@@ -593,6 +593,8 @@ private:
     void ScriptsProcess();
 
     void SendObjectUpdates();
+    // Forge: replaces SendObjectUpdates(). Defined in src/server/game/Forge/ForgeMap.cpp
+    void ForgeSendObjectUpdates();
 
     void UpdatePlayersRedirectKickEvent(uint32 diff);
 

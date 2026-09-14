@@ -111,6 +111,10 @@ namespace Movement
         unit->m_movementInfo.SetMovementFlags(moveFlags);
         move_spline.Initialize(args);
 
+        // Forge: no client sockets exist in the sim host; the spline above is the movement,
+        // the monster-move packet below is only for clients.
+        return move_spline.Duration();
+
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
         data << unit->GetPackGUID();
         if (transport)
@@ -156,6 +160,9 @@ namespace Movement
         unit->m_movementInfo.RemoveMovementFlag(MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_SPLINE_ENABLED);
         move_spline.onTransport = transport;
         move_spline.Initialize(args);
+
+        // Forge: no client sockets exist in the sim host; the stop-movement packet is only for clients.
+        return;
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
         data << unit->GetPackGUID();

@@ -181,6 +181,9 @@ void Object::BuildMovementUpdateBlock(UpdateData* data, uint32 flags) const
 
 void Object::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (!target)
         return;
 
@@ -238,6 +241,9 @@ void Object::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Object::SendUpdateToPlayer(Player* player)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     // send create update to player
     UpdateData upd;
     WorldPacket packet;
@@ -261,11 +267,17 @@ void Object::BuildValuesUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Object::BuildOutOfRangeUpdateBlock(UpdateData* data) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     data->AddOutOfRangeGUID(GetGUID());
 }
 
 void Object::DestroyForPlayer(Player* target, bool onDeath) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     ASSERT(target);
 
     if (IsUnit() || isType(TYPEMASK_PLAYER))
@@ -2165,18 +2177,27 @@ void Unit::BuildHeartBeatMsg(WorldPacket* data) const
 
 void WorldObject::SendMessageToSet(WorldPacket const* data, bool self) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (IsInWorld())
         SendMessageToSetInRange(data, 0.0f, self);
 }
 
 void WorldObject::SendMessageToSetInRange(WorldPacket const* data, float dist, bool /*self*/) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     Acore::MessageDistDeliverer notifier(this, data, dist);
     notifier.Visit(GetObjectVisibilityContainer().GetVisiblePlayersMap());
 }
 
 void WorldObject::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcvr) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     Acore::MessageDistDeliverer notifier(this, data, 0.0f, Acore::TeamFilter::All, skipped_rcvr);
     notifier.Visit(GetObjectVisibilityContainer().GetVisiblePlayersMap());
 }

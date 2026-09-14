@@ -1712,6 +1712,9 @@ void Player::UpdateVisibilityOf(T* target, UpdateData& data,
 
 void Player::GetInitialVisiblePackets(Unit* target)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     GetAurasForTarget(target);
     if (target->IsAlive())
     {
@@ -2411,6 +2414,11 @@ void Player::ProcessSpellQueue()
 // important changes, so a crash loses at most a few seconds of them
 void Player::UpdateAdditionalSaves(uint32 p_time)
 {
+    // Forge: sim bots are never persisted; drop queued partial saves (inventory, quests, achievements).
+    m_additionalSaveTimer = 0;
+    m_additionalSaveMask = 0;
+    return;
+
     if (!m_additionalSaveTimer || GetSession()->isLogingOut())
         return;
 

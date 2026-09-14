@@ -1707,6 +1707,10 @@ void Map::SendRemoveTransports(Player* player)
 
 void Map::SendObjectUpdates()
 {
+    // Forge: no client sockets exist in the sim host, so no update block is ever built
+    // (src/server/game/Forge/ForgeMap.cpp). The body below is intentionally dead.
+    return ForgeSendObjectUpdates();
+
     UpdateDataMapType update_players;
 
     while (!_updateObjects.empty())

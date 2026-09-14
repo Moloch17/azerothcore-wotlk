@@ -168,6 +168,9 @@ void Bag::StoreItem(uint8 slot, Item* pItem, bool /*update*/)
 
 void Bag::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     Item::BuildCreateUpdateBlockForPlayer(data, target);
 
     for (uint32 i = 0; i < GetBagSize(); ++i)

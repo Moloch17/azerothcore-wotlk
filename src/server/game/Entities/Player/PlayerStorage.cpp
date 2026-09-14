@@ -7195,6 +7195,15 @@ bool Player::_LoadHomeBind(PreparedQueryResult result)
 
 void Player::SaveToDB(bool create, bool logout)
 {
+    // Forge: sim bots are never persisted after creation; see the transaction overload below.
+    if (!create)
+    {
+        m_nextSave = 0;
+        m_additionalSaveTimer = 0;
+        m_additionalSaveMask = 0;
+        return;
+    }
+
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
     SaveToDB(trans, create, logout);
@@ -7204,6 +7213,19 @@ void Player::SaveToDB(bool create, bool logout)
 
 void Player::SaveToDB(CharacterDatabaseTransaction trans, bool create, bool logout)
 {
+    // Forge: sim bots are never persisted after creation. PlayerSaveInterval is measured in game
+    // time, which runs thousands of times faster than wall time, so the periodic save alone would
+    // write every bot several times per wall-second. Covers periodic, logout, quest and delayed
+    // saves. Zeroing m_nextSave switches the periodic branch in Player::Update off for good.
+    // Character creation (create == true) still saves.
+    if (!create)
+    {
+        m_nextSave = 0;
+        m_additionalSaveTimer = 0;
+        m_additionalSaveMask = 0;
+        return;
+    }
+
     // delay auto save at any saves (manual, in code, or autosave)
     m_nextSave = sWorld->getIntConfig(CONFIG_INTERVAL_SAVE);
 

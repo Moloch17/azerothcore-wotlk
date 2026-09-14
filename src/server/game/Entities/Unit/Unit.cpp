@@ -6739,6 +6739,9 @@ void Unit::SendSpellNonMeleeReflectLog(SpellNonMeleeDamage* log, Unit* attacker)
 
 void Unit::SendSpellNonMeleeDamageLog(SpellNonMeleeDamage* log)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     WorldPacket data(SMSG_SPELLNONMELEEDAMAGELOG, (16 + 4 + 4 + 4 + 1 + 4 + 4 + 1 + 1 + 4 + 4 + 1)); // we guess size
     //IF we are in cheat mode we swap absorb with damage and set damage to 0, this way we can still debug damage but our hp bar will not drop
     uint32 damage = log->damage;
@@ -6786,6 +6789,9 @@ void Unit::SendSpellNonMeleeDamageLog(SpellNonMeleeDamage* log)
 
 void Unit::SendSpellNonMeleeDamageLog(Unit* target, SpellInfo const* spellInfo, uint32 Damage, SpellSchoolMask damageSchoolMask, uint32 AbsorbedDamage, uint32 Resist, bool PhysicalDamage, uint32 Blocked, bool CriticalHit /*= false*/, bool Split /*= false*/)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     SpellNonMeleeDamage log(this, target, spellInfo, damageSchoolMask);
     log.damage = Damage;
     log.absorb = AbsorbedDamage;
@@ -6840,6 +6846,9 @@ void Unit::ProcSkillsAndAuras(Unit* actor, Unit* victim, uint32 procAttacker, ui
 
 void Unit::SendPeriodicAuraLog(SpellPeriodicAuraLogInfo* pInfo)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     AuraEffect const* aura = pInfo->auraEff;
     WorldPacket data(SMSG_PERIODICAURALOG, 30);
     data << GetPackGUID();
@@ -6896,6 +6905,9 @@ void Unit::SendPeriodicAuraLog(SpellPeriodicAuraLogInfo* pInfo)
 
 void Unit::SendSpellMiss(Unit* target, uint32 spellID, SpellMissInfo missInfo)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     WorldPacket data(SMSG_SPELLLOGMISS, (4 + 8 + 1 + 4 + 8 + 1));
     data << uint32(spellID);
     data << GetGUID();
@@ -6910,6 +6922,9 @@ void Unit::SendSpellMiss(Unit* target, uint32 spellID, SpellMissInfo missInfo)
 
 void Unit::SendSpellDamageResist(Unit* target, uint32 spellId)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     WorldPacket data(SMSG_PROCRESIST, 8 + 8 + 4 + 1);
     data << GetGUID();
     data << target->GetGUID();
@@ -6920,6 +6935,9 @@ void Unit::SendSpellDamageResist(Unit* target, uint32 spellId)
 
 void Unit::SendSpellDamageImmune(Unit* target, uint32 spellId)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     WorldPacket data(SMSG_SPELLORDAMAGE_IMMUNE, 8 + 8 + 4 + 1);
     data << GetGUID();
     data << target->GetGUID();
@@ -6930,6 +6948,9 @@ void Unit::SendSpellDamageImmune(Unit* target, uint32 spellId)
 
 void Unit::SendAttackStateUpdate(CalcDamageInfo* damageInfo)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     LOG_DEBUG("entities.unit", "WORLD: Sending SMSG_ATTACKERSTATEUPDATE");
 
     uint32 tmpDamage[MAX_ITEM_PROTO_DAMAGES] = { };
@@ -7017,6 +7038,9 @@ void Unit::SendAttackStateUpdate(CalcDamageInfo* damageInfo)
 
 void Unit::SendAttackStateUpdate(uint32 HitInfo, Unit* target, uint8 /*SwingType*/, SpellSchoolMask damageSchoolMask, uint32 Damage, uint32 AbsorbDamage, uint32 Resist, VictimState TargetState, uint32 BlockedAmount)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     CalcDamageInfo dmgInfo;
     dmgInfo.HitInfo = HitInfo;
     dmgInfo.attacker = this;
@@ -8382,6 +8406,9 @@ void Unit::UnsummonAllTotems(bool onDeath /*= false*/)
 
 void Unit::SendHealSpellLog(HealInfo const& healInfo, bool critical)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     uint32 overheal = healInfo.GetHeal() - healInfo.GetEffectiveHeal();
 
     // we guess size
@@ -8415,6 +8442,9 @@ int32 Unit::HealBySpell(HealInfo& healInfo, bool critical)
 
 void Unit::SendEnergizeSpellLog(Unit* victim, uint32 spellID, uint32 damage, Powers powerType)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     WorldPacket data(SMSG_SPELLENERGIZELOG, (8 + 8 + 4 + 4 + 4 + 1));
     data << victim->GetPackGUID();
     data << GetPackGUID();

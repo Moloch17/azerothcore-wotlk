@@ -4718,6 +4718,9 @@ void Spell::SendPetCastResult(SpellCastResult result)
 
 void Spell::SendSpellStart()
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (!IsNeedSendToClient(false))
         return;
 
@@ -4798,6 +4801,9 @@ void Spell::SendSpellStart()
 
 void Spell::SendSpellGo()
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     // not send invisible spell casting
     if (!IsNeedSendToClient(true))
         return;

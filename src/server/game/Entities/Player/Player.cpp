@@ -3978,6 +3978,9 @@ Mail* Player::GetMail(uint32 id)
 
 void Player::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (target == this)
     {
         for (uint8 i = 0; i < EQUIPMENT_SLOT_END; ++i)
@@ -4009,6 +4012,9 @@ void Player::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Player::DestroyForPlayer(Player* target, bool onDeath) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     Unit::DestroyForPlayer(target, onDeath);
 
     for (uint8 i = 0; i < EQUIPMENT_SLOT_END; ++i) // xinef: previously INVENTORY_SLOT_BAG_END
@@ -5830,11 +5836,17 @@ void Player::SaveRecallPosition()
 
 void Player::SendMessageToSet(WorldPacket const* data, bool self) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     SendMessageToSetInRange(data, GetVisibilityRange(), self);
 }
 
 void Player::SendMessageToSetInRange(WorldPacket const* data, float dist, bool self) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (self)
         SendDirectMessage(data);
 
@@ -5844,6 +5856,9 @@ void Player::SendMessageToSetInRange(WorldPacket const* data, float dist, bool s
 
 void Player::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcvr) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     if (skipped_rcvr != this)
         SendDirectMessage(data);
 
@@ -5853,6 +5868,9 @@ void Player::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcv
 
 void Player::SendDirectMessage(WorldPacket const* data) const
 {
+    // Forge: no client sockets exist in the sim host
+    return;
+
     m_session->SendPacket(data);
 }
 
@@ -11934,8 +11952,8 @@ void Player::SendUpdateToOutOfRangeGroupMembers()
 {
     if (m_groupUpdateMask == GROUP_UPDATE_FLAG_NONE)
         return;
-    if (Group* group = GetGroup())
-        group->UpdatePlayerOutOfRange(this);
+    // Forge: no client sockets exist in the sim host, so the party member stats packet is not built.
+    // The mask resets below are kept.
 
     m_groupUpdateMask = GROUP_UPDATE_FLAG_NONE;
     m_auraRaidUpdateMask = 0;

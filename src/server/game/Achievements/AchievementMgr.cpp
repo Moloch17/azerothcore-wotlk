@@ -518,6 +518,9 @@ void AchievementMgr::Reset()
 
 void AchievementMgr::ResetAchievementCriteria(AchievementCriteriaCondition condition, uint32 value, bool evenIfCriteriaComplete)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     // disable for gamemasters with GM-mode enabled
     if (_player->IsGameMaster())
         return;
@@ -566,6 +569,9 @@ void AchievementMgr::DeleteFromDB(ObjectGuid::LowType lowguid)
 
 void AchievementMgr::SaveToDB(CharacterDatabaseTransaction trans)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     if (!_completedAchievements.empty())
     {
         for (CompletedAchievementMap::iterator iter = _completedAchievements.begin(); iter != _completedAchievements.end(); ++iter)
@@ -799,6 +805,9 @@ void AchievementMgr::SendCriteriaUpdate(AchievementCriteriaEntry const* entry, C
  */
 void AchievementMgr::CheckAllAchievementCriteria()
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     // suppress sending packets
     for (uint32 i = 0; i < ACHIEVEMENT_CRITERIA_TYPE_TOTAL; ++i)
         UpdateAchievementCriteria(AchievementCriteriaTypes(i));
@@ -821,6 +830,9 @@ static const uint32 achievIdForDungeon[][4] =
  */
 void AchievementMgr::UpdateAchievementCriteria(AchievementCriteriaTypes type, uint32 miscValue1 /*= 0*/, uint32 miscValue2 /*= 0*/, Unit* unit /*= nullptr*/)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     // disable for gamemasters with GM-mode enabled
     if (_player->IsGameMaster())
         return;
@@ -2201,6 +2213,9 @@ void AchievementMgr::RemoveCriteriaProgress(AchievementCriteriaEntry const* entr
 
 void AchievementMgr::Update(uint32 timeDiff)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     if (_offlineUpdatesDelayTimer > 0)
     {
         if (timeDiff >= _offlineUpdatesDelayTimer)
@@ -2239,6 +2254,9 @@ void AchievementMgr::UpdateTimedAchievements(uint32 timeDiff)
 
 void AchievementMgr::StartTimedAchievement(AchievementCriteriaTimedTypes type, uint32 entry, uint32 timeLost /*= 0*/)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     AchievementCriteriaEntryList const& achievementCriteriaList = sAchievementMgr->GetTimedAchievementCriteriaByType(type);
     for (AchievementCriteriaEntryList::const_iterator i = achievementCriteriaList.begin(); i != achievementCriteriaList.end(); ++i)
     {
@@ -2262,6 +2280,9 @@ void AchievementMgr::StartTimedAchievement(AchievementCriteriaTimedTypes type, u
 
 void AchievementMgr::RemoveTimedAchievement(AchievementCriteriaTimedTypes type, uint32 entry)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     AchievementCriteriaEntryList const& achievementCriteriaList = sAchievementMgr->GetTimedAchievementCriteriaByType(type);
     for (AchievementCriteriaEntryList::const_iterator i = achievementCriteriaList.begin(); i != achievementCriteriaList.end(); ++i)
     {
@@ -2283,6 +2304,9 @@ void AchievementMgr::RemoveTimedAchievement(AchievementCriteriaTimedTypes type, 
 
 void AchievementMgr::CompletedAchievement(AchievementEntry const* achievement)
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     // disable for gamemasters with GM-mode enabled
     if (_player->IsGameMaster())
     {
@@ -2399,6 +2423,9 @@ void AchievementMgr::CompletedAchievement(AchievementEntry const* achievement)
 
 void AchievementMgr::SendAllAchievementData() const
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     WorldPacket data(SMSG_ALL_ACHIEVEMENT_DATA, _completedAchievements.size() * 8 + 4 + _criteriaProgress.size() * 38 + 4);
     BuildAllDataPacket(&data);
     GetPlayer()->SendDirectMessage(&data);
@@ -2406,6 +2433,9 @@ void AchievementMgr::SendAllAchievementData() const
 
 void AchievementMgr::SendRespondInspectAchievements(Player* player) const
 {
+    // Forge: sim bots do not use achievements
+    return;
+
     WorldPacket data(SMSG_RESPOND_INSPECT_ACHIEVEMENTS, 9 + _completedAchievements.size() * 8 + 4 + _criteriaProgress.size() * 38 + 4);
     data << GetPlayer()->GetPackGUID();
     BuildAllDataPacket(&data);

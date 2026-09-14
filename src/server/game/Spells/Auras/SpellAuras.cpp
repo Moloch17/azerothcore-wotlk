@@ -226,6 +226,9 @@ void AuraApplication::ClientUpdate(bool remove)
 {
     _needClientUpdate = false;
 
+    // Forge: no client sockets exist in the sim host; the flag reset above is the only state change
+    return;
+
     WorldPacket data(SMSG_AURA_UPDATE);
     data << GetTarget()->GetPackGUID();
     BuildUpdatePacket(data, remove);
