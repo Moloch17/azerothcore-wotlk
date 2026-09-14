@@ -69,9 +69,12 @@
 #include "ScriptLoader.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
+#include "Timer.h"
 #include "World.h"
 #include <boost/asio/signal_set.hpp>
+#include <algorithm>
 #include <csignal>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -148,7 +151,21 @@ namespace
         CharacterDatabase.WarnAboutSyncQueries(true);
         WorldDatabase.WarnAboutSyncQueries(true);
 
+        // Throughput reporting: min/max/average ticks per second over each 10 second window.
+        // The clock is read once per sampleTicks rather than once per tick -- at sim speed a
+        // per-tick getMSTime() would be thousands of reads a second for one log line.
+        constexpr uint32 sampleTicks = 1000;
+        constexpr uint32 reportIntervalMs = 10000;
+
         uint32 ticks = 0;
+        uint32 sinceSample = 0;                 // ticks since the last clock read
+        uint32 secondTicks = 0;                 // ticks in the second currently being measured
+        uint32 windowTicks = 0;                 // ticks in the current reporting window
+        uint32 minRate = std::numeric_limits<uint32>::max();
+        uint32 maxRate = 0;
+        uint32 samples = 0;
+        uint32 secondStart = getMSTime();
+        uint32 windowStart = secondStart;
 
         while (!World::IsStopped())
         {
@@ -157,6 +174,51 @@ namespace
             // Fixed diff, never wall clock: the sim advances in deterministic steps and runs
             // as fast as the CPU allows.
             sWorld->Update(tickMs);
+
+            ++secondTicks;
+            ++windowTicks;
+
+            if (++sinceSample >= sampleTicks)
+            {
+                sinceSample = 0;
+
+                uint32 const now = getMSTime();
+                uint32 const secondMs = getMSTimeDiff(secondStart, now);
+
+                // Close off a per-second sample. If the sim is running slower than sampleTicks
+                // per second this bucket covers more than a second, so derive the rate from the
+                // elapsed time rather than assuming exactly 1000 ms.
+                if (secondMs >= 1000)
+                {
+                    uint32 const rate = uint32(secondTicks * 1000.0 / secondMs);
+                    minRate = std::min(minRate, rate);
+                    maxRate = std::max(maxRate, rate);
+                    ++samples;
+
+                    secondTicks = 0;
+                    secondStart = now;
+                }
+
+                uint32 const windowMs = getMSTimeDiff(windowStart, now);
+                if (windowMs >= reportIntervalMs && samples)
+                {
+                    // Game time advanced in this window: every tick is a fixed tickMs step,
+                    // so this is an exact count rather than an estimate. Hours are not wrapped
+                    // at 24 -- a fast window can simulate days.
+                    uint64 const gameSeconds = uint64(windowTicks) * tickMs / 1000;
+
+                    LOG_INFO("server.worldserver",
+                        "Sim: {} ticks/s avg, {} min, {} max over {} s -- {}:{:02}:{:02} game time",
+                        uint32(windowTicks * 1000.0 / windowMs), minRate, maxRate, windowMs / 1000,
+                        gameSeconds / 3600, (gameSeconds % 3600) / 60, gameSeconds % 60);
+
+                    windowTicks = 0;
+                    windowStart = now;
+                    minRate = std::numeric_limits<uint32>::max();
+                    maxRate = 0;
+                    samples = 0;
+                }
+            }
 
             if (maxTicks && ++ticks >= maxTicks)
             {

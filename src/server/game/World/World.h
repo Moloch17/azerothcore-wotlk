@@ -241,6 +241,9 @@ public:
     void SetRealmName(std::string name) override { _realmName = name; } // pussywizard
 
 protected:
+    // Forge: sim tick, replaces Update(). Defined in src/server/game/Forge/ForgeWorld.cpp
+    void ForgeUpdate(uint32 diff);
+
     void _UpdateGameTime();
     bool RescheduleShutdownForWintergrasp();
     // callback for UpdateRealmCharacters

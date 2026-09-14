@@ -43,6 +43,11 @@ void MapInstanced::InitVisibilityDistance()
 
 void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
 {
+    // Forge: the sim host runs its own instance tick (src/server/game/Forge/ForgeMapMgr.cpp).
+    // Everything below is intentionally dead and kept verbatim, so upstream edits to this
+    // function merge cleanly on rebase and are simply never executed.
+    return ForgeUpdate(t, s_diff);
+
     // take care of loaded GridMaps (when unused, unload it!)
     Map::Update(t, s_diff, false);
 

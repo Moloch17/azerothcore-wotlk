@@ -168,6 +168,9 @@ private:
     MapMgr(MapMgr const&);
     MapMgr& operator=(MapMgr const&);
 
+    // Forge: sim map tick, replaces Update(). Defined in src/server/game/Forge/ForgeMapMgr.cpp
+    void ForgeUpdate(uint32 diff);
+
     std::mutex Lock;
     MapMapType i_maps;
     IntervalTimer i_timer[4]; // continents, bgs/arenas, instances, total from the beginning

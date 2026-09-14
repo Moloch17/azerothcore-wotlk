@@ -250,6 +250,11 @@ Map::EnterState MapMgr::PlayerCannotEnter(uint32 mapid, Player* player, bool log
 
 void MapMgr::Update(uint32 diff)
 {
+    // Forge: the sim host runs its own map tick (src/server/game/Forge/ForgeMapMgr.cpp).
+    // Everything below is intentionally dead and kept verbatim, so upstream edits to this
+    // function merge cleanly on rebase and are simply never executed.
+    return ForgeUpdate(diff);
+
     for (uint8 i = 0; i < 4; ++i)
         i_timer[i].Update(diff);
 

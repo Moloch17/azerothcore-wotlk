@@ -1118,6 +1118,11 @@ void World::DetectDBCLang()
 /// Update the World !
 void World::Update(uint32 diff)
 {
+    // Forge: the sim host runs its own tick (src/server/game/Forge/ForgeWorld.cpp). Everything
+    // below is intentionally dead and kept verbatim, so upstream edits to this function merge
+    // cleanly on rebase and are simply never executed.
+    return ForgeUpdate(diff);
+
     METRIC_TIMER("world_update_time_total");
 
     ///- Update the game time and check for shutdown time
