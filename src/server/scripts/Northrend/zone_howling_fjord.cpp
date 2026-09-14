@@ -138,9 +138,9 @@ struct npc_rodin_lightning_enabler : public ScriptedAI
         });
     }
 
-    void UpdateAI(uint32 /*diff*/) override
+    void UpdateAI(uint32 diff) override
     {
-        _scheduler.Update();
+        _scheduler.Update(diff);
     }
 
 private:

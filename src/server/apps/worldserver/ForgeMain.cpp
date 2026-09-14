@@ -55,6 +55,7 @@
 #include "Config.h"
 #include "DatabaseEnv.h"
 #include "DatabaseLoader.h"
+#include "GameTime.h"
 #include "GitRevision.h"
 #include "IoContext.h"
 #include "Log.h"
@@ -69,7 +70,9 @@
 #include "ScriptLoader.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
+#include "StringFormat.h"
 #include "Timer.h"
+#include "Unit.h"
 #include "World.h"
 #include <boost/asio/signal_set.hpp>
 #include <algorithm>
@@ -157,6 +160,14 @@ namespace
         constexpr uint32 sampleTicks = 1000;
         constexpr uint32 reportIntervalMs = 10000;
 
+        // Game clock budget. Cooldown and GCD timestamps are stored as uint32 milliseconds, and
+        // infinityCooldownDelay (30 days) is added to "now" for event-started cooldowns, so the
+        // clock must stop short of UINT32_MAX - infinityCooldownDelay (~19.7 game days) or those
+        // comparisons wrap and cooldowns silently stick or vanish. A one game hour margin covers
+        // the 50 game seconds between checks with room to spare.
+        constexpr uint64 clockBudgetMs = uint64(std::numeric_limits<uint32>::max()) - infinityCooldownDelay
+            - uint64(HOUR) * IN_MILLISECONDS;
+
         uint32 ticks = 0;
         uint32 sinceSample = 0;                 // ticks since the last clock read
         uint32 secondTicks = 0;                 // ticks in the second currently being measured
@@ -166,6 +177,27 @@ namespace
         uint32 samples = 0;
         uint32 secondStart = getMSTime();
         uint32 windowStart = secondStart;
+
+        // Sim clock proof. Every GameTime value is snapshotted, and at each report each one must
+        // have advanced by exactly (ticks x tickMs) -- while the wall clock advanced ~10 s. Any
+        // difference means something is still feeding GameTime from the wall clock.
+        struct ClockSnapshot
+        {
+            Milliseconds ms;
+            TimePoint steady;
+            SystemTimePoint system;
+            Seconds seconds;
+        };
+
+        auto const takeClockSnapshot = []()
+        {
+            return ClockSnapshot{ GameTime::GetGameTimeMS(), GameTime::Now(), GameTime::GetSystemTime(),
+                GameTime::GetGameTime() };
+        };
+
+        ClockSnapshot clockBase{};
+        bool clockBaseTaken = false;
+        uint64 clockTicks = 0;                  // ticks since clockBase was taken
 
         while (!World::IsStopped())
         {
@@ -178,9 +210,28 @@ namespace
             ++secondTicks;
             ++windowTicks;
 
+            // The first tick seeds the sim clock from the wall clock, so the baseline starts after it.
+            if (!clockBaseTaken)
+            {
+                clockBase = takeClockSnapshot();
+                clockBaseTaken = true;
+            }
+            else
+                ++clockTicks;
+
             if (++sinceSample >= sampleTicks)
             {
                 sinceSample = 0;
+
+                if (uint64(GameTime::GetGameTimeMS().count()) >= clockBudgetMs)
+                {
+                    // Non-zero exit so a batch orchestrator treats this as a failed run, not a
+                    // normal episode end.
+                    LOG_FATAL("server.worldserver", "Sim clock reached its {:.1f} game day budget: cooldown "
+                        "timestamps are uint32 milliseconds and would wrap. Stopping.",
+                        double(clockBudgetMs) / (uint64(DAY) * IN_MILLISECONDS));
+                    World::StopNow(ERROR_EXIT_CODE);
+                }
 
                 uint32 const now = getMSTime();
                 uint32 const secondMs = getMSTimeDiff(secondStart, now);
@@ -211,6 +262,36 @@ namespace
                         "Sim: {} ticks/s avg, {} min, {} max over {} s -- {}:{:02}:{:02} game time",
                         uint32(windowTicks * 1000.0 / windowMs), minRate, maxRate, windowMs / 1000,
                         gameSeconds / 3600, (gameSeconds % 3600) / 60, gameSeconds % 60);
+
+                    // Every clock must have moved by exactly clockTicks x tickMs. Whole seconds are
+                    // truncated at both ends of the window, so they may land one second over.
+                    Milliseconds const expected = Milliseconds(clockTicks * tickMs);
+                    Seconds const expectedSeconds = std::chrono::duration_cast<Seconds>(expected);
+
+                    Milliseconds const msDelta = GameTime::GetGameTimeMS() - clockBase.ms;
+                    Milliseconds const steadyDelta =
+                        std::chrono::duration_cast<Milliseconds>(GameTime::Now() - clockBase.steady);
+                    Milliseconds const systemDelta =
+                        std::chrono::duration_cast<Milliseconds>(GameTime::GetSystemTime() - clockBase.system);
+                    Seconds const secondsDelta = GameTime::GetGameTime() - clockBase.seconds;
+
+                    bool const clockOk = msDelta == expected && steadyDelta == expected && systemDelta == expected
+                        && secondsDelta >= expectedSeconds && secondsDelta <= expectedSeconds + 1s;
+
+                    std::string const clockLine = Acore::StringFormat(
+                        "{} ticks x {} ms = {} ms expected | GameTimeMS +{} | Now +{} | SystemTime +{} | "
+                        "GameTime +{} s | wall {} ms | budget {:.2f}% used",
+                        clockTicks, tickMs, expected.count(), msDelta.count(), steadyDelta.count(),
+                        systemDelta.count(), secondsDelta.count(), windowMs,
+                        100.0 * double(GameTime::GetGameTimeMS().count()) / double(clockBudgetMs));
+
+                    if (clockOk)
+                        LOG_INFO("server.worldserver", "Sim clock OK: {}", clockLine);
+                    else
+                        LOG_ERROR("server.worldserver", "Sim clock MISMATCH: {}", clockLine);
+
+                    clockBase = takeClockSnapshot();
+                    clockTicks = 0;
 
                     windowTicks = 0;
                     windowStart = now;

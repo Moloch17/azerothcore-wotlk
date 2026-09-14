@@ -411,7 +411,7 @@ uint32 GlobalCooldownMgr::GetGlobalCooldown(SpellInfo const* spellInfo) const
 
     uint32 start = itr->second.cast_time;
     uint32 delay = itr->second.duration;
-    uint32 now = getMSTime();
+    uint32 now = GameTime::GetGameTimeMS().count();
 
     return (start + delay > now) ? (start + delay) - now : 0;
 }

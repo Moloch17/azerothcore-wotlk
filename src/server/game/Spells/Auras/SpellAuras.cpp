@@ -2107,7 +2107,7 @@ void Aura::AddProcCooldown(SpellProcEntry const* procEntry, TimePoint now)
 
 void Aura::ResetProcCooldown()
 {
-    m_procCooldown = std::chrono::steady_clock::now();
+    m_procCooldown = GameTime::Now();
 }
 
 void Aura::PrepareProcToTrigger(AuraApplication* aurApp, ProcEventInfo& eventInfo, TimePoint now)

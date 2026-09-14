@@ -18,6 +18,7 @@
 #include "AchievementCriteriaScript.h"
 #include "Containers.h"
 #include "CreatureScript.h"
+#include "GameTime.h"
 #include "GridNotifiers.h"
 #include "InstanceScript.h"
 #include "MotionMaster.h"
@@ -867,7 +868,7 @@ struct npc_xt_toy_pile : public ScriptedAI
         if (!xt002 || xt002->IsWithinDist(me, SummonDistance))
             return;
 
-        uint32 now = getMSTime();
+        uint32 now = GameTime::GetGameTimeMS().count();
         if (now - _lastSummonTime < SummonCooldown)
             return;
 
@@ -975,7 +976,7 @@ class spell_xt002_exposed_heart : public AuraScript
         if (Creature* xt002 = GetTarget()->GetVehicleCreatureBase())
             xt002->AI()->SetData(DATA_TRANSFERED_HEALTH, damageInfo->GetDamage());
 
-        uint32 now = getMSTime();
+        uint32 now = GameTime::GetGameTimeMS().count();
         if (now - _lastOrbTime >= OrbCooldown)
         {
             _lastOrbTime = now;

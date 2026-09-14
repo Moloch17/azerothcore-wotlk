@@ -368,7 +368,7 @@ struct npc_batrider : public CreatureAI
         }
     }
 
-    void UpdateAI(uint32 /*diff*/) override
+    void UpdateAI(uint32 diff) override
     {
         if (_mode == BATRIDER_MODE_BOSS)
         {
@@ -388,7 +388,7 @@ struct npc_batrider : public CreatureAI
             DoMeleeAttackIfReady();
         }
 
-        _scheduler.Update();
+        _scheduler.Update(diff);
     }
 };
 

@@ -12021,7 +12021,7 @@ void Player::ApplyEquipCooldown(Item* pItem)
                 continue;
 
             if (Aura* itemAura = GetAura(spellData.SpellId, GetGUID(), pItem->GetGUID()))
-                itemAura->AddProcCooldown(std::chrono::steady_clock::now() + procEntry->Cooldown);
+                itemAura->AddProcCooldown(GameTime::Now() + procEntry->Cooldown);
             continue;
         }
 
@@ -16698,19 +16698,20 @@ bool Player::IsSummonAsSpectator() const
 bool Player::HasSpellCooldown(uint32 spell_id) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    return itr != m_spellCooldowns.end() && itr->second.end > getMSTime();
+    return itr != m_spellCooldowns.end() && itr->second.end > GameTime::GetGameTimeMS().count();
 }
 
 bool Player::HasSpellItemCooldown(uint32 spell_id, uint32 itemid) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    return itr != m_spellCooldowns.end() && itr->second.end > getMSTime() && itr->second.itemid == itemid;
+    return itr != m_spellCooldowns.end() && itr->second.end > GameTime::GetGameTimeMS().count() && itr->second.itemid == itemid;
 }
 
 uint32 Player::GetSpellCooldownDelay(uint32 spell_id) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    return uint32(itr != m_spellCooldowns.end() && itr->second.end > getMSTime() ? itr->second.end - getMSTime() : 0);
+    uint32 const now = GameTime::GetGameTimeMS().count();
+    return uint32(itr != m_spellCooldowns.end() && itr->second.end > now ? itr->second.end - now : 0);
 }
 
 std::string Player::GetDebugInfo() const

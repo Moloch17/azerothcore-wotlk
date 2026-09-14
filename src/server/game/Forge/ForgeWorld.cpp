@@ -38,6 +38,11 @@
  *                                  -- percentile bookkeeping only TC9Sidecar reads, plus
  *                                     per-tick slow-update logging; replaced by the once-a-second
  *                                     tick-rate line in ForgeUpdateLoop
+ *   - sWorldSessionMgr->UpdateSessions
+ *                                  -- the host has no listener, so no session is ever registered;
+ *                                     bot sessions stay out of WorldSessionMgr because a socketless
+ *                                     session is deleted (and its player saved) there. Bots are
+ *                                     driven by Map::Update through MapSessionFilter instead
  *   - DynamicVisibilityMgr::Update -- see below
  *   - WUPDATE_5_SECS (expired ban delete), WUPDATE_WHO_LIST, WUPDATE_UPTIME, WUPDATE_CLEANDB,
  *     WUPDATE_AUTOBROADCAST        -- these advance on our fixed diff, so at 50 ms/tick the
@@ -57,6 +62,7 @@
 
 #include "BattlegroundMgr.h"
 #include "DatabaseEnv.h"
+#include "GameTime.h"
 #include "InstanceSaveMgr.h"
 #include "MapMgr.h"
 #include "ScriptMgr.h"
@@ -65,8 +71,39 @@
 
 void World::ForgeUpdate(uint32 diff)
 {
-    ///- Update the game time and check for shutdown time
-    _UpdateGameTime();
+    ///- Update the game time and check for shutdown time. This is stock _UpdateGameTime() with one
+    /// change: the clock advances by the fixed tick diff (the sim clock) instead of being re-read
+    /// from the wall clock, so every GameTime reader -- cooldowns, GCD, procs, respawns -- moves on
+    /// game time. See ForgeGameTime.cpp.
+    Seconds lastGameTime = GameTime::GetGameTime();
+    GameTime::ForgeAdvanceGameTimers(Milliseconds(diff));
+
+    Seconds elapsed = GameTime::GetGameTime() - lastGameTime;
+
+    ///- if there is a shutdown timer
+    if (!IsStopped() && _shutdownTimer > 0 && elapsed > 0s)
+    {
+        ///- ... and it is overdue, stop the world (set m_stopEvent)
+        if (_shutdownTimer <= elapsed.count())
+        {
+            ///- ... unless a Wintergrasp battle is running and deferral is enabled, in which case the
+            ///  shutdown/restart is pushed past the end of the current battle and the world keeps running
+            if (!RescheduleShutdownForWintergrasp())
+            {
+                if (!(_shutdownMask & SHUTDOWN_MASK_IDLE) || sWorldSessionMgr->GetActiveAndQueuedSessionCount() == 0)
+                    _stopEvent = true;                     // exist code already set
+                else
+                    _shutdownTimer = 1;                    // minimum timer value to wait idle state
+            }
+        }
+        ///- ... else decrease it and if necessary display a shutdown countdown to the users
+        else
+        {
+            _shutdownTimer -= elapsed.count();
+
+            ShutdownMsg();
+        }
+    }
 
     ///- Advance the interval timers. Only WUPDATE_PINGDB is acted on below, but they are all
     /// stepped so anything that reads one sees a sane value.
@@ -77,10 +114,6 @@ void World::ForgeUpdate(uint32 diff)
         else
             _timers[i].SetCurrent(0);
     }
-
-    ///- Update sessions: the bots are WorldSessions with no socket, so this is what puts them
-    /// in the world.
-    sWorldSessionMgr->UpdateSessions(diff);
 
     ///- The simulation itself.
     sMapMgr->Update(diff);
