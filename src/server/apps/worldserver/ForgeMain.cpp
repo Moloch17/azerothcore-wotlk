@@ -157,7 +157,7 @@ namespace
         uint32 const tickMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 100));
 
         // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
-        constexpr uint32 maxTicks = 0;
+        constexpr uint64 maxTicks = 0;
 
         if (maxTicks)
             LOG_INFO("server.worldserver", "Sim loop: stopping after {} ticks", maxTicks);
@@ -166,19 +166,7 @@ namespace
         CharacterDatabase.WarnAboutSyncQueries(true);
         WorldDatabase.WarnAboutSyncQueries(true);
 
-        // Game clock budget. Cooldown and GCD timestamps are stored as uint32 milliseconds, and
-        // infinityCooldownDelay (30 days) is added to "now" for event-started cooldowns, so the
-        // clock must stop short of UINT32_MAX - infinityCooldownDelay (~19.7 game days) or those
-        // comparisons wrap and cooldowns silently stick or vanish. A one game hour margin covers
-        // the 50 game seconds between checks with room to spare.
-        constexpr uint64 clockBudgetMs = uint64(std::numeric_limits<uint32>::max()) - infinityCooldownDelay
-            - uint64(HOUR) * IN_MILLISECONDS;
-
-        // The budget is checked once per budgetCheckTicks rather than every tick.
-        constexpr uint32 budgetCheckTicks = 1000;
-
-        uint32 ticks = 0;
-        uint32 sinceBudgetCheck = 0;
+        uint64 ticks = 0;
 
         while (!World::IsStopped())
         {
@@ -187,21 +175,6 @@ namespace
             // Fixed diff, never wall clock: the sim advances in deterministic steps and runs
             // as fast as the CPU allows.
             sWorld->Update(tickMs);
-
-            if (++sinceBudgetCheck >= budgetCheckTicks)
-            {
-                sinceBudgetCheck = 0;
-
-                if (uint64(GameTime::GetGameTimeMS().count()) >= clockBudgetMs)
-                {
-                    // Non-zero exit so a batch orchestrator treats this as a failed run, not a
-                    // normal episode end.
-                    LOG_FATAL("server.worldserver", "Sim clock reached its {:.1f} game day budget: cooldown "
-                        "timestamps are uint32 milliseconds and would wrap. Stopping.",
-                        double(clockBudgetMs) / (uint64(DAY) * IN_MILLISECONDS));
-                    World::StopNow(ERROR_EXIT_CODE);
-                }
-            }
 
             if (maxTicks && ++ticks >= maxTicks)
             {

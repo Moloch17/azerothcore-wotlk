@@ -37,7 +37,8 @@
  *   Entities/Player/Player.cpp       HasSpellCooldown, HasSpellItemCooldown,
  *                                    GetSpellCooldownDelay: getMSTime() -> GetGameTimeMS()
  *   Entities/Player/Player.cpp       item proc cooldown: steady_clock::now() -> GameTime::Now()
- *   Entities/Unit/CharmInfo.cpp      GlobalCooldownMgr::GetGlobalCooldown: getMSTime() -> GetGameTimeMS()
+ *   Entities/Unit/CharmInfo.cpp      GlobalCooldownMgr::GetGlobalCooldown: getMSTime() -> GetGameTimeMS(),
+ *                                    and the time left through wrap-safe getMSTimeDiff
  *   Entities/Unit/Unit.cpp           GetProcAurasTriggeredOnEvent: steady_clock::now() -> GameTime::Now()
  *   Spells/Auras/SpellAuras.cpp      Aura::ResetProcCooldown: steady_clock::now() -> GameTime::Now()
  *   scripts/Spells/spell_paladin.cpp Sacred Shield internal cooldown: steady_clock::now() -> GameTime::Now()
@@ -51,9 +52,12 @@
  * GameEventMgr, Battlefield, Transport first-departure sync (continents are skipped),
  * scourge_invasion, midsummer, cs_mmaps, UpdateTime.
  *
- * Budget: cooldown timestamps are uint32 milliseconds, and infinityCooldownDelay (30 days) is
- * added to "now" for event-started cooldowns, which overflows once the clock passes ~19.7 game
- * days. ForgeUpdateLoop stops the sim before that point.
+ * No clock budget: the game clock is 64-bit milliseconds, and the absolute timestamps compared
+ * against it (player and creature spell cooldowns including infinityCooldownDelay "infinite"
+ * ones, creature school lockouts, gameobject cooldowns, Sanctuary, SotA demolishers, the Eclipse
+ * and turkey marker script timers) are uint64. Relative timers compared through
+ * getMSTimeDiff stay uint32 and are wrap-safe. Battleground queue join/invite times and the
+ * uint32 fields sent to clients are left as they are: the sim runs neither queues nor clients.
  */
 
 #include "GameTime.h"

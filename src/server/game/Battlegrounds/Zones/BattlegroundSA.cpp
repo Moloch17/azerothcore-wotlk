@@ -1122,11 +1122,11 @@ void BattlegroundSA::UpdateDemolisherSpawns()
                     // Demolisher is not in list
                     if (DemoliserRespawnList.find(i) == DemoliserRespawnList.end())
                     {
-                        DemoliserRespawnList[i] = GameTime::GetGameTimeMS().count() + 30000;
+                        DemoliserRespawnList[i] = uint64(GameTime::GetGameTimeMS().count()) + 30000;
                     }
                     else
                     {
-                        if (DemoliserRespawnList[i] < GameTime::GetGameTimeMS().count())
+                        if (DemoliserRespawnList[i] < uint64(GameTime::GetGameTimeMS().count()))
                         {
                             Demolisher->Relocate(BG_SA_NpcSpawnlocs[i][0], BG_SA_NpcSpawnlocs[i][1],
                                                  BG_SA_NpcSpawnlocs[i][2], BG_SA_NpcSpawnlocs[i][3]);

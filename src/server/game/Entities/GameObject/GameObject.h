@@ -379,7 +379,7 @@ protected:
     Seconds     m_restockTime;
     LootState   m_lootState;
     bool        m_spawnedByDefault;
-    uint32      m_cooldownTime;                         // used as internal reaction delay time store (not state change reaction).
+    uint64      m_cooldownTime;                         // used as internal reaction delay time store (not state change reaction).
     // For traps this: spell casting cooldown, for doors/buttons: reset time.
     std::unordered_map<ObjectGuid, int32> m_SkillupList;
 

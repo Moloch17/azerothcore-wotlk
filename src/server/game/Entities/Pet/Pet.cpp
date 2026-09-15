@@ -1506,8 +1506,8 @@ void Pet::_SaveSpellCooldowns(CharacterDatabaseTransaction trans)
     trans->Append(stmt);
 
     time_t curTime = GameTime::GetGameTime().count();
-    uint32 curMSTime = GameTime::GetGameTimeMS().count();
-    uint32 infTime   = curMSTime + infinityCooldownDelayCheck;
+    uint64 curMSTime = uint64(GameTime::GetGameTimeMS().count());
+    uint64 infTime   = curMSTime + infinityCooldownDelayCheck;
 
     // remove oudated and save active
     CreatureSpellCooldowns::iterator itr, itr2;

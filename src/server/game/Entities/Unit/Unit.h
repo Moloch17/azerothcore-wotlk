@@ -2087,7 +2087,7 @@ public:
 
     typedef std::unordered_multimap<uint32 /*type*/, uint32 /*spellId*/> SpellImmuneContainer;
     SpellImmuneContainer m_spellImmune[MAX_SPELL_IMMUNITY];
-    uint32 m_lastSanctuaryTime;
+    uint64 m_lastSanctuaryTime;
 
     // pet auras
     typedef std::set<PetAura const*> PetAuraSet;

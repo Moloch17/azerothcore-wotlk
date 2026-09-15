@@ -497,10 +497,10 @@ typedef std::list<VendorItemCount> VendorItemCounts;
 struct CreatureSpellCooldown
 {
     CreatureSpellCooldown()  = default;
-    CreatureSpellCooldown(uint16 categoryId, uint32 endTime) : category(categoryId), end(endTime) { }
+    CreatureSpellCooldown(uint16 categoryId, uint64 endTime) : category(categoryId), end(endTime) { }
 
     uint16 category{0};
-    uint32 end{0};
+    uint64 end{0};                  // game time ms
 };
 
 typedef std::map<uint32, CreatureSpellCooldown> CreatureSpellCooldowns;

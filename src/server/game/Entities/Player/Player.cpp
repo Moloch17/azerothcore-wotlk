@@ -2788,8 +2788,8 @@ bool Player::HasActivePowerType(Powers power)
 
 void Player::SendInitialSpells()
 {
-    uint32 curTime = GameTime::GetGameTimeMS().count();
-    uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
+    uint64 curTime = uint64(GameTime::GetGameTimeMS().count());
+    uint64 infTime = uint64(GameTime::GetGameTimeMS().count()) + infinityCooldownDelayCheck;
 
     uint16 spellCount = 0;
 
@@ -3701,7 +3701,7 @@ void Player::RemoveCategoryCooldown(uint32 cat)
 void Player::RemoveArenaSpellCooldowns(bool removeActivePetCooldowns)
 {
     // remove cooldowns on spells that have < 10 min CD
-    uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
+    uint64 infTime = uint64(GameTime::GetGameTimeMS().count()) + infinityCooldownDelayCheck;
     SpellCooldowns::iterator itr, next;
     for (itr = m_spellCooldowns.begin(); itr != m_spellCooldowns.end(); itr = next)
     {
@@ -3735,7 +3735,7 @@ void Player::RemoveArenaSpellCooldowns(bool removeActivePetCooldowns)
 
 void Player::RemoveAllSpellCooldown()
 {
-    uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
+    uint64 infTime = uint64(GameTime::GetGameTimeMS().count()) + infinityCooldownDelayCheck;
     if (!m_spellCooldowns.empty())
     {
         for (SpellCooldowns::const_iterator itr = m_spellCooldowns.begin(); itr != m_spellCooldowns.end(); ++itr)
@@ -3789,8 +3789,8 @@ void Player::_SaveSpellCooldowns(CharacterDatabaseTransaction trans, bool logout
     trans->Append(stmt);
 
     time_t curTime = GameTime::GetGameTime().count();
-    uint32 curMSTime = GameTime::GetGameTimeMS().count();
-    uint32 infTime = curMSTime + infinityCooldownDelayCheck;
+    uint64 curMSTime = uint64(GameTime::GetGameTimeMS().count());
+    uint64 infTime = curMSTime + infinityCooldownDelayCheck;
 
     bool first_round = true;
     std::ostringstream ss;
@@ -9798,8 +9798,8 @@ void Player::PetSpellInitialize()
     uint8 cooldownsCount = pet->m_CreatureSpellCooldowns.size();
     data << uint8(cooldownsCount);
 
-    uint32 curTime = GameTime::GetGameTimeMS().count();
-    uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
+    uint64 curTime = uint64(GameTime::GetGameTimeMS().count());
+    uint64 infTime = uint64(GameTime::GetGameTimeMS().count()) + infinityCooldownDelayCheck;
 
     for (CreatureSpellCooldowns::const_iterator itr = pet->m_CreatureSpellCooldowns.begin(); itr != pet->m_CreatureSpellCooldowns.end(); ++itr)
     {
@@ -9901,8 +9901,8 @@ void Player::VehicleSpellInitialize()
     // Cooldowns
     data << uint8(cooldownCount);
 
-    uint32 curTime = GameTime::GetGameTimeMS().count();
-    uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
+    uint64 curTime = uint64(GameTime::GetGameTimeMS().count());
+    uint64 infTime = uint64(GameTime::GetGameTimeMS().count()) + infinityCooldownDelayCheck;
 
     for (CreatureSpellCooldowns::const_iterator itr = vehicle->m_CreatureSpellCooldowns.begin(); itr != vehicle->m_CreatureSpellCooldowns.end(); ++itr)
     {
@@ -11257,7 +11257,7 @@ void Player::AddSpellAndCategoryCooldowns(SpellInfo const* spellInfo, uint32 ite
 void Player::_AddSpellCooldown(uint32 spellid, uint16 categoryId, uint32 itemid, uint32 end_time, bool needSendToClient, bool forceSendToSpectator)
 {
     SpellCooldown sc;
-    sc.end = GameTime::GetGameTimeMS().count() + end_time;
+    sc.end = uint64(GameTime::GetGameTimeMS().count()) + end_time;
     sc.category = categoryId;
     sc.itemid = itemid;
     sc.maxduration = end_time;
@@ -12054,7 +12054,7 @@ void Player::ApplyEquipCooldown(Item* pItem)
 
         // Don't replace longer cooldowns by equip cooldown if we have any.
         SpellCooldowns::iterator itr = m_spellCooldowns.find(spellData.SpellId);
-        if (itr != m_spellCooldowns.end() && itr->second.itemid == pItem->GetEntry() && itr->second.end > GameTime::GetGameTimeMS().count() + 30 * IN_MILLISECONDS)
+        if (itr != m_spellCooldowns.end() && itr->second.itemid == pItem->GetEntry() && itr->second.end > uint64(GameTime::GetGameTimeMS().count()) + 30 * IN_MILLISECONDS)
             continue;
 
         // xinef: dont apply eqiup cooldown for spells with this attribute
@@ -16716,19 +16716,19 @@ bool Player::IsSummonAsSpectator() const
 bool Player::HasSpellCooldown(uint32 spell_id) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    return itr != m_spellCooldowns.end() && itr->second.end > GameTime::GetGameTimeMS().count();
+    return itr != m_spellCooldowns.end() && itr->second.end > uint64(GameTime::GetGameTimeMS().count());
 }
 
 bool Player::HasSpellItemCooldown(uint32 spell_id, uint32 itemid) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    return itr != m_spellCooldowns.end() && itr->second.end > GameTime::GetGameTimeMS().count() && itr->second.itemid == itemid;
+    return itr != m_spellCooldowns.end() && itr->second.end > uint64(GameTime::GetGameTimeMS().count()) && itr->second.itemid == itemid;
 }
 
 uint32 Player::GetSpellCooldownDelay(uint32 spell_id) const
 {
     SpellCooldowns::const_iterator itr = m_spellCooldowns.find(spell_id);
-    uint32 const now = GameTime::GetGameTimeMS().count();
+    uint64 const now = uint64(GameTime::GetGameTimeMS().count());
     return uint32(itr != m_spellCooldowns.end() && itr->second.end > now ? itr->second.end - now : 0);
 }
 

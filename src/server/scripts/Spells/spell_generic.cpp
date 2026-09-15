@@ -2486,12 +2486,12 @@ class spell_gen_turkey_marker : public AuraScript
     {
         if (GetStackAmount() > stackAmount)
         {
-            _applyTimes.push_back(GameTime::GetGameTimeMS().count());
+            _applyTimes.push_back(uint64(GameTime::GetGameTimeMS().count()));
             stackAmount++;
         }
 
         // pop stack if it expired for us
-        if (_applyTimes.front() + GetMaxDuration() < GameTime::GetGameTimeMS().count())
+        if (_applyTimes.front() + GetMaxDuration() < uint64(GameTime::GetGameTimeMS().count()))
         {
             stackAmount--;
             ModStackAmount(-1, AURA_REMOVE_BY_EXPIRE);
@@ -2510,7 +2510,7 @@ class spell_gen_turkey_marker : public AuraScript
         OnEffectPeriodic += AuraEffectPeriodicFn(spell_gen_turkey_marker::OnPeriodic, EFFECT_0, SPELL_AURA_PERIODIC_DUMMY);
     }
 
-    std::list<uint32> _applyTimes;
+    std::list<uint64> _applyTimes;
     int16 stackAmount;
 };
 

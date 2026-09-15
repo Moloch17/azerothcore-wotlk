@@ -1501,7 +1501,7 @@ class spell_dru_eclipse : public AuraScript
             return false;
 
         // Check 30 second internal cooldown
-        uint32 now = GameTime::GetGameTimeMS().count();
+        uint64 now = GameTime::GetGameTimeMS().count();
         if (isWrathSpell && _lunarProcCooldownEnd > now)
             return false;
         if (isStarfireSpell && _solarProcCooldownEnd > now)
@@ -1526,7 +1526,7 @@ class spell_dru_eclipse : public AuraScript
         uint32 triggeredSpell = isWrathSpell ? SPELL_DRUID_ECLIPSE_LUNAR : SPELL_DRUID_ECLIPSE_SOLAR;
 
         // Set 30 second internal cooldown
-        uint32 now = GameTime::GetGameTimeMS().count();
+        uint64 now = GameTime::GetGameTimeMS().count();
         if (isWrathSpell)
             _lunarProcCooldownEnd = now + 30000;
         else
@@ -1542,8 +1542,8 @@ class spell_dru_eclipse : public AuraScript
     }
 
 private:
-    uint32 _lunarProcCooldownEnd = 0;
-    uint32 _solarProcCooldownEnd = 0;
+    uint64 _lunarProcCooldownEnd = 0;
+    uint64 _solarProcCooldownEnd = 0;
 };
 
 // -48539 - Revitalize

@@ -409,11 +409,12 @@ uint32 GlobalCooldownMgr::GetGlobalCooldown(SpellInfo const* spellInfo) const
     if (itr == m_GlobalCooldowns.end() || itr->second.duration == 0)
         return 0;
 
-    uint32 start = itr->second.cast_time;
-    uint32 delay = itr->second.duration;
-    uint32 now = GameTime::GetGameTimeMS().count();
+    // Forge: elapsed through getMSTimeDiff, which is wrap-safe. start + delay against now in uint32 read no cooldown for
+    // up to a GCD each time the low 32 bits of the 64-bit game clock wrapped (every 49.7 game days).
+    uint32 const elapsed = getMSTimeDiff(itr->second.cast_time, uint32(GameTime::GetGameTimeMS().count()));
+    uint32 const delay = itr->second.duration;
 
-    return (start + delay > now) ? (start + delay) - now : 0;
+    return elapsed < delay ? delay - elapsed : 0;
 }
 
 void GlobalCooldownMgr::AddGlobalCooldown(SpellInfo const* spellInfo, uint32 gcd)

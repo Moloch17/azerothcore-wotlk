@@ -613,7 +613,7 @@ private:
     bool SignaledRoundTwoHalfMin;
     /// for know if second round has been init
     bool InitSecondRound;
-    std::map<uint32/*id*/, uint32/*timer*/> DemoliserRespawnList;
+    std::map<uint32/*id*/, uint64/*timer*/> DemoliserRespawnList;
 
     // xinef:
     bool _relicClicked;

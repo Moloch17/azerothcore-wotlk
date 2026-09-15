@@ -198,7 +198,7 @@ typedef GuidList WhisperListContainer;
 
 struct SpellCooldown
 {
-    uint32 end;
+    uint64 end;                 // game time ms
     uint16 category;
     uint32 itemid;
     uint32 maxduration;

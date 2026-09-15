@@ -254,7 +254,7 @@ public:
 
     uint32 m_spells[MAX_CREATURE_SPELLS];
     CreatureSpellCooldowns m_CreatureSpellCooldowns;
-    uint32 m_ProhibitSchoolTime[7];
+    uint64 m_ProhibitSchoolTime[7];     // game time ms
 
     bool CanStartAttack(Unit const* u, bool force = false) const;
     float GetAggroRange(Unit const* target) const;
