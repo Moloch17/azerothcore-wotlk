@@ -791,7 +791,9 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool 
 
 InstancePlayerBind* InstanceSaveMgr::PlayerBindToInstance(ObjectGuid guid, InstanceSave* save, bool permanent, Player* player /*= nullptr*/)
 {
-    bool const persistBinding = !sToCloud9Sidecar->ClusterModeEnabled() || sToCloud9Sidecar->IsMapAssigned(save->GetMapId());
+    // Forge: sim bots (WorldSession::IsSimSession) have no character row to bind.
+    bool const persistBinding = (!sToCloud9Sidecar->ClusterModeEnabled()
+        || sToCloud9Sidecar->IsMapAssigned(save->GetMapId())) && !(player && player->GetSession()->IsSimSession());
     InstancePlayerBind& bind = playerBindStorage[guid]->m[save->GetDifficulty()][save->GetMapId()];
     ASSERT(!bind.perm || permanent); // ensure there's no changing permanent to temporary, this can be done only by unbinding
 
@@ -801,13 +803,16 @@ InstancePlayerBind* InstanceSaveMgr::PlayerBindToInstance(ObjectGuid guid, Insta
         {
             bind.extended = false;
 
-            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_INSTANCE);
-            stmt->SetData(0, save->GetInstanceId());
-            stmt->SetData(1, permanent);
-            stmt->SetData(2, guid.GetCounter());
-            stmt->SetData(3, bind.save->GetInstanceId());
+            // Forge: build the statement only when it is executed; Execute is what frees it.
             if (persistBinding)
+            {
+                CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_INSTANCE);
+                stmt->SetData(0, save->GetInstanceId());
+                stmt->SetData(1, permanent);
+                stmt->SetData(2, guid.GetCounter());
+                stmt->SetData(3, bind.save->GetInstanceId());
                 CharacterDatabase.Execute(stmt);
+            }
         }
     }
     else
@@ -830,12 +835,15 @@ InstancePlayerBind* InstanceSaveMgr::PlayerBindToInstance(ObjectGuid guid, Insta
         trans->Append(stmt);
         CharacterDatabase.CommitTransaction(trans);*/
 
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHAR_INSTANCE);
-        stmt->SetData(0, guid.GetCounter());
-        stmt->SetData(1, save->GetInstanceId());
-        stmt->SetData(2, permanent);
+        // Forge: build the statement only when it is executed; Execute is what frees it.
         if (persistBinding)
+        {
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHAR_INSTANCE);
+            stmt->SetData(0, guid.GetCounter());
+            stmt->SetData(1, save->GetInstanceId());
+            stmt->SetData(2, permanent);
             CharacterDatabase.Execute(stmt);
+        }
 
         if (player)
             player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_COMPLETE_RAID, 1);

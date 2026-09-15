@@ -223,6 +223,13 @@ public:
     bool isRaidGroup() const;
     bool isBFGroup()   const;
     bool isBGGroup()   const;
+    /// A sim group (Animus Forge training bots): like a normal party or raid in play -- membership, party spells,
+    /// shared kills -- but it lives only in memory: no group or member rows, no character cache entries, and
+    /// joining, leaving or disbanding never touches instance binds or homebind timers. Set before Create.
+    void SetSimGroup(bool sim) { m_simGroup = sim; }
+    [[nodiscard]] bool IsSimGroup() const { return m_simGroup; }
+    /// Written to the character database and character cache: not a battleground, battlefield or sim group.
+    [[nodiscard]] bool IsPersisted() const;
     bool IsCreated()   const;
     GroupType GetGroupType() const;
     ObjectGuid GetLeaderGUID() const;
@@ -359,6 +366,7 @@ protected:
     Difficulty          m_raidDifficulty;
     Battlefield*        m_bfGroup;
     Battleground*       m_bgGroup;
+    bool                m_simGroup;
     ObjectGuid          m_targetIcons[TARGETICONCOUNT];
     LootMethod          m_lootMethod;
     ItemQualities       m_lootThreshold;

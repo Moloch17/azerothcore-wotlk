@@ -486,6 +486,13 @@ public:
 
     ObjectGuid::LowType GetGuidLow() const;
     void SetSecurity(AccountTypes security) { _security = security; }
+
+    /// Forge: a session whose account and characters exist only in memory (sim bots). Nothing it does
+    /// is written to the login or character database: logout, play time and instance binds skip their
+    /// writes, which would otherwise pile up in the async queue at the rate bots are rebuilt.
+    void SetSimSession(bool sim) { m_simSession = sim; }
+    [[nodiscard]] bool IsSimSession() const { return m_simSession; }
+
     std::string const& GetRemoteAddress() { return m_Address; }
     void SetPlayer(Player* player);
     uint8 Expansion() const { return m_expansion; }
@@ -1290,6 +1297,7 @@ private:
     bool m_playerLogout;                                // code processed in LogoutPlayer
     bool m_playerRecentlyLogout;
     bool m_playerSave;
+    bool m_simSession = false;                          // Forge: see SetSimSession
     LocaleConstant m_sessionDbcLocale;
     LocaleConstant m_sessionDbLocaleIndex;
     std::atomic<uint32> m_latency;

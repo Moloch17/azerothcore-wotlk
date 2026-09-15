@@ -100,7 +100,7 @@ static void SendRollWonItemViaMail(Player* player, LootItem const* lootItem, uin
 
 Group::Group() : m_leaderName(""), m_groupType(GROUPTYPE_NORMAL),
     m_dungeonDifficulty(DUNGEON_DIFFICULTY_NORMAL), m_raidDifficulty(RAID_DIFFICULTY_10MAN_NORMAL),
-    m_bfGroup(nullptr), m_bgGroup(nullptr), m_lootMethod(FREE_FOR_ALL), m_lootThreshold(ITEM_QUALITY_UNCOMMON),
+    m_bfGroup(nullptr), m_bgGroup(nullptr), m_simGroup(false), m_lootMethod(FREE_FOR_ALL), m_lootThreshold(ITEM_QUALITY_UNCOMMON),
     m_subGroupsCounts(nullptr), m_counter(0), m_maxEnchantingLevel(0), _difficultyChangePreventionTime(0),
     _difficultyChangePreventionType(DIFFICULTY_PREVENTION_CHANGE_NONE)
 {
@@ -170,8 +170,11 @@ bool Group::Create(Player* leader)
     {
         m_dungeonDifficulty = leader->GetDungeonDifficulty();
         m_raidDifficulty = leader->GetRaidDifficulty();
+    }
 
-        // Store group in database
+    // Store group in database (a sim group lives only in memory)
+    if (IsPersisted())
+    {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_GROUP);
 
         uint8 index = 0;
@@ -195,7 +198,10 @@ bool Group::Create(Player* leader)
         stmt->SetData(index++, m_masterLooterGuid.GetCounter());
 
         CharacterDatabase.Execute(stmt);
+    }
 
+    if (!isBGGroup() && !isBFGroup())
+    {
         ASSERT(AddMember(leader)); // If the leader can't be added to a new group because it appears full, something is clearly wrong.
 
         sScriptMgr->OnCreate(this, leader);
@@ -301,7 +307,7 @@ void Group::ConvertToLFG(bool restricted /*= true*/)
         m_lootMethod = NEED_BEFORE_GREED;
     }
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_TYPE);
 
@@ -330,7 +336,7 @@ void Group::ConvertToRaid()
 
     _initRaidSubGroupsCounter();
 
-    if (!sToCloud9Sidecar->ClusterModeEnabled() && !isBGGroup() && !isBFGroup())
+    if (!sToCloud9Sidecar->ClusterModeEnabled() && IsPersisted())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_TYPE);
 
@@ -453,7 +459,7 @@ bool Group::AddMember(Player* player, uint8 roles /* = 0 */)
     member.roles     = roles;
     m_memberSlots.push_back(member);
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         sCharacterCache->UpdateCharacterGroup(player->GetGUID(), GetGUID());
     }
@@ -480,7 +486,7 @@ bool Group::AddMember(Player* player, uint8 roles /* = 0 */)
             m_targetIcons[i].Clear();
     }
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_REP_GROUP_MEMBER);
         stmt->SetData(0, GetGUID().GetCounter());
@@ -499,7 +505,8 @@ bool Group::AddMember(Player* player, uint8 roles /* = 0 */)
 
         if (!IsLeader(player->GetGUID()) && !isBGGroup() && !isBFGroup())
         {
-            Player::ResetInstances(player->GetGUID(), INSTANCE_RESET_GROUP_JOIN, false);
+            if (!m_simGroup)
+                Player::ResetInstances(player->GetGUID(), INSTANCE_RESET_GROUP_JOIN, false);
 
             if (player->GetDungeonDifficulty() != GetDungeonDifficulty())
             {
@@ -616,7 +623,7 @@ void Group::AddMemberWithGuid(ObjectGuid guid)
     member.roles     = 0;
     m_memberSlots.push_back(member);
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         sCharacterCache->UpdateCharacterGroup(guid, GetGUID());
     }
@@ -683,7 +690,7 @@ bool Group::RemoveMember(ObjectGuid guid, RemoveMethod const& method /*= GROUP_R
         }
 
         // Remove player from group in DB
-        if (!isBGGroup() && !isBFGroup())
+        if (IsPersisted())
         {
             CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GROUP_MEMBER);
             stmt->SetData(0, guid.GetCounter());
@@ -701,7 +708,7 @@ bool Group::RemoveMember(ObjectGuid guid, RemoveMethod const& method /*= GROUP_R
             SubGroupCounterDecrease(slot->group);
             m_memberSlots.erase(slot);
 
-            if (!isBGGroup() && !isBFGroup())
+            if (IsPersisted())
             {
                 sCharacterCache->ClearCharacterGroup(guid);
             }
@@ -729,8 +736,10 @@ bool Group::RemoveMember(ObjectGuid guid, RemoveMethod const& method /*= GROUP_R
             }
         }
 
-        _homebindIfInstance(player);
-        if (!isBGGroup() && !isBFGroup())
+        // A sim group's members never owned the instance they fight in through the group: leaving touches no binds.
+        if (!m_simGroup)
+            _homebindIfInstance(player);
+        if (IsPersisted())
             Player::ResetInstances(guid, INSTANCE_RESET_GROUP_LEAVE, false);
 
         sScriptMgr->OnGroupRemoveMember(this, guid, method, kicker, reason);
@@ -786,7 +795,7 @@ void Group::ChangeLeader(ObjectGuid newLeaderGuid)
     if (!newLeader)
         return;
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         // Update the group leader
@@ -823,20 +832,21 @@ void Group::ForcedDisband(bool hideDestroy /* = false */)
 
     for (member_citerator citr = m_memberSlots.begin(); citr != m_memberSlots.end(); ++citr)
     {
-        if (!isBGGroup() && !isBFGroup())
+        if (IsPersisted())
         {
             sCharacterCache->ClearCharacterGroup(citr->guid);
         }
 
         player = ObjectAccessor::FindConnectedPlayer(citr->guid);
 
-        if (player && !instanceId && !isBGGroup() && !isBFGroup())
+        if (player && !instanceId && IsPersisted())
         {
             instanceId = player->GetInstanceId();
         }
 
-        _homebindIfInstance(player);
-        if (!isBGGroup() && !isBFGroup())
+        if (!m_simGroup)
+            _homebindIfInstance(player);
+        if (IsPersisted())
             Player::ResetInstances(citr->guid, INSTANCE_RESET_GROUP_LEAVE, false);
 
         if (!player)
@@ -884,7 +894,7 @@ void Group::ForcedDisband(bool hideDestroy /* = false */)
 
     RemoveAllInvites();
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersisted())
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
@@ -904,7 +914,8 @@ void Group::ForcedDisband(bool hideDestroy /* = false */)
     }
 
     // Cleaning up instance saved data for gameobjects when a group is disbanded
-    sInstanceSaveMgr->DeleteInstanceSavedData(instanceId);
+    if (IsPersisted())
+        sInstanceSaveMgr->DeleteInstanceSavedData(instanceId);
 
     sGroupMgr->RemoveGroup(this);
     delete this;
@@ -912,7 +923,8 @@ void Group::ForcedDisband(bool hideDestroy /* = false */)
 
 void Group::Disband(bool hideDestroy /* = false */)
 {
-    if (sToCloud9Sidecar->ClusterModeEnabled() && !this->isBFGroup() && !this->isBGGroup())
+    // A sim group is never the group service's: always disband it locally.
+    if (sToCloud9Sidecar->ClusterModeEnabled() && !this->isBFGroup() && !this->isBGGroup() && !m_simGroup)
         return;
 
     ForcedDisband(hideDestroy);
@@ -2482,6 +2494,11 @@ bool Group::isRaidGroup() const
 bool Group::isBGGroup() const
 {
     return m_bgGroup != nullptr;
+}
+
+bool Group::IsPersisted() const
+{
+    return !isBGGroup() && !isBFGroup() && !m_simGroup;
 }
 
 bool Group::isBFGroup() const

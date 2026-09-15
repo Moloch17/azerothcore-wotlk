@@ -165,7 +165,8 @@ WorldSession::WorldSession(uint32 id, std::string&& name, uint32 accountFlags, s
 /// WorldSession destructor
 WorldSession::~WorldSession()
 {
-    LoginDatabase.Execute("UPDATE account SET totaltime = {} WHERE id = {}", GetTotalTime(), GetAccountId());
+    if (!m_simSession)
+        LoginDatabase.Execute("UPDATE account SET totaltime = {} WHERE id = {}", GetTotalTime(), GetAccountId());
 
     ///- unload player if not unloaded
     if (_player)
@@ -852,7 +853,7 @@ void WorldSession::LogoutPlayer(bool save, bool redirecting)
         LOG_DEBUG("network", "SESSION: Sent SMSG_LOGOUT_COMPLETE Message");
 
         //! Since each account can only have one online character at any given time, ensure all characters for active account are marked as offline
-        if (!redirecting)
+        if (!redirecting && !m_simSession)
         {
             CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_ACCOUNT_ONLINE);
             stmt->SetData(0, GetAccountId());
