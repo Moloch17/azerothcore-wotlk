@@ -15,32 +15,14 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef SFMTRand_h__
-#define SFMTRand_h__
+#ifndef RandomSeed_h__
+#define RandomSeed_h__
 
 #include "Define.h"
-#include <SFMT.h>
-#include <new>
 
-/*
- * C++ Wrapper for SFMT
- */
-class SFMTRand
-{
-public:
-    SFMTRand();
-    void Seed(uint32 seed); // restart the sequence from `seed`; 0 reseeds from std::random_device
-    uint32 RandomUInt32(); // Output random bits
-    void* operator new(std::size_t size, std::nothrow_t const&);
-    void operator delete(void* ptr, std::nothrow_t const&);
-    void* operator new(std::size_t size);
-    void operator delete(void* ptr);
-    void* operator new[](std::size_t size, std::nothrow_t const&);
-    void operator delete[](void* ptr, std::nothrow_t const&);
-    void* operator new[](std::size_t size);
-    void operator delete[](void* ptr);
-private:
-    sfmt_t _state;
-};
+/* Restart the calling thread's random sequence (urand, irand, frand, rand_norm, ...) from `seed`, so code run
+ * right after it draws the same numbers every time. 0 reseeds from std::random_device. Other threads are not
+ * affected. */
+AC_COMMON_API void rand_seed(uint32 seed);
 
-#endif // SFMTRand_h__
+#endif // RandomSeed_h__

@@ -16,6 +16,7 @@
  */
 
 #include "Random.h"
+#include "RandomSeed.h"
 #include "Errors.h"
 #include "SFMTRand.h"
 #include <memory>
@@ -75,6 +76,11 @@ Seconds randtime(Seconds min, Seconds max)
     ASSERT(diff >= 0);
     ASSERT(diff <= (uint32) - 1);
     return min + Seconds(urand(0, diff));
+}
+
+void rand_seed(uint32 seed)
+{
+    GetRng()->Seed(seed);
 }
 
 uint32 rand32()

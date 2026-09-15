@@ -58,6 +58,17 @@
 
 SFMTRand::SFMTRand()
 {
+    Seed(0);
+}
+
+void SFMTRand::Seed(uint32 seed)
+{
+    if (seed)
+    {
+        sfmt_init_gen_rand(&_state, seed);
+        return;
+    }
+
     std::random_device dev;
 
     if (dev.entropy() > 0)
