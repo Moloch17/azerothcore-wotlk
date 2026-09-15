@@ -145,7 +145,8 @@ namespace
 
     /// Fixed-tick world loop.
     ///
-    /// Tuning constants are declared inline below, not read from config.
+    /// One tick is one agent decision: its length is mod-animus-forge's AnimusForge.DecisionMs, read once here
+    /// (module configs are loaded by then), so game time and decisions advance together.
     ///
     /// Caveat: much of game/ reads getMSTime() directly, so the synthetic diff decouples this
     /// loop from wall clock but not every downstream timer. A clock shim behind getMSTime() is
@@ -153,12 +154,10 @@ namespace
     void ForgeUpdateLoop()
     {
         // Game milliseconds advanced per tick, independent of how long the tick really took.
-        constexpr uint32 tickMs = 50;
+        uint32 const tickMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 100));
 
         // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
         constexpr uint32 maxTicks = 0;
-
-        LOG_INFO("server.worldserver", "Sim loop: {} ms tick, unthrottled", tickMs);
 
         if (maxTicks)
             LOG_INFO("server.worldserver", "Sim loop: stopping after {} ticks", maxTicks);
