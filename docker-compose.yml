@@ -48,7 +48,9 @@ services:
     networks:
       - ac-animus-forge-network
     ports:
-      - ${DOCKER_DB_EXTERNAL_PORT:-13306}:3306
+      # Only reachable from this machine: the default root password is not meant for the network. Set
+      # DOCKER_DB_ROOT_PASSWORD, and drop the 127.0.0.1 in an override, to reach it from elsewhere.
+      - "127.0.0.1:${DOCKER_DB_EXTERNAL_PORT:-13306}:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=${DOCKER_DB_ROOT_PASSWORD:-password}
     volumes:
@@ -122,6 +124,8 @@ services:
       # torch wheel index for the first-start venv. Empty = PyPI (NVIDIA CUDA builds on Linux). AMD GPUs:
       # https://download.pytorch.org/whl/rocm6.4, CPU only: https://download.pytorch.org/whl/cpu
       ANIMUS_TORCH_INDEX_URL: ${ANIMUS_TORCH_INDEX_URL:-}
+      # Where training writes runs/ and layouts/ (AnimusForge.OutputDir): data, kept out of the source tree.
+      AC_ANIMUS_FORGE_OUTPUT_DIR: ${ANIMUS_FORGE_OUTPUT_DIR:-/azerothcore/var/animus-forge}
     ports:
       # TensorBoard for the learner's runs, on http://localhost:16006. The forge sim itself opens no
       # network listener (no world socket, SOAP or remote access), so nothing else is published.

@@ -37,7 +37,10 @@ elif [[ ! -x "$VENV/bin/python" ]]; then
 fi
 
 if [[ -x "$VENV/bin/tensorboard" ]]; then
-    "$VENV/bin/tensorboard" --logdir "$LEARNER/runs" --bind_all --port 6006 > "$LOGS/tensorboard.log" 2>&1 &
+    # The runs of AnimusForge.OutputDir (set by docker-compose.yml), else the module's python/ directory.
+    RUNS="${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs"
+    mkdir -p "$RUNS"
+    "$VENV/bin/tensorboard" --logdir "$RUNS" --bind_all --port 6006 > "$LOGS/tensorboard.log" 2>&1 &
 else
     echo "TensorBoard is not installed in $VENV; skipping it."
 fi
