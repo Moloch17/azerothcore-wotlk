@@ -31,13 +31,11 @@
  *   - sAuctionMgr, sLFGMgr (x2), sOutdoorPvPMgr, sWorldState, sBattlefieldMgr
  *                                  -- ungated every-tick calls the sim has no use for; this is
  *                                     the bulk of the win in an unthrottled loop
- *   - ProcessCliCommands()         -- no CLI thread exists in the sim host
  *   - sMetric->Update(), METRIC_*  -- Metric is never initialised
  *   - sToCloud9Sidecar block       -- single process, never clustered
  *   - sWorldUpdateTime Update/Record
  *                                  -- percentile bookkeeping only TC9Sidecar reads, plus
- *                                     per-tick slow-update logging; replaced by the once-a-second
- *                                     tick-rate line in ForgeUpdateLoop
+ *                                     per-tick slow-update logging
  *   - sWorldSessionMgr->UpdateSessions
  *                                  -- the host has no listener, so no session is ever registered;
  *                                     bot sessions stay out of WorldSessionMgr because a socketless
@@ -127,6 +125,10 @@ void World::ForgeUpdate(uint32 diff)
 
     ///- Instance reset bookkeeping.
     sInstanceSaveMgr->Update();
+
+    ///- Console commands (ForgeMain's CLI thread queues them). Run before the module's hook, so a
+    /// command the module defers is applied on this same tick.
+    ProcessCliCommands();
 
     ///- Where the bot orchestration module hooks in.
     sScriptMgr->OnWorldUpdate(diff);
