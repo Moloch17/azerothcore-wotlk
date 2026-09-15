@@ -3,7 +3,7 @@
 # Start Animus Forge training and attach this terminal to the worldserver console.
 #
 #   ./forge.sh              start everything (building what is missing) and attach to the console
-#   ./forge.sh --build      the same, but compile the worldserver from the current source first
+#   ./forge.sh --build      the same, but configure CMake and compile the worldserver from the current source first
 #   ./forge.sh attach       attach to the console of a server that is already running
 #   ./forge.sh dev          also start the dev container (for VS Code or `docker compose exec`)
 #   ./forge.sh stop         stop training (the learner saves a checkpoint first)
@@ -13,7 +13,8 @@
 #
 # Without --build the server runs the worldserver already in env/dist/bin, however old; `docker compose up
 # --build` only rebuilds the Docker images, never the worldserver. --build recreates the worldserver container
-# (stopping a running one; the learner saves first) and compiles incrementally before it starts.
+# (stopping a running one; the learner saves first), runs a CMake configure (so added or removed source files are
+# picked up) and compiles incrementally before it starts. A failed configure or compile stops the start.
 
 set -euo pipefail
 
@@ -21,7 +22,7 @@ cd "$(dirname "$0")"
 
 usage()
 {
-    sed -n '3,16p' "$0"
+    sed -n '3,17p' "$0"
     exit 1
 }
 

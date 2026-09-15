@@ -21,12 +21,22 @@ BUILD_REQUEST="$ROOT/env/dist/.forge-build"
 
 mkdir -p "$LOGS"
 
+# Every build configures first: CMake collects sources with file(GLOB) at configure time, so a source file added to
+# the core or a module (animus-lib's new blocks and encounters) is only compiled after a configure.
+build_worldserver()
+{
+    echo "Configuring CMake (picks up added and removed source files)..."
+    "$ROOT/acore.sh" compiler configure
+    echo "Compiling and installing the worldserver (incremental)..."
+    "$ROOT/acore.sh" compiler compile
+}
+
 if [[ ! -x "$BIN/worldserver" ]]; then
     echo "No worldserver in $BIN yet: building it (first start only, this takes a while)..."
-    "$ROOT/acore.sh" compiler build
+    build_worldserver
 elif [[ -f "$BUILD_REQUEST" ]]; then
-    echo "./forge.sh --build: building the worldserver from the current source (incremental)..."
-    "$ROOT/acore.sh" compiler build
+    echo "./forge.sh --build: configuring and building the worldserver from the current source..."
+    build_worldserver
 fi
 # Only this start: a later restart runs what was built. (A failed build stops the script above and keeps the request.)
 rm -f "$BUILD_REQUEST"
