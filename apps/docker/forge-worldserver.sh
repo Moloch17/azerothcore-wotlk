@@ -5,7 +5,7 @@
 #
 #   1. build and install the worldserver if env/dist/bin has none yet, or once when ./forge.sh --build asked for it
 #   2. put back missing config files: mod-animus-forge's template, and any .conf from its .dist
-#   3. create mod-animus-forge's Python venv (torch, the learner, TensorBoard) if it is missing
+#   3. install whatever mod-animus-forge's Python venv is missing (animus-venv.sh)
 #   4. start TensorBoard in the background
 #   5. exec the worldserver, which starts the learner itself (AnimusForge.Learner.AutoStart)
 
@@ -51,18 +51,7 @@ for dist in "$CONF"/*.conf.dist "$CONF"/modules/*.conf.dist; do
     [[ -f "${dist%.dist}" ]] || cp -v "$dist" "${dist%.dist}"
 done
 
-if [[ ! -d "$LEARNER" ]]; then
-    echo "WARNING: $LEARNER not found; the learner cannot start. Clone mod-animus-forge into modules/."
-elif [[ ! -x "$VENV/bin/python" ]]; then
-    echo "Creating the learner's Python environment in $VENV (first start only)..."
-    python3 -m venv "$VENV"
-    if [[ -n "${ANIMUS_TORCH_INDEX_URL:-}" ]]; then
-        "$VENV/bin/pip" install torch --index-url "$ANIMUS_TORCH_INDEX_URL"
-    else
-        "$VENV/bin/pip" install torch
-    fi
-    "$VENV/bin/pip" install -e "$LEARNER[tensorboard]"
-fi
+bash "$ROOT/apps/docker/animus-venv.sh"
 
 if [[ -x "$VENV/bin/tensorboard" ]]; then
     # The runs of AnimusForge.OutputDir (set by docker-compose.yml), else the module's python/ directory.

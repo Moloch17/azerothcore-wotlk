@@ -233,12 +233,18 @@ services:
     <<: *dev-image
     container_name: ac-animus-forge-dev-server
     tty: true
+    # Every start makes sure mod-animus-forge's venv has torch and pytest (apps/docker/animus-venv.sh), so the
+    # learner's tests run here:
+    #   docker compose exec -w /azerothcore/modules/mod-animus-forge/python ac-dev-server .venv/bin/python -m pytest
+    command: ["bash", "-c", "bash /azerothcore/apps/docker/animus-venv.sh; exec bash"]
     env_file:
         ${DOCKER_AC_ENV_FILE:-conf/dist/env.ac}
     environment:
       <<: *database-info
       AC_DATA_DIR: "/azerothcore/env/dist/data"
       AC_LOGS_DIR: "/azerothcore/env/dist/logs"
+      # torch wheel index if the venv needs torch (see ac-worldserver).
+      ANIMUS_TORCH_INDEX_URL: ${ANIMUS_TORCH_INDEX_URL:-}
     networks:
       - ac-animus-forge-network
     volumes:
