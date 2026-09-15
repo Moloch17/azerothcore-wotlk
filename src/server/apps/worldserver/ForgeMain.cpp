@@ -33,7 +33,7 @@
  * Removed relative to the stock worldserver main, and why:
  *   - all Windows/service/winmm logic        -- Linux-only sim host
  *   - WorldSocketMgr listener + WorldSocket  -- bots are in-process and sessionless
- *   - SOAP, Remote Access, CLI thread        -- headless batch runs, no operators
+ *   - SOAP, Remote Access                    -- no network operators; the console is enough
  *   - Metric, AppenderDB, PID file, banner   -- telemetry/ops surface the sim does not use
  *   - FreezeDetector                         -- it ABORT()s; a sim tick is allowed to be slow
  *   - TC9/libsidecar cluster plumbing        -- single process, never clustered
@@ -47,10 +47,12 @@
  *   - OpenSSL thread setup and PRNG seeding: BigNumber and packet crypto are linked and used
  *     regardless of whether a listener exists.
  *   - realm.Id.Realm: ~22 sites under game/ and shared/ scope GUIDs and account state by it.
+ *   - the console (CLI thread, Console.Enable): operators run commands while a training run goes.
  */
 
 #include "BattlegroundMgr.h"
 #include "BigNumber.h"
+#include "CliRunnable.h"
 #include "Common.h"
 #include "Config.h"
 #include "DatabaseEnv.h"
@@ -88,6 +90,17 @@
 
 namespace
 {
+    /// Joins the console thread. It returns on its own once the world stops: readline's event hook
+    /// (CliRunnable.cpp) ends the pending read when World::IsStopped().
+    struct ForgeCliThreadDeleter
+    {
+        void operator()(std::thread* cliThread) const
+        {
+            cliThread->join();
+            delete cliThread;
+        }
+    };
+
     void ForgeSignalHandler(boost::system::error_code const& error, int /*signalNumber*/)
     {
         if (!error)
@@ -402,11 +415,21 @@ int main(int argc, char** argv)
 
     sScriptMgr->OnStartup();
 
+    // The console: commands typed into the worldserver's terminal are queued and run on the world
+    // thread between ticks (World::ProcessCliCommands), so they work while the sim trains. Commands
+    // wait while the world thread is blocked waiting for a learner. End of input stops the server,
+    // so a server without a terminal (e.g. a container without stdin) should set Console.Enable = 0.
+    std::unique_ptr<std::thread, ForgeCliThreadDeleter> cliThread;
+    if (sConfigMgr->GetOption<bool>("Console.Enable", true))
+        cliThread.reset(new std::thread(CliThread));
+
     ForgeUpdateLoop();
 
-    // Shutdown starts here. Stop the IoContext first so nothing posts work into a world that
-    // is being torn down; the remaining teardown runs in reverse declaration order:
+    // Shutdown starts here. The console thread notices the stopped world and exits. Stop the
+    // IoContext next so nothing posts work into a world that is being torn down; the remaining
+    // teardown runs in reverse declaration order:
     // mapManagementHandle -> dbHandle -> sScriptMgrHandle -> opensslHandle.
+    cliThread.reset();
     threadPool.reset();
 
     sLog->SetSynchronous();

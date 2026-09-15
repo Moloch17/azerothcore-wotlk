@@ -1,6 +1,6 @@
 // If you want to run as a non-root user in the container, see .devcontainer/docker-compose.yml.
 {
-  "name": "ac-dev-server",
+  "name": "ac-animus-forge-dev-server",
 
   // Update the 'dockerComposeFile' list if you have more compose files or use different names.
   // set an empty array to automatically solve
@@ -46,8 +46,9 @@
   // Uncomment the next line if you want start specific services in your Docker Compose config.
   "runServices": ["ac-dev-server", "ac-database"],
 
-  // Uncomment the next line if you want to keep your containers running after VS Code shuts down.
-  // "shutdownAction": "none",
+  // Keep the containers running after VS Code shuts down: the default stops the whole compose project,
+  // which would also stop training in ac-worldserver.
+  "shutdownAction": "none",
 
   // Uncomment the next line to run commands after the container is created - for example installing curl.
   // "postCreateCommand": "apt-get update && apt-get install -y curl",
