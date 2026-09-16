@@ -96,6 +96,13 @@ MapUpdater::MapUpdater() : pending_requests(0), _cancelationToken(false)
 
 void MapUpdater::activate(std::size_t num_threads)
 {
+    // A pool that was deactivated starts again here: the sim host switches thread counts between decisions
+    // (AnimusForge `forge bench`). Both stops are sticky, so without clearing them the new workers would leave
+    // their loop at once and the queue would drop every request pushed to it, and the world thread would then
+    // wait forever for updates nothing runs.
+    _cancelationToken = false;
+    _queue.Reset();
+
     _workerThreads.reserve(num_threads);
     for (std::size_t i = 0; i < num_threads; ++i)
     {
@@ -119,6 +126,9 @@ void MapUpdater::deactivate()
             thread.join();
         }
     }
+
+    // Joined threads are not workers: activated() has to say so, and activate() must not keep them around.
+    _workerThreads.clear();
 }
 
 void MapUpdater::wait()
