@@ -154,7 +154,7 @@ namespace
     void ForgeUpdateLoop()
     {
         // Game milliseconds advanced per tick, independent of how long the tick really took.
-        uint32 const tickMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 100));
+        uint32 const tickMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
 
         // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
         constexpr uint64 maxTicks = 0;
