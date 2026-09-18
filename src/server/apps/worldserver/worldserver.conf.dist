@@ -3363,11 +3363,16 @@ Rate.InstanceResetTime = 1
 #    Instance.UnloadDelay
 #        Description: Time (in milliseconds) before instance maps are unloaded from memory if no
 #                     characters are inside.
-#        Default:     1800000 - (Enabled, 30 minutes)
+#        Default:     60000   - (Forge: 1 minute. The sim builds an instance per env and drops the
+#                               lot when a scenario ends; stock's 30 minutes kept every instance of
+#                               every finished pool in memory, which a bench sweep measured as tens
+#                               of gigabytes. An env's own instance always holds its bot, so it is
+#                               never a candidate while the env trains.)
+#                     1800000 - (upstream default, 30 minutes)
 #                     0       - (Disabled, Instance maps are kept in memory until the instance
 #                               resets)
 
-Instance.UnloadDelay = 1800000
+Instance.UnloadDelay = 60000
 
 #
 #   AccountInstancesPerHour

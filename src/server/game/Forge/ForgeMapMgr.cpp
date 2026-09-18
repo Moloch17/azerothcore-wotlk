@@ -36,15 +36,42 @@
  * so finished instances would never be destroyed. For a sim that cycles instances that is an
  * unbounded leak. Hence: containers always recurse, CanUnload always runs, and only the child's
  * Update() is skipped while it is empty.
+ *
+ * Destroying an instance frees tens of megabytes of small allocations, and glibc keeps that in the
+ * process arenas rather than returning it: a sim that builds and drops pools of a hundred instances
+ * (a scenario change, `forge bench`) reads as tens of gigabytes still held. So a destroyed instance
+ * asks for a trim, at most one every ForgeTrimInterval, on the world thread with no map updating.
  */
 
 #include "Map.h"
 #include "MapInstanced.h"
 #include "MapMgr.h"
 #include "MapUpdater.h"
+#include <atomic>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace
 {
+    /// Instances destroyed since the last trim, and how often a trim may run.
+    std::atomic<uint32> ForgeDestroyedInstances{ 0 };
+    constexpr uint32 ForgeTrimInterval = 10 * IN_MILLISECONDS;
+    uint32 ForgeTrimCountdown = ForgeTrimInterval;
+
+    /// Give the heap freed by destroyed instances back to the OS.
+    void ForgeTrimHeap(uint32 diff)
+    {
+        ForgeTrimCountdown = diff < ForgeTrimCountdown ? ForgeTrimCountdown - diff : 0;
+        if (ForgeTrimCountdown || !ForgeDestroyedInstances.exchange(0))
+            return;
+
+        ForgeTrimCountdown = ForgeTrimInterval;
+#if defined(__GLIBC__)
+        malloc_trim(0);
+#endif
+    }
+
     /// A non-instanceable base map (a continent) is skippable while empty. Containers never are.
     inline bool ForgeMapIsIdle(Map const* map)
     {
@@ -112,6 +139,9 @@ void MapMgr::ForgeUpdate(uint32 diff)
         mapUpdateStep = 0;
         i_timer[3].SetCurrent(0);
     }
+
+    // After the updaters are done and before the next tick schedules any: no map is being updated here.
+    ForgeTrimHeap(diff);
 }
 
 void MapInstanced::ForgeUpdate(const uint32 t, const uint32 s_diff)
@@ -127,10 +157,8 @@ void MapInstanced::ForgeUpdate(const uint32 t, const uint32 s_diff)
         // timer, and skipping it would leak every instance the sim ever creates.
         if (i->second->CanUnload(t))
         {
-            if (!DestroyInstance(i))                             // iterator incremented
-            {
-                //m_unloadTimer
-            }
+            if (DestroyInstance(i))                              // iterator incremented either way
+                ForgeDestroyedInstances.fetch_add(1);
         }
         else
         {
