@@ -127,9 +127,11 @@ services:
       # Where training writes runs/ and layouts/ (AnimusForge.OutputDir): data, kept out of the source tree.
       AC_ANIMUS_FORGE_OUTPUT_DIR: ${ANIMUS_FORGE_OUTPUT_DIR:-/azerothcore/var/animus-forge}
     ports:
-      # TensorBoard for the learner's runs, on http://localhost:16006. The forge sim itself opens no
-      # network listener (no world socket, SOAP or remote access), so nothing else is published.
+      # TensorBoard for the learner's runs, on http://localhost:16006, and the forge dashboard (config and
+      # live progress) on http://localhost:18800. The forge sim itself opens no network listener (no world
+      # socket, SOAP or remote access), and both of these are bound to the loopback address.
       - "127.0.0.1:${DOCKER_TENSORBOARD_EXTERNAL_PORT:-16006}:6006"
+      - "127.0.0.1:${DOCKER_DASHBOARD_EXTERNAL_PORT:-18800}:8800"
     volumes:
       - ${DOCKER_VOL_ROOT:-.}:/azerothcore:cached
       - ac-animus-forge-build-dev:/azerothcore/var/build

@@ -62,5 +62,15 @@ else
     echo "TensorBoard is not installed in $VENV; skipping it."
 fi
 
+# The forge dashboard (http://localhost:18800): the run's config and its live progress in one page. Standard library
+# only, so it runs on the image's python rather than the learner's venv, and it reads the run files without touching
+# the sim -- a crash or a restart of it costs nothing.
+DASHBOARD="$ROOT/modules/mod-animus-forge/python/animus/dashboard.py"
+if [[ -f "$DASHBOARD" ]]; then
+    python3 "$DASHBOARD" --host 0.0.0.0 --port 8800 \
+        --runs "${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs" \
+        --conf "$CONF/modules/mod_animus_forge.conf" > "$LOGS/dashboard.log" 2>&1 &
+fi
+
 cd "$BIN"
 exec ./worldserver
