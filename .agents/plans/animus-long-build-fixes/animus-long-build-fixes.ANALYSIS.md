@@ -357,6 +357,44 @@ a bot cannot be knocked back by Typhoon or Thunderstorm unless the module moves 
 one of these. The cheap instrument is `SpellChecks::CheckCast`'s optional `reason` out-parameter, which turns a
 silently masked action into a `SpellCastResult` number.
 
+## 20. Stage 10 could not fly: four bugs, none of them the policy
+
+Settled 2026-09-19. The flying arena reported `flying_fraction` 0.0000 for 182 updates while the seats mounted and
+arrived, and the obvious readings -- a stale area cache, then weak exploration -- were both wrong. What was
+actually stacked up:
+
+| # | bug | flights ran at | `saved` on a flight |
+| --- | --- | --- | --- |
+| 1 | `MOVEMENTFLAG_CAN_FLY` never set (item 19) | 11.2 yd/s, a 60% ground mount | n/a, never flew |
+| 2 | `MOVEMENTFLAG_FLYING` never set | 11.2 yd/s | 0.009 |
+| 3 | the fix for 2 gated on altitude > `AIRBORNE_ABOVE` | 11.2 unless the seat climbed first | 0.045 |
+| 4 | `MOVE_TO_OBJECTIVE` held the seat's altitude | 17.5-26.6, but 70-109 yd up | 0.079 |
+| - | all four fixed | 17.5-26.6 flat | **0.501**, against a ground mount's 0.392 |
+
+**2** is the one worth remembering. `MoveSplineInit::Launch` takes the spline's velocity from
+`MovementInfo::GetSpeedType` (`Object.cpp:1014`), which returns `MOVE_FLIGHT` only when `MOVEMENTFLAG_FLYING` is
+set and otherwise falls through to `MOVE_RUN`; `Launch` itself adds only `SPLINE_ENABLED` and `FORWARD`. The flag
+is *reported by* the client on take-off, never commanded to it -- note it is absent from
+`MOVEMENTFLAG_MASK_HAS_PLAYER_STATUS_OPCODE`, which does carry `CAN_FLY`. A seat has no client, so nothing set it,
+and a gryphon was slower than a ground mount (11.2 against 14). The core hits the same wall for charmed flyers and
+says so: *"Xinef: If creature can fly, add normal player flying flag (fixes speed)"*, `Unit.cpp:14751`.
+
+**3 and 4 were self-inflicted**, introduced while fixing 1 and 2. Gating the flag on altitude made flight speed
+conditional on climbing, and `MOVE_TO_OBJECTIVE`'s `std::max(landing, z)` was a one-way ratchet that kept a seat
+wherever it had drifted. Altitude is pure loss -- 1 yd up saved 0.390, 69 yd up saved nothing -- and it buys
+nothing, because a server spline does not collide with terrain.
+
+**The policy was right at every step.** It rode when the gryphon was a 60% mount, rode when it was 11.2 yd/s,
+pruned flight when climbing ate the trip, and adopted flying within 34 updates (1.1% -> 16.6% of episodes, unforced)
+once flying was actually faster. Three separate investigations went looking for a learning failure that was never
+there.
+
+**How to apply:** measure the mechanism before theorising about the policy. `flight_speed` read a healthy 17.5
+throughout because `GetSpeed(MOVE_FLIGHT)` is the honest speed *value* -- the spline simply never asked for it. The
+metric that settled it was the peak horizontal distance covered in one decision while aloft, which no policy
+behaviour can confound and no advertised value can fake. It should have been the first instrument built, not the
+sixth.
+
 # Upstream candidates: what mod-animus would gain from stock AzerothCore
 
 The goal for the shipping module is to need no core patch at all. These are the changes worth proposing upstream,
@@ -415,6 +453,14 @@ saves and delayed saves separately.
 
 B3 and B4 are not correctness issues on a real server -- persisting is the right default -- so they want to be
 opt-in flags, which is also what makes them plausible upstream.
+
+**B5. A server-side way to say a player is flying.** `MOVEMENTFLAG_FLYING` decides the speed of every flying
+spline (item 20) and no core method sets it -- the client reports it on take-off, which is why it is absent from
+`MOVEMENTFLAG_MASK_HAS_PLAYER_STATUS_OPCODE` while `CAN_FLY` is present. Any bot module that flies has to set the
+flag itself or move at run speed, and there is nothing in the core that makes that discoverable. Upstream shape:
+set it alongside the mount aura when the unit has no active session, or at minimum have `MoveSplineInit::Launch`
+select `MOVE_FLIGHT` when the spline is a flying one (`args.flags.flying`) rather than asking the unit's flags.
+The second is arguably a plain bug fix: a spline explicitly launched as flying should not move at run speed.
 
 **Not upstreamable, and deliberately so:** everything marked `// Forge: no client sockets exist in the sim host`
 (the packet-build skips in `Object.cpp`, `Unit.cpp`, `Bag.cpp`, `MoveSplineInit.cpp`, `Spell.cpp`,
