@@ -334,8 +334,11 @@ on `IsClientControlled()`:
 | `SetFeatherFall` | 16636 | Slow Fall, Levitate |
 | `SetHover` | 16677 | hover auras |
 | `SetWaterWalking` | 16730 | Water Walking, Path of Frost |
-| `SetSpeed(.., forced)` | 11349 | forced speed changes (packet may be notification only -- unverified) |
 | `KnockbackFrom` | 15431 | knockbacks: the displacement itself is client-side |
+
+`Unit::SetSpeed` (11349) branches the same way and is **not** affected, checked on 2026-09-19: it assigns
+`m_speed_rate[mtype]` and calls `propagateSpeedChange()` before the branch, so the speed takes server-side and the
+packet is only notification. Do not chase it again.
 
 None of this reports an error. The state simply never changes, and the symptom surfaces far away as a policy that
 "refuses" to use something. Stage 10 cost four rebuilds and two wrong diagnoses (stale area cache, then weak
@@ -392,8 +395,8 @@ This is the revive exploit of item 1, and the core side of it is two words.
 ## B. What would let a bot module work on stock core without reaching around it
 
 **B1. Movement state for a player-controlled unit with no client.** The whole of item 19: `SetCanFly`,
-`SetWaterWalking`, `SetFeatherFall`, `SetHover`, `SetDisableGravity` and forced `SetSpeed` send a packet and wait
-for an acknowledgement, so they never take for a bot. Upstream shape: take the immediate path when the unit has no
+`SetWaterWalking`, `SetFeatherFall`, `SetHover` and `SetDisableGravity` send a packet and wait for an
+acknowledgement, so they never take for a bot. Upstream shape: take the immediate path when the unit has no
 active session (a `Player::HasActiveSession()`-style check beside `IsClientControlled()`), rather than every bot
 module re-deriving it through `AddUnitMovementFlag`. This is the single most valuable one -- it is the difference
 between flying mounts, Levitate, Slow Fall, Water Walking and Path of Frost working or silently doing nothing.
