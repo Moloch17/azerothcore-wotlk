@@ -58,6 +58,9 @@ CMakeLists.txt.user
 # Agents
 #
 .agents/plans/**
+# ... except the running list of animus issues held back for the long build, which is shared work, not a plan.
+!.agents/plans/animus-long-build-fixes/
+!.agents/plans/animus-long-build-fixes/animus-long-build-fixes.ANALYSIS.md
 
 #
 # Claude
