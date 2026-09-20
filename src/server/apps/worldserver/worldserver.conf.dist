@@ -3784,7 +3784,10 @@ Wintergrasp.DeferShutdownTimer = 0
 #                     the exception and will always use the default 120 seconds timer, due to its boat timing mechanic.
 #        Default:     120
 
-Battleground.PrepTime = 120
+# Forge: the sim runs its own matches with no queue and nobody to wait for, so the two minutes a real
+# battleground spends behind its gates would be two minutes of every training episode standing still. The
+# starting sequence itself is the script's own -- this only shortens its countdown.
+Battleground.PrepTime = 3
 
 #
 #    Battleground.CastDeserter
