@@ -121,7 +121,16 @@ template<class Do>
 void Battleground::BroadcastWorker(Do& _do)
 {
     for (BattlegroundPlayerMap::const_iterator itr = m_Players.begin(); itr != m_Players.end(); ++itr)
-        _do(itr->second);
+    {
+        // Forge: a sim seat has no client behind its session, and the announcements a battleground makes -- the
+        // countdown, a flag taken, the score -- all funnel through here and dereference it. Nothing is lost by
+        // not telling a bot: the battleground's state is what the seats read, not its chat.
+        Player* player = itr->second;
+        if (!player || !player->GetSession())
+            continue;
+
+        _do(player);
+    }
 }
 
 void BattlegroundScore::AppendToPacket(WorldPacket& data)
