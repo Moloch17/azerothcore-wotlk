@@ -1,71 +1,100 @@
-# A director for each side
+# A director for a team, in every scenario that has one
 
-One policy a team, above the ten seats, choosing what each of them is *for* over a whole match: escort the
-carrier, hold our base, intercept theirs. The seats keep choosing how -- which spell, which target, when to
-run -- as they do now.
+One policy above a side's seats, deciding what the team is doing -- who to kill, where to gather, what posture to
+hold, whose turn it is to interrupt -- while the seats keep deciding how. Built once and used everywhere a team
+fights: arena, battleground, party, dungeon, raid.
 
-## What already exists, and is reused
+## The shape, and why it is this shape
 
-- **A goal head.** `SeatGoal` (Fight, Control, Recover, Protect, Position, Prepare) chosen every
-  `mappo.goal_every_decisions` (16) and held in between, with a goal-conditioned actor *and* critic
-  (`LayoutActor`, `mappo.goal_count`). The pattern for "choose on a slow cadence, hold until the next" is
-  `trainer.py:284` -- `state.age % goal_every == 0`.
-- **Recurrence that already spans the episode.** The GRU state is carried across rollout boundaries: "what it
-  remembers is bounded by the episode, not by rollout_length" (`train.py`). A director needs no new memory
-  machinery, only a coarse enough step that its own rollout covers the match.
-- **Heterogeneous layouts.** The spec already carries per-layout obs and action sizes ("18 layouts, obs up to
-  1087, actions up to 126"), so a director is just another layout with its own shapes.
+**One shared director layout, not one per content.** A director is a layout like `warrior_dps` is, seeded down
+the stage chain, so the network that learns to focus fire in a party fight is the network that calls a kill
+target in arena and an interrupt rotation in a raid. A director per content would learn "concentrate on one
+target" five separate times. Everything below follows from wanting that transfer.
 
-## Shape
+**Two more agents an env where a scenario asks for one**, one a side. `agents_per_env` rises by two only in
+directed arenas, so the socket, rollout buffer, per-layout actor and MAPPO update all carry it with no new
+transport and no second training loop.
 
-**A director is a 19th layout and two more agents an env** -- `agents_per_env` 20 -> 22, one a side. It then
-rides the existing socket, rollout buffer, per-layout actor and MAPPO update with no new transport and no second
-training loop. This is by far the cheapest route to something real.
+## The action space is team-level, not per seat
 
-- **Observation** (~100 floats, trivial beside a seat's 1087): its ten seats -- position relative to both bases,
-  health, role, alive, in combat, current assignment -- plus both flag states, who carries them, the score and
-  the clock.
-- **Action:** one `TeamAssignment` per seat, emitted every `director_every_decisions`.
-- **Reward:** the team reward it already shares. A capture pays the side, which is exactly the director's
-  objective, so nothing new has to be invented to score it.
+An assignment per seat does not scale: forty slots in a raid, and no shared network with a 2 v 2. The director
+instead emits a handful of categorical heads, the same shape as the goal head that already exists:
 
-## Decisions, settled
-
-**1. A parallel `TeamAssignment` channel, not `SeatGoal`.** Overloading six combat-shaped goals with strategy
-would force both through one channel built for the latter. A seat told *escort the carrier* still chooses Fight
-or Recover underneath. First vocabulary: `TakeFlag`, `EscortCarrier`, `DefendBase`, `InterceptCarrier`,
-`ReturnFlag`, `Free`.
-
-**2. The director gets its own discount; the seats keep theirs.** A seat's choices pay off in seconds and its
-credit window is already ~17 s (`GAE trace 0.98508`), of which gamma's nominal 100 s is mostly the critic's
-target. Raising the seats' gamma to see ten minutes would buy variance across 2,560 agents for something only
-two of them need. The director instead runs gamma ~0.996 on its own 2.5 s steps -- about a ten-minute horizon.
-This is the one piece that is **not** reuse: the trainer applies gamma per policy, not per layout.
-
-## Ten minutes of context, concretely
-
-| what | value | why |
+| head | domain | why it scales |
 | --- | --- | --- |
-| director cadence | every 10 decisions (2.5 s) | 256 of its steps then span 640 s |
-| its rollout | 256 director steps | ~10.7 minutes of *backpropagated* context, not merely remembered |
-| gamma | ~0.996 per director step | 240 steps = 600 s |
-| `EpisodeSeconds` | 420 -> 900 | a ten-minute window cannot live in a seven-minute episode; real Warsong has no timer |
+| Posture | attack, defend, protect, recover, regroup | one value for the team |
+| Focus target | one of N enemy slots | fixed slots, presence-flagged |
+| Rally | own base, their base, the carrier, the boss, spread, stack | named places, never coordinates |
+| Duty seat | one of MAX_SEATS slots | "you interrupt next", "you hold that one" |
 
-The distinction that matters: recurrence already *carries* a match's worth of state, but gradients only flow
-within a rollout. Without the coarse cadence the director would remember ten minutes and be trained on 64
-seconds.
+A seat then reads four small fields: the team's posture, the focus target, the rally point, and whether it is
+itself the nominated duty seat. Identical whether the team is two or forty.
+
+Focus and duty are the two a seat provably cannot produce alone: nothing in seat 7's own view says it is next in
+the rotation, and ten seats each choosing a target is the classic way a team loses a fight it should win.
+
+**Observation:** fixed slots with presence flags, as `FRIEND_SLOTS`, `SPOTLIGHT_SLOTS` and `RaidView` already
+do -- per seat position relative to the named places, health, role, alive, in combat; per enemy slot the same;
+then the objective state (flags, score, boss, clock). Content-agnostic by construction.
+
+## What is reused, and the two things that are not
+
+Reused: the goal head's "choose on a slow cadence, hold until the next" (`trainer.py:284`,
+`state.age % goal_every == 0`); recurrence that already spans an episode -- "what it remembers is bounded by the
+episode, not by rollout_length" (`train.py`); per-layout obs and action sizes, already heterogeneous ("18
+layouts, obs up to 1087, actions up to 126").
+
+New work, both in the learner:
+
+1. **Director transitions stored at the director's cadence.** Without this the cadence buys nothing: it would
+   remember ten minutes and be trained on sixty-four seconds.
+2. **Per-layout gamma and lambda.** The trainer applies both per policy today.
+
+## Horizons: the director's, not the seats'
+
+The seats keep what they have. A seat's decisions pay off in seconds, and its credit window is already about
+17 s (`gamma 0.99750`, `GAE trace 0.98508`) -- gamma's nominal 100 s is mostly the critic's target. Raising the
+seats' gamma to see ten minutes would buy variance across thousands of agents for something two of them need.
+
+| director | value | why |
+| --- | --- | --- |
+| cadence | every 10 decisions (2.5 s) | 256 of its steps span 640 s |
+| rollout | 256 director steps | ~10.7 min of *backpropagated* context, not merely remembered |
+| gamma | ~0.996 a director step | 240 steps = 600 s |
+| lambda | ~0.98 to start | ~100 s of credit. It takes ~240 low-noise decisions a match against a seat's ~1680, so it affords a longer trace |
+| `EpisodeSeconds` | 420 -> 900 where wanted | a ten minute window cannot live in a seven minute episode |
+
+## Opt-in, per arena
+
+A flag on `ArenaDefinition`. Solo stages -- duel, pack, gauntlet, travel, flight -- have one seat and would pay
+for an agent with nothing to say. Opting in also lets this arrive gradually instead of changing the agent count
+of eighteen stages at once, which would invalidate every checkpoint's layout set in a single step.
+
+Cost where enabled: two agents an env. Stage 18 goes 20 -> 22, about a tenth. A five-man party stage goes 4 -> 5,
+about a quarter -- proportionally worst on small teams, which is the second reason for opt-in.
+
+## Where it earns its keep
+
+- **Arena.** The best case and the weakest spot for per-seat policies: "kill the healer" is *the* arena decision,
+  and CC chains are cross-seat by definition -- who sheeps, who fears, in what order, without overlapping
+  diminishing returns. Stages 7 and 11 are 1 v 1 today, where a director has nothing to coordinate: it is the
+  reason to add **2 v 2 and 3 v 3**, which `SeatPlan::Teams` now makes cheap (`TEAM_SEATS` of 2 or 3).
+- **Dungeon and raid.** Stages 13 and 14 are forty seats in eight groups, and a raid leader is exactly a
+  director: kill order, interrupt rotation, spread and stack for mechanics, who peels. Stages 15, 16 and 17
+  (hazards, tanking, triage) are drills for precisely these.
+- **Party.** Stages 4 and 5, the same machinery over five seats: focus, who controls what, who guards the owner.
 
 ## Order of work
 
-1. `TeamAssignment` on `SeatView`, and the seats observing theirs (cheap, independent, testable alone).
-2. The director layout: observation, action space, and its two agents an env.
-3. Director transitions stored at the director's cadence -- the real trainer work. Without it the cadence buys
-   nothing.
-4. Per-layout gamma.
-5. `EpisodeSeconds` 900.
+1. `TeamOrder` on `SeatView` (posture, focus, rally, duty seat) and the seats observing theirs. Cheap,
+   independent, testable with a scripted director before any learning.
+2. The director layout: observation slots, the four heads, two agents an env, opt-in flag.
+3. Director transitions at the director's cadence -- the real trainer work.
+4. Per-layout gamma and lambda.
+5. `EpisodeSeconds` 900 where wanted; 2 v 2 and 3 v 3 arenas as the first small directed content.
 
 ## What it waits on
 
-Stage 18 scoring at all. A director commanding "take their flag" inherits every failure the flag stage has
-already had, with one more layer between the command and the cause. Five defects were found there by measuring;
-the sixth is still open.
+Stage 18 scoring at all. A director commanding "take their flag" inherits every failure the flag stage has had,
+with one more layer between the command and the cause. Six defects have been found there by measuring; the last
+is still open.
