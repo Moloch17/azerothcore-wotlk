@@ -66,6 +66,8 @@ CMakeLists.txt.user
 !.agents/plans/animus-team-ctf/
 !.agents/plans/animus-team-ctf/animus-team-ctf.PLAN.md
 !.agents/plans/animus-team-ctf/animus-team-ctf.SCRIPTED.md
+!.agents/plans/animus-director/
+!.agents/plans/animus-director/animus-director.PLAN.md
 
 #
 # Claude
