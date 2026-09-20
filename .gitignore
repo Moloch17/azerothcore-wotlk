@@ -70,6 +70,8 @@ CMakeLists.txt.user
 !.agents/plans/animus-director/animus-director.PLAN.md
 !.agents/plans/animus-curriculum/
 !.agents/plans/animus-curriculum/animus-curriculum.PLAN.md
+!.agents/plans/animus-retrain/
+!.agents/plans/animus-retrain/animus-retrain.PLAN.md
 
 #
 # Claude
