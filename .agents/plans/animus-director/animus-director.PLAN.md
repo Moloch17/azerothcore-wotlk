@@ -99,3 +99,72 @@ about a quarter -- proportionally worst on small teams, which is the second reas
 Stage 18 scoring at all. A director commanding "take their flag" inherits every failure the flag stage has had,
 with one more layer between the command and the cause. Six defects have been found there by measuring; the last
 is still open.
+
+# The curriculum the director needs
+
+The ladder as it stands teaches a director nothing. Team size goes 1, then 4 at stage 5, then 40 at stage 13,
+then 20 at stage 18, and the two stages called self-play -- the arena and the flag -- are one seat a side, where
+there is nobody to command. A shared director layout would meet its first team at stage 5 and its second at
+forty seats.
+
+Four principles shape the rework.
+
+**1. A seat learns to obey before a director learns to command.** Two policies that both start random co-adapt
+badly: the seats see noise and learn to ignore the channel, which is then hard to unlearn. The curriculum
+already solves this once -- stage 6 fights a *scripted* player before stage 7 fights a learned one -- and the
+same trick applies. A scripted director gives consistent, legible orders (focus the lowest enemy, interrupt in
+seat order, rally on the carrier), the seats learn that following them pays, and only then does a learned
+director take the seat.
+
+**2. One channel at a time.** Posture, focus, rally and duty are four heads; introducing them together gives the
+credit assignment four ways to be wrong at once. Focus first -- it is the simplest and the biggest win -- then
+duty, then rally, then posture.
+
+**3. Team size climbs 2, 3, 5, 10, 40.** Each step roughly doubles, and each is a real format rather than a
+contrivance: 2 v 2 and 3 v 3 arena, a five-man group, a battleground side, a raid.
+
+**4. Orders live in their own block.** A new `Order` block, carried only by directed stages, holds the four
+fields a seat reads. Undirected stages keep the layouts they have, so adding the director does not change the
+action or observation shape of the whole curriculum at once -- and the seeding cost of a changed block, which
+stage 18 has already paid once, falls only where the director is actually used.
+
+## The stages
+
+The existing trunk to stage 12 is untouched: it teaches a seat to play, and a director has nothing to say to one
+seat. The directed ladder branches from the stages that already teach fighting.
+
+| stage | from | team | director | channels | what is new |
+| --- | --- | --- | --- | --- | --- |
+| `stage19_duo_led` | `stage7_arena` | 2 v 2 | scripted | focus | a seat learns the called target is the right one |
+| `stage20_duo` | `stage19_duo_led` | 2 v 2 | **learned** | focus | the director learns to call it |
+| `stage21_trio` | `stage20_duo` | 3 v 3 | learned | focus, duty | a healer to kill and a chain to hold it down |
+| `stage22_group` | `stage5_party` | 5 | learned | + rally | a group against pulls: spread, stack, peel |
+| `stage23_warsong` | `stage18_warsong` | 10 v 10 | learned | + posture | the objective, with a side to split |
+| `stage24_raid` | `stage14_raid_gauntlet` | 40 | learned | all four | eight groups, kill order and rotations |
+
+`stage18_warsong` stays as it is -- undirected ten a side -- so the director's contribution is measurable against
+it rather than assumed. Same for `stage13`/`stage14` against `stage24`.
+
+## What the arena stages need first
+
+2 v 2 and 3 v 3 do not exist yet. `SeatPlan::Teams` already supports them: `TEAM_SEATS` becomes a property of
+the arena rather than a constant, and `Opposition::MirrorSeat` with two or three a side is the whole of it. This
+is the smallest piece of new content in the plan and the one the director depends on most, because arena is
+where a called target and a held chain decide the fight.
+
+## What to measure, per stage
+
+A director is worth having only where it beats its own absence, so each directed stage is scored against the
+undirected one it came from:
+
+- **focus**: the share of a side's damage landing on the called target, and time-to-kill against the undirected
+  stage.
+- **duty**: interrupts landed as a share of interruptible casts seen, and overlapping crowd control -- the thing
+  a rotation is supposed to stop.
+- **rally**: seats inside the called shape when a hazard lands; `hazard_seconds` against the undirected stage.
+- **posture**: win rate, which is the only honest test of a macro call.
+
+## Cost
+
+Two agents an env in directed stages only. Six new or reworked stages, of which two (`stage19`, `stage20`) are
+small arena content and two (`stage23`, `stage24`) are directed variants of stages that already exist.
