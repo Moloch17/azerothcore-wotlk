@@ -210,3 +210,62 @@ dying. One seat a side reduces to exactly the old behaviour.
   for it line up, because the call is what the seat selects. It does mean a seat is paid nothing for damage
   onto an enemy it has not selected, which is the right pressure for focus fire and the wrong one for
   off-target crowd control. Worth revisiting when the duty head lands.
+
+## Step 4 as built: the learned director layout
+
+### One call a decision, not four heads at once
+
+The plan asked for four categorical heads chosen together. The transport carries exactly two categorical
+channels per agent -- the action and the goal -- and the second is the goal head, woven through the rollout
+buffer, the actor, the critic, the PPO loss and the exported model format. Three more would mean widening all
+of that, for one agent in two of twenty-odd stages.
+
+Built instead: the standing order is state the director edits, and one action names the single field it is
+changing. `hold` (0), then posture (5), rally (7), focus slot (`PACK_SLOTS`), duty slot (`TEAM_SEATS`) --
+`ACTION_COUNT` 27, a flat space a 2 v 2 and a raid share. Everything not named keeps what it was.
+
+This is closer to what a leader actually does than four simultaneous heads were: a call stands until it is
+changed, so "switch to the healer" is one utterance rather than a fresh restatement of the whole plan every
+250 ms. It costs a director up to four decisions (1 s) to rewrite the entire order, which is well inside the
+2.5 s the scripted director was already thinking at. And it needs no learner change at all -- the director is
+simply a layout with its own observation width and action count, which the per-layout adapters and heads have
+handled since the beginning.
+
+### The layout
+
+`DirectorLayout` (`Layout/DirectorLayout.h`): `OBS_COUNT` 194 -- the side as `TEAM_SEATS` slots of 13 features
+(presence, alive, health, power, role, in combat, casting, spread from the side's centre, distance to the
+called target, whether it is already on it, whether it holds the duty), the enemy as `PACK_SLOTS` slots of 10,
+then the standing order, the two sides' standing and mean health, the objective and how long the order has
+stood. Distances only, never coordinates, and no class, spell or piece of content anywhere in it -- which is
+what lets one network carry arena, battleground, party and raid.
+
+A `Layout` grew a `Director` flavour rather than a second layout type: it seeds down the stage chain, exports
+a manifest and a model, and takes a slot in `Spec().Layouts` like any other, so `bootstrap.py` needed no
+change. It carries no blocks, no class/role and no catalog, and `LayoutCandidates` excludes it so no seat can
+ever draw it.
+
+### Two agents an env
+
+`AgentsPerEnv` becomes `SeatCount + TEAM_COUNT` for any stage with a learned-directed arena; agent
+`SeatCount + side` commands side `side`. The spec is fixed for a run, so an undirected episode of a mixed
+stage marks the pair absent (`AgentPresence`) instead of resizing anything.
+
+- **Reward**: a director is paid the mean of its side's seat rewards. It has no body to score, and a
+  team-level action is worth exactly what it did for the team; anything else would pay it to look busy.
+- **Episode info**: its row is left zero, and `present` being one of those zeros keeps it out of the episode
+  metrics, which are per character and mean nothing for it. What the director did is still reported by its
+  side's seats (`order_changes`, `order_posture`, `order_has_focus`, `order_focus_kept`).
+- **`IsOpponentSeat`**: the far side's director counts as the far side. A scripted-opponent evaluation that
+  replaced only the enemy seats would leave the learner commanding the team it is being scored against.
+- **Objective**: `Encounter::ViewDirector` is the hook a flag match fills in, so the director sees the score
+  and the carrier without `DirectorEncounter` knowing what a flag is. Unimplemented until `stage23`.
+
+`ArenaDefinition::DirectorLearned` is the opt-in; `Directed` alone still gets the scripted director, which
+stays as the baseline to beat. `stage19_duo_led` is the first arena to take it.
+
+### What this does not do
+
+Step 5 is untouched: director transitions are still stored at the seats' cadence, so the director learns on
+the seats' horizon rather than the ten-minute one. It trains and it acts; it just cannot yet see further than
+a seat can. That is the next piece, and it is the one that makes the cadence worth having.
