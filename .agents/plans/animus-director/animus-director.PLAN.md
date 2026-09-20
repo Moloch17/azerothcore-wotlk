@@ -61,7 +61,8 @@ seats' gamma to see ten minutes would buy variance across thousands of agents fo
 | cadence | every 10 decisions (2.5 s) | 256 of its steps span 640 s |
 | rollout | 256 director steps | ~10.7 min of *backpropagated* context, not merely remembered |
 | gamma | ~0.996 a director step | 240 steps = 600 s |
-| lambda | ~0.98 to start | ~100 s of credit. It takes ~240 low-noise decisions a match against a seat's ~1680, so it affords a longer trace |
+| lambda | ~0.98 to start | ~100 s of credit, against a seat's 17 s. It takes ~240 low-noise decisions a match
+where a seat takes ~1680, so it affords the longer trace |
 | `EpisodeSeconds` | 420 -> 900 where wanted | a ten minute window cannot live in a seven minute episode |
 
 ## Opt-in, per arena
