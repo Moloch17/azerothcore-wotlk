@@ -522,6 +522,18 @@ void Pet::SavePetToDB(PetSaveMode mode)
         mode = PET_SAVE_NOT_IN_SLOT;
     }
 
+    // Forge: sim pets are never persisted. Nothing ever loads one back -- the curriculum summons a pet outright
+    // when it wants one -- while a pet is destroyed with its owner for a large share of the characters rebuilt
+    // every episode, and at sim speed that is a stream of transactions per wall-second: two here (auras, spells
+    // and cooldowns, then the pet row) and five more through DeleteFromDB on the PET_SAVE_AS_DELETED path that
+    // dismissing a bot's pet takes. Everything below this line is database work. The one effect that is not is
+    // the aura wipe a stable save does, which is kept; the sim never reaches it, but its absence would be a
+    // behaviour change rather than a saving.
+    if (mode > PET_SAVE_AS_CURRENT)
+        RemoveAllAuras();
+
+    return;
+
     uint32 curhealth = GetHealth();
     uint32 curmana = GetPower(POWER_MANA);
 
