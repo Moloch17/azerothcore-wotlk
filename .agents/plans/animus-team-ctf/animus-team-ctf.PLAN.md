@@ -1,6 +1,6 @@
 # Group capture the flag: two teams of ten
 
-Warsong Gulch as it is actually played -- 10 v 10, both sides learned -- beside the 1 v 1 `stage11_flag`
+Warsong Gulch as it is actually played -- 10 v 10, both sides learned -- beside the 1 v 1 `stage17_flag`
 already has. A new stage; stage 11 is untouched and keeps running.
 
 ## What exists, and what assumes one seat a side
@@ -24,7 +24,7 @@ Seat capacity is not a problem: `MAX_SEATS` is 40 and stages 13/14 already plan 
 3. **Each team is a group.** Reuse `PartyEncounter`'s pattern (`new Group`, `CoreHooks::MarkSimGroup`,
    `sGroupMgr->AddGroup`) so party and raid spells, and the healer layouts, work at all. Without this a healer
    seat cannot target a team-mate and ten of the eighteen layouts are dead weight.
-4. **A new stage, `stage18_warsong`**, extending `stage11_flag` and seeding from it, so the 1 v 1 flag skill
+4. **A new stage, `stage18_warsong`**, extending `stage17_flag` and seeding from it, so the 1 v 1 flag skill
    carries in rather than being relearned.
 
 ## Changes

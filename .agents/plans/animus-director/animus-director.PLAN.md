@@ -135,12 +135,12 @@ seat. The directed ladder branches from the stages that already teach fighting.
 
 | stage | from | team | director | channels | what is new |
 | --- | --- | --- | --- | --- | --- |
-| `stage19_duo_led` | `stage7_arena` | 2 v 2 | scripted | focus | a seat learns the called target is the right one |
+| `stage19_duo_led` | `stage15_arena` | 2 v 2 | scripted | focus | a seat learns the called target is the right one |
 | `stage20_duo` | `stage19_duo_led` | 2 v 2 | **learned** | focus | the director learns to call it |
 | `stage21_trio` | `stage20_duo` | 3 v 3 | learned | focus, duty | a healer to kill and a chain to hold it down |
-| `stage22_group` | `stage5_party` | 5 | learned | + rally | a group against pulls: spread, stack, peel |
+| `stage22_group` | `stage9_party` | 5 | learned | + rally | a group against pulls: spread, stack, peel |
 | `stage23_warsong` | `stage18_warsong` | 10 v 10 | learned | + posture | the objective, with a side to split |
-| `stage24_raid` | `stage14_raid_gauntlet` | 40 | learned | all four | eight groups, kill order and rotations |
+| `stage24_raid` | `stage13_raid_gauntlet` | 40 | learned | all four | eight groups, kill order and rotations |
 
 `stage18_warsong` stays as it is -- undirected ten a side -- so the director's contribution is measurable against
 it rather than assumed. Same for `stage13`/`stage14` against `stage24`.
@@ -168,3 +168,45 @@ undirected one it came from:
 
 Two agents an env in directed stages only. Six new or reworked stages, of which two (`stage19`, `stage20`) are
 small arena content and two (`stage23`, `stage24`) are directed variants of stages that already exist.
+
+## What the stage19 plumbing test found
+
+Running `stage19_duo_led` before any director learning turned up three defects, in rising order of how much
+they mattered. The first run reported `order_has_focus` 1.0000 with `order_focus_kept` exactly 0.0000 over
+2996 episodes -- in a 2 v 2 chance alone should keep a seat on the called target about half the time, so an
+exact zero was a defect and not a seat declining to obey.
+
+1. **The compliance reading was dead.** `DirectorEncounter` and `OrderBlock` both asked `Player::GetTarget()`,
+   which reads `UNIT_FIELD_TARGET` -- set by the client's `CMSG_SET_SELECTION`, which a sessionless bot never
+   sends. It is empty for every seat, always. `GetTarget()` appeared exactly twice in the whole lib and both
+   were these. The rest of the lib reads `GetVictim()`; the right notion for "what this seat's actions aim at"
+   is `SeatView::Target`, and `StageScenario::SeatTarget` for the const readers that have only env and seat.
+2. **The arena was not a team fight.** `OpponentEncounter::Mirror` tested `Seats == SeatPlan::Mirror` only, so
+   a `Teams` arena read as "fight a scripted player": one scripted opponent was spawned and `SelectTarget`
+   pointed all four seats at it. The episode metrics said so plainly once read together -- `killed` 0.98
+   against `died` 0.003, which no mirror can produce, and 2194 damage a seat over four seats against the 7976
+   a lone seat needs in `stage15_arena`. `Find` compounded it with `env.FindBot(1 - seat)`, a two-seat formula
+   that hands seats 0 and 1 their own team mate and wraps unsigned for seats 2 and 3.
+3. **A seat had no way to choose a target.** `SeatView::Enemies` is filled from `env.Targets`, which the
+   self-play branch of `Build` never set, so `EnemyCount` was 0, every target-selection action stayed masked,
+   and there was nothing an order to focus an enemy could ask a seat to do. This is the one that would have
+   made the learned director untrainable rather than merely unmeasurable: compliance has to be a choice the
+   seat makes, or `order_focus_kept` measures nothing.
+
+`OpponentEncounter` is now N-a-side throughout: `Mirror` covers `Teams`, every cross-side pair is made
+hostile rather than the pair sharing an index, `View` offers the enemy side as selectable slots, `Find`
+returns the seat's selected enemy, and `IsTerminal` ends on a side being wiped rather than on seat 0 or 1
+dying. One seat a side reduces to exactly the old behaviour.
+
+### Two design questions this leaves open
+
+- **A side wider than `PACK_SLOTS`.** A seat observes at most `PACK_SLOTS` (4) enemies, so on a 10 v 10 it can
+  only select among the first four of the enemy side. Arena stages (2 v 2, 3 v 3) are unaffected. Warsong is
+  a `Flag` arena, where `Reward` and `IsTerminal` return early and the flags decide the match, so nothing is
+  broken today -- but a directed 10 v 10 whose director can name any of ten enemies needs the observed enemy
+  width raised, or the order's focus carried as its own slot rather than an index into this list.
+- **Who pays for a kill in a team fight.** `CombatReward::OneOnOne` scores a seat against one opponent, so the
+  Kill term fires when the seat's *selected* enemy dies. That is coherent -- following the call and being paid
+  for it line up, because the call is what the seat selects. It does mean a seat is paid nothing for damage
+  onto an enemy it has not selected, which is the right pressure for focus fire and the wrong one for
+  off-target crowd control. Worth revisiting when the duty head lands.

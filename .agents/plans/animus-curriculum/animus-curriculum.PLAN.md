@@ -17,9 +17,9 @@ rather than bolted to the end.
 | --- | --- | --- |
 | `stage1_duel` | `stage1_duel` | one creature its own level: close, kill, keep its health |
 | `stage2_pack` | `stage2_pack` | two to four, usually linked: targets, interrupts, control |
-| `stage3_hazards` | `stage15_hazards` | something on the ground in every pull: see it, walk out |
-| `stage4_gauntlet` | `stage3_gauntlet` | pull after pull: heal, eat, drink, survive the run |
-| `stage5_endurance` | `stage12_endurance` | a known run of eight: what to spend, what to keep |
+| `stage3_hazards` | `stage3_hazards` | something on the ground in every pull: see it, walk out |
+| `stage4_gauntlet` | `stage4_gauntlet` | pull after pull: heal, eat, drink, survive the run |
+| `stage5_endurance` | `stage5_endurance` | a known run of eight: what to spend, what to keep |
 
 Hazards moves from 15 to 3 because it refines the pack and nothing after stage 2 should be learned without it --
 standing in fire is the cheapest bad habit to acquire and the dearest to remove. Endurance moves from 12 to 5,
@@ -29,8 +29,8 @@ next to the gauntlet it plans.
 
 | new | was | what |
 | --- | --- | --- |
-| `stage6_travel` | `stage9_travel` | a place 60-320 yd away: mount when it pays, arrive on foot |
-| `stage7_flight` | `stage10_flight` | 350-700 yd in Nagrand: take off, fly, land |
+| `stage6_travel` | `stage6_travel` | a place 60-320 yd away: mount when it pays, arrive on foot |
+| `stage7_flight` | `stage7_flight` | 350-700 yd in Nagrand: take off, fly, land |
 
 Travel moves ahead of the group and PvP stages. Everything after it that crosses ground -- the flag, the
 battleground -- wants a seat that already rides.
@@ -39,10 +39,10 @@ battleground -- wants a seat that already rides.
 
 | new | was | what |
 | --- | --- | --- |
-| `stage8_companion` | `stage4_companion` | the gauntlet beside a scripted owner: follow, assist, guard, heal |
-| `stage9_party` | `stage5_party` | four learned seats and the owner against elite pulls |
-| `stage10_tanking` | `stage16_tanking` | a fixed tank seat: hold what the pull brings |
-| `stage11_triage` | `stage17_triage` | a fixed healer seat: keep the hurt one up |
+| `stage8_companion` | `stage8_companion` | the gauntlet beside a scripted owner: follow, assist, guard, heal |
+| `stage9_party` | `stage9_party` | four learned seats and the owner against elite pulls |
+| `stage10_tanking` | `stage10_tanking` | a fixed tank seat: hold what the pull brings |
+| `stage11_triage` | `stage11_triage` | a fixed healer seat: keep the hurt one up |
 
 The two drills follow the party they drill, instead of sitting eleven stages later.
 
@@ -50,22 +50,22 @@ The two drills follow the party they drill, instead of sitting eleven stages lat
 
 | new | was | what |
 | --- | --- | --- |
-| `stage12_raid_single` | `stage13_raid_single` | eight groups against one elite and its adds |
-| `stage13_raid_gauntlet` | `stage14_raid_gauntlet` | a raid clearing pull after pull |
+| `stage12_raid_single` | `stage12_raid_single` | eight groups against one elite and its adds |
+| `stage13_raid_gauntlet` | `stage13_raid_gauntlet` | a raid clearing pull after pull |
 
 **A seat learns to fight people.**
 
 | new | was | what |
 | --- | --- | --- |
-| `stage14_pvp` | `stage6_pvp` | one on one against a scripted enemy player |
-| `stage15_arena` | `stage7_arena` | self-play one on one |
-| `stage16_crossroads` | `stage8_crossroads` | PvE and PvP in one policy, both branches merged |
+| `stage14_pvp` | `stage14_pvp` | one on one against a scripted enemy player |
+| `stage15_arena` | `stage15_arena` | self-play one on one |
+| `stage16_crossroads` | `stage16_crossroads` | PvE and PvP in one policy, both branches merged |
 
 **A seat learns an objective.**
 
 | new | was | what |
 | --- | --- | --- |
-| `stage17_flag` | `stage11_flag` | capture the flag one on one |
+| `stage17_flag` | `stage17_flag` | capture the flag one on one |
 | `stage18_warsong` | `stage18_warsong` | ten a side, the real battleground, no director |
 
 The only stage that keeps its number, and the only one already written to the new shape.

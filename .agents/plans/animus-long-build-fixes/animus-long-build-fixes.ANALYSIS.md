@@ -64,7 +64,7 @@ width.
 
 ## 3. `forge start <stage>` seeds from `Extends`, not from queue order  (footgun, nearly cost stages 1-5)
 
-`forge start stage6_pvp stage7_arena ...` was issued to restart the sweep at stage 6. Stage 6 extends `stage1_duel`,
+`forge start stage14_pvp stage15_arena ...` was issued to restart the sweep at stage 6. Stage 6 extends `stage1_duel`,
 which has no *finished* run, so the plan fell back to training stage 6 **from scratch** -- discarding everything
 learned in stages 1-5 -- announcing it only as a warning line, then archiving the existing run. Caught within a
 minute; the archived run held the weights, so nothing was lost, and `forge resume` was used instead.
@@ -166,15 +166,15 @@ back clean are listed at the end so nobody re-runs them.
 
 ## 9. The broken stage-1 seed cascades into three stages, not one
 
-`stage9_travel` extends `stage1_duel`, which stopped at 11.2M and has no `finished.json`, so it will train **from
+`stage6_travel` extends `stage1_duel`, which stopped at 11.2M and has no `finished.json`, so it will train **from
 scratch**. That is not contained:
 
-- `stage10_flight` extends `stage9_travel` -- it inherits whatever stage 9 becomes.
-- `stage11_flag` merges `stage9_travel` for the mounting half of a flag match ("mounting between bases comes from
-  travel"), on top of `stage7_arena` for the fight.
+- `stage7_flight` extends `stage6_travel` -- it inherits whatever stage 9 becomes.
+- `stage17_flag` merges `stage6_travel` for the mounting half of a flag match ("mounting between bases comes from
+  travel"), on top of `stage15_arena` for the fight.
 
-So one unfinished stage at the bottom degrades the last three stages of the sweep. `stage8_crossroads` is fine: it
-extends `stage5_party` (finished) and merges stage 7, 6, 4 and 3; only its `stage1_duel` merge is missing, which
+So one unfinished stage at the bottom degrades the last three stages of the sweep. `stage16_crossroads` is fine: it
+extends `stage9_party` (finished) and merges stage 7, 6, 4 and 3; only its `stage1_duel` merge is missing, which
 costs it the duel arena's distillation teacher and nothing else.
 
 **Options**: give stage 1 a `finished.json` as was done for stage 6 (seeds stages 9-11 from the 9.18 model at 11.2M,
@@ -224,7 +224,7 @@ counted through their effects rather than by name -- the property-based classifi
 
 # Calibration questions from stage 7's self-play run
 
-Added 2026-09-19 from stage7_arena's first ~4M steps. None of these is a bug: the mechanisms were read and are
+Added 2026-09-19 from stage15_arena's first ~4M steps. None of these is a bug: the mechanisms were read and are
 working as written. They are weights and signals that were tuned for PvE and may not carry into a mirror match.
 
 ## 13. The hazard penalty is the third-largest negative term in a 1v1, and melee pay it 4x
@@ -294,7 +294,7 @@ as per-match rates -- `won`, `killed` and `died` all have this shape.
 
 ## 17. Stage 9's step budget is ~20x larger than the skill needs
 
-`stage9_travel.yaml` inherits `total_env_steps: 30M`, `convergence.min_env_steps: 20M` and `eval.eval_every: 10M`
+`stage6_travel.yaml` inherits `total_env_steps: 30M`, `convergence.min_env_steps: 20M` and `eval.eval_every: 10M`
 from `stage1_duel.yaml`. Travel converges at **~1.1M**: `mounted_fraction` 0.26 -> 0.79, `saved` 0.018 -> 0.396,
 trip 21.4 s -> 14.7 s over an unchanged ~175 yd walk, arrive reward 3.11 -> 5.38, entropy 0.90 -> 0.40, all flat from
 update 66 (1.08M) through update 167 (2.74M). The remaining 27M steps confirm a number that stopped moving after
@@ -313,7 +313,7 @@ YAML is read at learner start.
 (`python/animus/train.py:216`) falls back to `latest.pt` only when `best.pt` is *absent*, so a stale `best.pt` wins
 silently and nothing warns.
 
-Concretely: starting `stage10_flight` while `stage9_travel` sat at 2.8M steps would have seeded it from stage 1's
+Concretely: starting `stage7_flight` while `stage6_travel` sat at 2.8M steps would have seeded it from stage 1's
 weights, discarding every bit of the travel learning, with no message saying so. The run looks normal afterwards.
 
 This is the same family as items 3 and 4 and should be fixed with them. Options: seed from `latest.pt` when it is

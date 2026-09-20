@@ -53,11 +53,11 @@ flags. That is the main performance unknown and wants measuring early.
 3. **Episode from match** -- terminal on `STATUS_WAIT_LEAVE`; teardown and a fresh battleground on reset.
 4. **Rewards and views read the battleground** -- `GetTeamScore`, the flag state from `BattlegroundWS`, rather
    than `FlagEncounter`'s own counters. `FlagEncounter` becomes an adapter over the script for the team stage,
-   and keeps its own rules for the 1 v 1 `stage11_flag`, which does not want a battleground.
+   and keeps its own rules for the 1 v 1 `stage17_flag`, which does not want a battleground.
 
 ## What this does not change
 
-`stage11_flag` keeps `FlagEncounter`'s own rules: it is a 1 v 1 on the Barrens, not a battleground, and it is
+`stage17_flag` keeps `FlagEncounter`'s own rules: it is a 1 v 1 on the Barrens, not a battleground, and it is
 mid-run at 20.4M steps.
 
 # What was built, 2026-09-19
