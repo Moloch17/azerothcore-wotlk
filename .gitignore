@@ -58,9 +58,14 @@ CMakeLists.txt.user
 # Agents
 #
 .agents/plans/**
-# ... except the running list of animus issues held back for the long build, which is shared work, not a plan.
+# ... except the animus docs that are shared work rather than a plan: the running list of issues held back for
+# the long build, and the team battleground's design, which carries what the core does and does not allow a
+# sim to do with a real Battleground.
 !.agents/plans/animus-long-build-fixes/
 !.agents/plans/animus-long-build-fixes/animus-long-build-fixes.ANALYSIS.md
+!.agents/plans/animus-team-ctf/
+!.agents/plans/animus-team-ctf/animus-team-ctf.PLAN.md
+!.agents/plans/animus-team-ctf/animus-team-ctf.SCRIPTED.md
 
 #
 # Claude
