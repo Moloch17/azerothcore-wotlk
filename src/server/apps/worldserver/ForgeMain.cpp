@@ -33,7 +33,7 @@
  * Removed relative to the stock worldserver main, and why:
  *   - all Windows/service/winmm logic        -- Linux-only sim host
  *   - WorldSocketMgr listener + WorldSocket  -- bots are in-process and sessionless
- *   - SOAP, Remote Access                    -- no network operators; the console is enough
+ *   - Remote Access                          -- no network operators; the console is enough
  *   - Metric, AppenderDB, PID file, banner   -- telemetry/ops surface the sim does not use
  *   - FreezeDetector                         -- it ABORT()s; a sim tick is allowed to be slow
  *   - TC9/libsidecar cluster plumbing        -- single process, never clustered
@@ -48,8 +48,11 @@
  *     regardless of whether a listener exists.
  *   - realm.Id.Realm: ~22 sites under game/ and shared/ scope GUIDs and account state by it.
  *   - the console (CLI thread, Console.Enable): operators run commands while a training run goes.
+ *   - SOAP, when SOAP.Enabled is set: the same console commands, reachable by something that is
+ *     not a terminal. Off by default, so the sim still opens no listener unless asked.
  */
 
+#include "ACSoap.h"
 #include "BattlegroundMgr.h"
 #include "BigNumber.h"
 #include "CliRunnable.h"
@@ -282,6 +285,25 @@ int main(int argc, char** argv)
     // that blocks the world thread (waiting on a learner) runs the queue itself meanwhile. End of input
     // stops the server, so the console only starts when stdin is a terminal: a server started without
     // one (a detached container without stdin, a batch job) keeps running.
+    // SOAP: the console's commands over HTTP, for a caller that has no terminal -- the dashboard's stage
+    // controls are the reason it exists. Same handler and the same SEC_ADMINISTRATOR check as a typed
+    // command, so it adds no authority the console does not already have. Off unless SOAP.Enabled is set,
+    // which keeps "the sim opens no listener" true for every run that does not ask for one. The thread
+    // polls World::IsStopped and returns on shutdown; joined below with the console's.
+    std::shared_ptr<std::thread> soapThread;
+    if (sConfigMgr->GetOption<bool>("SOAP.Enabled", false))
+    {
+        std::string const soapIp = sConfigMgr->GetOption<std::string>("SOAP.IP", "127.0.0.1");
+        uint16 const soapPort = uint16(sConfigMgr->GetOption<int32>("SOAP.Port", 7878));
+        soapThread.reset(new std::thread(ACSoapThread, soapIp, soapPort), [](std::thread* thread)
+        {
+            thread->join();
+            delete thread;
+        });
+
+        LOG_INFO("server.worldserver", "SOAP is listening on {}:{}", soapIp, soapPort);
+    }
+
     std::unique_ptr<std::thread, ForgeCliThreadDeleter> cliThread;
     if (sConfigMgr->GetOption<bool>("Console.Enable", true))
     {
