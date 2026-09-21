@@ -82,6 +82,14 @@ class PathGenerator
         void SetPathLengthLimit(float distance) { _pointPathLimit = std::min<uint32>(uint32(distance/SMOOTH_PATH_STEP_SIZE), MAX_POINT_PATH_LENGTH); }
         void SetUseRaycast(bool useRaycast) { _useRaycast = useRaycast; }
 
+        // Restrict the search to some kinds of ground. CreateFilter gives a player NAV_GROUND | NAV_WATER |
+        // NAV_MAGMA unconditionally, so every player path is allowed to swim and a route "round" a lake is the
+        // route through it. Setting NAV_GROUND alone is how the dry way round can be measured at all. Only
+        // UpdateFilter touches the filter afterwards, and only to add the terrain a source already standing in
+        // water is in -- so this holds for a source on dry land.
+        void SetIncludeFlags(uint16 flags) { _filter.setIncludeFlags(flags); }
+        [[nodiscard]] uint16 GetIncludeFlags() const { return _filter.getIncludeFlags(); }
+
         // result getters
         [[nodiscard]] G3D::Vector3 const& GetStartPosition() const { return _startPosition; }
         [[nodiscard]] G3D::Vector3 const& GetEndPosition() const { return _endPosition; }
