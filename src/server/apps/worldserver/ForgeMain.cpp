@@ -157,7 +157,17 @@ namespace
     void ForgeUpdateLoop()
     {
         // Game milliseconds advanced per tick, independent of how long the tick really took.
-        uint32 const tickMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
+        //
+        // A decision is AnimusForge.DecisionMs of game time and always has been; AnimusForge.TicksPerDecision says
+        // how many world updates that decision is cut into. At 1 -- the default, and what the sim did before the two
+        // were separable -- a tick is a decision. Above 1 the world moves in finer steps while the module still
+        // decides every DecisionMs (AnimusForge::Forge::OnUpdate holds the decision back), so splines, auras and the
+        // fight run smoothly without the policy paying for more decisions. The module checks this arithmetic against
+        // the diff it is handed and complains if a stale worldserver disagrees.
+        uint32 const decisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
+        uint32 const ticksPerDecision =
+            std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.TicksPerDecision", 1));
+        uint32 const tickMs = std::max<uint32>(1, decisionMs / ticksPerDecision);
 
         // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
         constexpr uint64 maxTicks = 0;
