@@ -66,10 +66,21 @@ fi
 # only, so it runs on the image's python rather than the learner's venv, and it reads the run files without touching
 # the sim -- a crash or a restart of it costs nothing.
 DASHBOARD="$ROOT/modules/mod-animus-forge/python/animus/dashboard.py"
+# The page's stage controls (pause, resume, skip, cancel) go to the sim over SOAP and need an account to do it
+# as. They exist only when this file does: `user:password` for an account with SEC_ADMINISTRATOR, alongside
+# SOAP.Enabled in worldserver.conf. Absent -- which is the default -- the dashboard is read-only, exactly as it
+# was before the controls existed. It is a file rather than an argument because argv is in every ps listing.
+# The `+` expansion is what keeps `set -u` quiet when the array is empty, which is the normal case.
+DASHBOARD_AUTH="$CONF/animus-dashboard.auth"
 if [[ -f "$DASHBOARD" ]]; then
+    dashboard_soap=()
+    if [[ -r "$DASHBOARD_AUTH" ]]; then
+        dashboard_soap=(--soap-auth "$DASHBOARD_AUTH")
+    fi
     python3 "$DASHBOARD" --host 0.0.0.0 --port 8800 \
         --runs "${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs" \
-        --conf "$CONF/modules/mod_animus_forge.conf" > "$LOGS/dashboard.log" 2>&1 &
+        --conf "$CONF/modules/mod_animus_forge.conf" \
+        ${dashboard_soap[@]+"${dashboard_soap[@]}"} > "$LOGS/dashboard.log" 2>&1 &
 fi
 
 cd "$BIN"
