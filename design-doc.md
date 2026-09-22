@@ -85,3 +85,6 @@ say food? or water? and have the mage conjure and trade them some. SW tele? woul
 Player can initiate a ready check and the bots can accept it and when the group is ready the main tank can engage the
 fight. Summon $PLAYER_NAME will have a warlock begin a summoning ritual. Bots will automatically assist with a
 summoning stone portal the player opens. Etc.
+
+Something else I thought of is using the director to have world events that simulate real players. PvP engagements,
+ganking, bots showing up to grief towns, etc.
