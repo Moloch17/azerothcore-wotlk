@@ -37,25 +37,29 @@ if(WITH_LTO)
     set(FORGE_LTO_TOOLCHAIN_OK TRUE)
   endif()
 
-  if(FORGE_LTO_TOOLCHAIN_OK)
-    # check_ipo_supported compiles a project of its own, and a try_compile starts from a bare cache: the
-    # archiver set above is not in it, so the test linked with "CMAKE_CXX_COMPILER_AR-NOTFOUND" and the
-    # probe reported the toolchain as unable to do LTO while the real build could. These variables are
-    # forwarded into every try_compile from here on.
-    list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
-      CMAKE_AR CMAKE_RANLIB
-      CMAKE_CXX_COMPILER_AR CMAKE_CXX_COMPILER_RANLIB
-      CMAKE_C_COMPILER_AR CMAKE_C_COMPILER_RANLIB)
-
+  # check_ipo_supported cannot answer for clang here. It builds a project of its own through the project
+  # form of try_compile, which forwards a fixed set of variables and not the archiver: its test linked
+  # with "CMAKE_CXX_COMPILER_AR-NOTFOUND" and it reported the toolchain as unable to do LTO while the real
+  # build was able to do it, so the optimisation was silently absent from every binary.
+  # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES does not help, because that applies to the source-file form.
+  #
+  # For clang the check above is the real one: llvm-ar, llvm-ranlib and ld.lld either exist or they do
+  # not, and if LTO were still broken the link would say so loudly rather than quietly produce a slower
+  # binary. The probe stays for any other compiler, where nothing had to be found by hand.
+  if(FORGE_LTO_TOOLCHAIN_OK AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(FORGE_IPO_SUPPORTED TRUE)
+  elseif(FORGE_LTO_TOOLCHAIN_OK)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT FORGE_IPO_SUPPORTED OUTPUT FORGE_IPO_MESSAGE LANGUAGES CXX C)
-    if(FORGE_IPO_SUPPORTED)
-      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
-      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
-      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
-      message(STATUS "Forge: link-time optimisation enabled for non-Debug configurations")
-    else()
+    if(NOT FORGE_IPO_SUPPORTED)
       message(STATUS "Forge: link-time optimisation not supported by this toolchain: ${FORGE_IPO_MESSAGE}")
     endif()
+  endif()
+
+  if(FORGE_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
+    message(STATUS "Forge: link-time optimisation enabled for non-Debug configurations")
   endif()
 endif()
