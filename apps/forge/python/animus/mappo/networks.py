@@ -142,11 +142,10 @@ def _per_layout(layout: torch.Tensor, count: int) -> list[tuple[int, torch.Tenso
     return [(int(index), torch.nonzero(layout == index, as_tuple=True)[0]) for index in present]
 
 
-def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: torch.Tensor,
-                    dones: torch.Tensor) -> torch.Tensor:
-    """Run a GRU over a replayed sequence: `encoded` [T, N, H], `memory` [N, R] the state its first decision was
-    taken with, `dones` [T, N] where an episode ended (the next decision starts cleared) -> [T, N, R]. Only the cell
-    is sequential, which is the small part; everything before it runs in one pass."""
+def _carry_sequence_loop(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: torch.Tensor,
+                         dones: torch.Tensor) -> torch.Tensor:
+    """_carry_sequence one cell step at a time: what runs on the CPU, and the reference the fused call is tested
+    against."""
     carried = memory.reshape(-1, size)
     features = []
     for step in range(encoded.shape[0]):
@@ -154,6 +153,71 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
         features.append(carried)
         carried = carried * (~dones[step]).to(carried.dtype)[:, None]
     return torch.stack(features)
+
+
+def _pieces(dones: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    """Cut every row of a [T, N] sequence after each episode end, into pieces with no reset inside them. Returns, on
+    the CPU: each piece's row, first step and length, then for every (t, n) the piece it falls in and its position
+    there."""
+    steps, rows = dones.shape
+    ended = dones.detach().to("cpu", torch.bool)
+    # A piece starts at step 0 of every row, and after every episode end that has a step after it.
+    starts = torch.zeros((steps, rows), dtype=torch.bool)
+    starts[0] = True
+    starts[1:] = ended[:-1]
+    # Numbered row-major (row, then time), so each row's pieces are consecutive.
+    flat = starts.t().reshape(-1)
+    piece_of = (torch.cumsum(flat.to(torch.int64), 0) - 1).reshape(rows, steps).t().contiguous()     # [T, N]
+    first = torch.nonzero(flat, as_tuple=True)[0]
+    piece_row = first // steps
+    piece_start = first % steps
+    # A piece runs to the next piece's start on the same row, else to the end of the sequence.
+    same_row = torch.cat([piece_row[1:] == piece_row[:-1], torch.tensor([False])])
+    next_start = torch.cat([piece_start[1:], torch.tensor([steps])])
+    piece_length = torch.where(same_row, next_start - piece_start, steps - piece_start)
+    position_of = torch.arange(steps)[:, None] - piece_start[piece_of]                                  # [T, N]
+    return piece_row, piece_start, piece_length, piece_of, position_of
+
+
+def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: torch.Tensor,
+                    dones: torch.Tensor) -> torch.Tensor:
+    """Run a GRU over a replayed sequence: `encoded` [T, N, H], `memory` [N, R] the state its first decision was
+    taken with, `dones` [T, N] where an episode ended (the next decision starts cleared) -> [T, N, R]. Only the cell
+    is sequential, which is the small part; everything before it runs in one pass.
+
+    On the GPU, one fused RNN call per sequence instead of stepping the cell: the rows are cut at episode ends into
+    pieces that each start from their own memory (the carried one for a row's first piece, zero after an end), run
+    packed through the library's GRU with the cell's own weights, and put back in [T, N] order. Stepping the cell
+    was ~210,000 kernel launches per stage8_duel update; this took the update from 1.67 s to 1.29 s. (A hand-written
+    persistent kernel was tried and lost to it: at 16 rows a minibatch is one workgroup walking 128 dependent steps.)
+    """
+    carried = memory.reshape(-1, size)
+    steps, rows = encoded.shape[0], encoded.shape[1]
+    if not encoded.is_cuda or steps == 0:
+        return _carry_sequence_loop(cell, size, encoded, carried, dones)
+
+    piece_row, piece_start, piece_length, piece_of, position_of = _pieces(dones)
+    device = encoded.device
+    longest = int(piece_length.max())
+
+    # [pieces, longest] gather of each piece's steps; positions past a piece's end are dropped by the packing.
+    times = (piece_start[:, None] + torch.arange(longest)[None, :]).clamp(max=steps - 1)
+    inputs = encoded[times.to(device), piece_row[:, None].expand_as(times).to(device)]
+
+    first = torch.nonzero(piece_start == 0, as_tuple=True)[0]
+    initial = carried.new_zeros((len(piece_row), size)).index_copy(0, first.to(device),
+                                                                   carried[piece_row[first].to(device)])
+
+    packed = nn.utils.rnn.pack_padded_sequence(inputs, piece_length, batch_first=True, enforce_sorted=False)
+    hx = initial.index_select(0, packed.sorted_indices)[None]
+    # What nn.GRU.forward calls for a packed sequence, given the cell's parameters rather than a module's own.
+    output, _ = torch._VF.gru(packed.data, packed.batch_sizes, hx,
+                              [cell.weight_ih, cell.weight_hh, cell.bias_ih, cell.bias_hh], True, 1, 0.0,
+                              cell.training, False)
+    padded, _ = nn.utils.rnn.pad_packed_sequence(
+        nn.utils.rnn.PackedSequence(output, packed.batch_sizes, packed.sorted_indices, packed.unsorted_indices),
+        batch_first=True, total_length=longest)
+    return padded[piece_of.to(device), position_of.to(device)]
 
 
 class LayoutActor(nn.Module):

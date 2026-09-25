@@ -346,3 +346,73 @@ def test_the_first_epoch_replays_the_statistics_the_rollout_acted_through():
     trainer.update(buffer, auxiliary=Watcher())
     assert seen and seen[0] == 0.0          # the rollout's own view, which is what its log_probs came from
     assert float(trainer.actor.norms[0].count) == steps * envs   # and folded in once the epochs were done
+
+
+
+def _carry_results(carry, cell, size, encoded, memory, dones, weight):
+    cell.zero_grad()
+    x = encoded.clone().requires_grad_(True)
+    m = memory.clone().requires_grad_(True)
+    out = carry(cell, size, x, m, dones)
+    (out * weight).sum().backward()
+    return [out.detach(), x.grad, m.grad] + [p.grad.clone() for p in cell.parameters()]
+
+
+def _check_carry_matches_loop(steps: int, rows: int, hidden: int, size: int, seed: int = 3) -> None:
+    """The fused GRU call against the step loop, both in fp32, each measured against the step loop in fp64: the
+    library may sum in a different order, so it is held to the loop's own rounding error (a few times over), not to
+    bit equality."""
+    import copy
+
+    from animus.mappo.networks import _carry_sequence, _carry_sequence_loop
+
+    generator = torch.Generator().manual_seed(seed)
+    cell = torch.nn.GRUCell(hidden, size).cuda()
+    encoded = torch.randn(steps, rows, hidden, generator=generator).cuda()
+    memory = torch.randn(rows, size, generator=generator).cuda()
+    dones = torch.rand(steps, rows, generator=generator) < 0.08
+    dones[-1, 0] = True             # an end on the last step
+    dones[0, 1 % rows] = True       # an end on the first step
+    dones[3:6, 2 % rows] = True     # ends on consecutive steps
+    dones = dones.cuda()
+    weight = torch.linspace(-1.0, 1.0, steps * rows * size, device="cuda").reshape(steps, rows, size)
+
+    exact = _carry_results(_carry_sequence_loop, copy.deepcopy(cell).double(), size, encoded.double(),
+                           memory.double(), dones, weight.double())
+    loop = _carry_results(_carry_sequence_loop, cell, size, encoded, memory, dones, weight)
+    kernel = _carry_results(_carry_sequence, cell, size, encoded, memory, dones, weight)
+
+    names = ["output", "encoded grad", "memory grad", "weight_ih grad", "weight_hh grad", "bias_ih grad",
+             "bias_hh grad"]
+    for name, reference, stepped, fused in zip(names, exact, loop, kernel):
+        assert fused.shape == reference.shape, name
+        loop_error = float((stepped.double() - reference).abs().max())
+        kernel_error = float((fused.double() - reference).abs().max())
+        scale = float(reference.abs().max())
+        assert kernel_error <= 8.0 * loop_error + 1e-6 * max(1.0, scale), (
+            f"{name}: fused call off by {kernel_error:.3g}, the fp32 step loop by {loop_error:.3g} (largest {scale:.3g})")
+
+
+requires_gpu = pytest.mark.skipif(not torch.cuda.is_available(), reason="the fused GRU call runs on the GPU")
+
+
+@requires_gpu
+def test_fused_gru_matches_the_step_loop_at_the_real_size():
+    _check_carry_matches_loop(steps=128, rows=16, hidden=512, size=128)
+
+
+@requires_gpu
+def test_fused_gru_matches_the_step_loop_at_odd_sizes():
+    # Pieces of every length, including the one-step pieces between consecutive episode ends.
+    _check_carry_matches_loop(steps=37, rows=21, hidden=24, size=40)
+
+
+@requires_gpu
+def test_fused_gru_with_no_episode_end():
+    from animus.mappo.networks import _carry_sequence, _carry_sequence_loop
+
+    cell = torch.nn.GRUCell(8, 16).cuda()
+    encoded, memory = torch.randn(5, 3, 8).cuda(), torch.randn(3, 16).cuda()
+    dones = torch.zeros(5, 3, dtype=torch.bool).cuda()
+    torch.testing.assert_close(_carry_sequence(cell, 16, encoded, memory, dones),
+                               _carry_sequence_loop(cell, 16, encoded, memory, dones), rtol=1e-4, atol=1e-5)
