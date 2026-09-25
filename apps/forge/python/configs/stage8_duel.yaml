@@ -98,7 +98,10 @@ mappo:
   # entropy_coef stays put (1.0) unless eval.sampled_every shows the argmax policy drifting from the sampled one.
   entropy_final_fraction: 1.0
   epochs: 4
-  minibatches: 8
+  # 4 since 2026-09-25 (was 8), by the user's decision: the recurrent update is sequential GRU replays, one per
+  # minibatch per epoch, and launch-bound, so its time goes with the count, not the size (1.19 -> 0.69 s on this stage),
+  # which lets an overlapped update fit inside a half-batch rollout. Fewer, larger PPO steps per rollout.
+  minibatches: 4
   max_grad_norm: 0.5
   use_value_norm: true
   # The value normaliser follows the returns, which drift upwards as the policy learns to kill: stats that
