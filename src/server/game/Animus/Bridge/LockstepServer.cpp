@@ -19,8 +19,12 @@
 #include "LockstepServer.h"
 #include "Log.h"
 #include "World.h"
+#include <arpa/inet.h>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -45,6 +49,42 @@ bool AnimusForge::LockstepServer::Listen(std::string const& path)
 
     Shutdown();
 
+    // "tcp://address:port": a cluster worker's sim, which the host's learner reaches over the network.
+    if (path.rfind("tcp://", 0) == 0)
+    {
+        std::string const rest = path.substr(6);
+        std::size_t const colon = rest.rfind(':');
+        int const port = colon == std::string::npos ? 0 : std::atoi(rest.c_str() + colon + 1);
+        if (port <= 0 || port >= 65536)
+        {
+            LOG_ERROR("module.animus", "Socket '{}' is not tcp://address:port", path);
+            return false;
+        }
+
+        _listener = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        int const on = 1;
+        if (_listener >= 0)
+            ::setsockopt(_listener, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        sockaddr_in inet{};
+        inet.sin_family = AF_INET;
+        inet.sin_port = htons(uint16(port));
+        std::string const host = rest.substr(0, colon);
+        inet.sin_addr.s_addr = host.empty() || host == "0.0.0.0" ? htonl(INADDR_ANY) : ::inet_addr(host.c_str());
+        if (_listener < 0 || ::bind(_listener, reinterpret_cast<sockaddr*>(&inet), sizeof(inet)) < 0
+            || ::listen(_listener, 1) < 0)
+        {
+            LOG_ERROR("module.animus", "Cannot listen on '{}': {}", path, std::strerror(errno));
+            if (_listener >= 0)
+                ::close(_listener);
+            _listener = -1;
+            return false;
+        }
+
+        _path = path;
+        LOG_INFO("module.animus", "Listening for the learner on {}", path);
+        return true;
+    }
+
     sockaddr_un addr{};
     if (path.size() >= sizeof(addr.sun_path))
     {
@@ -59,11 +99,22 @@ bool AnimusForge::LockstepServer::Listen(std::string const& path)
         return false;
     }
 
-    // A stale socket file from a crashed run would make bind() fail.
-    ::unlink(path.c_str());
-
+    // A stale socket file from a crashed run would make bind() fail, so it is removed -- unless a sim is listening on
+    // it: two sims on one machine (a cluster worker beside its host) must not take each other's learner.
     addr.sun_family = AF_UNIX;
     std::memcpy(addr.sun_path, path.c_str(), path.size() + 1);
+    int const probe = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    bool const live = probe >= 0 && ::connect(probe, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+    if (probe >= 0)
+        ::close(probe);
+    if (live)
+    {
+        LOG_ERROR("module.animus", "Another sim is listening on '{}': give this one its own AnimusForge.Socket", path);
+        ::close(_listener);
+        _listener = -1;
+        return false;
+    }
+    ::unlink(path.c_str());
 
     if (::bind(_listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0 || ::listen(_listener, 1) < 0)
     {
@@ -86,7 +137,8 @@ void AnimusForge::LockstepServer::Shutdown()
     {
         ::close(_listener);
         _listener = -1;
-        ::unlink(_path.c_str());
+        if (_path.rfind("tcp://", 0) != 0)
+            ::unlink(_path.c_str());
     }
 }
 
@@ -101,6 +153,13 @@ bool AnimusForge::LockstepServer::AcceptClient(std::function<bool()> const& onId
         int const fd = ::accept4(_listener, nullptr, nullptr, SOCK_CLOEXEC);
         if (fd < 0)
             continue;
+
+        // Over TCP a STEP must not wait for Nagle to fill a segment: a decision is a request and its answer.
+        if (_path.rfind("tcp://", 0) == 0)
+        {
+            int const on = 1;
+            ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+        }
 
         _client = fd;
 

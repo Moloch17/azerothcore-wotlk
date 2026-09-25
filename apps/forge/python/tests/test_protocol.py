@@ -72,8 +72,10 @@ def test_spec_matches_cpp_layout():
 
 
 def test_mode_matches_cpp_layout():
-    # ModeMsg in Protocol.h: four uint32 fields (mode, seed base, episodes, flags) and a 32-byte policy name, packed.
-    assert p.MODE.size == 4 * 4 + 32
+    # ModeMsg in Protocol.h: five uint32 fields (mode, seed base, episodes, flags, first seed) and a 32-byte policy
+    # name, packed.
+    assert p.MODE.size == 5 * 4 + 32
+    assert p.decode_mode_first_seed(p.encode_mode(True, 1000, 64, "", first_seed=64)) == 64
     assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight")) == (True, 1000, 128, "fight", False)
     assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight", opponents_only=True)) == (
         True, 1000, 128, "fight", True)
@@ -221,3 +223,31 @@ def test_half_batch_step_joins_both_halves(tmp_path):
     server.join(timeout=5)
     listener.close()
     assert acts == [(0, 2), (2, 2)] * 2
+
+
+def test_a_sim_on_another_machine_is_reached_over_tcp():
+    """A cluster worker's sim is "tcp://host:port": the same protocol over TCP."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    first = make_step(0, np.random.default_rng(3))
+
+    def fake_sim():
+        conn, _ = listener.accept()
+        with conn:
+            read_exact(conn, p.HEADER.size + p.HELLO.size)
+            spec_payload = p.encode_spec(SPEC)
+            conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec_payload)) + spec_payload)
+            payload = p.encode_step(SPEC, first)
+            conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
+            read_exact(conn, p.HEADER.size)
+
+    server = threading.Thread(target=fake_sim)
+    server.start()
+    env = ForgeEnv(f"tcp://127.0.0.1:{port}", connect_timeout=5)
+    assert env.spec == SPEC
+    assert_steps_equal(env.reset(), first)
+    env.close()
+    server.join(timeout=5)
+    listener.close()

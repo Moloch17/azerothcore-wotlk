@@ -102,13 +102,14 @@ namespace Animus
         bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false, uint32 begin = 0,
             uint32 count = UINT32_MAX);
 
-        /// Evaluation (the forge's MODE message): hand seed indexes 0..episodes-1 to envs as they reset, each env
+        /// Evaluation (the forge's MODE message): hand seed indexes firstSeed..firstSeed+episodes-1 to envs as they
+        /// reset (a cluster's sims each play their own run of one evaluation's seeds), each env
         /// rebuilt right after reseeding the world thread's random numbers from (seedBase, index)
         /// (CoreHooks::SeedRandom). With a baseline policy name, EvalBaseline() tells the caller to run it
         /// instead of the learner's actions -- only on the opponent seats when EvalOpponentsOnly(). Takes effect at
         /// the next reset; call ResetAll to start every env on it.
         void SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
-            bool opponentsOnly = false);
+            bool opponentsOnly = false, uint32 firstSeed = 0);
         [[nodiscard]] bool IsEvaluating() const { return _evaluating; }
 
         /// How often training episodes draw each of the scenario's layouts (the forge's WEIGHTS message), in layout

@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 11
+PROTOCOL_VERSION = 12
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -39,7 +39,7 @@ LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
 ACT_HEADER = struct.Struct("<II")  # first env, env count; then that many envs' actions (and goals)
-MODE = struct.Struct(f"<IIII{POLICY_NAME_SIZE}s")  # mode, seed base, episodes, flags, baseline policy
+MODE = struct.Struct(f"<IIIII{POLICY_NAME_SIZE}s")  # mode, seed base, episodes, flags, first seed, baseline policy
 MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; the learner the rest
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
@@ -230,18 +230,25 @@ def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = N
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                opponents_only: bool = False) -> bytes:
+                opponents_only: bool = False, first_seed: int = 0) -> bytes:
+    """MODE payload. An evaluation plays seed indexes [first_seed, first_seed + episodes) of seed_base, so a
+    cluster's sims can each play their own share of one evaluation's seeds (ClusterEnv)."""
     name = baseline.encode("ascii")
     if len(name) >= POLICY_NAME_SIZE:
         raise ValueError(f"baseline policy name '{baseline}' is too long")
     flags = MODE_FLAG_SCRIPTED_OPPONENTS if opponents_only else 0
-    return MODE.pack(int(evaluate), seed_base, episodes, flags, name)
+    return MODE.pack(int(evaluate), seed_base, episodes, flags, first_seed, name)
 
 
 def decode_mode(payload: bytes) -> tuple[bool, int, int, str, bool]:
-    mode, seed_base, episodes, flags, name = MODE.unpack(payload)
+    mode, seed_base, episodes, flags, _first_seed, name = MODE.unpack(payload)
     return (bool(mode), seed_base, episodes, name.split(b"\0", 1)[0].decode("ascii"),
             bool(flags & MODE_FLAG_SCRIPTED_OPPONENTS))
+
+
+def decode_mode_first_seed(payload: bytes) -> int:
+    """The first seed index a MODE's evaluation plays (0 unless a cluster split the seeds)."""
+    return MODE.unpack(payload)[4]
 
 
 def encode_weights(weights) -> bytes:

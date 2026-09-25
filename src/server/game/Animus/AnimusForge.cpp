@@ -28,6 +28,7 @@
 #include "StringFormat.h"
 #include "World.h"
 #include <algorithm>
+#include <cstdio>
 #include <boost/json/object.hpp>
 #include <boost/json/array.hpp>
 #include <boost/json/parse.hpp>
@@ -103,12 +104,18 @@ void AnimusForge::Forge::OnStartup()
         return;
     }
 
+    if (_config.Cluster == ForgeConfig::ClusterRole::Host)
+        _cluster.Listen(_config.ClusterControlPort);
+    else if (_config.Cluster == ForgeConfig::ClusterRole::Worker)
+        _cluster.Join(_config.ClusterHost, _config.ClusterDataPort, _config.ClusterAdvertise);
+
     // Every world table the curriculum reads on first use, read now: the database pools are sealed right after
     // this and an episode must never query.
     Animus::Curriculum::WarmCaches();
 
-    // Open the socket now, so a learner started by hand can connect as soon as a plan starts.
-    if (_config.IsRemote())
+    // Open the socket now, so a learner started by hand can connect as soon as a plan starts. Not on a worker: its
+    // sim listens on TCP for the host's learner once ordered onto a scenario, and never has a learner of its own.
+    if (_config.IsRemote() && _config.Cluster != ForgeConfig::ClusterRole::Worker)
         _server.Listen(_config.SocketPath);
 
     LOG_INFO("module.animus", "Animus Forge is idle. Type `forge start` on the console to train AnimusForge.Queue, "
@@ -191,7 +198,16 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     _tickLearnerNs = 0;
 
     PollExport();
+    PollCluster();
     ApplyRequest();
+
+    // A worker ordered onto another scenario starts it once the one it was running has been torn down above.
+    if (_clusterOrder && _state == State::Idle && _request == Request::None)
+    {
+        _requested = std::move(*_clusterOrder);
+        _clusterOrder.reset();
+        _request = Request::Start;
+    }
 
     if (_pauseRequested && (_state == State::Training || _state == State::Running))
     {
@@ -450,16 +466,32 @@ bool AnimusForge::Forge::StartCurrent()
 
         // A learner that cannot be started is not fatal: the sim keeps waiting on the socket, so one started by
         // hand still works (and `forge cancel` gives up).
+        // A cluster host's workers run the same scenario, and its learner trains on their sims as well as this one.
+        ForgeConfig learnerConfig = config;
+        if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
+        {
+            _cluster.Poll();
+            learnerConfig.ClusterSims = _cluster.WorkerSims();
+            _cluster.Broadcast(Acore::StringFormat("START {} {} {}", entry.Scenario, entry.Resume ? 1 : 0,
+                _plan.Fast ? 1 : 0));
+            if (!learnerConfig.ClusterSims.empty())
+                LOG_INFO("module.animus", "Cluster: {} worker{} run{} {} too", learnerConfig.ClusterSims.size(),
+                    learnerConfig.ClusterSims.size() == 1 ? "" : "s", learnerConfig.ClusterSims.size() == 1 ? "s" : "",
+                    entry.Scenario);
+        }
+
         if (config.LearnerAutoStart)
         {
-            _learnerStarted = _learner.Start(config, entry.Scenario, entry.Resume);
+            _learnerStarted = _learner.Start(learnerConfig, entry.Scenario, entry.Resume);
             if (!_learnerStarted)
                 LOG_ERROR("module.animus", "Learner auto-start failed; start it by hand: {}",
-                    LearnerProcess::ManualCommand(config, entry.Scenario, entry.Resume));
+                    LearnerProcess::ManualCommand(learnerConfig, entry.Scenario, entry.Resume));
         }
+        else if (_config.Cluster == ForgeConfig::ClusterRole::Worker)
+            LOG_INFO("module.animus", "Cluster: waiting for the host's learner on {}", config.SocketPath);
         else
             LOG_INFO("module.animus", "Waiting for a learner started by hand: {}",
-                LearnerProcess::ManualCommand(config, entry.Scenario, entry.Resume));
+                LearnerProcess::ManualCommand(learnerConfig, entry.Scenario, entry.Resume));
     }
 
     _pool->ResetAll();
@@ -592,6 +624,9 @@ void AnimusForge::Forge::EndPlan(char const* reason)
 
     LOG_INFO("module.animus", "Plan ended: {}. The sim is idle.", reason);
 
+    if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
+        _cluster.Broadcast("STOP");
+
     if (_benching)
     {
         BenchPlanEnded();
@@ -714,8 +749,59 @@ void AnimusForge::Forge::Pump()
     _pumping = true;
     sWorld->ProcessCliCommands();
     PollExport();
+    PollCluster();
     MaybeReport();
     _pumping = false;
+}
+
+void AnimusForge::Forge::PollCluster()
+{
+    _cluster.Poll();
+    if (_config.Cluster != ForgeConfig::ClusterRole::Worker)
+        return;
+
+    // Orders only ask: the scenario is torn down and started from OnUpdate, never from inside a wait on the learner
+    // (Pump runs there), exactly as a console command's are.
+    while (std::optional<std::string> order = _cluster.NextOrder())
+    {
+        char scenario[128] = {};
+        unsigned resume = 0;
+        unsigned fast = 0;
+        if (std::sscanf(order->c_str(), "START %127s %u %u", scenario, &resume, &fast) >= 1)
+        {
+            LOG_INFO("module.animus", "Cluster: the host orders {}{}", scenario, fast ? " (fast)" : "");
+            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0);
+            if (_state != State::Idle)
+                _request = Request::Cancel;
+        }
+        else if (*order == "STOP")
+        {
+            LOG_INFO("module.animus", "Cluster: the host's plan ended");
+            _clusterOrder.reset();
+            if (_state != State::Idle)
+                _request = Request::Cancel;
+        }
+    }
+}
+
+AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast) const
+{
+    // A fast run's scenarios are built from the fast profile (its classes, levels, envs): the host's learner refuses a
+    // worker whose sim is not the same scenario as its own.
+    ForgeConfig config = fast ? _fastConfig : _config;
+    config.Policy = "remote";
+    config.LearnerAutoStart = false;
+    config.SocketPath = Acore::StringFormat("tcp://0.0.0.0:{}", _config.ClusterDataPort);
+
+    Plan plan;
+    plan.Policy = "remote";
+    plan.Fast = fast;
+    PlanEntry entry;
+    entry.Scenario = scenario;
+    entry.Resume = resume;
+    entry.Config = std::move(config);
+    plan.Entries.push_back(std::move(entry));
+    return plan;
 }
 
 void AnimusForge::Forge::PollExport()
@@ -1509,7 +1595,7 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
     }
 
     bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
-    _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly);
+    _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly, mode.FirstSeed);
 
     if (mode.Mode == 1)
         LOG_DEBUG("module.animus", "Evaluation: {} seeded episodes from seed {}, policy {}", mode.Episodes,

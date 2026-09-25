@@ -409,12 +409,13 @@ bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponen
 }
 
 void Animus::EnvPool::SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
-    bool opponentsOnly)
+    bool opponentsOnly, uint32 firstSeed)
 {
     _evaluating = enabled;
     _evalSeedBase = seedBase;
-    _evalEpisodes = enabled ? episodes : 0;
-    _evalNextSeed = 0;
+    // _evalEpisodes is the end of the run of seed indexes this sim plays, not a count.
+    _evalEpisodes = enabled ? firstSeed + episodes : 0;
+    _evalNextSeed = enabled ? firstSeed : 0;
     _evalBaseline = enabled ? baseline : std::string();
     _evalOpponentsOnly = enabled && !_evalBaseline.empty() && opponentsOnly;
 }

@@ -101,6 +101,28 @@ namespace AnimusForge
         /// empty = the stage config's train_device and rollout_device). A GPU the machine does not have falls back
         /// to the first one, so the key can name the machine as it will be.
         std::string LearnerDevice;
+
+        /// AnimusForge.Cluster.Role: several machines training one learner. A worker runs only its sim, of the
+        /// scenario its host orders, and the host's learner trains on every sim's envs as one pool (the learner's
+        /// ClusterEnv). A standalone sim, the default, is what the forge has always been.
+        enum class ClusterRole : uint8
+        {
+            Standalone,
+            Host,
+            Worker,
+        };
+        ClusterRole Cluster = ClusterRole::Standalone;
+        /// AnimusForge.Cluster.Host (worker): the host's control address, "address:port".
+        std::string ClusterHost;
+        /// AnimusForge.Cluster.ControlPort (host): where workers register and take orders.
+        uint16 ClusterControlPort = 7700;
+        /// AnimusForge.Cluster.DataPort (worker): where its sim listens for the host's learner.
+        uint16 ClusterDataPort = 7701;
+        /// AnimusForge.Cluster.Advertise (worker): the address the host's learner reaches it at; empty = the address
+        /// its registration comes from.
+        std::string ClusterAdvertise;
+        /// Host: the registered workers' sims, handed to the learner when it starts (not a config key).
+        std::vector<std::string> ClusterSims;
         std::vector<std::string> Classes;       // AnimusForge.Classes; empty = every class
 
         /// AnimusForge.SpawnPoint.*: the instanceable map and position every env's bots start at.

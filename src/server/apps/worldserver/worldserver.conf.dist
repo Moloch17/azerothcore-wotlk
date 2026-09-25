@@ -5293,6 +5293,50 @@ AnimusForge.Learner.TorchThreads = 0
 
 AnimusForge.Learner.Device = ""
 
+###################################################################################################
+# CLUSTER
+#
+#    Several machines training one learner: the host runs its sim and the learner, each worker
+#    runs only a sim, and the host's learner trains on every sim's envs as one pool. The host
+#    orders its workers onto each scenario it starts; the data (STEP/ACT) goes straight between
+#    the host's learner and each worker's sim over TCP. Every machine needs the same build, world
+#    data and scenario settings; each may run its own number of envs (AnimusForge.Envs).
+#
+#    AnimusForge.Cluster.Role
+#        Description: standalone (one machine, as always), host or worker.
+#        Default:     "standalone"
+
+AnimusForge.Cluster.Role = "standalone"
+
+#
+#    AnimusForge.Cluster.Host
+#        Description: Worker: the host's control address, "address:port" (its ControlPort).
+#        Default:     ""
+
+AnimusForge.Cluster.Host = ""
+
+#
+#    AnimusForge.Cluster.ControlPort
+#        Description: Host: the TCP port workers register on and take orders from.
+#        Default:     7700
+
+AnimusForge.Cluster.ControlPort = 7700
+
+#
+#    AnimusForge.Cluster.DataPort
+#        Description: Worker: the TCP port its sim listens on for the host's learner.
+#        Default:     7701
+
+AnimusForge.Cluster.DataPort = 7701
+
+#
+#    AnimusForge.Cluster.Advertise
+#        Description: Worker: the address the host's learner should reach it at, when the address
+#                     its registration comes from is not it (NAT, several interfaces). Empty = that one.
+#        Default:     ""
+
+AnimusForge.Cluster.Advertise = ""
+
 #
 #    AnimusForge.Learner.LogFile
 #        Description: File the learner's stdout and stderr are appended to, relative to the directory of

@@ -99,8 +99,9 @@ namespace AnimusForge
     // 10: the WEIGHTS payload is per (class, spec) rather than per (class, role), which is a different length and
     // a different meaning for the same bytes -- a mismatched pair would silently misweight rather than fail.
     // 11: STEP and ACT name the envs they cover (StepHeader, ActHeader) and SPEC how many groups the pool is sent
-    // in, so a half-batch sim can send each half on its own. This sim still sends the whole pool as one group.
-    constexpr uint32 PROTOCOL_VERSION = 11;
+    // in, so a half-batch sim can send each half on its own.
+    // 12: MODE says which seed index an evaluation starts from, so a cluster's sims share one evaluation's seeds.
+    constexpr uint32 PROTOCOL_VERSION = 12;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -166,6 +167,7 @@ namespace AnimusForge
         uint32 SeedBase;
         uint32 Episodes;                    // seeded evaluation episodes
         uint32 Flags;                       // MODE_FLAG_*
+        uint32 FirstSeed;                   // the evaluation plays seed indexes [FirstSeed, FirstSeed + Episodes)
         char Baseline[POLICY_NAME_SIZE];    // scripted policy to run instead of the learner's; empty = learner
     };
 

@@ -210,6 +210,9 @@ class TrainConfig:
     runs_dir: str = "runs"  # the sim passes AnimusForge.OutputDir/runs
     layouts_dir: str = "layouts"  # the sim passes AnimusForge.OutputDir/layouts
     socket: str = "/tmp/animus-forge.sock"
+    # A cluster host's workers' sims ("tcp://host:port" each; AnimusForge.Cluster): trained on together with the sim
+    # at `socket` as one pool (animus.env.ClusterEnv). Empty = the one sim. The host's sim passes it.
+    cluster_sims: list[str] = field(default_factory=list)
     seed: int = 1
 
     total_env_steps: int = 5_000_000  # decisions x envs x agents

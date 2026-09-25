@@ -52,6 +52,16 @@ namespace
             args.emplace_back("torch_threads=" + std::to_string(config.LearnerTorchThreads));
         }
 
+        // A cluster host's learner trains on its workers' sims as well as this one (the learner's ClusterEnv).
+        if (!config.ClusterSims.empty())
+        {
+            std::string sims;
+            for (std::string const& sim : config.ClusterSims)
+                sims += (sims.empty() ? "" : ", ") + ("'" + sim + "'");
+            args.emplace_back("--set");
+            args.emplace_back("cluster_sims=[" + sims + "]");
+        }
+
         // Before AnimusForge.Learner.Args, whose --set comes later and wins.
         if (!config.LearnerDevice.empty())
         {

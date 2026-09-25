@@ -248,6 +248,22 @@ void AnimusForge::ForgeConfig::Load()
     LearnerTorchThreads = sConfigMgr->GetOption<uint32>("AnimusForge.Learner.TorchThreads", 0);
     LearnerDevice = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Device", "");
 
+    std::string role = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Role", "standalone");
+    std::transform(role.begin(), role.end(), role.begin(), [](unsigned char c) { return std::tolower(c); });
+    Cluster = role == "host" ? ClusterRole::Host : role == "worker" ? ClusterRole::Worker : ClusterRole::Standalone;
+    if (role != "host" && role != "worker" && role != "standalone")
+        LOG_ERROR("module.animus", "AnimusForge.Cluster.Role = '{}' is not standalone, host or worker; standalone",
+            role);
+    ClusterHost = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Host", "");
+    ClusterControlPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.ControlPort", 7700));
+    ClusterDataPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.DataPort", 7701));
+    ClusterAdvertise = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Advertise", "");
+    if (Cluster == ClusterRole::Worker && ClusterHost.empty())
+    {
+        LOG_ERROR("module.animus", "AnimusForge.Cluster.Role = worker needs AnimusForge.Cluster.Host; standalone");
+        Cluster = ClusterRole::Standalone;
+    }
+
     Bench = BenchSettings();
     Bench.Scenario = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Scenario", "stage8_duel");
     Bench.Policy = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Policy", "fight");

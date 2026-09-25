@@ -20,6 +20,7 @@
 #define MOD_ANIMUS_FORGE_H
 
 #include "ChildProcess.h"
+#include "ClusterLink.h"
 #include "Map.h"
 #include "MapMgr.h"
 #include "EnvPool.h"
@@ -252,6 +253,11 @@ namespace AnimusForge
         void PollExport();
         void MaybeReport();
 
+        /// Cluster: take the registrations and orders that have come in; a worker acts on its host's orders.
+        void PollCluster();
+        /// A worker's plan for the scenario its host ordered: remote policy, no learner of its own, its sim on TCP.
+        [[nodiscard]] Plan WorkerPlan(std::string const& scenario, bool resume, bool fast) const;
+
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
         bool SendSpec();
@@ -301,6 +307,9 @@ namespace AnimusForge
         /// Half-batch (AnimusForge.HalfBatch with TicksPerDecision 1): the world ticks at half a decision and the
         /// pool's two groups' maps take turns; `_turn` is the group whose maps tick this world tick and decide at
         /// its end, `_nextTurn` the next one's. Without half-batch the one group ticks every world tick.
+        ClusterLink _cluster;
+        /// Worker: the scenario the host ordered, to start once the one running has been torn down.
+        std::optional<Plan> _clusterOrder;
         bool _halfBatch = false;
         uint32 _turn = 0;
         uint32 _nextTurn = 0;

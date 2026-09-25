@@ -37,7 +37,7 @@ from .bootstrap import DIRECTOR_LAYOUT, seed_merges, seed_trainer
 from .cast import LEAGUE, Cast, league_snapshot
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
-from .env import ForgeEnv
+from .env import ClusterEnv, ForgeEnv
 from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
                          format_summary,
                          run_evaluation)
@@ -408,7 +408,8 @@ class TrainingRun:
         (self.run_dir / "config.yaml").write_text(yaml.safe_dump(config.to_dict(), sort_keys=False))
 
         print(f"Connecting to {config.socket} ...", flush=True)
-        self.env = ForgeEnv(config.socket)
+        self.env = (ClusterEnv([config.socket, *config.cluster_sims]) if config.cluster_sims
+                    else ForgeEnv(config.socket))
         self.spec = spec = self.env.spec
         (self.run_dir / "spec.json").write_text(json.dumps(asdict(spec), indent=2))
 

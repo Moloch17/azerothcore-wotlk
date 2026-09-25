@@ -60,7 +60,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
 
         e_count, a_count = spec.num_envs, spec.agents_per_env
         groups = spec.env_groups_ranges()
-        evaluating, episodes, next_seed = False, 0, 0
+        evaluating, episodes, next_seed, last_seed = False, 0, 0, 0
         env_seed = [p.NO_EPISODE_SEED] * e_count
         env_time = [0] * e_count
         decision = 0
@@ -69,7 +69,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
             nonlocal next_seed
             env_time[e] = 0
             env_seed[e] = p.NO_EPISODE_SEED
-            if evaluating and next_seed < episodes:
+            if evaluating and next_seed < last_seed:
                 env_seed[e], next_seed = next_seed, next_seed + 1
 
         def blank():
@@ -118,7 +118,8 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                 if msg_type == p.MsgType.MODE:
                     evaluating, _, episodes, baseline, _ = p.decode_mode(body)
                     modes.append((evaluating, episodes, baseline))
-                    next_seed = 0
+                    next_seed = p.decode_mode_first_seed(body)
+                    last_seed = next_seed + episodes
                     for e in range(e_count):
                         reset(e)
                     for begin, count in groups:
@@ -283,3 +284,50 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     assert [int(row["update"]) for row in rows] == [1, 2, 3]
     assert all(float(row["reward_per_decision"]) == pytest.approx(1.0) for row in rows)
     assert modes.count((True, 2, "")) >= 3
+
+
+def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path):
+    """The host's learner trains on its own sim and a worker's as one pool (cluster_sims): a half-batch sim and a
+    lock-step one here. Every present seat earns 1 as with one sim, and each evaluation's seeds are shared out so
+    that every seed is played exactly once."""
+    host_spec = dataclasses.replace(SPEC, num_envs=4, env_groups=2)
+    listeners, servers, modes = [], [], []
+    for name, spec in (("host", host_spec), ("worker", SPEC)):
+        path = str(tmp_path / f"{name}.sock")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        sim_modes = []
+        servers.append(threading.Thread(target=fake_sim, args=(listener, sim_modes, [], spec)))
+        servers[-1].start()
+        listeners.append(listener)
+        modes.append(sim_modes)
+
+    envs = host_spec.num_envs + SPEC.num_envs
+    steps_per_update = 4 * envs * SPEC.agents_per_env
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+        f"socket={tmp_path / 'host.sock'}", f"cluster_sims=['{tmp_path / 'worker.sock'}']",
+        f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
+        "rollout_length=4", f"total_env_steps={2 * steps_per_update}", "checkpoint_every=1", "init_from=''",
+        "train_device=cpu", "rollout_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
+        f"eval.every_env_steps={steps_per_update}", "eval.episodes=6", "eval.baseline=''", "eval.sampled_every=3",
+        "convergence.patience=0",
+    ])
+    assert TrainingRun(config, resume=False).run() == 0
+    for server, listener in zip(servers, listeners):
+        server.join(timeout=10)
+        listener.close()
+
+    run_dir = tmp_path / "runs" / "fake"
+    with (run_dir / "metrics.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [int(row["update"]) for row in rows] == [1, 2]
+    assert all(float(row["reward_per_decision"]) == pytest.approx(1.0) for row in rows)
+    # Both sims took part in every evaluation, the host with the larger share (4 envs against 2).
+    assert modes[0].count((True, 4, "")) >= 1 and modes[1].count((True, 2, "")) >= 1
+    # One row per seat: within an evaluation no seat of a seed is scored twice, and every seed is played.
+    episodes = [json.loads(line) for line in (run_dir / "eval_episodes.jsonl").read_text().splitlines()]
+    played = [(row["env_steps"], row["policy"], row["seed"], row["layout"]) for row in episodes]
+    assert len(played) == len(set(played)), "a seed was played twice"
+    for evaluation in {(steps, policy) for steps, policy, _, _ in played}:
+        assert {seed for steps, policy, seed, _ in played if (steps, policy) == evaluation} == set(range(6))

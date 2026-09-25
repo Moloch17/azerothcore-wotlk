@@ -6,6 +6,7 @@ blocks until it gets one ACT back. All envs auto-reset inside the sim.
 
 from __future__ import annotations
 
+import dataclasses
 import socket
 import time
 
@@ -35,14 +36,22 @@ class ForgeEnv:
 
     @staticmethod
     def _connect(path: str, timeout: float) -> socket.socket:
-        """Retry until the sim is listening: the server may still be loading the world."""
+        """Retry until the sim is listening: the server may still be loading the world. `path` is a Unix socket, or
+        "tcp://host:port" for a sim on another machine (a cluster worker)."""
         deadline = time.monotonic() + timeout
         while True:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            if path.startswith("tcp://"):
+                host, _, port = path[len("tcp://"):].rpartition(":")
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                target = (host, int(port))
+            else:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                target = path
             try:
-                sock.connect(path)
+                sock.connect(target)
                 return sock
-            except (FileNotFoundError, ConnectionRefusedError):
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
                 sock.close()
                 if time.monotonic() > deadline:
                     raise
@@ -81,13 +90,13 @@ class ForgeEnv:
         return self._receive_step()
 
     def set_mode(self, evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                 opponents_only: bool = False) -> p.Step:
+                 opponents_only: bool = False, first_seed: int = 0) -> p.Step:
         """Switch the sim between training and seeded evaluation (see protocol MODE). With `opponents_only` the
         baseline plays only the opponent seats of self-play episodes and the actions sent play the rest.
 
         Every env resets; the returned STEP holds the fresh observations and, like the first one, no transition.
         """
-        payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only)
+        payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only, first_seed)
         self.sock.sendall(p.encode_header(p.MsgType.MODE, len(payload)) + payload)
         self._pending = self._receive_decision()
         return self._pending
@@ -153,3 +162,103 @@ class ForgeEnv:
             if got == 0:
                 raise ConnectionError("sim closed the connection")
             view = view[got:]
+
+
+class ClusterEnv:
+    """Several sims as one pool: the host's own and every worker's (AnimusForge.Cluster). Their envs are laid end to
+    end in the order given, and every sim's groups are groups of the whole, so the pipelined rollout answers each
+    sim's half as it comes and every sim's maps tick while the others' are decided. Whole-decision calls (step,
+    reset, set_mode) go to every sim: an evaluation's seeds are shared out, each sim playing its own run of them.
+
+    The sims must be one scenario: the same observation, state, action and episode info layouts, decision length
+    and goals. How many envs each runs may differ.
+    """
+
+    def __init__(self, endpoints: list[str], connect_timeout: float = 600.0):
+        self.sims = [ForgeEnv(endpoint, connect_timeout) for endpoint in endpoints]
+        first = self.sims[0].spec
+        for endpoint, sim in zip(endpoints[1:], self.sims[1:]):
+            mine = dataclasses.replace(sim.spec, num_envs=first.num_envs, env_groups=first.env_groups)
+            if mine != first:
+                raise ConnectionError(f"sim {endpoint} runs {sim.spec.scenario} with a different spec than "
+                                      f"{endpoints[0]}'s {first.scenario}: a cluster's sims must be one scenario")
+
+        self.offsets, self.groups, self._owners = [], [], []
+        offset = 0
+        for index, sim in enumerate(self.sims):
+            self.offsets.append(offset)
+            for begin, count in sim.groups:
+                self.groups.append((offset + begin, count))
+                self._owners.append((index, begin))
+            offset += sim.spec.num_envs
+        self.spec = dataclasses.replace(first, num_envs=offset, env_groups=len(self.groups))
+        self._next_group = 0
+
+    def _owner(self, begin: int) -> tuple[int, int]:
+        return self._owners[[group for group, _ in self.groups].index(begin)]
+
+    def _joined(self, parts: list[p.Step]) -> p.Step:
+        return p.join_steps([dataclasses.replace(part, env_begin=part.env_begin + offset)
+                             for part, offset in zip(parts, self.offsets)])
+
+    def reset(self) -> p.Step:
+        self._next_group = 0
+        return self._joined([sim.reset() for sim in self.sims])
+
+    def step(self, actions: np.ndarray, goals: np.ndarray | None = None) -> p.Step:
+        # Every sim's answers go out before any STEP is read, so the sims tick together.
+        for begin, count in self.groups:
+            rows = slice(begin, begin + count)
+            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None)
+        self._next_group = 0
+        return self._joined([sim._receive_decision() for sim in self.sims])
+
+    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> None:
+        index, local = self._owner(env_begin)
+        self.sims[index].send_act(local, actions, goals)
+
+    def receive_step(self) -> p.Step:
+        """The next group's STEP, in the order of `groups`: the pipelined rollout reads them in that order."""
+        index, _ = self._owners[self._next_group]
+        self._next_group = (self._next_group + 1) % len(self.groups)
+        part = self.sims[index].receive_step()
+        return dataclasses.replace(part, env_begin=part.env_begin + self.offsets[index])
+
+    def set_mode(self, evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
+                 opponents_only: bool = False, first_seed: int = 0) -> p.Step:
+        # An evaluation's seeds shared out in proportion to each sim's envs, in consecutive runs, so every seed is
+        # played once and reported by its own index whichever sim plays it.
+        shares = _shares(episodes, [sim.spec.num_envs for sim in self.sims]) if evaluate else [0] * len(self.sims)
+        parts, start = [], first_seed
+        for sim, share in zip(self.sims, shares):
+            parts.append(sim.set_mode(evaluate, seed_base, share, baseline, opponents_only, start))
+            start += share
+        self._next_group = 0
+        return self._joined(parts)
+
+    def set_layout_weights(self, weights) -> None:
+        for sim in self.sims:
+            sim.set_layout_weights(weights)
+
+    def set_replay(self, seed_base: int, fraction: float, seeds) -> None:
+        for sim in self.sims:
+            sim.set_replay(seed_base, fraction, seeds)
+
+    def close(self) -> None:
+        for sim in self.sims:
+            sim.close()
+
+    def __enter__(self) -> "ClusterEnv":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+def _shares(total: int, weights: list[int]) -> list[int]:
+    """`total` split in proportion to `weights`, whole numbers adding up to it."""
+    whole = sum(weights) or 1
+    shares = [total * weight // whole for weight in weights]
+    for index in range(total - sum(shares)):
+        shares[index % len(shares)] += 1
+    return shares
