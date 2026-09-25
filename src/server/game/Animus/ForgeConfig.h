@@ -101,9 +101,26 @@ namespace AnimusForge
         /// empty = the stage config's train_device and rollout_device). A GPU the machine does not have falls back
         /// to the first one, so the key can name the machine as it will be.
         std::string LearnerDevice;
-        /// AnimusForge.Learner.Ranks: data-parallel learners sharing this sim's pool, one per GPU, gradients averaged
-        /// every step. Each owns an equal share of every group of envs.
+        /// Data-parallel learners sharing this sim's pool, one per GPU, gradients averaged every step; each owns an
+        /// equal share of every group of envs. Resolved from the GPU mode: 1 in single mode, AnimusForge.Gpu.Multi.
+        /// Learners (or one per GPU found) in multi mode.
         uint32 LearnerRanks = 1;
+
+        /// AnimusForge.Gpu.Mode: how the learner uses the machine's GPUs. Auto counts the GPUs the learner's torch
+        /// sees (ROCm or CUDA alike) that have at least half the compute units of the largest -- an integrated GPU
+        /// beside a discrete card does not count -- and runs multi mode with two or more, single mode otherwise.
+        /// Each mode has its own envs, minibatches and learner args (AnimusForge.Gpu.Single.* / Gpu.Multi.*),
+        /// applied to Envs, the stages' own envs, LearnerRanks and LearnerArgs as the config loads.
+        enum class GpuMode : uint8
+        {
+            Auto,
+            Single,
+            Multi
+        };
+        GpuMode GpuModeSetting = GpuMode::Auto;
+        bool MultiGpu = false;                  // resolved: the mode in force
+        std::vector<uint32> Gpus;               // resolved: the GPUs that count, by torch index (empty: none found)
+        std::string GpuSummary;                 // resolved: the mode in force and why, for the log and `forge status`
 
         /// AnimusForge.Cluster.Role: several machines training one learner. A worker runs only its sim, of the
         /// scenario its host orders, and the host's learner trains on every sim's envs as one pool (the learner's
@@ -206,6 +223,10 @@ namespace AnimusForge
         [[nodiscard]] std::string LearnerConfigFor(std::string const& scenario) const;
 
         void Load();
+
+    private:
+        /// AnimusForge.Gpu.*: resolve the mode (counting the GPUs if it has to) and apply its values. End of Load.
+        void ApplyGpuMode();
     };
 }
 

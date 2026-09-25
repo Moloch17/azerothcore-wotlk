@@ -465,7 +465,7 @@ evaluation seeds are shared over the sims present. The host re-orders a worker t
 running stage, and a worker keeps a stage already running. Tested live: killed the worker mid-stage8_duel,
 updates carried on with the host's 32 envs; restarted, it was ordered back on and its 32 envs rejoined.
 
-**Data-parallel learners** (`AnimusForge.Learner.Ranks`, 1-16; animus.parallel): the worldserver starts one learner
+**Data-parallel learners** (animus.parallel; chosen by the GPU mode below): the worldserver starts one learner
 per rank. Rank k: `--set rank=k ranks=N dist_address=127.0.0.1:<free port>`, device cuda:(k + the index in
 Learner.Device), whole physical cores of what the map update leaves (CpuPlacement::Split), log
 animus-learner.rank<k>.log. Each rank takes an equal share of every group of the pool's envs (PoolRanks clamps N so
@@ -484,6 +484,14 @@ in, with a presence count). Also: NCCL ranks set their own current device (objec
 
 **Untested until the second GPU is in**: NCCL/RCCL itself, and whether two ranks beat one. Expect it to: the
 learner is GPU-latency-bound per process, and two cards run two update chains side by side.
+
+**GPU modes** (the user's request; replaces `AnimusForge.Learner.Ranks`): `AnimusForge.Gpu.Mode = auto | single |
+multi`. The worldserver asks the learner's torch once per start which GPUs it sees, keeps those with at least half
+the largest's compute units (this machine: the RX card; kfd also lists the CPU's iGPU, which ROCm's torch hides), and
+auto runs multi mode with two or more. Each mode has its own `Gpu.<Mode>.Envs` (multi's 0 = AnimusForge.Envs and each
+stage's own envs x learners), `Gpu.<Mode>.Minibatches` (0 = the stage config's) and `Gpu.<Mode>.LearnerArgs`
+(after Learner.Args); `Gpu.Multi.Learners` (0 = one per GPU). Rank k runs on the k-th counted GPU. The startup log
+and `forge status` say "GPU mode: ...". Forced multi with 2 learners: 2 learners, 384 envs; auto here: single.
 
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
@@ -1015,15 +1023,16 @@ thousands of bots puts that on the critical path:
 ## Resume here (2026-09-25, third session)
 
 State: `forge` is pushed to origin (Moloch17/azerothcore-wotlk). The worldserver runs standalone at 192 envs,
-half-batch, 7 map threads, 8 replicas, Learner.Ranks 1. The user's standing priorities: multithreading as fast and
+half-batch, 7 map threads, 8 replicas, GPU mode auto (single on this machine). The user's standing priorities: multithreading as fast and
 efficient as possible, as much as possible on the GPU; judge by end-to-end env steps/s with the learner attached.
 Seventh measurement: ~22k (128 envs) / ~30k (192) env steps/s with the learner; the learner is the wall.
 
 Open items, most useful first:
 
-1. **When the second GPU is fitted**: set `AnimusForge.Learner.Ranks = 2` and run `forge fast stage8_duel`;
-   check both learner logs say `(nccl)` and `Updates on cuda:0` / `cuda:1`, then bench 1 vs 2 ranks at 192 and
-   384 envs. Consider mappo.minibatches 8 with 2 ranks to keep the per-step batch.
+1. **When the second GPU is fitted**: nothing to set (GPU mode auto). Check the startup log says "GPU mode: multi
+   (auto): 2 learners, 384 envs (2 GPUs found ...)", run `forge fast stage8_duel`, check both learner logs say
+   `(nccl)` and `Updates on cuda:0` / `cuda:1`, then bench single vs multi (`forge bench` uses the mode in force;
+   Gpu.Mode single for the other side).
 2. Done: after the drop/rejoin and data-parallel changes, `forge bench` (7 threads, 8 replicas, half-batch, one
    rank) gives 22,399 / 30,072 env steps/s with the learner at 128 / 192 envs (sim alone 43,797 / 53,350): the
    seventh measurement's numbers, no regression.

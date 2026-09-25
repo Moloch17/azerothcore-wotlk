@@ -104,6 +104,8 @@ void AnimusForge::Forge::OnStartup()
         return;
     }
 
+    LOG_INFO("module.animus", "GPU mode: {}", _config.GpuSummary);
+
     if (_config.Cluster == ForgeConfig::ClusterRole::Host)
         _cluster.Listen(_config.ClusterControlPort);
     else if (_config.Cluster == ForgeConfig::ClusterRole::Worker)

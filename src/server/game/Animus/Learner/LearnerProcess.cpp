@@ -54,14 +54,21 @@ namespace
         return port;
     }
 
-    /// Rank `rank`'s device: its own GPU counted from AnimusForge.Learner.Device ("cuda:1" and 2 ranks: cuda:1 and
-    /// cuda:2; empty: cuda:0, cuda:1, ...), or the one device for every rank when that is not a GPU. The learner
-    /// falls back to the first GPU for one the machine does not have, and then reduces over gloo.
-    std::string RankDevice(std::string const& device, uint32 rank, uint32 ranks)
+    /// Rank `rank`'s device. AnimusForge.Learner.Device set: its own GPU counted from there ("cuda:1" and 2 ranks:
+    /// cuda:1 and cuda:2), or that one device for every rank when it is not a GPU. Empty: the rank-th of the GPUs the
+    /// GPU mode counted (the largest ones, whatever torch numbers them), or with none counted cuda:<rank> for
+    /// several ranks and the stage config's own device for one. The learner falls back to the first GPU for one the
+    /// machine does not have, and then reduces over gloo.
+    std::string RankDevice(AnimusForge::ForgeConfig const& config, uint32 rank)
     {
-        if (ranks <= 1)
-            return device;
-        if (!device.empty() && device.rfind("cuda", 0) != 0)
+        std::string const& device = config.LearnerDevice;
+        if (device.empty())
+        {
+            if (!config.Gpus.empty())
+                return "cuda:" + std::to_string(config.Gpus[rank % config.Gpus.size()]);
+            return config.LearnerRanks > 1 ? "cuda:" + std::to_string(rank) : std::string();
+        }
+        if (config.LearnerRanks <= 1 || device.rfind("cuda", 0) != 0)
             return device;
 
         uint32 first = 0;
@@ -116,7 +123,7 @@ namespace
         }
 
         // Before AnimusForge.Learner.Args, whose --set comes later and wins.
-        std::string const device = RankDevice(config.LearnerDevice, rank, config.LearnerRanks);
+        std::string const device = RankDevice(config, rank);
         if (!device.empty())
             for (char const* key : { "train_device=", "rollout_device=" })
                 set(key + device);

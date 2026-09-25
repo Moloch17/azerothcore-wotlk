@@ -261,11 +261,11 @@ namespace AnimusForge
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
         bool SendSpec(uint32 rank);
-        /// AnimusForge.Learner.Ranks as this pool can take it: every rank needs an env of every group. The learners
-        /// started and the connections awaited both use it, so the two always agree.
+        /// The GPU mode's learner count (ForgeConfig::LearnerRanks) as this pool can take it: every rank needs an env
+        /// of every group. The learners started and the connections awaited both use it, so the two always agree.
         [[nodiscard]] uint32 PoolRanks(uint32 wanted) const;
         bool SendStep(uint32 group);
-        /// Data-parallel learners (AnimusForge.Learner.Ranks): rank `rank`'s share of group `group`, as the first
+        /// Data-parallel learners (multi-GPU mode): rank `rank`'s share of group `group`, as the first
         /// env of the pool, how many, and the first env in that learner's own numbering (its envs are its share of
         /// each group, one after another).
         struct RankRows

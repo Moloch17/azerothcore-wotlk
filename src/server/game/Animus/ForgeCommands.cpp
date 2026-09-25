@@ -290,6 +290,7 @@ void AnimusForge::Forge::CommandStatus(LineSink const& out)
         if (_config.IsRemote())
         {
             table.AddRow({ "learner", _config.LearnerAutoStart ? "started with each scenario" : "started by hand" });
+            table.AddRow({ "GPU mode", _config.GpuSummary });
             table.AddRow({ "learner socket", _config.SocketPath });
             table.AddRow({ "learner log", _config.LearnerLogFile });
         }

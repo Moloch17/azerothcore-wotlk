@@ -21,11 +21,14 @@
 #include "Config.h"
 #include "DBCEnums.h"
 #include "Log.h"
+#include "StringConvert.h"
 #include "Tokenize.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <system_error>
 
@@ -101,6 +104,54 @@ namespace
         }
 
         return numbers;
+    }
+}
+
+namespace
+{
+    struct Gpu
+    {
+        uint32 Index = 0;
+        uint32 Units = 0;       // compute units (AMD) or streaming multiprocessors (NVIDIA)
+        std::string Name;
+    };
+
+    /// The GPUs the learner's own torch sees (ROCm or CUDA: what it will run on, which a count of /sys would get
+    /// wrong -- ROCm hides GPUs it does not support). Asked once per process, the first time a config loads in a
+    /// mode that needs it; the cards do not change while the server runs. Empty when torch sees none or cannot be
+    /// asked.
+    std::vector<Gpu> const& DetectGpus(std::string const& python, std::string const& workDir)
+    {
+        static std::optional<std::vector<Gpu>> found;
+        if (found)
+            return *found;
+
+        found.emplace();
+        std::string const command = "cd '" + workDir + "' && '" + python + "' -c 'import torch; n = "
+            "torch.cuda.device_count() if torch.cuda.is_available() else 0; [print(i, torch.cuda.get_device_properties"
+            "(i).multi_processor_count, torch.cuda.get_device_properties(i).name, sep=chr(9)) for i in range(n)]' "
+            "2>/dev/null";
+        FILE* pipe = popen(command.c_str(), "r");
+        if (!pipe)
+            return *found;
+
+        char line[512];
+        while (std::fgets(line, sizeof(line), pipe))
+        {
+            std::vector<std::string_view> const fields = Acore::Tokenize(line, '\t', true);
+            if (fields.size() < 3)
+                continue;
+            Optional<uint32> const index = Acore::StringTo<uint32>(fields[0]);
+            Optional<uint32> const units = Acore::StringTo<uint32>(fields[1]);
+            if (!index || !units)
+                continue;
+            std::string name(fields[2]);
+            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())))
+                name.pop_back();
+            found->push_back({ *index, *units, std::move(name) });
+        }
+        pclose(pipe);
+        return *found;
     }
 }
 
@@ -247,7 +298,6 @@ void AnimusForge::ForgeConfig::Load()
 
     LearnerTorchThreads = sConfigMgr->GetOption<uint32>("AnimusForge.Learner.TorchThreads", 0);
     LearnerDevice = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Device", "");
-    LearnerRanks = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("AnimusForge.Learner.Ranks", 1), 1, 16);
 
     std::string role = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Role", "standalone");
     std::transform(role.begin(), role.end(), role.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -307,6 +357,91 @@ void AnimusForge::ForgeConfig::Load()
         sConfigMgr->GetOption<float>("AnimusForge.SpawnPoint.Y", 1315.2f),
         sConfigMgr->GetOption<float>("AnimusForge.SpawnPoint.Z", 14.0f),
         sConfigMgr->GetOption<float>("AnimusForge.SpawnPoint.O", 2.96f));
+
+    // Last: the mode needs the policy, the cluster role and the learner's paths, and adjusts Envs and LearnerArgs.
+    ApplyGpuMode();
+}
+
+void AnimusForge::ForgeConfig::ApplyGpuMode()
+{
+    std::string mode = sConfigMgr->GetOption<std::string>("AnimusForge.Gpu.Mode", "auto");
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return std::tolower(c); });
+    GpuModeSetting = mode == "single" ? GpuMode::Single : mode == "multi" ? GpuMode::Multi : GpuMode::Auto;
+    if (mode != "auto" && mode != "single" && mode != "multi")
+        LOG_ERROR("module.animus", "AnimusForge.Gpu.Mode = '{}' is not auto, single or multi; auto", mode);
+
+    uint32 const multiLearners = std::min<uint32>(sConfigMgr->GetOption<uint32>("AnimusForge.Gpu.Multi.Learners", 0),
+        16);
+
+    // Only a learner of this sim's own needs the GPUs counted: a cluster worker runs none, and a local policy none.
+    bool const learnerHere = IsRemote() && Cluster != ClusterRole::Worker;
+    Gpus.clear();
+    std::string found = "not counted";
+    // Counted in every mode: besides auto's choice, it puts the learners on the largest GPUs whatever torch numbers
+    // them (an integrated GPU can come first).
+    if (learnerHere)
+    {
+        std::vector<Gpu> const& gpus = DetectGpus(LearnerPython, LearnerWorkDir);
+        uint32 largest = 0;
+        for (Gpu const& gpu : gpus)
+            largest = std::max(largest, gpu.Units);
+
+        // An integrated GPU beside a discrete card would be the slowest rank, and every rank waits for the slowest.
+        std::vector<std::string> names;
+        for (Gpu const& gpu : gpus)
+        {
+            if (2 * gpu.Units < largest)
+                continue;
+            Gpus.push_back(gpu.Index);
+            names.push_back(Acore::StringFormat("cuda:{} {}", gpu.Index, gpu.Name));
+        }
+
+        found = Gpus.empty() ? "no GPU found" : Acore::StringFormat("{} GPU{} found: ", Gpus.size(),
+            Gpus.size() == 1 ? "" : "s");
+        for (std::size_t i = 0; i < names.size(); ++i)
+            found += (i ? ", " : "") + names[i];
+        if (gpus.size() > Gpus.size())
+            found += Acore::StringFormat(" ({} smaller left out)", gpus.size() - Gpus.size());
+    }
+
+    MultiGpu = learnerHere && (GpuModeSetting == GpuMode::Multi
+        || (GpuModeSetting == GpuMode::Auto && Gpus.size() > 1));
+    LearnerRanks = MultiGpu ? std::clamp<uint32>(multiLearners ? multiLearners : uint32(Gpus.size()), 1, 16) : 1;
+
+    // The mode's own values. Envs: Single.Envs, or Multi.Envs, or by default AnimusForge.Envs (and each stage's own
+    // envs) for every learner, so each GPU gets the batch one GPU would.
+    std::string const prefix = MultiGpu ? "AnimusForge.Gpu.Multi." : "AnimusForge.Gpu.Single.";
+    uint32 const envs = sConfigMgr->GetOption<uint32>(prefix + "Envs", 0);
+    if (envs)
+        Envs = envs;
+    else if (MultiGpu)
+    {
+        Envs *= LearnerRanks;
+        for (auto& [stage, stageEnvs] : StageEnvs)
+            stageEnvs *= LearnerRanks;
+    }
+    if (Envs > Animus::BotAccounts::MAX_ENVS)
+    {
+        LOG_ERROR("module.animus", "{} envs for the GPU mode is more than bot account ids allow; using {}", Envs,
+            Animus::BotAccounts::MAX_ENVS);
+        Envs = Animus::BotAccounts::MAX_ENVS;
+    }
+
+    // Minibatches, then the mode's own learner args: after AnimusForge.Learner.Args, so the mode's --set wins.
+    std::vector<std::string> args;
+    if (uint32 const minibatches = sConfigMgr->GetOption<uint32>(prefix + "Minibatches", 0))
+        args = { "--set", Acore::StringFormat("mappo.minibatches={}", minibatches) };
+    args.insert(args.begin(), LearnerArgs.begin(), LearnerArgs.end());
+    std::istringstream modeArgs(sConfigMgr->GetOption<std::string>(prefix + "LearnerArgs", ""));
+    for (std::string arg; modeArgs >> arg;)
+        args.push_back(arg);
+    LearnerArgs = std::move(args);
+
+    char const* const setting = GpuModeSetting == GpuMode::Auto ? "auto" : GpuModeSetting == GpuMode::Single
+        ? "single" : "multi";
+    GpuSummary = !learnerHere ? Acore::StringFormat("{} (no learner on this sim)", setting)
+        : Acore::StringFormat("{}{}: {} learner{}, {} envs ({})", MultiGpu ? "multi" : "single",
+            GpuModeSetting == GpuMode::Auto ? " (auto)" : "", LearnerRanks, LearnerRanks == 1 ? "" : "s", Envs, found);
 }
 
 Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenario) const

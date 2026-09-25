@@ -29,10 +29,10 @@ namespace AnimusForge
 {
     struct ForgeConfig;
 
-    /// The Python learner as child processes of the worldserver: one, or with AnimusForge.Learner.Ranks one per
-    /// rank of a data-parallel run (animus.parallel), each on its own GPU, its own slice of the cores left over from
-    /// the map update, and its own log. Rank 0 is the run's leader and writes animus-learner.log; rank k writes
-    /// animus-learner.rank<k>.log beside it.
+    /// The Python learner as child processes of the worldserver: one, or in multi-GPU mode (AnimusForge.Gpu.Mode)
+    /// one per rank of a data-parallel run (animus.parallel), each on its own GPU, its own slice of the cores left
+    /// over from the map update, and its own log. Rank 0 is the run's leader and writes animus-learner.log; rank k
+    /// writes animus-learner.rank<k>.log beside it.
     ///
     /// Lifetime is tied to the learner socket rather than to signals: when the server shuts down, a run is
     /// cancelled (or the server crashes) the socket closes, the learners' train loops see the disconnect, save

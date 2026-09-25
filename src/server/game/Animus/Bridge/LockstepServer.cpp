@@ -184,7 +184,7 @@ bool AnimusForge::LockstepServer::AcceptClients(uint32 ranks, std::function<bool
         if (hello.Ranks != clients.size() || hello.Rank >= clients.size() || clients[hello.Rank] >= 0)
         {
             LOG_ERROR("module.animus", "A learner says it is rank {} of {}; this sim expects {} learner{} "
-                "(AnimusForge.Learner.Ranks) and {}", hello.Rank, hello.Ranks, clients.size(),
+                "(the GPU mode's learners) and {}", hello.Rank, hello.Ranks, clients.size(),
                 clients.size() == 1 ? "" : "s", hello.Rank < clients.size() && clients[hello.Rank] >= 0
                 ? "has that rank already" : "no such rank");
             ::close(fd);
