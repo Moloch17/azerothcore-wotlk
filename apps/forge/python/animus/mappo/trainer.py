@@ -298,7 +298,6 @@ class _RolloutGraph:
         self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
 
         stream = trainer._rollout_stream
-        self.side = torch.cuda.Stream(device=device, priority=-1)
         # Warm up on the capture stream (allocator and library workspaces), then capture.
         stream.wait_stream(torch.cuda.current_stream(device))
         with torch.no_grad():
@@ -323,13 +322,10 @@ class _RolloutGraph:
         memory = inputs["memory"].reshape(rows, -1) if "memory" in inputs else None
         state_t = inputs["state"][:, None, :].expand(envs, agents, inputs["state"].shape[-1]).reshape(rows, -1)
 
-        # Two branches: the critic's goal-free encoding (its two large products) on the side stream while the actor
-        # carries its memory and chooses the goal here, then the critic's goal-dependent rest there while the actor
-        # chooses the actions here. Captured with the fork and the joins, so a replay runs them side by side.
-        main, side = torch.cuda.current_stream(), self.side
-        side.wait_stream(main)
-        with torch.cuda.stream(side):
-            critic_hidden = critic.state_encoder(critic.state_norm(state_t))
+        # One stream, in order. A side stream for the critic's branch ran them side by side and measured faster alone,
+        # but slower in training (47,144 -> 35,352 env steps/s): ROCm maps streams onto a few hardware queues, and
+        # beside the update's two the side stream's kernels queued behind the update's.
+        critic_hidden = critic.state_encoder(critic.state_norm(state_t))
         # Both networks' adapters read the observation: one product (SharedInputDense), the critic's half handed over.
         actor_own, critic_own = trainer._shared_adapters(obs_t, layout_t)
         features = actor.features_from(actor.trunk(actor_own), memory)
@@ -345,17 +341,14 @@ class _RolloutGraph:
             out["goal"] = goal_t.reshape(envs, agents)
             out["goal_log_prob"] = log_prob_of(goal_logits, goal_t).reshape(envs, agents)
 
-        side.wait_stream(main)
-        critic_out: dict[str, torch.Tensor] = {}
-        with torch.cuda.stream(side):
-            critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
-            values, carried = critic.step_encoded(critic.encode_goal(critic_hidden, critic_own, goal_t), (rows,),
-                                                  critic_memory)
-            if trainer._rollout_value_norm is not None:
-                values = trainer._rollout_value_norm.denormalize(values)
-            critic_out["values"] = values.reshape(envs, agents)
-            if critic_memory is not None:
-                critic_out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
+        critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
+        values, carried = critic.step_encoded(critic.encode_goal(critic_hidden, critic_own, goal_t), (rows,),
+                                              critic_memory)
+        if trainer._rollout_value_norm is not None:
+            values = trainer._rollout_value_norm.denormalize(values)
+        out["values"] = values.reshape(envs, agents)
+        if critic_memory is not None:
+            out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
 
         logits = actor.action_logits(features, layout_t, mask_t, goal_t, None)
         actions, log_probs = sample_logits(logits, self.deterministic)
@@ -367,15 +360,11 @@ class _RolloutGraph:
             out["memory"] = features.reshape(envs, agents, trainer.recurrent_size)
 
         if self.outputs is None:
-            self.outputs = _Packed([(name, tuple(value.shape), value.dtype)
-                                    for name, value in {**out, **critic_out}.items()], trainer.rollout_device)
+            self.outputs = _Packed([(name, tuple(value.shape), value.dtype) for name, value in out.items()],
+                                   trainer.rollout_device)
         # Gathered into the output buffer on the device (small copy kernels), then down in one transfer.
         for name, value in out.items():
             self.outputs.device[name].copy_(value)
-        with torch.cuda.stream(side):
-            for name, value in critic_out.items():
-                self.outputs.device[name].copy_(value)
-        main.wait_stream(side)
         self.outputs.download()
 
     def run(self, obs, mask, layout, state_features, state: "ActingState"):
