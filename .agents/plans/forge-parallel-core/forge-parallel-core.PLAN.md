@@ -1024,8 +1024,9 @@ Open items, most useful first:
 1. **When the second GPU is fitted**: set `AnimusForge.Learner.Ranks = 2` and run `forge fast stage8_duel`;
    check both learner logs say `(nccl)` and `Updates on cuda:0` / `cuda:1`, then bench 1 vs 2 ranks at 192 and
    384 envs. Consider mappo.minibatches 8 with 2 ranks to keep the per-step batch.
-2. **Bench the real sim at 192 envs** with the learner since the drop/rejoin and data-parallel changes (should
-   match the seventh measurement: nothing on the one-rank path changed but the learner launcher).
+2. Done: after the drop/rejoin and data-parallel changes, `forge bench` (7 threads, 8 replicas, half-batch, one
+   rank) gives 22,399 / 30,072 env steps/s with the learner at 128 / 192 envs (sim alone 43,797 / 53,350): the
+   seventh measurement's numbers, no regression.
 3. The update's remaining cost is MIOpen's per-timestep GRU launches; a persistent RNN kernel is the research
    option (see "Using every core").
 4. Cluster: `forge bench` on the host alone; workers do not report progress to the host's console.
