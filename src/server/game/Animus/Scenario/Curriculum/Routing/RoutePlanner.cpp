@@ -42,9 +42,25 @@ namespace
     constexpr float EXTENT_XY = 3.0f;
     constexpr float EXTENT_Z = 5.0f;
 
-    /// One query per navmesh, keyed on the mesh rather than the map id: instanced maps share their parent's
-    /// mesh through a shared_ptr, so keying on the id would build the same query many times over.
-    std::unordered_map<dtNavMesh const*, dtNavMeshQuery*> g_queries;
+    /// One query per navmesh per thread, keyed on the mesh rather than the map id: instanced maps share their
+    /// parent's mesh through a shared_ptr, so keying on the id would build the same query many times over.
+    ///
+    /// Per thread because a dtNavMeshQuery holds its search state (node pool, open list) and is not safe to share:
+    /// plans run inside each map's task (rewards and observation on the map threads), and a continent's replicas
+    /// share one mesh, so one global query was searched by several map threads at once -- a segfault in
+    /// dtNavMeshQuery::getPathToNode in a fast stage1_move at 16 replicas. Freed when the thread ends.
+    struct ThreadQueries
+    {
+        std::unordered_map<dtNavMesh const*, dtNavMeshQuery*> Queries;
+
+        ~ThreadQueries()
+        {
+            for (auto& [mesh, query] : Queries)
+                dtFreeNavMeshQuery(query);
+        }
+    };
+
+    thread_local ThreadQueries g_threadQueries;
 
     dtNavMeshQuery* QueryFor(Map* map)
     {
@@ -55,8 +71,9 @@ namespace
         if (!mesh)
             return nullptr;
 
-        auto found = g_queries.find(mesh);
-        if (found != g_queries.end())
+        auto& queries = g_threadQueries.Queries;
+        auto found = queries.find(mesh);
+        if (found != queries.end())
             return found->second;
 
         dtNavMeshQuery* query = dtAllocNavMeshQuery();
@@ -69,7 +86,7 @@ namespace
             return nullptr;
         }
 
-        g_queries.emplace(mesh, query);
+        queries.emplace(mesh, query);
         return query;
     }
 
@@ -152,13 +169,7 @@ Animus::Curriculum::RoutePlanner& Animus::Curriculum::RoutePlanner::Instance()
     return planner;
 }
 
-Animus::Curriculum::RoutePlanner::~RoutePlanner()
-{
-    for (auto& [mesh, query] : g_queries)
-        dtFreeNavMeshQuery(query);
-
-    g_queries.clear();
-}
+Animus::Curriculum::RoutePlanner::~RoutePlanner() = default;   // each thread frees its own queries
 
 bool Animus::Curriculum::RoutePlanner::Plan(Map* map, Position const& from, Position const& to, Route& out)
 {

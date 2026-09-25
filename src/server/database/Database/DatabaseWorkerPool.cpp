@@ -16,6 +16,9 @@
  */
 
 #include "DatabaseWorkerPool.h"
+#include <boost/stacktrace.hpp>
+#include <mutex>
+#include <set>
 #include <future>
 #include "AdhocStatement.h"
 #include "CharacterDatabase.h"
@@ -204,7 +207,10 @@ QueryResult DatabaseWorkerPool<T>::Query(std::string_view sql)
     {
         if (_sealStrict)
             ABORT("Synchronous query on sealed DatabasePool '{}': {}", GetDatabaseName(), sql);
-        LOG_WARN("sql.driver", "Synchronous query on sealed DatabasePool '{}' (remove before the seal is strict): {}", GetDatabaseName(), sql);
+        std::ostringstream trace;
+        trace << boost::stacktrace::stacktrace();
+        LOG_WARN("sql.driver", "Synchronous query on sealed DatabasePool '{}' (remove before the seal is strict): {}\n{}",
+            GetDatabaseName(), sql, trace.str());
     }
 
     auto connection = GetFreeConnection();
@@ -228,7 +234,22 @@ PreparedQueryResult DatabaseWorkerPool<T>::Query(PreparedStatement<T>* stmt)
     {
         if (_sealStrict)
             ABORT("Synchronous prepared query {} on sealed DatabasePool '{}'", stmt->GetIndex(), GetDatabaseName());
-        LOG_WARN("sql.driver", "Synchronous prepared query {} on sealed DatabasePool '{}' (remove before the seal is strict)", stmt->GetIndex(), GetDatabaseName());
+        // Once per statement, with where it came from: the sweep that clears the way to a strict seal needs the
+        // caller, not the index alone.
+        static std::mutex seenLock;
+        static std::set<std::pair<std::string, uint32>> seen;
+        bool first = false;
+        {
+            std::lock_guard<std::mutex> guard(seenLock);
+            first = seen.emplace(GetDatabaseName(), stmt->GetIndex()).second;
+        }
+        if (first)
+        {
+            std::ostringstream trace;
+            trace << boost::stacktrace::stacktrace();
+            LOG_WARN("sql.driver", "Synchronous prepared query {} on sealed DatabasePool '{}' (remove before the seal is "
+                "strict), first seen at:\n{}", stmt->GetIndex(), GetDatabaseName(), trace.str());
+        }
     }
 
     auto connection = GetFreeConnection();
