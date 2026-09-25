@@ -43,6 +43,11 @@ class Map;
 ///
 /// activate() / deactivate() may be called repeatedly between ticks: the module switches thread
 /// counts while benchmarking.
+///
+/// Placement (Acore::CpuPlacement::Order): the thread that calls activate(), the world thread, which runs tasks
+/// too in wait(), takes the first CPU and worker k the (k + 1)-th, so the pool fills one die's physical cores, then
+/// their SMT siblings, before it crosses to another die's L3. Pinned by CPU number instead, on a two-die 9950X3D,
+/// every map task ran 40% slower above 8 threads.
 class MapUpdater
 {
 public:
@@ -52,6 +57,9 @@ public:
     void activate(std::size_t num_threads);
     void deactivate();
     [[nodiscard]] bool activated() const { return !_workers.empty(); }
+
+    /// The CPUs the world thread and the workers are pinned to (empty before activate()).
+    [[nodiscard]] std::vector<int> const& PoolCpus() const { return _poolCpus; }
 
     /// A map's full tick: Update(diff, s_diff) then DelayedUpdate(diff). Callable from any thread.
     void schedule_update(Map& map, uint32 diff, uint32 s_diff);
@@ -84,11 +92,14 @@ private:
 
     std::unique_ptr<Task[]> _tasks;
     std::unique_ptr<std::atomic<bool>[]> _ready;    ///< slot written and publishable
-    std::atomic<uint32> _count{ 0 };                ///< slots taken this tick
-    std::atomic<uint32> _next{ 0 };                 ///< slots claimed this tick
-    std::atomic<uint32> _pending{ 0 };              ///< pushed and not yet finished
-    std::atomic<uint32> _parked{ 0 };               ///< workers waiting on the condition variable
-    std::atomic<bool> _stop{ false };
+    // One cache line each. _next is written by every claim and _pending by every finish, while idle workers spin
+    // reading _next and _count: sharing a line, every claim and finish would pull it away from every spinner.
+    alignas(64) std::atomic<uint32> _count{ 0 };    ///< slots taken this tick
+    alignas(64) std::atomic<uint32> _next{ 0 };     ///< slots claimed this tick
+    alignas(64) std::atomic<uint32> _pending{ 0 };  ///< pushed and not yet finished
+    alignas(64) std::atomic<uint32> _parked{ 0 };   ///< workers waiting on the condition variable
+    alignas(64) std::atomic<bool> _stop{ false };
+    std::vector<int> _poolCpus;
     std::mutex _parkLock;
     std::condition_variable _parkCv;
     std::vector<std::thread> _workers;

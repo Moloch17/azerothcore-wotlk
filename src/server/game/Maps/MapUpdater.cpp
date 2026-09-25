@@ -19,6 +19,7 @@
 
 #include "MapUpdater.h"
 #include "AnimusForge.h"
+#include "CpuPlacement.h"
 #include "DatabaseEnv.h"
 #include "Errors.h"
 #include "Log.h"
@@ -27,7 +28,6 @@
 #include <algorithm>
 #include <chrono>
 #if defined(__linux__)
-#include <pthread.h>
 #include <sched.h>
 #endif
 #if defined(__x86_64__) || defined(__i386__)
@@ -63,6 +63,19 @@ void MapUpdater::activate(std::size_t num_threads)
 {
     // A pool that was deactivated starts again here (the module switches thread counts between decisions).
     _stop.store(false, std::memory_order_release);
+
+    // The world thread first: it runs tasks in wait() like any worker, and unpinned it wandered onto the other die.
+    std::vector<int> const& order = Acore::CpuPlacement::Order();
+    _poolCpus.clear();
+    if (!order.empty())
+    {
+        for (std::size_t i = 0; i <= num_threads; ++i)
+            _poolCpus.push_back(order[i % order.size()]);
+
+        Acore::CpuPlacement::PinThisThread(_poolCpus.front());
+        LOG_INFO("server.loading", ">> Map update: {} workers and the world thread on cpus {}", num_threads,
+            Acore::CpuPlacement::Describe(_poolCpus));
+    }
 
     _workers.reserve(num_threads);
     for (std::size_t i = 0; i < num_threads; ++i)
@@ -201,29 +214,13 @@ void MapUpdater::wait()
     _next.store(0, std::memory_order_release);
 }
 
-void MapUpdater::PinToCpu([[maybe_unused]] uint32 index)
+void MapUpdater::PinToCpu(uint32 index)
 {
-#if defined(__linux__)
-    // Worker k takes the k-th CPU this process may run on, so a container's cpuset is honoured and every
-    // worker keeps its cache. The world thread and the learner stay unpinned.
-    cpu_set_t allowed;
-    CPU_ZERO(&allowed);
-    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0)
-        return;
-
-    std::vector<int> cpus;
-    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu)
-        if (CPU_ISSET(cpu, &allowed))
-            cpus.push_back(cpu);
-
-    if (cpus.empty())
-        return;
-
-    cpu_set_t mine;
-    CPU_ZERO(&mine);
-    CPU_SET(cpus[index % cpus.size()], &mine);
-    pthread_setaffinity_np(pthread_self(), sizeof(mine), &mine);
-#endif
+    // Worker k after the world thread in CpuPlacement's order, which lists only the CPUs this process may run on,
+    // so a container's cpuset is honoured.
+    std::vector<int> const& order = Acore::CpuPlacement::Order();
+    if (!order.empty())
+        Acore::CpuPlacement::PinThisThread(order[(index + 1) % order.size()]);
 }
 
 void MapUpdater::WorkerThread(uint32 index)
