@@ -169,6 +169,10 @@ void MapUpdater::wait()
 
     // Every task is finished and none can be claimed (next >= count). Rewind for the next tick: count first,
     // so a worker that reads the rewound next also reads a rewound count.
+    //
+    // The load-bearing invariant: a slot is claimed (next advanced) strictly before its task runs, and
+    // _pending is decremented only after the task ran, so a claimed-but-unrun slot keeps _pending above
+    // zero and this rewind cannot happen underneath a worker still waiting on that slot's _ready flag.
     _count.store(0, std::memory_order_release);
     _next.store(0, std::memory_order_release);
 }
