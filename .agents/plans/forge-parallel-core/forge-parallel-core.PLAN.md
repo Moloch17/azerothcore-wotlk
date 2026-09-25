@@ -232,6 +232,42 @@ What the numbers say, in the order that matters:
 Claims deliberately not made: the pet guard cannot be observed firing, only that the scenario which
 aborted at spawn now completes 16 trials. The gain is Phases 0-3 together, not replicas alone.
 
+## Second measurement, 2026-09-25 (revision 6474ff9d0, same bench, now with map task times)
+
+Same settings as the first: `stage8_duel`, policy `random`, 12 sim trials then the 2 fastest with the
+learner. Tasks per update are 6 / 8 / 10 at 64 / 128 / 192 envs (not 5: other maps tick as well). `Parallel`
+is summed task time over the update's wall time; `CPUs` is the last update only.
+
+| threads | envs | env steps/s | world ms | longest task ms | parallel | objects ms | CPUs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | 128 | 29,482 | 3.9 | 3.90 | 3.6x | 6.69 | 0-3,24 |
+| 8 | 128 | 29,688 | 3.9 | 3.87 | 3.7x | 6.75 | 0-3,25 |
+| 8 | 192 | 40,391 | 4.1 | 4.12 | 5.5x | 10.96 | 0-2,4-5,7,25 |
+| 12 | 128 | 21,673 | 5.5 | 5.46 | 3.4x | 9.63 | 1-2,6-7,13 |
+| 16 | 128 | 20,106 | 5.9 | 5.90 | 3.4x | 10.38 | 0,4,8,15,24 |
+| 8 + learner | 192 | 7,530 | 5.7 | 5.68 | 4.7x | - | 0-2,4-5,7-8 |
+| 8 + learner | 128 | 5,449-5,508 | 5.4 | 5.34 | 3.3x | - | 0-5 |
+
+Full table: `var/animus-forge/shared/bench/bench.json`.
+
+1. **The map update is one map long.** The longest task equals the wall time in 15 of 16 trials; the one
+   exception is 4 threads / 192 envs, where 10 tasks do not fit 4 workers plus the world thread. More
+   threads cannot shorten the update below the heaviest map's tick. Next: name that map (the status row
+   has it; the bench line does not yet) and see whether it is the base continent or a replica.
+2. **Above 8 threads, the same tasks run slower.** At 128 envs the longest task goes from 3.9 ms to 5.5-5.9 ms
+   and non-player object time from 6.7 to 9.6-10.4 ms, with the same tasks doing the same work. Finding 4
+   stands, now measured over every map.
+3. **Other-die pinning fits, but does not explain all of it.** At 12 and 16 threads the slowest task ran on
+   CCD1 (8, 13, 24). But at 8 threads the slowest task also ran on CCD1 twice (cpu 9, and 25 = the world
+   thread, which is unpinned and runs tasks in `wait()`) at normal speed. So one task on the other die is
+   not slow by itself. What changes above 8 is 4-8 more workers, pinned to CCD1, spinning on
+   `_next`/`_count` between tasks; that suggests cross-die cache traffic (spinning plus whatever the maps
+   write in common) rather than a slow die. Next test to tell them apart: 12 threads pinned to CCD0's SMT
+   siblings (0-7,16-23), against 12 spread across both dies.
+4. **The learner slows the map update too**: 3.9 → 5.4 ms at 8 threads / 128 envs, and the new CPU sets show
+   tasks on 0-5 while torch runs unpinned. The exchange itself is still 17-19 ms of a ~24-26 ms decision, so
+   Phase 4 remains the largest lever.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
