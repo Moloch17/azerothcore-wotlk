@@ -44,6 +44,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
 from .progress import ProgressWriter
+from . import protocol
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
 
@@ -331,6 +332,52 @@ def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+class DecisionRows:
+    """One decision's inputs and choices, filled group by group (a half-batch half at a time) and handed to the
+    rollout buffer whole."""
+
+    FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
+              "goal", "goal_log_prob", "goal_chosen", "critic_memory", "chosen")
+
+    def __init__(self, envs: int, agents: int):
+        self.envs = envs
+        self.arrays: dict[str, np.ndarray | None] = {}
+
+    def set(self, rows: slice, **values) -> None:
+        for name, value in values.items():
+            if value is None:
+                self.arrays[name] = None
+                continue
+            array = self.arrays.get(name)
+            if array is None:
+                array = self.arrays[name] = np.empty((self.envs, *value.shape[1:]), dtype=value.dtype)
+            array[rows] = value
+
+    def __getattr__(self, name: str):
+        if name in DecisionRows.FIELDS:
+            return self.__dict__["arrays"].get(name)
+        raise AttributeError(name)
+
+    def recorded(self) -> tuple:
+        """RolloutBuffer.add_decision's arguments."""
+        a = self.arrays
+        goals = (a["goal"], a["goal_log_prob"], a["goal_chosen"]) if a.get("goal") is not None else None
+        return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
+                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"))
+
+
+class RolloutOutcome:
+    """What one decision earned, filled group by group like DecisionRows: RolloutBuffer.add_outcome's arguments."""
+
+    def __init__(self, envs: int, agents: int, foresight_outputs: int):
+        self.reward = np.zeros((envs, agents), dtype=np.float32)
+        self.done = np.zeros(envs, dtype=bool)
+        self.terminated = np.zeros(envs, dtype=bool)
+        self.final_values = np.zeros((envs, agents), dtype=np.float32)
+        self.final_foresight = (np.zeros((envs, agents, foresight_outputs), dtype=np.float32)
+                                if foresight_outputs else None)
 
 
 class TrainingRun:
@@ -880,75 +927,50 @@ class TrainingRun:
         # across rollout boundaries, so what it remembers is bounded by the episode, not by rollout_length. The
         # update replays each rollout from the memory its first decision was taken with, so only the gradient is
         # truncated there.
-        while not buffer.full:
-            step = self.step
-            memory = self.acting.memory.copy() if self.acting.memory is not None else None
-            critic_memory = self.acting.critic_memory.copy() if self.acting.critic_memory is not None else None
-            # A non-finite observation reaches the networks as a non-finite logit and comes back out of
-            # torch.multinomial as "probability tensor contains either `inf`, `nan` or element < 0" -- an error
-            # that names neither the observation nor the seat it came from, several layers away from whichever
-            # block wrote it. Caught here it names both, which is the difference between a fix and a hunt.
-            if not np.isfinite(step.obs).all():
-                bad = np.argwhere(~np.isfinite(step.obs))
-                where = ", ".join(f"env {int(e)} agent {int(a)} obs[{int(i)}]={step.obs[e, a, i]}"
-                                  for e, a, i in bad[:8])
-                raise RuntimeError(
-                    f"{len(bad)} non-finite observation(s) from the sim at step {self.env_steps}: {where}"
-                    + ("" if len(bad) <= 8 else f" (and {len(bad) - 8} more)"))
+        #
+        # A decision is taken group by group. In half-batch (the sim ticks one half's maps while the other half
+        # decides) each half is answered as soon as its STEP arrives, so this side's inference runs while the sim
+        # ticks the other half: the sim and the learner stop taking turns. Otherwise there is one group, the whole
+        # pool, and env.step -- also what half-batch falls back to with a cast, which acts on whole decisions.
+        pipelined = len(self.env.groups) > 1 and self.cast is None
+        groups = self.env.groups if pipelined else [(0, envs)]
+        sent: dict[str, np.ndarray | None] = {}
 
-            actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
-                step.obs, step.mask, step.layout, step.state, state=self.acting)
-            # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
-            # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
-            present = step.present
-            if len(self.frozen):
-                present = present & ~np.isin(step.layout, self.frozen)
-            # A cast row (a frozen checkpoint's seat) takes the frozen actor's action and is not a sample either.
-            if self.cast is not None:
-                rows = self.cast.rows(step)
-                if rows.any():
-                    actions = self.cast.act(step, actions, rows)
-                    present = present & ~rows
-            buffer.add_decision(step.obs, step.state, step.mask, step.layout, actions, log_probs, values, present,
-                                foresight, memory, goals, critic_memory, chosen)
+        def send(begin: int, count: int, actions: np.ndarray, goals: np.ndarray | None) -> None:
+            if pipelined:
+                self.env.send_act(begin, actions, goals)
+            else:
+                sent["actions"], sent["goals"] = actions, goals
 
-            # The ended episodes' layouts: the next STEP already carries the new episodes'.
-            layout = step.layout
-            self.step = step = self.env.step(actions, goals[0] if goals is not None else None)
+        def receive(begin: int, count: int) -> protocol.Step:
+            if pipelined:
+                part = self.env.receive_step()
+                if (part.env_begin, part.done.shape[0]) != (begin, count):
+                    raise ConnectionError(f"expected the STEP of envs {begin}+{count}, got {part.env_begin}+"
+                                          f"{part.done.shape[0]}")
+                return part
+            return self.env.step(sent["actions"], sent["goals"])
 
-            final_values = np.zeros((envs, agents), dtype=np.float32)
-            final_foresight = (np.zeros((envs, agents, trainer.foresight_outputs), dtype=np.float32)
-                               if trainer.foresight_outputs else None)
-            if step.done.any():
-                # Only the envs that finished need one: an env ends an episode once in hundreds of decisions, so
-                # valuing all of them and then throwing most away is a forward pass over ~20x the rows needed.
-                done = step.done
-                # The goal in force is the one the ended episode's last decision pursued, which the value depends on.
-                goal = self.acting.goal
-                # The memory the critic ends the episode with, not a cleared one: the last decision's own state,
-                # which act_and_value has just carried forward and clear() has not yet reset.
-                critic_end = self.acting.critic_memory
-                final_values[done] = trainer.value(step.final_state[done], step.final_obs[done], layout[done],
-                                                   goal[done] if goal is not None else None,
-                                                   critic_end[done] if critic_end is not None else None)
-                if final_foresight is not None:
-                    final_foresight[done] = trainer.foresight_of(step.final_obs[done], layout[done],
-                                                                 memory[done] if memory is not None else None)
-                ended = step.episode_info[step.done].reshape(-1, spec.episode_info_dim)
-                ended_layouts = layout[step.done].reshape(-1)
-                present = self.present_column
-                keep = slice(None) if present is None else ended[:, present] > 0.0
-                self.finished_episodes.extend(ended[keep])
-                self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
-
-            # A new episode starts with nothing remembered and no goal; the league scores the ended ones.
-            if step.done.any():
-                if self.cast is not None:
-                    self.cast.observe_ended(step, self.won_column)
-                    self.cast.clear(step.done)
-                self.acting.clear(step.done)
-
-            buffer.add_outcome(step.reward, step.done, step.terminated, final_values, final_foresight)
+        decision = self._act_on_rows_of(self.step, groups, send)
+        while True:
+            buffer.add_decision(*decision.recorded())
+            last = buffer.cursor + 1 >= buffer.steps
+            outcome = RolloutOutcome(envs, agents, trainer.foresight_outputs)
+            following = None if last else DecisionRows(envs, agents)
+            parts = []
+            for begin, count in groups:
+                part = receive(begin, count)
+                parts.append(part)
+                rows = slice(begin, begin + count)
+                self._take_outcome_of(part, rows, decision, outcome)
+                if following is not None:
+                    self._act_on_rows(part, rows, following, send)
+            self.step = protocol.join_steps(parts)
+            buffer.add_outcome(outcome.reward, outcome.done, outcome.terminated, outcome.final_values,
+                               outcome.final_foresight)
+            if following is None:
+                break
+            decision = following
 
         rollout_seconds = time.perf_counter() - started
         buffer.finish(trainer.value(self.step.state, self.step.obs, self.step.layout, self.acting.goal,
@@ -994,6 +1016,99 @@ class TrainingRun:
         # it waited too, and so on: every update was joined where it was submitted and overlap_updates never
         # overlapped anything.
         return stats if stats is not None else {}, started, rollout_seconds
+
+    def _act_on_rows_of(self, step: protocol.Step, groups: list[tuple[int, int]], send) -> DecisionRows:
+        """Act on every group of a decision already received whole (the one a rollout starts from)."""
+        decision = DecisionRows(self.spec.num_envs, self.spec.agents_per_env)
+        for begin, count in groups:
+            rows = slice(begin, begin + count)
+            self._act_on_rows(protocol.rows_of(step, begin, count), rows, decision, send)
+        return decision
+
+    def _act_on_rows(self, part: protocol.Step, rows: slice, decision: DecisionRows, send) -> None:
+        """The policy's decision for envs `rows` (`part` is their STEP), recorded into `decision` and sent."""
+        trainer = self.trainer
+        memory = self.acting.memory[rows].copy() if self.acting.memory is not None else None
+        critic_memory = self.acting.critic_memory[rows].copy() if self.acting.critic_memory is not None else None
+        # A non-finite observation reaches the networks as a non-finite logit and comes back out of
+        # torch.multinomial as "probability tensor contains either `inf`, `nan` or element < 0" -- an error
+        # that names neither the observation nor the seat it came from, several layers away from whichever
+        # block wrote it. Caught here it names both, which is the difference between a fix and a hunt.
+        if not np.isfinite(part.obs).all():
+            bad = np.argwhere(~np.isfinite(part.obs))
+            where = ", ".join(f"env {int(e) + rows.start} agent {int(a)} obs[{int(i)}]={part.obs[e, a, i]}"
+                              for e, a, i in bad[:8])
+            raise RuntimeError(
+                f"{len(bad)} non-finite observation(s) from the sim at step {self.env_steps}: {where}"
+                + ("" if len(bad) <= 8 else f" (and {len(bad) - 8} more)"))
+
+        acting = self.acting.take(rows)
+        actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
+            part.obs, part.mask, part.layout, part.state, state=acting)
+        self.acting.put(rows, acting)
+        # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
+        # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
+        present = part.present
+        if len(self.frozen):
+            present = present & ~np.isin(part.layout, self.frozen)
+        # A cast row (a frozen checkpoint's seat) takes the frozen actor's action and is not a sample either. A cast
+        # acts on whole decisions, so a run with one is never pipelined and `part` is the whole pool.
+        if self.cast is not None:
+            cast_rows = self.cast.rows(part)
+            if cast_rows.any():
+                actions = self.cast.act(part, actions, cast_rows)
+                present = present & ~cast_rows
+        goal, goal_log_prob, goal_chosen = goals if goals is not None else (None, None, None)
+        decision.set(rows, obs=part.obs, state=part.state, mask=part.mask, layout=part.layout, actions=actions,
+                     log_probs=log_probs, values=values, present=present, foresight=foresight, memory=memory,
+                     goal=goal, goal_log_prob=goal_log_prob, goal_chosen=goal_chosen, critic_memory=critic_memory,
+                     chosen=chosen)
+        send(rows.start, rows.stop - rows.start, actions, goals[0] if goals is not None else None)
+
+    def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
+                         outcome: RolloutOutcome) -> None:
+        """What `decision` earned in envs `rows`, from their next STEP `part`: rewards, and for the episodes that
+        ended, their final values, their info, and a cleared memory for the episodes that follow."""
+        trainer, spec = self.trainer, self.spec
+        done = part.done
+        outcome.reward[rows], outcome.done[rows], outcome.terminated[rows] = part.reward, done, part.terminated
+        if not done.any():
+            return
+
+        # The ended episodes' layouts are the decision's: the STEP already carries the new episodes'. Only the envs
+        # that finished are valued: an env ends an episode once in hundreds of decisions, so valuing all of them and
+        # then throwing most away is a forward pass over ~20x the rows needed.
+        layout = decision.layout[rows]
+        memory = decision.memory[rows] if decision.memory is not None else None
+        # The goal in force is the one the ended episode's last decision pursued, which the value depends on; the
+        # memory the critic ends the episode with is the last decision's own, which acting has carried forward and
+        # clear() has not yet reset.
+        goal = self.acting.goal[rows] if self.acting.goal is not None else None
+        critic_end = self.acting.critic_memory[rows] if self.acting.critic_memory is not None else None
+        final_values = outcome.final_values[rows]
+        final_values[done] = trainer.value(part.final_state[done], part.final_obs[done], layout[done],
+                                           goal[done] if goal is not None else None,
+                                           critic_end[done] if critic_end is not None else None)
+        outcome.final_values[rows] = final_values
+        if outcome.final_foresight is not None:
+            final_foresight = outcome.final_foresight[rows]
+            final_foresight[done] = trainer.foresight_of(part.final_obs[done], layout[done],
+                                                         memory[done] if memory is not None else None)
+            outcome.final_foresight[rows] = final_foresight
+        ended = part.episode_info[done].reshape(-1, spec.episode_info_dim)
+        ended_layouts = layout[done].reshape(-1)
+        present = self.present_column
+        keep = slice(None) if present is None else ended[:, present] > 0.0
+        self.finished_episodes.extend(ended[keep])
+        self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
+
+        # A new episode starts with nothing remembered and no goal; the league scores the ended ones.
+        if self.cast is not None:
+            self.cast.observe_ended(part, self.won_column)
+            self.cast.clear(part.done)
+        cleared = np.zeros(spec.num_envs, dtype=bool)
+        cleared[rows] = done
+        self.acting.clear(cleared)
 
     @staticmethod
     def allowed_actions_by_layout(buffer: RolloutBuffer) -> dict[int, float]:

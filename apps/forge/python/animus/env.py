@@ -28,7 +28,9 @@ class ForgeEnv:
         if self.spec.version != p.PROTOCOL_VERSION:
             raise ConnectionError(f"sim speaks protocol {self.spec.version}, client {p.PROTOCOL_VERSION}")
 
-        self._step_buffer = bytearray(self.spec.step_payload_size())
+        # A group's STEP (the whole pool, or one half in half-batch) is the largest message the sim sends.
+        self.groups = self.spec.env_groups_ranges()
+        self._step_buffer = bytearray(max(self.spec.step_payload_size(count) for _, count in self.groups))
         self._pending: p.Step | None = None
 
     @staticmethod
@@ -49,26 +51,34 @@ class ForgeEnv:
     def reset(self) -> p.Step:
         """The first STEP after connecting: freshly reset envs. Its reward/done are meaningless."""
         if self._pending is None:
-            self._pending = self._receive_step()
+            self._pending = self._receive_decision()
         return self._pending
 
     def step(self, actions: np.ndarray, goals: np.ndarray | None = None) -> p.Step:
         """Send [E, A] actions, with the goals each agent is pursuing when the policy has a goal head, and return the
         next STEP. Goals are what the sim scores, reports and shows a party's teammates; they mask nothing."""
-        actions = np.ascontiguousarray(actions, dtype="<i4")
         expected = (self.spec.num_envs, self.spec.agents_per_env)
-        if actions.shape != expected:
-            raise ValueError(f"actions must have shape {expected}, got {actions.shape}")
+        if np.shape(actions) != expected:
+            raise ValueError(f"actions must have shape {expected}, got {np.shape(actions)}")
+        if goals is not None and np.shape(goals) != expected:
+            raise ValueError(f"goals must have shape {expected}, got {np.shape(goals)}")
 
-        payload = actions.tobytes()
-        if goals is not None:
-            goals = np.ascontiguousarray(goals, dtype="<i4")
-            if goals.shape != expected:
-                raise ValueError(f"goals must have shape {expected}, got {goals.shape}")
-            payload += goals.tobytes()
-        self.sock.sendall(p.encode_header(p.MsgType.ACT, len(payload)) + payload)
-        self._pending = self._receive_step()
+        # In half-batch both halves are answered before either STEP is read: the sim has what it needs for both
+        # ticks, so this works exactly as a whole-pool step, only without the overlap the pipelined rollout gets.
+        for begin, count in self.groups:
+            rows = slice(begin, begin + count)
+            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None)
+        self._pending = self._receive_decision()
         return self._pending
+
+    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> None:
+        """Answer one group's STEP: [count, A] actions (and goals) for envs [env_begin, env_begin + count)."""
+        payload = p.encode_act(env_begin, actions, goals)
+        self.sock.sendall(p.encode_header(p.MsgType.ACT, len(payload)) + payload)
+
+    def receive_step(self) -> p.Step:
+        """The next group's STEP as it comes (one half in half-batch, env_begin says which)."""
+        return self._receive_step()
 
     def set_mode(self, evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
                  opponents_only: bool = False) -> p.Step:
@@ -79,7 +89,7 @@ class ForgeEnv:
         """
         payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only)
         self.sock.sendall(p.encode_header(p.MsgType.MODE, len(payload)) + payload)
-        self._pending = self._receive_step()
+        self._pending = self._receive_decision()
         return self._pending
 
     def set_layout_weights(self, weights) -> None:
@@ -110,12 +120,21 @@ class ForgeEnv:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def _receive_decision(self) -> p.Step:
+        """Every group's STEP of one decision, joined in env order."""
+        return p.join_steps([self._receive_step() for _ in self.groups])
+
     def _receive_step(self) -> p.Step:
         msg_type, length = self._receive_header()
-        if msg_type != p.MsgType.STEP or length != len(self._step_buffer):
-            raise ConnectionError(f"expected STEP of {len(self._step_buffer)} bytes, got type {msg_type} of {length}")
-        self._read_into(memoryview(self._step_buffer))
-        return p.decode_step(self.spec, self._step_buffer)
+        if msg_type != p.MsgType.STEP or length > len(self._step_buffer):
+            raise ConnectionError(f"expected STEP of at most {len(self._step_buffer)} bytes, got type {msg_type} of "
+                                  f"{length}")
+        view = memoryview(self._step_buffer)[:length]
+        self._read_into(view)
+        step = p.decode_step(self.spec, view)
+        if length != self.spec.step_payload_size(step.done.shape[0]):
+            raise ConnectionError(f"STEP of {length} bytes does not hold the {step.done.shape[0]} envs it says")
+        return step
 
     def _receive(self) -> tuple[int, bytes]:
         msg_type, length = self._receive_header()

@@ -98,7 +98,9 @@ namespace AnimusForge
 {
     // 10: the WEIGHTS payload is per (class, spec) rather than per (class, role), which is a different length and
     // a different meaning for the same bytes -- a mismatched pair would silently misweight rather than fail.
-    constexpr uint32 PROTOCOL_VERSION = 10;
+    // 11: STEP and ACT name the envs they cover (StepHeader, ActHeader) and SPEC how many groups the pool is sent
+    // in, so a half-batch sim can send each half on its own. This sim still sends the whole pool as one group.
+    constexpr uint32 PROTOCOL_VERSION = 11;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -143,6 +145,7 @@ namespace AnimusForge
         uint32 TickMs;
         uint32 DecisionTicks;
         uint32 EpisodeSeconds;
+        uint32 EnvGroups;       // STEPs per decision: 1, or 2 for half-batch (contiguous halves, the first half first)
         char Scenario[SCENARIO_NAME_SIZE];
     };
 
@@ -183,9 +186,20 @@ namespace AnimusForge
         uint32 Count;
     };
 
+    /// Then the arrays of envs [EnvBegin, EnvBegin + EnvCount), in the order of the learner's Spec.step_layout.
     struct StepHeader
     {
         uint64 Decision;
+        uint32 EnvBegin;
+        uint32 EnvCount;
+    };
+
+    /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then as many goals when the policy has
+    /// a goal head.
+    struct ActHeader
+    {
+        uint32 EnvBegin;
+        uint32 EnvCount;
     };
 #pragma pack(pop)
 }

@@ -1,5 +1,6 @@
 """Protocol encoding and a full lock-step exchange against a fake sim over a real Unix socket."""
 
+import dataclasses
 import socket
 import struct
 import threading
@@ -28,28 +29,31 @@ SPEC = p.Spec(
 )
 
 
-def make_step(decision: int, rng: np.random.Generator) -> p.Step:
-    e, a = SPEC.num_envs, SPEC.agents_per_env
+def make_step(decision: int, rng: np.random.Generator, spec: p.Spec = SPEC, envs: int | None = None,
+              env_begin: int = 0) -> p.Step:
+    e, a = spec.num_envs if envs is None else envs, spec.agents_per_env
     done = rng.random(e) < 0.5
     return p.Step(
+        env_begin=env_begin,
         decision=decision,
-        obs=rng.random((e, a, SPEC.obs_dim), dtype=np.float32),
-        state=rng.random((e, SPEC.state_dim), dtype=np.float32),
-        mask=rng.random((e, a, SPEC.num_actions)) < 0.7,
-        layout=rng.integers(0, len(SPEC.layouts), size=(e, a), dtype=np.uint16),
+        obs=rng.random((e, a, spec.obs_dim), dtype=np.float32),
+        state=rng.random((e, spec.state_dim), dtype=np.float32),
+        mask=rng.random((e, a, spec.num_actions)) < 0.7,
+        layout=rng.integers(0, len(spec.layouts), size=(e, a), dtype=np.uint16),
         present=rng.random((e, a)) < 0.8,
         reward=rng.random((e, a), dtype=np.float32),
         done=done,
         terminated=done & (rng.random(e) < 0.5),
-        final_obs=rng.random((e, a, SPEC.obs_dim), dtype=np.float32),
-        final_state=rng.random((e, SPEC.state_dim), dtype=np.float32),
-        episode_info=rng.random((e, a, SPEC.episode_info_dim), dtype=np.float32),
+        final_obs=rng.random((e, a, spec.obs_dim), dtype=np.float32),
+        final_state=rng.random((e, spec.state_dim), dtype=np.float32),
+        episode_info=rng.random((e, a, spec.episode_info_dim), dtype=np.float32),
         episode_seed=rng.integers(0, 2**32, size=e, dtype=np.uint32),
     )
 
 
 def assert_steps_equal(left: p.Step, right: p.Step) -> None:
     assert left.decision == right.decision
+    assert left.env_begin == right.env_begin
     for name, *_ in SPEC.step_layout():
         np.testing.assert_array_equal(getattr(left, name), getattr(right, name))
 
@@ -59,9 +63,12 @@ def test_spec_round_trip():
 
 
 def test_spec_matches_cpp_layout():
-    # SpecMsg in Protocol.h: eleven uint32 fields (goal count among them) and a 32-byte name, packed.
-    assert p.SPEC.size == 11 * 4 + 32
+    # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them) and a 32-byte name, packed.
+    assert p.SPEC.size == 12 * 4 + 32
     assert p.HEADER.size == 8
+    # StepHeader: uint64 decision, uint32 first env, uint32 env count. ActHeader: uint32 first env, uint32 count.
+    assert p.STEP_HEADER.size == 16
+    assert p.ACT_HEADER.size == 8
 
 
 def test_mode_matches_cpp_layout():
@@ -128,7 +135,9 @@ def test_lockstep_exchange(tmp_path):
                     closed.set()
                     return
                 assert msg_type == p.MsgType.ACT
-                received_actions.append(np.frombuffer(read_exact(conn, length), dtype="<i4"))
+                body = read_exact(conn, length)
+                assert p.ACT_HEADER.unpack_from(body) == (0, SPEC.num_envs)
+                received_actions.append(np.frombuffer(body, dtype="<i4", offset=p.ACT_HEADER.size))
 
     server = threading.Thread(target=fake_sim)
     server.start()
@@ -161,3 +170,54 @@ def test_replay_round_trip():
     seed_base, fraction, seeds = p.decode_replay(payload)
     assert seed_base == 1000 and fraction == pytest.approx(0.2) and list(seeds) == [3, 7, 12]
     assert list(p.decode_replay(p.encode_replay(1000, 0.0, []))[2]) == []
+
+
+def test_half_batch_step_joins_both_halves(tmp_path):
+    """In half-batch the sim sends each half's STEP on its own. ForgeEnv.step answers both halves, then joins their
+    next STEPs into one decision, so everything but the pipelined rollout sees the pool as before."""
+    spec = dataclasses.replace(SPEC, num_envs=4, env_groups=2)
+    assert spec.env_groups_ranges() == [(0, 2), (2, 2)]
+    rng = np.random.default_rng(5)
+
+    def half(decision, begin):
+        return make_step(decision, rng, spec=spec, envs=2, env_begin=begin)
+
+    path = str(tmp_path / "forge.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(1)
+    decisions = [(half(d, 0), half(d, 2)) for d in range(3)]
+    acts = []
+
+    def fake_sim():
+        conn, _ = listener.accept()
+        with conn:
+            read_exact(conn, p.HEADER.size + p.HELLO.size)
+            spec_payload = p.encode_spec(spec)
+            conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec_payload)) + spec_payload)
+            # Both halves to start; then, as the sim does, a half's next STEP after its maps tick.
+            for part in decisions[0]:
+                payload = p.encode_step(spec, part)
+                conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
+            for decision in decisions[1:]:
+                for part in decision:
+                    msg_type, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
+                    assert msg_type == p.MsgType.ACT
+                    body = read_exact(conn, length)
+                    acts.append(p.ACT_HEADER.unpack_from(body))
+                    payload = p.encode_step(spec, part)
+                    conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
+            read_exact(conn, p.HEADER.size)
+
+    server = threading.Thread(target=fake_sim)
+    server.start()
+    env = ForgeEnv(path, connect_timeout=5)
+    assert env.spec == spec
+    assert_steps_equal(env.reset(), p.join_steps(list(decisions[0])))
+    for decision in decisions[1:]:
+        actions = np.zeros((spec.num_envs, spec.agents_per_env), dtype=np.int64)
+        assert_steps_equal(env.step(actions), p.join_steps(list(decision)))
+    env.close()
+    server.join(timeout=5)
+    listener.close()
+    assert acts == [(0, 2), (2, 2)] * 2

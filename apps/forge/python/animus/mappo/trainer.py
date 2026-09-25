@@ -116,6 +116,17 @@ class ActingState:
     action: np.ndarray | None = None
     slow_age: np.ndarray | None = None
 
+    def take(self, rows: slice) -> "ActingState":
+        """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
+        return ActingState(**{name: None if value is None else value[rows].copy()
+                              for name, value in vars(self).items()})
+
+    def put(self, rows: slice, part: "ActingState") -> None:
+        """Write back the state take() gave out, once it has acted."""
+        for name, value in vars(self).items():
+            if value is not None:
+                value[rows] = getattr(part, name)
+
     def clear(self, done: np.ndarray) -> None:
         """An episode ended in these envs: nothing is remembered, and a goal and a call are made afresh."""
         if self.memory is not None:

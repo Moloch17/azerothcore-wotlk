@@ -1273,7 +1273,7 @@ void AnimusForge::Forge::RemoteDecision()
         std::vector<char> payload;
         auto const waitFrom = std::chrono::steady_clock::now();
         bool const received = _server.ReceiveAny(type, payload,
-            std::max({ 2 * actionBytes, sizeof(ModeMsg), weightBytes, replayBytes }), onIdle);
+            std::max({ sizeof(ActHeader) + 2 * actionBytes, sizeof(ModeMsg), weightBytes, replayBytes }), onIdle);
         WaitedForLearner(waitFrom);
         if (!received)
         {
@@ -1281,12 +1281,19 @@ void AnimusForge::Forge::RemoteDecision()
             return;
         }
 
-        // ACT carries the actions, and the goals after them when the policy has a goal head.
-        if (type == MsgType::Act && (payload.size() == actionBytes || payload.size() == 2 * actionBytes))
+        // ACT names the envs it answers for (the whole pool: this sim sends it as one group), then carries the
+        // actions, and the goals after them when the policy has a goal head.
+        ActHeader act{};
+        if (type == MsgType::Act && payload.size() >= sizeof(act))
+            std::memcpy(&act, payload.data(), sizeof(act));
+        std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
+        if (type == MsgType::Act && act.EnvBegin == 0 && act.EnvCount == _pool->NumEnvs()
+            && (body == actionBytes || body == 2 * actionBytes))
         {
-            std::memcpy(_pool->Actions.data(), payload.data(), actionBytes);
-            if (payload.size() == 2 * actionBytes)
-                std::memcpy(_pool->Goals.data(), payload.data() + actionBytes, actionBytes);
+            char const* actions = payload.data() + sizeof(act);
+            std::memcpy(_pool->Actions.data(), actions, actionBytes);
+            if (body == 2 * actionBytes)
+                std::memcpy(_pool->Goals.data(), actions + actionBytes, actionBytes);
             else
                 std::fill(_pool->Goals.begin(), _pool->Goals.end(), -1);
 
@@ -1445,6 +1452,7 @@ bool AnimusForge::Forge::SendSpec()
     msg.DecisionTicks = RunConfig().TicksPerDecision;
     // The longest episode the scenario can have: the learner sizes evaluation windows by it.
     msg.EpisodeSeconds = std::max(RunConfig().EpisodeSeconds, spec.LongestEpisodeSeconds);
+    msg.EnvGroups = 1;
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
@@ -1466,7 +1474,7 @@ bool AnimusForge::Forge::SendSpec()
 
 bool AnimusForge::Forge::SendStep()
 {
-    StepHeader header{ _decisions++ };
+    StepHeader header{ _decisions++, 0, _pool->NumEnvs() };
 
     auto chunk = [](auto const& vec) { return Chunk{ vec.data(), vec.size() * sizeof(vec[0]) }; };
 

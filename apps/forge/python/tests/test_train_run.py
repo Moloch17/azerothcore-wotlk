@@ -1,6 +1,7 @@
 """A whole learner run (animus.train.TrainingRun) against a fake sim: updates, evaluations, checkpoints, finish."""
 
 import csv
+import dataclasses
 import json
 import socket
 import threading
@@ -13,6 +14,7 @@ pytest.importorskip("torch")
 
 from animus import protocol as p  # noqa: E402
 from animus.config import TrainConfig  # noqa: E402
+from animus.env import ForgeEnv  # noqa: E402
 from animus.train import TrainingRun  # noqa: E402
 
 SPEC = p.Spec(
@@ -45,15 +47,19 @@ def read_exact(conn: socket.socket, size: int) -> bytes:
     return data
 
 
-def fake_sim(listener: socket.socket, modes: list, replays: list) -> None:
-    """3-decision episodes paying 1 per decision; env 1's second seat is empty (present 0, only the no-op)."""
+def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec = SPEC) -> None:
+    """3-decision episodes paying 1 per decision; env 1's second seat is empty (present 0, only the no-op).
+
+    With spec.env_groups 2 it runs as the half-batch sim does: every group's STEP after a reset, then for each reply
+    only that group's envs move on and only its STEP goes out."""
     conn, _ = listener.accept()
     with conn:
         read_exact(conn, p.HEADER.size + p.HELLO.size)
-        payload = p.encode_spec(SPEC)
+        payload = p.encode_spec(spec)
         conn.sendall(p.encode_header(p.MsgType.SPEC, len(payload)) + payload)
 
-        e_count, a_count = SPEC.num_envs, SPEC.agents_per_env
+        e_count, a_count = spec.num_envs, spec.agents_per_env
+        groups = spec.env_groups_ranges()
         evaluating, episodes, next_seed = False, 0, 0
         env_seed = [p.NO_EPISODE_SEED] * e_count
         env_time = [0] * e_count
@@ -69,29 +75,34 @@ def fake_sim(listener: socket.socket, modes: list, replays: list) -> None:
         def blank():
             present = np.ones((e_count, a_count), bool)
             present[1, 1] = False
-            mask = np.ones((e_count, a_count, SPEC.num_actions), bool)
+            mask = np.ones((e_count, a_count, spec.num_actions), bool)
             mask[1, 1, 1:] = False
             return p.Step(
                 decision=decision,
-                obs=np.random.default_rng(decision).random((e_count, a_count, SPEC.obs_dim), dtype=np.float32),
-                state=np.zeros((e_count, SPEC.state_dim), np.float32),
+                obs=np.random.default_rng(decision).random((e_count, a_count, spec.obs_dim), dtype=np.float32),
+                state=np.zeros((e_count, spec.state_dim), np.float32),
                 mask=mask,
                 layout=np.tile(np.arange(a_count, dtype=np.uint16), (e_count, 1)),
                 present=present,
                 reward=np.zeros((e_count, a_count), np.float32),
                 done=np.zeros(e_count, bool),
                 terminated=np.zeros(e_count, bool),
-                final_obs=np.zeros((e_count, a_count, SPEC.obs_dim), np.float32),
-                final_state=np.zeros((e_count, SPEC.state_dim), np.float32),
-                episode_info=np.zeros((e_count, a_count, SPEC.episode_info_dim), np.float32),
+                final_obs=np.zeros((e_count, a_count, spec.obs_dim), np.float32),
+                final_state=np.zeros((e_count, spec.state_dim), np.float32),
+                episode_info=np.zeros((e_count, a_count, spec.episode_info_dim), np.float32),
                 episode_seed=np.full(e_count, p.NO_EPISODE_SEED, np.uint32),
             )
 
+        def send(step, begin, count):
+            payload = p.encode_step(spec, p.rows_of(step, begin, count))
+            conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
+
         step = blank()
+        for begin, count in groups:
+            send(step, begin, count)
+        turn = 0
         while True:
-            payload = p.encode_step(SPEC, step)
             try:
-                conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
                 # WEIGHTS and REPLAY are applied without an answer, as the sim does: read on to the ACT or MODE.
                 while True:
                     msg_type, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
@@ -102,26 +113,32 @@ def fake_sim(listener: socket.socket, modes: list, replays: list) -> None:
                         replays.append(p.decode_replay(body))
                     elif msg_type != p.MsgType.WEIGHTS:
                         break
+                decision += 1
+                step = blank()
+                if msg_type == p.MsgType.MODE:
+                    evaluating, _, episodes, baseline, _ = p.decode_mode(body)
+                    modes.append((evaluating, episodes, baseline))
+                    next_seed = 0
+                    for e in range(e_count):
+                        reset(e)
+                    for begin, count in groups:
+                        send(step, begin, count)
+                    turn = 0
+                    continue
+                begin, count = groups[turn]
+                assert p.ACT_HEADER.unpack_from(body) == (begin, count), "an ACT for the group whose turn it is not"
+                for e in range(begin, begin + count):
+                    env_time[e] += 1
+                    step.reward[e] = np.where(step.present[e], 1.0, 0.0)
+                    if env_time[e] == EPISODE_DECISIONS:
+                        step.done[e] = True
+                        step.episode_seed[e] = env_seed[e]
+                        step.episode_info[e, :, 0] = step.present[e]
+                        reset(e)
+                send(step, begin, count)
+                turn = (turn + 1) % len(groups)
             except (ConnectionError, OSError):
                 return
-            decision += 1
-            step = blank()
-            if msg_type == p.MsgType.MODE:
-                evaluating, _, episodes, baseline, _ = p.decode_mode(body)
-                modes.append((evaluating, episodes, baseline))
-                next_seed = 0
-                for e in range(e_count):
-                    reset(e)
-                continue
-            for e in range(e_count):
-                env_time[e] += 1
-                step.reward[e] = np.where(step.present[e], 1.0, 0.0)
-                if env_time[e] == EPISODE_DECISIONS:
-                    step.done[e] = True
-                    step.episode_seed[e] = env_seed[e]
-                    step.episode_info[e, :, 0] = step.present[e]
-                    reset(e)
-
 
 def test_training_run_trains_evaluates_and_finishes(tmp_path):
     path = str(tmp_path / "forge.sock")
@@ -214,3 +231,55 @@ def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
     # One row per update; the first has no update of its own to report yet, the later ones the update before.
     assert [int(row["update"]) for row in rows] == [1, 2, 3]
     assert rows[0]["policy_loss"] == "" and rows[1]["policy_loss"] != ""
+
+
+def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch):
+    """Against a half-batch sim the rollout answers each half's STEP on its own (pipelined), evaluations go through
+    the whole-decision facade, and the run learns what the lock-step run does: every present seat earns 1."""
+    spec = dataclasses.replace(SPEC, num_envs=4, env_groups=2)
+    path = str(tmp_path / "forge.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(1)
+    modes, replays = [], []
+    server = threading.Thread(target=fake_sim, args=(listener, modes, replays, spec))
+    server.start()
+
+    steps_per_update = 4 * spec.num_envs * spec.agents_per_env
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+        f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
+        "rollout_length=4", f"total_env_steps={3 * steps_per_update}", "checkpoint_every=1", "init_from=''",
+        "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
+        f"eval.every_env_steps={steps_per_update}", "eval.episodes=2", "eval.baseline=''", "eval.sampled_every=3",
+        "convergence.patience=0",
+    ])
+    sent_one_half, events = [], []
+    send_act, receive_step = ForgeEnv.send_act, ForgeEnv.receive_step
+
+    def watched_send(self, env_begin, actions, goals=None):
+        sent_one_half.append(actions.shape[0] == spec.num_envs // 2)
+        events.append(("act", env_begin))
+        return send_act(self, env_begin, actions, goals)
+
+    def watched_receive(self):
+        step = receive_step(self)
+        events.append(("step", step.env_begin))
+        return step
+
+    monkeypatch.setattr(ForgeEnv, "send_act", watched_send)
+    monkeypatch.setattr(ForgeEnv, "receive_step", watched_receive)
+    assert TrainingRun(config, resume=False).run() == 0
+    server.join(timeout=10)
+    listener.close()
+
+    assert all(sent_one_half) and sent_one_half
+    # Pipelined: the first half is answered as soon as its STEP is in, before the second half's STEP is read.
+    half = spec.num_envs // 2
+    assert ("step", 0) in events
+    pipelined = [events[i:i + 3] for i in range(len(events) - 2)]
+    assert [("step", 0), ("act", 0), ("step", half)] in pipelined
+    with (tmp_path / "runs" / "fake" / "metrics.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [int(row["update"]) for row in rows] == [1, 2, 3]
+    assert all(float(row["reward_per_decision"]) == pytest.approx(1.0) for row in rows)
+    assert modes.count((True, 2, "")) >= 3

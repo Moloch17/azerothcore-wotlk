@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 11
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -34,10 +34,11 @@ class MsgType(IntEnum):
 
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<I")  # version
-SPEC = struct.Struct(f"<11I{SCENARIO_NAME_SIZE}s")
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
-STEP_HEADER = struct.Struct("<Q")  # decision counter
+STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
+ACT_HEADER = struct.Struct("<II")  # first env, env count; then that many envs' actions (and goals)
 MODE = struct.Struct(f"<IIII{POLICY_NAME_SIZE}s")  # mode, seed base, episodes, flags, baseline policy
 MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; the learner the rest
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
@@ -73,14 +74,26 @@ class Spec:
     scenario: str
     layouts: tuple[Layout, ...] = ()
     episode_info_names: tuple[str, ...] = field(default_factory=tuple)
+    # 2 = half-batch: the sim ticks the two halves' maps in turn, and each STEP and ACT covers one half (env_groups()).
+    # A learner may still answer both halves together (ForgeEnv.step); answering each as it comes (the rollout's
+    # pipelined loop) is what lets its inference run while the other half's maps tick.
+    env_groups: int = 1
 
     @property
     def decision_ms(self) -> int:
         return self.tick_ms * self.decision_ticks
 
-    def step_layout(self) -> list[tuple[str, np.dtype, tuple[int, ...]]]:
-        """STEP payload arrays after the header, in wire order: (name, dtype, shape)."""
-        e, a = self.num_envs, self.agents_per_env
+    def env_groups_ranges(self) -> list[tuple[int, int]]:
+        """(first env, env count) of each group, in the order the sim sends them: contiguous halves of the envs."""
+        if self.env_groups <= 1:
+            return [(0, self.num_envs)]
+        half = self.num_envs // 2
+        return [(0, half), (half, self.num_envs - half)]
+
+    def step_layout(self, envs: int | None = None) -> list[tuple[str, np.dtype, tuple[int, ...]]]:
+        """STEP payload arrays after the header, in wire order: (name, dtype, shape), for `envs` envs (all of them by
+        default; a half-batch STEP carries one group's)."""
+        e, a = self.num_envs if envs is None else envs, self.agents_per_env
         f32, u8, u16, u32 = np.dtype("<f4"), np.dtype("u1"), np.dtype("<u2"), np.dtype("<u4")
         return [
             ("obs", f32, (e, a, self.obs_dim)),
@@ -97,9 +110,9 @@ class Spec:
             ("episode_seed", u32, (e,)),
         ]
 
-    def step_payload_size(self) -> int:
+    def step_payload_size(self, envs: int | None = None) -> int:
         size = STEP_HEADER.size
-        for _, dtype, shape in self.step_layout():
+        for _, dtype, shape in self.step_layout(envs):
             size += dtype.itemsize * int(np.prod(shape))
         return size
 
@@ -119,6 +132,25 @@ class Step:
     final_state: np.ndarray  # [E, S] float32, valid where done
     episode_info: np.ndarray  # [E, A, K] float32, valid where done
     episode_seed: np.ndarray  # [E] uint32, evaluation seed index where done; NO_EPISODE_SEED for training
+    env_begin: int = 0  # the first env these rows are: a half-batch STEP covers envs [env_begin, env_begin + E)
+
+
+def rows_of(step: Step, begin: int, count: int) -> Step:
+    """Envs [begin, begin + count) of a decision, as the STEP of that group would carry them."""
+    if begin == 0 and count == step.done.shape[0]:
+        return step
+    names = [name for name in Step.__dataclass_fields__ if name not in ("decision", "env_begin")]
+    return Step(decision=step.decision, env_begin=step.env_begin + begin,
+                **{name: getattr(step, name)[begin:begin + count] for name in names})
+
+
+def join_steps(parts: list[Step]) -> Step:
+    """One decision from its groups' STEPs, in env order."""
+    if len(parts) == 1:
+        return parts[0]
+    names = [name for name in Step.__dataclass_fields__ if name not in ("decision", "env_begin")]
+    return Step(decision=parts[0].decision, env_begin=0,
+                **{name: np.concatenate([getattr(part, name) for part in parts]) for name in names})
 
 
 def encode_spec(spec: Spec) -> bytes:
@@ -134,6 +166,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.tick_ms,
         spec.decision_ticks,
         spec.episode_seconds,
+        spec.env_groups,
         spec.scenario.encode("ascii"),
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
@@ -155,15 +188,17 @@ def decode_spec(payload: bytes) -> Spec:
     names = payload[offset:].decode("ascii")
     return Spec(
         *fields[:11],
-        scenario=fields[11].split(b"\0", 1)[0].decode("ascii"),
+        env_groups=fields[11],
+        scenario=fields[12].split(b"\0", 1)[0].decode("ascii"),
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
 
 
 def encode_step(spec: Spec, step: Step) -> bytes:
-    parts = [STEP_HEADER.pack(step.decision)]
-    for name, dtype, shape in spec.step_layout():
+    envs = step.done.shape[0]
+    parts = [STEP_HEADER.pack(step.decision, step.env_begin, envs)]
+    for name, dtype, shape in spec.step_layout(envs):
         array = np.ascontiguousarray(getattr(step, name), dtype=dtype).reshape(shape)
         parts.append(array.tobytes())
     return b"".join(parts)
@@ -171,17 +206,27 @@ def encode_step(spec: Spec, step: Step) -> bytes:
 
 def decode_step(spec: Spec, payload: bytes | bytearray | memoryview) -> Step:
     """Decode a STEP payload. Arrays are copies, so the receive buffer can be reused."""
-    (decision,) = STEP_HEADER.unpack_from(payload)
+    decision, env_begin, envs = STEP_HEADER.unpack_from(payload)
     offset = STEP_HEADER.size
     arrays = {}
-    for name, dtype, shape in spec.step_layout():
+    for name, dtype, shape in spec.step_layout(envs):
         count = int(np.prod(shape))
         array = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(shape).copy()
         offset += dtype.itemsize * count
         if dtype == np.dtype("u1"):
             array = array.astype(bool)
         arrays[name] = array
-    return Step(decision=decision, **arrays)
+    return Step(decision=decision, env_begin=env_begin, **arrays)
+
+
+def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> bytes:
+    """ACT payload for envs [env_begin, env_begin + len(actions)): [E, A] actions, then the goals when the policy has a
+    goal head."""
+    actions = np.ascontiguousarray(actions, dtype="<i4")
+    payload = ACT_HEADER.pack(env_begin, actions.shape[0]) + actions.tobytes()
+    if goals is not None:
+        payload += np.ascontiguousarray(goals, dtype="<i4").tobytes()
+    return payload
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",

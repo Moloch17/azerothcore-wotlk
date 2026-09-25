@@ -13,6 +13,7 @@ learner logs. Nothing about learning is measured; the data is noise.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import csv
 import json
 import multiprocessing
@@ -32,6 +33,8 @@ def load_spec(path: Path) -> p.Spec:
     fields = {name: raw[name] for name in ("version", "num_envs", "agents_per_env", "obs_dim", "state_dim",
                                            "num_actions", "episode_info_dim", "goal_count", "tick_ms",
                                            "decision_ticks", "episode_seconds", "scenario")}
+    # The run's shapes, in the protocol this learner speaks: a spec.json from before a protocol bump still serves.
+    fields["version"] = p.PROTOCOL_VERSION
     return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())))
 
 
@@ -46,8 +49,7 @@ def _read_exact(conn: socket.socket, size: int) -> bytes:
 
 
 def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
-    """Serve one learner for `decisions` decisions, then hang up, as the sim's own bench ends a trial: a STEP, then
-    `sim_ms` of sleep after every ACT or MODE."""
+    """Serve one learner for `decisions` decisions, then hang up, as the sim's own bench ends a trial."""
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(path)
     listener.listen(1)
@@ -69,25 +71,37 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
     episode = max(1, int(spec.episode_seconds * 1000 / (spec.tick_ms * spec.decision_ticks)))
     clock = rng.integers(0, episode, size=envs)
 
+    groups = spec.env_groups_ranges()
+
+    def step_of(begin: int, count: int, decision: int) -> bytes:
+        rows = slice(begin, begin + count)
+        clock[rows] += 1
+        done = clock[rows] >= episode
+        clock[rows][done] = 0
+        frame = frames[decision % len(frames)]
+        step = p.Step(
+            decision=decision, env_begin=begin, obs=frame[rows], state=state[rows], mask=mask[rows],
+            layout=layout[rows], present=np.ones((count, agents), bool),
+            reward=rng.standard_normal((count, agents)).astype(np.float32), done=done, terminated=done,
+            final_obs=obs[rows], final_state=np.zeros_like(state[rows]),
+            episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
+            episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32))
+        payload = p.encode_step(spec, step)
+        return p.encode_header(p.MsgType.STEP, len(payload)) + payload
+
     with conn:
         _read_exact(conn, p.HEADER.size + p.HELLO.size)
         payload = p.encode_spec(spec)
         conn.sendall(p.encode_header(p.MsgType.SPEC, len(payload)) + payload)
 
-        decision = 0
-        while True:
-            clock += 1
-            done = clock >= episode
-            clock[done] = 0
-            step = p.Step(
-                decision=decision, obs=frames[decision % len(frames)], state=state, mask=mask, layout=layout,
-                present=np.ones((envs, agents), bool), reward=rng.standard_normal((envs, agents)).astype(np.float32),
-                done=done, terminated=done, final_obs=obs, final_state=np.zeros_like(state),
-                episode_info=np.zeros((envs, agents, spec.episode_info_dim), np.float32),
-                episode_seed=np.full(envs, p.NO_EPISODE_SEED, np.uint32))
-            payload = p.encode_step(spec, step)
-            try:
-                conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
+        # As the sim runs: every group's STEP to start (and after a MODE); then, for each reply, that group's maps
+        # tick (`sim_ms`) and its next STEP goes out, while the learner answers the other group's. With one group
+        # this is the plain lock step.
+        for begin, count in groups:
+            conn.sendall(step_of(begin, count, 0))
+        turn, replies = 0, 0
+        try:
+            while True:
                 while True:
                     msg_type, length = p.HEADER.unpack(_read_exact(conn, p.HEADER.size))
                     if msg_type == p.MsgType.CLOSE:
@@ -95,20 +109,31 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
                     _read_exact(conn, length)
                     if msg_type in (p.MsgType.ACT, p.MsgType.MODE):
                         break
-            except (ConnectionError, OSError):
-                return
-            decision += 1
-            if decision > decisions:
-                return
-            time.sleep(sim_ms / 1000.0)
-
+                replies += 1
+                if replies > decisions * len(groups):
+                    return
+                if msg_type == p.MsgType.MODE:
+                    for begin, count in groups:
+                        conn.sendall(step_of(begin, count, replies))
+                    turn = 0
+                    continue
+                time.sleep(sim_ms / 1000.0)
+                begin, count = groups[turn]
+                conn.sendall(step_of(begin, count, replies))
+                turn = (turn + 1) % len(groups)
+        except (ConnectionError, OSError) as error:
+            if not isinstance(error, (ConnectionResetError, BrokenPipeError)) and "learner closed" not in str(error):
+                raise
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", required=True, help="the stage's training config (YAML)")
     parser.add_argument("--spec", required=True, help="spec.json of a run of that stage")
     parser.add_argument("--layouts", required=True, help="the sim's layouts directory (stage.json)")
-    parser.add_argument("--sim-ms", type=float, default=5.0, help="the sim's own time per decision")
+    parser.add_argument("--sim-ms", type=float, default=5.0,
+                        help="the sim's own time per decision, or per half with --half-batch")
+    parser.add_argument("--half-batch", action="store_true",
+                        help="the sim ticks the two halves' maps in turn and sends each half's STEP on its own")
     parser.add_argument("--updates", type=int, default=6, help="updates to run; the first is reported apart")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="config override")
     args = parser.parse_args()
@@ -117,6 +142,8 @@ def main() -> int:
     from .train import TrainingRun
 
     spec = load_spec(Path(args.spec))
+    if args.half_batch:
+        spec = dataclasses.replace(spec, env_groups=2)
     steps_per_update = None
     with tempfile.TemporaryDirectory() as scratch:
         path = str(Path(scratch) / "sim.sock")
@@ -136,8 +163,10 @@ def main() -> int:
         started = time.perf_counter()
         try:
             TrainingRun(config, resume=False).run()
-        except ConnectionError:
-            pass  # the hang-up that ends the measurement
+        except ConnectionError as error:
+            # The hang-up that ends the measurement; anything else is said, not swallowed.
+            if not isinstance(error, BrokenPipeError) and "closed the connection" not in str(error):
+                raise
         wall = time.perf_counter() - started
         sim.join(timeout=10)
 
@@ -145,6 +174,10 @@ def main() -> int:
             rows = list(csv.DictReader(f))
 
     rows = rows[: args.updates]
+    for row in rows:
+        print(f"  update {row['update']}: rollout {steps_per_update / float(row['env_steps_per_sec']):.3f} s, "
+              f"waited {float(row['update_seconds']):.3f} s, update work {row.get('update_compute_seconds') or '-'}",
+              flush=True)
     later = rows[1:] or rows
     rollout = np.median([float(row["env_steps_per_sec"]) for row in later])
     update = np.median([float(row["update_seconds"]) for row in later])
