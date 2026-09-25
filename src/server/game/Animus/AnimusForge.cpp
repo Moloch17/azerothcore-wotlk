@@ -775,6 +775,8 @@ void AnimusForge::Forge::BenchTick()
         _benchWorldNs = _worldNs;
         _benchSimNs = _simNs;
         _benchLearnerNs = _learnerNs;
+        _benchObjectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
+        _benchTaskTiming = sMapMgr->GetTaskTiming();
         return;
     }
 
@@ -793,6 +795,23 @@ void AnimusForge::Forge::BenchTick()
     trial.SimMsPerTick = double(_simNs - _benchSimNs) / ticks / 1e6;
     trial.LearnerMsPerTick = double(_learnerNs - _benchLearnerNs) / ticks / 1e6;
     trial.MemoryMb = ResidentMb();
+
+    // Instances destroyed during the window take their share out of the map totals: clamp rather than wrap.
+    uint64 const objectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
+    trial.ObjectsMs = double(objectsNs - std::min(objectsNs, _benchObjectsNs)) / ticks / 1e6;
+
+    MapMgr::TaskTiming const& tasks = sMapMgr->GetTaskTiming();
+    if (uint64 const updates = tasks.Ticks - _benchTaskTiming.Ticks)
+    {
+        double const perUpdate = double(updates) * 1e6;
+        trial.TasksPerUpdate = double(tasks.Tasks - _benchTaskTiming.Tasks) / double(updates);
+        trial.TaskSumMs = double(tasks.SumNs - _benchTaskTiming.SumNs) / perUpdate;
+        trial.TaskLongestMs = double(tasks.LongestNs - _benchTaskTiming.LongestNs) / perUpdate;
+        trial.TaskWallMs = double(tasks.WallNs - _benchTaskTiming.WallNs) / perUpdate;
+    }
+    trial.SlowestCpu = tasks.SlowestCpu;
+    trial.CpuMask = tasks.CpuMask;
+
     trial.WarmupTicks = warmupTicks;
     trial.MeasureTicks = measureTicks;
     trial.Measured = true;
@@ -802,6 +821,10 @@ void AnimusForge::Forge::BenchTick()
         trial.Envs, trial.Learner ? Acore::StringFormat(", learner (torch threads {})",
             trial.TorchThreads ? std::to_string(trial.TorchThreads) : "default") : "", trial.EnvStepsPerSecond,
         trial.WorldMsPerTick, trial.SimMsPerTick, trial.LearnerMsPerTick, trial.MemoryMb);
+    LOG_INFO("module.animus", "Bench {} of {}: map tasks {:.1f} per update, sum {:.2f} ms over {:.2f} ms wall, "
+        "longest {:.2f} ms (last on cpu {}), cpus {}; objects {:.2f} ms per decision", _benchTrial + 1,
+        _benchTrials.size(), trial.TasksPerUpdate, trial.TaskSumMs, trial.TaskWallMs, trial.TaskLongestMs,
+        trial.SlowestCpu, Format::Cpus(trial.CpuMask), trial.ObjectsMs);
 
     // Skip what is left of this thread count once the machine is running out of memory: bigger envs only cost more.
     // The trials go from the plan too, so their envs are never built. Trial i is plan entry _plan.Index + i -
@@ -887,7 +910,8 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
     TextTable table({ { "Threads", TextTable::Align::Right }, { "Envs", TextTable::Align::Right }, { "Learner" },
         { "Env steps/s", TextTable::Align::Right }, { "World ms", TextTable::Align::Right },
         { "Sim ms", TextTable::Align::Right }, { "Learner ms", TextTable::Align::Right },
-        { "Memory MB", TextTable::Align::Right } });
+        { "Memory MB", TextTable::Align::Right }, { "Tasks", TextTable::Align::Right },
+        { "Longest ms", TextTable::Align::Right }, { "Parallel", TextTable::Align::Right }, { "CPUs" } });
 
     BenchTrial const* winner = nullptr;
     for (BenchTrial const& trial : _benchTrials)
@@ -898,14 +922,17 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
         if (!trial.Measured)
         {
             table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs), learner,
-                trial.Note.empty() ? "not run" : trial.Note, "", "", "", "" });
+                trial.Note.empty() ? "not run" : trial.Note, "", "", "", "", "", "", "", "" });
             continue;
         }
 
         table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs), learner,
             Acore::StringFormat("{:.0f}", trial.EnvStepsPerSecond),
             Acore::StringFormat("{:.1f}", trial.WorldMsPerTick), Acore::StringFormat("{:.1f}", trial.SimMsPerTick),
-            Acore::StringFormat("{:.1f}", trial.LearnerMsPerTick), std::to_string(trial.MemoryMb) });
+            Acore::StringFormat("{:.1f}", trial.LearnerMsPerTick), std::to_string(trial.MemoryMb),
+            Acore::StringFormat("{:.1f}", trial.TasksPerUpdate), Acore::StringFormat("{:.2f}", trial.TaskLongestMs),
+            Acore::StringFormat("{:.1f}x", trial.TaskWallMs > 0.0 ? trial.TaskSumMs / trial.TaskWallMs : 0.0),
+            Format::Cpus(trial.CpuMask) });
 
         // The learner phase is what training costs, so it decides once it has run.
         bool const better = !winner || (trial.Learner && !winner->Learner)
@@ -977,6 +1004,13 @@ void AnimusForge::Forge::BenchSave() const
         entry["sim_ms"] = trial.SimMsPerTick;
         entry["learner_ms"] = trial.LearnerMsPerTick;
         entry["memory_mb"] = trial.MemoryMb;
+        entry["objects_ms"] = trial.ObjectsMs;
+        entry["tasks_per_update"] = trial.TasksPerUpdate;
+        entry["task_sum_ms"] = trial.TaskSumMs;
+        entry["task_longest_ms"] = trial.TaskLongestMs;
+        entry["task_wall_ms"] = trial.TaskWallMs;
+        entry["slowest_cpu"] = trial.SlowestCpu;
+        entry["cpus"] = Format::Cpus(trial.CpuMask);
         entry["warmup_ticks"] = trial.WarmupTicks;
         entry["measure_ticks"] = trial.MeasureTicks;
         if (!trial.Note.empty())

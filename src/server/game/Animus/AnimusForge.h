@@ -141,6 +141,13 @@ namespace AnimusForge
             double SimMsPerTick = 0.0;      // observing, rewarding and applying actions
             double LearnerMsPerTick = 0.0;  // blocked on the learner
             uint64 MemoryMb = 0;            // the worldserver's resident memory at the end of the trial
+            double ObjectsMs = 0.0;         // UpdateNonPlayerObjects, thread time per decision over every map
+            double TasksPerUpdate = 0.0;    // map tasks per map update (MapMgr::TaskTiming), and per update:
+            double TaskSumMs = 0.0;         // ... their summed wall time
+            double TaskLongestMs = 0.0;     // ... the longest one
+            double TaskWallMs = 0.0;        // ... the whole schedule-and-join
+            int32 SlowestCpu = -1;          // the last update's longest task ran here
+            uint64 CpuMask = 0;             // and its tasks started on these
             uint32 WarmupTicks = 0;         // the window this trial ran: the sim grid and the learner phase differ
             uint32 MeasureTicks = 0;
             bool Measured = false;
@@ -313,6 +320,8 @@ namespace AnimusForge
         uint64 _benchWorldNs = 0;       // the counters when the measurement started
         uint64 _benchSimNs = 0;
         uint64 _benchLearnerNs = 0;
+        uint64 _benchObjectsNs = 0;
+        MapMgr::TaskTiming _benchTaskTiming;
 
         std::chrono::steady_clock::time_point _rateTime;
         uint64 _rateTicks = 0;

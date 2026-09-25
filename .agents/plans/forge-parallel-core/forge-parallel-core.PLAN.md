@@ -754,7 +754,10 @@ Open items, most useful first:
    `map tasks` row gives, per map update, the task count, summed task wall time and its ratio to the
    update's wall (the parallelism actually had), the mean longest task (critical path), the last update's
    slowest map with the CPU it ran on, and the set of CPUs tasks started on. Measured in
-   `MapUpdater::RunMapTick`, rolled up in `MapMgr::Update` (`MapMgr::TaskTiming`). Syntax-checked only.
+   `MapUpdater::RunMapTick`, rolled up in `MapMgr::Update` (`MapMgr::TaskTiming`). `forge bench` records
+   the same per trial (a second log line per trial, four new table columns: Tasks, Longest ms, Parallel,
+   CPUs; and `objects_ms`, `task_*`, `cpus` in the saved JSON), so the re-run sweep answers it directly.
+   Syntax-checked only.
    Two things found on the way, both of which change how to read finding 4:
    - **The `world parts` row never counted continent replicas.** `MapMgr::Update` summed `i_maps` and
      instance children; replicas live only in `i_replicaById`. At 128 envs that is 1 map of 5, the base

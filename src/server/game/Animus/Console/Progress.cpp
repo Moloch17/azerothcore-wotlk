@@ -45,27 +45,6 @@ namespace
             collect.Reset, collect.ResetsPerTick, collect.ReusedPerTick);
     }
 
-    /// A set of CPUs as ranges, "0-7,16".
-    std::string CpuList(uint64 mask)
-    {
-        std::string list;
-        for (int32 cpu = 0; cpu < 64; ++cpu)
-        {
-            if (!(mask & (uint64(1) << cpu)))
-                continue;
-
-            int32 last = cpu;
-            while (last + 1 < 64 && (mask & (uint64(1) << (last + 1))))
-                ++last;
-
-            if (!list.empty())
-                list += ',';
-            list += last == cpu ? std::to_string(cpu) : Acore::StringFormat("{}-{}", cpu, last);
-            cpu = last;
-        }
-        return list.empty() ? "-" : list;
-    }
-
     /// The map update as tasks: sum against wall is the parallelism it had, longest against wall whether one map
     /// is the critical path, and the CPUs say where the pinned workers actually ran.
     std::string MapTasksNote(AnimusForge::SimSnapshot::MapTasksMs const& tasks)
@@ -73,7 +52,7 @@ namespace
         return Acore::StringFormat("{:.1f} tasks, sum {:.2f} ms ({:.1f}x wall), longest {:.2f} ms (last: map {} "
             "instance {} on cpu {}), cpus {} (per map update)", tasks.Tasks, tasks.Sum,
             tasks.Wall > 0.0 ? tasks.Sum / tasks.Wall : 0.0, tasks.Longest, tasks.SlowestMapId,
-            tasks.SlowestInstanceId, tasks.SlowestCpu, CpuList(tasks.CpuMask));
+            tasks.SlowestInstanceId, tasks.SlowestCpu, AnimusForge::Format::Cpus(tasks.CpuMask));
     }
 
     /// Weight of the newest interval in the step rate average.

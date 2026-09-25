@@ -89,6 +89,9 @@ namespace AnimusForge
         /// 0.4512 -> "45.1%"; with `sign`, "+45.1%" / "-3.0%".
         std::string Percent(double fraction, bool sign = false);
 
+        /// A mask of CPUs 0-63 as ranges: "0-7,16". Empty -> "-".
+        std::string Cpus(uint64 mask);
+
         /// A value, or "-" when it is missing.
         std::string OrDash(std::optional<double> value, std::function<std::string(double)> const& format);
     }

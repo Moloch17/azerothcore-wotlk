@@ -80,6 +80,26 @@ void AnimusForge::TextTable::Write(LineSink const& sink, std::string const& inde
         sink(text);
 }
 
+std::string AnimusForge::Format::Cpus(uint64 mask)
+{
+    std::string list;
+    for (int32 cpu = 0; cpu < 64; ++cpu)
+    {
+        if (!(mask & (uint64(1) << cpu)))
+            continue;
+
+        int32 last = cpu;
+        while (last + 1 < 64 && (mask & (uint64(1) << (last + 1))))
+            ++last;
+
+        if (!list.empty())
+            list += ',';
+        list += last == cpu ? std::to_string(cpu) : Acore::StringFormat("{}-{}", cpu, last);
+        cpu = last;
+    }
+    return list.empty() ? "-" : list;
+}
+
 std::string AnimusForge::Format::Count(uint64 value)
 {
     std::string digits = std::to_string(value);
