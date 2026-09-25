@@ -300,10 +300,7 @@ void MapMgr::Update(uint32 diff)
         if (m_updater.activated())
             m_updater.schedule_update(*map, diff, diff);
         else
-        {
-            map->Update(diff, diff);
-            map->DelayedUpdate(diff);
-        }
+            MapUpdater::RunMapTick(*map, diff, diff);
     }
 
     if (m_updater.activated())

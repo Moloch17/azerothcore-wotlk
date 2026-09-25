@@ -102,6 +102,11 @@ Delivered and syntax-checked (no full build; the user builds with `./forge.sh --
   playtest tick tolerance. Python suite: 610 pass, 10 pre-existing model-JSON stage-name failures
   (identical in the old module checkout). Still staged: `ForgeSealStrict = false` until one full run
   logs no straggler; `mod-animus.cmake`'s exclusion check lives in that module's own repo.
+- **Phase 3 item 1** done (syntax-checked, unmeasured): a decision is `BeginDecision` on the world thread
+  before the maps, `ApplyActionsForMap` + `ObserveMap` inside each map's task (`MapUpdater::RunMapTick`),
+  and `FinishCollect` on the world thread after the join, which keeps only the ended episodes' info and
+  their reset. The `forge status` figure for observe, reward and apply is now thread time inside the world
+  number, not on top of it.
 
 Deferred, with reasons:
 - `_valuesUpdateCache` removal (no cost while empty), templated aura scans, `std::list` target lists,
@@ -354,13 +359,35 @@ learner-driven run reaches its first reset without a "Synchronous query on seale
 
 ## Phase 3: module work onto map threads; replica continents
 
-1. **Observe/reward per map.** Register a `MapScript::OnMapUpdate` in
-   `modules/mod-animus-forge/src/Hooks/AnimusForgeScripts.cpp`; `EnvPool` keeps `mapToEnvs`; the map
-   thread runs `StageScenario::Observe`/`Reward` for its envs into their disjoint slices of `Obs`, `Mask`,
-   `Rewards`. `ApplyActions` runs at the start of the next tick from a swapped `pendingActions` buffer.
-   `RecordDamage/RecordHeal/RecordCast` index `_agents` by a `Player`-stored agent slot instead of an
-   `unordered_map` find. Instance stages parallelise immediately; the world thread keeps only the learner
-   exchange, console, and instance create/destroy.
+1. **Observe/reward per map.** Done (2026-09-25, syntax-checked, unmeasured). The script hook the plan
+   named is gone with the module fold, so the seam is `MapUpdater::RunMapTick` -- the one definition of a
+   map's whole tick, which the workers and the two inline paths (no threads configured) all go through.
+   It calls `Forge::OnMapPrologue` before `Map::Update` and `Forge::OnMapEpilogue` after
+   `Map::DelayedUpdate`.
+
+   A decision is now three parts on `EnvPool`. `BeginDecision` opens it on the world thread from
+   `Forge::OnWorldPrologue`, called from `World::Update` before `MapMgr::Update`: the episode clock is
+   advanced there (the terminal check after the maps reads it) and the tick-to-decision count moved there
+   with it, so both are settled before the first map task starts. `ApplyActionsForMap` and `ObserveMap`
+   run on the thread updating that map, over `_mapEnvs` (envs keyed by map id and instance id, maintained
+   by `IndexEnv` on the world thread like `_agents`), writing only their own envs' slices of `Obs`,
+   `State`, `Mask` and `Rewards`. `FinishCollect` closes the decision on the world thread and keeps what
+   must stay serial: an ended episode's info, its report, and its reset (item 3 moves resets).
+
+   Per-decision timings are per-env slots summed by `FinishCollect`, so no two map threads write one
+   counter; the apply is an atomic accumulator, since the maps of the tick after a decision run it.
+   Observe, reward and apply are now thread time inside the world figure rather than time on top of it,
+   and `forge status` says so instead of implying they add to the sim number.
+
+   Audited for the move: the curriculum keeps per-env state in vectors indexed by `env.Index`
+   (`StageScenario::_data`, each encounter's own `_envs`), its shared members are read-only tables built
+   at setup, and `DifficultyLadder` already had a mutex for finishing on map threads. An env whose map no
+   task ticked is scored by `FinishCollect` itself with one error line, so a scheduler gap costs a stall,
+   not a stale transition.
+
+   Still to do here: `RecordDamage/RecordHeal/RecordCast` index `_agents` by a `Player`-stored agent slot
+   instead of an `unordered_map` find. Instance stages parallelise with this; continent stages need item 2,
+   since every env on one base map is one task.
 2. **Replica continents.** Create N `Map` objects per continent with `instanceId > 0` (envs sharded
    `env.Index % N`), sharing `GridTerrainData` via `GetGridTerrainDataSharedPtr` (`Map.h:230`) and the
    global VMAP/MMAP. Local edits in `MapMgr::CreateBaseMap` (`MapMgr.cpp:71-108`),

@@ -55,6 +55,10 @@ public:
 
     /// A map's full tick: Update(diff, s_diff) then DelayedUpdate(diff). Callable from any thread.
     void schedule_update(Map& map, uint32 diff, uint32 s_diff);
+    /// The same tick run here and now, for the callers that update a map without a worker (no threads
+    /// configured). The sim's per-map halves of a decision hang off this, so every path that ticks a map
+    /// goes through it and none of them can be forgotten.
+    static void RunMapTick(Map& map, uint32 diff, uint32 s_diff);
     /// Create the base map and load all of its grids (PreloadAllNonInstancedMapGrids).
     void schedule_map_preload(uint32 mapid);
     /// Run tasks on the calling thread until every pushed task, including those pushed meanwhile, is done.

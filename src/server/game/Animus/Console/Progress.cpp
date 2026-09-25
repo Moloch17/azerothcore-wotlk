@@ -37,9 +37,12 @@ namespace
     /// without it, so their per-call difference is what mask building costs.
     std::string SimPartsNote(AnimusForge::SimSnapshot::CollectMs const& collect)
     {
-        return Acore::StringFormat("reward {:.2f} ms, final observe {:.2f} ms, reset {:.2f} ms ({:.2f} episodes "
-            "rebuilt per decision, {:.2f} characters reused), apply {:.2f} ms", collect.Reward, collect.FinalObserve,
-            collect.Reset, collect.ResetsPerTick, collect.ReusedPerTick, collect.Apply);
+        // Observe, reward and apply run inside the map tasks, so they are summed thread time already counted in
+        // the world figure above, not time of their own on top of it. Reset is the world thread's, and is.
+        return Acore::StringFormat("reward {:.2f} ms, final observe {:.2f} ms, apply {:.2f} ms (thread time inside "
+            "the map update, not on top of it), reset {:.2f} ms on the world thread ({:.2f} episodes rebuilt per "
+            "decision, {:.2f} characters reused)", collect.Reward, collect.FinalObserve, collect.Apply,
+            collect.Reset, collect.ResetsPerTick, collect.ReusedPerTick);
     }
 
     /// Weight of the newest interval in the step rate average.

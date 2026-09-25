@@ -72,10 +72,7 @@ void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
             if (sMapMgr->GetMapUpdater()->activated())
                 sMapMgr->GetMapUpdater()->schedule_update(*i->second, t, s_diff);
             else
-            {
-                i->second->Update(t, s_diff);
-                i->second->DelayedUpdate(t);
-            }
+                MapUpdater::RunMapTick(*i->second, t, s_diff);
             ++i;
         }
     }

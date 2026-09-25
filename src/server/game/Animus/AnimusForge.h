@@ -51,6 +51,17 @@ namespace AnimusForge
         void OnUpdate(uint32 diff);
         void OnShutdown();
 
+        /// The world tick, before the maps are scheduled: the episode clock, and whether this tick ends a
+        /// decision. A decision's scoring and observation run inside the map tasks that follow
+        /// (OnMapEpilogue), so both have to be settled before the first of them starts.
+        void OnWorldPrologue(uint32 diff);
+
+        /// Inside a map's task, on the thread updating it: the envs on this map take the last decision's
+        /// actions before its tick (OnMapPrologue) and are scored and observed after it (OnMapEpilogue).
+        /// Both do nothing for a map that holds no env, which is every map in playtest mode.
+        void OnMapPrologue(Map& map);
+        void OnMapEpilogue(Map& map);
+
         /// Console commands, run on the world thread. Each writes its reply to `out` and returns false when it
         /// refuses (the reply says why).
         void CommandStatus(LineSink const& out);
@@ -265,6 +276,17 @@ namespace AnimusForge
 
         uint64 _ticks = 0;                  // decisions since the scenario started, not world updates
         uint32 _ticksSinceDecision = 0;     // world updates since the last decision (< TicksPerDecision)
+        /// This tick ends a decision: set by OnWorldPrologue, read by the map epilogues that score and observe
+        /// on it, cleared when OnUpdate closes the decision.
+        ///
+        /// Plain bools although map workers read them: both are written before any map task is pushed and read
+        /// only from inside a task, so the scheduler's release on publishing a task and the worker's acquire on
+        /// claiming it publish them; the join in MapUpdater::wait() orders the next write after every read.
+        bool _decisionTick = false;
+        /// A decision has filled Actions and no map has applied them yet. The prologue hands it to _applyTick,
+        /// so the maps of exactly one tick apply a decision's actions, whatever TicksPerDecision is.
+        bool _actionsPending = false;
+        bool _applyTick = false;
         uint64 _decisions = 0;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
         uint32 _progressInterval = 0;

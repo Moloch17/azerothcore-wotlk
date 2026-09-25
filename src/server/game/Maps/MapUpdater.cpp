@@ -18,6 +18,7 @@
  */
 
 #include "MapUpdater.h"
+#include "AnimusForge.h"
 #include "DatabaseEnv.h"
 #include "Errors.h"
 #include "Log.h"
@@ -117,12 +118,22 @@ void MapUpdater::schedule_map_preload(uint32 mapid)
     Push(task);
 }
 
+void MapUpdater::RunMapTick(Map& map, uint32 diff, uint32 s_diff)
+{
+    // The sim's envs on this map, on this thread: they take the last decision's actions before the tick and are
+    // scored and observed after it, so the only part of a decision left for the world thread is the part that has
+    // to be serial. A map with no env of its own pays one branch for each.
+    sAnimusForge->OnMapPrologue(map);
+    map.Update(diff, s_diff);
+    map.DelayedUpdate(diff);
+    sAnimusForge->OnMapEpilogue(map);
+}
+
 void MapUpdater::Run(Task const& task)
 {
     if (task.map)
     {
-        task.map->Update(task.diff, task.s_diff);
-        task.map->DelayedUpdate(task.diff);
+        RunMapTick(*task.map, task.diff, task.s_diff);
         return;
     }
 

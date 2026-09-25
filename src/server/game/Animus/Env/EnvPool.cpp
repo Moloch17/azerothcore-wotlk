@@ -21,6 +21,7 @@
 #include "RandomSeed.h"
 #include "Common.h"
 #include "Log.h"
+#include "Map.h"
 #include "MoveSpline.h"
 #include "Random.h"
 #include "Spell.h"
@@ -70,6 +71,11 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     Actions.assign(agents, 0);
     Goals.assign(agents, -1);     // Curriculum::NO_GOAL: no goal until a learner with a goal head sends one
     _reportInfoSum.assign(_spec.EpisodeInfoDim, 0.0);
+
+    // NOT_FILED, not MapKey(0, 0): map 0 instance 0 is Eastern Kingdoms, a key an env can really have.
+    _envMapKey.assign(envs, NOT_FILED);
+    _envCollect.assign(envs, CollectTiming());
+    _observed.assign(envs, 0);
 }
 
 bool Animus::EnvPool::Setup()
@@ -96,6 +102,9 @@ void Animus::EnvPool::Teardown()
     _agents.clear();
     _allies.clear();
     _envByInstance.clear();
+    _mapEnvs.clear();
+    std::fill(_envMapKey.begin(), _envMapKey.end(), NOT_FILED);
+    _decisionOpen = false;
 
     for (Env& env : _envs)
         _scenario.Teardown(env);
@@ -131,6 +140,9 @@ void Animus::EnvPool::ResetAll()
     std::fill(Rewards.begin(), Rewards.end(), 0.0f);
     std::fill(Done.begin(), Done.end(), 0);
     std::fill(Terminated.begin(), Terminated.end(), 0);
+
+    // Every env starts afresh, so whatever a decision had scored before this is discarded with it.
+    _decisionOpen = false;
 }
 
 namespace
@@ -145,62 +157,162 @@ namespace
     }
 }
 
-void Animus::EnvPool::Collect()
+void Animus::EnvPool::BeginDecision()
 {
-    uint32 const agentsPerEnv = _spec.AgentsPerEnv;
-
     // Where this decision's time goes, for the host's report. The clock is read a handful of times per env, not
     // per agent or per action, so the measurement does not pay for itself.
     _collect = CollectTiming();
+    _envCollect.assign(_envs.size(), CollectTiming());
+    _observed.assign(_envs.size(), 0);
+    _decisionOpen = true;
+}
+
+void Animus::EnvPool::ObserveEnv(Env& env)
+{
+    uint32 const agentsPerEnv = _spec.AgentsPerEnv;
+    uint32 const e = env.Index;
+    CollectTiming& timing = _envCollect[e];
     auto mark = std::chrono::steady_clock::now();
 
+    _scenario.Reward(env, &Rewards[e * agentsPerEnv]);
+    timing.RewardNs += Since(mark);
+
+    for (uint32 agent = 0; agent < agentsPerEnv; ++agent)
+    {
+        env.EpisodeStats[agent].Add(env.StepStats[agent]);
+        env.StepStats[agent] = AgentStats();
+    }
+    env.StepInterruptedTargets.clear();
+
+    bool const terminal = _scenario.IsTerminal(env);
+    bool const done = terminal || env.EpisodeElapsedMs >= env.EpisodeLengthMs;
+    Done[e] = done ? 1 : 0;
+    Terminated[e] = terminal ? 1 : 0;
+
+    _observed[e] = 1;
+
+    if (done)
+    {
+        // No mask: nothing acts on the final observation. The next episode does not exist yet -- FinishEnv
+        // builds it on the world thread and observes it there.
+        _scenario.Observe(env, &FinalObs[e * agentsPerEnv * _spec.ObsDim], &FinalState[e * _spec.StateDim],
+            nullptr);
+        timing.FinalObserveNs += Since(mark);
+        return;
+    }
+
+    _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
+        &Mask[e * agentsPerEnv * _spec.NumActions]);
+    DescribeAgents(env);
+    ++timing.Observes;
+    timing.ObserveNs += Since(mark);
+}
+
+void Animus::EnvPool::FinishEnv(Env& env)
+{
+    uint32 const agentsPerEnv = _spec.AgentsPerEnv;
+    uint32 const e = env.Index;
+    auto mark = std::chrono::steady_clock::now();
+
+    _scenario.EpisodeInfo(env, &EpisodeInfo[e * agentsPerEnv * _spec.EpisodeInfoDim]);
+    EpisodeSeed[e] = _envSeed[e];
+
+    ++env.EpisodesCompleted;
+    ReportEpisode(e);
+    _collect.FinalObserveNs += Since(mark);
+
+    CurrentReset = {};
+    ResetEnv(env);
+    ++_collect.Resets;
+    _collect.ResetNs += Since(mark);
+    _collect.ResetCreateNs += CurrentReset.CreateNs;
+    _collect.ResetPlaceNs += CurrentReset.PlaceNs;
+    _collect.ResetConfigureNs += CurrentReset.ConfigureNs;
+    _collect.ResetDestroyNs += CurrentReset.DestroyNs;
+
+    _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
+        &Mask[e * agentsPerEnv * _spec.NumActions]);
+    DescribeAgents(env);
+    ++_collect.Observes;
+    _collect.ObserveNs += Since(mark);
+}
+
+uint64 Animus::EnvPool::MapKey(Map const& map)
+{
+    return MapKey(map.GetId(), map.GetInstanceId());
+}
+
+void Animus::EnvPool::ApplyActionsForMap(Map const& map)
+{
+    auto const envs = _mapEnvs.find(MapKey(map));
+    if (envs == _mapEnvs.end())
+        return;
+
+    auto mark = std::chrono::steady_clock::now();
+
+    for (uint32 index : envs->second)
+    {
+        Env& env = _envs[index];
+        if (!Goals.empty())
+            _scenario.ApplyGoals(env, &Goals[index * _spec.AgentsPerEnv]);
+
+        _scenario.ApplyActions(env, &Actions[index * _spec.AgentsPerEnv]);
+    }
+
+    // Every map's share of the apply, which they run at once: the sum, not the wall clock.
+    _applyNs.fetch_add(Since(mark), std::memory_order_relaxed);
+}
+
+void Animus::EnvPool::ObserveMap(Map const& map)
+{
+    auto const envs = _mapEnvs.find(MapKey(map));
+    if (envs == _mapEnvs.end())
+        return;
+
+    for (uint32 index : envs->second)
+        ObserveEnv(_envs[index]);
+}
+
+void Animus::EnvPool::FinishCollect()
+{
+    if (!_decisionOpen)
+        return;
+
+    _decisionOpen = false;
+
+    // An env whose map did not tick was never scored. That is a scheduler bug, not a reason to hand the
+    // learner a stale transition, so it is scored here and said once.
     for (Env& env : _envs)
     {
-        uint32 const e = env.Index;
+        if (_observed[env.Index])
+            continue;
 
-        _scenario.Reward(env, &Rewards[e * agentsPerEnv]);
-        _collect.RewardNs += Since(mark);
-
-        for (uint32 agent = 0; agent < agentsPerEnv; ++agent)
+        if (!_strayLogged)
         {
-            env.EpisodeStats[agent].Add(env.StepStats[agent]);
-            env.StepStats[agent] = AgentStats();
-        }
-        env.StepInterruptedTargets.clear();
-
-        bool const terminal = _scenario.IsTerminal(env);
-        bool const done = terminal || env.EpisodeElapsedMs >= env.EpisodeLengthMs;
-        Done[e] = done ? 1 : 0;
-        Terminated[e] = terminal ? 1 : 0;
-
-        if (done)
-        {
-            // No mask: nothing acts on the final observation.
-            _scenario.Observe(env, &FinalObs[e * agentsPerEnv * _spec.ObsDim], &FinalState[e * _spec.StateDim],
-                nullptr);
-            _scenario.EpisodeInfo(env, &EpisodeInfo[e * agentsPerEnv * _spec.EpisodeInfoDim]);
-            EpisodeSeed[e] = _envSeed[e];
-
-            ++env.EpisodesCompleted;
-            ReportEpisode(e);
-            _collect.FinalObserveNs += Since(mark);
-
-            CurrentReset = {};
-            ResetEnv(env);
-            ++_collect.Resets;
-            _collect.ResetNs += Since(mark);
-            _collect.ResetCreateNs += CurrentReset.CreateNs;
-            _collect.ResetPlaceNs += CurrentReset.PlaceNs;
-            _collect.ResetConfigureNs += CurrentReset.ConfigureNs;
-            _collect.ResetDestroyNs += CurrentReset.DestroyNs;
+            _strayLogged = true;
+            LOG_ERROR("module.animus", "Env {} is on map {} instance {}, which no map task ticked: scoring it on "
+                "the world thread instead. Either the scheduler skipped the map, or the env holds no player to "
+                "keep it awake (MapMgr skips a continent and MapInstanced an instance that has none).",
+                env.Index, env.MapId, env.InstanceId);
         }
 
-        _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
-            &Mask[e * agentsPerEnv * _spec.NumActions]);
-        DescribeAgents(env);
-        ++_collect.Observes;
-        _collect.ObserveNs += Since(mark);
+        ObserveEnv(env);
     }
+
+    for (CollectTiming const& timing : _envCollect)
+    {
+        _collect.RewardNs += timing.RewardNs;
+        _collect.ObserveNs += timing.ObserveNs;
+        _collect.FinalObserveNs += timing.FinalObserveNs;
+        _collect.Observes += timing.Observes;
+    }
+
+    // The maps' share of applying the last decision's actions, whenever in the ticks since they ran it.
+    _collect.ApplyNs = _applyNs.exchange(0, std::memory_order_relaxed);
+
+    for (Env& env : _envs)
+        if (Done[env.Index])
+            FinishEnv(env);
 }
 
 void Animus::EnvPool::DescribeAgents(Env const& env)
@@ -273,21 +385,6 @@ void Animus::EnvPool::SetReplay(uint32 seedBase, float fraction, std::vector<uin
     _replaySeedBase = seedBase;
     _replayFraction = std::isfinite(fraction) ? std::clamp(fraction, 0.0f, 1.0f) : 0.0f;
     _replaySeeds = std::move(seeds);
-}
-
-void Animus::EnvPool::ApplyActions()
-{
-    auto mark = std::chrono::steady_clock::now();
-
-    for (Env& env : _envs)
-    {
-        if (!Goals.empty())
-            _scenario.ApplyGoals(env, &Goals[env.Index * _spec.AgentsPerEnv]);
-
-        _scenario.ApplyActions(env, &Actions[env.Index * _spec.AgentsPerEnv]);
-    }
-
-    _collect.ApplyNs = Since(mark);
 }
 
 void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type,
@@ -511,6 +608,24 @@ void Animus::EnvPool::IndexEnv(Env const& env)
 
     if (env.InstanceId)
         _envByInstance[env.InstanceId] = env.Index;
+
+    // Where the env lives now. A reset can move it (a new instance, another continent replica), so it leaves
+    // the map it was filed under first.
+    uint64 const key = MapKey(env.MapId, env.InstanceId);
+    uint64& filed = _envMapKey[env.Index];
+    if (filed == key)
+        return;
+
+    if (auto const previous = _mapEnvs.find(filed); previous != _mapEnvs.end())
+    {
+        std::vector<uint32>& envs = previous->second;
+        envs.erase(std::remove(envs.begin(), envs.end(), env.Index), envs.end());
+        if (envs.empty())
+            _mapEnvs.erase(previous);
+    }
+
+    _mapEnvs[key].push_back(env.Index);
+    filed = key;
 }
 
 void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain, bool periodic)

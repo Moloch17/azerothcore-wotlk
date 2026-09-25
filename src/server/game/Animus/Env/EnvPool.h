@@ -21,6 +21,7 @@
 
 #include "Env.h"
 #include "Scenario.h"
+#include <atomic>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -55,14 +56,29 @@ namespace Animus
         /// Reset every env and write fresh observations with zero reward and done.
         void ResetAll();
 
-        /// Decision step: score the transition that just ended, auto-reset finished envs, observe.
-        void Collect();
+        /// A decision in three parts, so the scoring and the observation run on the threads that update
+        /// the maps instead of on the world thread.
+        ///
+        /// BeginDecision opens the decision on the world thread before the maps tick: it clears the marks
+        /// and the per-env timings the other parts fill. ApplyActionsForMap and ObserveMap run on the
+        /// thread updating that map, before and after its tick, and touch only the envs that live on it,
+        /// so two maps never meet. FinishCollect closes the decision on the world thread once the maps
+        /// have joined, and does what has to stay serial: the ended episodes' info and their reset.
+        ///
+        /// An env whose map never ticked is observed by FinishCollect itself, so a map the scheduler did
+        /// not run costs correctness nothing.
+        void BeginDecision();
+        void ApplyActionsForMap(Map const& map);
+        void ObserveMap(Map const& map);
+        void FinishCollect();
+
+        /// Whether a decision is open: BeginDecision ran and FinishCollect has not. A host that abandons
+        /// a decision (a pause, a learner that reconnects) still has to close it.
+        [[nodiscard]] bool DecisionOpen() const { return _decisionOpen; }
 
         /// Fill Actions from a local policy ("random" or a scenario scripted policy): every agent's, or only the
         /// opponent seats' (Scenario::IsOpponentSeat), keeping the other actions.
         bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false);
-
-        void ApplyActions();
 
         /// Evaluation (the forge's MODE message): hand seed indexes 0..episodes-1 to envs as they reset, each env
         /// rebuilt right after reseeding the world thread's random numbers from (seedBase, index)
@@ -115,8 +131,12 @@ namespace Animus
         /// Episodes finished by every env since Setup.
         [[nodiscard]] uint64 CompletedEpisodes() const;
 
-        /// Where a decision's pool time went, for the host's report: the parts of Collect and ApplyActions that
-        /// can be worked on separately. Filled every decision, so a host may read it after ApplyActions.
+        /// Where a decision's pool time went, for the host's report: the parts that can be worked on
+        /// separately. Filled by FinishCollect, so a host may read it once the decision is closed.
+        ///
+        /// Reward, Observe, FinalObserve and Apply are summed thread time from the map tasks -- the maps run
+        /// at once, so their total is more than the wall clock they took, and it is already inside the world
+        /// figure rather than on top of it. Reset is the world thread's own.
         ///
         /// ObserveNs covers the observation and the mask of the running episodes; FinalObserveNs the ended ones'
         /// last observation, which is the same work without the mask, so comparing the two per call is the
@@ -175,6 +195,25 @@ namespace Animus
         /// victim made it smaller with what they prevented.
         void RecordPrevented(AgentSlot const& victimSlot, bool victimIsAgent, Unit const* victim, uint32 damage);
 
+        /// One env's decision, less what must run on the world thread: the reward, the step stats, the
+        /// terminal check, and the observation (the final one when the episode ended, whose next episode
+        /// FinishEnv observes after building it). Runs on the thread updating the env's map.
+        void ObserveEnv(Env& env);
+        /// An ended episode's serial half: its info, its report, the next episode, and that one's first
+        /// observation. World thread only -- it builds characters and puts them on a map.
+        void FinishEnv(Env& env);
+
+        /// _envMapKey of an env that is not in _mapEnvs yet.
+        static constexpr uint64 NOT_FILED = UI64LIT(0xFFFFFFFFFFFFFFFF);
+
+        /// Envs are grouped by this, so a map task can find its own: one key per Map, since an instance id
+        /// is unique and a continent's replicas each have their own.
+        [[nodiscard]] static uint64 MapKey(uint32 mapId, uint32 instanceId)
+        {
+            return (uint64(mapId) << 32) | instanceId;
+        }
+        [[nodiscard]] static uint64 MapKey(Map const& map);
+
         void ResetEnv(Env& env);
         /// Write the env's per-agent layout and presence rows (after its observation).
         void DescribeAgents(Env const& env);
@@ -202,6 +241,24 @@ namespace Animus
         /// Instance id -> env index, for hooks about units that are not agents (the env's targets). Maintained like
         /// _agents.
         std::unordered_map<uint32, uint32> _envByInstance;
+
+        /// MapKey -> the envs living on that map, in env order. Maintained like _agents, and read by the
+        /// map threads while they hold a decision's half.
+        std::unordered_map<uint64, std::vector<uint32>> _mapEnvs;
+        std::vector<uint64> _envMapKey;         // per env: the key it is filed under, to move it when it changes
+
+        /// A decision is open between BeginDecision and FinishCollect.
+        bool _decisionOpen = false;
+        /// What the maps spent applying this decision's actions, summed across them (they run at once, so it
+        /// is more than the wall clock they took). Taken by the next FinishCollect, which is the decision the
+        /// actions came from however many ticks apart the two are.
+        std::atomic<uint64> _applyNs{ 0 };
+        /// Per env, so two map threads never write the same line; summed into _collect by FinishCollect.
+        std::vector<CollectTiming> _envCollect;
+        /// Per env: its map ticked this decision and observed it. What is left is observed serially.
+        std::vector<uint8> _observed;
+        /// The stray-env warning is worth one line, not one per decision.
+        bool _strayLogged = false;
 
         bool _evaluating = false;
         uint32 _evalSeedBase = 0;

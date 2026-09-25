@@ -116,6 +116,49 @@ void AnimusForge::Forge::OnStartup()
     CommandStatus(LogInfo);
 }
 
+void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
+{
+    _applyTick = false;
+
+    if (!_config.Enable || !_pool)
+        return;
+
+    // Only a running scenario has envs on maps. A pause or a cancel recorded since the last tick is applied by
+    // OnUpdate below, so the state read here is the one the last tick ended in.
+    if (_state != State::Training && _state != State::Running)
+        return;
+
+    // Game time accrues every tick, whether or not the policy chose on this one: an episode's clock, and
+    // everything the library measures against it, is in game milliseconds and does not care how often anyone
+    // decides. It is advanced before the maps tick because the terminal check that follows them reads it.
+    _pool->AdvanceClock(diff);
+
+    // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move
+    // splines, auras and the fight at the finer step and are otherwise silent -- no observation, no action, no
+    // learner. That is the whole point: movement wants a fast world, the policy does not want a faster decision.
+    // Counting ticks rather than accumulating milliseconds keeps a decision exactly TicksPerDecision ticks
+    // whatever the tick rounds to.
+    _decisionTick = ++_ticksSinceDecision >= RunConfig().TicksPerDecision;
+    if (_decisionTick)
+        _pool->BeginDecision();
+
+    // The actions of the decision that just ended are applied by the maps of this tick, and of no other.
+    _applyTick = _actionsPending;
+    _actionsPending = false;
+}
+
+void AnimusForge::Forge::OnMapPrologue(Map& map)
+{
+    if (_applyTick && _pool)
+        _pool->ApplyActionsForMap(map);
+}
+
+void AnimusForge::Forge::OnMapEpilogue(Map& map)
+{
+    if (_decisionTick && _pool)
+        _pool->ObserveMap(map);
+}
+
 void AnimusForge::Forge::OnUpdate(uint32 diff)
 {
     if (!_config.Enable)
@@ -139,14 +182,25 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
             _current, _plan.Remote() ? " and the learner waits" : "");
     }
 
+    // A decision the prologue opened on the strength of the last tick's state: the maps have already scored and
+    // observed into the pool, so it is closed here whatever this tick decides to do instead of finishing it.
+    auto const abandonDecision = [this]()
+    {
+        _decisionTick = false;
+        if (_pool)
+            _pool->FinishCollect();
+    };
+
     if (_state == State::Paused)
     {
+        abandonDecision();
         HoldWhilePaused();
         return;
     }
 
     if (_state == State::Idle)
     {
+        abandonDecision();
         std::this_thread::sleep_for(IDLE_SLEEP);
         return;
     }
@@ -163,17 +217,12 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
             run.TickMs());
     }
 
-    // Game time accrues every tick, whether or not the policy chose on this one: an episode's clock, and everything
-    // the library measures against it, is in game milliseconds and does not care how often anyone decides.
-    _pool->AdvanceClock(diff);
-
-    // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move splines,
-    // auras and the fight at the finer step and are otherwise silent -- no observation, no action, no learner. That is
-    // the whole point: movement wants a fast world, the policy does not want a faster decision. Counting ticks rather
-    // than accumulating milliseconds keeps a decision exactly TicksPerDecision ticks whatever the tick rounds to.
-    bool const decided = ++_ticksSinceDecision >= run.TicksPerDecision;
+    // The clock and the count of ticks to a decision are the prologue's, before the maps tick: what is left here
+    // is the decision itself, on a world thread the maps have rejoined.
+    bool const decided = _decisionTick;
     if (decided)
     {
+        _decisionTick = false;
         _ticksSinceDecision = 0;
 
         // _ticks counts decisions, not world updates: it is the denominator of every per-decision figure in the
@@ -1093,7 +1142,7 @@ void AnimusForge::Forge::WaitedForLearner(std::chrono::steady_clock::time_point 
 
 void AnimusForge::Forge::LocalDecision()
 {
-    _pool->Collect();
+    _pool->FinishCollect();
 
     if (_plan.LocalEpisodes && _pool->CompletedEpisodes() >= _plan.LocalEpisodes)
     {
@@ -1108,7 +1157,9 @@ void AnimusForge::Forge::LocalDecision()
         return;
     }
 
-    _pool->ApplyActions();
+    // The maps apply them at the start of the next tick, each its own envs': the actions land in the very
+    // update they would have if they had been applied here, and every env's share runs on its map's thread.
+    _actionsPending = true;
 }
 
 void AnimusForge::Forge::RemoteDecision()
@@ -1154,7 +1205,7 @@ void AnimusForge::Forge::RemoteDecision()
         _pool->ResetAll();
     }
     else
-        _pool->Collect();
+        _pool->FinishCollect();
 
     if (!SendStep())
         return;
@@ -1272,7 +1323,9 @@ void AnimusForge::Forge::RemoteDecision()
         return;
     }
 
-    _pool->ApplyActions();
+    // The maps apply them at the start of the next tick, each its own envs': the actions land in the very
+    // update they would have if they had been applied here, and every env's share runs on its map's thread.
+    _actionsPending = true;
 }
 
 bool AnimusForge::Forge::KnowsPolicy(std::string const& policy) const

@@ -1228,6 +1228,10 @@ void World::Update(uint32 diff)
     ///- Dungeon finder: remove obsolete entries before the maps look for compatibles.
     sLFGMgr->Update(diff, 0);
 
+    ///- The training host's tick, before the maps: the episode clock, and whether this tick ends a decision.
+    /// The maps themselves carry the decision's per-env halves (MapUpdater::Run).
+    sAnimusForge->OnWorldPrologue(diff);
+
     ///- The simulation itself.
     sMapMgr->Update(diff);
 
