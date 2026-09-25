@@ -28,6 +28,18 @@ if(WITH_LTO)
       set(CMAKE_CXX_COMPILER_RANLIB "${FORGE_LLVM_RANLIB}" CACHE FILEPATH "LTO ranlib" FORCE)
       set(CMAKE_C_COMPILER_AR "${FORGE_LLVM_AR}" CACHE FILEPATH "LTO archiver" FORCE)
       set(CMAKE_C_COMPILER_RANLIB "${FORGE_LLVM_RANLIB}" CACHE FILEPATH "LTO ranlib" FORCE)
+
+      # And again as ordinary variables, which is what the archive rules actually read. project() loads
+      # the compiler detection CMake stored in the build tree, and that file does a plain set() of these:
+      # a normal variable shadows the cache entry above for the rest of the configure. A build tree
+      # configured before the toolchain had llvm-ar keeps "CMAKE_CXX_COMPILER_AR-NOTFOUND" in that file
+      # for as long as the compiler itself does not change, and CMake then writes that literal string
+      # into every static library's link.txt, where it fails as "Error running link command: No such file
+      # or directory". Setting them here, before any add_subdirectory, fixes a stale build tree in place.
+      set(CMAKE_CXX_COMPILER_AR "${FORGE_LLVM_AR}")
+      set(CMAKE_CXX_COMPILER_RANLIB "${FORGE_LLVM_RANLIB}")
+      set(CMAKE_C_COMPILER_AR "${FORGE_LLVM_AR}")
+      set(CMAKE_C_COMPILER_RANLIB "${FORGE_LLVM_RANLIB}")
       target_link_options(acore-compile-option-interface INTERFACE -fuse-ld=lld)
       set(FORGE_LTO_TOOLCHAIN_OK TRUE)
     else()
