@@ -569,6 +569,12 @@ faster alone but slower in training (ROCm hardware queues) and was taken out. GP
 best; more queues let the update's kernels crowd the rollout's. The 7900 XTX holds its memory clock at 456 of 1249 MHz
 under the rollout's bursts (power level auto); the user held off on changing it.
 
+After the fix, where the sim's time goes in training (per decision, thread time over every map unless noted): the
+map update 2.4 ms wall (11 tasks, 6x parallel, longest 1.2 ms); observation 8.8 ms, of which the **move block 5.45
+ms** and the core block 2.32 (duel 0.47, travel 0.23, the seat's view 0.14, pet 0.09) -- `forge status` "observe
+blocks"; apply 2.45 ms; resets 0.78 ms on the world thread; the learner 3.1 ms. Evaluations: 2048 episodes in 16.8 s
+(66-125 s before). Next optimisation target when the user asks for one: the move block.
+
 **Lesson**: measure what training does, not only the bench. The bench's learner phase leaves out evaluation,
 replays, the league and the reset mix of a learning policy.
 

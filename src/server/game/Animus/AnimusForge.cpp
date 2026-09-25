@@ -17,6 +17,7 @@
  */
 
 #include "AnimusForge.h"
+#include "SeatEncoder.h"
 #include "WarmCaches.h"
 #include "Forge.h"
 #include "AnimusHooks.h"
@@ -1292,6 +1293,20 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _collectMs.Observe = since(_collect.ObserveNs, _rateCollect.ObserveNs) / perTick;
             _collectMs.FinalObserve = since(_collect.FinalObserveNs, _rateCollect.FinalObserveNs) / perTick;
             _collectMs.Reset = since(_collect.ResetNs, _rateCollect.ResetNs) / perTick;
+            _observeBlockMs.clear();
+            for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
+            {
+                uint64 const now = Animus::Curriculum::SeatEncoder::ObserveNs[slot].load(std::memory_order_relaxed);
+                double const ms = double(now - std::min(now, _rateObserveNs[slot])) / 1e6 / double(ticks);
+                if (ms > 0.0)
+                {
+                    namespace Curriculum = Animus::Curriculum;
+                    _observeBlockMs.emplace_back(slot == Curriculum::SeatEncoder::OBSERVE_VIEW ? std::string("view")
+                        : std::string(Curriculum::BlockName(Curriculum::BlockId(slot))), ms);
+                }
+            }
+            std::sort(_observeBlockMs.begin(), _observeBlockMs.end(),
+                [](auto const& a, auto const& b) { return a.second > b.second; });
             _collectMs.ResetCreate = since(_collect.ResetCreateNs, _rateCollect.ResetCreateNs) / perTick;
             _collectMs.ResetPlace = since(_collect.ResetPlaceNs, _rateCollect.ResetPlaceNs) / perTick;
             _collectMs.ResetConfigure = since(_collect.ResetConfigureNs, _rateCollect.ResetConfigureNs) / perTick;
@@ -1341,11 +1356,14 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _rateSimNs = _simNs;
         _rateLearnerNs = _learnerNs;
         _rateCollect = _collect;
+        for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
+            _rateObserveNs[slot] = Animus::Curriculum::SeatEncoder::ObserveNs[slot].load(std::memory_order_relaxed);
         _rateMapTiming = sMapMgr->GetUpdateTiming();
         _rateTaskTiming = sMapMgr->GetTaskTiming();
     }
 
     sim.TicksPerSecond = _ticksPerSecond;
+    sim.ObserveBlocks = _observeBlockMs;
     sim.EpisodesPerSecond = _episodesPerSecond;
     sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);
     sim.WorldMsPerTick = _worldMsPerTick;

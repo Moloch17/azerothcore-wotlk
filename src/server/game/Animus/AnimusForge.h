@@ -25,6 +25,7 @@
 #include "MapMgr.h"
 #include "EnvPool.h"
 #include "ForgeConfig.h"
+#include "Block.h"
 #include "LearnerProcess.h"
 #include "LockstepServer.h"
 #include "Progress.h"
@@ -396,6 +397,9 @@ namespace AnimusForge
         SimSnapshot::WorldMs _worldMs;
         SimSnapshot::MapTasksMs _mapTasks;
         SimSnapshot::CollectMs _collectMs;
+        /// SeatEncoder::ObserveNs at the last report, and per decision since it (for `forge status`).
+        std::array<uint64, Animus::Curriculum::BLOCK_COUNT + 1> _rateObserveNs{};
+        std::vector<std::pair<std::string, double>> _observeBlockMs;
         double _ticksPerSecond = 0.0;
         double _episodesPerSecond = 0.0;
         double _worldMsPerTick = 0.0;

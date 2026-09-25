@@ -21,6 +21,19 @@
 #include "DuelBlock.h"
 #include "Player.h"
 #include <algorithm>
+#include <chrono>
+
+namespace
+{
+    /// Adds the time since `mark` to `slot` and moves `mark` to now.
+    void Charge(std::atomic<uint64>& slot, std::chrono::steady_clock::time_point& mark)
+    {
+        auto const now = std::chrono::steady_clock::now();
+        slot.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mark).count()),
+            std::memory_order_relaxed);
+        mark = now;
+    }
+}
 
 void Animus::Curriculum::SeatEncoder::Observe(SeatView const& view, float* obs, uint8* mask)
 {
@@ -35,7 +48,9 @@ void Animus::Curriculum::SeatEncoder::Observe(SeatView const& view, float* obs, 
     // A block's slice of the mask, or null when no mask is wanted.
     auto const blockMask = [mask](BlockSlice const& slice) { return mask ? mask + slice.ActionFirst : nullptr; };
 
+    auto mark = std::chrono::steady_clock::now();
     CoreBlock::ObserveCharacter(view, obs);
+    Charge(ObserveNs[std::size_t(BlockId::Core)], mark);
 
     Player* bot = view.Bot;
     if (bot && !bot->IsAlive())
@@ -57,6 +72,7 @@ void Animus::Curriculum::SeatEncoder::Observe(SeatView const& view, float* obs, 
     {
         BlockSlice const& slice = layout.Slice(id);
         GetBlock(id).Observe(view, obs + slice.ObsFirst, blockMask(slice));
+        Charge(ObserveNs[std::size_t(id)], mark);
     }
 
     // The no-op stays allowed whatever the core block decided.

@@ -21,6 +21,8 @@
 
 #include "Layout.h"
 #include "SeatView.h"
+#include <array>
+#include <atomic>
 
 /*
  * A class/role policy's inputs and outputs in the world: a bot's observation row and action mask, and what each action
@@ -39,6 +41,12 @@ namespace Animus::Curriculum::SeatEncoder
     /// allowed and the character features are always written; the rest only for a living bot with a target (or a
     /// layout that acts without one).
     void Observe(SeatView const& view, float* obs, uint8* mask);
+
+    /// Thread time spent observing, summed over every seat on every map thread: per block (BlockId::Core is the
+    /// character), and at OBSERVE_VIEW what the seat does before its blocks (StageScenario::ObserveSeat: the
+    /// liquid check, target and motion tracking, the memory, SeatView). `forge status` shows where it goes.
+    constexpr std::size_t OBSERVE_VIEW = BLOCK_COUNT;
+    inline std::array<std::atomic<uint64>, BLOCK_COUNT + 1> ObserveNs{};
 
     /// Apply `action` as the client would. Masked or out-of-range actions do nothing.
     void Apply(SeatView& view, int32 action, SeatActionResult& result);

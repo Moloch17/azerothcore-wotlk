@@ -45,6 +45,16 @@ namespace
             collect.Reset, collect.ResetsPerTick, collect.ReusedPerTick);
     }
 
+    /// The rest of the observation's blocks after the largest, as "name ms", largest first.
+    std::string ObserveBlocksNote(std::vector<std::pair<std::string, double>> const& blocks)
+    {
+        std::string note;
+        for (std::size_t i = 1; i < blocks.size(); ++i)
+            if (blocks[i].second >= 0.005)
+                note += Acore::StringFormat("{}{} {:.2f}", note.empty() ? "" : ", ", blocks[i].first, blocks[i].second);
+        return note + " ms (thread time per decision, every map)";
+    }
+
     /// The map update as tasks: sum against wall is the parallelism it had, longest against wall whether one map
     /// is the critical path, and the CPUs say where the pinned workers actually ran.
     std::string MapTasksNote(AnimusForge::SimSnapshot::MapTasksMs const& tasks)
@@ -397,6 +407,9 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         Acore::StringFormat("sessions {:.2f}, players {:.2f}, scripts {:.2f}, relocation {:.2f}, visibility {:.2f}, "
             "delayed {:.2f} ms (thread time per decision, every map)", sim.World.Sessions, sim.World.Players,
             sim.World.Scripts, sim.World.Relocation, sim.World.Visibility, sim.World.Delayed) });
+    if (!sim.ObserveBlocks.empty())
+        table.AddRow({ "observe blocks", Acore::StringFormat("{:.2f} ms {}", sim.ObserveBlocks.front().second,
+            sim.ObserveBlocks.front().first), ObserveBlocksNote(sim.ObserveBlocks) });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
 
@@ -561,6 +574,9 @@ void AnimusForge::ProgressMonitor::ReportLocal(SimSnapshot const& sim, LineSink 
         Acore::StringFormat("sessions {:.2f}, players {:.2f}, scripts {:.2f}, relocation {:.2f}, visibility {:.2f}, "
             "delayed {:.2f} ms (thread time per decision, every map)", sim.World.Sessions, sim.World.Players,
             sim.World.Scripts, sim.World.Relocation, sim.World.Visibility, sim.World.Delayed) });
+    if (!sim.ObserveBlocks.empty())
+        table.AddRow({ "observe blocks", Acore::StringFormat("{:.2f} ms {}", sim.ObserveBlocks.front().second,
+            sim.ObserveBlocks.front().first), ObserveBlocksNote(sim.ObserveBlocks) });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
 

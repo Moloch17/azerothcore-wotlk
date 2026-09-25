@@ -2711,6 +2711,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     if (!seat.L)
         return;
 
+    auto const viewMark = std::chrono::steady_clock::now();
     Player* bot = env.FindBot(seatIndex);
     Unit* target = CurrentTarget(env, seatIndex);      // may be null between gauntlet pulls
 
@@ -2749,6 +2750,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
     view.Option = &seat.Option;
+    SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
+        std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
     SeatEncoder::Observe(view, obs, mask);
 
     if (mask)
