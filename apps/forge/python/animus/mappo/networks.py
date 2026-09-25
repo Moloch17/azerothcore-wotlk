@@ -41,11 +41,11 @@ def _linear(in_dim: int, out_dim: int, gain: float) -> nn.Linear:
 def masked_distribution(logits: torch.Tensor, mask: torch.Tensor) -> Categorical:
     """Categorical over allowed actions only. A row with nothing allowed falls back to action 0."""
     mask = mask.bool()
+    # Chosen on the device, not with `if empty.any()`: on a GPU that read waits for everything queued before it.
     empty = ~mask.any(dim=-1, keepdim=True)
-    if empty.any():
-        fallback = torch.zeros_like(mask)
-        fallback[..., 0] = True
-        mask = torch.where(empty, fallback, mask)
+    fallback = torch.zeros_like(mask)
+    fallback[..., 0] = True
+    mask = torch.where(empty, fallback, mask)
     return Categorical(logits=logits.masked_fill(~mask, MASKED_LOGIT))
 
 
@@ -111,6 +111,34 @@ def fold_into(norm: RunningNorm, linear: nn.Linear) -> None:
     linear.bias.sub_(linear.weight @ (mean / std))
     linear.weight.div_(std[None, :])
     norm.bypass = True
+
+
+class DenseLayouts:
+    """One linear layer per layout (the adapters, the action heads), as one matrix over every layout: each row goes
+    through all of them in a single product and keeps its own layout's slice. A layout's input past its width is the
+    padding the sim writes as zeros, so its slice is exactly its own layer's output. For a rollout on the GPU, where
+    ten small products a network cost more in launches than one ten times the size costs in arithmetic. Built from
+    the layers as they are; rebuilt after the weights change (MappoTrainer._sync_rollout).
+    """
+
+    @torch.no_grad()
+    def __init__(self, linears, in_width: int):
+        self.layouts = len(linears)
+        self.out = max(linear.out_features for linear in linears)
+        first = linears[0].weight
+        self.weight = first.new_zeros((in_width, self.layouts * self.out))
+        self.bias = first.new_zeros(self.layouts * self.out)
+        self.valid = torch.zeros((self.layouts, self.out), dtype=torch.bool, device=first.device)
+        for index, linear in enumerate(linears):
+            columns = slice(index * self.out, index * self.out + linear.out_features)
+            self.weight[: linear.in_features, columns] = linear.weight.t()
+            self.bias[columns] = linear.bias
+            self.valid[index, : linear.out_features] = True
+
+    def __call__(self, rows: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """rows [N, in_width], layout [N] -> each row's own layer's output, [N, out] (padded past its width)."""
+        every = torch.addmm(self.bias, rows, self.weight).view(rows.shape[0], self.layouts, self.out)
+        return every.gather(1, layout.long().view(-1, 1, 1).expand(-1, 1, self.out)).squeeze(1)
 
 
 class _Trunk(nn.Module):
@@ -283,6 +311,9 @@ class LayoutActor(nn.Module):
         head_width = recurrent_size if recurrent_size else hidden[-1]
         self.head_width = head_width
         self.heads = nn.ModuleList(_linear(head_width, actions, 0.01) for _, actions in layouts)
+        # The rollout copy's adapters and heads as DenseLayouts (densify); None everywhere else.
+        self.dense_adapters: DenseLayouts | None = None
+        self.dense_heads: DenseLayouts | None = None
         self.foresight_outputs = foresight_outputs
         self.foresight = _linear(head_width, foresight_outputs, 1.0) if foresight_outputs else None
         # The goal head (mappo.goal_count): a goal chosen every mappo.goal_every_decisions and kept in between, which
@@ -317,6 +348,11 @@ class LayoutActor(nn.Module):
         for norm, adapter in zip(self.norms, self.adapters):
             fold_into(norm, adapter)
 
+    def densify(self, obs_width: int) -> None:
+        """Adapters and heads as DenseLayouts, after fold_normalisation: for a rollout copy on the GPU only."""
+        self.dense_adapters = DenseLayouts(self.adapters, obs_width)
+        self.dense_heads = DenseLayouts(self.heads, self.head_width)
+
     def initial_memory(self, *lead: int, device=None) -> torch.Tensor:
         """A cleared memory for `lead` rows (what an episode starts with)."""
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
@@ -325,6 +361,8 @@ class LayoutActor(nn.Module):
         """Adapters and trunk for flat rows: everything that depends only on this decision's observation, before the
         GRU. A replayed sequence encodes every step in one pass and then carries the memory through them (carry),
         which is the difference between one large matmul per layer and one per step."""
+        if self.dense_adapters is not None:
+            return self.trunk(self.dense_adapters(obs, layout))
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         width = self.adapters[0].out_features
         hidden = obs.new_zeros(obs.shape[0], width)
@@ -354,10 +392,17 @@ class LayoutActor(nn.Module):
     def action_distribution(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
                             goal: torch.Tensor | None = None, groups=None) -> Categorical:
         """The actions of flat rows whose features are `features`, under `goal` where the actor has goals."""
-        groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         if self.goal_embedding is not None and goal is not None:
             features = features + self.goal_embedding(goal.reshape(-1))
 
+        if self.dense_heads is not None:
+            dense = self.dense_heads
+            own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
+            logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
+                own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
+            return masked_distribution(logits, mask)
+
+        groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows])
@@ -410,6 +455,7 @@ class LayoutCritic(nn.Module):
         self.recurrent_size = recurrent_size
         self.memory = nn.GRUCell(hidden[-1], recurrent_size) if recurrent_size else None
         self.head = _linear(recurrent_size if recurrent_size else hidden[-1], 1, 1.0)
+        self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
@@ -417,9 +463,12 @@ class LayoutCritic(nn.Module):
         for flat rows, before the GRU. A replayed sequence encodes every step in one pass and then carries the memory
         through them (carry)."""
         hidden = self.state_encoder(self.state_norm(state))
-        own = torch.zeros_like(hidden)
-        for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
-            own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]]))
+        if self.dense_adapters is not None:
+            own = self.dense_adapters(obs, layout)
+        else:
+            own = torch.zeros_like(hidden)
+            for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
+                own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]]))
         if self.goal_embedding is not None and goal is not None:
             own = own + self.goal_embedding(goal.reshape(-1))
         return self.trunk(hidden + own)
@@ -429,6 +478,10 @@ class LayoutCritic(nn.Module):
         for norm, adapter in zip(self.norms, self.adapters):
             fold_into(norm, adapter)
         fold_into(self.state_norm, self.state_encoder)
+
+    def densify(self, obs_width: int) -> None:
+        """As LayoutActor.densify."""
+        self.dense_adapters = DenseLayouts(self.adapters, obs_width)
 
     def carry(self, encoded: torch.Tensor, memory: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
         """The critic's GRU over a replayed sequence, as LayoutActor.carry is for the actor's."""

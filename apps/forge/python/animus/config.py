@@ -232,7 +232,7 @@ class TrainConfig:
     overlap_updates: bool = False
 
     train_device: str = AUTO  # "auto": cuda when torch sees a GPU (ROCm included), else cpu
-    rollout_device: str = "cpu"  # one small forward pass per decision is faster on the CPU
+    rollout_device: str = "cpu"  # per-layout products on the CPU; stage8_duel's "auto" takes the GPU's dense path
     # CPU threads torch may use; 0 = torch's own default (a thread per core). The learner shares the machine with the
     # sim's map update threads, so fewer can be faster overall (the sim's `forge bench` sweeps both).
     torch_threads: int = 0

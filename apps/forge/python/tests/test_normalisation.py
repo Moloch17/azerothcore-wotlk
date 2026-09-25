@@ -91,3 +91,34 @@ def test_the_rollout_copies_fold_the_normalisers_into_their_adapters():
         trained_value = trainer.critic(state, obs, layout, memory=memory)
         folded_value = trainer._rollout_critic(state, obs, layout, memory=memory)
         torch.testing.assert_close(folded_value, trained_value, rtol=1e-4, atol=1e-4)
+
+
+def test_dense_rollout_layers_match_the_per_layout_ones():
+    """A GPU rollout copy runs every layout's adapter and head as one product (densify); it must choose from the same
+    distribution and value the same state as the per-layout layers, whatever the padding past a layout's width."""
+    import copy
+
+    torch.manual_seed(1)
+    layouts = [(6, 3), (4, 5), (5, 2)]
+    trainer = MappoTrainer(layouts, 7, MappoConfig(hidden=(8, 8), recurrent_size=4, goal_count=0))
+    rows = 30
+    layout = torch.arange(rows) % 3
+    obs = torch.randn(rows, 6)
+    for index, (dim, _) in enumerate(layouts):
+        obs[layout == index, dim:] = 99.0      # whatever sits past a layout's width must not matter
+    state, memory = torch.randn(rows, 7), torch.randn(rows, 4)
+    mask = torch.rand(rows, 5) < 0.7
+    for index, (_, actions) in enumerate(layouts):
+        mask[layout == index, actions:] = False
+
+    actor, critic = copy.deepcopy(trainer.actor), copy.deepcopy(trainer.critic)
+    dense_actor, dense_critic = copy.deepcopy(actor), copy.deepcopy(critic)
+    dense_actor.densify(6)
+    dense_critic.densify(6)
+    with torch.no_grad():
+        expected = actor(obs, layout, mask, memory=memory).logits
+        got = dense_actor(obs, layout, mask, memory=memory).logits
+        allowed = mask | ~mask.any(dim=-1, keepdim=True)
+        torch.testing.assert_close(got[allowed], expected[allowed], rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(dense_critic(state, obs, layout, memory=memory),
+                                   critic(state, obs, layout, memory=memory), rtol=1e-5, atol=1e-5)

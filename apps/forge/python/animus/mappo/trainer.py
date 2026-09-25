@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import numpy as np
@@ -163,6 +164,55 @@ def horizon_seconds(discount: float, decision_ms: int) -> float:
     return float("inf") if discount >= 1.0 else decision_ms / 1000.0 / (1.0 - discount)
 
 
+class _Downloads:
+    """Device results a rollout decision needs on the host, fetched together: each is copied into pinned memory as
+    soon as it is queued, and finish() waits for the device once. On the CPU they are just converted."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.items: list[torch.Tensor] = []
+
+    def add(self, tensor: torch.Tensor) -> int:
+        if tensor.device.type == "cuda":
+            host = torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
+            host.copy_(tensor, non_blocking=True)
+            tensor = host
+        self.items.append(tensor)
+        return len(self.items) - 1
+
+    def finish(self) -> list[np.ndarray]:
+        if self.stream is not None:
+            self.stream.synchronize()
+        return [item.numpy() for item in self.items]
+
+
+class _Decided:
+    """An actor decision whose results are still on their way to the host: finish() hands them out and updates the
+    acting state from them."""
+
+    def __init__(self, trainer, state, layout, envs, agents):
+        self.trainer, self.state, self.layout = trainer, state, layout
+        self.goal_t = None
+        self.goal_chosen = None
+        self.chosen = None
+        self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
+        self.actions_at = self.log_probs_at = None
+
+    def finish(self, fetched: list[np.ndarray]):
+        goals = None
+        if self.goal_at is not None:
+            goal = fetched[self.goal_at]
+            goals = (goal, fetched[self.goal_log_prob_at], self.goal_chosen)
+            self.state.goal = goal
+        if self.memory_at is not None:
+            self.state.memory = fetched[self.memory_at]
+        taken = fetched[self.actions_at]
+        if self.chosen is not None:
+            self.state.action = taken
+        foresight = fetched[self.foresight_at] if self.foresight_at is not None else None
+        return taken, fetched[self.log_probs_at], foresight, goals, self.chosen
+
+
 class MappoTrainer:
     """Owns the networks. Rollouts run on `rollout_device` (a CPU copy is usually fastest for small
     MLPs at batch sizes of a few hundred); updates run on `train_device`."""
@@ -202,6 +252,8 @@ class MappoTrainer:
 
         self.reset_optimizers()
 
+        self._rollout_stream = (torch.cuda.Stream(device=self.rollout_device, priority=-1)
+                                if self.rollout_device.type == "cuda" else None)
         self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
         self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
         self._rollout_value_norm = (
@@ -302,9 +354,30 @@ class MappoTrainer:
         # the adapter after it: folded into the adapters, on the copies only.
         self._rollout_actor.fold_normalisation()
         self._rollout_critic.fold_normalisation()
+        if self.rollout_device.type == "cuda":
+            self._rollout_actor.densify(max(self._rollout_actor.obs_dims))
+            self._rollout_critic.densify(max(self._rollout_critic.obs_dims))
+        # The rollout's stream reads these copies next: after them, not beside them.
+        if self._rollout_stream is not None:
+            self._rollout_stream.wait_stream(torch.cuda.current_stream(self.rollout_device))
 
     def _tensor(self, array: np.ndarray, dtype=None) -> torch.Tensor:
-        return torch.as_tensor(array, device=self.rollout_device, dtype=dtype)
+        if self.rollout_device.type != "cuda":
+            return torch.as_tensor(array, device=self.rollout_device, dtype=dtype)
+        # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
+        return to_device(torch.as_tensor(np.ascontiguousarray(array), dtype=dtype), self.rollout_device)
+
+    def _groups(self, layout: np.ndarray, layout_t: torch.Tensor):
+        """The rows of each layout: grouped on the host when the rollout is on the GPU, so no forward pass waits to
+        read the layouts back."""
+        if self.rollout_device.type == "cuda":
+            return None  # the rollout copies are dense on the GPU (densify): no groups to build
+        return per_layout(layout_t, len(self.layouts))
+
+    def _rollout_context(self):
+        """The rollout's stream on the GPU: its own and high priority, so its few small kernels per decision do not
+        queue behind an overlapped update's thousands."""
+        return torch.cuda.stream(self._rollout_stream) if self._rollout_stream is not None else nullcontext()
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool = False,
@@ -314,7 +387,8 @@ class MappoTrainer:
         `state` is carried in and updated in place (memory, goal): the policy of a decision is the policy of what it
         remembers and is pursuing.
         """
-        actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state)
+        with self._rollout_context():
+            actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state)
         return actions, log_probs
 
     @torch.inference_mode()
@@ -324,40 +398,51 @@ class MappoTrainer:
         layout once for both networks. Returns (actions, log_probs, values, foresight or None, goals or None), the
         last three [E, A, H + 1], (goal, goal log prob, whether this decision chose it), and which
         decisions are samples (a slow layout's held ones are not; None when the run has no slow layout)."""
-        envs, agents = layout.shape
-        rows = envs * agents
-        # Converted and grouped by layout once, for the actor and the critic both.
-        obs_t = self._tensor(obs).reshape(rows, -1)
-        layout_t = self._tensor(layout, torch.long).reshape(rows)
-        groups = per_layout(layout_t, len(self.layouts))
-        actions, log_probs, foresight, goals, chosen = self._decide(obs, mask, layout, deterministic, state,
-                                                                    (obs_t, layout_t, groups))
+        with self._rollout_context():
+            envs, agents = layout.shape
+            rows = envs * agents
+            downloads = _Downloads(self._rollout_stream)
+            # Converted and grouped by layout once, for the actor and the critic both.
+            obs_t = self._tensor(obs).reshape(rows, -1)
+            layout_t = self._tensor(layout, torch.long).reshape(rows)
+            groups = self._groups(layout, layout_t)
+            decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads)
 
-        state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
-            rows, -1)
-        goal_t = (self._tensor(goals[0], torch.long).reshape(rows)
-                  if self.goal_count and goals is not None else None)
-        critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
-                         if self.recurrent_size else None)
-        values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups, memory=critic_memory)
-        if self.recurrent_size and state is not None:
-            state.critic_memory = carried.reshape(envs, agents, self.recurrent_size).cpu().numpy()
-        if self._rollout_value_norm is not None:
-            values = self._rollout_value_norm.denormalize(values)
-        return actions, log_probs, values.reshape(envs, agents).cpu().numpy(), foresight, goals, chosen
+            state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
+                rows, -1)
+            goal_t = decided.goal_t if self.goal_count and decided.goal_t is not None else None
+            critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
+                             if self.recurrent_size else None)
+            values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups,
+                                                        memory=critic_memory)
+            carried_at = (downloads.add(carried.reshape(envs, agents, self.recurrent_size))
+                          if self.recurrent_size and state is not None else None)
+            if self._rollout_value_norm is not None:
+                values = self._rollout_value_norm.denormalize(values)
+            values_at = downloads.add(values.reshape(envs, agents))
+
+            fetched = downloads.finish()
+            actions, log_probs, foresight, goals, chosen = decided.finish(fetched)
+            if carried_at is not None:
+                state.critic_memory = fetched[carried_at]
+            return actions, log_probs, fetched[values_at], foresight, goals, chosen
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
-                state: "ActingState | None", prepared=None):
+                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
-        acting state's memory and goal are updated in place. `prepared` is (obs, layout, groups) as tensors when the
-        caller has them already."""
+        acting state's memory and goal are updated when the result is finished. `prepared` is (obs, layout, groups)
+        as tensors when the caller has them already. With `downloads` the results are queued there and the caller
+        finishes them after its one wait for the device (_Decided.finish); without, they are finished here."""
+        own = downloads is None
+        if own:
+            downloads = _Downloads(self._rollout_stream)
         envs, agents = layout.shape
         rows = envs * agents
         if prepared is None:
             obs_t = self._tensor(obs).reshape(rows, -1)
             layout_t = self._tensor(layout, torch.long).reshape(rows)
-            groups = per_layout(layout_t, len(self.layouts))
+            groups = self._groups(layout, layout_t)
         else:
             obs_t, layout_t, groups = prepared
         mask_t = self._tensor(mask).reshape(rows, -1)
@@ -366,8 +451,7 @@ class MappoTrainer:
         features = self._rollout_actor.features(
             obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups)
 
-        goals = None
-        goal_t = None
+        decided = _Decided(self, state, layout, envs, agents)
         if self.goal_count and state is not None:
             # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
             chosen = (state.age % max(1, self.config.goal_every_decisions)) == 0
@@ -375,21 +459,19 @@ class MappoTrainer:
             sampled = distribution.logits.argmax(dim=-1) if deterministic else distribution.sample()
             kept = self._tensor(state.goal, torch.long).reshape(rows)
             chosen_t = self._tensor(chosen).reshape(rows)
-            goal_t = torch.where(chosen_t, sampled, kept)
-            goal_log_prob = distribution.log_prob(goal_t).reshape(envs, agents).cpu().numpy()
-            goal_array = goal_t.reshape(envs, agents).cpu().numpy()
-            goals = (goal_array, goal_log_prob, chosen)
-            state.goal = goal_array
+            decided.goal_t = torch.where(chosen_t, sampled, kept)
+            decided.goal_log_prob_at = downloads.add(distribution.log_prob(decided.goal_t).reshape(envs, agents))
+            decided.goal_at = downloads.add(decided.goal_t.reshape(envs, agents))
+            decided.goal_chosen = chosen
             state.age = np.where(chosen, 1, state.age + 1)
 
-        dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, goal_t, groups)
+        dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
         log_probs = dist.log_prob(actions)
 
         # A slow layout speaks on its own clock and its call stands in between, so the seats have something
         # steady enough to act on. The log probabilities of the held decisions are the sampled action's and not
         # the held one's, which costs nothing: a held decision is not a sample and never reaches the loss.
-        chosen = None
         if self.slow_layout >= 0 and state is not None and state.slow_age is not None:
             every = max(1, self.config.slow_every_decisions)
             slow = layout == self.slow_layout
@@ -398,23 +480,18 @@ class MappoTrainer:
             if holding.any():
                 actions = torch.where(self._tensor(holding).reshape(rows).bool(),
                                       self._tensor(state.action, torch.long).reshape(rows), actions)
-            chosen = ~slow | choosing
-
-        foresight = None
-        if self.foresight_outputs:
-            foresight = self._rollout_actor.foresight(features).reshape(
-                envs, agents, self.foresight_outputs).cpu().numpy()
-        if state is not None and self.recurrent_size:
-            state.memory = features.reshape(envs, agents, self.recurrent_size).cpu().numpy()
-
-        taken = actions.reshape(envs, agents).cpu().numpy()
-        if chosen is not None:
-            state.action = taken
+            decided.chosen = ~slow | choosing
             # A choosing decision starts the count again at 1, as the goal head's age does.
-            state.slow_age = np.where(layout == self.slow_layout,
-                                      np.where(chosen, 1, state.slow_age + 1), 0)
+            state.slow_age = np.where(slow, np.where(decided.chosen, 1, state.slow_age + 1), 0)
 
-        return taken, log_probs.reshape(envs, agents).cpu().numpy(), foresight, goals, chosen
+        if self.foresight_outputs:
+            decided.foresight_at = downloads.add(
+                self._rollout_actor.foresight(features).reshape(envs, agents, self.foresight_outputs))
+        if state is not None and self.recurrent_size:
+            decided.memory_at = downloads.add(features.reshape(envs, agents, self.recurrent_size))
+        decided.actions_at = downloads.add(actions.reshape(envs, agents))
+        decided.log_probs_at = downloads.add(log_probs.reshape(envs, agents))
+        return decided.finish(downloads.finish()) if own else decided
 
     @torch.no_grad()
     def foresight_of(self, obs: np.ndarray, layout: np.ndarray, memory: np.ndarray | None = None) -> np.ndarray | None:
@@ -425,11 +502,15 @@ class MappoTrainer:
 
         lead = layout.shape
         rows = int(np.prod(lead))
-        obs_t = self._tensor(obs).reshape(rows, -1)
-        layout_t = self._tensor(layout, torch.long).reshape(rows)
-        features = self._rollout_actor.features(
-            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None)
-        return self._rollout_actor.foresight(features).reshape(*lead, self.foresight_outputs).cpu().numpy()
+        with self._rollout_context():
+            downloads = _Downloads(self._rollout_stream)
+            obs_t = self._tensor(obs).reshape(rows, -1)
+            layout_t = self._tensor(layout, torch.long).reshape(rows)
+            features = self._rollout_actor.features(
+                obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None,
+                self._groups(layout, layout_t))
+            downloads.add(self._rollout_actor.foresight(features).reshape(*lead, self.foresight_outputs))
+            return downloads.finish()[0]
 
     def _memory_tensor(self, memory: np.ndarray | None, rows: int) -> torch.Tensor:
         """The memory to carry in, as the actor wants it: cleared when the caller has none."""
@@ -465,15 +546,19 @@ class MappoTrainer:
         what the critic remembers of the episode, so pass the memory those decisions left (bootstrapping a truncated
         episode from a cleared memory values a fight in progress as if it had just begun)."""
         envs, agents = layout.shape
-        goal_t = self._tensor(goal, torch.long) if self.goal_count and goal is not None else None
-        state_t = self._tensor(state)[:, None, :].expand(envs, agents, state.shape[-1])
-        memory_t = (self._memory_tensor(memory, envs * agents).reshape(envs, agents, self.recurrent_size)
-                    if self.recurrent_size else None)
-        values = self._rollout_critic(state_t, self._tensor(obs), self._tensor(layout, torch.long), goal_t,
-                                      memory=memory_t)
-        if self._rollout_value_norm is not None:
-            values = self._rollout_value_norm.denormalize(values)
-        return values.cpu().numpy()
+        with self._rollout_context():
+            downloads = _Downloads(self._rollout_stream)
+            goal_t = self._tensor(goal, torch.long) if self.goal_count and goal is not None else None
+            state_t = self._tensor(state)[:, None, :].expand(envs, agents, state.shape[-1])
+            memory_t = (self._memory_tensor(memory, envs * agents).reshape(envs, agents, self.recurrent_size)
+                        if self.recurrent_size else None)
+            layout_t = self._tensor(layout, torch.long)
+            values = self._rollout_critic(state_t, self._tensor(obs), layout_t, goal_t,
+                                          self._groups(layout, layout_t.reshape(-1)), memory=memory_t)
+            if self._rollout_value_norm is not None:
+                values = self._rollout_value_norm.denormalize(values)
+            downloads.add(values)
+            return downloads.finish()[0]
 
     def _goal_stats(self, data: dict) -> dict[str, float]:
         """How the goal head is being used, from the rollout itself: the share of decisions spent on each goal, and

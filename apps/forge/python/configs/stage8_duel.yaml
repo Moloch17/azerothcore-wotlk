@@ -45,10 +45,13 @@ log_every: 1
 checkpoint_every: 100
 keep_checkpoints: 5
 
-# Updates on the GPU when torch sees one (CUDA or ROCm), else the CPU. Rollouts stay on the CPU: one forward pass per
-# decision is faster there.
+# Updates on the GPU when torch sees one (CUDA or ROCm), else the CPU. Rollouts too since 2026-09-25: the rollout
+# copies run every layout's adapter and head as one product there (DenseLayouts) on a stream of their own, with one
+# wait per decision, which beat the CPU's per-layout products (1.2 against 1.7 ms a half-batch half; bench_learner
+# --half-batch 22,645 against 21,316 env steps/s) and leaves the CPU to the overlapped update. "auto" = the CPU
+# when there is no GPU.
 train_device: auto
-rollout_device: cpu
+rollout_device: auto
 
 mappo:
   # Wide enough to condition a rotation on level, spec, talents, gear stats and a large action space.
