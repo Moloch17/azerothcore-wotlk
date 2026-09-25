@@ -38,6 +38,15 @@ if(WITH_LTO)
   endif()
 
   if(FORGE_LTO_TOOLCHAIN_OK)
+    # check_ipo_supported compiles a project of its own, and a try_compile starts from a bare cache: the
+    # archiver set above is not in it, so the test linked with "CMAKE_CXX_COMPILER_AR-NOTFOUND" and the
+    # probe reported the toolchain as unable to do LTO while the real build could. These variables are
+    # forwarded into every try_compile from here on.
+    list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+      CMAKE_AR CMAKE_RANLIB
+      CMAKE_CXX_COMPILER_AR CMAKE_CXX_COMPILER_RANLIB
+      CMAKE_C_COMPILER_AR CMAKE_C_COMPILER_RANLIB)
+
     include(CheckIPOSupported)
     check_ipo_supported(RESULT FORGE_IPO_SUPPORTED OUTPUT FORGE_IPO_MESSAGE LANGUAGES CXX C)
     if(FORGE_IPO_SUPPORTED)
