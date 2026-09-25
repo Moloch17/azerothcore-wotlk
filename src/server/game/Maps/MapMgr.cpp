@@ -25,6 +25,7 @@
 #include "LFGMgr.h"
 #include "Language.h"
 #include "Log.h"
+#include "AnimusForge.h"
 #include "MapInstanced.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
@@ -346,10 +347,14 @@ void MapMgr::Update(uint32 diff)
         if (ForgeMapIsIdle(map))
             continue;
 
+        uint32 const tick = ForgeTickDiff(*map, diff);
+        if (!tick)
+            continue;
+
         if (m_updater.activated())
-            m_updater.schedule_update(*map, diff, diff);
+            m_updater.schedule_update(*map, tick, tick);
         else
-            MapUpdater::RunMapTick(*map, diff, diff);
+            MapUpdater::RunMapTick(*map, tick, tick);
     }
 
     // Continent replicas are map objects in their own right, and the reason they exist is to be one task each.
@@ -360,10 +365,14 @@ void MapMgr::Update(uint32 diff)
         if (ForgeMapIsIdle(map))
             continue;
 
+        uint32 const tick = ForgeTickDiff(*map, diff);
+        if (!tick)
+            continue;
+
         if (m_updater.activated())
-            m_updater.schedule_update(*map, diff, diff);
+            m_updater.schedule_update(*map, tick, tick);
         else
-            MapUpdater::RunMapTick(*map, diff, diff);
+            MapUpdater::RunMapTick(*map, tick, tick);
     }
 
     if (m_updater.activated())
@@ -430,6 +439,16 @@ void MapMgr::Update(uint32 diff)
     _taskTiming.SlowestCpu = slowestCpu;
     _taskTiming.SlowestMapId = slowest ? slowest->GetId() : 0;
     _taskTiming.SlowestInstanceId = slowest ? slowest->GetInstanceId() : 0;
+}
+
+uint32 MapMgr::ForgeTickDiff(Map& map, uint32 diff)
+{
+    map.AccrueTickDiff(diff);
+    // An instance container runs its own bookkeeping every world tick; only the instances in it hold envs.
+    if (!map.ToMapInstanced() && sAnimusForge->IsMapFrozen(map))
+        return 0;
+
+    return map.TakeAccruedDiff();
 }
 
 void MapMgr::NoteInstanceDestroyed()

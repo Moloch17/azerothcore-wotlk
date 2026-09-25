@@ -5143,6 +5143,21 @@ AnimusForge.DecisionMs = 250
 AnimusForge.TicksPerDecision = 1
 
 #
+#    AnimusForge.HalfBatch
+#        Description: Split the envs into two halves whose maps tick in turn, so the learner decides one half
+#                     while the other half's maps tick, instead of the sim and the learner taking turns.
+#                     The world ticks at half a decision; each half's maps sit out every other world tick
+#                     and then tick with the time of both, so every env still observes, acts and moves
+#                     DecisionMs at a time exactly as without it. Needs TicksPerDecision = 1, and two
+#                     halves on separate maps: a continent stage's AnimusForge.ContinentReplicas even and
+#                     dividing the envs (otherwise it runs as one group and says so). Pays when the
+#                     learner's update fits inside the faster rollout (see the forge-parallel-core plan).
+#                     Read once at startup by the module and the worldserver: a change needs a restart.
+#        Default:     0
+
+AnimusForge.HalfBatch = 0
+
+#
 #    AnimusForge.EpisodeSeconds
 #        Description: Game-time length of an episode, in seconds. Episodes end by truncation.
 #        Default:     60

@@ -50,8 +50,25 @@ namespace Animus
         bool Setup();
         void Teardown();
 
-        /// Every world tick: advance each env's episode clock.
-        void AdvanceClock(uint32 diff);
+        /// Every world tick its maps ticked: advance a group's episode clocks by the game time they ticked.
+        void AdvanceClock(uint32 group, uint32 diff);
+
+        /// Half-batch (AnimusForge.HalfBatch): envs [0, split) are group 0 and the rest group 1, and the sim ticks one
+        /// group's maps while the learner decides the other's. split = NumEnvs(), the default, is one group.
+        void SetGroups(uint32 split);
+        [[nodiscard]] uint32 GroupCount() const { return _split < NumEnvs() ? 2 : 1; }
+        /// (first env, env count) of a group.
+        [[nodiscard]] std::pair<uint32, uint32> GroupRange(uint32 group) const
+        {
+            uint32 const split = std::min(_split, NumEnvs());
+            return group == 0 ? std::make_pair(0u, split) : std::make_pair(split, NumEnvs() - split);
+        }
+        /// The group whose envs are on `map`, or -1 for a map without envs. Read by map tasks while the maps update,
+        /// when nothing moves an env between maps.
+        [[nodiscard]] int32 GroupOfMap(Map const& map) const;
+        /// No map holds envs of both groups, which freezing a group's maps needs. Continent replicas are dealt
+        /// contiguous blocks, so a split on a replica boundary passes; an instance holds one env.
+        [[nodiscard]] bool GroupsKeepToTheirMaps() const;
 
         /// Reset every env and write fresh observations with zero reward and done.
         void ResetAll();
@@ -67,18 +84,23 @@ namespace Animus
         ///
         /// An env whose map never ticked is observed by FinishCollect itself, so a map the scheduler did
         /// not run costs correctness nothing.
-        void BeginDecision();
+        ///
+        /// Each takes the group deciding (0 with one group): a half-batch decision is two, one per half.
+        void BeginDecision(uint32 group);
         void ApplyActionsForMap(Map const& map);
         void ObserveMap(Map const& map);
+        void FinishCollect(uint32 group);
+        /// Close whichever decisions are open.
         void FinishCollect();
 
         /// Whether a decision is open: BeginDecision ran and FinishCollect has not. A host that abandons
         /// a decision (a pause, a learner that reconnects) still has to close it.
-        [[nodiscard]] bool DecisionOpen() const { return _decisionOpen; }
+        [[nodiscard]] bool DecisionOpen() const { return _decisionOpen[0] || _decisionOpen[1]; }
 
         /// Fill Actions from a local policy ("random" or a scenario scripted policy): every agent's, or only the
-        /// opponent seats' (Scenario::IsOpponentSeat), keeping the other actions.
-        bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false);
+        /// opponent seats' (Scenario::IsOpponentSeat), keeping the other actions. Only envs [begin, begin + count).
+        bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false, uint32 begin = 0,
+            uint32 count = UINT32_MAX);
 
         /// Evaluation (the forge's MODE message): hand seed indexes 0..episodes-1 to envs as they reset, each env
         /// rebuilt right after reseeding the world thread's random numbers from (seedBase, index)
@@ -248,7 +270,8 @@ namespace Animus
         std::vector<uint64> _envMapKey;         // per env: the key it is filed under, to move it when it changes
 
         /// A decision is open between BeginDecision and FinishCollect.
-        bool _decisionOpen = false;
+        uint32 _split = UINT32_MAX;             // first env of group 1; NumEnvs() or more is one group (SetGroups)
+        bool _decisionOpen[2] = { false, false };
         /// What the maps spent applying this decision's actions, summed across them (they run at once, so it
         /// is more than the wall clock they took). Taken by the next FinishCollect, which is the decision the
         /// actions came from however many ticks apart the two are.

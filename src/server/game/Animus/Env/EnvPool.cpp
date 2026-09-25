@@ -104,7 +104,7 @@ void Animus::EnvPool::Teardown()
     _envByInstance.clear();
     _mapEnvs.clear();
     std::fill(_envMapKey.begin(), _envMapKey.end(), NOT_FILED);
-    _decisionOpen = false;
+    _decisionOpen[0] = _decisionOpen[1] = false;
 
     for (Env& env : _envs)
         _scenario.Teardown(env);
@@ -119,10 +119,33 @@ uint64 Animus::EnvPool::CompletedEpisodes() const
     return episodes;
 }
 
-void Animus::EnvPool::AdvanceClock(uint32 diff)
+void Animus::EnvPool::AdvanceClock(uint32 group, uint32 diff)
 {
-    for (Env& env : _envs)
-        env.EpisodeElapsedMs += diff;
+    auto const [begin, count] = GroupRange(group);
+    for (uint32 e = begin; e < begin + count; ++e)
+        _envs[e].EpisodeElapsedMs += diff;
+}
+
+void Animus::EnvPool::SetGroups(uint32 split)
+{
+    _split = split;
+}
+
+int32 Animus::EnvPool::GroupOfMap(Map const& map) const
+{
+    auto const envs = _mapEnvs.find(MapKey(map));
+    if (envs == _mapEnvs.end() || envs->second.empty())
+        return -1;
+    return envs->second.front() < _split ? 0 : 1;
+}
+
+bool Animus::EnvPool::GroupsKeepToTheirMaps() const
+{
+    for (auto const& [key, envs] : _mapEnvs)
+        for (uint32 index : envs)
+            if ((index < _split) != (envs.front() < _split))
+                return false;
+    return true;
 }
 
 void Animus::EnvPool::ResetAll()
@@ -142,7 +165,7 @@ void Animus::EnvPool::ResetAll()
     std::fill(Terminated.begin(), Terminated.end(), 0);
 
     // Every env starts afresh, so whatever a decision had scored before this is discarded with it.
-    _decisionOpen = false;
+    _decisionOpen[0] = _decisionOpen[1] = false;
 }
 
 namespace
@@ -157,14 +180,20 @@ namespace
     }
 }
 
-void Animus::EnvPool::BeginDecision()
+void Animus::EnvPool::BeginDecision(uint32 group)
 {
     // Where this decision's time goes, for the host's report. The clock is read a handful of times per env, not
     // per agent or per action, so the measurement does not pay for itself.
     _collect = CollectTiming();
-    _envCollect.assign(_envs.size(), CollectTiming());
-    _observed.assign(_envs.size(), 0);
-    _decisionOpen = true;
+    _envCollect.resize(_envs.size());
+    _observed.resize(_envs.size());
+    auto const [begin, count] = GroupRange(group);
+    for (uint32 e = begin; e < begin + count; ++e)
+    {
+        _envCollect[e] = CollectTiming();
+        _observed[e] = 0;
+    }
+    _decisionOpen[group] = true;
 }
 
 void Animus::EnvPool::ObserveEnv(Env& env)
@@ -275,15 +304,23 @@ void Animus::EnvPool::ObserveMap(Map const& map)
 
 void Animus::EnvPool::FinishCollect()
 {
-    if (!_decisionOpen)
+    for (uint32 group = 0; group < 2; ++group)
+        FinishCollect(group);
+}
+
+void Animus::EnvPool::FinishCollect(uint32 group)
+{
+    if (!_decisionOpen[group])
         return;
 
-    _decisionOpen = false;
+    _decisionOpen[group] = false;
+    auto const [begin, count] = GroupRange(group);
 
     // An env whose map did not tick was never scored. That is a scheduler bug, not a reason to hand the
     // learner a stale transition, so it is scored here and said once.
-    for (Env& env : _envs)
+    for (uint32 e = begin; e < begin + count; ++e)
     {
+        Env& env = _envs[e];
         if (_observed[env.Index])
             continue;
 
@@ -299,8 +336,9 @@ void Animus::EnvPool::FinishCollect()
         ObserveEnv(env);
     }
 
-    for (CollectTiming const& timing : _envCollect)
+    for (uint32 e = begin; e < begin + count; ++e)
     {
+        CollectTiming const& timing = _envCollect[e];
         _collect.RewardNs += timing.RewardNs;
         _collect.ObserveNs += timing.ObserveNs;
         _collect.FinalObserveNs += timing.FinalObserveNs;
@@ -310,9 +348,9 @@ void Animus::EnvPool::FinishCollect()
     // The maps' share of applying the last decision's actions, whenever in the ticks since they ran it.
     _collect.ApplyNs = _applyNs.exchange(0, std::memory_order_relaxed);
 
-    for (Env& env : _envs)
-        if (Done[env.Index])
-            FinishEnv(env);
+    for (uint32 e = begin; e < begin + count; ++e)
+        if (Done[e])
+            FinishEnv(_envs[e]);
 }
 
 void Animus::EnvPool::DescribeAgents(Env const& env)
@@ -322,13 +360,14 @@ void Animus::EnvPool::DescribeAgents(Env const& env)
     _scenario.AgentPresence(env, &Present[first]);
 }
 
-bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponentsOnly)
+bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponentsOnly, uint32 begin, uint32 count)
 {
-    uint32 const agents = NumEnvs() * _spec.AgentsPerEnv;
+    uint32 const end = std::min<uint32>(NumEnvs(), count == UINT32_MAX ? NumEnvs() : begin + count);
+    uint32 const agents = end * _spec.AgentsPerEnv;
     uint32 const numActions = _spec.NumActions;
     bool const random = policy == "random";
 
-    for (uint32 i = 0; i < agents; ++i)
+    for (uint32 i = begin * _spec.AgentsPerEnv; i < agents; ++i)
     {
         if (opponentsOnly && !_scenario.IsOpponentSeat(_envs[i / _spec.AgentsPerEnv], i % _spec.AgentsPerEnv))
             continue;

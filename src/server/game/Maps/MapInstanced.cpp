@@ -68,11 +68,19 @@ void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
                 continue;
             }
 
-            // update only here, because it may schedule some bad things before delete
+            // update only here, because it may schedule some bad things before delete. A frozen half-batch instance
+            // is left out of this world tick and gets the time it missed on its next (MapMgr::ForgeTickDiff).
+            uint32 const tick = sMapMgr->ForgeTickDiff(*i->second, t);
+            if (!tick)
+            {
+                ++i;
+                continue;
+            }
+
             if (sMapMgr->GetMapUpdater()->activated())
-                sMapMgr->GetMapUpdater()->schedule_update(*i->second, t, s_diff);
+                sMapMgr->GetMapUpdater()->schedule_update(*i->second, tick, tick);
             else
-                MapUpdater::RunMapTick(*i->second, t, s_diff);
+                MapUpdater::RunMapTick(*i->second, tick, tick);
             ++i;
         }
     }

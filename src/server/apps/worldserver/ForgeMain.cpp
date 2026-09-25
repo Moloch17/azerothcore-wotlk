@@ -266,7 +266,10 @@ namespace
         uint32 const decisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
         uint32 const ticksPerDecision =
             std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.TicksPerDecision", 1));
-        uint32 const tickMs = std::max<uint32>(1, decisionMs / ticksPerDecision);
+        // AnimusForge.HalfBatch (TicksPerDecision 1 only): the pool's two halves take turns, each half's maps ticking
+        // every other world tick with the time of both, so the world ticks at half a decision.
+        bool const halfBatch = sConfigMgr->GetOption<bool>("AnimusForge.HalfBatch", false) && ticksPerDecision == 1;
+        uint32 const tickMs = std::max<uint32>(1, decisionMs / ticksPerDecision / (halfBatch ? 2 : 1));
 
         // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
         constexpr uint64 maxTicks = 0;

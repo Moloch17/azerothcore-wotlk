@@ -174,6 +174,11 @@ public:
 
     [[nodiscard]] TaskTiming const& GetTaskTiming() const { return _taskTiming; }
 
+    /// The diff `map` ticks with on this world tick of `diff`, or 0 to leave it out: the forge's half-batch
+    /// (AnimusForge.HalfBatch) freezes the maps of the half that is deciding, and a frozen map gets the world time it
+    /// missed on its next tick. Every other map ticks every world tick, with `diff`.
+    uint32 ForgeTickDiff(Map& map, uint32 diff);
+
     Map::EnterState PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck = false);
     void InitializeVisibilityDistanceInfo();
 

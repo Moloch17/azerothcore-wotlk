@@ -63,10 +63,20 @@ namespace AnimusForge
         /// ForgeUpdateLoop reads both keys -- so splines, auras and the fight run at the finer step while the policy
         /// still chooses every DecisionMs. It buys smooth movement without paying for more decisions.
         uint32 TicksPerDecision = 1;
-        /// DecisionMs / TicksPerDecision: the world tick, and what the module expects OnUpdate's diff to be.
+        /// DecisionMs / TicksPerDecision: how far a map moves per tick.
         [[nodiscard]] uint32 TickMs() const
         {
             return std::max<uint32>(1, DecisionMs / std::max<uint32>(1, TicksPerDecision));
+        }
+        /// AnimusForge.HalfBatch: the pool in two halves whose maps tick in turn, so the learner decides one half
+        /// while the other's maps tick (see AnimusForge::Forge::IsMapFrozen). Needs TicksPerDecision 1.
+        bool HalfBatch = false;
+        [[nodiscard]] bool HalvesTick() const { return HalfBatch && TicksPerDecision == 1; }
+        /// The world tick, and what the module expects OnUpdate's diff to be: TickMs, or half of it in half-batch,
+        /// where each half's maps tick every other world tick with the time of both.
+        [[nodiscard]] uint32 WorldTickMs() const
+        {
+            return HalvesTick() ? std::max<uint32>(1, TickMs() / 2) : TickMs();
         }
         uint32 EpisodeSeconds = 60;
 

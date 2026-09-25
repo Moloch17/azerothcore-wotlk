@@ -128,10 +128,21 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     if (_state != State::Training && _state != State::Running)
         return;
 
+    // Half-batch: the groups' maps take turns, one per world tick, and a group's maps tick with the time of both
+    // (MapMgr::ForgeTickDiff), so its envs' clocks move a whole TickMs. Otherwise the one group ticks every tick.
+    _turn = _halfBatch ? _nextTurn : 0;
+    _nextTurn = _halfBatch ? (_turn + 1) % 2 : 0;
+    if (_turn >= _pool->GroupCount())
+    {
+        // Half-batch fell back to one group (GroupsKeepToTheirMaps): this world tick is the empty half.
+        _decisionTick = false;
+        return;
+    }
+
     // Game time accrues every tick, whether or not the policy chose on this one: an episode's clock, and
     // everything the library measures against it, is in game milliseconds and does not care how often anyone
     // decides. It is advanced before the maps tick because the terminal check that follows them reads it.
-    _pool->AdvanceClock(diff);
+    _pool->AdvanceClock(_turn, _halfBatch ? 2 * diff : diff);
 
     // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move
     // splines, auras and the fight at the finer step and are otherwise silent -- no observation, no action, no
@@ -140,11 +151,20 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // whatever the tick rounds to.
     _decisionTick = ++_ticksSinceDecision >= RunConfig().TicksPerDecision;
     if (_decisionTick)
-        _pool->BeginDecision();
+        _pool->BeginDecision(_turn);
 
-    // The actions of the decision that just ended are applied by the maps of this tick, and of no other.
-    _applyTick = _actionsPending;
-    _actionsPending = false;
+    // The actions of the group's last decision are applied by the maps of this tick, and of no other.
+    _applyTick = _actionsPending[_turn];
+    _actionsPending[_turn] = false;
+}
+
+bool AnimusForge::Forge::IsMapFrozen(Map const& map) const
+{
+    if (!_halfBatch || !_pool || (_state != State::Training && _state != State::Running))
+        return false;
+
+    int32 const group = _pool->GroupOfMap(map);
+    return group >= 0 && uint32(group) != _turn;
 }
 
 void AnimusForge::Forge::OnMapPrologue(Map& map)
@@ -207,19 +227,21 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
     ForgeConfig const& run = RunConfig();
 
-    // The forge core sizes its tick from the same two keys; a different tick means a worldserver built before they
+    // The forge core sizes its tick from the same keys; a different tick means a worldserver built before they
     // were one, and every reward scaled per decision would be off.
-    if (diff != run.TickMs() && !ForgeCore::Playtest() && !_tickMismatchLogged)
+    if (diff != _config.WorldTickMs() && !ForgeCore::Playtest() && !_tickMismatchLogged)
     {
         _tickMismatchLogged = true;
-        LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {} "
+        LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {}{} "
             "wants {} ms: rebuild the worldserver (./forge.sh --build)", diff, run.DecisionMs, run.TicksPerDecision,
-            run.TickMs());
+            _config.HalvesTick() ? ", halved for AnimusForge.HalfBatch," : "", _config.WorldTickMs());
     }
 
     // The clock and the count of ticks to a decision are the prologue's, before the maps tick: what is left here
     // is the decision itself, on a world thread the maps have rejoined.
     bool const decided = _decisionTick;
+    // A decision of the whole pool is every group's: in half-batch, the second half's ends it.
+    bool const counted = decided && _pool && _turn + 1 >= _pool->GroupCount();
     if (decided)
     {
         _decisionTick = false;
@@ -227,14 +249,16 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
         // _ticks counts decisions, not world updates: it is the denominator of every per-decision figure in the
         // report (EnvStepsPerSecond, the ms-per-tick buckets) and of the bench's measurement window.
-        ++_ticks;
-
-        MaybeReport();
+        if (counted)
+        {
+            ++_ticks;
+            MaybeReport();
+        }
 
         if (_plan.Remote())
-            RemoteDecision();
+            RemoteDecision(_turn);
         else
-            LocalDecision();
+            LocalDecision(_turn);
 
         // What the pool spent this decision on, totalled for the report.
         if (_pool)
@@ -257,7 +281,7 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     _simNs += inModule > _tickLearnerNs ? inModule - _tickLearnerNs : 0;
     _lastUpdateEnd = tickEnded;
 
-    if (_benching && decided)
+    if (_benching && counted)
         BenchTick();
 }
 
@@ -439,6 +463,22 @@ bool AnimusForge::Forge::StartCurrent()
     }
 
     _pool->ResetAll();
+
+    // Half-batch: two halves, provided no map holds envs of both (a continent's replicas are dealt contiguous
+    // blocks, so the split has to fall on a replica boundary). Otherwise one group, which ticks on every other
+    // world tick: the world still runs at half a decision, and the decisions are what they are without it.
+    _halfBatch = _config.HalvesTick();
+    _pool->SetGroups(_halfBatch ? _pool->NumEnvs() / 2 : _pool->NumEnvs());
+    if (_halfBatch && (_pool->NumEnvs() < 2 || !_pool->GroupsKeepToTheirMaps()))
+    {
+        LOG_ERROR("module.animus", "AnimusForge.HalfBatch: {} envs of {} do not split into two halves on separate "
+            "maps (make AnimusForge.ContinentReplicas even and a divisor of the envs); running them as one group",
+            _pool->NumEnvs(), entry.Scenario);
+        _pool->SetGroups(_pool->NumEnvs());
+    }
+    _turn = _nextTurn = 0;
+    _awaitingAnswer[0] = _awaitingAnswer[1] = false;
+    _actionsPending[0] = _actionsPending[1] = false;
 
     auto const now = std::chrono::steady_clock::now();
     _ticks = 0;
@@ -776,6 +816,7 @@ void AnimusForge::Forge::BenchTick()
         _benchSimNs = _simNs;
         _benchLearnerNs = _learnerNs;
         _benchObjectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
+        _benchResetNs = _collect.ResetNs;
         _benchTaskTiming = sMapMgr->GetTaskTiming();
         return;
     }
@@ -799,6 +840,7 @@ void AnimusForge::Forge::BenchTick()
     // Instances destroyed during the window take their share out of the map totals: clamp rather than wrap.
     uint64 const objectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
     trial.ObjectsMs = double(objectsNs - std::min(objectsNs, _benchObjectsNs)) / ticks / 1e6;
+    trial.ResetMs = double(_collect.ResetNs - std::min(_collect.ResetNs, _benchResetNs)) / ticks / 1e6;
 
     MapMgr::TaskTiming const& tasks = sMapMgr->GetTaskTiming();
     if (uint64 const updates = tasks.Ticks - _benchTaskTiming.Ticks)
@@ -822,9 +864,9 @@ void AnimusForge::Forge::BenchTick()
             trial.TorchThreads ? std::to_string(trial.TorchThreads) : "default") : "", trial.EnvStepsPerSecond,
         trial.WorldMsPerTick, trial.SimMsPerTick, trial.LearnerMsPerTick, trial.MemoryMb);
     LOG_INFO("module.animus", "Bench {} of {}: map tasks {:.1f} per update, sum {:.2f} ms over {:.2f} ms wall, "
-        "longest {:.2f} ms (last on cpu {}), cpus {}; objects {:.2f} ms per decision", _benchTrial + 1,
-        _benchTrials.size(), trial.TasksPerUpdate, trial.TaskSumMs, trial.TaskWallMs, trial.TaskLongestMs,
-        trial.SlowestCpu, Format::Cpus(trial.CpuMask), trial.ObjectsMs);
+        "longest {:.2f} ms (last on cpu {}), cpus {}; objects {:.2f} ms, resets {:.2f} ms per decision",
+        _benchTrial + 1, _benchTrials.size(), trial.TasksPerUpdate, trial.TaskSumMs, trial.TaskWallMs,
+        trial.TaskLongestMs, trial.SlowestCpu, Format::Cpus(trial.CpuMask), trial.ObjectsMs, trial.ResetMs);
 
     // Skip what is left of this thread count once the machine is running out of memory: bigger envs only cost more.
     // The trials go from the plan too, so their envs are never built. Trial i is plan entry _plan.Index + i -
@@ -1005,6 +1047,7 @@ void AnimusForge::Forge::BenchSave() const
         entry["learner_ms"] = trial.LearnerMsPerTick;
         entry["memory_mb"] = trial.MemoryMb;
         entry["objects_ms"] = trial.ObjectsMs;
+        entry["reset_ms"] = trial.ResetMs;
         entry["tasks_per_update"] = trial.TasksPerUpdate;
         entry["task_sum_ms"] = trial.TaskSumMs;
         entry["task_longest_ms"] = trial.TaskLongestMs;
@@ -1191,9 +1234,9 @@ void AnimusForge::Forge::WaitedForLearner(std::chrono::steady_clock::time_point 
     _tickLearnerNs += waited;
 }
 
-void AnimusForge::Forge::LocalDecision()
+void AnimusForge::Forge::LocalDecision(uint32 group)
 {
-    _pool->FinishCollect();
+    _pool->FinishCollect(group);
 
     if (_plan.LocalEpisodes && _pool->CompletedEpisodes() >= _plan.LocalEpisodes)
     {
@@ -1201,19 +1244,20 @@ void AnimusForge::Forge::LocalDecision()
         return;
     }
 
-    if (!_pool->ChooseLocalActions(_plan.Policy))
+    auto const [begin, count] = _pool->GroupRange(group);
+    if (!_pool->ChooseLocalActions(_plan.Policy, false, begin, count))
     {
         LOG_ERROR("module.animus", "Scenario {} could not choose actions with policy '{}'", _current, _plan.Policy);
         FinishCurrent(Outcome::Failed);
         return;
     }
 
-    // The maps apply them at the start of the next tick, each its own envs': the actions land in the very
+    // The maps apply them at the start of the group's next tick, each its own envs': the actions land in the very
     // update they would have if they had been applied here, and every env's share runs on its map's thread.
-    _actionsPending = true;
+    _actionsPending[group] = true;
 }
 
-void AnimusForge::Forge::RemoteDecision()
+void AnimusForge::Forge::RemoteDecision(uint32 group)
 {
     // While the world thread waits on the learner: answer console commands, report progress, and stop waiting
     // when a command needs this scenario to end.
@@ -1254,13 +1298,27 @@ void AnimusForge::Forge::RemoteDecision()
         _pool->SetEvaluation(false, 0, 0, {});
         _pool->SetReplay(0, 0.0f, {});
         _pool->ResetAll();
+        if (!SendEveryGroup())
+            return;
     }
     else
-        _pool->FinishCollect();
+    {
+        _pool->FinishCollect(group);
+        if (!SendStep(group))
+            return;
+    }
 
-    if (!SendStep())
+    // The group whose maps tick next needs its answer before they do. In half-batch that is the other half, whose
+    // STEP went out a world tick ago and which the learner has been deciding while this half's maps ticked; so the
+    // wait here is only what is left of it. With one group it is this STEP's answer, the plain lock step.
+    uint32 target = _halfBatch && _nextTurn < _pool->GroupCount() ? _nextTurn : 0;
+    if (!_awaitingAnswer[target])
         return;
 
+    auto actionBytesOf = [this](uint32 g)
+    {
+        return std::size_t(_pool->GroupRange(g).second) * _pool->Spec().AgentsPerEnv * sizeof(int32);
+    };
     std::size_t const actionBytes = _pool->Actions.size() * sizeof(int32);
     std::size_t const weightBytes = sizeof(WeightsHeader) + _pool->Spec().Layouts.size() * sizeof(float);
     std::size_t const replayBytes = sizeof(ReplayHeader) + MAX_REPLAY_SEEDS * sizeof(uint32);
@@ -1281,22 +1339,26 @@ void AnimusForge::Forge::RemoteDecision()
             return;
         }
 
-        // ACT names the envs it answers for (the whole pool: this sim sends it as one group), then carries the
-        // actions, and the goals after them when the policy has a goal head.
+        // ACT names the envs it answers for -- the group awaited, as the learner answers STEPs in the order they
+        // went out -- then carries their actions, and the goals after them when the policy has a goal head.
         ActHeader act{};
         if (type == MsgType::Act && payload.size() >= sizeof(act))
             std::memcpy(&act, payload.data(), sizeof(act));
+        auto const [begin, count] = _pool->GroupRange(target);
+        std::size_t const groupBytes = actionBytesOf(target);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
-        if (type == MsgType::Act && act.EnvBegin == 0 && act.EnvCount == _pool->NumEnvs()
-            && (body == actionBytes || body == 2 * actionBytes))
+        if (type == MsgType::Act && act.EnvBegin == begin && act.EnvCount == count
+            && (body == groupBytes || body == 2 * groupBytes))
         {
+            std::size_t const first = std::size_t(begin) * _pool->Spec().AgentsPerEnv;
             char const* actions = payload.data() + sizeof(act);
-            std::memcpy(_pool->Actions.data(), actions, actionBytes);
-            if (body == 2 * actionBytes)
-                std::memcpy(_pool->Goals.data(), actions + actionBytes, actionBytes);
+            std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
+            if (body == 2 * groupBytes)
+                std::memcpy(_pool->Goals.data() + first, actions + groupBytes, groupBytes);
             else
-                std::fill(_pool->Goals.begin(), _pool->Goals.end(), -1);
+                std::fill_n(_pool->Goals.begin() + first, groupBytes / sizeof(int32), -1);
 
+            _awaitingAnswer[target] = false;
             _lastAct = std::chrono::steady_clock::now();
             break;
         }
@@ -1311,10 +1373,13 @@ void AnimusForge::Forge::RemoteDecision()
                 return;
             }
 
+            // A MODE comes where the learner holds every group's STEP (between whole decisions), so nothing it has
+            // not read is lost: every env starts again, and every group's fresh STEP goes out.
             _pool->ResetAll();
-            if (!SendStep())
+            if (!SendEveryGroup())
                 return;
 
+            target = 0;
             continue;
         }
 
@@ -1372,8 +1437,9 @@ void AnimusForge::Forge::RemoteDecision()
 
     // Scoring a scripted baseline on the evaluation seeds: its actions replace the learner's (only the opponent
     // seats' when the learner plays against it).
+    auto const [begin, count] = _pool->GroupRange(target);
     if (!_pool->EvalBaseline().empty()
-        && !_pool->ChooseLocalActions(_pool->EvalBaseline(), _pool->EvalOpponentsOnly()))
+        && !_pool->ChooseLocalActions(_pool->EvalBaseline(), _pool->EvalOpponentsOnly(), begin, count))
     {
         LOG_ERROR("module.animus", "Scenario {} could not run baseline '{}'; dropping the learner", _current,
             _pool->EvalBaseline());
@@ -1381,9 +1447,9 @@ void AnimusForge::Forge::RemoteDecision()
         return;
     }
 
-    // The maps apply them at the start of the next tick, each its own envs': the actions land in the very
+    // The maps apply them at the start of the group's next tick, each its own envs': the actions land in the very
     // update they would have if they had been applied here, and every env's share runs on its map's thread.
-    _actionsPending = true;
+    _actionsPending[target] = true;
 }
 
 bool AnimusForge::Forge::KnowsPolicy(std::string const& policy) const
@@ -1452,7 +1518,7 @@ bool AnimusForge::Forge::SendSpec()
     msg.DecisionTicks = RunConfig().TicksPerDecision;
     // The longest episode the scenario can have: the learner sizes evaluation windows by it.
     msg.EpisodeSeconds = std::max(RunConfig().EpisodeSeconds, spec.LongestEpisodeSeconds);
-    msg.EnvGroups = 1;
+    msg.EnvGroups = _pool->GroupCount();
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
@@ -1472,11 +1538,29 @@ bool AnimusForge::Forge::SendSpec()
         { layouts.data(), layouts.size() * sizeof(LayoutMsg) }, { names.data(), names.size() } });
 }
 
-bool AnimusForge::Forge::SendStep()
+bool AnimusForge::Forge::SendEveryGroup()
 {
-    StepHeader header{ _decisions++, 0, _pool->NumEnvs() };
+    _nextTurn = 0;
+    _actionsPending[0] = _actionsPending[1] = false;
+    for (uint32 group = 0; group < _pool->GroupCount(); ++group)
+        if (!SendStep(group))
+            return false;
+    return true;
+}
 
-    auto chunk = [](auto const& vec) { return Chunk{ vec.data(), vec.size() * sizeof(vec[0]) }; };
+bool AnimusForge::Forge::SendStep(uint32 group)
+{
+    auto const [begin, count] = _pool->GroupRange(group);
+    StepHeader header{ _decisions++, begin, count };
+    _awaitingAnswer[group] = true;
+
+    // Every array is env-major, so a group's rows are one contiguous run of each.
+    uint32 const envs = std::max<uint32>(1, _pool->NumEnvs());
+    auto chunk = [begin, count, envs](auto const& vec)
+    {
+        std::size_t const perEnv = vec.size() / envs;
+        return Chunk{ vec.data() + std::size_t(begin) * perEnv, std::size_t(count) * perEnv * sizeof(vec[0]) };
+    };
 
     return _server.Send(MsgType::Step,
     {

@@ -63,6 +63,11 @@ namespace AnimusForge
         void OnMapPrologue(Map& map);
         void OnMapEpilogue(Map& map);
 
+        /// Half-batch (AnimusForge.HalfBatch): whether `map` sits out this world tick because it holds envs of the
+        /// half that is not ticking -- the one the learner is deciding. Called from map tasks (MapMgr::ForgeTickDiff,
+        /// for the instances a container schedules), while nothing writes the state it reads.
+        [[nodiscard]] bool IsMapFrozen(Map const& map) const;
+
         /// Console commands, run on the world thread. Each writes its reply to `out` and returns false when it
         /// refuses (the reply says why).
         void CommandStatus(LineSink const& out);
@@ -142,6 +147,7 @@ namespace AnimusForge
             double LearnerMsPerTick = 0.0;  // blocked on the learner
             uint64 MemoryMb = 0;            // the worldserver's resident memory at the end of the trial
             double ObjectsMs = 0.0;         // UpdateNonPlayerObjects, thread time per decision over every map
+            double ResetMs = 0.0;           // rebuilding ended episodes on the world thread, per decision
             double TasksPerUpdate = 0.0;    // map tasks per map update (MapMgr::TaskTiming), and per update:
             double TaskSumMs = 0.0;         // ... their summed wall time
             double TaskLongestMs = 0.0;     // ... the longest one
@@ -240,10 +246,12 @@ namespace AnimusForge
         void PollExport();
         void MaybeReport();
 
-        void LocalDecision();
-        void RemoteDecision();
+        void LocalDecision(uint32 group);
+        void RemoteDecision(uint32 group);
         bool SendSpec();
-        bool SendStep();
+        bool SendStep(uint32 group);
+        /// After a reset (a new learner, a MODE): every group's STEP, and group 0's maps tick next.
+        bool SendEveryGroup();
         bool ApplyMode(ModeMsg const& mode);
 
         /// Whether the running scenario has the local policy `policy` ("random" or one of its scripted policies).
@@ -284,6 +292,14 @@ namespace AnimusForge
 
         uint64 _ticks = 0;                  // decisions since the scenario started, not world updates
         uint32 _ticksSinceDecision = 0;     // world updates since the last decision (< TicksPerDecision)
+        /// Half-batch (AnimusForge.HalfBatch with TicksPerDecision 1): the world ticks at half a decision and the
+        /// pool's two groups' maps take turns; `_turn` is the group whose maps tick this world tick and decide at
+        /// its end, `_nextTurn` the next one's. Without half-batch the one group ticks every world tick.
+        bool _halfBatch = false;
+        uint32 _turn = 0;
+        uint32 _nextTurn = 0;
+        /// A group's STEP went to the learner and its answer has not come back.
+        bool _awaitingAnswer[2] = { false, false };
         /// This tick ends a decision: set by OnWorldPrologue, read by the map epilogues that score and observe
         /// on it, cleared when OnUpdate closes the decision.
         ///
@@ -293,7 +309,7 @@ namespace AnimusForge
         bool _decisionTick = false;
         /// A decision has filled Actions and no map has applied them yet. The prologue hands it to _applyTick,
         /// so the maps of exactly one tick apply a decision's actions, whatever TicksPerDecision is.
-        bool _actionsPending = false;
+        bool _actionsPending[2] = { false, false };        // per group
         bool _applyTick = false;
         uint64 _decisions = 0;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
@@ -321,6 +337,7 @@ namespace AnimusForge
         uint64 _benchSimNs = 0;
         uint64 _benchLearnerNs = 0;
         uint64 _benchObjectsNs = 0;
+        uint64 _benchResetNs = 0;
         MapMgr::TaskTiming _benchTaskTiming;
 
         std::chrono::steady_clock::time_point _rateTime;

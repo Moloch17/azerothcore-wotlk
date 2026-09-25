@@ -238,6 +238,16 @@ public:
     };
 
     void SetTaskSample(TaskSample const& sample) { _taskSample = sample; }
+
+    /// World time this map has been left out of the update for, and handed to it whole when it next ticks: the
+    /// forge's half-batch freezes one half's maps every other world tick (MapMgr::ForgeTickDiff).
+    void AccrueTickDiff(uint32 diff) { _accruedDiff += diff; }
+    [[nodiscard]] uint32 TakeAccruedDiff()
+    {
+        uint32 const diff = _accruedDiff;
+        _accruedDiff = 0;
+        return diff;
+    }
     [[nodiscard]] TaskSample TakeTaskSample()
     {
         TaskSample const sample = _taskSample;
@@ -772,6 +782,7 @@ private:
 
     UpdateTiming _updateTiming;
     TaskSample _taskSample;
+    uint32 _accruedDiff = 0;
     std::unordered_map<ObjectGuid, Player*> _playersByGuid;
 };
 

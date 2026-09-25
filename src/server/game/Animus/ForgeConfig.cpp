@@ -133,6 +133,7 @@ void AnimusForge::ForgeConfig::Load()
     }
     DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
     TicksPerDecision = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.TicksPerDecision", 1));
+    HalfBatch = sConfigMgr->GetOption<bool>("AnimusForge.HalfBatch", false);
     if (TicksPerDecision > DecisionMs)
     {
         LOG_ERROR("module.animus", "AnimusForge.TicksPerDecision = {} is more than AnimusForge.DecisionMs = {} ms, "
@@ -148,6 +149,16 @@ void AnimusForge::ForgeConfig::Load()
             "decision is exactly {} ticks of {} ms", DecisionMs, TicksPerDecision, rounded, TicksPerDecision,
             rounded / TicksPerDecision);
         DecisionMs = rounded;
+    }
+    if (HalfBatch && TicksPerDecision != 1)
+        LOG_ERROR("module.animus", "AnimusForge.HalfBatch needs AnimusForge.TicksPerDecision = 1 (it is {}); the "
+            "halves do not take turns", TicksPerDecision);
+    if (HalvesTick() && DecisionMs % 2)
+    {
+        // Each half's maps tick every other world tick with the time of both, so a world tick has to be exactly half.
+        LOG_ERROR("module.animus", "AnimusForge.HalfBatch halves AnimusForge.DecisionMs = {} ms, which is odd; using "
+            "{} ms", DecisionMs, DecisionMs - 1);
+        DecisionMs -= 1;
     }
     EpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.EpisodeSeconds", 60));
 
