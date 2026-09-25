@@ -11,7 +11,8 @@ import torch
 from torch import nn
 
 from .buffer import RolloutBuffer
-from .networks import LayoutActor, LayoutCritic, _per_layout, per_layout, skip_distribution_checks, update_norms
+from .networks import (LayoutActor, LayoutCritic, per_layout, per_layout_host, skip_distribution_checks, to_device,
+                       update_norms)
 from .valuenorm import ValueNorm
 
 
@@ -234,24 +235,25 @@ class MappoTrainer:
                 if len(parts) >= 2 and parts[0] in ("adapters", "heads") and parts[1].isdigit():
                     parameter.requires_grad_(int(parts[1]) not in self.frozen_layouts)
 
-    @staticmethod
-    def _layout_totals(totals: dict, layout: torch.Tensor, entropy: torch.Tensor, kl: torch.Tensor,
+    def _layout_totals(self, totals: dict, layout: torch.Tensor, entropy: torch.Tensor, kl: torch.Tensor,
                        weight: torch.Tensor | None = None) -> None:
-        """Add one minibatch's per-row entropy and KL into per-layout sums (weighted by `weight` where given)."""
-        flat_layout = layout.reshape(-1)
+        """Add one minibatch's per-row entropy and KL into per-layout sums (weighted by `weight` where given). The
+        sums stay on the device and are read once, in _finish_layout_stats: read per minibatch, they were three
+        pipeline stalls per layout per minibatch."""
+        flat_layout = layout.reshape(-1).long()
         flat_entropy = entropy.reshape(-1).detach()
-        flat_kl = kl.reshape(-1).detach()
-        flat_weight = weight.reshape(-1) if weight is not None else torch.ones_like(flat_entropy)
-        for index, rows in _per_layout(flat_layout, 1 << 30):
-            entry = totals.setdefault(index, [0.0, 0.0, 0.0])
-            w = flat_weight[rows]
-            entry[0] += float((flat_entropy[rows] * w).sum())
-            entry[1] += float((flat_kl[rows] * w).sum())
-            entry[2] += float(w.sum())
+        flat_weight = weight.reshape(-1).to(flat_entropy.dtype) if weight is not None else torch.ones_like(flat_entropy)
+        rows = torch.stack([flat_entropy * flat_weight, kl.reshape(-1).detach() * flat_weight, flat_weight], dim=1)
+        sums = totals.get("sums")
+        if sums is None:
+            sums = totals["sums"] = rows.new_zeros((len(self.layouts), 3))
+        sums.index_add_(0, flat_layout, rows)
 
     def _finish_layout_stats(self, totals: dict) -> None:
+        sums = totals.get("sums")
+        read = sums.double().cpu().tolist() if sums is not None else []
         self.layout_stats = {index: {"entropy": e / max(n, 1e-9), "approx_kl": k / max(n, 1e-9), "rows": n}
-                             for index, (e, k, n) in totals.items() if n > 0}
+                             for index, (e, k, n) in enumerate(read) if n > 0}
 
     def set_learning_rate_scale(self, scale: float) -> None:
         """Both optimizers at `scale` times their configured learning rate (see MappoConfig.lr_final_fraction)."""
@@ -688,8 +690,10 @@ class MappoTrainer:
         if foresight:
             stats["foresight_loss"] = 0.0
 
-        data = {name: torch.as_tensor(value, device=self.train_device)
-                for name, value in buffer.sequences().items()}
+        # The host copy stays at hand: each minibatch's layout groups and GRU pieces are cut from it, so neither has to
+        # be read back from the device.
+        host = buffer.sequences()
+        data = {name: torch.as_tensor(value, device=self.train_device) for name, value in host.items()}
         if self.goal_count and "goal" not in data:
             raise ValueError("the actor chooses goals but the rollout buffer did not keep them")
         steps, envs, agents = data["actions"].shape
@@ -725,9 +729,12 @@ class MappoTrainer:
         for _ in range(cfg.epochs):
             epoch_kl = torch.zeros((), device=self.train_device)
             epoch_updates = 0
-            order = torch.randperm(envs, device=self.train_device)
-            for chunk in torch.tensor_split(order, splits):
-                envs_here = len(chunk)
+            # Shuffled on the host, where the minibatch's groups are cut, rather than on the device and read back.
+            order = torch.randperm(envs)
+            for chunk_host in torch.tensor_split(order, splits):
+                chunk = to_device(chunk_host, self.train_device)
+                picked = chunk_host.numpy()
+                envs_here = len(chunk_host)
                 rows_here = envs_here * agents
                 lead = (steps, envs_here, agents)
 
@@ -740,12 +747,16 @@ class MappoTrainer:
                 dones_all = (data["dones"][:, chunk][:, :, None].expand(steps, envs_here, agents)
                              .reshape(steps, rows_here))
 
-                encoded = self.actor.encode(obs_all, layout_all).reshape(steps, rows_here, -1)
+                # Shared by the actor's adapters and heads and the critic's adapters: the same rows in the same order.
+                groups = per_layout_host(host["layout"][:, picked], len(self.layouts), self.train_device)
+                dones_host = torch.from_numpy(np.repeat(host["dones"][:, picked], agents, axis=1))
+
+                encoded = self.actor.encode(obs_all, layout_all, groups).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)
-                carried = self.actor.carry(encoded, memory, dones_all)
+                carried = self.actor.carry(encoded, memory, dones_host)
                 features = carried.reshape(-1, carried.shape[-1])
 
-                dist = self.actor.action_distribution(features, layout_all, mask_all, goal_all)
+                dist = self.actor.action_distribution(features, layout_all, mask_all, goal_all, groups)
                 log_probs = dist.log_prob(data["actions"][:, chunk].reshape(-1)).reshape(*lead)
                 action_entropies = dist.entropy().reshape(*lead)
                 entropies = action_entropies
@@ -831,10 +842,10 @@ class MappoTrainer:
                          .reshape(-1, data["state"].shape[-1]))
                 layout = data["layout"][:, chunk].reshape(-1)
                 goal_chunk = data["goal"][:, chunk].reshape(-1) if self.goal_count else None
-                encoded_value = self.critic.encode(state, obs, layout, goal_chunk).reshape(steps, rows_here, -1)
+                encoded_value = self.critic.encode(state, obs, layout, goal_chunk, groups).reshape(steps, rows_here, -1)
                 critic_memory = data["critic_memory"][0][chunk].reshape(rows_here, -1)
                 predicted = self.critic.values_of(
-                    self.critic.carry(encoded_value, critic_memory, dones_all)).reshape(steps, -1, agents)
+                    self.critic.carry(encoded_value, critic_memory, dones_host)).reshape(steps, -1, agents)
                 previous = old_values[:, chunk]
                 target = returns_target[:, chunk]
                 bounded = previous + (predicted - previous).clamp(-cfg.value_clip, cfg.value_clip)

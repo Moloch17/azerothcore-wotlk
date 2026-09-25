@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+import numpy as np
 import torch
 from torch import nn
 from torch.distributions import Categorical
@@ -83,10 +84,10 @@ class RunningNorm(nn.Module):
         self.count.copy_(total)
 
     def forward(self, rows: torch.Tensor) -> torch.Tensor:
-        if float(self.count) == 0.0:
-            return rows  # nothing seen yet: the raw features are the best estimate of themselves
-
-        return (rows - self.mean) / torch.sqrt(self.var + self.epsilon)
+        # Nothing seen yet: the raw features are the best estimate of themselves. Chosen on the device rather than by
+        # reading the count back: on a GPU that read waits for every queued kernel, once per layout per forward pass.
+        normalised = (rows - self.mean) / torch.sqrt(self.var + self.epsilon)
+        return torch.where(self.count > 0.0, normalised, rows)
 
     @torch.no_grad()
     def scale(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -131,6 +132,24 @@ def per_layout(layout: torch.Tensor, count: int) -> list[tuple[int, torch.Tensor
     """(layout, row indices) for every layout present in the flat batch `layout`, for the forward passes to share: the
     grouping is a unique and a nonzero per layout, which with 18 layouts is most of a small batch's forward cost."""
     return _per_layout(layout.reshape(-1), count)
+
+
+def to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """A small host tensor onto `device` without waiting: from pageable memory a copy to the GPU blocks the host until
+    every kernel queued before it has run, which turns each index upload into a pipeline drain."""
+    if device.type != "cuda":
+        return tensor.to(device)
+    return tensor.pin_memory().to(device, non_blocking=True)
+
+
+def per_layout_host(layout: np.ndarray, count: int, device: torch.device) -> list[tuple[int, torch.Tensor]]:
+    """per_layout for a batch whose layouts are still on the host (the rollout buffer's): the grouping is done in
+    numpy and only the row indices go to the device, so building it never waits on the GPU."""
+    flat = np.asarray(layout).reshape(-1)
+    if count == 1:
+        return [(0, to_device(torch.arange(flat.shape[0]), device))]
+    return [(int(index), to_device(torch.from_numpy(np.flatnonzero(flat == index)), device))
+            for index in np.unique(flat)]
 
 
 def _per_layout(layout: torch.Tensor, count: int) -> list[tuple[int, torch.Tensor]]:
@@ -183,7 +202,8 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
                     dones: torch.Tensor) -> torch.Tensor:
     """Run a GRU over a replayed sequence: `encoded` [T, N, H], `memory` [N, R] the state its first decision was
     taken with, `dones` [T, N] where an episode ended (the next decision starts cleared) -> [T, N, R]. Only the cell
-    is sequential, which is the small part; everything before it runs in one pass.
+    is sequential, which is the small part; everything before it runs in one pass. `dones` may be on the host even
+    when the rest is on the GPU: the cut into pieces is made there, so passing it from the host saves a read back.
 
     On the GPU, one fused RNN call per sequence instead of stepping the cell: the rows are cut at episode ends into
     pieces that each start from their own memory (the carried one for a row's first piece, zero after an end), run
@@ -202,11 +222,11 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
 
     # [pieces, longest] gather of each piece's steps; positions past a piece's end are dropped by the packing.
     times = (piece_start[:, None] + torch.arange(longest)[None, :]).clamp(max=steps - 1)
-    inputs = encoded[times.to(device), piece_row[:, None].expand_as(times).to(device)]
+    inputs = encoded[to_device(times, device), to_device(piece_row[:, None].expand_as(times).contiguous(), device)]
 
     first = torch.nonzero(piece_start == 0, as_tuple=True)[0]
-    initial = carried.new_zeros((len(piece_row), size)).index_copy(0, first.to(device),
-                                                                   carried[piece_row[first].to(device)])
+    initial = carried.new_zeros((len(piece_row), size)).index_copy(0, to_device(first, device),
+                                                                   carried[to_device(piece_row[first], device)])
 
     packed = nn.utils.rnn.pack_padded_sequence(inputs, piece_length, batch_first=True, enforce_sorted=False)
     hx = initial.index_select(0, packed.sorted_indices)[None]
@@ -217,7 +237,7 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     padded, _ = nn.utils.rnn.pad_packed_sequence(
         nn.utils.rnn.PackedSequence(output, packed.batch_sizes, packed.sorted_indices, packed.unsorted_indices),
         batch_first=True, total_length=longest)
-    return padded[piece_of.to(device), position_of.to(device)]
+    return padded[to_device(piece_of, device), to_device(position_of, device)]
 
 
 class LayoutActor(nn.Module):
