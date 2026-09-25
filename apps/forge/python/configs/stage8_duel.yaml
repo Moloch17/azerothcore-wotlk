@@ -106,6 +106,9 @@ mappo:
   # 4 since 2026-09-25 (was 8), by the user's decision: the recurrent update is sequential GRU replays, one per
   # minibatch per epoch, and launch-bound, so its time goes with the count, not the size (1.19 -> 0.69 s on this stage),
   # which lets an overlapped update fit inside a half-batch rollout. Fewer, larger PPO steps per rollout.
+  # Per rank: with data-parallel learners (AnimusForge.Learner.Ranks) each rank cuts its own rollout into this many
+  # and their gradients are averaged, so a step's batch is ranks x as large and the steps per update stay the same.
+  # To keep one rank's batch per step with more envs, scale this with the ranks.
   minibatches: 4
   max_grad_norm: 0.5
   use_value_norm: true

@@ -525,7 +525,11 @@ bool AnimusForge::Forge::CommandResume(std::vector<std::string> scenarios, LineS
         std::error_code error;
         bool const resume = fs::exists(RunConfig().RunsDir() / _current / "latest.pt", error);
         _plan.Entries[_plan.Index].Resume = resume;
-        _learnerStarted = _learner.Start(RunConfig(), _current, resume);
+        // As the scenario started it: as many ranks, and a cluster host's workers' sims.
+        ForgeConfig learnerConfig = RunConfig();
+        learnerConfig.LearnerRanks = PoolRanks(learnerConfig.LearnerRanks);
+        learnerConfig.ClusterSims = _clusterSims;
+        _learnerStarted = _learner.Start(learnerConfig, _current, resume);
         if (!_learnerStarted)
         {
             out(Acore::StringFormat("Could not restart the learner for {}; see the server log.", _current));
@@ -1093,7 +1097,9 @@ bool AnimusForge::Forge::CommandClean(std::string const& target, std::string con
             return false;
         }
 
-        bool const learner = RemovePath(_config.LearnerLogFile, out);
+        bool learner = RemovePath(_config.LearnerLogFile, out);
+        for (uint32 rank = 1; rank < 16; ++rank)
+            learner = RemovePath(LearnerProcess::RankLogFile(_config.LearnerLogFile, rank), out) && learner;
         return RemovePath(exportLog, out) && learner;
     };
 

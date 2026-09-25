@@ -5293,6 +5293,21 @@ AnimusForge.Learner.TorchThreads = 0
 
 AnimusForge.Learner.Device = ""
 
+#
+#    AnimusForge.Learner.Ranks
+#        Description: Data-parallel learners training one policy, one per GPU (1-16). Each rank takes an
+#                     equal share of every group of envs, collects rollouts on its own GPU and the
+#                     gradients are averaged every step, so N GPUs update on N times the envs in about
+#                     the time one takes on its share. Rank k runs on cuda:k counted from
+#                     AnimusForge.Learner.Device (cuda:0 when that is empty), on its own slice of the
+#                     cores the map update leaves free, and logs to animus-learner.rank<k>.log; rank 0
+#                     writes the run. A GPU the machine lacks falls back to the first, the ranks then
+#                     share it and reduce over gloo: it runs, but no faster than one rank. The batch
+#                     per update grows with the ranks; see the stage config's mappo.minibatches.
+#        Default:     1
+
+AnimusForge.Learner.Ranks = 1
+
 ###################################################################################################
 # CLUSTER
 #

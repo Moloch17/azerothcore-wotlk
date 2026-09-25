@@ -468,6 +468,7 @@ bool AnimusForge::Forge::StartCurrent()
         // hand still works (and `forge cancel` gives up).
         // A cluster host's workers run the same scenario, and its learner trains on their sims as well as this one.
         ForgeConfig learnerConfig = config;
+        learnerConfig.LearnerRanks = PoolRanks(config.LearnerRanks);
         if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
         {
             _cluster.Poll();
@@ -1398,6 +1399,11 @@ void AnimusForge::Forge::LocalDecision(uint32 group)
     _actionsPending[group] = true;
 }
 
+uint32 AnimusForge::Forge::PoolRanks(uint32 wanted) const
+{
+    return std::clamp<uint32>(wanted, 1, std::max<uint32>(1, _pool->NumEnvs() / _pool->GroupCount()));
+}
+
 void AnimusForge::Forge::RemoteDecision(uint32 group)
 {
     // While the world thread waits on the learner: answer console commands, report progress, and stop waiting
@@ -1420,8 +1426,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         // Blocks until the learner connects; returns false on shutdown, a cancel or skip, or when the scenario's
         // learner has finished its run.
         auto const waitFrom = std::chrono::steady_clock::now();
-        _ranks = std::clamp<uint32>(RunConfig().LearnerRanks, 1, std::max<uint32>(1, _pool->NumEnvs()
-            / _pool->GroupCount()));
+        _ranks = PoolRanks(RunConfig().LearnerRanks);
         bool const connected = _server.AcceptClients(_ranks, onAccepting);
         WaitedForLearner(waitFrom);
 

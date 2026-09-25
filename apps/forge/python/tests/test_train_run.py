@@ -48,8 +48,9 @@ def read_exact(conn: socket.socket, size: int) -> bytes:
 
 
 def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec = SPEC,
-             hang_up_after: int | None = None) -> None:
+             hang_up_after: int | None = None, marks: list | None = None) -> None:
     """3-decision episodes paying 1 per decision; env 1's second seat is empty (present 0, only the no-op).
+    `marks` gets the decision each MODE came on.
 
     With spec.env_groups 2 it runs as the half-batch sim does: every group's STEP after a reset, then for each reply
     only that group's envs move on and only its STEP goes out."""
@@ -121,6 +122,8 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                 if msg_type == p.MsgType.MODE:
                     evaluating, _, episodes, baseline, _ = p.decode_mode(body)
                     modes.append((evaluating, episodes, baseline))
+                    if marks is not None:
+                        marks.append(decision)
                     next_seed = p.decode_mode_first_seed(body)
                     last_seed = next_seed + episodes
                     for e in range(e_count):

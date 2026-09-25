@@ -41,6 +41,9 @@ class Ranks:
         own_gpus = (device.startswith("cuda") and torch.cuda.is_available()
                     and torch.cuda.device_count() >= self.world and dist.is_nccl_available())
         self.backend = "nccl" if own_gpus else "gloo"
+        if own_gpus:
+            # NCCL's object collectives (broadcast, gather) stage through the current device: each rank's own.
+            torch.cuda.set_device(torch.device(device))
         dist.init_process_group(self.backend, rank=rank, world_size=self.world)
         self._dist = dist
         # The update runs on the overlap worker thread while the run's own thread broadcasts and gathers: on one
@@ -75,20 +78,31 @@ class Ranks:
         return self.sum(tensor) / self.world if self.active else tensor
 
     def average_gradients(self, parameters) -> None:
-        """Every rank's gradients replaced by their mean over the ranks: one flat all-reduce per call."""
+        """Every rank's gradients replaced by their mean over the ranks: one flat all-reduce per call.
+
+        Every parameter goes in, whether or not it has a gradient here: a layout head no row of this rank's minibatch
+        used has none on this rank but may on another, and the ranks' buffers must line up. A presence count rides
+        along, so a parameter no rank touched is left without a gradient, as one learner would leave it."""
         if not self.active:
             return
-        grads = [p.grad for p in parameters if p.grad is not None]
-        if not grads:
+        parameters = [p for p in parameters if p.requires_grad]
+        if not parameters:
             return
-        flat = torch.cat([grad.reshape(-1) for grad in grads])
+        device = parameters[0].device
+        flat = torch.cat([(p.grad if p.grad is not None else torch.zeros_like(p)).reshape(-1) for p in parameters]
+                         + [torch.tensor([float(p.grad is not None) for p in parameters], device=device,
+                                         dtype=parameters[0].dtype)])
         self._reduce(flat)
-        flat /= self.world
+        flat[:-len(parameters)] /= self.world
+        present = flat[-len(parameters):].tolist()
         offset = 0
-        for grad in grads:
-            count = grad.numel()
-            grad.copy_(flat[offset:offset + count].view_as(grad))
-            offset += count
+        for parameter, count in zip(parameters, present):
+            size = parameter.numel()
+            if count > 0:
+                if parameter.grad is None:
+                    parameter.grad = torch.empty_like(parameter)
+                parameter.grad.copy_(flat[offset:offset + size].view_as(parameter))
+            offset += size
 
     def broadcast_module(self, module: torch.nn.Module) -> None:
         """The leader's parameters and buffers, everywhere: the ranks start as one network."""
@@ -119,6 +133,15 @@ class Ranks:
         box = [None] * self.world if self.leader else None
         self._dist.gather_object(value, box, 0, group=self.group)
         return box
+
+    def any(self, flag: bool) -> bool:
+        """Whether `flag` holds on any rank (one small all-reduce, on the host)."""
+        if not self.active:
+            return flag
+        box = torch.tensor([int(flag)], dtype=torch.int32,
+                           device=torch.cuda.current_device() if self.backend == "nccl" else "cpu")
+        self._dist.all_reduce(box, group=self.group)
+        return bool(box.item())
 
     def barrier(self) -> None:
         if self.active:

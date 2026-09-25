@@ -39,6 +39,11 @@ namespace Acore::CpuPlacement
     /// run beside a pinned pool without taking hardware threads from its cores. Empty if the pool covers every core.
     AC_COMMON_API std::vector<int> AwayFrom(std::vector<int> const& used);
 
+    /// `cpus` dealt into `parts` slices of whole physical cores (a core's SMT siblings stay together), in the order
+    /// the cores first appear in `cpus`, so a slice keeps to one die where it can. Fewer cores than parts: every
+    /// slice is all of `cpus`.
+    AC_COMMON_API std::vector<std::vector<int>> Split(std::vector<int> const& cpus, std::size_t parts);
+
     /// Pin the calling thread to `cpu`. False, and nothing changed, if the kernel refuses.
     AC_COMMON_API bool PinThisThread(int cpu);
 

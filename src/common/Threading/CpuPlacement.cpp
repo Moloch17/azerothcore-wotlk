@@ -149,6 +149,26 @@ std::vector<int> Acore::CpuPlacement::AwayFrom(std::vector<int> const& used)
     return away;
 }
 
+std::vector<std::vector<int>> Acore::CpuPlacement::Split(std::vector<int> const& cpus, std::size_t parts)
+{
+    parts = std::max<std::size_t>(1, parts);
+    std::vector<int> cores;
+    for (int cpu : cpus)
+        if (std::find(cores.begin(), cores.end(), CoreOf(cpu)) == cores.end())
+            cores.push_back(CoreOf(cpu));
+
+    if (cores.size() < parts)
+        return std::vector<std::vector<int>>(parts, cpus);
+
+    std::vector<std::vector<int>> slices(parts);
+    for (int cpu : cpus)
+    {
+        std::size_t const core = std::find(cores.begin(), cores.end(), CoreOf(cpu)) - cores.begin();
+        slices[core * parts / cores.size()].push_back(cpu);
+    }
+    return slices;
+}
+
 bool Acore::CpuPlacement::PinThisThread([[maybe_unused]] int cpu)
 {
 #if defined(__linux__)

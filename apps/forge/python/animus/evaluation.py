@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 
@@ -390,7 +391,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    max_decisions: int | None = None, opponents: str = "",
                    arenas: tuple[str, ...] = (),
                    action_names: dict[str, list[str]] | None = None,
-                   trace_episodes: int = 0, first_seed: int = 0) -> tuple[EvalResult, p.Step]:
+                   trace_episodes: int = 0, first_seed: int = 0,
+                   any_playing: Callable[[bool], bool] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -400,6 +402,10 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     everything); their rows are left out. `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
     decision of the episodes with the first seed indexes, in EvalResult.trace.
+
+    `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
+    every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
+    seeds keeps stepping until the last one is, and they switch back together.
     """
     started = time.perf_counter()
     envs, agents = spec.num_envs, spec.agents_per_env
@@ -430,7 +436,11 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     opponent_seat = info_names.index("opponent_seat") if opponents and "opponent_seat" in info_names else None
     decisions = 0
 
-    while len(finished) < episodes and decisions < max_decisions:
+    def playing() -> bool:
+        mine = len(finished) < episodes and decisions < max_decisions
+        return any_playing(mine) if any_playing else mine
+
+    while playing():
         chosen = np.zeros((envs, agents), dtype=np.int32) if baseline else choose_actions(step)
         actions, goals = chosen if isinstance(chosen, tuple) else (chosen, None)
         # The episode's layouts: after a done, the next STEP already carries the new episode's.
