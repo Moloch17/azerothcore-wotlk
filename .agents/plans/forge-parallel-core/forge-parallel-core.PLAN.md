@@ -552,6 +552,26 @@ rollout, then graph-capture whichever side it is.
 16 replicas spread the continent's envs over twice the maps: 11 map tasks per update instead of 7, 6x parallel
 instead of 3.4x, +~550 MB. At the session's start (with learner, 128 envs) this was ~5,480.
 
+## Tenth measurement, 2026-09-25: training is not the bench -- the RNG reseed (b682aa647)
+
+`forge bench` turns evaluations and replays off, and so never ran a seeded reset. A training-like run (fast
+stage8_duel at 192 envs with the learner, started by hand; `forge status`) showed the sim at 3.7 ms per decision,
+3.0 ms of it resets -- and a finer breakdown (now in `forge status`'s "reset parts") put Scenario::Reset itself at
+0.66 ms. The rest was `rand_seed(0)` after every seeded build (evaluation episodes, and replays of lost ones in 20%
+of training resets): it fills SFMT's state with 624 draws of std::random_device. Now the RNG draws its own
+continuation before the seed and resumes from it. Reset 3.00 -> 0.77 ms, sim 3.7 -> 1.2 ms, **19,254 -> 28,979 env
+steps/s** in the training-like run. Building characters is ~0.5 ms of a decision (create 0.13, configure 0.38), so a
+startup character cache (the user's question) would buy at most that; despawning old targets measured 0.00.
+
+Also this round (e9b7b45d9, abbd6eede, 617fead5d): Gumbel-max sampling in the rollout graph, packed transfers, one
+transposed GEMM for the actor's and critic's adapters (forge bench 45,460 -> 47,144); a side-stream fork measured
+faster alone but slower in training (ROCm hardware queues) and was taken out. GPU_MAX_HW_QUEUES 4 (the default) is
+best; more queues let the update's kernels crowd the rollout's. The 7900 XTX holds its memory clock at 456 of 1249 MHz
+under the rollout's bursts (power level auto); the user held off on changing it.
+
+**Lesson**: measure what training does, not only the bench. The bench's learner phase leaves out evaluation,
+replays, the league and the reset mix of a learning policy.
+
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
 - **More learner processes on one GPU do not scale**: 1 / 2 / 3 learners at once (bench_learner, each with its own
