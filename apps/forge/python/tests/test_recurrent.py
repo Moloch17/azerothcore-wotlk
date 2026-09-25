@@ -417,3 +417,27 @@ def test_fused_gru_with_no_episode_end():
     dones = torch.zeros(5, 3, dtype=torch.bool).cuda()
     torch.testing.assert_close(_carry_sequence(cell, 16, encoded, memory, dones),
                                _carry_sequence_loop(cell, 16, encoded, memory, dones), rtol=1e-4, atol=1e-5)
+
+
+@requires_gpu
+def test_the_update_on_two_streams_is_the_update_on_one():
+    """The recurrent update runs each minibatch's actor and critic halves on two streams: scheduling only, so the
+    networks it leaves are the ones a single stream leaves."""
+    envs, agents, steps = 2, 1, 6
+    config = MappoConfig(hidden=(16, 16), recurrent_size=8, epochs=2, minibatches=2)
+    trainers = []
+    for _ in range(2):
+        torch.manual_seed(0)
+        trainers.append(MappoTrainer([(5, 3)], 6, config, train_device="cuda", rollout_device="cpu"))
+    trainer, single = trainers
+    single._update_streams = (None, None)
+    buffer = RolloutBuffer(steps, envs, agents, 5, 6, 3, recurrent=8)
+    fill(trainer, buffer, steps, envs, agents, 5, 6, 3, done_at=2)
+    torch.manual_seed(1)
+    trainer.update(buffer)
+    torch.manual_seed(1)
+    single.update(buffer)
+    for (name, got), (_, want) in zip(trainer.actor.state_dict().items(), single.actor.state_dict().items()):
+        torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-6, msg=lambda text: f"actor {name}: {text}")
+    for (name, got), (_, want) in zip(trainer.critic.state_dict().items(), single.critic.state_dict().items()):
+        torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-6, msg=lambda text: f"critic {name}: {text}")

@@ -254,6 +254,9 @@ class MappoTrainer:
 
         self._rollout_stream = (torch.cuda.Stream(device=self.rollout_device, priority=-1)
                                 if self.rollout_device.type == "cuda" else None)
+        # The recurrent update's actor and critic halves (_update_recurrent); None off the GPU.
+        self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
+                                if self.train_device.type == "cuda" else (None, None))
         self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
         self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
         self._rollout_value_norm = (
@@ -373,6 +376,15 @@ class MappoTrainer:
         if self.rollout_device.type == "cuda":
             return None  # the rollout copies are dense on the GPU (densify): no groups to build
         return per_layout(layout_t, len(self.layouts))
+
+    def _switch_stream(self, stream, wait_for=None) -> None:
+        """Make `stream` current, after the work queued on `wait_for` (a stream or several). Nothing on the CPU."""
+        if stream is None:
+            return
+        for other in (wait_for if isinstance(wait_for, (tuple, list)) else (wait_for,)):
+            if other is not None and other is not stream:
+                stream.wait_stream(other)
+        torch.cuda.set_stream(stream)
 
     def _rollout_context(self):
         """The rollout's stream on the GPU: its own and high priority, so its few small kernels per decision do not
@@ -833,6 +845,7 @@ class MappoTrainer:
         auxiliary_updates = 0
         updates = 0
         epochs_run = 0
+        main = torch.cuda.current_stream(self.train_device) if self.train_device.type == "cuda" else None
 
         for _ in range(cfg.epochs):
             epoch_kl = torch.zeros((), device=self.train_device)
@@ -858,6 +871,13 @@ class MappoTrainer:
                 # Shared by the actor's adapters and heads and the critic's adapters: the same rows in the same order.
                 groups = per_layout_host(host["layout"][:, picked], len(self.layouts), self.train_device)
                 dones_host = torch.from_numpy(np.repeat(host["dones"][:, picked], agents, axis=1))
+                counted = valid[:, chunk].to(torch.float32)
+                weight = counted.sum().clamp(min=1.0)
+
+                # The actor's half of the minibatch on one stream, the critic's on another: they share only these
+                # inputs, and each replays its GRU through every step, a chain of small kernels the GPU cannot
+                # overlap with itself but can with the other. The minibatch's statistics wait for both.
+                self._switch_stream(self._update_streams[0], wait_for=main)
 
                 encoded = self.actor.encode(obs_all, layout_all, groups).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)
@@ -899,8 +919,6 @@ class MappoTrainer:
                     if taught is not None:
                         distill_loss, distill_rows = taught
 
-                counted = valid[:, chunk].to(torch.float32)
-                weight = counted.sum().clamp(min=1.0)
                 taken = data["log_probs"][:, chunk]
                 if self.goal_count:
                     taken = taken + data["goal_log_probs"][:, chunk] * data["goal_chosen"][:, chunk].to(taken.dtype)
@@ -944,6 +962,7 @@ class MappoTrainer:
                 # The critic carries a memory of its own, so its rows are replayed in order exactly as the
                 # actor's are: encode every step in one pass, then walk the GRU through the sequence from the state
                 # those decisions were valued with.
+                self._switch_stream(self._update_streams[1], wait_for=main)
                 obs = data["obs"][:, chunk].reshape(-1, data["obs"].shape[-1])
                 state = (data["state"][:, chunk][:, :, None, :]
                          .expand(steps, len(chunk), agents, data["state"].shape[-1])
@@ -965,6 +984,8 @@ class MappoTrainer:
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
 
+                # Back on the update's own stream, once both halves are in.
+                self._switch_stream(main, wait_for=self._update_streams)
                 with torch.no_grad():
                     log_ratio = log_probs - taken
                     self._layout_totals(layout_totals, layout_all, action_entropies, (ratio - 1) - log_ratio,
