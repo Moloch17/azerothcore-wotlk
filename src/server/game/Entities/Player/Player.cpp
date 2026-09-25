@@ -15097,6 +15097,7 @@ void Player::ResetMap()
     // nocheck_prev will return the padding element of the RefMgr
     // instead of nullptr in the case of prev
     GetMap()->UpdateIteratorBack(this);
+    GetMap()->UnindexPlayer(this);
     Unit::ResetMap();
     GetMapRef().unlink();
 }

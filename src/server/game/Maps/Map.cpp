@@ -275,6 +275,7 @@ bool Map::AddPlayerToMap(Player* player)
     ASSERT (player->GetMap() == this);
     player->SetMap(this);
     player->AddToWorld();
+    _playersByGuid[player->GetGUID()] = player;
 
     SendInitTransports(player);
     SendInitSelf(player);
@@ -496,7 +497,11 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
     }
 
     _updatableObjectListRecheckTimer.Update(t_diff);
-    resetMarkedCells();
+
+    // The marks are written (MarkNearbyCellsOf) and read (IsUpdateNeeded) only on a recheck tick, every
+    // 30 s of game time; clearing the 32 KB bitset on every other tick was pure memset.
+    if (_updatableObjectListRecheckTimer.Passed())
+        resetMarkedCells();
 
     // Update players
     for (m_mapRefIter = m_mapRefMgr.begin(); m_mapRefIter != m_mapRefMgr.end(); ++m_mapRefIter)
@@ -612,7 +617,7 @@ void Map::AddObjectToPendingUpdateList(WorldObject* obj)
     if (!obj->CanBeAddedToMapUpdateList())
         return;
 
-    UpdatableMapObject* mapUpdatableObject = dynamic_cast<UpdatableMapObject*>(obj);
+    UpdatableMapObject* mapUpdatableObject = obj->ToUpdatableMapObject();
     if (!mapUpdatableObject || mapUpdatableObject->GetUpdateState() != UpdatableMapObject::UpdateState::NotUpdating)
         return;
 
@@ -623,7 +628,7 @@ void Map::AddObjectToPendingUpdateList(WorldObject* obj)
 // Internal use only
 void Map::_AddObjectToUpdateList(WorldObject* obj)
 {
-    UpdatableMapObject* mapUpdatableObject = dynamic_cast<UpdatableMapObject*>(obj);
+    UpdatableMapObject* mapUpdatableObject = obj->ToUpdatableMapObject();
     ASSERT(mapUpdatableObject && mapUpdatableObject->GetUpdateState() == UpdatableMapObject::UpdateState::PendingAdd);
 
     mapUpdatableObject->SetUpdateState(UpdatableMapObject::UpdateState::Updating);
@@ -634,12 +639,12 @@ void Map::_AddObjectToUpdateList(WorldObject* obj)
 // Internal use only
 void Map::_RemoveObjectFromUpdateList(WorldObject* obj)
 {
-    UpdatableMapObject* mapUpdatableObject = dynamic_cast<UpdatableMapObject*>(obj);
+    UpdatableMapObject* mapUpdatableObject = obj->ToUpdatableMapObject();
     ASSERT(mapUpdatableObject && mapUpdatableObject->GetUpdateState() == UpdatableMapObject::UpdateState::Updating);
 
     if (obj != _updatableObjectList.back())
     {
-        dynamic_cast<UpdatableMapObject*>(_updatableObjectList.back())->SetMapUpdateListOffset(mapUpdatableObject->GetMapUpdateListOffset());
+        _updatableObjectList.back()->ToUpdatableMapObject()->SetMapUpdateListOffset(mapUpdatableObject->GetMapUpdateListOffset());
         std::swap(_updatableObjectList[mapUpdatableObject->GetMapUpdateListOffset()], _updatableObjectList.back());
     }
 
@@ -652,7 +657,7 @@ void Map::RemoveObjectFromMapUpdateList(WorldObject* obj)
     if (!obj->CanBeAddedToMapUpdateList())
         return;
 
-    UpdatableMapObject* mapUpdatableObject = dynamic_cast<UpdatableMapObject*>(obj);
+    UpdatableMapObject* mapUpdatableObject = obj->ToUpdatableMapObject();
     if (mapUpdatableObject->GetUpdateState() == UpdatableMapObject::UpdateState::PendingAdd)
         _pendingAddUpdatableObjectList.erase(obj);
     else if (mapUpdatableObject->GetUpdateState() == UpdatableMapObject::UpdateState::Updating)
@@ -743,8 +748,14 @@ struct ResetNotifier
     void Visit(PlayerMapType& m) { resetNotify<Player>(m);}
 };
 
+void Map::UnindexPlayer(Player* player)
+{
+    _playersByGuid.erase(player->GetGUID());
+}
+
 void Map::RemovePlayerFromMap(Player* player, bool remove)
 {
+    UnindexPlayer(player);
     UpdatePlayerZoneStats(player->GetZoneId(), MAP_INVALID_ZONE);
 
     player->GetThreatMgr().RemoveMeFromThreatLists(); // pussywizard: multithreading crashfix

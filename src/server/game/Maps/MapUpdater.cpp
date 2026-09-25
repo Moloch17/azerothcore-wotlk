@@ -1,5 +1,7 @@
 /*
- * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * Portions of this file are derived from the AzerothCore Project.
+ * See AUTHORS file for Copyright information.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,184 +19,218 @@
 
 #include "MapUpdater.h"
 #include "DatabaseEnv.h"
-#include "LFGMgr.h"
+#include "Errors.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapMgr.h"
-#include "Metric.h"
+#if defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
 
-class UpdateRequest
+namespace
 {
-public:
-    UpdateRequest() = default;
-    virtual ~UpdateRequest() = default;
+    inline void CpuRelax()
+    {
+#if defined(__x86_64__) || defined(__i386__)
+        _mm_pause();
+#else
+        std::this_thread::yield();
+#endif
+    }
+}
 
-    virtual void call() = 0;
-};
-
-class MapUpdateRequest : public UpdateRequest
+MapUpdater::MapUpdater()
+    : _tasks(std::make_unique<Task[]>(MaxTasks)), _ready(std::make_unique<std::atomic<bool>[]>(MaxTasks))
 {
-public:
-    MapUpdateRequest(Map& m, MapUpdater& u, uint32 d, uint32 sd)
-        : m_map(m), m_updater(u), m_diff(d), s_diff(sd)
-    {
-    }
+    for (uint32 i = 0; i < MaxTasks; ++i)
+        _ready[i].store(false, std::memory_order_relaxed);
+}
 
-    void call() override
-    {
-        METRIC_TIMER("map_update_time_diff", METRIC_TAG("map_id", std::to_string(m_map.GetId())));
-        m_map.Update(m_diff, s_diff);
-        m_updater.update_finished();
-    }
-
-private:
-    Map& m_map;
-    MapUpdater& m_updater;
-    uint32 m_diff;
-    uint32 s_diff;
-};
-
-class MapPreloadRequest : public UpdateRequest
+MapUpdater::~MapUpdater()
 {
-public:
-    MapPreloadRequest(uint32 mapId, MapUpdater& updater)
-        : _mapId(mapId), _updater(updater)
-    {
-    }
-
-    void call() override
-    {
-        Map* map = sMapMgr->CreateBaseMap(_mapId);
-        LOG_INFO("server.loading", ">> Loading All Grids For Map {} ({})", map->GetId(), map->GetMapName());
-        map->LoadAllGrids();
-        _updater.update_finished();
-    }
-
-private:
-    uint32 _mapId;
-    MapUpdater& _updater;
-};
-
-class LFGUpdateRequest : public UpdateRequest
-{
-public:
-    LFGUpdateRequest(MapUpdater& u, uint32 d) : m_updater(u), m_diff(d) {}
-
-    void call() override
-    {
-        sLFGMgr->Update(m_diff, 1);
-        m_updater.update_finished();
-    }
-private:
-    MapUpdater& m_updater;
-    uint32 m_diff;
-};
-
-MapUpdater::MapUpdater() : pending_requests(0), _cancelationToken(false)
-{
+    if (activated())
+        deactivate();
 }
 
 void MapUpdater::activate(std::size_t num_threads)
 {
-    // A pool that was deactivated starts again here: the sim host switches thread counts between decisions
-    // (AnimusForge `forge bench`). Both stops are sticky, so without clearing them the new workers would leave
-    // their loop at once and the queue would drop every request pushed to it, and the world thread would then
-    // wait forever for updates nothing runs.
-    _cancelationToken = false;
-    _queue.Reset();
+    // A pool that was deactivated starts again here (the module switches thread counts between decisions).
+    _stop.store(false, std::memory_order_release);
 
-    _workerThreads.reserve(num_threads);
+    _workers.reserve(num_threads);
     for (std::size_t i = 0; i < num_threads; ++i)
-    {
-        _workerThreads.push_back(std::thread(&MapUpdater::WorkerThread, this));
-    }
+        _workers.emplace_back(&MapUpdater::WorkerThread, this, uint32(i));
 }
 
 void MapUpdater::deactivate()
 {
-    _cancelationToken = true;
+    wait();
 
-    wait();  // This is where we wait for tasks to complete
-
-    _queue.Cancel();  // Cancel the queue to prevent further task processing
-
-    // Join all worker threads
-    for (auto& thread : _workerThreads)
     {
-        if (thread.joinable())
-        {
-            thread.join();
-        }
+        std::lock_guard<std::mutex> guard(_parkLock);
+        _stop.store(true, std::memory_order_release);
     }
+    _parkCv.notify_all();
+
+    for (std::thread& worker : _workers)
+        if (worker.joinable())
+            worker.join();
 
     // Joined threads are not workers: activated() has to say so, and activate() must not keep them around.
-    _workerThreads.clear();
+    _workers.clear();
 }
 
-void MapUpdater::wait()
+void MapUpdater::Push(Task const& task)
 {
-    std::unique_lock<std::mutex> guard(_lock);  // Guard lock for safe waiting
+    _pending.fetch_add(1, std::memory_order_acq_rel);
 
-    // Wait until there are no pending requests
-    _condition.wait(guard, [this] {
-        return pending_requests.load(std::memory_order_acquire) == 0;
-    });
-}
+    uint32 const slot = _count.fetch_add(1, std::memory_order_acq_rel);
+    ASSERT(slot < MaxTasks, "MapUpdater: more than {} tasks in one tick", MaxTasks);
 
-void MapUpdater::schedule_task(UpdateRequest* request)
-{
-    // Atomic increment for pending_requests
-    pending_requests.fetch_add(1, std::memory_order_release);
-    _queue.Push(request);
+    _tasks[slot] = task;
+    _ready[slot].store(true, std::memory_order_release);
+
+    if (_parked.load(std::memory_order_acquire))
+    {
+        std::lock_guard<std::mutex> guard(_parkLock);
+        _parkCv.notify_all();
+    }
 }
 
 void MapUpdater::schedule_update(Map& map, uint32 diff, uint32 s_diff)
 {
-    schedule_task(new MapUpdateRequest(map, *this, diff, s_diff));
+    Task task;
+    task.map = &map;
+    task.diff = diff;
+    task.s_diff = s_diff;
+    Push(task);
 }
 
 void MapUpdater::schedule_map_preload(uint32 mapid)
 {
-    schedule_task(new MapPreloadRequest(mapid, *this));
+    Task task;
+    task.mapId = mapid;
+    Push(task);
 }
 
-void MapUpdater::schedule_lfg_update(uint32 diff)
+void MapUpdater::Run(Task const& task)
 {
-    schedule_task(new LFGUpdateRequest(*this, diff));
-}
-
-bool MapUpdater::activated()
-{
-    return !_workerThreads.empty();
-}
-
-void MapUpdater::update_finished()
-{
-    // Atomic decrement for pending_requests
-    if (pending_requests.fetch_sub(1, std::memory_order_acquire) == 1)
+    if (task.map)
     {
-        // Only notify when pending_requests becomes 0 (i.e., all tasks are finished)
-        std::lock_guard<std::mutex> lock(_lock);  // Lock only for condition variable notification
-        _condition.notify_all();  // Notify waiting threads that all requests are complete
+        task.map->Update(task.diff, task.s_diff);
+        task.map->DelayedUpdate(task.diff);
+        return;
     }
+
+    Map* map = sMapMgr->CreateBaseMap(task.mapId);
+    LOG_INFO("server.loading", ">> Loading All Grids For Map {} ({})", map->GetId(), map->GetMapName());
+    map->LoadAllGrids();
 }
 
-void MapUpdater::WorkerThread()
+bool MapUpdater::RunOne()
 {
+    uint32 slot = _next.load(std::memory_order_acquire);
+    for (;;)
+    {
+        if (slot >= _count.load(std::memory_order_acquire))
+            return false;
+        if (_next.compare_exchange_weak(slot, slot + 1, std::memory_order_acq_rel, std::memory_order_acquire))
+            break;
+    }
+
+    // The slot was taken by a pusher that has not written it yet: it is a few instructions away.
+    while (!_ready[slot].load(std::memory_order_acquire))
+        CpuRelax();
+
+    Task const task = _tasks[slot];
+    _ready[slot].store(false, std::memory_order_relaxed);
+
+    Run(task);
+
+    _pending.fetch_sub(1, std::memory_order_acq_rel);
+    return true;
+}
+
+void MapUpdater::wait()
+{
+    // The calling thread works too, then spins on the stragglers: the join is one atomic read.
+    for (;;)
+    {
+        if (RunOne())
+            continue;
+        if (_pending.load(std::memory_order_acquire) == 0)
+            break;
+        CpuRelax();
+    }
+
+    // Every task is finished and none can be claimed (next >= count). Rewind for the next tick: count first,
+    // so a worker that reads the rewound next also reads a rewound count.
+    _count.store(0, std::memory_order_release);
+    _next.store(0, std::memory_order_release);
+}
+
+void MapUpdater::PinToCpu([[maybe_unused]] uint32 index)
+{
+#if defined(__linux__)
+    // Worker k takes the k-th CPU this process may run on, so a container's cpuset is honoured and every
+    // worker keeps its cache. The world thread and the learner stay unpinned.
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0)
+        return;
+
+    std::vector<int> cpus;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+        if (CPU_ISSET(cpu, &allowed))
+            cpus.push_back(cpu);
+
+    if (cpus.empty())
+        return;
+
+    cpu_set_t mine;
+    CPU_ZERO(&mine);
+    CPU_SET(cpus[index % cpus.size()], &mine);
+    pthread_setaffinity_np(pthread_self(), sizeof(mine), &mine);
+#endif
+}
+
+void MapUpdater::WorkerThread(uint32 index)
+{
+    PinToCpu(index);
+
     LoginDatabase.WarnAboutSyncQueries(true);
     CharacterDatabase.WarnAboutSyncQueries(true);
     WorldDatabase.WarnAboutSyncQueries(true);
 
-    while (!_cancelationToken)
+    // How long a worker spins for the next task before parking. A tick's tasks arrive within microseconds of
+    // each other; between ticks the learner exchange can take milliseconds, and that is what parking is for.
+    constexpr uint32 SpinRounds = 4000;
+
+    while (!_stop.load(std::memory_order_acquire))
     {
-        UpdateRequest* request = nullptr;
+        if (RunOne())
+            continue;
 
-        _queue.WaitAndPop(request);  // Wait for and pop a request from the queue
-
-        if (!_cancelationToken && request)
+        bool found = false;
+        for (uint32 round = 0; round < SpinRounds && !found; ++round)
         {
-            request->call();  // Execute the request
-            delete request;  // Clean up after processing
+            CpuRelax();
+            found = _next.load(std::memory_order_acquire) < _count.load(std::memory_order_acquire);
         }
+        if (found)
+            continue;
+
+        std::unique_lock<std::mutex> lock(_parkLock);
+        _parked.fetch_add(1, std::memory_order_acq_rel);
+        _parkCv.wait(lock, [this]
+        {
+            return _stop.load(std::memory_order_acquire)
+                || _next.load(std::memory_order_acquire) < _count.load(std::memory_order_acquire);
+        });
+        _parked.fetch_sub(1, std::memory_order_acq_rel);
     }
 }

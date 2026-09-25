@@ -20,7 +20,11 @@
 
 #include "ByteBuffer.h"
 #include "Errors.h"
+#include <algorithm>
 
+/// Which update fields of an object changed. Stored as the 32-bit words the client reads, one bit per
+/// field: a Player's 1326 fields are 42 words, clearing is a short fill, and the packet form is the
+/// storage form. (Stock kept one byte per field and transposed it into words for every packet.)
 class UpdateMask
 {
 public:
@@ -32,31 +36,24 @@ public:
         CLIENT_UPDATE_MASK_BITS = sizeof(ClientUpdateMaskType) * 8,
     };
 
-    UpdateMask()  = default;
+    UpdateMask() = default;
 
     UpdateMask(UpdateMask const& right)
     {
         SetCount(right.GetCount());
-        memcpy(_bits, right._bits, sizeof(uint8) * _blockCount * 32);
+        std::copy_n(right._blocks, _blockCount, _blocks);
     }
 
-    ~UpdateMask() { delete[] _bits; }
+    ~UpdateMask() { delete[] _blocks; }
 
-    void SetBit(uint32 index) { _bits[index] = 1; }
-    void UnsetBit(uint32 index) { _bits[index] = 0; }
-    [[nodiscard]] bool GetBit(uint32 index) const { return _bits[index] != 0; }
+    void SetBit(uint32 index) { _blocks[index / CLIENT_UPDATE_MASK_BITS] |= ClientUpdateMaskType(1) << (index % CLIENT_UPDATE_MASK_BITS); }
+    void UnsetBit(uint32 index) { _blocks[index / CLIENT_UPDATE_MASK_BITS] &= ~(ClientUpdateMaskType(1) << (index % CLIENT_UPDATE_MASK_BITS)); }
+    [[nodiscard]] bool GetBit(uint32 index) const { return (_blocks[index / CLIENT_UPDATE_MASK_BITS] >> (index % CLIENT_UPDATE_MASK_BITS)) & 1; }
 
     void AppendToPacket(ByteBuffer* data)
     {
-        for (uint32 i = 0; i < GetBlockCount(); ++i)
-        {
-            ClientUpdateMaskType maskPart = 0;
-            for (uint32 j = 0; j < CLIENT_UPDATE_MASK_BITS; ++j)
-                if (_bits[CLIENT_UPDATE_MASK_BITS * i + j])
-                    maskPart |= 1 << j;
-
-            *data << maskPart;
-        }
+        for (uint32 i = 0; i < _blockCount; ++i)
+            *data << _blocks[i];
     }
 
     [[nodiscard]] uint32 GetBlockCount() const { return _blockCount; }
@@ -64,19 +61,18 @@ public:
 
     void SetCount(uint32 valuesCount)
     {
-        delete[] _bits;
+        delete[] _blocks;
 
         _fieldCount = valuesCount;
         _blockCount = (valuesCount + CLIENT_UPDATE_MASK_BITS - 1) / CLIENT_UPDATE_MASK_BITS;
 
-        _bits = new uint8[_blockCount * CLIENT_UPDATE_MASK_BITS];
-        memset(_bits, 0, sizeof(uint8) * _blockCount * CLIENT_UPDATE_MASK_BITS);
+        _blocks = new ClientUpdateMaskType[_blockCount]();
     }
 
     void Clear()
     {
-        if (_bits)
-            memset(_bits, 0, sizeof(uint8) * _blockCount * CLIENT_UPDATE_MASK_BITS);
+        if (_blocks)
+            std::fill_n(_blocks, _blockCount, ClientUpdateMaskType(0));
     }
 
     UpdateMask& operator=(UpdateMask const& right)
@@ -85,15 +81,23 @@ public:
             return *this;
 
         SetCount(right.GetCount());
-        memcpy(_bits, right._bits, sizeof(uint8) * _blockCount * CLIENT_UPDATE_MASK_BITS);
+        std::copy_n(right._blocks, _blockCount, _blocks);
         return *this;
     }
 
+    /// Fields beyond right's count are left as they are, as stock did.
     UpdateMask& operator&=(UpdateMask const& right)
     {
         ASSERT(right.GetCount() <= GetCount());
-        for (uint32 i = 0; i < _fieldCount; ++i)
-            _bits[i] &= right._bits[i];
+        uint32 const fullBlocks = right._fieldCount / CLIENT_UPDATE_MASK_BITS;
+        for (uint32 i = 0; i < fullBlocks; ++i)
+            _blocks[i] &= right._blocks[i];
+
+        if (uint32 const rest = right._fieldCount % CLIENT_UPDATE_MASK_BITS)
+        {
+            ClientUpdateMaskType const low = (ClientUpdateMaskType(1) << rest) - 1;
+            _blocks[fullBlocks] = (_blocks[fullBlocks] & ~low) | (_blocks[fullBlocks] & right._blocks[fullBlocks] & low);
+        }
 
         return *this;
     }
@@ -101,8 +105,15 @@ public:
     UpdateMask& operator|=(UpdateMask const& right)
     {
         ASSERT(right.GetCount() <= GetCount());
-        for (uint32 i = 0; i < _fieldCount; ++i)
-            _bits[i] |= right._bits[i];
+        uint32 const fullBlocks = right._fieldCount / CLIENT_UPDATE_MASK_BITS;
+        for (uint32 i = 0; i < fullBlocks; ++i)
+            _blocks[i] |= right._blocks[i];
+
+        if (uint32 const rest = right._fieldCount % CLIENT_UPDATE_MASK_BITS)
+        {
+            ClientUpdateMaskType const low = (ClientUpdateMaskType(1) << rest) - 1;
+            _blocks[fullBlocks] |= right._blocks[fullBlocks] & low;
+        }
 
         return *this;
     }
@@ -117,7 +128,7 @@ public:
 private:
     uint32 _fieldCount{0};
     uint32 _blockCount{0};
-    uint8* _bits{nullptr};
+    ClientUpdateMaskType* _blocks{nullptr};
 };
 
 #endif

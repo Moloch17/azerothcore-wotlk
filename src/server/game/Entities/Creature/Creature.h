@@ -46,6 +46,8 @@ typedef std::unordered_map<uint8, CreatureTextRepeatIds> CreatureTextRepeatGroup
 class Creature : public Unit, public GridObject<Creature>, public MovableMapObject, public UpdatableMapObject
 {
 public:
+    UpdatableMapObject* ToUpdatableMapObject() override { return this; }
+
     explicit Creature();
     ~Creature() override;
 

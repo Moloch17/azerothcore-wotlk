@@ -55,24 +55,10 @@ namespace
         return !map->Instanceable() && !map->HavePlayers();
     }
 
-    /// Stock's round-robin selector: which map kind gets a full update on this step.
-    /// 0 = continents, 1 = battlegrounds/arenas, 2 = dungeons, 3 = none.
-    inline bool ForgeMapMatchesStep(Map const* map, uint8 step)
-    {
-        switch (step)
-        {
-            case 0:  return !map->IsBattlegroundOrArena() && !map->IsDungeon();
-            case 1:  return map->IsBattlegroundOrArena();
-            case 2:  return map->IsDungeon();
-            default: return false;
-        }
-    }
 }
 
 MapMgr::MapMgr()
 {
-    i_timer[3].SetInterval(sWorld->getIntConfig(CONFIG_INTERVAL_MAPUPDATE));
-    mapUpdateStep = 0;
     _nextInstanceId = 0;
 }
 
@@ -283,12 +269,15 @@ Map::EnterState MapMgr::PlayerCannotEnter(uint32 mapid, Player* player, bool log
 
 /// The sim host's map tick.
 ///
-/// Skips maps that have nobody on them: the sim still creates the continent maps at startup, and
-/// they would otherwise tick forever with no players.
+/// Every map gets its full diff every tick. Stock's 4-step round robin (continents, then battlegrounds,
+/// then dungeons, then nothing, with the accumulated timer) is gone: it existed to spread a realm's
+/// map work over several server ticks, and in the sim it meant a dungeon's creatures stepped in
+/// four-tick chunks while its players stepped every tick. Uniform ticks cost more per tick on
+/// instance maps and give every map the same time resolution.
 ///
-/// The stock 4-step round robin (mapUpdateStep 0-3 with the `full` flag) is reproduced exactly.
-/// It is what decides whether a map gets the accumulated timer or a session-only update, so bots
-/// observe the same update cadence they would on a stock server.
+/// Skips maps that have nobody on them: the sim still creates the continent maps at startup, and
+/// they would otherwise tick forever with no players. A map's task is its Update *and* its
+/// DelayedUpdate (transports, the remove list), so nothing is left for this thread after the join.
 ///
 /// Destroying an instance frees tens of megabytes of small allocations, and the allocator keeps
 /// that in the process arenas rather than returning it: a sim that builds and drops pools of a
@@ -297,9 +286,6 @@ Map::EnterState MapMgr::PlayerCannotEnter(uint32 mapid, Player* player, bool log
 /// with no map updating.
 void MapMgr::Update(uint32 diff)
 {
-    for (uint8 i = 0; i < 4; ++i)
-        i_timer[i].Update(diff);
-
     // The dungeon finder's compatibility pass, which stock hands to the updater as its own task. Run inline: it
     // is empty unless somebody queued, and one fewer task keeps the join simple.
     sLFGMgr->Update(diff, 1);
@@ -311,39 +297,17 @@ void MapMgr::Update(uint32 diff)
         if (ForgeMapIsIdle(map))
             continue;
 
-        bool const full = mapUpdateStep < 3 && ForgeMapMatchesStep(map, mapUpdateStep);
-
         if (m_updater.activated())
-            m_updater.schedule_update(*map, uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
+            m_updater.schedule_update(*map, diff, diff);
         else
-            map->Update(uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
+        {
+            map->Update(diff, diff);
+            map->DelayedUpdate(diff);
+        }
     }
 
     if (m_updater.activated())
         m_updater.wait();
-
-    if (mapUpdateStep < 3)
-    {
-        for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
-        {
-            Map* map = iter->second;
-
-            if (ForgeMapIsIdle(map))
-                continue;
-
-            if (ForgeMapMatchesStep(map, mapUpdateStep))
-                map->DelayedUpdate(uint32(i_timer[mapUpdateStep].GetCurrent()));
-        }
-
-        i_timer[mapUpdateStep].SetCurrent(0);
-        ++mapUpdateStep;
-    }
-
-    if (mapUpdateStep == 3 && i_timer[3].Passed())
-    {
-        mapUpdateStep = 0;
-        i_timer[3].SetCurrent(0);
-    }
 
     // After the updaters are done and before the next tick schedules any: no map is being updated here.
     ForgeTrimHeap(diff);

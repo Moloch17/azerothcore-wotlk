@@ -1,5 +1,7 @@
 /*
- * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * Portions of this file are derived from the AzerothCore Project.
+ * See AUTHORS file for Copyright information.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,38 +21,73 @@
 #define _MAP_UPDATER_H_INCLUDED
 
 #include "Define.h"
-#include "PCQueue.h"
-#include <condition_variable>
-#include <thread>
 #include <atomic>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 class Map;
-class UpdateRequest;
 
+/// The sim host's map scheduler.
+///
+/// A persistent pool of pinned worker threads and one fixed task array per tick. Tasks are pushed by
+/// the world thread (base maps, grid preloads) and by map tasks themselves (an instance container
+/// pushes its children while it runs), claimed with one atomic increment, and never heap-allocated.
+/// Workers spin briefly for the next task, then park on a condition variable until the next push.
+/// wait() makes the calling thread a worker too and returns when every pushed task has finished.
+///
+/// A map task is the whole of a map's tick: Map::Update followed by its own Map::DelayedUpdate, so
+/// nothing about a map is left for the world thread to do serially after the join.
+///
+/// activate() / deactivate() may be called repeatedly between ticks: the module switches thread
+/// counts while benchmarking.
 class MapUpdater
 {
 public:
     MapUpdater();
-    ~MapUpdater() = default;
+    ~MapUpdater();
 
-    void schedule_task(UpdateRequest* request);
-    void schedule_update(Map& map, uint32 diff, uint32 s_diff);
-    void schedule_map_preload(uint32 mapid);
-    void schedule_lfg_update(uint32 diff);
-    void wait();
     void activate(std::size_t num_threads);
     void deactivate();
-    bool activated();
-    void update_finished();
+    [[nodiscard]] bool activated() const { return !_workers.empty(); }
+
+    /// A map's full tick: Update(diff, s_diff) then DelayedUpdate(diff). Callable from any thread.
+    void schedule_update(Map& map, uint32 diff, uint32 s_diff);
+    /// Create the base map and load all of its grids (PreloadAllNonInstancedMapGrids).
+    void schedule_map_preload(uint32 mapid);
+    /// Run tasks on the calling thread until every pushed task, including those pushed meanwhile, is done.
+    void wait();
 
 private:
-    void WorkerThread();
-    ProducerConsumerQueue<UpdateRequest*> _queue;
-    std::atomic<int> pending_requests;  // Use std::atomic for pending_requests to avoid lock contention
-    std::atomic<bool> _cancelationToken;  // Atomic flag for cancellation to avoid race conditions
-    std::vector<std::thread> _workerThreads;
-    std::mutex _lock; // Mutex and condition variable for synchronization
-    std::condition_variable _condition;
+    struct Task
+    {
+        Map* map = nullptr;          ///< nullptr: a preload of mapId
+        uint32 mapId = 0;
+        uint32 diff = 0;
+        uint32 s_diff = 0;
+    };
+
+    /// More than the largest env count the module allows plus every base map, with room to spare.
+    static constexpr uint32 MaxTasks = 16384;
+
+    void Push(Task const& task);
+    bool RunOne();
+    static void Run(Task const& task);
+    void WorkerThread(uint32 index);
+    static void PinToCpu(uint32 index);
+
+    std::unique_ptr<Task[]> _tasks;
+    std::unique_ptr<std::atomic<bool>[]> _ready;    ///< slot written and publishable
+    std::atomic<uint32> _count{ 0 };                ///< slots taken this tick
+    std::atomic<uint32> _next{ 0 };                 ///< slots claimed this tick
+    std::atomic<uint32> _pending{ 0 };              ///< pushed and not yet finished
+    std::atomic<uint32> _parked{ 0 };               ///< workers waiting on the condition variable
+    std::atomic<bool> _stop{ false };
+    std::mutex _parkLock;
+    std::condition_variable _parkCv;
+    std::vector<std::thread> _workers;
 };
 
 #endif //_MAP_UPDATER_H_INCLUDED

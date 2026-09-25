@@ -73,14 +73,9 @@ public:
     void Initialize(void);
     void Update(uint32);
 
-    void SetMapUpdateInterval(uint32 t)
-    {
-        if (t < MIN_MAP_UPDATE_DELAY)
-            t = MIN_MAP_UPDATE_DELAY;
-
-        i_timer[3].SetInterval(t);
-        i_timer[3].Reset();
-    }
+    /// Stock spread map work over MapUpdateInterval with a round robin; the sim ticks every map every
+    /// tick, so the interval has nothing left to drive. Kept for the config reload that sets it.
+    void SetMapUpdateInterval(uint32 /*t*/) { }
 
     //void LoadGrid(int mapid, int instId, float x, float y, WorldObject const* obj, bool no_unload = false);
     void UnloadAll();
@@ -187,8 +182,6 @@ private:
 
     std::mutex Lock;
     MapMapType i_maps;
-    IntervalTimer i_timer[4]; // continents, bgs/arenas, instances, total from the beginning
-    uint8 mapUpdateStep;
 
     InstanceIds _instanceIds;
     uint32 _nextInstanceId;

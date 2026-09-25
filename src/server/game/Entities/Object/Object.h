@@ -472,8 +472,15 @@ private:
     UpdateState _mapUpdateState;
 };
 
+class UpdatableMapObject;
+
 class WorldObject : public Object, public WorldLocation
 {
+public:
+    /// The map update-list mixin, for the three types that carry it (Creature, GameObject, DynamicObject).
+    /// A virtual instead of a dynamic_cast on every add and remove.
+    virtual UpdatableMapObject* ToUpdatableMapObject() { return nullptr; }
+
 protected:
     explicit WorldObject();
 public:

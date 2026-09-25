@@ -243,8 +243,9 @@ Pet* ObjectAccessor::GetPet(WorldObject const& u, ObjectGuid const& guid)
 
 Player* ObjectAccessor::GetPlayer(Map const* m, ObjectGuid const& guid)
 {
-    if (Player * player = HashMapHolder<Player>::Find(guid))
-        if (player->IsInWorld() && player->GetMap() == m)
+    // The map's own index: no global lock on a lookup every aura tick makes from every map thread.
+    if (Player* player = m->GetPlayerByGuid(guid))
+        if (player->IsInWorld())
             return player;
 
     return nullptr;

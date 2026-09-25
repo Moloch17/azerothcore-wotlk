@@ -229,6 +229,18 @@ public:
 
     [[nodiscard]] UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
 
+    /// A player on this map by guid, without the global HashMapHolder lock: the map thread's own index,
+    /// written when a player is added to or removed from the map. Sim threads look casters up through this
+    /// for every aura tick, so it has to be lock-free.
+    [[nodiscard]] Player* GetPlayerByGuid(ObjectGuid const& guid) const
+    {
+        auto itr = _playersByGuid.find(guid);
+        return itr != _playersByGuid.end() ? itr->second : nullptr;
+    }
+
+    /// Forget a player that is leaving without RemovePlayerFromMap (deleted while unlinked).
+    void UnindexPlayer(Player* player);
+
     [[nodiscard]] float GetVisibilityRange() const { return m_VisibleDistance; }
     void SetVisibilityRange(float range) { m_VisibleDistance = range; }
     void OnCreateMap();
@@ -743,6 +755,7 @@ private:
     TimeTrackerSmall _lastAnnounceRedirectKickTimer;
 
     UpdateTiming _updateTiming;
+    std::unordered_map<ObjectGuid, Player*> _playersByGuid;
 };
 
 enum InstanceResetMethod

@@ -529,7 +529,10 @@ void Object::BuildValuesUpdate(uint8 updateType, ByteBuffer* data, Player* targe
 
 void Object::AddToObjectUpdateIfNeeded()
 {
-    if (m_inWorld && !m_objectUpdated)
+    // The map's dirty set exists to build value-update packets. With no client connected nothing would be
+    // built, so the object is not queued; its changed-field bits stay set and go out in one block the first
+    // time a client sees it, which is also what happens to any object that changed before a client arrived.
+    if (m_inWorld && !m_objectUpdated && Forge::HasClients())
     {
         AddToObjectUpdate();
         m_objectUpdated = true;

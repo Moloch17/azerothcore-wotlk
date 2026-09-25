@@ -72,7 +72,10 @@ void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
             if (sMapMgr->GetMapUpdater()->activated())
                 sMapMgr->GetMapUpdater()->schedule_update(*i->second, t, s_diff);
             else
+            {
                 i->second->Update(t, s_diff);
+                i->second->DelayedUpdate(t);
+            }
             ++i;
         }
     }
@@ -80,10 +83,8 @@ void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
 
 void MapInstanced::DelayedUpdate(const uint32 diff)
 {
-    for (InstancedMaps::iterator i = m_InstancedMaps.begin(); i != m_InstancedMaps.end(); ++i)
-        i->second->DelayedUpdate(diff);
-
-    Map::DelayedUpdate(diff); // this may be removed
+    // Each child's DelayedUpdate is part of the child's own task, on the thread that updated it.
+    Map::DelayedUpdate(diff);
 }
 
 /*

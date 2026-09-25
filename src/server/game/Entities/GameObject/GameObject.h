@@ -119,6 +119,8 @@ enum LootState
 class GameObject : public WorldObject, public GridObject<GameObject>, public MovableMapObject, public UpdatableMapObject
 {
 public:
+    UpdatableMapObject* ToUpdatableMapObject() override { return this; }
+
     explicit GameObject();
     ~GameObject() override;
 
