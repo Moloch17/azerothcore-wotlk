@@ -390,7 +390,8 @@ def _check_carry_matches_loop(steps: int, rows: int, hidden: int, size: int, see
         kernel_error = float((fused.double() - reference).abs().max())
         scale = float(reference.abs().max())
         assert kernel_error <= 8.0 * loop_error + 1e-6 * max(1.0, scale), (
-            f"{name}: fused call off by {kernel_error:.3g}, the fp32 step loop by {loop_error:.3g} (largest {scale:.3g})")
+            f"{name}: fused call off by {kernel_error:.3g}, the fp32 step loop by {loop_error:.3g} "
+            f"(largest {scale:.3g})")
 
 
 requires_gpu = pytest.mark.skipif(not torch.cuda.is_available(), reason="the fused GRU call runs on the GPU")
