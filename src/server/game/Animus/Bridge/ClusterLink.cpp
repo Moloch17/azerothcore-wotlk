@@ -29,6 +29,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <utility>
 
 namespace
 {
@@ -217,8 +218,8 @@ void AnimusForge::ClusterLink::Poll()
                 {
                     std::string const address = std::strcmp(advertise, "-") ? advertise : it->Address;
                     it->Sim = Acore::StringFormat("tcp://{}:{}", address, port);
-                    LOG_INFO("module.animus", "Cluster: worker registered, its sim at {}; it joins the next "
-                        "scenario this host starts", it->Sim);
+                    _registered.push_back(it->Sim);
+                    LOG_INFO("module.animus", "Cluster: worker registered, its sim at {}", it->Sim);
                 }
             }
             ++it;
@@ -257,6 +258,18 @@ void AnimusForge::ClusterLink::Broadcast(std::string const& line)
     for (Peer& worker : _workers)
         if (!worker.Sim.empty() && !Send(worker, line))
             LOG_WARN("module.animus", "Cluster: could not reach the worker at {}", worker.Sim);
+}
+
+void AnimusForge::ClusterLink::SendTo(std::string const& sim, std::string const& line)
+{
+    for (Peer& worker : _workers)
+        if (worker.Sim == sim && !Send(worker, line))
+            LOG_WARN("module.animus", "Cluster: could not reach the worker at {}", worker.Sim);
+}
+
+std::vector<std::string> AnimusForge::ClusterLink::TakeRegistrations()
+{
+    return std::exchange(_registered, {});
 }
 
 std::optional<std::string> AnimusForge::ClusterLink::NextOrder()

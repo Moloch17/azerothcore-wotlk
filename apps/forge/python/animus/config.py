@@ -215,6 +215,9 @@ class TrainConfig:
     cluster_sims: list[str] = field(default_factory=list)
     # Data-parallel learners (animus.parallel; the sim's AnimusForge.Learner.Ranks): this learner's rank, how many
     # there are, and where rank 0 meets the others. One rank is the plain learner.
+    # Seconds a worker's sim may leave the learner waiting before it counts as dropped out (its envs sit out and
+    # training goes on; it rejoins when it is back).
+    cluster_timeout: float = 60.0
     rank: int = 0
     ranks: int = 1
     dist_address: str = "127.0.0.1:29500"

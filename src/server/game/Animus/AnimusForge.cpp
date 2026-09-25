@@ -471,7 +471,10 @@ bool AnimusForge::Forge::StartCurrent()
         if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
         {
             _cluster.Poll();
+            _cluster.TakeRegistrations();       // the workers registered by now are in this scenario from the start
             learnerConfig.ClusterSims = _cluster.WorkerSims();
+            _clusterSims = learnerConfig.ClusterSims;
+            _clusterStart = Acore::StringFormat("START {} 0 {}", entry.Scenario, _plan.Fast ? 1 : 0);
             _cluster.Broadcast(Acore::StringFormat("START {} {} {}", entry.Scenario, entry.Resume ? 1 : 0,
                 _plan.Fast ? 1 : 0));
             if (!learnerConfig.ClusterSims.empty())
@@ -625,7 +628,11 @@ void AnimusForge::Forge::EndPlan(char const* reason)
     LOG_INFO("module.animus", "Plan ended: {}. The sim is idle.", reason);
 
     if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
+    {
         _cluster.Broadcast("STOP");
+        _clusterSims.clear();
+        _clusterStart.clear();
+    }
 
     if (_benching)
     {
@@ -757,6 +764,25 @@ void AnimusForge::Forge::Pump()
 void AnimusForge::Forge::PollCluster()
 {
     _cluster.Poll();
+
+    // Host: a worker of the running scenario that dropped out and is back goes straight back to it, and the
+    // learner takes its envs in again between rollouts. One the learner does not know joins the next scenario.
+    if (_config.Cluster == ForgeConfig::ClusterRole::Host)
+    {
+        for (std::string const& sim : _cluster.TakeRegistrations())
+        {
+            bool const running = _state == State::Training && !_clusterStart.empty();
+            if (running && std::find(_clusterSims.begin(), _clusterSims.end(), sim) != _clusterSims.end())
+            {
+                LOG_INFO("module.animus", "Cluster: {} is back; ordering it onto {} again", sim, _current);
+                _cluster.SendTo(sim, _clusterStart);
+            }
+            else if (running)
+                LOG_INFO("module.animus", "Cluster: {} joins the next scenario this host starts", sim);
+        }
+        return;
+    }
+
     if (_config.Cluster != ForgeConfig::ClusterRole::Worker)
         return;
 
@@ -769,6 +795,13 @@ void AnimusForge::Forge::PollCluster()
         unsigned fast = 0;
         if (std::sscanf(order->c_str(), "START %127s %u %u", scenario, &resume, &fast) >= 1)
         {
+            // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
+            if (_state != State::Idle && _current == scenario && _plan.Fast == (fast != 0) && !_clusterOrder)
+            {
+                LOG_INFO("module.animus", "Cluster: the host orders {}, which this worker is running already",
+                    scenario);
+                continue;
+            }
             LOG_INFO("module.animus", "Cluster: the host orders {}{}", scenario, fast ? " (fast)" : "");
             _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0);
             if (_state != State::Idle)

@@ -323,6 +323,10 @@ namespace AnimusForge
         ClusterLink _cluster;
         /// Worker: the scenario the host ordered, to start once the one running has been torn down.
         std::optional<Plan> _clusterOrder;
+        /// Host: the workers' sims the running scenario's learner trains on, and the order that started them, for
+        /// one that drops out and registers again to be sent straight back to it.
+        std::vector<std::string> _clusterSims;
+        std::string _clusterStart;
         bool _halfBatch = false;
         uint32 _turn = 0;
         uint32 _nextTurn = 0;

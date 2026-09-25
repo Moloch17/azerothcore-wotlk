@@ -59,6 +59,10 @@ namespace AnimusForge
         [[nodiscard]] std::vector<std::string> WorkerSims() const;
         /// Host: an order to every worker.
         void Broadcast(std::string const& line);
+        /// Host: an order to the worker whose sim is `sim`.
+        void SendTo(std::string const& sim, std::string const& line);
+        /// Host: the sims of the workers that registered since the last call (a new one, or one back after a drop).
+        std::vector<std::string> TakeRegistrations();
 
         /// Worker: the next order from the host, if one has come.
         std::optional<std::string> NextOrder();
@@ -79,6 +83,7 @@ namespace AnimusForge
 
         int _listener = -1;
         std::vector<Peer> _workers;
+        std::vector<std::string> _registered;
 
         Peer _host;
         std::string _hostAddress;

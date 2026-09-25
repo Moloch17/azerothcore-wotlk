@@ -47,7 +47,8 @@ def read_exact(conn: socket.socket, size: int) -> bytes:
     return data
 
 
-def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec = SPEC) -> None:
+def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec = SPEC,
+             hang_up_after: int | None = None) -> None:
     """3-decision episodes paying 1 per decision; env 1's second seat is empty (present 0, only the no-op).
 
     With spec.env_groups 2 it runs as the half-batch sim does: every group's STEP after a reset, then for each reply
@@ -114,6 +115,8 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                     elif msg_type != p.MsgType.WEIGHTS:
                         break
                 decision += 1
+                if hang_up_after is not None and decision > hang_up_after:
+                    return  # the machine went down: the connection closes mid-run
                 step = blank()
                 if msg_type == p.MsgType.MODE:
                     evaluating, _, episodes, baseline, _ = p.decode_mode(body)
@@ -331,3 +334,53 @@ def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path)
     assert len(played) == len(set(played)), "a seed was played twice"
     for evaluation in {(steps, policy) for steps, policy, _, _ in played}:
         assert {seed for steps, policy, seed, _ in played if (steps, policy) == evaluation} == set(range(6))
+
+
+def test_a_worker_that_drops_out_does_not_stop_training_and_rejoins(tmp_path, monkeypatch, capsys):
+    """A cluster worker's sim hangs up mid-run: its envs sit out and training goes on on the host's; a worker back on
+    the same address rejoins between rollouts. Every present seat still earns 1 -- the rows that sat out are no
+    samples."""
+    from animus.env import ClusterEnv
+
+    monkeypatch.setattr(ClusterEnv, "REJOIN_INTERVAL", 0.0)
+    host_path, worker_path = str(tmp_path / "host.sock"), str(tmp_path / "worker.sock")
+    listeners, servers = [], []
+    for path, hang_up in ((host_path, None), (worker_path, 6)):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        listeners.append(listener)
+        servers.append(threading.Thread(target=fake_sim, args=(listener, [], [], SPEC, hang_up)))
+        servers[-1].start()
+
+    def worker_comes_back():
+        servers[1].join()
+        comeback = threading.Thread(target=fake_sim, args=(listeners[1], [], [], SPEC))
+        comeback.start()
+        comeback.join()
+
+    back = threading.Thread(target=worker_comes_back)
+    back.start()
+
+    envs = 2 * SPEC.num_envs
+    steps_per_update = 4 * envs * SPEC.agents_per_env
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+        f"socket={host_path}", f"cluster_sims=['{worker_path}']", f"runs_dir={tmp_path / 'runs'}",
+        f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake", "rollout_length=4",
+        f"total_env_steps={5 * steps_per_update}", "checkpoint_every=100", "init_from=''", "train_device=cpu",
+        "rollout_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
+        "eval.every_env_steps=1000000", "eval.at_start=false", "eval.episodes=2", "eval.baseline=''",
+        "convergence.patience=0",
+    ])
+    assert TrainingRun(config, resume=False).run() == 0
+    back.join(timeout=10)
+    servers[0].join(timeout=10)
+    for listener in listeners:
+        listener.close()
+
+    printed = capsys.readouterr().out
+    assert "lost the worker sim" in printed and "is back" in printed
+    with (tmp_path / "runs" / "fake" / "metrics.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [int(row["update"]) for row in rows] == [1, 2, 3, 4, 5]
+    assert all(float(row["reward_per_decision"]) == pytest.approx(1.0) for row in rows)

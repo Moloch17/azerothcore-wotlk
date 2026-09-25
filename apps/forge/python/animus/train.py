@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import dataclasses
 import json
 import random
 import time
@@ -418,7 +419,8 @@ class TrainingRun:
         workers = config.cluster_sims[self.ranks.rank::self.ranks.world]
         print(f"Connecting to {config.socket}{f' (rank {config.rank} of {config.ranks})' if config.ranks > 1 else ''}"
               " ...", flush=True)
-        self.env = (ClusterEnv([config.socket, *workers], rank=config.rank, ranks=config.ranks)
+        self.env = (ClusterEnv([config.socket, *workers], rank=config.rank, ranks=config.ranks,
+                               timeout=config.cluster_timeout)
                     if workers else ForgeEnv(config.socket, rank=config.rank, ranks=config.ranks))
         self.spec = spec = self.env.spec
         # Env steps count every rank's envs: budgets, schedules and evaluations are the run's, not a rank's.
@@ -988,6 +990,19 @@ class TrainingRun:
         # decides) each half is answered as soon as its STEP arrives, so this side's inference runs while the sim
         # ticks the other half: the sim and the learner stop taking turns. Otherwise there is one group, the whole
         # pool, and env.step -- also what half-batch falls back to with a cast, which acts on whole decisions.
+        # Workers that dropped out and are back rejoin here, between rollouts, where no decision is half answered:
+        # their envs start new episodes, remembering nothing.
+        if isinstance(self.env, ClusterEnv):
+            for offset, fresh in self.env.rejoin():
+                count = fresh.done.shape[0]
+                parts = [protocol.rows_of(self.step, 0, offset), dataclasses.replace(fresh, env_begin=offset),
+                         protocol.rows_of(self.step, offset + count, envs - offset - count)]
+                self.step = protocol.join_steps([part for part in parts if part.done.shape[0]])
+                cleared = np.zeros(envs, dtype=bool)
+                cleared[offset:offset + count] = True
+                self.acting.clear(cleared)
+                if self.cast is not None:
+                    self.cast.clear(cleared)
         pipelined = len(self.env.groups) > 1 and self.cast is None
         groups = self.env.groups if pipelined else [(0, envs)]
         sent: dict[str, np.ndarray | None] = {}
@@ -1129,6 +1144,11 @@ class TrainingRun:
         trainer, spec = self.trainer, self.spec
         done = part.done
         outcome.reward[rows], outcome.done[rows], outcome.terminated[rows] = part.reward, done, part.terminated
+        # A cluster worker that dropped out while this decision was out has no outcome to give it: its rows of the
+        # decision are no samples (from the next decision on its rows come with no character present anyway).
+        if isinstance(self.env, ClusterEnv) and self.env.sat_out[rows].any():
+            lost = np.flatnonzero(self.env.sat_out[rows]) + rows.start
+            self.buffer.valid[self.buffer.cursor, lost] = False
         if not done.any():
             return
 
