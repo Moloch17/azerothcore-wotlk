@@ -1033,10 +1033,15 @@ class TrainingRun:
                 part = receive(begin, count)
                 parts.append(part)
                 rows = slice(begin, begin + count)
-                self._take_outcome_of(part, rows, decision, outcome)
+                value_ended = self._take_outcome_of(part, rows, decision, outcome)
                 if following is not None:
                     self._act_on_rows(part, rows, following, send)
-            self.step = protocol.join_steps(parts)
+                if value_ended is not None:
+                    value_ended()
+            # The whole decision's STEP is only read after the rollout (the bootstrap, the next rollout's first
+            # decision): joined once there, not copied every decision.
+            if following is None:
+                self.step = protocol.join_steps(parts)
             buffer.add_outcome(outcome.reward, outcome.done, outcome.terminated, outcome.final_values,
                                outcome.final_foresight)
             if following is None:
@@ -1138,9 +1143,14 @@ class TrainingRun:
         send(rows.start, rows.stop - rows.start, actions, goals[0] if goals is not None else None)
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
-                         outcome: RolloutOutcome) -> None:
+                         outcome: RolloutOutcome):
         """What `decision` earned in envs `rows`, from their next STEP `part`: rewards, and for the episodes that
-        ended, their final values, their info, and a cleared memory for the episodes that follow."""
+        ended, their final values, their info, and a cleared memory for the episodes that follow.
+
+        The ended episodes are valued later: returns None, or a function that values them. What the value depends
+        on (the goal and critic memory the episode ended with) is taken here, before their memories are cleared for
+        the next decision, so the caller can act on the next decision and send it first, and value the ended
+        episodes while the sim ticks -- their forward passes are not what the sim waits for."""
         trainer, spec = self.trainer, self.spec
         done = part.done
         outcome.reward[rows], outcome.done[rows], outcome.terminated[rows] = part.reward, done, part.terminated
@@ -1160,20 +1170,14 @@ class TrainingRun:
         # The goal in force is the one the ended episode's last decision pursued, which the value depends on; the
         # memory the critic ends the episode with is the last decision's own, which acting has carried forward and
         # clear() has not yet reset.
-        goal = self.acting.goal[rows] if self.acting.goal is not None else None
-        critic_end = self.acting.critic_memory[rows] if self.acting.critic_memory is not None else None
-        final_values = outcome.final_values[rows]
-        final_values[done] = trainer.value(part.final_state[done], part.final_obs[done], layout[done],
-                                           goal[done] if goal is not None else None,
-                                           critic_end[done] if critic_end is not None else None)
-        outcome.final_values[rows] = final_values
-        if outcome.final_foresight is not None:
-            final_foresight = outcome.final_foresight[rows]
-            final_foresight[done] = trainer.foresight_of(part.final_obs[done], layout[done],
-                                                         memory[done] if memory is not None else None)
-            outcome.final_foresight[rows] = final_foresight
+        goal = self.acting.goal[rows][done] if self.acting.goal is not None else None
+        critic_end = self.acting.critic_memory[rows][done] if self.acting.critic_memory is not None else None
+        ended_memory = memory[done] if memory is not None else None
+        ended_layout = layout[done]
+        final_state, final_obs = part.final_state[done], part.final_obs[done]
+
         ended = part.episode_info[done].reshape(-1, spec.episode_info_dim)
-        ended_layouts = layout[done].reshape(-1)
+        ended_layouts = ended_layout.reshape(-1)
         present = self.present_column
         keep = slice(None) if present is None else ended[:, present] > 0.0
         self.finished_episodes.extend(ended[keep])
@@ -1186,6 +1190,14 @@ class TrainingRun:
         cleared = np.zeros(spec.num_envs, dtype=bool)
         cleared[rows] = done
         self.acting.clear(cleared)
+
+        def value_ended() -> None:
+            ended_rows = np.flatnonzero(done) + rows.start
+            outcome.final_values[ended_rows] = trainer.value(final_state, final_obs, ended_layout, goal, critic_end)
+            if outcome.final_foresight is not None:
+                outcome.final_foresight[ended_rows] = trainer.foresight_of(final_obs, ended_layout, ended_memory)
+
+        return value_ended
 
     @staticmethod
     def allowed_actions_by_layout(buffer: RolloutBuffer) -> dict[int, float]:
