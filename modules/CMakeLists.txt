@@ -13,6 +13,19 @@
 # Make the script module list available in the current scope
 GetModuleSourceList(MODULES_MODULE_LIST)
 
+# Modules whose sources are now part of the core: building one alongside the core it was folded into
+# gives every one of its symbols twice and the link fails on duplicates. A checkout of such a module
+# may still sit in modules/ (it is its own git repository and the core ignores it), so the core drops
+# it from the list rather than relying on a build option nobody remembers to pass.
+set(MODULES_FOLDED_INTO_CORE mod-animus-forge)
+foreach(FOLDED_MODULE ${MODULES_FOLDED_INTO_CORE})
+  if(${FOLDED_MODULE} IN_LIST MODULES_MODULE_LIST)
+    message(STATUS "* Module (${FOLDED_MODULE}) is part of the core now (src/server/game/Animus): "
+                   "the checkout in modules/ is stale and is not built.")
+    list(REMOVE_ITEM MODULES_MODULE_LIST ${FOLDED_MODULE})
+  endif()
+endforeach()
+
 # Make the native install offset available in this scope
 GetInstallOffset(INSTALL_OFFSET)
 
