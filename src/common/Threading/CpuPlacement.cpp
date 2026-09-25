@@ -18,6 +18,7 @@
 #include "CpuPlacement.h"
 #include "StringFormat.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <tuple>
@@ -147,6 +148,66 @@ std::vector<int> Acore::CpuPlacement::AwayFrom(std::vector<int> const& used)
         if (std::find(taken.begin(), taken.end(), CoreOf(cpu)) == taken.end())
             away.push_back(cpu);
     return away;
+}
+
+std::vector<int> Acore::CpuPlacement::Parse(std::string const& list, std::string& error)
+{
+    error.clear();
+    std::string text;
+    for (char c : list)
+        if (!std::isspace(static_cast<unsigned char>(c)))
+            text += char(std::tolower(static_cast<unsigned char>(c)));
+    if (text.empty() || text == "auto")
+        return {};
+
+    std::vector<int> cpus;
+    std::vector<int> refused;
+    std::size_t start = 0;
+    while (start <= text.size())
+    {
+        std::size_t const comma = std::min(text.find(',', start), text.size());
+        std::string const entry = text.substr(start, comma - start);
+        start = comma + 1;
+        if (entry.empty())
+            continue;
+
+        int first = -1, last = -1;
+        std::size_t const dash = entry.find('-');
+        char* end = nullptr;
+        first = int(std::strtol(entry.c_str(), &end, 10));
+        bool ok = end != entry.c_str() && first >= 0;
+        if (ok && dash != std::string::npos)
+        {
+            char const* tail = entry.c_str() + dash + 1;
+            last = int(std::strtol(tail, &end, 10));
+            ok = end != tail && *end == '\0' && last >= first && std::size_t(end - entry.c_str()) == entry.size();
+        }
+        else
+        {
+            last = first;
+            ok = ok && *end == '\0';
+        }
+
+        if (!ok)
+        {
+            error = Acore::StringFormat("'{}' is not a CPU or a range of CPUs", entry);
+            return {};
+        }
+
+        for (int cpu = first; cpu <= last; ++cpu)
+        {
+            if (std::find(cpus.begin(), cpus.end(), cpu) != cpus.end())
+                continue;
+            if (std::find(Order().begin(), Order().end(), cpu) == Order().end())
+                refused.push_back(cpu);
+            else
+                cpus.push_back(cpu);
+        }
+    }
+
+    if (!refused.empty())
+        error = Acore::StringFormat("cpus {} are not ones this process may run on; left out", Describe(refused));
+    return cpus;
 }
 
 std::vector<std::vector<int>> Acore::CpuPlacement::Split(std::vector<int> const& cpus, std::size_t parts)

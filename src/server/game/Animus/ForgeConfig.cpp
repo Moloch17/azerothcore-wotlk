@@ -297,7 +297,19 @@ void AnimusForge::ForgeConfig::Load()
         FastLearnerArgs.push_back(arg);
 
     LearnerTorchThreads = sConfigMgr->GetOption<uint32>("AnimusForge.Learner.TorchThreads", 0);
-    LearnerDevice = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Device", "");
+    // "auto" and "" alike leave the choice to the GPU mode (TrainDevice / RolloutDevice) or the map update (Cpus).
+    auto const placement = [](std::string const& key)
+    {
+        std::string value = sConfigMgr->GetOption<std::string>(key, "auto");
+        value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); }),
+            value.end());
+        std::string lower = value;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+        return lower == "auto" ? std::string() : value;
+    };
+    LearnerTrainDevice = placement("AnimusForge.Learner.TrainDevice");
+    LearnerRolloutDevice = placement("AnimusForge.Learner.RolloutDevice");
+    LearnerCpus = placement("AnimusForge.Learner.Cpus");
 
     std::string role = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Role", "standalone");
     std::transform(role.begin(), role.end(), role.begin(), [](unsigned char c) { return std::tolower(c); });

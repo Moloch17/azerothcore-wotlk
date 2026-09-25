@@ -44,6 +44,11 @@ namespace Acore::CpuPlacement
     /// slice is all of `cpus`.
     AC_COMMON_API std::vector<std::vector<int>> Split(std::vector<int> const& cpus, std::size_t parts);
 
+    /// The CPUs a config list names ("0-7,16-23", "3,5"), in the order written, each once, keeping only those this
+    /// process may run on. Empty for "auto", "" or a list that names none of them; `error` says what was wrong with
+    /// a list that was not "auto" (a malformed entry, CPUs left out), empty when nothing was.
+    AC_COMMON_API std::vector<int> Parse(std::string const& list, std::string& error);
+
     /// Pin the calling thread to `cpu`. False, and nothing changed, if the kernel refuses.
     AC_COMMON_API bool PinThisThread(int cpu);
 

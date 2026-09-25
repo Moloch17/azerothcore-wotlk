@@ -44,10 +44,10 @@ class Map;
 /// activate() / deactivate() may be called repeatedly between ticks: the module switches thread
 /// counts while benchmarking.
 ///
-/// Placement (Acore::CpuPlacement::Order): the thread that calls activate(), the world thread, which runs tasks
-/// too in wait(), takes the first CPU and worker k the (k + 1)-th, so the pool fills one die's physical cores, then
-/// their SMT siblings, before it crosses to another die's L3. Pinned by CPU number instead, on a two-die 9950X3D,
-/// every map task ran 40% slower above 8 threads.
+/// Placement (Acore::CpuPlacement::Order, or the CPUs MapUpdate.Cpus names, in its order): the thread that calls
+/// activate(), the world thread, which runs tasks too in wait(), takes the first CPU and worker k the (k + 1)-th, so
+/// the pool fills one die's physical cores, then their SMT siblings, before it crosses to another die's L3. Pinned
+/// by CPU number instead, on a two-die 9950X3D, every map task ran 40% slower above 8 threads.
 class MapUpdater
 {
 public:
@@ -88,7 +88,7 @@ private:
     bool RunOne();
     static void Run(Task const& task);
     void WorkerThread(uint32 index);
-    static void PinToCpu(uint32 index);
+    void PinToCpu(uint32 index) const;
 
     std::unique_ptr<Task[]> _tasks;
     std::unique_ptr<std::atomic<bool>[]> _ready;    ///< slot written and publishable

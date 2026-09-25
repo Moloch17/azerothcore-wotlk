@@ -24,7 +24,9 @@
 #include "AnimusForge.h"
 #include "ClassAssets.h"
 #include "Config.h"
+#include "CpuPlacement.h"
 #include "Log.h"
+#include "MapMgr.h"
 #include "StringFormat.h"
 #include <algorithm>
 #include <cctype>
@@ -291,6 +293,10 @@ void AnimusForge::Forge::CommandStatus(LineSink const& out)
         {
             table.AddRow({ "learner", _config.LearnerAutoStart ? "started with each scenario" : "started by hand" });
             table.AddRow({ "GPU mode", _config.GpuSummary });
+            auto const setting = [](std::string const& value) { return value.empty() ? std::string("auto") : value; };
+            table.AddRow({ "learner placement", Acore::StringFormat("update {}, rollouts {}, cpus {}; the sim's "
+                "map update on cpus {}", setting(_config.LearnerTrainDevice), setting(_config.LearnerRolloutDevice),
+                setting(_config.LearnerCpus), Acore::CpuPlacement::Describe(sMapMgr->GetMapUpdater()->PoolCpus())) });
             table.AddRow({ "learner socket", _config.SocketPath });
             table.AddRow({ "learner log", _config.LearnerLogFile });
         }

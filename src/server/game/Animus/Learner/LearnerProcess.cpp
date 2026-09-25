@@ -54,14 +54,14 @@ namespace
         return port;
     }
 
-    /// Rank `rank`'s device. AnimusForge.Learner.Device set: its own GPU counted from there ("cuda:1" and 2 ranks:
-    /// cuda:1 and cuda:2), or that one device for every rank when it is not a GPU. Empty: the rank-th of the GPUs the
-    /// GPU mode counted (the largest ones, whatever torch numbers them), or with none counted cuda:<rank> for
+    /// Rank `rank`'s device for one of the learner's two jobs, `device` being AnimusForge.Learner.TrainDevice or
+    /// RolloutDevice. Set: that device, or with several ranks each its own GPU counted from there ("cuda:1" and 2
+    /// ranks: cuda:1 and cuda:2; a device that is not a GPU is every rank's). Auto (empty): the rank-th of the GPUs
+    /// the GPU mode counted (the largest ones, whatever torch numbers them), or with none counted cuda:<rank> for
     /// several ranks and the stage config's own device for one. The learner falls back to the first GPU for one the
     /// machine does not have, and then reduces over gloo.
-    std::string RankDevice(AnimusForge::ForgeConfig const& config, uint32 rank)
+    std::string RankDevice(AnimusForge::ForgeConfig const& config, std::string const& device, uint32 rank)
     {
-        std::string const& device = config.LearnerDevice;
         if (device.empty())
         {
             if (!config.Gpus.empty())
@@ -123,10 +123,10 @@ namespace
         }
 
         // Before AnimusForge.Learner.Args, whose --set comes later and wins.
-        std::string const device = RankDevice(config, rank);
-        if (!device.empty())
-            for (char const* key : { "train_device=", "rollout_device=" })
-                set(key + device);
+        if (std::string const train = RankDevice(config, config.LearnerTrainDevice, rank); !train.empty())
+            set("train_device=" + train);
+        if (std::string const rollout = RankDevice(config, config.LearnerRolloutDevice, rank); !rollout.empty())
+            set("rollout_device=" + rollout);
 
         args.insert(args.end(), config.LearnerArgs.begin(), config.LearnerArgs.end());
         return args;
@@ -177,12 +177,23 @@ bool AnimusForge::LearnerProcess::Start(ForgeConfig const& config, std::string c
         _ranks.push_back(std::make_unique<ChildProcess>("Learner rank " + std::to_string(_ranks.size())));
     _started = ranks;
 
-    // Off the map update's cores. Unpinned, torch's threads landed on the CPUs the map tasks run on and the map
-    // update went from 3.9 to 5.4 ms per decision with the learner attached. Each rank gets whole cores of what is
-    // left, so two ranks' threads do not share one. A pool that covers every core leaves them alone.
-    std::vector<int> const& pool = sMapMgr->GetMapUpdater()->PoolCpus();
-    std::vector<int> const away = pool.empty() ? std::vector<int>() : Acore::CpuPlacement::AwayFrom(pool);
-    std::vector<std::vector<int>> const slices = Acore::CpuPlacement::Split(away, ranks);
+    // Off the map update's cores (AnimusForge.Learner.Cpus = auto). Unpinned, torch's threads landed on the CPUs the
+    // map tasks run on and the map update went from 3.9 to 5.4 ms per decision with the learner attached. Each rank
+    // gets whole cores of what is left, so two ranks' threads do not share one. A pool that covers every core leaves
+    // them alone. Named CPUs are shared out the same way, whatever the map update uses.
+    std::string cpuError;
+    std::vector<int> cpus = Acore::CpuPlacement::Parse(config.LearnerCpus, cpuError);
+    if (!cpuError.empty())
+        LOG_ERROR("module.animus", "AnimusForge.Learner.Cpus: {}{}", cpuError,
+            cpus.empty() ? "; placing it itself" : "");
+    bool const named = !cpus.empty();
+    if (!named)
+    {
+        std::vector<int> const& pool = sMapMgr->GetMapUpdater()->PoolCpus();
+        if (!pool.empty())
+            cpus = Acore::CpuPlacement::AwayFrom(pool);
+    }
+    std::vector<std::vector<int>> const slices = Acore::CpuPlacement::Split(cpus, ranks);
 
     uint16 const port = ranks > 1 ? FreeLoopbackPort() : 0;
     for (uint32 rank = 0; rank < ranks; ++rank)
@@ -201,17 +212,19 @@ bool AnimusForge::LearnerProcess::Start(ForgeConfig const& config, std::string c
         }
 
         // Set before the interpreter has started any thread of its own, so every thread it starts inherits it.
-        if (!away.empty())
-        {
-            std::vector<int> const& cpus = slices[rank];
-            if (Acore::CpuPlacement::PinProcess(process.Pid(), cpus))
-                LOG_INFO("module.animus", "{} (pid {}) on cpus {}, away from the map update's cores",
-                    ranks > 1 ? "Learner rank " + std::to_string(rank) : std::string("Learner"), process.Pid(),
-                    Acore::CpuPlacement::Describe(cpus));
-            else
-                LOG_WARN("module.animus", "Could not pin the learner (pid {}) to cpus {}", process.Pid(),
-                    Acore::CpuPlacement::Describe(cpus));
-        }
+        std::string const train = RankDevice(config, config.LearnerTrainDevice, rank);
+        std::string const rollout = RankDevice(config, config.LearnerRolloutDevice, rank);
+        std::string const devices = Acore::StringFormat("update on {}, rollouts on {}", train.empty()
+            ? "the stage config's device" : train, rollout.empty() ? "the stage config's device" : rollout);
+        std::string const name = ranks > 1 ? "Learner rank " + std::to_string(rank) : std::string("Learner");
+        if (cpus.empty())
+            LOG_INFO("module.animus", "{} (pid {}): {}", name, process.Pid(), devices);
+        else if (Acore::CpuPlacement::PinProcess(process.Pid(), slices[rank]))
+            LOG_INFO("module.animus", "{} (pid {}): {}; on cpus {}{}", name, process.Pid(), devices,
+                Acore::CpuPlacement::Describe(slices[rank]), named ? "" : ", away from the map update's cores");
+        else
+            LOG_WARN("module.animus", "Could not pin the learner (pid {}) to cpus {}", process.Pid(),
+                Acore::CpuPlacement::Describe(slices[rank]));
 
         LOG_DEBUG("module.animus", "Started learner rank {} of {} (pid {}) for {}{}: config {}; output in {}", rank,
             ranks, process.Pid(), scenario, resume ? ", resuming latest.pt" : "", configPath.string(), logFile);

@@ -97,10 +97,15 @@ namespace AnimusForge
         /// AnimusForge.Learner.TorchThreads: CPU threads the learner's torch uses (0 = torch's own default). The
         /// learner runs beside the map update threads on the same cores, so `forge bench` sweeps both.
         uint32 LearnerTorchThreads = 0;
-        /// AnimusForge.Learner.Device: the device the learner updates and rolls out on ("cuda:1" for a second GPU;
-        /// empty = the stage config's train_device and rollout_device). A GPU the machine does not have falls back
-        /// to the first one, so the key can name the machine as it will be.
-        std::string LearnerDevice;
+        /// AnimusForge.Learner.TrainDevice / RolloutDevice: where the learner updates its networks and where it runs
+        /// the envs' action inference ("cuda:1", "cpu"). Empty ("auto" in the config): the GPU mode decides -- each
+        /// learner on its GPU, or the stage config's train_device / rollout_device when no GPU was counted. A GPU the
+        /// machine does not have falls back to the first one, so the keys can name the machine as it will be.
+        std::string LearnerTrainDevice;
+        std::string LearnerRolloutDevice;
+        /// AnimusForge.Learner.Cpus: the CPUs the learner(s) run on ("8-15,24-31"; several learners share them out
+        /// by whole cores). Empty ("auto"): every core the map update does not use.
+        std::string LearnerCpus;
         /// Data-parallel learners sharing this sim's pool, one per GPU, gradients averaged every step; each owns an
         /// equal share of every group of envs. Resolved from the GPU mode: 1 in single mode, AnimusForge.Gpu.Multi.
         /// Learners (or one per GPU found) in multi mode.

@@ -432,7 +432,7 @@ less memory).
 
 ## A second GPU and clusters (2026-09-25, 2636b91e3 and 413e174dc)
 
-**Learner on a second GPU**: `AnimusForge.Learner.Device = "cuda:1"` passes train_device and rollout_device to the
+**Learner on a second GPU** (since split into `Learner.TrainDevice` / `Learner.RolloutDevice`, below): `AnimusForge.Learner.Device = "cuda:1"` passed train_device and rollout_device to the
 learner (AnimusForge.Learner.Args still override). A GPU the machine does not have falls back to cuda:0 (or the
 CPU) with a line in the learner log, so it can be set before the card is fitted. Untested on two cards: the
 update-to-rollout weight copy then crosses devices (torch handles it; the rollout stream waits on the rollout
@@ -467,7 +467,7 @@ updates carried on with the host's 32 envs; restarted, it was ordered back on an
 
 **Data-parallel learners** (animus.parallel; chosen by the GPU mode below): the worldserver starts one learner
 per rank. Rank k: `--set rank=k ranks=N dist_address=127.0.0.1:<free port>`, device cuda:(k + the index in
-Learner.Device), whole physical cores of what the map update leaves (CpuPlacement::Split), log
+Learner.TrainDevice / RolloutDevice), whole physical cores of what the map update leaves (CpuPlacement::Split), log
 animus-learner.rank<k>.log. Each rank takes an equal share of every group of the pool's envs (PoolRanks clamps N so
 every rank has an env of every group) and of the cluster's worker sims; gradients are averaged every optimizer
 step (NCCL/RCCL with a GPU per rank, else gloo); rank 0 alone writes the run and decides. A rank that dies stops
@@ -492,6 +492,14 @@ auto runs multi mode with two or more. Each mode has its own `Gpu.<Mode>.Envs` (
 stage's own envs x learners), `Gpu.<Mode>.Minibatches` (0 = the stage config's) and `Gpu.<Mode>.LearnerArgs`
 (after Learner.Args); `Gpu.Multi.Learners` (0 = one per GPU). Rank k runs on the k-th counted GPU. The startup log
 and `forge status` say "GPU mode: ...". Forced multi with 2 learners: 2 learners, 384 envs; auto here: single.
+
+**Placement keys** (the user's request; every one "auto" by default = the behaviour above): `AnimusForge.Learner.
+TrainDevice` (the update) and `Learner.RolloutDevice` (the envs' action inference) replace `Learner.Device`; a GPU
+named is the first learner's and learner k takes the k-th after it. `Learner.Cpus` ("8-15,24-31", shared out by
+whole cores between learners; auto = every core the map update leaves) and the core key `MapUpdate.Cpus` (the envs'
+sim: world thread first, worker k the (k+1)-th, in the order written; auto = CpuPlacement::Order). Parsed by
+CpuPlacement::Parse, which drops CPUs outside the process's cpuset with an error line. `forge status` shows
+"learner placement" and the map update's CPUs.
 
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 

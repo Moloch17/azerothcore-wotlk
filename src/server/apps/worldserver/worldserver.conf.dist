@@ -1344,6 +1344,17 @@ MapUpdateInterval = 10
 MapUpdate.Threads = 1
 
 #
+#    MapUpdate.Cpus
+#        Description: The CPUs the map update runs on -- for the forge, the envs' sim: the world
+#                     thread takes the first, worker k the (k + 1)-th, as a list like "0-7" or
+#                     "0-3,16-19" (the order written is the order used; CPUs this process may not
+#                     run on are left out). "auto" puts the pool on the die with the largest L3
+#                     first (an X3D's V-cache die), physical cores before their SMT siblings.
+#        Default:     "auto"
+
+MapUpdate.Cpus = "auto"
+
+#
 #    MoveMaps.Enable
 #        Description: Enable/Disable pathfinding using mmaps - recommended.
 #        Default:     0 - (Disabled)
@@ -5282,16 +5293,32 @@ AnimusForge.Learner.Args = ""
 AnimusForge.Learner.TorchThreads = 0
 
 #
-#    AnimusForge.Learner.Device
-#        Description: The device the learner updates its networks and runs rollout inference on: "cuda:1"
-#                     puts it on a second GPU and leaves the first to the sim ("cuda" means the ROCm or
-#                     CUDA device alike). A GPU the machine does not have yet falls back to the first
-#                     one (or the CPU) with a line in the learner log, so this can be set ahead of the
-#                     card. Empty uses the stage config's train_device and rollout_device.
-#                     AnimusForge.Learner.Args still override it.
-#        Default:     ""
+#    AnimusForge.Learner.TrainDevice
+#    AnimusForge.Learner.RolloutDevice
+#        Description: Where the learner updates its networks (TrainDevice) and where it runs the
+#                     envs' action inference (RolloutDevice): "cuda:0", "cuda:1", "cpu" ("cuda"
+#                     means the ROCm or CUDA device alike). "auto" leaves it to the GPU mode:
+#                     each learner on its own GPU (the largest ones counted), or the stage
+#                     config's train_device / rollout_device when no GPU was counted. With
+#                     several learners (multi mode) a GPU named here is the first learner's and
+#                     learner k takes the k-th after it; "cpu" is every learner's. A GPU the
+#                     machine does not have yet falls back to the first one (or the CPU) with a
+#                     line in the learner log, so this can be set ahead of the card.
+#                     AnimusForge.Learner.Args still override both.
+#        Default:     "auto"
 
-AnimusForge.Learner.Device = ""
+AnimusForge.Learner.TrainDevice = "auto"
+AnimusForge.Learner.RolloutDevice = "auto"
+
+#
+#    AnimusForge.Learner.Cpus
+#        Description: The CPUs the learner runs on, as a list like "8-15,24-31"; several learners
+#                     (multi mode) share them out by whole physical cores. "auto" gives it every
+#                     core the map update (MapUpdate.Cpus) does not use. `forge status` shows
+#                     both placements.
+#        Default:     "auto"
+
+AnimusForge.Learner.Cpus = "auto"
 
 ###################################################################################################
 # GPU MODE

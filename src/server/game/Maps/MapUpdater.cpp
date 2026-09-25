@@ -19,6 +19,7 @@
 
 #include "MapUpdater.h"
 #include "AnimusForge.h"
+#include "Config.h"
 #include "CpuPlacement.h"
 #include "DatabaseEnv.h"
 #include "Errors.h"
@@ -65,7 +66,15 @@ void MapUpdater::activate(std::size_t num_threads)
     _stop.store(false, std::memory_order_release);
 
     // The world thread first: it runs tasks in wait() like any worker, and unpinned it wandered onto the other die.
-    std::vector<int> const& order = Acore::CpuPlacement::Order();
+    // MapUpdate.Cpus names the CPUs in that order instead of CpuPlacement's own ("auto").
+    std::string error;
+    std::vector<int> order = Acore::CpuPlacement::Parse(sConfigMgr->GetOption<std::string>("MapUpdate.Cpus", "auto"),
+        error);
+    if (!error.empty())
+        LOG_ERROR("server.loading", "MapUpdate.Cpus: {}{}", error,
+            order.empty() ? "; placing the map update itself" : "");
+    if (order.empty())
+        order = Acore::CpuPlacement::Order();
     _poolCpus.clear();
     if (!order.empty())
     {
@@ -214,13 +223,12 @@ void MapUpdater::wait()
     _next.store(0, std::memory_order_release);
 }
 
-void MapUpdater::PinToCpu(uint32 index)
+void MapUpdater::PinToCpu(uint32 index) const
 {
-    // Worker k after the world thread in CpuPlacement's order, which lists only the CPUs this process may run on,
-    // so a container's cpuset is honoured.
-    std::vector<int> const& order = Acore::CpuPlacement::Order();
-    if (!order.empty())
-        Acore::CpuPlacement::PinThisThread(order[(index + 1) % order.size()]);
+    // Worker k after the world thread in the pool's order (activate()), which lists only the CPUs this process may
+    // run on, so a container's cpuset is honoured.
+    if (index + 1 < _poolCpus.size())
+        Acore::CpuPlacement::PinThisThread(_poolCpus[index + 1]);
 }
 
 void MapUpdater::WorkerThread(uint32 index)
