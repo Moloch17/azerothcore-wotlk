@@ -39,6 +39,7 @@
 #include "EnvPool.h"
 #include "Log.h"
 #include "Map.h"
+#include "MapMgr.h"
 #include "MapDefines.h"
 #include "Opponents.h"
 #include "PetBlock.h"
@@ -285,6 +286,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 {
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
+
+    // How many envs share one continent map. A map has 31 phases to give away and an env needs one of its own,
+    // so that is the ceiling however few replicas were asked for; asking for more replicas than that makes the
+    // blocks smaller. At the default (0) a pool of 31 envs or fewer is one map, exactly as a continent stage
+    // has always been, and a larger pool is no longer capped at 31.
+    uint32 const replicas = std::max<uint32>(1, settings.ContinentReplicas);
+    _envsPerReplica = std::clamp<uint32>((settings.Envs + replicas - 1) / replicas, 1, ENV_PHASE_BITS);
 
     // The classes this run plays: StageSettings::Classes, or all of them.
     for (ClassProfile const& profile : ClassProfiles())
@@ -602,10 +610,17 @@ void Animus::Curriculum::StageScenario::ScatterSeats(Env const& env, Map* map) c
     }
 }
 
+uint32 Animus::Curriculum::StageScenario::ReplicaOf(Env const& env) const
+{
+    return env.Index / _envsPerReplica;
+}
+
 uint32 Animus::Curriculum::StageScenario::EnvPhase(Env const& env)
 {
-    // Phase 1 is the world's own; each env takes one of the other 31 bits.
-    return uint32(1) << (1 + env.Index % 31);
+    // Phase 1 is the world's own; each env takes one of the other 31 bits. Envs are dealt to replicas in
+    // consecutive blocks of at most this many, so the envs sharing a map always have distinct remainders and
+    // therefore distinct bits.
+    return uint32(1) << (1 + env.Index % ENV_PHASE_BITS);
 }
 
 Animus::Curriculum::ArenaDefinition const& Animus::Curriculum::StageScenario::Arena(Env const& env) const
@@ -1714,6 +1729,17 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     Map* map = !firstBuild || env.InstanceId ? env.FindMap() : nullptr;
     if (map && map->GetId() != EpisodeMapId(env))
         map = nullptr;
+
+    // A continent is not one map for the whole pool any more: the envs are dealt out over replicas of it, each
+    // a Map object of its own and so a map task of its own. Replica 0 is the base map, which is where every env
+    // of a pool that fits in one map's phases goes, as before.
+    if (!map)
+    {
+        uint32 const episodeMapId = EpisodeMapId(env);
+        MapEntry const* episodeEntry = sMapStore.LookupEntry(episodeMapId);
+        if (episodeEntry && !episodeEntry->Instanceable())
+            map = sMapMgr->CreateContinentReplica(episodeMapId, ReplicaOf(env));
+    }
 
     // The new bots go on idle sessions and into the map before the old ones leave, so the instance always has a
     // bound player.

@@ -173,8 +173,17 @@ namespace Animus::Curriculum
         void ScatterSeats(Env const& env, Map* map) const;
         /// Whether the envs share a continent (each in its own phase) rather than each having an instance.
         [[nodiscard]] bool OnContinent() const { return _continent; }
+        /// Phase bits a map has to give an env: all but phase 1, which is the world's own.
+        static constexpr uint32 ENV_PHASE_BITS = 31;
+
         /// The phase of the env's seats and everything they meet on a continent.
         [[nodiscard]] static uint32 EnvPhase(Env const& env);
+        /// Envs a continent replica holds: at most the 31 phase bits a map has, and fewer when the stage asks
+        /// for more replicas than that. Envs are dealt out in blocks of this size, so the envs on one replica
+        /// are consecutive and EnvPhase (index modulo 31) gives each of them a bit of its own.
+        [[nodiscard]] uint32 EnvsPerReplica() const { return _envsPerReplica; }
+        /// The continent replica this env belongs on (MapMgr::CreateContinentReplica), 0 being the base map.
+        [[nodiscard]] uint32 ReplicaOf(Env const& env) const;
         [[nodiscard]] uint32 SpawnMapId() const { return _spawnMapId; }
         /// The map this episode's seats are placed on: what an encounter fixed (EnvState::EpisodeMapId), else the
         /// stage's.
@@ -350,6 +359,8 @@ namespace Animus::Curriculum
         uint32 _spawnMapId;
         Position _spawnPoint;
         bool _continent = false;
+        /// StageSettings::ContinentReplicas resolved against the env count and the phase cap.
+        uint32 _envsPerReplica = 31;
         uint32 _seatCount = 1;
         bool _castOwner = false;            // some arena plays its owner as an agent (ArenaDefinition::OwnerCast)
         uint32 _level = 0;                  // StageSettings::Level: every character's level, 0 = random

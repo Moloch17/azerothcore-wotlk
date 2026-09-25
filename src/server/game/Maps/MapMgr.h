@@ -39,6 +39,19 @@ public:
 
     Map* CreateBaseMap(uint32 mapId);
     Map* FindBaseNonInstanceMap(uint32 mapId) const;
+
+    /// One of several Map objects for the same continent, so the sim can spread its envs over map objects --
+    /// and so over map tasks -- instead of crowding one. Replica 0 is the base map itself; a higher index is a
+    /// child of it with an instance id of its own, created on first use.
+    ///
+    /// A replica costs only its own grids, spawns and nav query: terrain comes from the base (GridTerrainLoader
+    /// gives any map with an instance id its parent's), and so do the collision tree and the navmesh
+    /// (MapCollisionData). Its own nav query is the point -- one per map object is what makes concurrent
+    /// pathfinding safe. The base's grids are all loaded before the first replica, because a replica's grid
+    /// asks the base for terrain that must already be there.
+    ///
+    /// World thread only: it takes the manager's lock, adds to its containers and loads a continent's grids.
+    Map* CreateContinentReplica(uint32 mapId, uint32 index);
     Map* CreateMap(uint32 mapId, Player* player);
     Map* FindMap(uint32 mapId, uint32 instanceId) const;
 
@@ -180,8 +193,20 @@ private:
     std::atomic<uint32> _destroyedInstances{ 0 };
     uint32 _trimCountdown{ 10 * IN_MILLISECONDS };
 
+    /// Continent replicas by map id, in index order, index 0 being the base map in i_maps.
+    typedef std::unordered_map<uint32, std::vector<Map*>> ReplicaMapType;
+    /// The same maps keyed by map id and instance id, for FindMap, which is asked on every hook.
+    typedef std::unordered_map<uint64, Map*> ReplicaByIdType;
+
+    [[nodiscard]] static uint64 ReplicaKey(uint32 mapId, uint32 instanceId)
+    {
+        return (uint64(mapId) << 32) | instanceId;
+    }
+
     std::mutex Lock;
     MapMapType i_maps;
+    ReplicaMapType i_replicas;
+    ReplicaByIdType i_replicaById;
 
     InstanceIds _instanceIds;
     uint32 _nextInstanceId;
@@ -205,6 +230,11 @@ void MapMgr::DoForAllMaps(Worker&& worker)
         else
             worker(map);
     }
+
+    // A continent replica is a world of its own: whatever is done to every map is done to it too, or game
+    // events and world spawns would reach the base continent only.
+    for (auto& replica : i_replicaById)
+        worker(replica.second);
 }
 
 template<typename Worker>
@@ -225,6 +255,11 @@ inline void MapMgr::DoForAllMapsWithMapId(uint32 mapId, Worker&& worker)
         else
             worker(map);
     }
+
+    auto const replicas = i_replicas.find(mapId);
+    if (replicas != i_replicas.end())
+        for (std::size_t index = 1; index < replicas->second.size(); ++index)
+            worker(replicas->second[index]);
 }
 
 #define sMapMgr MapMgr::instance()

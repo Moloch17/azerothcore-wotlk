@@ -122,6 +122,47 @@ Map* MapMgr::CreateBaseMap(uint32 id)
     return map;
 }
 
+Map* MapMgr::CreateContinentReplica(uint32 mapId, uint32 index)
+{
+    Map* base = CreateBaseMap(mapId);
+    ASSERT(base);
+
+    // An instanceable map already has as many map objects as anyone asks for, through MapInstanced.
+    if (index == 0 || base->Instanceable())
+        return base;
+
+    std::lock_guard<std::mutex> guard(Lock);
+
+    std::vector<Map*>& replicas = i_replicas[mapId];
+    if (replicas.empty())
+        replicas.push_back(base);
+
+    // A replica's grid takes the base's terrain for the same coordinates, which has to be there already. Asked
+    // for before the lookup rather than beside the creation, so it holds whatever order replicas are asked for
+    // in; loading a loaded map is a walk over its grids.
+    base->LoadAllGrids();
+
+    if (index < replicas.size())
+        return replicas[index];
+
+    while (replicas.size() <= index)
+    {
+        uint32 const instanceId = GenerateInstanceId();
+        Map* replica = new Map(mapId, instanceId, REGULAR_DIFFICULTY, base);
+
+        replicas.push_back(replica);
+        i_replicaById[ReplicaKey(mapId, instanceId)] = replica;
+
+        // Loads every grid, because the instance id is not zero. The spawns are this replica's own.
+        replica->OnCreateMap();
+
+        LOG_INFO("server.loading", ">> Continent replica {} of map {} is instance {}", replicas.size() - 1, mapId,
+            instanceId);
+    }
+
+    return replicas[index];
+}
+
 Map* MapMgr::FindBaseNonInstanceMap(uint32 mapId) const
 {
     Map* map = FindBaseMap(mapId);
@@ -147,7 +188,14 @@ Map* MapMgr::FindMap(uint32 mapid, uint32 instanceId) const
         return nullptr;
 
     if (!map->Instanceable())
-        return instanceId == 0 ? map : nullptr;
+    {
+        if (instanceId == 0)
+            return map;
+
+        // A continent replica: another map object for the same continent, with an instance id of its own.
+        auto const replica = i_replicaById.find(ReplicaKey(mapid, instanceId));
+        return replica == i_replicaById.end() ? nullptr : replica->second;
+    }
 
     return ((MapInstanced*)map)->FindInstanceMap(instanceId);
 }
@@ -303,6 +351,20 @@ void MapMgr::Update(uint32 diff)
             MapUpdater::RunMapTick(*map, diff, diff);
     }
 
+    // Continent replicas are map objects in their own right, and the reason they exist is to be one task each.
+    for (auto const& replica : i_replicaById)
+    {
+        Map* map = replica.second;
+
+        if (ForgeMapIsIdle(map))
+            continue;
+
+        if (m_updater.activated())
+            m_updater.schedule_update(*map, diff, diff);
+        else
+            MapUpdater::RunMapTick(*map, diff, diff);
+    }
+
     if (m_updater.activated())
         m_updater.wait();
 
@@ -367,6 +429,15 @@ bool MapMgr::IsValidMAP(uint32 mapid, bool startUp)
 
 void MapMgr::UnloadAll()
 {
+    // Before the base maps: a replica's grids hold the base's terrain.
+    for (auto& replica : i_replicaById)
+    {
+        replica.second->UnloadAll();
+        delete replica.second;
+    }
+    i_replicaById.clear();
+    i_replicas.clear();
+
     for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end();)
     {
         iter->second->UnloadAll();

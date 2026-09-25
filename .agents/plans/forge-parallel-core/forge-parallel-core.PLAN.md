@@ -107,6 +107,9 @@ Delivered and syntax-checked (no full build; the user builds with `./forge.sh --
   and `FinishCollect` on the world thread after the join, which keeps only the ended episodes' info and
   their reset. The `forge status` figure for observe, reward and apply is now thread time inside the world
   number, not on top of it.
+- **Phase 3 item 2** done (syntax-checked, unmeasured): continent replicas as child `Map` objects of the
+  base continent, `AnimusForge.ContinentReplicas` sizing them, envs dealt in contiguous blocks of at most
+  31 so the phase formula is unchanged. A continent stage is now as many map tasks as it has replicas.
 
 Deferred, with reasons:
 - `_valuesUpdateCache` removal (no cost while empty), templated aura scans, `std::list` target lists,
@@ -388,13 +391,31 @@ learner-driven run reaches its first reset without a "Synchronous query on seale
    Still to do here: `RecordDamage/RecordHeal/RecordCast` index `_agents` by a `Player`-stored agent slot
    instead of an `unordered_map` find. Instance stages parallelise with this; continent stages need item 2,
    since every env on one base map is one task.
-2. **Replica continents.** Create N `Map` objects per continent with `instanceId > 0` (envs sharded
-   `env.Index % N`), sharing `GridTerrainData` via `GetGridTerrainDataSharedPtr` (`Map.h:230`) and the
-   global VMAP/MMAP. Local edits in `MapMgr::CreateBaseMap` (`MapMgr.cpp:71-108`),
-   `Map::Instanceable`/`ToMapInstanced`, `MapMgr::FindMap`, `Player::TeleportTo` resolution,
-   `BotFactory::PlaceOnContinent`. Each replica has its own 31 phases, which removes the 31-env
-   continent cap. Memory: ~450 MB per replica of the largest continent after the aura fix.
-   `PreloadAllNonInstancedMapGrids = 1` and no base-map grid unload: the world stays loaded.
+2. **Replica continents.** Done (2026-09-25, syntax-checked, unmeasured). Less was needed than this item
+   assumed: a replica is `new Map(id, GenerateInstanceId(), REGULAR_DIFFICULTY, base)` and nothing else.
+   `GridTerrainLoader::LoadMap` already gives any map with an instance id its parent's terrain, and
+   `MapCollisionData` already shares the parent's collision tree and navmesh while keeping a nav query per
+   map object, which is what makes concurrent pathfinding safe. So `Map::Instanceable`/`ToMapInstanced` are
+   untouched, continents stay non-instanceable, and no `InstanceMap` machinery is involved.
+
+   `MapMgr::CreateContinentReplica(mapId, index)` creates them on first use under the manager's lock, index
+   0 being the base map; `FindMap` gains one branch for a non-instanceable map with an instance id;
+   `MapMgr::Update` schedules replicas like any other map; both `DoForAllMaps` forms reach them, so world
+   spawns and game events are not confined to the base; `UnloadAll` drops them before the base whose terrain
+   they hold. The base's grids are loaded before any replica, since a replica's grid asks the base for
+   terrain that must already exist.
+
+   Envs are dealt out in **contiguous blocks**, not `env.Index % N`: a map has 31 phases to give and
+   consecutive indexes in a block of at most 31 have distinct remainders, so `EnvPhase` is unchanged.
+   `AnimusForge.ContinentReplicas` (`StageSettings::ContinentReplicas`) sizes it, 0 meaning the fewest the
+   phase cap allows, which leaves a pool of 31 envs or fewer on one map exactly as before and removes the
+   31-env cap above it. `Player::TeleportTo` needed nothing: every curriculum teleport is within the map,
+   and that branch keeps the map object, replica included.
+
+   Costs to know: each replica's `OnCreateMap` loads all the continent's grids and spawns its whole creature
+   set on the world thread during `Scenario::Setup` -- the ~450 MB per replica, and seconds of setup, paid
+   once per stage rather than per episode. Zone-keyed world state (outdoor PvP, weather, world states) is one
+   set per map id and is shared across a continent's replicas; nothing the sim does touches it today.
 3. **Reset on the map thread.** `ObjectGuidGeneratorBase::_nextGuid` → `std::atomic` with `fetch_add`
    (`ObjectGuid.h:298-315`). `HashMapHolder::Insert/Remove` and `CharacterCache::AddCharacterCacheEntry`
    become per-thread batches applied by the world thread at the barrier. Then `BotFactory::Create` and

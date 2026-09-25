@@ -58,6 +58,14 @@ namespace Animus
         /// Every character's level, or 0 for the curriculum's random levels.
         uint32 Level = 0;
 
+        /// How many Map objects a continent stage spreads its envs over (MapMgr::CreateContinentReplica), so a
+        /// continent is not one map and therefore one map task for the whole pool. 0 asks for the fewest the
+        /// phase cap allows: an env stands in one of the 31 phase bits its map has, so 31 envs per replica.
+        /// Sizing, like Envs or MapUpdate.Threads -- each replica is another full copy of the continent's
+        /// spawns, so the trade is parallelism against memory. At or below 31 envs the default is one map,
+        /// which is what a continent stage has always been.
+        uint32 ContinentReplicas = 0;
+
         /// Prefix of the curriculum tuning keys (CurriculumTuning::Load) and arena weights, with the trailing dot:
         /// "AnimusForge.Curriculum." for the forge, "Animus.Curriculum." for mod-animus.
         std::string TuningPrefix;

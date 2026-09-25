@@ -114,6 +114,7 @@ void AnimusForge::ForgeConfig::Load()
     Classes = GetList("AnimusForge.Classes");
 
     Envs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Envs", 64));
+    ContinentReplicas = sConfigMgr->GetOption<uint32>("AnimusForge.ContinentReplicas", 0);
     // AnimusForge.Stage.<name>.Envs
     StageEnvs.clear();
     for (std::string const& key : sConfigMgr->GetKeysByString("AnimusForge.Stage."))
@@ -292,6 +293,7 @@ Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenari
     stage.SpawnMapId = SpawnMapId;
     stage.SpawnPosition = SpawnPosition;
     stage.Level = Level;
+    stage.ContinentReplicas = ContinentReplicas;
     stage.TuningPrefix = "AnimusForge.Curriculum.";
     stage.LayoutsDir = LayoutsDir().string();
     return stage;

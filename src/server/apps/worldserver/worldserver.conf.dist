@@ -5083,6 +5083,20 @@ AnimusForge.Classes = ""
 AnimusForge.Envs = 64
 
 #
+#    AnimusForge.ContinentReplicas
+#        Description: How many copies of the continent a continent stage spreads its envs over. Each is a
+#                     Map object of its own, so each is a map task of its own and the envs on it are
+#                     scored and observed on its thread; without this a whole pool shares one continent
+#                     and therefore one thread. An env stands in one of the 31 phases its map has, so a
+#                     replica holds at most 31 envs and 0 asks for the fewest replicas that allows.
+#                     Sizing, not a switch: every replica carries another full copy of the continent's
+#                     spawns, so raising it buys threads with memory. Instance stages ignore it -- every
+#                     env already has an instance of its own.
+#        Default:     0 - (31 envs per continent, which is one map up to 31 envs as before)
+
+AnimusForge.ContinentReplicas = 0
+
+#
 #    AnimusForge.Stage.<name>.Envs
 #        Description: a stage's own env count, where the default would not do. The real raids are forty seats an
 #                     env, so `forge start stage32_raid40` at 128 envs would be 5,120 bots; these keep the bots in

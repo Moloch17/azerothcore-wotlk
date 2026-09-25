@@ -49,6 +49,9 @@ namespace AnimusForge
         uint32 QueueLocalEpisodes = 0;
 
         uint32 Envs = 64;
+        /// AnimusForge.ContinentReplicas: Map objects a continent stage spreads its envs over, so the continent
+        /// is not one map task for the whole pool. 0 = the fewest the 31 phase bits allow (31 envs each).
+        uint32 ContinentReplicas = 0;
         /// AnimusForge.Stage.<name>.Envs: a stage's own env count where the default would not do (forty seats an
         /// env at 128 envs is 5,120 bots), so `forge start stage32_raid40` needs no conf edit.
         std::map<std::string, uint32> StageEnvs;
