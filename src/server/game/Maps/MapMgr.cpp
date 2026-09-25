@@ -36,6 +36,7 @@
 #include "World.h"
 #include "WorldPacket.h"
 #include <atomic>
+#include <chrono>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -336,6 +337,8 @@ void MapMgr::Update(uint32 diff)
     // is empty unless somebody queued, and one fewer task keeps the join simple.
     sLFGMgr->Update(diff, 1);
 
+    auto const scheduled = std::chrono::steady_clock::now();
+
     for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
     {
         Map* map = iter->second;
@@ -366,19 +369,67 @@ void MapMgr::Update(uint32 diff)
     if (m_updater.activated())
         m_updater.wait();
 
+    uint64 const wallNs = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - scheduled).count());
+
     // After the updaters are done and before the next tick schedules any: no map is being updated here.
     ForgeTrimHeap(diff);
 
-    // Roll every map's phase timers into one figure the status line can diff between reports.
+    // Roll every map's phase timers and last task into figures the status line can diff between reports. Every map
+    // means the replicas too: they are not in i_maps, and on a continent stage they are all but one of the tasks.
     Map::UpdateTiming total;
+    uint32 tasks = 0;
+    uint64 sumNs = 0;
+    uint64 longestNs = 0;
+    Map* slowest = nullptr;
+    int32 slowestCpu = -1;
+    uint64 cpuMask = 0;
+
+    // With no worker threads a container ticks its instances inline, inside its own task: their samples are part
+    // of the container's, and counting them again would double the sum.
+    bool const instancesAreTasks = m_updater.activated();
+
+    auto const roll = [&](Map* map, bool isTask)
+    {
+        total += map->GetUpdateTiming();
+
+        Map::TaskSample const sample = map->TakeTaskSample();
+        if (!isTask || !sample.Ns)
+            return;
+
+        ++tasks;
+        sumNs += sample.Ns;
+        if (sample.Cpu >= 0 && sample.Cpu < 64)
+            cpuMask |= uint64(1) << sample.Cpu;
+        if (sample.Ns > longestNs)
+        {
+            longestNs = sample.Ns;
+            slowest = map;
+            slowestCpu = sample.Cpu;
+        }
+    };
+
     for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
     {
-        total += iter->second->GetUpdateTiming();
+        roll(iter->second, true);
         if (MapInstanced* container = iter->second->ToMapInstanced())
             for (auto const& [id, instance] : container->GetInstancedMaps())
-                total += instance->GetUpdateTiming();
+                roll(instance, instancesAreTasks);
     }
+    for (auto const& replica : i_replicaById)
+        roll(replica.second, true);
+
     _updateTiming = total;
+
+    ++_taskTiming.Ticks;
+    _taskTiming.Tasks += tasks;
+    _taskTiming.SumNs += sumNs;
+    _taskTiming.LongestNs += longestNs;
+    _taskTiming.WallNs += wallNs;
+    _taskTiming.CpuMask = cpuMask;
+    _taskTiming.SlowestCpu = slowestCpu;
+    _taskTiming.SlowestMapId = slowest ? slowest->GetId() : 0;
+    _taskTiming.SlowestInstanceId = slowest ? slowest->GetInstanceId() : 0;
 }
 
 void MapMgr::NoteInstanceDestroyed()

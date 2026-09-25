@@ -229,6 +229,22 @@ public:
 
     [[nodiscard]] UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
 
+    /// This map's last task on the updater: the wall time of MapUpdater::RunMapTick and the CPU it started on.
+    /// Written by the map thread, taken (read and cleared) by MapMgr between ticks; Ns == 0 means not ticked.
+    struct TaskSample
+    {
+        uint64 Ns = 0;
+        int32 Cpu = -1;
+    };
+
+    void SetTaskSample(TaskSample const& sample) { _taskSample = sample; }
+    [[nodiscard]] TaskSample TakeTaskSample()
+    {
+        TaskSample const sample = _taskSample;
+        _taskSample = {};
+        return sample;
+    }
+
     /// A player on this map by guid, without the global HashMapHolder lock: the map thread's own index,
     /// written when a player is added to or removed from the map. Sim threads look casters up through this
     /// for every aura tick, so it has to be lock-free.
@@ -755,6 +771,7 @@ private:
     TimeTrackerSmall _lastAnnounceRedirectKickTimer;
 
     UpdateTiming _updateTiming;
+    TaskSample _taskSample;
     std::unordered_map<ObjectGuid, Player*> _playersByGuid;
 };
 

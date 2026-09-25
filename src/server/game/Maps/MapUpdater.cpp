@@ -24,6 +24,8 @@
 #include "Log.h"
 #include "Map.h"
 #include "MapMgr.h"
+#include <algorithm>
+#include <chrono>
 #if defined(__linux__)
 #include <pthread.h>
 #include <sched.h>
@@ -123,10 +125,21 @@ void MapUpdater::RunMapTick(Map& map, uint32 diff, uint32 s_diff)
     // The sim's envs on this map, on this thread: they take the last decision's actions before the tick and are
     // scored and observed after it, so the only part of a decision left for the world thread is the part that has
     // to be serial. A map with no env of its own pays one branch for each.
+    auto const start = std::chrono::steady_clock::now();
+    Map::TaskSample sample;
+#if defined(__linux__)
+    sample.Cpu = sched_getcpu();
+#endif
+
     sAnimusForge->OnMapPrologue(map);
     map.Update(diff, s_diff);
     map.DelayedUpdate(diff);
     sAnimusForge->OnMapEpilogue(map);
+
+    // Never zero for a task that ran: zero is how MapMgr tells a map that was not ticked.
+    sample.Ns = std::max<uint64>(1, uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - start).count()));
+    map.SetTaskSample(sample);
 }
 
 void MapUpdater::Run(Task const& task)

@@ -750,9 +750,23 @@ Release + LTO and was running idle when the session ended. `forge` is ~17 commit
 
 Open items, most useful first:
 
-1. **Per-map task times in the `forge status` timing line.** Phase 3's own verification item, still
-   missing, and now the blocker on explaining finding 4 above (threads above 8 make it slower and the
-   CPU inside the map update doubles from 4 to 8 threads). Add it, then re-run `forge bench`.
+1. **Per-map task times in the `forge status` timing line: written, not yet built or measured.** A new
+   `map tasks` row gives, per map update, the task count, summed task wall time and its ratio to the
+   update's wall (the parallelism actually had), the mean longest task (critical path), the last update's
+   slowest map with the CPU it ran on, and the set of CPUs tasks started on. Measured in
+   `MapUpdater::RunMapTick`, rolled up in `MapMgr::Update` (`MapMgr::TaskTiming`). Syntax-checked only.
+   Two things found on the way, both of which change how to read finding 4:
+   - **The `world parts` row never counted continent replicas.** `MapMgr::Update` summed `i_maps` and
+     instance children; replicas live only in `i_replicaById`. At 128 envs that is 1 map of 5, the base
+     continent. So "5.7 ms on 4 threads to 12.4 ms on 8" is the *base map's* update getting slower while
+     more replicas run beside it (contention on something the base owns and replicas share, e.g. the
+     base's grid lock in `CreateGrid` or the terrain), not total work doubling. Fixed in the same change,
+     so `world parts` figures from before it are not comparable with those after.
+   - **`PinToCpu` puts worker k on the k-th CPU, and this is a two-CCD 9950X3D.** CPUs 0-7 (+16-23) share
+     one L3 (the V-cache die), 8-15 (+24-31) the other. 8 workers sit on one die; 12 and 16 straddle
+     both, which alone fits "slower above 8 at every env count". Unconfirmed: the new row's CPU set and
+     slowest-task CPU are meant to confirm or rule it out in one sweep.
+   Next: rebuild, re-run `forge bench` (needs the user's go-ahead, as the last one did).
 2. **Phase 4, the learner exchange.** 16.7 ms of a 26.2 ms decision. Everything else is noise beside it.
 3. **The folded-module config fix depends on an untracked directory.** `modules/CMakeLists.txt` keeps a
    folded module's `.conf` in `CONFIG_FILE_LIST` by globbing `modules/<module>/conf/*.conf.dist`. That

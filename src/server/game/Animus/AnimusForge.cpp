@@ -455,6 +455,7 @@ bool AnimusForge::Forge::StartCurrent()
     _collect = Animus::EnvPool::CollectTiming();
     _rateCollect = Animus::EnvPool::CollectTiming();
     _collectMs = SimSnapshot::CollectMs();
+    _mapTasks = SimSnapshot::MapTasksMs();
     _scenarioStarted = now;
     _lastReport = now;
     _lastAct.reset();
@@ -1061,6 +1062,20 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _worldMs.Relocation = since(mapTiming.RelocationNs, _rateMapTiming.RelocationNs) / perTick;
             _worldMs.Visibility = since(mapTiming.VisibilityNs, _rateMapTiming.VisibilityNs) / perTick;
             _worldMs.Delayed = since(mapTiming.DelayedNs, _rateMapTiming.DelayedNs) / perTick;
+
+            MapMgr::TaskTiming const& taskTiming = sMapMgr->GetTaskTiming();
+            if (uint64 const updates = taskTiming.Ticks - std::min(taskTiming.Ticks, _rateTaskTiming.Ticks))
+            {
+                double const perUpdate = double(updates) * 1e6;
+                _mapTasks.Tasks = since(taskTiming.Tasks, _rateTaskTiming.Tasks) / double(updates);
+                _mapTasks.Sum = since(taskTiming.SumNs, _rateTaskTiming.SumNs) / perUpdate;
+                _mapTasks.Longest = since(taskTiming.LongestNs, _rateTaskTiming.LongestNs) / perUpdate;
+                _mapTasks.Wall = since(taskTiming.WallNs, _rateTaskTiming.WallNs) / perUpdate;
+            }
+            _mapTasks.SlowestMapId = taskTiming.SlowestMapId;
+            _mapTasks.SlowestInstanceId = taskTiming.SlowestInstanceId;
+            _mapTasks.SlowestCpu = taskTiming.SlowestCpu;
+            _mapTasks.CpuMask = taskTiming.CpuMask;
             _collectMs.Apply = since(_collect.ApplyNs, _rateCollect.ApplyNs) / perTick;
             _collectMs.ResetsPerTick = since(_collect.Resets, _rateCollect.Resets) / double(ticks);
             _collectMs.ReusedPerTick = since(_collect.Reused, _rateCollect.Reused) / double(ticks);
@@ -1077,6 +1092,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _rateLearnerNs = _learnerNs;
         _rateCollect = _collect;
         _rateMapTiming = sMapMgr->GetUpdateTiming();
+        _rateTaskTiming = sMapMgr->GetTaskTiming();
     }
 
     sim.TicksPerSecond = _ticksPerSecond;
@@ -1087,6 +1103,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     sim.LearnerMsPerTick = _learnerMsPerTick;
     sim.Collect = _collectMs;
     sim.World = _worldMs;
+    sim.MapTasks = _mapTasks;
 
     sim.LearnerRunning = _learner.IsRunning();
     sim.LearnerPid = _learner.IsRunning() ? int32(_learner.Pid()) : -1;

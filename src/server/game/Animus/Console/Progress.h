@@ -106,6 +106,23 @@ namespace AnimusForge
         };
 
         WorldMs World;
+
+        /// The map update as tasks on the updater (MapMgr::TaskTiming), per map update rather than per decision.
+        /// Sum over Wall is the parallelism the update actually had; Longest near Wall means one map is the
+        /// critical path. Slowest* and Cpus describe the last update only.
+        struct MapTasksMs
+        {
+            double Tasks = 0.0;
+            double Sum = 0.0;
+            double Longest = 0.0;
+            double Wall = 0.0;
+            uint32 SlowestMapId = 0;
+            uint32 SlowestInstanceId = 0;
+            int32 SlowestCpu = -1;
+            uint64 CpuMask = 0;
+        };
+
+        MapTasksMs MapTasks;
         bool LearnerRunning = false;
         int32 LearnerPid = -1;
         bool LearnerConnected = false;

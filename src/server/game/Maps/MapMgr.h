@@ -151,8 +151,28 @@ public:
     void NoteInstanceDestroyed();
 
     /// Every map's Map::UpdateTiming summed, refreshed at the end of each Update() while no map thread runs.
-    /// Cumulative; readers diff two snapshots. Instances are included through their container.
+    /// Cumulative; readers diff two snapshots. Instances are included through their container, continent
+    /// replicas through i_replicaById.
     [[nodiscard]] Map::UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
+
+    /// The map tasks of every Update(), accumulated: how many ran, their summed wall time, each tick's longest
+    /// task, and the wall time of the whole schedule-and-join. Sum over wall is the parallelism actually had;
+    /// longest over wall says whether one map is the critical path. The last tick's slowest map, and the CPUs
+    /// its tasks started on, name the straggler and show where the pinned workers ran.
+    struct TaskTiming
+    {
+        uint64 Ticks = 0;
+        uint64 Tasks = 0;
+        uint64 SumNs = 0;
+        uint64 LongestNs = 0;           ///< sum over ticks of that tick's longest task
+        uint64 WallNs = 0;
+        uint32 SlowestMapId = 0;        ///< last tick
+        uint32 SlowestInstanceId = 0;
+        int32 SlowestCpu = -1;
+        uint64 CpuMask = 0;             ///< last tick: CPUs 0-63 on which a task started
+    };
+
+    [[nodiscard]] TaskTiming const& GetTaskTiming() const { return _taskTiming; }
 
     Map::EnterState PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck = false);
     void InitializeVisibilityDistanceInfo();
@@ -188,6 +208,7 @@ private:
     void ForgeTrimHeap(uint32 diff);
 
     Map::UpdateTiming _updateTiming;
+    TaskTiming _taskTiming;
 
     /// Instances destroyed since the last trim, and the countdown to the next one.
     std::atomic<uint32> _destroyedInstances{ 0 };

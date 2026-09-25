@@ -21,6 +21,7 @@
 
 #include "ChildProcess.h"
 #include "Map.h"
+#include "MapMgr.h"
 #include "EnvPool.h"
 #include "ForgeConfig.h"
 #include "LearnerProcess.h"
@@ -324,7 +325,9 @@ namespace AnimusForge
         Animus::EnvPool::CollectTiming _collect;
         Animus::EnvPool::CollectTiming _rateCollect;
         Map::UpdateTiming _rateMapTiming;
+        MapMgr::TaskTiming _rateTaskTiming;
         SimSnapshot::WorldMs _worldMs;
+        SimSnapshot::MapTasksMs _mapTasks;
         SimSnapshot::CollectMs _collectMs;
         double _ticksPerSecond = 0.0;
         double _episodesPerSecond = 0.0;
