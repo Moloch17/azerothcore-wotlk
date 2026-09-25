@@ -413,8 +413,7 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     if (owner->IsPlayer() && isControlled() && !isTemporarySummoned() && (getPetType() == SUMMON_PET || getPetType() == HUNTER_PET))
         owner->ToPlayer()->SetLastPetNumber(petInfo->PetNumber);
 
-    owner->GetSession()->AddQueryHolderCallback(CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
-        .AfterComplete([this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, savedhealth = petInfo->Health, savedmana = petInfo->Mana, healthPct, fullMana]
+    auto const finishLoad = [this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, savedhealth = petInfo->Health, savedmana = petInfo->Mana, healthPct, fullMana]
         (SQLQueryHolderBase const& holder)
     {
         if (session->GetPlayer() != owner || owner->GetPet() != this)
@@ -494,7 +493,23 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         LoadTemplateImmunities(0);
         //LoadMechanicTemplateImmunity();
         m_loading = false;
-    });
+    };
+
+    // Sealed pool: no worker would ever answer the holder, and a sim pet has no saved rows to answer it
+    // with. The rest of the load does not depend on them -- talents, the pet passives, the level-up
+    // spells, the action bar and the health and mana it was called with are all computed here -- so the
+    // same work runs against an empty holder. _LoadAuras, _LoadSpells and _LoadSpellCooldowns take a null
+    // result and simply have nothing to restore, which is the truth for a pet that was never persisted.
+    if (CharacterDatabase.IsSealed())
+    {
+        PetLoadQueryHolder const empty(ownerid, petInfo->PetNumber);
+        finishLoad(empty);
+        return true;
+    }
+
+    owner->GetSession()->AddQueryHolderCallback(
+        CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
+        .AfterComplete(finishLoad);
 
     return true;
 }

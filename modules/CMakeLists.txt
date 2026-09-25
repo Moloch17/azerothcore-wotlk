@@ -366,6 +366,33 @@ foreach(ModuleName ${MODULE_LIST__})
   endforeach()
 endforeach()
 
+# Forge: a module folded into the core keeps its config file. The loop above walks the module list,
+# and a folded module was removed from it, so without this its .conf disappeared from CONFIG_LIST and
+# the server stopped reading the file altogether: every tuned value silently fell back to the compiled
+# default while the file still sat on disk looking authoritative. The code moved into the core, the
+# settings did not. Configs only, not MODULE_LIST, which drives module SQL and the enabled-module list.
+foreach(ModuleName ${MODULES_FOLDED_INTO_CORE})
+  GetPathToModuleConfig(${ModuleName} MODULE_CONFIG_PATH)
+
+  if(NOT IS_DIRECTORY "${MODULE_CONFIG_PATH}")
+    message(STATUS "  +- ${ModuleName} (folded into core, no config directory left)")
+    continue()
+  endif()
+
+  file(GLOB MODULE_CONFIG_LIST RELATIVE
+    ${MODULE_CONFIG_PATH}
+    ${MODULE_CONFIG_PATH}/*.conf.dist)
+
+  message(STATUS "  +- ${ModuleName} (folded into core, config kept)")
+
+  foreach(configFileName ${MODULE_CONFIG_LIST})
+    CopyModuleConfig("${MODULE_CONFIG_PATH}/${configFileName}")
+    string(REGEX REPLACE "\.dist$" "" configFileName ${configFileName})
+    set(CONFIG_LIST ${CONFIG_LIST}${configFileName},)
+    message(STATUS "  |  * ${configFileName}")
+  endforeach()
+endforeach()
+
 # Define modules list
 target_compile_options(modules
   INTERFACE
