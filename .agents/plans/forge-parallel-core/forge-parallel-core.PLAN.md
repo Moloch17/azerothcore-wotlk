@@ -343,6 +343,33 @@ and the global clock D per cycle; the halves are phase-shifted by D/2. Halves mu
 sim, half learner ~3.5 ms) ~ 7-8 ms. Touches ForgeMain's tick, MapMgr::Update, the module's decision cycle, the
 protocol (StepHeader env range), and the learner's env/buffer/rollout loop.
 
+## Fifth measurement, 2026-09-25: half-batch on the learner side, and the update as the wall (d5364900d)
+
+Built: protocol 11 (STEP/ACT name their env range, SPEC the group count; the sim still sends one group) and the
+learner's half of half-batch (ForgeEnv facade + a pipelined rollout loop that answers each half as its STEP
+arrives; a half-batch fake sim trains a whole run through both paths in the tests). Not built: the sim's
+half-batch tick (design in the fourth measurement), because the numbers below say it buys nothing yet.
+
+`bench_learner`, 128 envs, overlap on (env steps/s):
+
+| mappo.minibatches | update alone | lock step, 5 ms sim | half-batch, 3 ms a half |
+| --- | --- | --- | --- |
+| 8 (current) | 1.19 s | 12,204 | 11,300 |
+| 4 | 0.69 s | 12,426 | 15,704 |
+| 2 | 0.44 s | 12,967 | 16,063 |
+
+With overlap on, a decision's cost is the longer of the rollout and the update. Half-batch shortens the rollout
+~30%; at 8 minibatches the overlapped update (~1.3-1.5 s, contended) is already as long as the rollout, so the
+gain disappears into the wait. At 4 or fewer it shows. The update's cost is sequential GRU replays (epochs x
+minibatches x 2 nets x 128 steps), launch-bound: minibatches is the knob, and it is a training hyperparameter
+(fewer, larger PPO steps per rollout). Next step depends on that decision:
+- minibatches 4 (or 2): build the sim's half-batch tick; expected ~+25-30% end to end at 128 envs.
+- minibatches 8: the update is the wall; the remaining lever is taking it out of the learner process (no GIL or
+  core sharing with the rollout, 1.3-1.5 s -> ~1.2 s), a large refactor for a small gain.
+
+Also measured: the real sim speaks protocol 11 with the learner (forge bench: 11,871 / 14,674 env steps/s at 128 /
+192 envs, 7 threads, 8 replicas, overlap on); the rewritten rollout loop costs nothing (A/B within 1%).
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
@@ -862,8 +889,9 @@ as possible offloaded to the GPU; judge by end-to-end env steps/s with the learn
 
 Open items, most useful first:
 
-1. **The user's decision on overlap_updates** (1.65x on the real-sim bench for one update of staleness). If on, set it
-   in configs/stage8_duel.yaml (the curriculum extends it) and re-run `forge bench` with the learner.
+1. **Decided and done**: overlap_updates on (configs/stage8_duel.yaml), MapUpdate.Threads 7 and
+   AnimusForge.ContinentReplicas 8 in the live confs. **Pending the user**: mappo.minibatches (fifth measurement),
+   which decides whether the sim's half-batch tick is worth building next.
 2. **The rollout side is now the wall when overlapped**: ~9.8 ms per decision = sim ~5-6 ms + learner ~4 ms
    (CPU inference for 128 envs, buffer writes, the socket copy). Phase 4's shared-memory ring and half-batch
    double buffering attack the learner's 4 ms; profile `bench_learner` first to split inference from transport.
