@@ -174,3 +174,43 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
 
     assert (run_dir / "latest.pt").exists() and (run_dir / "best.pt").exists()
     assert json.loads((run_dir / "progress.json").read_text())["phase"] == "finished"
+
+
+def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
+    """With overlap_updates, each rollout hands its update to the worker and returns without joining it; the join
+    comes after the next rollout. It used to join every update where it was submitted, so nothing overlapped."""
+    path = str(tmp_path / "forge.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(1)
+    server = threading.Thread(target=fake_sim, args=(listener, [], []))
+    server.start()
+
+    steps_per_update = 4 * SPEC.num_envs * SPEC.agents_per_env
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+        f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
+        "rollout_length=4", f"total_env_steps={3 * steps_per_update}", "checkpoint_every=1000", "init_from=''",
+        "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
+        "eval.every_env_steps=1000000", "eval.at_start=false", "eval.episodes=2", "eval.baseline=''",
+        "convergence.patience=0", "overlap_updates=true",
+    ])
+
+    pending_after_rollout = []
+    rollout = TrainingRun.rollout
+
+    def watched(self):
+        result = rollout(self)
+        pending_after_rollout.append(self.pending_update is not None)
+        return result
+
+    monkeypatch.setattr(TrainingRun, "rollout", watched)
+    assert TrainingRun(config, resume=False).run() == 0
+    server.join(timeout=10)
+    listener.close()
+
+    assert pending_after_rollout == [True, True, True]
+    with (tmp_path / "runs" / "fake" / "metrics.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    # One row per update; the first has no update of its own to report yet, the later ones the update before.
+    assert [int(row["update"]) for row in rows] == [1, 2, 3]
+    assert rows[0]["policy_loss"] == "" and rows[1]["policy_loss"] != ""

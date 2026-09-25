@@ -224,17 +224,11 @@ class TrainConfig:
     # from the same weights, so the PPO ratio stays consistent. Update stats are logged one update late as well.
     #
     # Off, and stage8_duel sets it off explicitly for the whole curriculum that extends it. The arithmetic argues
-    # the other way -- the sim blocks in ReceiveAny for the whole update, which is 1.82 s against a 3.2 s rollout
-    # on stage1_move and 3.08 s against 4.26 s on stage15_stealth, so 36-42% of wall clock with the sim idle, and
-    # the rollout being the longer of the two is the case overlap should hide completely. It was measured on this
-    # machine anyway and the arithmetic lost: 5,365 against 5,323 env steps/s, inside the noise (see the note in
-    # configs/stage8_duel.yaml). The rollout's forward pass and the update evidently contend for something the
-    # per-decision accounting does not show, so the idle time does not convert into throughput.
-    #
-    # Not settled: that measurement was taken at a 1.1 s update against a 2 s rollout. The ratio is the same today
-    # but updates now run on the GPU, and `forge bench` moves learner time by 0.1% between torch_threads 0 and 8,
-    # which is what a GPU-bound update looks like. Worth one A/B on a fast stage -- compare rollout_seconds, not
-    # update_seconds, since contention shows up as a longer rollout -- before changing this.
+    # the other way -- the sim blocks in ReceiveAny for the whole update, which is 36-42% of wall clock on the
+    # stages measured -- and the measurement that seemed to refute it (5,365 against 5,323 env steps/s) measured a
+    # bug: every overlapped update was joined in the rollout that submitted it, so nothing overlapped. Fixed
+    # 2026-09-25; on stage8_duel `python -m animus.bench_learner` gives 11,594 env steps/s overlapped against 6,896
+    # serial. Whether one update of staleness is worth that is a training decision, not a speed one.
     overlap_updates: bool = False
 
     train_device: str = AUTO  # "auto": cuda when torch sees a GPU (ROCm included), else cpu

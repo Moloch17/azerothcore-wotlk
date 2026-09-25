@@ -989,10 +989,11 @@ class TrainingRun:
         self.buffer, self.spare_buffer = self.spare_buffer, buffer
         if stats is None:
             stats, self.carried_stats = self.carried_stats, None
-        if stats is None:
-            # The very first update has nothing to overlap with; wait for it, so every update has a logged row.
-            stats = self.finish_update()
-        return stats, started, rollout_seconds
+        # The first rollout has no finished update to report, and its row goes without update stats (log_update
+        # takes that). It used to wait for its own update instead, which left the next rollout nothing to join, so
+        # it waited too, and so on: every update was joined where it was submitted and overlap_updates never
+        # overlapped anything.
+        return stats if stats is not None else {}, started, rollout_seconds
 
     @staticmethod
     def allowed_actions_by_layout(buffer: RolloutBuffer) -> dict[int, float]:

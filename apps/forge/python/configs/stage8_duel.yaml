@@ -29,10 +29,11 @@ total_env_steps: 100000000
 rollout_length: 128
 
 # Updating on a worker thread while the sim collects the next rollout used to buy ~20% more env steps per second,
-# when an update cost 21 s against a 1.6 s rollout. Batched, an update is ~1.1 s against a ~2 s rollout and the two
-# compete for the same cores: measured on this machine, overlapping gained 5,365 against 5,323 env steps/s, inside
-# the noise, and it costs the rollout one update of staleness (it acts on the update before last). Serial keeps the
-# data on-policy for nothing.
+# when an update cost 21 s against a 1.6 s rollout. A later measurement here (5,365 against 5,323 env steps/s) said it
+# bought nothing, but it measured a bug: every overlapped update was joined where it was submitted, so nothing
+# overlapped (fixed 2026-09-25). Fixed, `python -m animus.bench_learner` puts this stage at 11,594 env steps/s
+# overlapped against 6,896 serial (update 1.2 s on the GPU, rollout ~1.2 s). The price is one update of staleness:
+# the rollout acts on the weights of the update before last. Off until someone decides that trade.
 overlap_updates: false
 # The rollout's forward pass and the update share the CPU: 8 threads answered a decision in 2.6 ms with an update
 # running where torch's default 16 took 3.6 ms (1.5 against 1.7 ms idle).
