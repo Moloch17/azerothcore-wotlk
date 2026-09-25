@@ -534,7 +534,9 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
 
     UpdateNonPlayerObjects(t_diff);
 
+    auto sending = std::chrono::steady_clock::now();
     SendObjectUpdates();
+    _updateTiming.SendUpdatesNs += SinceNs(sending);
     _updateTiming.ObjectsNs += SinceNs(mark);
 
     ///- Process necessary scripts
@@ -571,11 +573,57 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
         METRIC_TAG("map_instanceid", std::to_string(GetInstanceId())));
 }
 
+namespace
+{
+    /// A creature or gameobject the map loaded from the database with its grids, rather than one something spawned.
+    bool IsWorldSpawn(WorldObject const* obj)
+    {
+        if (Creature const* creature = obj->ToCreature())
+            return creature->GetSpawnId() != 0;
+        if (GameObject const* go = obj->ToGameObject())
+            return go->GetSpawnId() != 0;
+        return false;
+    }
+}
+
+void Map::UpdateNonPlayerObject(WorldObject* obj, uint32 diff, bool detailed, uint32 seenPhases)
+{
+    bool const spawn = IsWorldSpawn(obj);
+    // A world spawn no player on this map shares a phase with cannot be seen, reached or touched by any of them, so
+    // nothing anyone can observe depends on it moving on. The sim's envs each live in a phase of their own and the
+    // continent's creatures in the normal one: updating them was ~90% of a duel stage's object time, for nobody.
+    // A stage that plays in the world has its players in the normal phase, and updates them as before.
+    if (spawn && !(obj->GetPhaseMask() & seenPhases))
+    {
+        ++_updateTiming.UnseenSpawns;
+        return;
+    }
+
+    ++(spawn ? _updateTiming.SpawnUpdates : _updateTiming.OtherUpdates);
+    if (!detailed)
+    {
+        obj->Update(diff);
+        return;
+    }
+
+    auto mark = std::chrono::steady_clock::now();
+    obj->Update(diff);
+    (spawn ? _updateTiming.SpawnNs : _updateTiming.OtherNs) += SinceNs(mark);
+}
+
 void Map::UpdateNonPlayerObjects(uint32 const diff)
 {
     for (WorldObject* obj : _pendingAddUpdatableObjectList)
         _AddObjectToUpdateList(obj);
     _pendingAddUpdatableObjectList.clear();
+
+    bool const detailed = DetailedObjectTiming.load(std::memory_order_relaxed);
+
+    // Every phase a player on this map is in: what the world spawns have to share to be worth updating.
+    uint32 seenPhases = 0;
+    for (MapRefMgr::iterator itr = m_mapRefMgr.begin(); itr != m_mapRefMgr.end(); ++itr)
+        if (Player const* player = itr->GetSource())
+            seenPhases |= player->GetPhaseMask();
 
     if (_updatableObjectListRecheckTimer.Passed())
     {
@@ -588,7 +636,7 @@ void Map::UpdateNonPlayerObjects(uint32 const diff)
                 continue;
             }
 
-            obj->Update(diff);
+            UpdateNonPlayerObject(obj, diff, detailed, seenPhases);
 
             if (!obj->IsUpdateNeeded())
             {
@@ -609,7 +657,7 @@ void Map::UpdateNonPlayerObjects(uint32 const diff)
             if (!obj->IsInWorld())
                 continue;
 
-            obj->Update(diff);
+            UpdateNonPlayerObject(obj, diff, detailed, seenPhases);
         }
     }
 }

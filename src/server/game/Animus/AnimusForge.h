@@ -148,6 +148,12 @@ namespace AnimusForge
             uint64 MemoryMb = 0;            // the worldserver's resident memory at the end of the trial
             double ObjectsMs = 0.0;         // UpdateNonPlayerObjects, thread time per decision over every map
             double ResetMs = 0.0;           // rebuilding ended episodes on the world thread, per decision
+            double SpawnUpdates = 0.0;      // world spawns updated per decision, over every map
+            double UnseenSpawns = 0.0;      // world spawns left alone per decision (no player shares their phase)
+            double OtherUpdates = 0.0;      // other non-player objects updated per decision
+            double SpawnMs = 0.0;           // ... and their thread time per decision
+            double OtherMs = 0.0;
+            double SendMs = 0.0;            // SendObjectUpdates, thread time per decision
             double TasksPerUpdate = 0.0;    // map tasks per map update (MapMgr::TaskTiming), and per update:
             double TaskSumMs = 0.0;         // ... their summed wall time
             double TaskLongestMs = 0.0;     // ... the longest one
@@ -338,6 +344,7 @@ namespace AnimusForge
         uint64 _benchLearnerNs = 0;
         uint64 _benchObjectsNs = 0;
         uint64 _benchResetNs = 0;
+        Map::UpdateTiming _benchMapTiming;
         MapMgr::TaskTiming _benchTaskTiming;
 
         std::chrono::steady_clock::time_point _rateTime;

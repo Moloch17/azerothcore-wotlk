@@ -817,6 +817,7 @@ void AnimusForge::Forge::BenchTick()
         _benchLearnerNs = _learnerNs;
         _benchObjectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
         _benchResetNs = _collect.ResetNs;
+        _benchMapTiming = sMapMgr->GetUpdateTiming();
         _benchTaskTiming = sMapMgr->GetTaskTiming();
         return;
     }
@@ -841,6 +842,16 @@ void AnimusForge::Forge::BenchTick()
     uint64 const objectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
     trial.ObjectsMs = double(objectsNs - std::min(objectsNs, _benchObjectsNs)) / ticks / 1e6;
     trial.ResetMs = double(_collect.ResetNs - std::min(_collect.ResetNs, _benchResetNs)) / ticks / 1e6;
+    {
+        Map::UpdateTiming const& now = sMapMgr->GetUpdateTiming();
+        auto const since = [](uint64 later, uint64 earlier) { return double(later - std::min(later, earlier)); };
+        trial.SpawnUpdates = since(now.SpawnUpdates, _benchMapTiming.SpawnUpdates) / ticks;
+        trial.UnseenSpawns = since(now.UnseenSpawns, _benchMapTiming.UnseenSpawns) / ticks;
+        trial.OtherUpdates = since(now.OtherUpdates, _benchMapTiming.OtherUpdates) / ticks;
+        trial.SpawnMs = since(now.SpawnNs, _benchMapTiming.SpawnNs) / ticks / 1e6;
+        trial.OtherMs = since(now.OtherNs, _benchMapTiming.OtherNs) / ticks / 1e6;
+        trial.SendMs = since(now.SendUpdatesNs, _benchMapTiming.SendUpdatesNs) / ticks / 1e6;
+    }
 
     MapMgr::TaskTiming const& tasks = sMapMgr->GetTaskTiming();
     if (uint64 const updates = tasks.Ticks - _benchTaskTiming.Ticks)
@@ -867,6 +878,9 @@ void AnimusForge::Forge::BenchTick()
         "longest {:.2f} ms (last on cpu {}), cpus {}; objects {:.2f} ms, resets {:.2f} ms per decision",
         _benchTrial + 1, _benchTrials.size(), trial.TasksPerUpdate, trial.TaskSumMs, trial.TaskWallMs,
         trial.TaskLongestMs, trial.SlowestCpu, Format::Cpus(trial.CpuMask), trial.ObjectsMs, trial.ResetMs);
+    LOG_INFO("module.animus", "Bench {} of {}: objects are {:.0f} world spawns ({:.2f} ms; {:.0f} unseen, left alone), "
+        "{:.0f} others ({:.2f} ms) and sending updates ({:.2f} ms) per decision", _benchTrial + 1, _benchTrials.size(),
+        trial.SpawnUpdates, trial.SpawnMs, trial.UnseenSpawns, trial.OtherUpdates, trial.OtherMs, trial.SendMs);
 
     // Skip what is left of this thread count once the machine is running out of memory: bigger envs only cost more.
     // The trials go from the plan too, so their envs are never built. Trial i is plan entry _plan.Index + i -
@@ -940,6 +954,7 @@ void AnimusForge::Forge::BenchPlanEnded()
 void AnimusForge::Forge::BenchEnd()
 {
     _benching = false;
+    Map::DetailedObjectTiming.store(false, std::memory_order_relaxed);
     _benchLearnerPhase = false;
     ApplyMapThreads(ConfiguredMapThreads());
 }
@@ -1048,6 +1063,12 @@ void AnimusForge::Forge::BenchSave() const
         entry["memory_mb"] = trial.MemoryMb;
         entry["objects_ms"] = trial.ObjectsMs;
         entry["reset_ms"] = trial.ResetMs;
+        entry["spawn_updates"] = trial.SpawnUpdates;
+        entry["unseen_spawns"] = trial.UnseenSpawns;
+        entry["other_updates"] = trial.OtherUpdates;
+        entry["spawn_ms"] = trial.SpawnMs;
+        entry["other_ms"] = trial.OtherMs;
+        entry["send_ms"] = trial.SendMs;
         entry["tasks_per_update"] = trial.TasksPerUpdate;
         entry["task_sum_ms"] = trial.TaskSumMs;
         entry["task_longest_ms"] = trial.TaskLongestMs;

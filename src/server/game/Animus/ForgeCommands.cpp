@@ -862,6 +862,7 @@ bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink cons
     }
 
     _benching = true;
+    Map::DetailedObjectTiming.store(true, std::memory_order_relaxed);
     _benchLearnerPhase = false;
     _benchTrial = 0;
     _benchScenario = benchScenario;

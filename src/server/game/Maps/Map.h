@@ -39,6 +39,7 @@
 #include "SpawnData.h"
 #include "Timer.h"
 #include "GridTerrainData.h"
+#include <atomic>
 #include <bitset>
 #include <list>
 #include <memory>
@@ -212,9 +213,25 @@ public:
         uint64 ScriptsNs = 0;
         uint64 DelayedNs = 0;
         uint64 Ticks = 0;               ///< full (t_diff != 0) updates counted
+        /// Objects splits into what UpdateNonPlayerObjects spent on world spawns (creatures and gameobjects the
+        /// map loaded from the database with its grids) and on everything else (a scenario's own creatures,
+        /// pets, dynamic objects), and SendObjectUpdates. The counts are updates, summed over ticks; the times
+        /// are kept only while Map::DetailedObjectTiming is on, since they cost two clock reads an object.
+        uint64 SpawnUpdates = 0;
+        uint64 OtherUpdates = 0;
+        uint64 SpawnNs = 0;
+        uint64 OtherNs = 0;
+        uint64 SendUpdatesNs = 0;
+        uint64 UnseenSpawns = 0;        ///< world spawns left alone: no player on the map shares a phase with them
 
         UpdateTiming& operator+=(UpdateTiming const& other)
         {
+            UnseenSpawns += other.UnseenSpawns;
+            SpawnUpdates += other.SpawnUpdates;
+            OtherUpdates += other.OtherUpdates;
+            SpawnNs += other.SpawnNs;
+            OtherNs += other.OtherNs;
+            SendUpdatesNs += other.SendUpdatesNs;
             SessionsNs += other.SessionsNs;
             PlayersNs += other.PlayersNs;
             ObjectsNs += other.ObjectsNs;
@@ -228,6 +245,10 @@ public:
     };
 
     [[nodiscard]] UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
+
+    /// Time each non-player object's update by kind (UpdateTiming::SpawnNs / OtherNs): `forge bench` turns it
+    /// on for its trials. Written by the world thread between ticks, read by the map tasks.
+    static inline std::atomic<bool> DetailedObjectTiming{ false };
 
     /// This map's last task on the updater: the wall time of MapUpdater::RunMapTick and the CPU it started on.
     /// Written by the map thread, taken (read and cleared) by MapMgr between ticks; Ns == 0 means not ticked.
@@ -714,6 +735,7 @@ private:
     void DeleteFromWorld(T*);
 
     void UpdateNonPlayerObjects(uint32 const diff);
+    void UpdateNonPlayerObject(WorldObject* obj, uint32 diff, bool detailed, uint32 seenPhases);
 
     void _AddObjectToUpdateList(WorldObject* obj);
     void _RemoveObjectFromUpdateList(WorldObject* obj);
