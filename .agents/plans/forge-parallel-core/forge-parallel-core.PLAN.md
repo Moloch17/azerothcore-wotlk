@@ -309,6 +309,40 @@ Findings, in order of consequence:
    pays launches and a device round trip for its outputs. It becomes right only when observations are produced
    on the device (Phase 6).
 
+## Fourth measurement, 2026-09-25: inference, threads, replicas (revision 0cb3868fe, overlap on)
+
+Learner side, `bench_learner` at 5 ms of sim: transport + decode is ~0.8-1 ms per decision, so the shared-memory
+ring (Phase 4 item 1) is worth under 1 ms. Rollout inference is the learner's cost: act_and_value 2.15 -> 1.76 ms
+after folding the rollout copies' normalisers into their adapters (animus.export's fold). What remains is ~42
+small matmuls at ~23 us each (OpenMP fork/join on 13-row slices) and categorical sampling. torch_threads 8 stays
+(best serial; 4 is within 4% overlapped). GPU inference stays slower until observations are made on the device:
+~17 host syncs per decision (per_layout on the device, 6-8 separate `.cpu()` outputs) at ~180 us each.
+
+`forge bench`, stage8_duel, learner phase with overlap on (env steps/s; map update ms):
+
+| continent replicas | 7 thr, 128 sim-only | 7 thr, 192 sim-only | 192 with learner, 7 / 8 thr |
+| --- | --- | --- | --- |
+| 0 (31 envs a map) | 32,698 (3.5) | 40,599 (4.1) | 15,924 / 15,825 |
+| 8 (16 envs a map) | **36,925 (3.1)** | **43,554 (3.8)** | 15,790 / 15,998 |
+| 16 (8 envs a map) | 22,529 (5.1) | 29,821 (5.8) | 15,598 / 15,312 |
+
+1. **7 threads beats 8**: the world thread plus 7 workers are exactly the V-cache die's 8 cores; the 8th worker
+   lands on the world thread's SMT sibling. The live config runs 16.
+2. **8 replicas beat the default on the sim alone** (smaller maps, a shorter longest task); 16 over-split it
+   (19 tasks on 8 threads, and total map work up ~40% from per-map fixed costs).
+3. **With the learner the setting stops mattering**: a decision at 192 envs is map ~4.2 + sim ~1.0 + learner
+   ~6-7 ms, taken in turn. End to end is now learner-bound, which is what Phase 4 item 2 (half-batch double
+   buffering) exists to hide.
+
+**Half-batch design note (not started).** The world thread ticks every map with one global clock, and spell
+cooldowns read GameTime, so a half cannot simply tick every other world tick. Proposed: world ticks at D/2 (GameTime
+advances D/2), and each half's maps tick every second world tick with diff D, so every map advances D per decision
+and the global clock D per cycle; the halves are phase-shifted by D/2. Halves must be disjoint sets of maps
+(replicas/instances). A half's world time is its longest map, so it wants maps of ~16 envs or fewer: at 192 envs,
+8 replicas give 12 maps, 6 per half. Expected at 192 envs: from ~12 ms per decision to ~2 x max(half map ~3 ms +
+sim, half learner ~3.5 ms) ~ 7-8 ms. Touches ForgeMain's tick, MapMgr::Update, the module's decision cycle, the
+protocol (StepHeader env range), and the learner's env/buffer/rollout loop.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
@@ -833,8 +867,9 @@ Open items, most useful first:
 2. **The rollout side is now the wall when overlapped**: ~9.8 ms per decision = sim ~5-6 ms + learner ~4 ms
    (CPU inference for 128 envs, buffer writes, the socket copy). Phase 4's shared-memory ring and half-batch
    double buffering attack the learner's 4 ms; profile `bench_learner` first to split inference from transport.
-3. **The pool's 9th thread with 8 map threads lands on the world thread's SMT sibling (cpu 16)**; sim-only at
-   128 envs moved 3.9 -> 4.2 ms. Consider treating MapUpdate.Threads as including the world thread.
+3. **Settings to apply once the user agrees** (performance only, no training effect): MapUpdate.Threads 16 -> 7
+   and AnimusForge.ContinentReplicas 0 -> 8 (fourth measurement). Envs 192 would change the learner's batch:
+   the user's call.
 4. The update's remaining cost is MIOpen's per-timestep launches (~880 ms CPU of 1.18 s). Only fewer, larger
    sequential sweeps (fewer minibatches) change that: a training hyperparameter, the user's call.
 5. The learner is pinned with sched_setaffinity(pid) right after posix_spawn: that pins the main thread only, and
