@@ -88,6 +88,10 @@ class MappoConfig:
     # reference MAPPO replays 10-step chunks. Rounded down to a divisor of rollout_length; off while a distiller is
     # teaching (the teachers' memories are not stored).
     chunk_length: int = 0
+    # Rollout decisions on the GPU as one captured graph per batch shape (_RolloutGraph): the ~250 small kernels of
+    # the actor and critic, their inputs' uploads and their results' downloads replayed as one launch, instead of
+    # issued one by one from Python. The same computation; off (or off the GPU, or with a slow layout) it runs eager.
+    rollout_graphs: bool = True
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
     # between, and its action head is conditioned on it. The chooser then decides on a clock that many times slower
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
@@ -233,6 +237,133 @@ class _Decided:
         return taken, fetched[self.log_probs_at], foresight, goals, self.chosen
 
 
+class _RolloutGraph:
+    """One rollout decision (MappoTrainer.act_and_value with an acting state) captured as a CUDA / HIP graph for one
+    batch shape: upload from fixed pinned buffers, the actor (goal, actions, foresight, memory) and the critic
+    (value, memory), and the download of every result to fixed pinned buffers. A replay is one launch and one wait.
+
+    The graph reads the rollout networks' tensors where they were at capture: _sync_rollout copies the weights in
+    place and DenseLayouts.refresh keeps the dense matrices where they are, so a replay always uses the latest
+    weights. Sampling draws from the device generator, which the capture registers (fresh draws each replay)."""
+
+    def __init__(self, trainer: "MappoTrainer", envs: int, agents: int, obs: np.ndarray, mask: np.ndarray,
+                 state_features: np.ndarray, deterministic: bool):
+        self.trainer, self.envs, self.agents, self.deterministic = trainer, envs, agents, deterministic
+        device, rows = trainer.rollout_device, envs * agents
+        recurrent, goals = trainer.recurrent_size, trainer.goal_count
+
+        def pinned(shape, dtype):
+            return torch.zeros(shape, dtype=dtype, pin_memory=True)
+
+        # Inputs: a pinned host copy the caller fills and a device copy the graph uploads it into.
+        self.host_in = {
+            "obs": pinned((envs, agents, obs.shape[-1]), torch.float32),
+            "layout": pinned((envs, agents), torch.long),
+            "mask": pinned((envs, agents, mask.shape[-1]), torch.bool),
+            "state": pinned((envs, state_features.shape[-1]), torch.float32),
+        }
+        if recurrent:
+            self.host_in["memory"] = pinned((envs, agents, recurrent), torch.float32)
+            self.host_in["critic_memory"] = pinned((envs, agents, recurrent), torch.float32)
+        if goals:
+            self.host_in["goal"] = pinned((envs, agents), torch.long)
+            self.host_in["chosen"] = pinned((envs, agents), torch.bool)
+        self.device_in = {name: torch.empty_like(host, device=device) for name, host in self.host_in.items()}
+        self.host_out: dict[str, torch.Tensor] = {}
+
+        stream = trainer._rollout_stream
+        # Warm up on the capture stream (allocator and library workspaces), then capture.
+        stream.wait_stream(torch.cuda.current_stream(device))
+        with torch.no_grad():
+            with torch.cuda.stream(stream):
+                for _ in range(2):
+                    self._body(rows)
+            stream.synchronize()
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph, stream=stream):
+                self._body(rows)
+
+    def _body(self, rows: int) -> None:
+        trainer = self.trainer
+        envs, agents = self.envs, self.agents
+        actor, critic = trainer._rollout_actor, trainer._rollout_critic
+        inputs = self.device_in
+        for name, host in self.host_in.items():
+            inputs[name].copy_(host, non_blocking=True)
+
+        obs_t = inputs["obs"].reshape(rows, -1)
+        layout_t = inputs["layout"].reshape(rows)
+        mask_t = inputs["mask"].reshape(rows, -1)
+        memory = inputs["memory"].reshape(rows, -1) if "memory" in inputs else None
+        features = actor.features(obs_t, layout_t, memory, None)
+
+        out: dict[str, torch.Tensor] = {}
+        goal_t = None
+        if trainer.goal_count:
+            distribution = actor.goal_distribution(features)
+            sampled = distribution.logits.argmax(dim=-1) if self.deterministic else distribution.sample()
+            goal_t = torch.where(inputs["chosen"].reshape(rows), sampled, inputs["goal"].reshape(rows))
+            out["goal"] = goal_t.reshape(envs, agents)
+            out["goal_log_prob"] = distribution.log_prob(goal_t).reshape(envs, agents)
+
+        dist = actor.action_distribution(features, layout_t, mask_t, goal_t, None)
+        actions = dist.logits.argmax(dim=-1) if self.deterministic else dist.sample()
+        out["actions"] = actions.reshape(envs, agents)
+        out["log_probs"] = dist.log_prob(actions).reshape(envs, agents)
+        if trainer.foresight_outputs:
+            out["foresight"] = actor.foresight(features).reshape(envs, agents, trainer.foresight_outputs)
+        if memory is not None:
+            out["memory"] = features.reshape(envs, agents, trainer.recurrent_size)
+
+        state_t = inputs["state"][:, None, :].expand(envs, agents, inputs["state"].shape[-1]).reshape(rows, -1)
+        critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
+        values, carried = critic.step(state_t, obs_t, layout_t, goal_t, None, memory=critic_memory)
+        if trainer._rollout_value_norm is not None:
+            values = trainer._rollout_value_norm.denormalize(values)
+        out["values"] = values.reshape(envs, agents)
+        if critic_memory is not None:
+            out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
+
+        if not self.host_out:
+            self.host_out = {name: torch.empty(value.shape, dtype=value.dtype, pin_memory=True)
+                             for name, value in out.items()}
+        for name, value in out.items():
+            self.host_out[name].copy_(value, non_blocking=True)
+
+    def run(self, obs, mask, layout, state_features, state: "ActingState"):
+        """One decision: fill the inputs, replay, wait once. Returns the act_and_value tuple and updates `state`."""
+        trainer = self.trainer
+        host = self.host_in
+        np.copyto(host["obs"].numpy(), obs)
+        np.copyto(host["layout"].numpy(), layout, casting="unsafe")
+        np.copyto(host["mask"].numpy(), mask)
+        np.copyto(host["state"].numpy(), state_features)
+        if trainer.recurrent_size:
+            np.copyto(host["memory"].numpy(), state.memory)
+            np.copyto(host["critic_memory"].numpy(), state.critic_memory)
+        chosen = None
+        if trainer.goal_count:
+            # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
+            chosen = (state.age % max(1, trainer.config.goal_every_decisions)) == 0
+            np.copyto(host["goal"].numpy(), state.goal, casting="unsafe")
+            np.copyto(host["chosen"].numpy(), chosen)
+            state.age = np.where(chosen, 1, state.age + 1)
+
+        self.graph.replay()
+        trainer._rollout_stream.synchronize()
+        # Copies: the pinned outputs are overwritten by the next replay.
+        fetched = {name: value.numpy().copy() for name, value in self.host_out.items()}
+
+        goals = None
+        if trainer.goal_count:
+            state.goal = fetched["goal"]
+            goals = (fetched["goal"], fetched["goal_log_prob"], chosen)
+        if trainer.recurrent_size:
+            state.memory = fetched["memory"]
+            state.critic_memory = fetched["critic_memory"]
+        return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals, None
+
+
 class MappoTrainer:
     """Owns the networks. Rollouts run on `rollout_device` (a CPU copy is usually fastest for small
     MLPs at batch sizes of a few hundred); updates run on `train_device`."""
@@ -280,6 +411,7 @@ class MappoTrainer:
         # The recurrent update's actor and critic halves (_update_recurrent); None off the GPU.
         self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
                                 if self.train_device.type == "cuda" else (None, None))
+        self._rollout_graphs: dict[tuple, _RolloutGraph] = {}
         self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
         self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
         self._rollout_value_norm = (
@@ -398,6 +530,22 @@ class MappoTrainer:
         # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
         return to_device(torch.as_tensor(np.ascontiguousarray(array), dtype=dtype), self.rollout_device)
 
+    def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
+                       state: "ActingState | None") -> "_RolloutGraph | None":
+        """The captured decision for this batch shape, captured on first use; None where it does not apply: off the
+        GPU, turned off (mappo.rollout_graphs), without an acting state, or with a slow layout (its held decisions
+        branch on the host)."""
+        if (self._rollout_stream is None or not self.config.rollout_graphs or state is None
+                or self.slow_layout >= 0):
+            return None
+        envs, agents = layout.shape
+        key = (envs, agents, obs.shape[-1], mask.shape[-1], state_features.shape[-1], bool(deterministic))
+        graph = self._rollout_graphs.get(key)
+        if graph is None:
+            graph = self._rollout_graphs[key] = _RolloutGraph(self, envs, agents, obs, mask, state_features,
+                                                              bool(deterministic))
+        return graph
+
     def _groups(self, layout: np.ndarray, layout_t: torch.Tensor):
         """The rows of each layout: grouped on the host when the rollout is on the GPU, so no forward pass waits to
         read the layouts back."""
@@ -440,6 +588,9 @@ class MappoTrainer:
         decisions are samples (a slow layout's held ones are not; None when the run has no slow layout)."""
         with self._rollout_context():
             envs, agents = layout.shape
+            graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
+            if graph is not None:
+                return graph.run(obs, mask, layout, state_features, state)
             rows = envs * agents
             downloads = _Downloads(self._rollout_stream)
             # Converted and grouped by layout once, for the actor and the critic both.

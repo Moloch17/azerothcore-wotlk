@@ -143,10 +143,17 @@ class DenseLayouts:
         self.bias = first.new_zeros(self.layouts * self.out)
         self.valid = torch.zeros((self.layouts, self.out), dtype=torch.bool, device=first.device)
         for index, linear in enumerate(linears):
+            self.valid[index, : linear.out_features] = True
+        self.refresh(linears)
+
+    @torch.no_grad()
+    def refresh(self, linears) -> None:
+        """The layers' current weights, written into this matrix in place: a rollout graph (MappoTrainer) captured
+        these tensors' addresses, so the weights after a sync have to land in them rather than in new ones."""
+        for index, linear in enumerate(linears):
             columns = slice(index * self.out, index * self.out + linear.out_features)
             self.weight[: linear.in_features, columns] = linear.weight.t()
             self.bias[columns] = linear.bias
-            self.valid[index, : linear.out_features] = True
 
     def __call__(self, rows: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
         """rows [N, in_width], layout [N] -> each row's own layer's output, [N, out] (padded past its width)."""
@@ -367,9 +374,14 @@ class LayoutActor(nn.Module):
             fold_into(norm, adapter)
 
     def densify(self, obs_width: int) -> None:
-        """Adapters and heads as DenseLayouts, after fold_normalisation: for a rollout copy on the GPU only."""
-        self.dense_adapters = DenseLayouts(self.adapters, obs_width)
-        self.dense_heads = DenseLayouts(self.heads, self.head_width)
+        """Adapters and heads as DenseLayouts, after fold_normalisation: for a rollout copy on the GPU only. Once
+        built they are refreshed in place (DenseLayouts.refresh)."""
+        if self.dense_adapters is None:
+            self.dense_adapters = DenseLayouts(self.adapters, obs_width)
+            self.dense_heads = DenseLayouts(self.heads, self.head_width)
+        else:
+            self.dense_adapters.refresh(self.adapters)
+            self.dense_heads.refresh(self.heads)
 
     def initial_memory(self, *lead: int, device=None) -> torch.Tensor:
         """A cleared memory for `lead` rows (what an episode starts with)."""
@@ -499,7 +511,10 @@ class LayoutCritic(nn.Module):
 
     def densify(self, obs_width: int) -> None:
         """As LayoutActor.densify."""
-        self.dense_adapters = DenseLayouts(self.adapters, obs_width)
+        if self.dense_adapters is None:
+            self.dense_adapters = DenseLayouts(self.adapters, obs_width)
+        else:
+            self.dense_adapters.refresh(self.adapters)
 
     def carry(self, encoded: torch.Tensor, memory: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
         """The critic's GRU over a replayed sequence, as LayoutActor.carry is for the actor's."""
