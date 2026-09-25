@@ -284,15 +284,16 @@ Two tools now measure the learner without a worldserver, both reproducing the li
 | GRU replay as one fused MIOpen call per sequence | 1.29 | 6,642 / 6,657 (overlap broken) | 6,368 / 8,474 |
 | + CPU placement (pool on the V-cache die, learner on the other) | 1.29 | - | 6,878 / 9,053 |
 | + overlap_updates fixed (it had never overlapped) | 1.29 | 6,650 / 11,150 | not re-run |
-| + host syncs out of the update (3,555 -> 444) | 1.18 | 6,896 / 11,594 | not re-run |
+| + host syncs out of the update (3,555 -> 444) | 1.18 | 6,896 / 11,594 | 7,067 / 9,278 serial |
+| same, `--set overlap_updates=true` | 1.18 | | **11,670 / 15,460** (2.1x the session's start) |
 
 Findings, in order of consequence:
 
 1. **overlap_updates never overlapped.** The first-update wait keyed on "the previous join returned nothing",
    which the wait itself guaranteed for the next rollout, so every update was joined where it was submitted.
    The earlier conclusion that overlap buys nothing measured this bug. Fixed and pinned by a test; the setting
-   stays off because one update of policy staleness is a training decision for the user. On it would be
-   ~1.7x end to end on this stage.
+   stays off because one update of policy staleness is a training decision for the user. On, the real-sim bench
+   gives 11,670 / 15,460 env steps/s against 7,067 / 9,278 serial (128 / 192 envs): 1.65x.
 2. **The recurrent update is launch-bound.** 4 epochs x 8 minibatches x (actor + critic) = 64 sequential GRU
    replays of 128 steps on 16 rows. Stepping GRUCell was ~210k launches per update; MIOpen's fused call still
    launches per timestep internally (~190k), so it only moved the overhead into C++. A persistent Triton kernel
@@ -827,7 +828,7 @@ as possible offloaded to the GPU; judge by end-to-end env steps/s with the learn
 
 Open items, most useful first:
 
-1. **The user's decision on overlap_updates** (~1.7x on stage8_duel for one update of staleness). If on, set it
+1. **The user's decision on overlap_updates** (1.65x on the real-sim bench for one update of staleness). If on, set it
    in configs/stage8_duel.yaml (the curriculum extends it) and re-run `forge bench` with the learner.
 2. **The rollout side is now the wall when overlapped**: ~9.8 ms per decision = sim ~5-6 ms + learner ~4 ms
    (CPU inference for 128 envs, buffer writes, the socket copy). Phase 4's shared-memory ring and half-batch
@@ -836,6 +837,9 @@ Open items, most useful first:
    128 envs moved 3.9 -> 4.2 ms. Consider treating MapUpdate.Threads as including the world thread.
 4. The update's remaining cost is MIOpen's per-timestep launches (~880 ms CPU of 1.18 s). Only fewer, larger
    sequential sweeps (fewer minibatches) change that: a training hyperparameter, the user's call.
-5. Carried over from the first session: the folded-module config fix depends on an untracked directory
+5. The learner is pinned with sched_setaffinity(pid) right after posix_spawn: that pins the main thread only, and
+   torch's threads inherit it because Python starts them much later. If that ever races, prefix the argv with
+   `taskset -c <list>` instead.
+6. Carried over from the first session: the folded-module config fix depends on an untracked directory
    (`modules/<module>/conf`); the abort handler segfaults before its backtrace; the live worldserver.conf
    predates the fold; `AnimusForge.Bench.Policy` is left at "random".
