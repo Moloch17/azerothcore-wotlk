@@ -228,7 +228,7 @@ void AuraApplication::ClientUpdate(bool remove)
     _needClientUpdate = false;
 
     // The flag reset above is the only state change; the packet is only for clients.
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_AURA_UPDATE);

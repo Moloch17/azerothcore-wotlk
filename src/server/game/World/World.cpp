@@ -20,6 +20,7 @@
 */
 
 #include "World.h"
+#include "AnimusForge.h"
 #include "Forge.h"
 #include "AccountMgr.h"
 #include "AchievementMgr.h"
@@ -1153,7 +1154,7 @@ void World::Update(uint32 diff)
     /// from the wall clock, so every GameTime reader -- cooldowns, GCD, procs, respawns -- moves on
     /// game time. See GameTime::AdvanceGameTimers. Playtest mode is the stock wall clock.
     Seconds lastGameTime = GameTime::GetGameTime();
-    if (Forge::Playtest())
+    if (ForgeCore::Playtest())
         GameTime::UpdateGameTimers();
     else
         GameTime::AdvanceGameTimers(Milliseconds(diff));
@@ -1221,7 +1222,7 @@ void World::Update(uint32 diff)
     sAuctionMgr->Update(diff);
 
     ///- Real client sessions (playtest mode only; sim sessions are driven by their map).
-    if (Forge::Playtest())
+    if (ForgeCore::Playtest())
         sWorldSessionMgr->UpdateSessions(diff);
 
     ///- Dungeon finder: remove obsolete entries before the maps look for compatibles.
@@ -1252,7 +1253,8 @@ void World::Update(uint32 diff)
     /// command the module defers is applied on this same tick.
     ProcessCliCommands();
 
-    ///- Where the bot orchestration module hooks in.
+    ///- The training host's decision loop, then any module's world hook.
+    sAnimusForge->OnUpdate(diff);
     sScriptMgr->OnWorldUpdate(diff);
 
     ///- Ping to keep MySQL connections alive. Kept because a long run would otherwise sit idle

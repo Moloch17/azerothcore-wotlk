@@ -1,0 +1,13 @@
+# The bear's drill. The arena pins its first seat to a build that can hold the pull
+# (ArenaDefinition::SeatAptitudes, a threshold on measured mitigation rather than a role), which in a druid-only
+# run means a bear -- and the floors are on the bear because it is the build being drilled.
+#
+# Note what is gated and what is not. threat_share and threat_on_teammates are outcomes: what the pull did, not
+# what the seat pressed. Nothing here asks for Maul, for a form, or for a rate of anything -- a bear that holds a
+# pull some other way has held the pull.
+
+extends: ../stage18_tanking.yaml
+run_name: stage18_tanking
+
+eval:
+  report: [threat_share, threat_on_teammates, teammate_damage_taken, pulls_cleared, wipes]

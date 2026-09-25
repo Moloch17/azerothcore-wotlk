@@ -3979,7 +3979,7 @@ Mail* Player::GetMail(uint32 id)
 
 void Player::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (target == this)
@@ -4013,7 +4013,7 @@ void Player::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Player::DestroyForPlayer(Player* target, bool onDeath) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     Unit::DestroyForPlayer(target, onDeath);
@@ -5837,7 +5837,7 @@ void Player::SaveRecallPosition()
 
 void Player::SendMessageToSet(WorldPacket const* data, bool self) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     SendMessageToSetInRange(data, GetVisibilityRange(), self);
@@ -5845,7 +5845,7 @@ void Player::SendMessageToSet(WorldPacket const* data, bool self) const
 
 void Player::SendMessageToSetInRange(WorldPacket const* data, float dist, bool self) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (self)
@@ -5857,7 +5857,7 @@ void Player::SendMessageToSetInRange(WorldPacket const* data, float dist, bool s
 
 void Player::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcvr) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (skipped_rcvr != this)
@@ -5869,7 +5869,7 @@ void Player::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcv
 
 void Player::SendDirectMessage(WorldPacket const* data) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     m_session->SendPacket(data);
@@ -11954,7 +11954,7 @@ void Player::SendUpdateToOutOfRangeGroupMembers()
     if (m_groupUpdateMask == GROUP_UPDATE_FLAG_NONE)
         return;
     // The party member stats packet is only for clients; the mask resets below always run.
-    if (Forge::HasClients())
+    if (ForgeCore::HasClients())
         if (Group* group = GetGroup())
             group->UpdatePlayerOutOfRange(this);
 

@@ -71,10 +71,12 @@ public:
     bool isDryRun() { return dryRun; }
     void setDryRun(bool mode) { dryRun = mode; }
 
+    /// Forge: an extra file merged after the main one; the sim host reads a legacy modules/mod_animus_forge.conf.
+    bool LoadAdditionalFile(std::string file, bool isOptional = false, bool isReload = false);
+
 private:
     /// Method used only for loading main configuration files (authserver.conf and worldserver.conf)
     bool LoadInitial(std::string const& file, bool isReload = false);
-    bool LoadAdditionalFile(std::string file, bool isOptional = false, bool isReload = false);
 
     template<class T>
     T GetValueDefault(std::string const& name, T const& def, bool showLogs = true) const;

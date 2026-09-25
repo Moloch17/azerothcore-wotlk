@@ -16,6 +16,7 @@
  */
 
 #include "SpellAuraEffects.h"
+#include "AnimusHooks.h"
 #include "AreaDefines.h"
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
@@ -6653,6 +6654,7 @@ void AuraEffect::HandlePeriodicHealAurasTick(Unit* target, Unit* caster) const
     // Script Hook For HandlePeriodicDamageAurasTick -- Allow scripts to change the Damage pre class mitigation calculations
     sScriptMgr->ModifyPeriodicDamageAurasTick(target, caster, heal, GetSpellInfo());
     sScriptMgr->ModifyHealReceived(target, caster, heal, GetSpellInfo());
+    Animus::Hooks::HealCast(caster, target, heal);
 
     if (target->GetAI())
     {
@@ -6661,7 +6663,7 @@ void AuraEffect::HandlePeriodicHealAurasTick(Unit* target, Unit* caster) const
 
     HealInfo healInfo(caster, target, heal, GetSpellInfo(), GetSpellInfo()->GetSchoolMask());
     Unit::CalcHealAbsorb(healInfo);
-    int32 gain = Unit::DealHeal(caster, target, healInfo.GetHeal());
+    int32 gain = Unit::DealHeal(caster, target, healInfo.GetHeal(), true);
     healInfo.SetEffectiveHeal(gain);
 
     SpellPeriodicAuraLogInfo pInfo(this, healInfo.GetHeal(), healInfo.GetHeal() - healInfo.GetEffectiveHeal(), healInfo.GetAbsorb(), 0, 0.0f, crit);

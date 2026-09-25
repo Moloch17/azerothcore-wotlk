@@ -1,0 +1,19 @@
+# Stage 23 of the curriculum: the first real instance. A party of four learned seats and their cast owner against a
+# dungeon's own scripted bosses, in the dungeon: Ragefire Chasm at 15, the Deadmines at 20, the Scarlet Monastery at
+# 35-40, Stratholme at 60 and heroic Utgarde Keep at 80 (InstanceBosses.cpp). The rung fixes the level as well as the
+# fight, so a class climbs a band at a time; the evaluation spreads its seeds over every rung. A tenth of the episodes
+# are the party gauntlet on the host map, the control the same policy has always been graded on (eval.jsonl's
+# `arenas` group tells the two apart).
+extends: stage19_triage.yaml
+run_name: stage23_dungeon
+total_env_steps: 60000000
+eval:
+  every_env_steps: 10000000
+  # 300 s episodes at 128 envs: 512 is 1,200 sim-seconds an evaluation (manual 4, "What an evaluation costs").
+  episodes: 512
+  baseline: fight
+  report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, owner_deaths, boss_rung, instance_map]
+# The owner: the endurance policy, as in the party line.
+cast:
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

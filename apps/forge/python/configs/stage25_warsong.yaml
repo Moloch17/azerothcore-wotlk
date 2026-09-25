@@ -1,0 +1,36 @@
+# Warsong Gulch at its proper size: ten a side, both sides learned, on the battleground's own map (489). The flag
+# rules are stage 11's and it seeds from there, so the objective itself is known; what is new is that a side is ten
+# seats and a group, and that the ground is the real one -- Silverwing Hold against the Warsong Lumber Mill, the
+# bases where game_graveyard puts them, at the distance and over the terrain the battleground actually has.
+# A capture now needs an escort, a base needs somebody left on it, and an enemy carrier can be chased by ten.
+# Trained by name, never in the default queue.
+#
+# The reward splits the way a team game does: a capture, pickup, return or carrier kill pays every seat of the
+# side, while a death charges only the seat that died. The critic is shared, so team credit is what it is built to
+# handle; per-seat credit for a team objective would make nine seats of every ten look useless.
+extends: stage24_flag.yaml
+run_name: stage25_warsong
+total_env_steps: 40000000
+# Ten a side is twenty agents an env against the mirror's two, so a rollout covers ten times the experience per
+# decision. The horizon stays stage 11's: a capture is still a minute of riding, fighting and carrying, and a
+# seven-minute match holds several.
+rollout_length: 256
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+eval:
+  # An episode here is a whole battleground match, not a fight: stage 11's 1024 came to 20,480 scored episodes
+  # (a match scores each of its twenty seats) and 44 minutes a pass, twice over with opponent_baseline -- about
+  # an hour and a half before the first gradient step, and as much again at every evaluation after it. 128
+  # matches still score 2,560 episodes, which is more than the 1 v 1 stage got from 1024, because twenty seats
+  # play each one.
+  episodes: 128
+  report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, team_seat, flag_in_reach,
+    mounted_fraction, healing_done]
+
+# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
+# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+cast:
+  opponents: league
+  parent: "{runs_dir}/stage12_pvp/best.pt"
+  opponent_share: 0.5

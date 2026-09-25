@@ -1,0 +1,38 @@
+# Drill: something on the ground in every pull. Hazards are not new to the curriculum -- the pack ladder draws a
+# hazard caster from rung 3, and self-play makes them by the spell (stage12_pvp measured 3.1 s of hazard an episode,
+# stage10_gauntlet 1.1 s) -- but a class/build that stalls below rung 3 never meets one, and a second an episode is
+# thin to learn from. Here every pull has one at stage 2's difficulty, so walking out of it is what the episode is
+# about rather than a detail of a harder fight.
+#
+# Trained by name (`forge start stage5_dodge`), after stage9_pack, which it seeds from. Not in the default queue.
+# Extends the shared base, not stage9_pack.
+#
+# It used to extend stage9_pack, and `merge` is a deep merge for non-empty maps -- so this drill inherited a
+# pack fight's gate, `pulls_cleared`, which its own arena (PullSchedule::None) can never produce. The learner
+# refused to start, every time, and leaving the metric out of the override did not help: only an empty map
+# replaces, so an omitted key is an inherited key. The C++ definition has said `.Extends = "stage1_move"` all
+# along; this file disagreed with it.
+#
+# Seeding is unaffected either way -- the seed chain comes from stage.json (the C++ definition), not from
+# `extends`, which is config inheritance only.
+extends: stage8_duel.yaml
+run_name: stage5_dodge
+# Carried forward from stage9_pack so that only the gate changes: a longer horizon and a longer rollout than
+# the duel default, which a 120 s drill wants for the same reason a pack fight does.
+rollout_length: 256
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+  # As stage1_move: the argmax policy is the one that is gated, so the exploration bonus anneals towards it.
+  entropy_final_fraction: 0.3
+# A drill, not a stage of the curriculum: it is there to move one behaviour, and the behaviour shows early.
+total_env_steps: 30000000
+convergence:
+  patience: 2
+
+layout_sampling:
+  metric: ""
+  replay_fraction: 0.0
+
+eval:
+  every_env_steps: 5000000

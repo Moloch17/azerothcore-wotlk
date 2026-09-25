@@ -1,0 +1,25 @@
+# Stage 18: stealth, which is not the same lesson as stage 17's hiding and is why it is a stage of its own.
+#
+# Hiding is not being found. Every class does it, with terrain and distance and whatever its kit gives it, and
+# Shadowmeld counts there. Stealth is being *close* and not found: crossing the ground to someone who is
+# looking for you, arriving inside strike range with the opener still in hand, and holding there. Shadowmeld
+# cannot do that -- it breaks the moment you move -- so this stage is played only by the class/builds whose own
+# kit carries a stealth aura: rogue_dps (Stealth) and the three druids (Prowl).
+#
+# It is a leaf. Its checkpoint holds four of the eighteen layouts, and init_from: auto takes the first
+# checkpoint in the chain that exists, so a stage seeding from it would start the other fourteen from random
+# weights without saying so. stage12_pvp extends stage14_hide, reaching past this stage rather than through
+# it, and Problem() in Stages.cpp refuses anything that tries to extend or merge it.
+
+extends: stage14_hide.yaml
+run_name: stage15_stealth
+total_env_steps: 20000000
+
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  report: [stalk_seconds, stalk_longest_seconds, stalked_into_range, closest_stealthed, stalk_approaches, stealth_openers, re_stealths, survived, won, died]

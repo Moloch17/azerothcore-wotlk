@@ -113,7 +113,7 @@ namespace Movement
         move_spline.Initialize(args);
 
         // The spline above is the movement; the monster-move packet below is only for clients.
-        if (!Forge::HasClients())
+        if (!ForgeCore::HasClients())
             return move_spline.Duration();
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
@@ -163,7 +163,7 @@ namespace Movement
         move_spline.Initialize(args);
 
         // The stop-movement packet is only for clients.
-        if (!Forge::HasClients())
+        if (!ForgeCore::HasClients())
             return;
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);

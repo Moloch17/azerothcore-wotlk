@@ -50,6 +50,11 @@ target_include_directories(game
   PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR})
 
+# Forge: where the training host finds its Python learner unless AnimusForge.Learner.WorkDir says otherwise.
+target_compile_definitions(game
+  PRIVATE
+    FORGE_PYTHON_DIR="${CMAKE_SOURCE_DIR}/apps/forge/python")
+
 target_link_libraries(game
   PRIVATE
     acore-core-interface

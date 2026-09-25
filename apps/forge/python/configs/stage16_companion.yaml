@@ -1,0 +1,28 @@
+# Stage 9: the gauntlet fought beside a scripted owner, a player of a random class and
+# role near the bot's level that wanders, engages each pull and takes real damage. The bot follows, assists and guards
+# it; tanks keep enemies on themselves, healers keep the owner alive, damage dealers avoid pulling threat. Nobody's
+# death ends the episode: the dead stand up after the pull. The arena runs 450 s, as the solo gauntlet.
+#
+# What stage 3 taught carries on beside the owner: readiness is paid when a pull is engaged (Pulls.OwnerReadiness),
+# crowd control that keeps an add out of the fight pays (Pulls.OwnerControl*), and food and drink are rationed
+# (Pulls.GauntletSupplies). Rewards are win-first: a pull cleared pays about as much as alone, the seat's own death
+# costs 10 and every owner death 15 (Owner.Death), so guarding the owner comes before the seat's own health.
+
+extends: stage10_gauntlet.yaml
+run_name: stage16_companion
+total_env_steps: 60000000
+
+# A win is clean_kill: the 450 s lasted with the owner never dead, no wipe, Pulls.OwnerWinPulls (5) pulls cleared and
+# the seat itself never dead (PullsEncounter counts the first three as the kill; died covers the last). The owner fights
+# too, so pulls clear faster than alone, but one owner death loses the episode.
+#
+# What to read: clean_kill, owner_deaths, wipes and pulls_cleared overall, and the role checks per class and per
+# build -- owner_heal_share for healers, threat_share for whoever is holding the pull and the rest. None of them is a
+# gate; the stage ends on the convergence rule like every other.
+
+# The owner is played by a frozen checkpoint (animus.cast): the endurance policy, which clears pulls on its own,
+# in 70% of the training episodes; the script's wandering owner in the rest (Owner.CastScriptedShare) and in every
+# evaluation, so the reported owner_deaths keep their meaning.
+cast:
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

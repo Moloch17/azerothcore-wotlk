@@ -1,0 +1,26 @@
+[project]
+name = "animus-forge"
+version = "0.1.0"
+description = "MAPPO learner and sim client for the forge training host"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pyyaml>=6",
+  # Install the ROCm build for AMD GPUs, e.g.
+  #   pip install torch --index-url https://download.pytorch.org/whl/rocm6.4
+  "torch>=2.4",
+]
+
+[project.optional-dependencies]
+tensorboard = ["tensorboard>=2.16"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["animus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

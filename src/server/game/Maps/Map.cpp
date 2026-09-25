@@ -1755,10 +1755,10 @@ void Map::SendRemoveTransports(Player* player)
 /// override (WorldObject, Item, MotionTransport, StaticTransport) ends in ClearUpdateMask. So with
 /// nobody connected this drains the queue and clears each mask directly, which keeps field-change
 /// tracking correct -- the next change re-queues the object exactly as before -- without building
-/// anything. Every other packet builder gates on the same Forge::HasClients().
+/// anything. Every other packet builder gates on the same ForgeCore::HasClients().
 void Map::SendObjectUpdates()
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
     {
         while (!_updateObjects.empty())
         {

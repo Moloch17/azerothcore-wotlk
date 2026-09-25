@@ -1,0 +1,18 @@
+# Stage 31 of the curriculum, by name: twenty-five seats against Naxxramas's bosses.
+# Real instances (InstanceEncounter): the seats spawn at the raid's front door and are taken to the boss along the
+# server's own path; the boss fights with the core's script; seat 0 leads the raid group. A tenth of the episodes are
+# the synthetic single pack at the same seat count, the control the real bosses are graded against.
+#
+# Not in the default queue: 25 seats an env, so AnimusForge.Stage.stage31_raid25.Envs runs it at 16 envs
+# (forge start stage31_raid25); the evaluation's 64 episodes of 420 s at 16 envs are 1,680 sim-seconds.
+extends: stage30_raid10.yaml
+run_name: stage31_raid25
+total_env_steps: 40000000
+eval:
+  every_env_steps: 10000000
+  episodes: 64
+  baseline: fight
+  report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, teammates_died, boss_rung, instance_map]
+# No owner in a raid: the cast is off.
+cast:
+  agents: {}

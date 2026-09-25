@@ -140,3 +140,18 @@ __pycache__/
 #
 # ==================
 
+
+#
+#  Forge (imported from mod-animus-forge, which ignored the same paths)
+#
+#  Training output and generated assets: the learner writes these, they are not source.
+apps/forge/python/runs/
+apps/forge/python/layouts/
+apps/forge/models/
+apps/forge/python/.venv/
+*.egg-info/
+.pytest_cache/
+
+#  The parallel-core plan is shared work, like the animus plans above.
+!.agents/plans/forge-parallel-core/
+!.agents/plans/forge-parallel-core/forge-parallel-core.PLAN.md

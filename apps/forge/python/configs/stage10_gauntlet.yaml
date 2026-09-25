@@ -1,0 +1,41 @@
+# Stage 4: pull after pull (1-4 creatures, sometimes an elite or a higher-level pack) with breaks
+# between, for seven and a half minutes or until the bot dies. What it teaches is recovering between fights and lasting
+# through many of them:
+#
+# - A pull left alone comes to the bot 20-40 s after it spawns (Pulls.Arrive*), and every pull cleared brings the next
+#   one sooner and shortens the break before it: resting has a clock, and staying away from the pulls is no way out.
+# - Engaging a pull pays Pulls.SoloGauntletReadiness times the lower of the bot's health and mana fractions: entering
+#   a fight ready is what eating, drinking, bandages and heals between pulls are for.
+# - Seven food and seven drink (Pulls.GauntletSupplies) for eight or more pulls: they have to be spread.
+# - Crowd control that keeps an add out of the fight pays Pulls.SoloGauntletControl per enemy-second (up to
+#   SoloGauntletControlMax per pull): Sap, Blind, Polymorph, Fear, Hibernate and roots were almost never used in
+#   stage 2, where they pay only through the damage they save.
+# - Each cleared pull pays (Pulls.SoloGauntletClear, a little more fast and untouched), a death costs
+#   Pulls.SoloGauntletDeath and every pull left unfought, and standing off a pull or taking melee hits as a ranged spec
+#   is charged as in stage 2. The gauntlet arena runs 450 s whatever AnimusForge.EpisodeSeconds says.
+
+extends: stage9_pack.yaml
+run_name: stage10_gauntlet
+
+# ~16 h at ~7k env steps/s; convergence usually ends the stage much sooner (the headroom is for restarts).
+total_env_steps: 60000000
+
+# rollout_length 256 (64 s at 250 ms decisions) and gamma 0.999 / lambda 0.995 per 100 ms (a ~100 s horizon, ~17 s
+# of GAE trace) come from stage 2: a pull, its recovery and the next pull's setup fit in a few rollouts, and resting
+# before a pull, sapping or stealthing in and saving cooldowns pay off over that long.
+
+# An evaluation costs a wave of full episodes per env, so it scales with the episode length (the first stage 3 run's
+# 2048 five-minute episodes took about 3 minutes). Evaluate less often rather than on fewer episodes -- the score's
+# standard error sets the convergence margin and the per-class/build gates.
+eval:
+  every_env_steps: 10000000
+
+# A win is clean_kill: the gauntlet lasted to the end without a death and with Pulls.SoloGauntletWinPulls (5) pulls
+# cleared (PullsEncounter counts that as the kill; lasting on fewer is a timeout). The gauntlet has no difficulty
+# ladder, so none of stage 2's rung or tier gates apply.
+#
+# The floors are provisional. The first stage 3 run (five minutes, pulls that waited, a win by merely lasting) reached
+# 63-66% survived overall with seven class/builds at 38-57%, and 12% of its wins cleared at most one pull. This run's
+# win is stricter, so the floors are lower: 55% overall and 40% per class/build by the Wilson bound, four pulls cleared
+# on average, no livelocks. The stage halts below them rather than training on; recalibrate from this run's
+# evaluations.

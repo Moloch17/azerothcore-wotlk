@@ -1,0 +1,66 @@
+# Stage 1 of the curriculum, and the root: covering ground on the seat's own legs, with nothing to fight.
+#
+# This is first on purpose. A seat steers itself now -- eight egocentric bearings under a held yaw and pitch, with
+# the ground read along sixteen rays and a trail of where it has been -- and where a seat puts its feet is not
+# something only some stages are about.
+# Putting it first means everything after it inherits legs that already work, instead of learning to fight and to
+# walk at the same time and doing both badly.
+#
+# A character starts in the Barrens with a place 40-160 yd away and no mount available: the mount actions are
+# masked out, not merely unpaid, so the policy cannot explore into riding and the lesson stays clean. What is left
+# is everything a player does before it can ride -- Sprint, Dash, Travel Form, Aspect of the Cheetah, and simply
+# not stopping or wandering off the path -- which is worth its own stage because a mount is barred in combat,
+# indoors and below level 20, which is most of the times a bot actually has to get somewhere.
+#
+# Three arenas, because "cross it" is a different problem on each and a policy taught only on the flats learns to
+# hold forward:
+#   open    flat ground, the lesson at its simplest
+#   broken  terrain with things in the way, where the ground probe earns its place -- a seat that cannot see the
+#           cliff it is walking into is only being steered by the pathfinder, which is the point order coming back
+#           one layer down
+#   water   an objective whose way round is longer than the way through. Swimming is about 4.7 yd/s against 7
+#           running, so the crossing pays only when the straight line saves more than about a third of the
+#           distance -- and what a build can do in water changes the answer, which is why this is not a reflex
+
+extends: stage8_duel.yaml
+run_name: stage1_move
+
+# The root of the tree starts from nothing, but it is a far smaller problem than the duel: few actions are live,
+# there is one objective and the episodes are short.
+total_env_steps: 30000000
+
+mappo:
+  # The policy that is gated and shipped takes the argmax; the one that trained sampled. With the coefficient held
+  # flat the two drifted apart on every movement stage -- stage1_move's sampled actions arrived 0.996 against the
+  # argmax's 0.979, stage6_travel 0.992 against 0.970, stage7_flight 0.851 against 0.543 -- so the exploration bonus
+  # anneals to a third of itself by total_env_steps and the two converge. eval.sampled_every writes the remaining
+  # gap into eval.jsonl as argmax_gap.
+  entropy_final_fraction: 0.3
+
+eval:
+  baseline: fight
+  # TEMPORARY, to see the shape of a failure rather than its average: every decision of the first 64 seeded
+  # episodes, written to eval_trace.jsonl. Around 6% of scored episodes end by covering seven hundred yards of a
+  # hundred-yard trip and finishing forty short, and no column says which motion that is -- orbiting the
+  # objective, pacing a barrier, or alternating two neighbouring bearings on the 45-degree lattice. They want
+  # different fixes and look identical in every average. Join it to eval_episodes.jsonl on `seed`.
+  trace_episodes: 64
+  # Scored with the argmax, which is the default and is deliberate: a shipped bot decides greedily, so that is
+  # the honest measure of one. Turned off for one experiment on 2026-09-22 -- sampling cut timeouts from 9.5% to
+  # 6.4%, all of it on open and broken ground, which is what a deterministic livelock looks like. Left on would
+  # have hidden that behind the sampling rather than fixing it.
+  # TEMPORARY, for testing generalisation early: 2M instead of the 10M inherited from stage8_duel. Scored episodes
+  # stand on the control ground (StageDefinition::HeldOutSpawnPoints), so this is the only number that says whether
+  # the policy reads terrain or has learned the training regions -- and waiting 10M steps to see it first is a long
+  # time to be guessing. Each evaluation is 2048 seeded episodes, about 90 s, so at this rate it costs roughly a
+  # tenth of the run: put it back to 10000000 once the question is answered.
+  every_env_steps: 2000000
+  # lost, wedged and spl are derived (evaluation.py): a failure that covered three times its path against one that
+  # never got going, which want opposite fixes and look identical in `arrived`, and success weighted by path length.
+  # stall_seconds and stalls are the sim's: the longest stretch without gaining on the objective, and how many.
+  report: [arrived, spl, lost, wedged, stall_seconds, stalls, travel_seconds, start_distance, walk_distance,
+           distance_travelled, objective_distance_at_end, dry_distance, dry_detour, detour_band, trip_share, saved,
+           died, timed_out, crossing, swim_seconds]
+
+layout_sampling:
+  metric: arrived

@@ -1,0 +1,24 @@
+# Drill: a fixed healer seat beside its group. Stage 5 has healers, but its win is the clear, and stage 4 measured
+# the seat putting 13% of its healing into the owner: triage is never what the episode is about. Here it is.
+#
+# WARNING before trusting a score from this stage: stage 5 carries a resurrection exploit that this drill inherits.
+# Nothing clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
+# resurrect that pays the revive reward again (stage16_companion measured druid_dps at 38.4 revives an episode, 88%
+# of its return). A forced healer seat will find that faster than anything else in the curriculum. Fix it first.
+#
+# Trained by name (`forge start stage19_triage`), after stage17_party, which it seeds from. Not in the default queue.
+extends: stage17_party.yaml
+run_name: stage19_triage
+total_env_steps: 60000000
+convergence:
+  patience: 2
+
+eval:
+  every_env_steps: 15000000
+
+# The owner is played by a frozen checkpoint (animus.cast): the endurance policy, which clears pulls on its own,
+# in 70% of the training episodes; the script's wandering owner in the rest (Owner.CastScriptedShare) and in every
+# evaluation, so the reported owner_deaths keep their meaning.
+cast:
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

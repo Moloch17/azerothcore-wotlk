@@ -1,0 +1,22 @@
+# Stage 17: the same losing fight six levels up rather than ten, for every class and every race. Stealth is one
+# way to get out of sight and the rarest -- four of the eighteen class/builds have a stealth aura in their kit --
+# but it is not the lesson. The lesson is becoming unseen and staying unseen, which every class can do with
+# terrain, with distance, and with whatever its kit and its race give it: Blink, Disengage, Feign Death,
+# Invisibility, Sprint, Vanish, Prowl, and Shadowmeld for any night elf.
+#
+# Six levels rather than stage 16's ten so the fight is winnable often enough that hiding is a choice rather
+# than the only move left. That is the difference between the two stages: stage 16 is about leaving a fight
+# that is lost, this one is about not being found once you have.
+
+extends: stage13_evade.yaml
+run_name: stage14_hide
+total_env_steps: 30000000
+
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  report: [escaped, re_hides, unseen_longest_seconds, survived, contact_breaks, unseen_seconds, re_stealths, stealth_openers, died]

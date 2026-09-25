@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# Make sure mod-animus-forge's Python venv has torch, the learner (with TensorBoard) and pytest. Idempotent: run
+# Make sure the forge learner's Python venv has torch, the learner (with TensorBoard) and pytest. Idempotent: run
 # on every start of ac-worldserver and ac-dev-server, it only installs what is missing. The venv lives on the bind
-# mount (modules/mod-animus-forge/python/.venv), so both containers share it; its interpreter paths are container
+# mount (apps/forge/python/.venv), so both containers share it; its interpreter paths are container
 # paths, so run it from a container:
 #
-#   docker compose exec -w /azerothcore/modules/mod-animus-forge/python ac-dev-server .venv/bin/python -m pytest
+#   docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/python -m pytest
 #
 # ANIMUS_TORCH_INDEX_URL picks the torch wheel index (empty = PyPI).
 
 set -euo pipefail
 
-LEARNER=/azerothcore/modules/mod-animus-forge/python
+LEARNER=/azerothcore/apps/forge/python
 VENV="$LEARNER/.venv"
 
 if [[ ! -d "$LEARNER" ]]; then
-    echo "WARNING: $LEARNER not found; the learner cannot start. Clone mod-animus-forge into modules/."
+    echo "WARNING: $LEARNER not found; the learner cannot start. The source tree is incomplete."
     exit 0
 fi
 

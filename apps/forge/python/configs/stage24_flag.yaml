@@ -1,0 +1,35 @@
+# Stage 18: Warsong Gulch's rules between two learned seats. Each has a flag at its base 100-180 yd
+# from the other's: take the other side's flag home while one's own is there, return one's own when it is dropped,
+# and stop the carrier. A carrier cannot ride, the dead stand up at their base after a 15 s wave, and the first to
+# three captures wins. Seeded from stage12_pvp (the fight) and stage6_travel (mounting between bases).
+#
+# As in the arena, a score against itself says little, so evaluation plays the other seat with the fight baseline,
+# which heads for the flags on a mount.
+
+extends: stage12_pvp.yaml
+run_name: stage24_flag
+
+total_env_steps: 40000000
+
+# gamma below is a ~100 s horizon, so a 128-decision rollout (12.8 s) would leave nearly every return to the
+# critic's bootstrap. 256 covers 25.6 s of it, as the gauntlet line does.
+rollout_length: 256
+
+# The GAE trace decides how far credit reaches back: at lambda 0.99 per 100 ms it was about 9 s, while a pull, its
+# recovery and the setup that made it winnable take 30-60 s, so what caused an outcome fell outside the trace and was
+# learned only through the critic. 0.995 is about 17 s of credit, for more variance than the critic (explained variance
+# ~0.93 through stages 2 and 3) has trouble with.
+mappo:
+  # A capture is a minute of riding, fighting and carrying.
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, mounted_fraction]
+
+# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
+# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+cast:
+  opponents: league
+  parent: "{runs_dir}/stage12_pvp/best.pt"
+  opponent_share: 0.5

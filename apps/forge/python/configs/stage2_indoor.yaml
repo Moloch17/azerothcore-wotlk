@@ -1,0 +1,48 @@
+# Inside, where the walls are close enough to matter.
+#
+# stage1_move taught the feet on open ground. This is the same trip made somewhere a seat can touch both walls at
+# once: a place 8-40 yd away inside an inn, which is shorter than the first step of an outdoor episode.
+#
+# It exists because the block could not see a wall. The ground probe sampled the *height* of the floor at five
+# ranges and blocked on a change between two of them, so a vertical wall standing on a flat floor returned the
+# same height at six yards and at twelve -- no step, nothing blocking, clear ground reported straight through the
+# wall. Outdoors that passes, because a cliff is a height change. Indoors it is every wall, door frame and table
+# in the building. Each bearing now casts a navmesh ray as well, which stops where walkable space stops.
+#
+# Three things follow, and this stage is where they are worth anything:
+#   - a turn is 15 degrees, not 45. At 45 it was exactly the spacing between two bearings, so every heading the
+#     seat could walk was its spawn orientation plus a multiple of 45 and a doorway off that lattice could not be
+#     aimed at.
+#   - clearance: yards to the nearest edge of walkable space, and which way is out. Charged by the second inside
+#     a margin, capped per episode, and never a mask -- a doorway is narrower than any margin worth keeping in
+#     the open, so forbidding closeness would forbid doorways.
+#   - a jump, which is the one move no pathfinder can propose: a route is polygons that touch, and a gap has
+#     none.
+#
+# NOT in the default queue, and deliberately so -- it is a side branch off stage1_move, not a rung of the
+# ladder (stage5_dodge seeds from stage1_move). It is the stage that tests what the sixteen rays, the
+# fifteen-degree turn, the clearance term and the jump were built for -- a doorway off the objective's axis, which
+# open country never asks for -- and it joins the queue (StageDefinition::InDefaultQueue) once its rooms have been
+# stood on again with `forge rays` and its gate is one a run can pass: a queued stage that halts below its target
+# halts `forge start` with it, and the gate below is one a first run is expected to fail. Train it by name:
+#
+#   forge start stage2_indoor
+#
+# The spawn points started as the centre of every row of areatrigger_tavern and did not survive contact with the
+# ground. `forge rays` stood on all 22 Kalimdor taverns first: three were on no navmesh at all, four were night
+# elf inns whose WMO group is flagged outdoors (so FindPlace would refuse to place an objective in them), and
+# one -- Astranaar -- had its trigger centre in the gap between two storeys. The seven that train here and the
+# three held back are what was left, with z corrected from the trigger centre to the floor underneath it.
+
+extends: stage1_move.yaml
+run_name: stage2_indoor
+
+# Short trips in small rooms: the episodes are quick and the lesson shows early.
+total_env_steps: 16000000
+
+eval:
+  # Until the rooms are known to be rooms, look often and trace what happens.
+  every_env_steps: 2000000
+  trace_episodes: 64
+  report: [arrived, spl, lost, wedged, stall_seconds, stalls, travel_seconds, start_distance, walk_distance,
+           distance_travelled, objective_distance_at_end, trip_share, saved, died, timed_out, reward_clearance]

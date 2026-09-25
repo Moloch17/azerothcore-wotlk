@@ -1,0 +1,29 @@
+# Stage 17: two a side, each side commanded by a learned director. The seats already fight one on one from the
+# arena; what is new is being told what the pair is doing -- concentrate on that one, you take the next
+# interrupt -- and learning that following the call pays, while the director learns what to call.
+#
+# order_focus_kept, the share of a side's seats on the called target, is the measure that matters: a seat that
+# never obeys and a channel that never arrives look identical without it.
+extends: stage12_pvp.yaml
+run_name: stage26_duo_led
+total_env_steps: 30000000
+rollout_length: 256
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.99
+  # The director decides on its own clock and is credited on it. Every 10 decisions is 2.5 s, which is what the
+  # scripted director thought at and roughly the fastest a call can change and still be followable: with the
+  # director choosing every decision it moved the order on 0.706 of them and order_focus_kept never left chance.
+  # gamma and gae_lambda here are per director decision, so 0.996 is a ~10 minute horizon and 0.98 ~2 minutes of
+  # credit, against the seats' 100 s and 9 s.
+  slow_layout: director
+  slow_every_decisions: 10
+  slow_gamma: 0.996
+  slow_gae_lambda: 0.98
+eval:
+  # Four seats an episode rather than twenty, so the count is closer to the arena's than to the battleground's.
+  episodes: 512
+  report: [won, killed, died, damage, order_focus_kept, order_focus_lowest, order_focus_chance,
+           order_focus_alive, order_focus_unseen, director_enemies_seen, order_has_focus,
+           order_changes, order_posture, order_place_called, order_place_reached,
+           order_place_distance, reward_place_match]

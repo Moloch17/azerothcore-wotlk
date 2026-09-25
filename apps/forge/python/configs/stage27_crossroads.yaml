@@ -1,0 +1,45 @@
+# Stage 27, the crossroads: the PvE and PvP branches join in one policy. Every episode is one of the
+# stage's arenas (weights in the stage definition): the companion's and the party's gauntlets, the self-play
+# one-on-one, the solo gauntlet and duel, and two new situations -- an ambush of the owner by 1-2 enemy players in the
+# middle of a gauntlet, and a lone enemy player attacking the owner (escort_duel). The context and hostiles blocks let
+# the policy tell them apart as a live server would. PvE arenas run 5-minute episodes, one-on-ones 60-90 s.
+#
+# Seeding: the trunk and PvE blocks from stage19_triage; the pvp block from stage12_pvp (merges). Distillation: each
+# arena is taught by the first parent that has it (party by stage17_party, arena_1v1 by stage12_pvp, companion by
+# stage16_companion, gauntlet by stage10_gauntlet, duel by stage8_duel); the new arenas learn from the reward alone.
+
+extends: stage17_party.yaml
+run_name: stage27_crossroads
+
+# ~20 h at ~15k env steps/s (up to four seats); convergence usually ends the stage sooner.
+total_env_steps: 100000000
+
+mappo:
+  gamma: 0.999
+
+distill:
+  teachers: auto
+  coef: 1.0
+  half_life_env_steps: 50000000
+
+eval:
+  episodes: 256
+  every_env_steps: 25000000
+  # The shipped model samples: every third evaluation also runs sampled, to see the argmax and sampled policies agree.
+  sampled_every: 3
+  # The arena_1v1 seat is scored against fight as its opponent.
+  opponent_baseline: true
+  report: [dps, died, won, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died, ambushers,
+    ambushers_killed, casts_completed, casts_cancelled]
+
+# Every situation holds up on its own, not only on average; the new arenas only need to beat the fight baseline.
+
+# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
+# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+cast:
+  opponents: league
+  parent: "{runs_dir}/stage12_pvp/best.pt"
+  opponent_share: 0.5
+  # The companion, party, ambush and escort arenas' owner: the endurance policy, as in the companion line.
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

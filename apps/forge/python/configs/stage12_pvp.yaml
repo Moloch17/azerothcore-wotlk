@@ -1,0 +1,34 @@
+# The PvP stage: self-play one-on-one. Two learned agents of random classes and builds fight in each env, both
+# played by this policy, so both sides of every fight are training data, across class matchups. The far side is
+# the live policy or a frozen earlier checkpoint (the learner's cast league), never a script.
+#
+# Against itself a policy's score says little about progress (both sides improve together), so evaluation plays the
+# other side with the fight baseline (eval.opponent_baseline): the score is the learner's first seat against a fixed
+# scripted opponent, and the baseline score is fight against fight on the same seeds. Convergence works on that
+# score like any other stage's.
+#
+# A fight turns on what happened tens of seconds before (a stealthy approach, a trinket baited out), so the horizon
+# is long: gamma 0.999 and lambda 0.995 per 100 ms.
+
+extends: stage8_duel.yaml
+run_name: stage12_pvp
+rollout_length: 256
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+# ~4 h at ~14k env steps/s (two seats).
+total_env_steps: 60000000
+
+eval:
+  baseline: fight
+  opponent_baseline: true
+  report: [won, dps, died, time_to_kill, damage_taken, cast_seconds_wasted]
+
+# The far side: a frozen checkpoint half the time (animus.cast) -- the endurance policy this stage seeds from at
+# first, then this run's own snapshots as the league fills (every 5M steps, and every improved best.pt), drawn by how
+# hard each still is -- and the live policy the other half, so the opponent is never weaker than the policy and never
+# only its own current habits. The evaluation's far side stays the scripted fight baseline, the fixed yardstick.
+cast:
+  opponents: league
+  opponent_share: 0.5

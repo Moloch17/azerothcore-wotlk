@@ -1,0 +1,29 @@
+# Stage 8: flying. Characters of level 60 or more (Expert Riding and a flying mount; Artisan and a
+# fast one from 70) start in Outland's Nagrand, where flying mounts fly, with a place 350-700 yd away. Flying is several
+# times faster than riding and passes over everything, but dismounting in the air falls with a player's fall damage:
+# the policy learns to take off, keep a height, land and then dismount. Battlegrounds never allow flying mounts, so
+# this is for the open world. Seeded from stage6_travel.
+
+extends: stage6_travel.yaml
+run_name: stage7_flight
+
+total_env_steps: 20000000
+
+# gamma below is a ~100 s horizon, so a 128-decision rollout (12.8 s) would leave nearly every return to the
+# critic's bootstrap. 256 covers 25.6 s of it, as the gauntlet line does.
+rollout_length: 256
+
+# The GAE trace decides how far credit reaches back: at lambda 0.99 per 100 ms it was about 9 s, while a pull, its
+# recovery and the setup that made it winnable take 30-60 s, so what caused an outcome fell outside the trace and was
+# learned only through the critic. 0.995 is about 17 s of credit, for more variance than the critic (explained variance
+# ~0.93 through stages 2 and 3) has trouble with.
+mappo:
+  # A trip of 700 yd plans takeoff and landing tens of seconds apart.
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  every_env_steps: 2000000
+  report: [arrived, spl, lost, wedged, stall_seconds, air_only, travel_seconds, mounted_fraction, flying_fraction,
+    flying_mount_fraction, knows_flying_mount, could_mount_flying, flew, saved_if_flew, saved_if_ground,
+    flight_speed, flight_yps, flight_yps_peak, flying_flag_share, flight_height, saved, died]

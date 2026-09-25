@@ -1,0 +1,32 @@
+# Down, where the way round is long and the way down is a fall.
+#
+# stage1_move's first format-6 run lost fifty of its eighty held-out failures at one cliff foot, under an
+# objective forty yards up. This is the mirror of that: the seat starts on a plateau top and the place is below a
+# ledge, 5-80 yd under it, with a way round on foot at least twice the straight line. The jump drops off the edge
+# -- it could not before format 7, when the landing test raycast along the navmesh and clipped at every lip -- and
+# the fall after it is the core's own, with the core's own damage: nothing to fourteen yards, lethal past about
+# seventy for a full-health character. The seat is told how far down the landing is (OBS_JUMP_DROP) and nothing
+# about what that costs; the cost is what it learns here, and the round trip by the ramp is always there for the
+# episodes where the drop is not worth it.
+#
+# Slow Fall and Levitate are open: a mage or a priest that has one learns when a cast is worth spending to make a
+# deadly drop free, and a class without one (or below the level that has it) learns the bare price of the drop.
+#
+# The spawn points are plateau tops above the ground the broken arena trains its cliff feet on, found from the
+# relief in the creature spawns; whether a top offers a ledge trip is what the `ledge` column reports, and a top
+# that never does is a top to replace.
+
+extends: stage1_move.yaml
+run_name: stage3_jump
+
+total_env_steps: 16000000
+
+eval:
+  every_env_steps: 2000000
+  trace_episodes: 64
+  # ledge: the episode was built below a ledge at all (a spawn point with none in reach builds a plain trip).
+  # drops, drop_yards, fell, fall_damage, fall_deaths: what the seat did with it. jumps_refused: presses the mask
+  # allowed and the landing test refused, which should stay near zero. feather_falls is 0 here by construction.
+  report: [arrived, spl, lost, wedged, ledge, ledge_drop, jumps, jumps_refused, drops, drop_yards, fell, fall_damage,
+           fall_deaths, feather_falls, damage_taken, saved, travel_seconds, start_distance, walk_distance,
+           distance_travelled, objective_distance_at_end, trip_share, died, timed_out]

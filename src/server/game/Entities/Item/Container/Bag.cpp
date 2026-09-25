@@ -169,7 +169,7 @@ void Bag::StoreItem(uint8 slot, Item* pItem, bool /*update*/)
 
 void Bag::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     Item::BuildCreateUpdateBlockForPlayer(data, target);

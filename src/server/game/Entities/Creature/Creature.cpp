@@ -16,6 +16,7 @@
  */
 
 #include "Creature.h"
+#include "SummonLevel.h"
 #include "BattlegroundMgr.h"
 #include "CellImpl.h"
 #include "Common.h"
@@ -1504,6 +1505,10 @@ void Creature::SelectLevel(bool changelevel)
     uint8 level = minlevel == maxlevel ? minlevel : urand(minlevel, maxlevel);
 
     sScriptMgr->OnBeforeCreatureSelectLevel(cInfo, this, level);
+
+    // A creature the training host summons at a chosen level (Animus::PendingSummonLevel, set around the summon).
+    if (Animus::PendingSummonLevel)
+        level = Animus::PendingSummonLevel;
 
     if (changelevel)
         SetLevel(level);

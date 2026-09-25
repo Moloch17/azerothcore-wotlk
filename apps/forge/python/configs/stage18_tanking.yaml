@@ -1,0 +1,24 @@
+# Drill: a fixed tank seat beside its group. Tanks play in stages 5, 8, 13 and 14, but those are won by the clear,
+# so a tank that loses an add and takes it back scores the same as one that never lost it. Here seat 0 is always the
+# tank and the episode is about the threat table, which the seat can now read (Encoding::ThreatShare).
+#
+# Read its scores knowing the hazard charge lands about four times harder on a tank than on a ranged seat
+# (stage12_pvp: paladin_tank -0.834 an episode against priest_dps -0.198): a tank cannot walk out of what it is
+# holding an enemy in, and Hazards.Standing was tuned for a seat with a choice.
+#
+# Trained by name (`forge start stage18_tanking`), after stage17_party, which it seeds from. Not in the default queue.
+extends: stage17_party.yaml
+run_name: stage18_tanking
+total_env_steps: 60000000
+convergence:
+  patience: 2
+
+eval:
+  every_env_steps: 15000000
+
+# The owner is played by a frozen checkpoint (animus.cast): the endurance policy, which clears pulls on its own,
+# in 70% of the training episodes; the script's wandering owner in the rest (Owner.CastScriptedShare) and in every
+# evaluation, so the reported owner_deaths keep their meaning.
+cast:
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

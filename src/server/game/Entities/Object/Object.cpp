@@ -182,7 +182,7 @@ void Object::BuildMovementUpdateBlock(UpdateData* data, uint32 flags) const
 
 void Object::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (!target)
@@ -242,7 +242,7 @@ void Object::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Object::SendUpdateToPlayer(Player* player)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     // send create update to player
@@ -268,7 +268,7 @@ void Object::BuildValuesUpdateBlockForPlayer(UpdateData* data, Player* target)
 
 void Object::BuildOutOfRangeUpdateBlock(UpdateData* data) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     data->AddOutOfRangeGUID(GetGUID());
@@ -276,7 +276,7 @@ void Object::BuildOutOfRangeUpdateBlock(UpdateData* data) const
 
 void Object::DestroyForPlayer(Player* target, bool onDeath) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     ASSERT(target);
@@ -532,7 +532,7 @@ void Object::AddToObjectUpdateIfNeeded()
     // The map's dirty set exists to build value-update packets. With no client connected nothing would be
     // built, so the object is not queued; its changed-field bits stay set and go out in one block the first
     // time a client sees it, which is also what happens to any object that changed before a client arrived.
-    if (m_inWorld && !m_objectUpdated && Forge::HasClients())
+    if (m_inWorld && !m_objectUpdated && ForgeCore::HasClients())
     {
         AddToObjectUpdate();
         m_objectUpdated = true;
@@ -2181,7 +2181,7 @@ void Unit::BuildHeartBeatMsg(WorldPacket* data) const
 
 void WorldObject::SendMessageToSet(WorldPacket const* data, bool self) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (IsInWorld())
@@ -2190,7 +2190,7 @@ void WorldObject::SendMessageToSet(WorldPacket const* data, bool self) const
 
 void WorldObject::SendMessageToSetInRange(WorldPacket const* data, float dist, bool /*self*/) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     Acore::MessageDistDeliverer notifier(this, data, dist);
@@ -2199,7 +2199,7 @@ void WorldObject::SendMessageToSetInRange(WorldPacket const* data, float dist, b
 
 void WorldObject::SendMessageToSet(WorldPacket const* data, Player const* skipped_rcvr) const
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     Acore::MessageDistDeliverer notifier(this, data, 0.0f, Acore::TeamFilter::All, skipped_rcvr);

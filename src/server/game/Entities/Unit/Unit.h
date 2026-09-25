@@ -1618,7 +1618,7 @@ public:
     [[nodiscard]] SpellMissInfo SpellHitResult(Unit* victim, Spell const* spell, bool canReflect = false);
 
     // Healling spells
-    static int32 DealHeal(Unit* healer, Unit* victim, uint32 addhealth);
+    static int32 DealHeal(Unit* healer, Unit* victim, uint32 addhealth, bool periodic = false);
     void SendHealSpellLog(HealInfo const& healInfo, bool critical = false);
     int32 HealBySpell(HealInfo& healInfo, bool critical = false);
 

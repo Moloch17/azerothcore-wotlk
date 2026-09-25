@@ -27,7 +27,7 @@ namespace
     bool ForgePlaytest = false;
 }
 
-namespace Forge
+namespace ForgeCore
 {
     void LoadSettings()
     {

@@ -1,0 +1,45 @@
+# Overlay for `forge fast`: a fixed-budget sweep of the whole curriculum. The sim passes
+# `--overlay configs/fast.yaml` to every stage's learner, and it is merged over that stage's whole config (extends chain
+# included), before any --set. It is not a stage config of its own: never `extends` it or train it directly.
+#
+# A fast run plays the SAME content as a real one -- every class/build, every level -- and differs only in how long each
+# stage gets and how many envs run it. It used to narrow to four class/builds at level 20, which made it a rehearsal of a
+# problem the real build never trains: the classes it skipped were the ones whose faults a sweep is for finding.
+#
+# `total_env_steps` here is a fallback. The sim passes `--set total_env_steps=<budget>` from AnimusForge.Fast.Budget, or
+# from `forge fast 30M`, and that wins. It also passes `--set convergence.patience=0`, which is what makes a budget a
+# budget: with patience 0 a stage trains every step it was given instead of stopping as soon as its score flattens, so a
+# sweep is predictable in length rather than a race of uneven ones.
+#
+# Networks, gamma, entropy, the evaluation baseline and seeding stay each stage's own, so a fast stage seeds from the
+# fast runs of the stages it builds on, through the same code paths as a real run.
+#
+# Look at eval.csv: the at_start evaluation against the best, and the baseline in eval_baseline.json.
+
+# A sweep advances by itself, and on 64-episode evaluations best.pt often never moves: the convergence margin is
+# dominated by two standard errors of scores that noisy, so a stage can triple its score without clearing it. Seed
+# the next stage from what the last one actually trained to. (This is also the learner's default; it is written
+# here because a fast run is where it matters and where someone will look for it.)
+seed_from: latest
+
+total_env_steps: 10000000
+rollout_length: 128
+checkpoint_every: 10
+keep_checkpoints: 2
+
+mappo:
+  minibatches: 4
+
+eval:
+  # 20M at 100k an evaluation would be 200 of them; at 1M it is 20, which is enough to see a curve.
+  every_env_steps: 1000000
+  episodes: 64
+
+convergence:
+  # Overridden to 0 by the sim (`--set convergence.patience=0`) so every stage trains its whole budget. Kept here
+  # non-zero only so that running the overlay by hand, without the sim's --set, still behaves like a short run.
+  patience: 4
+  window: 3
+
+# No stage has a pass gate, in a fast run or a real one: with patience 0 every fast stage trains its whole budget and
+# advances on it, with the convergence report saying which classes were done.

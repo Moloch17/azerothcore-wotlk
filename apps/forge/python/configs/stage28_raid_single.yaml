@@ -1,0 +1,18 @@
+# Stage 28 of the curriculum: a raid of eight groups of five against one elite and its adds, won or lost as the
+# single pack is. The party stages taught a group of five; this asks whether the same policy holds together at
+# forty, where threat, healing and standing out of things all scale differently. Not in the default queue: forty
+# seats an env needs a few dozen envs, not 128 (forge start stage28_raid_single). The synthetic raid: the control the real raids are graded against.
+
+extends: stage19_triage.yaml
+run_name: stage28_raid_single
+
+total_env_steps: 40000000
+
+eval:
+  every_env_steps: 20000000
+  # 2048 inherited episodes of 300 s at 32 envs would be 19,200 sim-seconds an evaluation, 13x the duel's; 256 is
+  # 2,400 (manual 4, "What an evaluation costs").
+  episodes: 256
+  baseline: fight
+  report: [pulls_cleared, died, low_health_seconds, threat_share]
+

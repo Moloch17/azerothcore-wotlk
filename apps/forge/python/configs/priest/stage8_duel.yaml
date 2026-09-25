@@ -1,0 +1,17 @@
+# The priest's duel: the root of its fighting line. Two healing builds and a shadow one; the weakest solo duel of the casters.
+#
+# One file per class, each saying the same thing: where the class's combat line seeds from. The movement stages
+# (1-7) are trained once for every class in the shared run, so this stage seeds from that run's flight checkpoint
+# rather than from a priest-only stage7_flight, which does not exist. `init_from: auto` cannot find it (the seed
+# chain looks under this run's own runs directory); `{shared_runs}` is the shared root's runs directory beside
+# this class's own (animus.config). Seeding across is allowed because the layout check is one-directional: a
+# priest-only run takes the priest out of an all-class checkpoint and leaves the other nine behind (animus.bootstrap).
+#
+# Everything else -- the budget, the evaluation, the convergence rule -- is the shared stage8_duel's. Per-build
+# report columns are the class's own to add here.
+
+extends: ../stage8_duel.yaml
+run_name: stage8_duel
+
+init_from:
+  - "{shared_runs}/stage7_flight/best.pt"

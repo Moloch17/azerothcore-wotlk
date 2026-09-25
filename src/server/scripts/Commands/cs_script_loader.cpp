@@ -28,6 +28,7 @@ void AddSC_character_commandscript();
 void AddSC_cheat_commandscript();
 void AddSC_debug_commandscript();
 void AddSC_deserter_commandscript();
+void AddSC_forge_commandscript();
 void AddSC_disable_commandscript();
 void AddSC_event_commandscript();
 void AddSC_chatfilter_commandscript();
@@ -87,6 +88,7 @@ void AddCommandsScripts()
     AddSC_cheat_commandscript();
     AddSC_debug_commandscript();
     AddSC_deserter_commandscript();
+    AddSC_forge_commandscript();
     AddSC_disable_commandscript();
     AddSC_event_commandscript();
     AddSC_chatfilter_commandscript();

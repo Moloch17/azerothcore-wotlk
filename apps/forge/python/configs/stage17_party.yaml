@@ -1,0 +1,23 @@
+# Stage 10: up to four learned agents per env -- a tank, a healer and damage dealers of
+# random classes -- with the scripted owner as the fifth player, against elite-heavy packs. Every agent assists,
+# guards and heals its teammates; tanks hold the pull, healers keep the party up, damage dealers stay off the threat
+# table. Like the gauntlet, give it episodes of several minutes. Env steps count every agent's decisions.
+
+extends: stage16_companion.yaml
+run_name: stage17_party
+
+# ~11 h at ~15k env steps/s (four seats); convergence usually ends the stage much sooner (the headroom is for restarts).
+total_env_steps: 90000000
+
+eval:
+  every_env_steps: 15000000
+  report: [dps, died, deaths, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died,
+    teammate_healing, threat_on_teammates, casts_completed, casts_cancelled, cancelled_stopped, cancelled_moved,
+    cancelled_target, cancelled_other]
+
+# The owner is played by a frozen checkpoint (animus.cast): the endurance policy, which clears pulls on its own,
+# in 70% of the training episodes; the script's wandering owner in the rest (Owner.CastScriptedShare) and in every
+# evaluation, so the reported owner_deaths keep their meaning.
+cast:
+  agents:
+    owner: "{runs_dir}/stage11_endurance/best.pt"

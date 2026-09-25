@@ -90,7 +90,7 @@ services:
       ac-database:
         condition: service_healthy
 
-  # The training server: the forge sim with mod-animus-forge and its auto-started Python learner.
+  # The training server: the forge sim and its auto-started Python learner.
   #
   # It runs the worldserver built from the bind-mounted source tree (env/dist/bin), not a baked image,
   # because the learner needs the module's python/ directory, a venv and the GPU. The first start builds
@@ -235,9 +235,9 @@ services:
     <<: *dev-image
     container_name: ac-animus-forge-dev-server
     tty: true
-    # Every start makes sure mod-animus-forge's venv has torch and pytest (apps/docker/animus-venv.sh), so the
+    # Every start makes sure the forge learner's venv has torch and pytest (apps/docker/animus-venv.sh), so the
     # learner's tests run here:
-    #   docker compose exec -w /azerothcore/modules/mod-animus-forge/python ac-dev-server .venv/bin/python -m pytest
+    #   docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/python -m pytest
     command: ["bash", "-c", "bash /azerothcore/apps/docker/animus-venv.sh; exec bash"]
     env_file:
         ${DOCKER_AC_ENV_FILE:-conf/dist/env.ac}

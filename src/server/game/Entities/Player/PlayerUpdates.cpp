@@ -1713,7 +1713,7 @@ void Player::UpdateVisibilityOf(T* target, UpdateData& data,
 
 void Player::GetInitialVisiblePackets(Unit* target)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     GetAurasForTarget(target);

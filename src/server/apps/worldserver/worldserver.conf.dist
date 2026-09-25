@@ -4953,3 +4953,1284 @@ Cluster.IsCrossrealm=0
 # CLUSTER SETTINGS END                                                                            #
 #                                                                                                 #
 ###################################################################################################
+
+###################################################################################################
+# FORGE (the in-process training host; formerly mod-animus-forge)
+#
+#    Every AnimusForge.* key. A legacy modules/mod_animus_forge.conf next to this file is still read
+#    after it and overrides these values.
+#
+###################################################################################################
+# GENERAL
+#
+#    AnimusForge.Enable
+#        Description: Enable the module. When disabled it creates no bots, opens no socket and
+#                     every hook returns immediately.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+AnimusForge.Enable = 1
+
+#
+#    AnimusForge.OutputDir
+#        Description: Where training writes its data: runs/<scenario>/ (checkpoints, metrics, evaluation)
+#                     and layouts/<scenario>/ (each model's layout manifest and the stage's stage.json).
+#                     Relative to the directory of worldserver.conf, or absolute. The Docker ac-worldserver
+#                     service sets it to /azerothcore/var/animus-forge.
+#        Default:     "" - (the learner's directory, the module's python/)
+
+AnimusForge.OutputDir = ""
+
+###################################################################################################
+# QUEUE
+#
+#    AnimusForge.Queue
+#        Description: Comma-separated scenarios `forge start` trains one after another when it is given
+#                     none. The sim starts idle: nothing trains until `forge start` is typed on the
+#                     console (`forge help` lists every command). Every env in the pool runs the current
+#                     scenario. Each runs until its auto-started learner finishes (every class the run
+#                     plays has converged on the generic signals, or it reaches total_env_steps, and it
+#                     exits cleanly), then the next one starts; after the last one the sim idles again.
+#                     There are no pass gates: nothing but a crash halts the plan, and a stage that ends
+#                     at its budget says which classes were not done in runs/<scenario>/finished.json. A
+#                     stage none of the run's classes can play (the stealth drill in a run without rogues
+#                     or druids) is skipped. Moving on needs
+#                     AnimusForge.Policy = "remote" and AnimusForge.Learner.AutoStart = 1 (see
+#                     AnimusForge.Queue.LocalEpisodes for local policies). `forge start` rejects an unknown
+#                     name and lists the available scenarios. Each scenario trains in
+#                     <OutputDir>/runs/<scenario>/. Like any config key it can also be set from the
+#                     environment: AC_ANIMUS_FORGE_QUEUE.
+#        Values:      Curriculum: one policy for every class of AnimusForge.Classes, one scenario per
+#                     stage. Every episode each learned seat is a new character: a random race the class
+#                     allows, gender, level (1-80; 55-80 for death knights), a role the episode's makeup
+#                     calls for and one of the class's specs that plays it, with its standard talent
+#                     build and glyphs, the trainer spells of the level, gear from the item level band of
+#                     the level with enchants and gems, and potions, bandages and stones it learns to
+#                     use. Each class is a layout of the policy and exports as its own model, covering
+#                     every role it can play: what the model is told is its role and its talents, never
+#                     its spec, so it learns to play the character it was handed. Each stage's layouts
+#                     extend the stage it builds on, which seeds it:
+#                       "stage1_move"        - the root: a place 40-160 yd away on foot, over open,
+#                                              broken and wet ground (the first stage, from scratch)
+#                       "stage2_indoor" ... "stage7_flight" - the rest of the movement line: rooms,
+#                                              ledges, lakebeds, fire underfoot, the mount, the air
+#                       "stage8_duel"        - a same-level creature out of aggro range: close in and
+#                                              kill it fast, taking little damage
+#                       "stage9_pack"        - a pack of 2-4 (casters, usually linked): targets,
+#                                              interrupts, crowd control
+#                       "stage10_gauntlet"   - pull after pull with short breaks: heals, food, drink
+#                       "stage12_pvp"        - self-play one-on-one: two learned seats of any classes
+#                       "stage16_companion"  - the gauntlet beside an owner played by the endurance
+#                                              policy: follow, assist, guard and heal it
+#                       "stage17_party"      - up to four learned seats and the owner against
+#                                              elite-heavy pulls
+#                       "stage27_crossroads" - PvE and PvP in one policy: every earlier situation, an
+#                                              ambush of the owner mid-gauntlet and a ganked owner
+#                                              (merges every other line)
+#                     Only when named (not in an empty queue): the two raid stages,
+#                       "stage28_raid_single" and "stage29_raid_gauntlet" (forty seats an env).
+#        Example:     "stage8_duel" - (train a single scenario)
+#        Default:     "" - (the whole curriculum, first stage to last)
+
+AnimusForge.Queue = ""
+
+#
+#    AnimusForge.Queue.SkipFinished
+#        Description: `forge start` without scenarios leaves out queued scenarios whose run already
+#                     finished and moved on (runs/<scenario>/finished.json in AnimusForge.OutputDir with
+#                     "advanced": true), so it continues where training stopped instead of training
+#                     every stage again. A cancelled stage trains again. Scenarios
+#                     named on `forge start` always train. To retrain a finished stage, move its run
+#                     directory away or set this to 0. Only with the remote policy.
+#        Default:     1 - (Skip finished runs)
+#                     0 - (Train every queued scenario, archiving earlier runs)
+
+AnimusForge.Queue.SkipFinished = 1
+
+#
+#    AnimusForge.Queue.LocalEpisodes
+#        Description: With a local AnimusForge.Policy ("random", a scripted baseline), run this many
+#                     episodes (over all envs) per queued scenario, then move to the next. Use it to
+#                     smoke-test or baseline every scenario in one server run.
+#        Default:     0 - (a local policy runs the first queued scenario forever)
+
+AnimusForge.Queue.LocalEpisodes = 0
+
+#
+#    AnimusForge.Classes
+#        Description: Comma-separated classes the curriculum stages play (their layouts). A subset trains
+#                     a policy for just those, e.g. "warrior, priest". Changing the list changes the
+#                     layouts: models of the earlier list do not fit the new one.
+#                     A class brings every role it can play with it -- there is one model per class, not
+#                     one per class and role -- so listing "paladin" trains its healing, its tanking and
+#                     its damage in one policy. Leaving out a class can leave a stage unable to fill a
+#                     composition: a run of only rogues and mages has no tank to offer a party, and the
+#                     seats fall back to whatever the run does have.
+#                     Available: warrior, paladin, hunter, rogue, priest, deathknight, shaman, mage,
+#                     warlock, druid
+#        Default:     "" - (all of them)
+
+AnimusForge.Classes = ""
+
+###################################################################################################
+# ENVIRONMENTS
+#
+#    AnimusForge.Envs
+#        Description: Number of parallel environments. Each env gets its own instance map, so envs
+#                     are spread across MapUpdate.Threads.
+#        Default:     64
+
+AnimusForge.Envs = 64
+
+#
+#    AnimusForge.Stage.<name>.Envs
+#        Description: a stage's own env count, where the default would not do. The real raids are forty seats an
+#                     env, so `forge start stage32_raid40` at 128 envs would be 5,120 bots; these keep the bots in
+#                     the world where the pool stages have them. Any stage name works.
+#        Default:     AnimusForge.Envs
+
+AnimusForge.Stage.stage30_raid10.Envs = 32
+AnimusForge.Stage.stage31_raid25.Envs = 16
+AnimusForge.Stage.stage32_raid40.Envs = 8
+
+#
+#    AnimusForge.DecisionMs
+#        Description: Game time per agent decision, in milliseconds. Read once at startup (a change needs a
+#                     restart). Per-decision reward terms are scaled to stay the same per second, and the
+#                     learner's discounts are compounded to it, so this is the unit everything that costs
+#                     game time is written in. Models play at this interval (mod-animus:
+#                     Animus.ClassRole.DecisionMs and Animus.Stage.DecisionMs).
+#                     250 ms is about a player's reaction time: a decision there has to count for something,
+#                     where at 100 ms policies re-decided ten times a second and dithered.
+#        Default:     250
+
+AnimusForge.DecisionMs = 250
+
+#
+#    AnimusForge.TicksPerDecision
+#        Description: World updates per decision. At 1 the sim's world tick is the decision -- the world
+#                     advances AnimusForge.DecisionMs and the policy chooses, which is what the sim did
+#                     before the two were separable. Above 1 the worldserver ticks at DecisionMs divided by
+#                     this, and the module holds the decision back until that many ticks have passed: the
+#                     world moves in finer steps while the policy still chooses every DecisionMs.
+#                     What it buys is movement. A spline, a cast bar and a periodic aura all advance per
+#                     world update, so at one tick per decision a bot's path is a 250 ms staircase and a
+#                     dodge cannot be finer than that. Cutting the tick smooths all of it without making the
+#                     policy decide more often, which is the expensive half.
+#                     What it costs is world time: four ticks per decision runs the map update, the spline
+#                     and the aura ticks four times as often, so throughput falls roughly with it. The
+#                     learner is unaffected -- it is told the split and still sees one step per decision.
+#                     DecisionMs must divide by it; a remainder is rounded down at startup with a warning,
+#                     so a decision stays a whole number of ticks. Read once at startup, and the worldserver
+#                     reads the same key, so a change needs a restart of both (./forge.sh --build).
+#        Default:     1
+
+AnimusForge.TicksPerDecision = 1
+
+#
+#    AnimusForge.EpisodeSeconds
+#        Description: Game-time length of an episode, in seconds. Episodes end by truncation.
+#        Default:     60
+
+AnimusForge.EpisodeSeconds = 60
+
+#
+#    AnimusForge.SpawnPoint.MapId
+#    AnimusForge.SpawnPoint.X / Y / Z / O
+#        Description: Instanceable (dungeon) map and position where each env's bots start. The map
+#                     must have an instance_template row. The default is the Old Hillsbrad Foothills
+#                     entrance: its nearest creature spawn is 352 yd away, well outside visibility.
+#        Default:     560, 2741.9, 1315.2, 14.0, 2.96
+
+AnimusForge.SpawnPoint.MapId = 560
+AnimusForge.SpawnPoint.X     = 2741.9
+AnimusForge.SpawnPoint.Y     = 1315.2
+AnimusForge.SpawnPoint.Z     = 14.0
+AnimusForge.SpawnPoint.O     = 2.96
+
+###################################################################################################
+# POLICY
+#
+#    AnimusForge.Policy
+#        Description: Who chooses actions.
+#        Values:      "remote"          - lock-step with the Python learner over AnimusForge.Socket
+#                     "random"          - uniform over unmasked actions
+#                     "greedy"          - (curriculum stages) first usable spell or trinket
+#                     "fight"           - (curriculum stages with the duel block) start attacking, run
+#                                         to the target, first usable spell; eat and drink between
+#                                         gauntlet pulls; heal a hurt owner or teammate
+#        Default:     "remote"
+
+AnimusForge.Policy = "remote"
+
+#
+#    AnimusForge.ReportEpisodes
+#        Description: Mean episode statistics are taken over this many completed episodes (all
+#                     policies, including remote). They show in `forge status` and in the progress report
+#                     of local policy runs, and in the log at debug level.
+#        Default:     256
+
+AnimusForge.ReportEpisodes = 256
+
+#
+#    AnimusForge.Socket
+#        Description: Unix domain socket path the remote policy listens on, relative to the directory of
+#                     worldserver.conf or absolute.
+#        Default:     "/tmp/animus-forge.sock"
+
+AnimusForge.Socket = "/tmp/animus-forge.sock"
+
+###################################################################################################
+# LEARNER
+#
+#    AnimusForge.Learner.AutoStart
+#        Description: With AnimusForge.Policy = "remote", start the Python learner automatically
+#                     whenever a scenario of `forge start` or `forge resume` is ready:
+#                         <Python> -u -m animus.train --config <Config> --socket <AnimusForge.Socket>
+#                             --run-name <scenario> --runs-dir <OutputDir>/runs --layouts-dir <OutputDir>/layouts
+#                     run in <WorkDir>. `forge start` trains from scratch: whatever runs/<scenario>/ held is
+#                     moved to runs/_archive/<scenario>-<time>/ first (nothing is deleted). `forge resume`
+#                     adds --resume and continues runs/<scenario>/latest.pt instead. The learner is
+#                     stopped (and saves latest.pt) by `forge cancel`, `forge skip` and server shutdown.
+#                     Requires Python and the learner's packages where the worldserver runs, and the
+#                     module source tree: a native build, or the Docker ac-worldserver service, which
+#                     runs the build from the bind-mounted source tree.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, start the learner yourself)
+
+AnimusForge.Learner.AutoStart = 1
+
+#
+#    AnimusForge.Learner.WorkDir
+#        Description: Directory the learner runs in (the module's python/ directory). Relative to the
+#                     directory of worldserver.conf, or absolute.
+#        Default:     "" - the python/ directory of the module source this server was built from
+
+AnimusForge.Learner.WorkDir = ""
+
+#
+#    AnimusForge.Learner.Python
+#        Description: Python interpreter for the learner: a name found on PATH, or a path (relative to the
+#                     directory of worldserver.conf, or absolute).
+#        Default:     "" - <WorkDir>/.venv/bin/python if it exists, otherwise python3 from PATH
+
+AnimusForge.Learner.Python = ""
+
+#
+#    AnimusForge.Learner.Config
+#        Description: Learner config for every scenario, relative to the directory of worldserver.conf or
+#                     absolute. The run is
+#                     always named after the scenario (--run-name).
+#                     Left empty, a run of a single AnimusForge.Classes uses that class's own
+#                     configs/<class>/<scenario>.yaml where one exists, and the shared
+#                     configs/<scenario>.yaml otherwise. A curriculum trained one class at a time wants
+#                     per-class floors -- a restoration druid and a bear are not held to the same clean
+#                     kill rate -- and a single overlay file cannot express them, because an overlay
+#                     merges section by section and would hand every stage in the queue the same
+#                     `target` when stage one gates `arrived` and stage five gates `clean_kill`.
+#        Default:     "" - configs/<class>/<scenario>.yaml if it exists, else configs/<scenario>.yaml
+
+AnimusForge.Learner.Config = ""
+
+#
+#    AnimusForge.Learner.Args
+#        Description: Extra learner arguments appended to every learner command line, split on spaces
+#                     (no quoting). Mostly "--set key=value" to override learner config values for the
+#                     whole queue without editing the YAML files, e.g. a short pass over a curriculum.
+#        Example:     "--set total_env_steps=5000000 --set eval.every_env_steps=1000000"
+#        Default:     ""
+
+AnimusForge.Learner.Args = ""
+
+#
+#    AnimusForge.Learner.TorchThreads
+#        Description: CPU threads the learner's torch may use (--set torch_threads). The learner and the
+#                     sim's map update threads (MapUpdate.Threads in worldserver.conf) share the machine,
+#                     so leaving torch every core can be slower overall. `forge bench` measures both.
+#        Default:     0 - (torch's own default: a thread per core)
+
+AnimusForge.Learner.TorchThreads = 0
+
+#
+#    AnimusForge.Learner.LogFile
+#        Description: File the learner's stdout and stderr are appended to, relative to the directory of
+#                     worldserver.conf or absolute.
+#        Default:     "" - animus-learner.log in LogsDir
+
+AnimusForge.Learner.LogFile = ""
+
+###################################################################################################
+# BENCHMARK
+#
+#    `forge bench [scenario]` measures how fast the sim runs at every MapUpdate.Threads x AnimusForge.Envs
+#    pair below, then runs the fastest few again with the real learner, and reports the env steps per second
+#    of each. It writes bench.json in <OutputDir>/bench and trains nothing: every trial runs in that
+#    directory, so runs/ is untouched. `forge bench apply` writes the winner into worldserver.conf and this
+#    file (the thread count takes effect on the next restart, the env count at the next `forge start`).
+#
+#    `forge status` shows the same measurement while training: env steps/s and where a decision's wall time
+#    goes -- the world tick (the map update), this module (observing and acting) and waiting on the learner.
+#
+#    Note: more envs is not only speed. One learner update is rollout_length x envs x seats env steps, so
+#    changing the env count changes the batch the learner trains on.
+#
+#    AnimusForge.Bench.Scenario
+#        Description: Scenario the trials run, when `forge bench` is given none. A party stage (four seats
+#                     per env) costs more per env than a solo one.
+#        Default:     "stage8_duel"
+
+AnimusForge.Bench.Scenario = "stage8_duel"
+
+#
+#    AnimusForge.Bench.Policy
+#        Description: Local policy the sim-only trials play ("fight", "greedy", "random"). It decides how
+#                     much work a decision is, so keep the one closest to a trained policy.
+#        Default:     "fight"
+
+AnimusForge.Bench.Policy = "fight"
+
+#
+#    AnimusForge.Bench.Threads
+#        Description: MapUpdate.Threads values to try, comma-separated. The sim switches the map update
+#                     pool between trials, so no restart is needed while benchmarking. Every trial rebuilds
+#                     the env pool, so a trial costs its warm-up and measured decisions plus that build:
+#                     keep the grid to the counts worth telling apart. More threads than the machine has
+#                     cores, once the learner's own threads are counted, only adds trials.
+#        Default:     "4, 8, 12, 16"
+
+AnimusForge.Bench.Threads = "4, 8, 12, 16"
+
+#
+#    AnimusForge.Bench.Envs
+#        Description: AnimusForge.Envs values to try, comma-separated. Big env counts cost the most to
+#                     build and to hold, so try the few that could win rather than a wide ladder.
+#        Default:     "64, 128, 192"
+
+AnimusForge.Bench.Envs = "64, 128, 192"
+
+#
+#    AnimusForge.Bench.MaxEnvs
+#        Description: Never try more envs than this, whatever AnimusForge.Bench.Envs says.
+#        Default:     256
+
+AnimusForge.Bench.MaxEnvs = 256
+
+#
+#    AnimusForge.Bench.WarmupTicks
+#        Description: Decisions a sim-only trial runs before it is timed, so the first episode (which every
+#                     env starts together) and the cold caches are behind it.
+#        Default:     128
+
+AnimusForge.Bench.WarmupTicks = 128
+
+#
+#    AnimusForge.Bench.MeasureTicks
+#        Description: Decisions timed per sim-only trial. What the window has to average over is episode
+#                     ends: an env rebuilds its character there, and that rebuild is part of what training
+#                     costs. Episodes end on the kill well before the 60 s limit, so at 64 envs a few
+#                     hundred decisions already cover a hundred or so of them and the rate settles to a few
+#                     percent. Raise it if trials of the same settings disagree by more than that.
+#        Default:     384
+
+AnimusForge.Bench.MeasureTicks = 384
+
+#
+#    AnimusForge.Bench.MaxMemoryPercent
+#        Description: Once the machine's memory is this used after a trial, the bigger env counts of that
+#                     thread count are skipped instead of being built.
+#        Default:     80
+
+AnimusForge.Bench.MaxMemoryPercent = 80
+
+#
+#    AnimusForge.Bench.LearnerTop
+#        Description: How many of the fastest sim trials run again with the real learner, which is what
+#                     training actually costs. Each one starts a learner of its own, so this is the
+#                     expensive phase; two is enough to tell the top settings apart. 0 = sim only.
+#        Default:     2
+
+AnimusForge.Bench.LearnerTop = 2
+
+#
+#    AnimusForge.Bench.LearnerWarmupTicks
+#        Description: The learner phase's own warm-up, which also has to cover the learner starting up and
+#                     its first updates (one update per rollout_length decisions, 128 by default).
+#        Default:     384
+
+AnimusForge.Bench.LearnerWarmupTicks = 384
+
+#
+#    AnimusForge.Bench.LearnerMeasureTicks
+#        Description: Decisions timed per learner trial. Longer than the sim-only window because the cost
+#                     being measured now includes updates, which land once per rollout: this averages over
+#                     several of them.
+#        Default:     768
+
+AnimusForge.Bench.LearnerMeasureTicks = 768
+
+#
+#    AnimusForge.Bench.LearnerTorchThreads
+#        Description: AnimusForge.Learner.TorchThreads values to try in the learner trials, comma-separated
+#                     (0 = torch's own default). Every value is tried with every setting of LearnerTop.
+#        Default:     "0, 8"
+
+AnimusForge.Bench.LearnerTorchThreads = "0, 8"
+
+###################################################################################################
+# FAST TEST RUN
+#
+#    `forge fast [scenario ...]` trains stages (default: every curriculum stage) on an easier
+#    problem, to see quickly that training works and learns before a long run: fewer envs, a few
+#    classes at one level, and learner settings that end each stage as soon as its evaluation
+#    score stops improving. It always uses the remote policy and trains from scratch, in its own
+#    output directory, so it never archives, seeds from or overwrites a real run. Every other
+#    setting (decision interval, episode length, rewards) is the one above.
+#
+#    AnimusForge.Fast.Queue
+#        Description: Comma-separated scenarios `forge fast` trains when given none, in order, each again
+#                     from scratch (nothing is skipped because an earlier fast run of it finished).
+#        Default:     ""  - (every curriculum stage in order, the raid stages included: a full run)
+#                     "stage8_duel, stage12_pvp, stage27_crossroads" - (a stage from scratch, one seeded from
+#                     it, and a stage that mixes arenas, merges parents and distills)
+
+AnimusForge.Fast.Queue = ""
+
+#
+#    AnimusForge.Fast.Envs
+#        Description: Parallel envs of a fast run.
+#        Default:     32
+#
+#    AnimusForge.Fast.Budget
+#        Description: Env steps each stage of a fast run trains for before the next one starts. A fast run
+#                     is a fixed-budget sweep of the whole curriculum, not a smoke test: it plays the same
+#                     content at every class and every level, and only the budget and the env count are
+#                     smaller. Convergence is off for these runs, so a stage trains every step it was given
+#                     rather than stopping as soon as its score flattens.
+#
+#                     Override per invocation: `forge fast 30M`, `forge fast 30M stage8_duel`. A suffix of K
+#                     or M is understood, and a bare number under 1000 is read as a scenario name rather
+#                     than a budget.
+#
+#                     At the default this is a day or more over the whole queue; `forge status` reports the
+#                     total so it is not started by accident.
+#        Default:     20000000
+
+AnimusForge.Fast.Envs = 32
+AnimusForge.Fast.Budget = 20000000
+
+#
+#    AnimusForge.Fast.OutputDir
+#        Description: Where a fast run's runs/, layouts/ and exported models/ go; relative to
+#                     AnimusForge.OutputDir. `forge clean fast` deletes it.
+#        Default:     "fast"
+
+AnimusForge.Fast.OutputDir = "fast"
+
+#
+#    AnimusForge.Fast.Learner.Overlay
+#        Description: Learner config merged over every stage's config in a fast run (--overlay),
+#                     relative to the directory of worldserver.conf or absolute. The default evaluates
+#                     often and trains every stage its whole budget (the sim sets patience to 0).
+#        Default:     "" - configs/fast.yaml
+
+AnimusForge.Fast.Learner.Overlay = ""
+
+#
+#    AnimusForge.Fast.Learner.Args
+#        Description: Extra learner arguments for fast runs only, after AnimusForge.Learner.Args.
+#        Example:     "--set convergence.window=2" - (a shorter convergence window for a rehearsal)
+#        Default:     ""
+
+AnimusForge.Fast.Learner.Args = ""
+
+###################################################################################################
+# CONSOLE
+#
+#    AnimusForge.ModelDir
+#        Description: Folder `forge export` writes .amdl models (and their layout manifests) to, relative
+#                     to the directory of worldserver.conf or absolute. Models are never copied anywhere else: copy
+#                     them to a game server by hand. `forge clean exports` empties it.
+#        Default:     "" - models/ in the module source this server was built from
+
+AnimusForge.ModelDir = ""
+
+#
+#    AnimusForge.Progress.Interval
+#        Description: While a scenario runs, also log the progress report every this many wall-clock
+#                     seconds: env steps, step rate, ETAs (step limit, earliest convergence, the whole
+#                     plan), evaluation scores against the baseline, restarts, losses and warnings
+#                     (stalled learner, falling step rate, entropy collapse, large updates, non-finite
+#                     values, convergence close). The report is always printed when a stage ends, and
+#                     `forge status` prints it at any time; `forge progress <seconds|off>` changes the
+#                     interval until the server restarts.
+#        Default:     0  - (no periodic report)
+
+AnimusForge.Progress.Interval = 0
+
+###################################################################################################
+# CURRICULUM TUNING
+#
+# What the curriculum trains on and what it is paid for: the characters, parties, pulls
+# and scripted players it meets, and the reward weights. Every key is optional; a missing one keeps
+# the default shown. The effective values are written to <OutputDir>/layouts/<stage>/stage.json and
+# copied into every run directory. Per-decision reward terms are tuned per 50 ms decision and scaled
+# with AnimusForge.DecisionMs.
+
+#
+#    AnimusForge.Curriculum.Arena.<stage>.<arena>.Weight
+#        Description: A stage's share of episodes for one of its arenas (see stage.json "arenas"), e.g.
+#                     AnimusForge.Curriculum.Arena.stage4_dive.chain.Weight = 2 for as many chains as
+#                     single dives. Only matters for stages with several arenas.
+#        Default:     the stage definition's weight (1 for every arena of the current stages)
+
+#
+#    AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung
+#        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
+#                     AnimusForge.Curriculum.Arena.stage5_dodge.hazards.MaxRung = 0 for the bottom rung.
+#                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
+#                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
+#        Default:     the stage definition's (0 for stage5_dodge, -1 for every other arena)
+
+#
+#    AnimusForge.Curriculum.Characters.*
+#        The seat characters.
+
+#   levels at or above this are "high"
+AnimusForge.Curriculum.Characters.HighLevelFirst = 61
+#   percent of characters drawn from the high levels
+AnimusForge.Curriculum.Characters.HighLevelChance = 50
+#   levels at or below this are "low"
+AnimusForge.Curriculum.Characters.LowLevelLast = 20
+#   percent of characters drawn from the low levels (when the class can be that low); the rest are any level
+AnimusForge.Curriculum.Characters.LowLevelChance = 15
+#   percent of characters: the standard build with its last points moved (0 = never)
+AnimusForge.Curriculum.Characters.NoisyTalentChance = 30
+#   percent of characters: every talent point spent at random (the rest get the spec's standard build)
+AnimusForge.Curriculum.Characters.RandomTalentChance = 10
+#   a noisy build moves 1 to this many of its last points
+AnimusForge.Curriculum.Characters.TalentNoisePoints = 5
+#   percent of pet-class characters (hunters, warlocks, death knights with Master of Ghouls, frost mages with Glyph
+#   of Eternal Water) that start with their pet out, as a player arrives with one
+AnimusForge.Curriculum.Characters.PetOutChance = 50
+#   episodes a seat keeps its character for when the next episode draws the same class and build, before it is
+#   built afresh (race, level, talents, gear). A kept character is healed, cleared of buffs and cooldowns, restocked
+#   and moved to the new spawn, at a fraction of a build's cost; the level stays what it was. Evaluations always
+#   build. 0 = build every episode. `forge status` counts the characters reused per decision beside the rebuilt.
+AnimusForge.Curriculum.Characters.ReuseEpisodes = 4
+
+#
+#    AnimusForge.Curriculum.Party.*
+#        Which party seats have a character, and their roles.
+
+#   relative chance of 1, 2, 3 or 4 seats with a character
+AnimusForge.Curriculum.Party.SizeWeight1 = 20
+AnimusForge.Curriculum.Party.SizeWeight2 = 20
+AnimusForge.Curriculum.Party.SizeWeight3 = 20
+AnimusForge.Curriculum.Party.SizeWeight4 = 40
+#   percent: tank, healer, damage dealers instead of drawn roles
+AnimusForge.Curriculum.Party.ClassicChance = 50
+#   drawn roles: percent tanks, healers, the rest damage dealers
+AnimusForge.Curriculum.Party.RoleTankChance = 25
+AnimusForge.Curriculum.Party.RoleHealerChance = 25
+#   damage dealers: a non-tank teammate's damage taken
+AnimusForge.Curriculum.Party.TeammateDamageTakenDps = 0.5
+#   tanks and healers
+AnimusForge.Curriculum.Party.TeammateDamageTakenProtector = 1.0
+#   healers: effective healing, fraction of its health
+AnimusForge.Curriculum.Party.TeammateHealing = 2.0
+#   tanks: per enemy on a non-tank teammate, per decision
+AnimusForge.Curriculum.Party.TankLoseTeammate = 0.02
+AnimusForge.Curriculum.Party.TeammateDeath = 3.0
+
+#
+#    AnimusForge.Curriculum.Duel.*
+#        One-on-one fights against a creature (the duel) or a player (PvP).
+
+#   fraction of the opponent's health: a kill is worth this in damage
+AnimusForge.Curriculum.Duel.DamageDealt = 2.0
+#   fraction of the bot's health
+AnimusForge.Curriculum.Duel.DamageTaken = 1.0
+#   shaping toward the spec's range, per 40 yd closed
+AnimusForge.Curriculum.Duel.Approach = 0.5
+#   a harmful spell from stealth that breaks it (Ambush, Cheap Shot)
+AnimusForge.Curriculum.Duel.StealthOpener = 0.5
+#   one that keeps it (Sap, Distract), once per target per stealth
+AnimusForge.Curriculum.Duel.StealthUtility = 0.05
+#   per decision
+AnimusForge.Curriculum.Duel.StepCost = 0.0002
+#   winning outweighs winning fast: at Kill 10, FastKill 1 and a loss (Death, Timeout) at 10, a risky fast opener
+#   only pays more than a sure slow win above ~97% odds
+AnimusForge.Curriculum.Duel.Kill = 10.0
+#   times the fraction of the episode length left, from the engagement
+AnimusForge.Curriculum.Duel.FastKill = 1.0
+#   times the fraction of the bot's health not lost; damage taken is already charged as it happens, so a large
+#   value pays twice for the same thing and reads as "survive" rather than "win"
+AnimusForge.Curriculum.Duel.HealthKept = 0.5
+AnimusForge.Curriculum.Duel.Death = 10.0
+#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one, charged times the share
+#   of the opponent still standing -- a clock that runs out with the creature nearly dead is a near miss, one that
+#   runs out with it untouched is a refusal to fight. At the full charge it matches Death, so a seat that cannot be
+#   sure of the kill has nothing to gain by keeping its distance
+AnimusForge.Curriculum.Duel.Timeout = 10.0
+#   the share of Timeout charged whatever the fight's progress; the rest goes with the opponent still standing, so a
+#   near miss costs about half a refusal and breaking off at half health is not cheaper than dying
+AnimusForge.Curriculum.Duel.TimeoutFloor = 0.5
+#   creature duel: per second the fight has not started once StallGraceMs are gone; Timeout alone charges standing
+#   where it spawned only when the clock runs out, too far off for the policy to see, and keeping out of a fight has
+#   to cost more than holding a goal at range pays
+AnimusForge.Curriculum.Duel.Stall = 0.08
+#   ... the time a seat has to summon, buff and sneak up before it (ms)
+AnimusForge.Curriculum.Duel.StallGraceMs = 15000
+#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
+#   cast time, at least a global cooldown), up to this much (ms): 30 s made a 45 s approach free
+AnimusForge.Curriculum.Duel.PreparationRefundMaxMs = 15000
+#   duel: stopping the opponent's cast, priced by what was stopped as the pack's is (a heal undoes damage already
+#   dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output). The duel
+#   meets casters now (Difficulty.CasterChance), and one enemy casting one spell is the cheapest place in the
+#   curriculum to learn what an interrupt is for
+AnimusForge.Curriculum.Duel.Interrupt = 0.3
+AnimusForge.Curriculum.Duel.InterruptHeal = 3.0
+AnimusForge.Curriculum.Duel.InterruptArea = 2.0
+AnimusForge.Curriculum.Duel.InterruptLong = 1.5
+#   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
+AnimusForge.Curriculum.Duel.Spacing = 0.03
+#   the range the approach shaping aims for, melee specs
+AnimusForge.Curriculum.Duel.MeleeRange = 3.5
+#   ... ranged specs
+AnimusForge.Curriculum.Duel.RangedRange = 25.0
+
+#
+#    AnimusForge.Curriculum.Difficulty.*
+#        How hard the creature duel's opponents are, per class and role. Tier t below EliteTier is a normal
+#        creature t x LevelsPerTier levels above the seat; from EliteTier on an elite, (t - EliteTier) x
+#        LevelsPerTier levels above. Evaluations spread their seeds over every tier.
+
+#   the hardest tier
+AnimusForge.Curriculum.Difficulty.MaxTier = 6
+#   the first elite tier (above MaxTier: no elites)
+AnimusForge.Curriculum.Difficulty.EliteTier = 4
+AnimusForge.Curriculum.Difficulty.LevelsPerTier = 1
+#   a class in a role moves up a tier when it wins (kills without dying) this share of Window fights at its tier ...
+AnimusForge.Curriculum.Difficulty.RaiseAbove = 0.9
+#   ... and down below this share
+AnimusForge.Curriculum.Difficulty.LowerBelow = 0.6
+AnimusForge.Curriculum.Difficulty.Window = 200
+#   percent of training fights drawn from a lower tier, so none is forgotten
+AnimusForge.Curriculum.Difficulty.ReviewChance = 25
+#   percent drawn one tier above that class and role's own, which do not count towards moving it: an evaluation scores
+#   every tier, so nothing should be met there for the first time
+AnimusForge.Curriculum.Difficulty.StretchChance = 10
+#   duel: the share of fights against something that casts, and of those, the share against something that puts a
+#   hazard on the ground. The duel's own pool is default-AI creatures, which never cast at all, so at 0 the duel
+#   teaches nothing about interrupting, dispelling or stepping out of anything -- all of it waits for the pack
+#   stage, where it competes with learning to fight several enemies at once
+AnimusForge.Curriculum.Difficulty.CasterChance = 40
+AnimusForge.Curriculum.Difficulty.HazardChance = 30
+#   the outcome terms scale with the tier: a win (kill, clear, health kept) is multiplied by 1 + TierScale x tier and
+#   a loss (death, timeout, overtime) divided by it, in the duel, the packs, the raids and the endurance run's pulls.
+#   A tier-0 fight is unchanged; at tier 6 a kill pays 2.5x and a death costs 0.4x, so a hard fight is worth
+#   attempting and the score no longer falls as the ladder climbs. 0 keeps every tier flat
+AnimusForge.Curriculum.Difficulty.TierScale = 0.25
+
+#
+#    AnimusForge.Curriculum.Instance.*
+#        Real dungeons and raids (the dungeon and raid stages): the seats spawn at the instance's front door and are
+#        taken to the boss along the server's own path; the boss fights with the core's script.
+
+#   how far back up the path from the boss the seats start
+AnimusForge.Curriculum.Instance.EngageYards = 35
+#   creatures this close to the boss that are not its adds (InstanceBosses.cpp, Keep) are cleared for the episode
+AnimusForge.Curriculum.Instance.TrashRadius = 60
+#   the rung's tier scale (Difficulty.TierScale) is capped at this tier: a ladder of twenty bosses would otherwise pay
+#   a top kill 5.75x where the pool ladders stop at 2.5x
+AnimusForge.Curriculum.Instance.MaxTierScale = 6
+#   paid on a wipe or an evade for the share of the boss's health the fight took off it, times the tier scale, so a
+#   forty-seat fight has a gradient before its first kill
+AnimusForge.Curriculum.Instance.BossProgress = 5.0
+#   the clock running out with the boss alive, scaled by what is left of it (Duel.TimeoutFloor), divided by the tier
+AnimusForge.Curriculum.Instance.Timeout = 10.0
+
+#
+#    AnimusForge.Curriculum.Life.*
+#        Life outside the fight (the quest, gather and town stages): the seat alone in a copy of the world's own
+#        zone -- its quest givers, creatures, nodes and traders summoned into the env's phase from the spawn tables
+#        -- with what it does kept on the character in memory. The outcome terms scale with the band's tier.
+
+#   per decision
+AnimusForge.Curriculum.Life.StepCost = 0.0002
+#   potential shaping on the distance to where the episode wants the seat next, paid once over an approach
+AnimusForge.Curriculum.Life.Progress = 2.0
+#   a press that did nothing in the world (an interact with nothing in reach, a buy that bought nothing)
+AnimusForge.Curriculum.Life.Wasted = 0.1
+#   divided by the tier scale
+AnimusForge.Curriculum.Life.Death = 5.0
+#   the quest: taking it, its objective counts as they land (times the tier scale), the turn-in (times the tier
+#   scale), and the clock running out without it (less what was done, over the tier scale)
+AnimusForge.Curriculum.Life.QuestAccepted = 1.0
+AnimusForge.Curriculum.Life.QuestCredit = 3.0
+AnimusForge.Curriculum.Life.QuestTurnIn = 10.0
+AnimusForge.Curriculum.Life.QuestTimeout = 3.0
+#   gathering: per node looted (times the tier scale), per skill point gained
+AnimusForge.Curriculum.Life.GatherNode = 2.0
+AnimusForge.Curriculum.Life.GatherSkillUp = 0.5
+#   the town: the starting junk's vendor value realised (pro rata), the gear repaired, food and drink restocked, each
+#   upgrade put on, and all of it done before the clock
+AnimusForge.Curriculum.Life.TownSold = 2.0
+AnimusForge.Curriculum.Life.TownRepaired = 2.0
+AnimusForge.Curriculum.Life.TownStocked = 2.0
+AnimusForge.Curriculum.Life.TownEquipped = 3.0
+AnimusForge.Curriculum.Life.TownDone = 5.0
+#   yards the seat's world features reach
+AnimusForge.Curriculum.Life.SenseRange = 100.0
+#   the world's creatures this close to a quest objective's place (or a gather ground) are summoned, up to this many
+AnimusForge.Curriculum.Life.ObjectiveRadius = 60.0
+AnimusForge.Curriculum.Life.ObjectiveSpawns = 24
+#   the nodes this close to the gather ground are the field, up to this many
+AnimusForge.Curriculum.Life.NodeRadius = 150.0
+AnimusForge.Curriculum.Life.NodeSpawns = 24
+#   the traders this close to the inn are the town
+AnimusForge.Curriculum.Life.TownRadius = 80.0
+#   the seat's purse in a town episode: level squared times this, in copper (level 20: 1 gold)
+AnimusForge.Curriculum.Life.TownCopperPerLevelSquared = 25
+
+#
+#    AnimusForge.Curriculum.Casting.*
+#        Cast-time spells, from the duel stage on.
+
+#   per second spent on a cast that did not finish
+AnimusForge.Curriculum.Casting.TimeWasted = 0.03
+#   per second of cast time of a cast that finished, in combat
+AnimusForge.Curriculum.Casting.TimeCompleted = 0.03
+#   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
+#   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
+AnimusForge.Curriculum.Casting.Cancel = 0.05
+#   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
+#   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
+#   paid once for each goal the seat holds, on the first decision its actions match the goal the learner is pursuing
+#   (fight, control, recover, protect, position, prepare) -- a goal is there to be reached, and paying per decision
+#   spent in one made standing at range the stage's second largest earner. Small on purpose: it keeps the goals apart
+#   so a goal head cannot collapse into one goal, rather than paying for play the stage's own terms already price
+AnimusForge.Curriculum.Goals.Match = 0.02
+#   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
+#   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
+#   channel that correlates with nothing cannot bootstrap into that. stage26_duo_led ran 30M steps with the order
+#   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
+#   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
+#   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
+#   reward, or it would learn to call whoever its seats were already fighting.
+#   Small because a per-decision term adds up over a fight: at 0.01 it earned 5.01 an episode, 23.7% of gross and
+#   level with the kill and the death, which would buy tunnel vision on the called target. At 0.001 full compliance
+#   is worth about 0.5, a tenth of the kill
+AnimusForge.Curriculum.Order.Focus = 0.001
+#   every arena whose director may name a place: paid once to a seat that arrives where it was sent, and not
+#   again for PlaceCooldownMs. Never per decision -- a per-decision payment for standing in the right spot is
+#   the shape that made the focus nudge 23.7% of gross before it was cut, and it could be farmed by stepping
+#   over the edge of the radius and back
+AnimusForge.Curriculum.Order.PlaceMatch = 0.02
+#   yards: close enough to the called place to count as having arrived
+AnimusForge.Curriculum.Order.PlaceRadius = 8
+#   milliseconds before the same seat can be paid for arriving again
+AnimusForge.Curriculum.Order.PlaceCooldownMs = 10000
+#   how far a called place sits off its anchor, at each ring. These two numbers are all that changes between
+#   an arena and a continent: the director's thirteen place actions mean the same thing at any scale
+AnimusForge.Curriculum.Director.PlaceNearYards = 20
+AnimusForge.Curriculum.Director.PlaceFarYards = 60
+AnimusForge.Curriculum.Support.SelfHealing = 0.5
+#   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
+#   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
+#   bought nothing and a heal over time could be stacked on a full bar for free. With it the objective is healing per
+#   mana. Kept well below SelfHealing -- the failure to avoid is a seat that heals too little and dies
+AnimusForge.Curriculum.Support.HealingMana = 0.1
+#   the same charge in the schedules that pay readiness (the gauntlet, a planned run), where mana spent healing
+#   already costs the seat what it brings to the next pull. 0 leaves that accounting to do the work: the charge is a
+#   stand-in for an opportunity cost and is only needed where there is no later fight to have one
+AnimusForge.Curriculum.Support.HealingManaWithReadiness = 0.0
+#   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
+AnimusForge.Curriculum.Support.BuffCoverage = 0.3
+#   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
+#   engagement: part of being ready, which the kill alone did not teach
+AnimusForge.Curriculum.Support.PetReady = 0.3
+
+#
+#    AnimusForge.Curriculum.Actions.*
+#        How often a seat may press the same button, as a player would. A paced action is masked until it may be
+#        pressed again, so a policy cannot sit re-issuing an order every decision (a pet sent in 125 times an
+#        episode, a cast started and stopped over and over). Spells keep their own cooldowns as well. 0 = no pace.
+
+#   the same action again: spells, orders, consumables, targeting (ms)
+AnimusForge.Curriculum.Actions.RepeatMs = 1000
+#   the same movement order again (ms)
+AnimusForge.Curriculum.Actions.MoveRepeatMs = 300
+#   a cast the bot is in cannot be stopped before it has run this long (ms)
+AnimusForge.Curriculum.Actions.StopCastMinMs = 500
+#   a spell the bot stopped itself cannot be started again for this long (ms)
+AnimusForge.Curriculum.Actions.RecastAfterStopMs = 2000
+#   per press of the same action past the free ones within RepeatWindowMs: pressing one button over and over,
+#   however far apart the presses are paced (how often the seat acts overall is not charged; movement orders are
+#   always free)
+AnimusForge.Curriculum.Actions.Repeat = 0.02
+#   the window the presses of one action are counted in (ms)
+AnimusForge.Curriculum.Actions.RepeatWindowMs = 10000
+#   presses of one action within the window that cost nothing
+AnimusForge.Curriculum.Actions.RepeatFree = 3
+#   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
+#   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
+#   or Levitate, health past fourteen yards, death past about seventy -- is the seat's to learn. Only the void is
+#   masked
+AnimusForge.Curriculum.Actions.JumpDropSearch = 200
+#   a stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change of its
+#   kind (ms)
+AnimusForge.Curriculum.Actions.ModeLockMs = 5000
+
+#
+#    AnimusForge.Curriculum.Pulls.*
+#        Packs and the gauntlet's pull after pull.
+
+#   percent of pulls whose members aggro together
+AnimusForge.Curriculum.Pulls.LinkedChance = 70
+#   gauntlet: a single elite instead of a pack
+AnimusForge.Curriculum.Pulls.EliteChance = 15
+#   gauntlet: a pack 1-3 levels above the bot (at most 1 below level 20, 2 below 30)
+AnimusForge.Curriculum.Pulls.HigherLevelChance = 25
+#   party: per pack member
+AnimusForge.Curriculum.Pulls.PartyEliteChance = 50
+#   gauntlet: the break between pulls
+AnimusForge.Curriculum.Pulls.NextPullMinMs = 8000
+AnimusForge.Curriculum.Pulls.NextPullMaxMs = 20000
+#   with an owner: when it walks over to a new pull
+AnimusForge.Curriculum.Pulls.OwnerEngageMinMs = 1500
+AnimusForge.Curriculum.Pulls.OwnerEngageMaxMs = 5000
+#   ... in a party, after the tank has had time to pull
+AnimusForge.Curriculum.Pulls.PartyOwnerEngageMinMs = 4000
+AnimusForge.Curriculum.Pulls.PartyOwnerEngageMaxMs = 7000
+#   ... when the owner starts the pull itself
+AnimusForge.Curriculum.Pulls.OwnerPullsMinMs = 500
+AnimusForge.Curriculum.Pulls.OwnerPullsMaxMs = 1500
+#   percent of pulls a damage dealer or healer owner starts (tanks: all)
+AnimusForge.Curriculum.Pulls.OwnerPullsChance = 30
+#   owner stages: health and mana the dead stand up with after a pull
+AnimusForge.Curriculum.Pulls.RecoverFraction = 0.5
+#   fraction of the pull's total health
+AnimusForge.Curriculum.Pulls.DamageDealt = 2.0
+#   pack: fraction of the bot's health
+AnimusForge.Curriculum.Pulls.DamageTaken = 1.0
+#   gauntlet on: surviving many pulls matters more than any one
+AnimusForge.Curriculum.Pulls.GauntletDamageTaken = 1.5
+AnimusForge.Curriculum.Pulls.Approach = 0.5
+AnimusForge.Curriculum.Pulls.StealthOpener = 0.5
+AnimusForge.Curriculum.Pulls.StealthUtility = 0.05
+AnimusForge.Curriculum.Pulls.Interrupt = 0.3
+#   an interrupt is paid Interrupt times what it stopped, from the spell's own properties: a heal undoes damage
+#   already dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output. Never
+#   below 1 -- the flat term is how a class finds interrupting at all, and if only heals paid the behaviour might
+#   never appear to be shaped
+AnimusForge.Curriculum.Pulls.InterruptHeal = 3.0
+AnimusForge.Curriculum.Pulls.InterruptArea = 2.0
+AnimusForge.Curriculum.Pulls.InterruptLong = 1.5
+AnimusForge.Curriculum.Pulls.Kill = 0.5
+#   per decision
+AnimusForge.Curriculum.Pulls.StepCost = 0.0002
+#   owner stages (the solo gauntlet has SoloGauntlet*), win-first: each pull cleared, and FastPull times
+#   1 - its time since engaged / 60 s, both x OwnerClearScale; HealthKept times the seat's own health kept through it;
+#   GauntletDeath per seat death (the owner's is Owner.Death)
+AnimusForge.Curriculum.Pulls.Clear = 2.5
+AnimusForge.Curriculum.Pulls.FastPull = 0.5
+AnimusForge.Curriculum.Pulls.HealthKept = 0.5
+AnimusForge.Curriculum.Pulls.GauntletDeath = 10.0
+#   A single pack (stage9_pack) is won or lost, as the duel is: the clear outweighs finishing it untouched,
+#   and dying or running out of time costs as much as the clear pays. With the gauntlet's Clear and HealthKept
+#   the pack was worth 2 + 2, so keeping health paid as much as winning, and a death cost only 3.
+AnimusForge.Curriculum.Pulls.PackClear = 10.0
+#   pack: times the episode fraction left after engaging
+AnimusForge.Curriculum.Pulls.FastClear = 1.0
+#   pack: times the fraction of the bot's health not lost
+AnimusForge.Curriculum.Pulls.PackHealthKept = 0.5
+AnimusForge.Curriculum.Pulls.PackDeath = 10.0
+#   pack: the clock ran out with the pack and the seat both alive; the episode ends as a lost fight
+#   pack: the single pack's top ladder rung (0-5: 2, 3, 4 creatures with a caster, two casters, an elite, an elite a
+#   level above), climbed per class and role at the Difficulty.* rates; 0 keeps every pack on the first rung
+AnimusForge.Curriculum.Pulls.MaxTier = 5
+#   pack: the clock running out, charged times the share of the pull still standing, as the duel's is
+AnimusForge.Curriculum.Pulls.Timeout = 10.0
+#   pack: the share of it charged whatever the pull's progress
+AnimusForge.Curriculum.Pulls.TimeoutFloor = 0.5
+#   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
+#   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
+AnimusForge.Curriculum.Pulls.Overtime = 0.1
+AnimusForge.Curriculum.Pulls.OvertimeGraceMs = 60000
+#   pack: crowd control paid as the damage it prevents, not as time held. Each add kept out of the fight is credited
+#   its own measured damage rate over the decision, divided by the seat's health now (floored at ControlHealthFloor of
+#   its maximum), so a prevented hit is worth more the less health there is to lose -- the same currency DamageTaken is
+#   charged in, which is why the two weights are comparable and control no longer loses to the overtime clock.
+#   Half DamageTaken: what a held add would have dealt is estimated, not observed, and the health floor can multiply
+#   it fivefold, so control is paid less than the damage it is credited with preventing. Measured at 0 until
+#   2026-09-18 (stage9_pack at 30M: control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was
+#   controlled because nothing paid for it).
+AnimusForge.Curriculum.Pulls.SinglePackControl = 0.5
+#   ... at most this much a pull, a guard against a sim quirk rather than a shaping knob
+AnimusForge.Curriculum.Pulls.SinglePackControlMax = 1.0
+#   the health divisor's floor, as a fraction of maximum health, so control's value cannot run away near death
+AnimusForge.Curriculum.Pulls.ControlHealthFloor = 0.2
+#   what an add that never got to act is assumed to have prevented, in maximum healths per second: a pack sapped
+#   before it swings has no measured rate of its own, and pre-pull control is the most valuable kind
+AnimusForge.Curriculum.Pulls.ControlFallbackDps = 0.02
+#   how long an add must be loose before its own measured rate is trusted over the pull's mean (ms)
+AnimusForge.Curriculum.Pulls.ControlRateMinMs = 3000
+#   pack: the overtime grace grows by the wall time at least one add was held, up to this much (ms), so holding an add
+#   is not charged as dragging the fight out: with the grace alone, the overtime charge took back what the control
+#   paid. 0 leaves the grace alone. Bounded on purpose -- Overtime is what stops kiting the clock, and an unbounded
+#   pause would hand that back
+AnimusForge.Curriculum.Pulls.ControlGraceMaxMs = 15000
+#   pack: per second the pack has not been engaged once StallGraceMs of the episode are gone
+AnimusForge.Curriculum.Pulls.Stall = 0.08
+AnimusForge.Curriculum.Pulls.StallGraceMs = 15000
+#   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
+#   its cast time, at least a global cooldown), up to this much (ms). Counted per pull, not per episode: a gauntlet
+#   seat that prepared once used to earn the full refund on every pull after it
+AnimusForge.Curriculum.Pulls.PreparationRefundMaxMs = 15000
+#   pack: per second a ranged spec is hit by a pack member in melee reach
+AnimusForge.Curriculum.Pulls.Spacing = 0.03
+#   solo gauntlet (pull after pull, no owner; won by lasting to the end with SoloGauntletWinPulls cleared): each pull
+#   cleared, instead of Clear ...
+AnimusForge.Curriculum.Pulls.SoloGauntletClear = 5.0
+#   ... plus this times 1 - the pull's time since engaged / 60 s, instead of FastPull ...
+AnimusForge.Curriculum.Pulls.SoloGauntletFastPull = 1.0
+#   ... and this times the health kept through the pull, instead of HealthKept
+AnimusForge.Curriculum.Pulls.SoloGauntletHealthKept = 0.5
+#   solo gauntlet: a death, instead of GauntletDeath (it also forfeits every pull left)
+AnimusForge.Curriculum.Pulls.SoloGauntletDeath = 10.0
+#   solo gauntlet: engaging a pull pays this times the health fraction (the lower of health and mana for mana users)
+#   the decision before: entering a fight ready is what resting between pulls is for
+AnimusForge.Curriculum.Pulls.SoloGauntletReadiness = 0.5
+#   solo gauntlet: lasting to the end is a win only with this many pulls cleared (fewer is a timeout)
+AnimusForge.Curriculum.Pulls.SoloGauntletWinPulls = 5
+#   solo gauntlet: food and drink stocked, each
+AnimusForge.Curriculum.Pulls.GauntletSupplies = 7
+#   solo gauntlet: per second per pack member kept out of the engaged fight by crowd control (stunned, incapacitated,
+#   asleep, polymorphed, feared, or rooted out of melee reach and not casting), other than the seat's target, while
+#   another member is alive ...
+AnimusForge.Curriculum.Pulls.SoloGauntletControl = 0.02
+#   ... up to this much per pull
+AnimusForge.Curriculum.Pulls.SoloGauntletControlMax = 1.5
+#   solo gauntlet: a pull nobody engaged comes to the seat this long after it spawned (ms) ...
+AnimusForge.Curriculum.Pulls.ArriveMinMs = 20000
+AnimusForge.Curriculum.Pulls.ArriveMaxMs = 40000
+#   ... less this per pull cleared, down to ArriveFloorMs
+AnimusForge.Curriculum.Pulls.ArriveShrinkMs = 1500
+AnimusForge.Curriculum.Pulls.ArriveFloorMs = 10000
+#   solo gauntlet: the break before the next pull shrinks by this per pull cleared, down to NextPullFloorMs (ms)
+AnimusForge.Curriculum.Pulls.NextPullShrinkMs = 1000
+AnimusForge.Curriculum.Pulls.NextPullFloorMs = 4000
+#   gauntlets: what the per-hit terms (damage dealt and taken, kills, approach) are multiplied by there. A plan pays
+#   at the end of a pull or an episode -- the clear, surviving, readiness, control -- and dense terms paid every
+#   decision drown those out. 1 leaves the single pack's balance alone
+AnimusForge.Curriculum.Pulls.GauntletDenseScale = 0.5
+#   owner stages: kills and clears count this many times
+AnimusForge.Curriculum.Pulls.OwnerClearScale = 2.0
+#   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
+#   mana), crowd control per enemy-second an add is kept out of the fight (up to OwnerControlMax a pull), and a win --
+#   the episode lasted with the owner never dead, no wipe and OwnerWinPulls pulls cleared -- counted as the kill
+AnimusForge.Curriculum.Pulls.OwnerReadiness = 0.5
+AnimusForge.Curriculum.Pulls.OwnerControl = 0.02
+AnimusForge.Curriculum.Pulls.OwnerControlMax = 1.5
+AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
+
+#
+#    AnimusForge.Curriculum.Options.*
+#        Description: How long a durative action may run before the seat has to choose again (ms). One press of
+#                     one stands for many decisions: resting until health and mana are back, holding an interrupt
+#                     for the target's next cast, or walking a bearing. They also end on their own conditions,
+#                     and any other action the policy takes cancels them -- except that only the feet end a held
+#                     bearing, and only its own opposite ends a held turn or pitch.
+#        Default:     30000 / 10000 / 3000 / 750 / 750
+#
+AnimusForge.Curriculum.Options.RestMaxMs = 30000
+AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
+#   ... and how long a bearing chosen with the move block keeps being walked before it lapses (ms). Shorter than the
+#   two above on purpose: those are standing instructions that stay true while the fight does, where a direction
+#   chosen against the ground goes stale as soon as the seat has covered it. Re-pressing keeps it going, which is
+#   what a held key is.
+AnimusForge.Curriculum.Options.MoveBearingMs = 3000
+
+#   ... and how long a turn or a pitch keeps being held (ms). Shorter again than a bearing: a seat that keeps turning
+#   for three seconds has spun round twice, so this is the length of a glance rather than of a journey. What it has
+#   turned to is kept when it stops, the way a mouse leaves the camera where it was left.
+AnimusForge.Curriculum.Options.MoveTurnMs = 750
+AnimusForge.Curriculum.Options.MovePitchMs = 750
+
+#   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
+#   just behind the owner and keeps re-aiming that run at where the owner is now; it ends on its own when the seat
+#   is there and the owner has stopped, and like a bearing it ends when the feet are told something else. Longer
+#   than a bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
+AnimusForge.Curriculum.Options.FollowMs = 6000
+
+#   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison
+#   cloud, a consecration), charged per fraction of maximum health ON TOP of DamageTaken, which already charges it
+#   once as damage. This is the damage a seat could have walked out of, and the only term that pays for moving its
+#   feet -- without it, standing in fire costs exactly what standing anywhere else costs. Reads zero wherever nothing
+#   puts anything on the ground, which is most of the curriculum today and none of a dungeon.
+AnimusForge.Curriculum.Hazards.Damage = 0.5
+#   per second standing in one, whether or not it has ticked yet. The damage alone is small, late and noisy (it
+#   arrives after the decision that put the seat there); the seconds are immediate and describe the behaviour, as
+#   Spacing does for a ranged spec caught in melee
+AnimusForge.Curriculum.Hazards.Standing = 0.15
+#   at most this much an episode, both hazard terms together. Melee have to stand in melee: a hazard under the enemy
+#   is a real trade, and an uncapped charge teaches a seat to leave the fight, which is worse than standing in fire
+AnimusForge.Curriculum.Hazards.Max = 3.0
+
+#
+#    AnimusForge.Curriculum.Owner.*
+#        The scripted owner of the companion and party stages.
+
+#   its level: the bot's plus or minus this
+AnimusForge.Curriculum.Owner.LevelSpread = 2
+#   percent tanks, healers, the rest damage dealers
+AnimusForge.Curriculum.Owner.TankChance = 25
+AnimusForge.Curriculum.Owner.HealerChance = 25
+#   in a stage whose owner is played by a frozen checkpoint (the learner's cast), the percent of training episodes
+#   that keep the scripted owner instead -- it wanders and engages on a timer, the shape the follow lesson was built
+#   on; evaluations always script it
+AnimusForge.Curriculum.Owner.CastScriptedShare = 30
+#   damage dealers: the owner's damage taken, fraction of its health
+AnimusForge.Curriculum.Owner.DamageTakenDps = 1.0
+#   tanks and healers exist to prevent it
+AnimusForge.Curriculum.Owner.DamageTakenProtector = 2.0
+#   a tank owner is hit by design: its damage taken counts this much
+AnimusForge.Curriculum.Owner.TankOwnerDamageShare = 0.25
+#   any role: effective healing on the owner, plus what the bot's absorbs soaked and its damage reductions
+#   prevented there, as a fraction of the owner's health
+AnimusForge.Curriculum.Owner.Healing = 2.0
+#   tanks: soften the pulls' damage taken
+AnimusForge.Curriculum.Owner.TankDamageRefund = 0.5
+#   tanks: per enemy on the tank, per decision
+AnimusForge.Curriculum.Owner.TankHold = 0.002
+#   tanks: per enemy on the owner, per decision
+AnimusForge.Curriculum.Owner.TankLose = 0.02
+#   damage dealers and healers, and only beside a tank owner: per enemy on the bot, per decision. Beside an owner
+#   that does not tank, holding the enemies is the bot's job and is not charged
+AnimusForge.Curriculum.Owner.PulledThreat = 0.004
+#   per decision in combat while the owner is not
+AnimusForge.Curriculum.Owner.SoloFight = 0.01
+#   per decision out of combat beyond FollowFarDistance
+AnimusForge.Curriculum.Owner.FollowFar = 0.002
+#   per decision out of combat within FollowNearDistance
+AnimusForge.Curriculum.Owner.FollowNear = 0.0005
+AnimusForge.Curriculum.Owner.FollowFarDistance = 25.0
+AnimusForge.Curriculum.Owner.FollowNearDistance = 12.0
+AnimusForge.Curriculum.Owner.Death = 15.0
+
+#
+#    AnimusForge.Curriculum.Resurrection.*
+#        Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion
+#        and party stages). Nobody is revived automatically while a resurrection is possible.
+
+#   the dead wait this long (ms) for a resurrection they can get before solo stages end and
+#   owner stages stand them up (the next pull waits too)
+AnimusForge.Curriculum.Resurrection.GraceMs = 20000
+#   a dead ally the seat resurrected stood up
+AnimusForge.Curriculum.Resurrection.ReviveAlly = 1.5
+
+#
+#    AnimusForge.Curriculum.Opponent.*
+#        The scripted enemy player of the PvP stage.
+
+AnimusForge.Curriculum.Opponent.LevelSpread = 1
+#   it starts fighting up to this long into the episode
+AnimusForge.Curriculum.Opponent.EngageMaxMs = 3000
+AnimusForge.Curriculum.Opponent.HealerChance = 20
+AnimusForge.Curriculum.Opponent.TankChance = 20
+
+#
+#    AnimusForge.Curriculum.Evade.*
+#        Getting away from a fight that cannot be won (stage13_evade, stage14_hide). Time spent unseen is
+#        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
+#        paid is the transition out of contact, once a break, with a cooldown.
+
+#   paid once when a seat that was visible to a living enemy stops being visible
+AnimusForge.Curriculum.Evade.BrokeContact = 0.3
+#   no second break pays within this long of the last, in ms
+AnimusForge.Curriculum.Evade.BreakCooldownMs = 5000
+#   an unbroken stretch out of sight at least this long, in ms, counts as an escape (metric only)
+AnimusForge.Curriculum.Evade.EscapeMs = 8000
+
+#
+#    AnimusForge.Curriculum.Stealth.*
+#        Stalking (stage15_stealth): closing on someone while stealthed and unseen, and holding there. The one
+#        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
+#        is still never paid -- the distance condition is what makes this a skill, since detection is a check
+#        the seat is losing the whole time it stands inside the band.
+
+#   paid each decision the seat is stealthed, unseen and within StalkYards of a living opponent
+AnimusForge.Curriculum.Stealth.Stalk = 0.02
+#   how close counts as stalking, in yards
+AnimusForge.Curriculum.Stealth.StalkYards = 10.0
+#   the most the stalk nudge may pay in one episode, so the opener it sets up stays the larger prize
+AnimusForge.Curriculum.Stealth.StalkMax = 1.0
+
+#
+#    AnimusForge.Curriculum.Ambush.*
+#        Scripted enemy players who ambush the owner (stage27_crossroads' ambush and escort_duel arenas).
+#        Their class, role and level follow the Opponent.* chances and spread.
+
+#   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)
+AnimusForge.Curriculum.Ambush.MinMs = 20000
+AnimusForge.Curriculum.Ambush.MaxMs = 120000
+#   they start fighting up to this long after arriving, in ms
+AnimusForge.Curriculum.Ambush.EngageMaxMs = 3000
+#   beside pulls: every seat is paid this per ambusher killed (alone, the duel's rewards apply)
+AnimusForge.Curriculum.Ambush.Kill = 3.0
+
+#
+#    AnimusForge.Curriculum.ScriptedPlayers.*
+#        How the scripted players (owner, PvP opponent, ambushers) play.
+
+#   time between damage spells
+AnimusForge.Curriculum.ScriptedPlayers.SpellMinMs = 2000
+AnimusForge.Curriculum.ScriptedPlayers.SpellMaxMs = 4000
+#   time between heals
+AnimusForge.Curriculum.ScriptedPlayers.HealMinMs = 1500
+AnimusForge.Curriculum.ScriptedPlayers.HealMaxMs = 2500
+#   between pulls: time between wander steps
+AnimusForge.Curriculum.ScriptedPlayers.WanderMinMs = 6000
+AnimusForge.Curriculum.ScriptedPlayers.WanderMaxMs = 12000
+#   ... and the percent of an owner's steps that are a run instead: a leg at a run to a spot RunMinYards-RunMaxYards
+#   from the spawn point (never nearer than RunMinYards to where it stands) with a real route there, so the seats
+#   beside it have an owner that goes somewhere to follow. The wander's leash brings it back: another leg.
+AnimusForge.Curriculum.ScriptedPlayers.RunChance = 35
+AnimusForge.Curriculum.ScriptedPlayers.RunMinYards = 40.0
+AnimusForge.Curriculum.ScriptedPlayers.RunMaxYards = 60.0
+#   of max health and mana per second, out of combat
+AnimusForge.Curriculum.ScriptedPlayers.RegenFraction = 0.04
+#   healers heal party members under this health fraction
+AnimusForge.Curriculum.ScriptedPlayers.HealBelow = 0.85
+#   PvP healers heal themselves under this
+AnimusForge.Curriculum.ScriptedPlayers.SelfHealBelow = 0.6
+#   healers stay this close to the tank
+AnimusForge.Curriculum.ScriptedPlayers.HealerRange = 30.0
+AnimusForge.Curriculum.ScriptedPlayers.TauntRange = 25.0
+#   PvP: a ranged spec backs off inside half this ...
+AnimusForge.Curriculum.ScriptedPlayers.RangedMin = 20.0
+#   ... and closes in beyond this
+AnimusForge.Curriculum.ScriptedPlayers.RangedMax = 30.0
+#   PvP: percent of engagements a rogue sneaks up in stealth
+AnimusForge.Curriculum.ScriptedPlayers.StealthChance = 50
+#   PvP: percent of engagements it plays its kit: interrupts, crowd control, snares, defensives, breaks
+AnimusForge.Curriculum.ScriptedPlayers.TacticsChance = 75
+#   ... time between crowd control attempts
+AnimusForge.Curriculum.ScriptedPlayers.ControlMinMs = 8000
+AnimusForge.Curriculum.ScriptedPlayers.ControlMaxMs = 15000
+#   ... a defensive when its health is under this
+AnimusForge.Curriculum.ScriptedPlayers.DefensiveBelow = 0.35
+#   ... breaks crowd control when its health is under this
+AnimusForge.Curriculum.ScriptedPlayers.BreakBelow = 0.6
+
+#   Travel arenas. Ground: a place this many yards away by path
+AnimusForge.Curriculum.Travel.ObjectiveMin = 60.0
+AnimusForge.Curriculum.Travel.ObjectiveMax = 320.0
+#   travel arenas made on foot (stage1_move): yards from the start, by path. Shorter than the mounted range because
+#   the lesson is how well the seat covers ground with what it has -- Sprint, Dash, Travel Form, Aspect of the
+#   Cheetah, and not stopping -- rather than whether a ride is worth summoning. Long enough that a speed cooldown
+#   pays for itself, short enough that the trip is not simply a wait
+AnimusForge.Curriculum.Travel.FootMin = 40
+AnimusForge.Curriculum.Travel.FootMax = 160
+#   flying arenas: yards from the start
+AnimusForge.Curriculum.Travel.FlyingMin = 350.0
+AnimusForge.Curriculum.Travel.FlyingMax = 700.0
+#   which trips the ground arenas ask for, by how much longer the walking way round is than the straight line:
+#   each episode draws a band first -- DetourEasyShare of them under DetourEasy, DetourMidShare between DetourEasy
+#   and DetourHard, the rest from DetourHard up to the generator's ceiling of 1.8 -- and looks for an objective in
+#   it. Drawn uniformly, real detours were the tail (51% of stage1_move's trips and 82% of stage6_travel's had a
+#   dry detour under 1.15), and a policy taught on straight lines learns to hold forward. Water, indoor and flying
+#   arenas draw no band
+AnimusForge.Curriculum.Travel.DetourEasy = 1.15
+AnimusForge.Curriculum.Travel.DetourHard = 1.4
+AnimusForge.Curriculum.Travel.DetourEasyShare = 0.4
+AnimusForge.Curriculum.Travel.DetourMidShare = 0.35
+#   air-only arenas (stage7_flight's flight_air): a place is accepted only when the ground route to it is missing
+#   or longer than AirDetour times the straight line, so the wings are the way and not a slower option; and
+#   arriving there means standing within AirArriveRise yards of the objective's own height, or the foot of the
+#   cliff six yards under a plateau's edge would count
+AnimusForge.Curriculum.Travel.AirDetour = 2.5
+AnimusForge.Curriculum.Travel.AirArriveRise = 10.0
+#   ledge arenas (stage3_jump): the objective is LedgeMin to LedgeMax yards away and LedgeDropMin to
+#   LedgeDropMax yards below the seat, its way round on foot complete but at least LedgeDetour times the straight
+#   line, and the straight line crosses one edge the seat can drop off. LedgeDropMax runs past the lethal fall on
+#   purpose: with Slow Fall or Levitate the drop is free, without them the seat learns what it costs
+AnimusForge.Curriculum.Travel.LedgeMin = 20.0
+AnimusForge.Curriculum.Travel.LedgeMax = 120.0
+AnimusForge.Curriculum.Travel.LedgeDetour = 2.0
+AnimusForge.Curriculum.Travel.LedgeDropMin = 5.0
+AnimusForge.Curriculum.Travel.LedgeDropMax = 80.0
+#   dive arenas (stage4_dive): the objective is DiveMin to DiveMax yards away on a lakebed under
+#   DiveDepthMin to DiveDepthMax yards of water. DiveDepthMax runs past what one breath reaches on purpose: with
+#   Unending Breath or Water Breathing the dive is free, without them the seat learns to come up for air
+AnimusForge.Curriculum.Travel.DiveMin = 20.0
+AnimusForge.Curriculum.Travel.DiveMax = 120.0
+AnimusForge.Curriculum.Travel.DiveDepthMin = 6.0
+AnimusForge.Curriculum.Travel.DiveDepthMax = 40.0
+#   chain arenas (stage4_dive's chain): reaching an objective draws the next one ChainMin to ChainMax yards on from
+#   where the seat stands, of the arena's own kind, until the clock runs out
+AnimusForge.Curriculum.Travel.ChainMin = 30.0
+AnimusForge.Curriculum.Travel.ChainMax = 60.0
+#   indoor arenas (stage2_indoor): yards from the start, by path. Shorter than anything outdoors because it is
+#   a trip across a room -- the far end of an inn is nearer than the first march range of an open-country probe
+AnimusForge.Curriculum.Travel.IndoorMin = 8.0
+AnimusForge.Curriculum.Travel.IndoorMax = 40.0
+#   potential shaping: what closing the whole trip pays, spread over its length -- per 100 yd on a trip shorter
+#   than that -- and taken back for leaving. Per 100 yd whatever the trip, a 700 yd flight paid more for progress
+#   than for arriving
+AnimusForge.Curriculum.Travel.Progress = 1.0
+AnimusForge.Curriculum.Travel.Arrive = 3.0
+#   times the fraction of the walk the trip saved: 0 on foot, ~0.3 mounted over
+#   a few hundred yards. This is what pays for a mount, so it has to be worth
+#   more than the cast time costs
+AnimusForge.Curriculum.Travel.FastArrive = 6.0
+#   fraction of the bot's health (falls, what it rode past)
+AnimusForge.Curriculum.Travel.DamageTaken = 1.0
+AnimusForge.Curriculum.Travel.Death = 3.0
+#   per decision
+AnimusForge.Curriculum.Travel.StepCost = 0.0002
+#   room to move, charged by the second while the seat is inside ClearanceMargin yards of the nearest edge of
+#   walkable space, and capped per episode by ClearanceMax. Never a mask: a doorway is narrower than any margin
+#   worth keeping in the open, so forbidding closeness would forbid doorways
+AnimusForge.Curriculum.Travel.Clearance = 0.08
+AnimusForge.Curriculum.Travel.ClearanceMargin = 1.5
+AnimusForge.Curriculum.Travel.ClearanceMax = 0.6
+#   routing. The way to the objective is re-planned when the seat has strayed RouteStray yards from the corner it
+#   was walking to, or after RouteRefresh seconds -- movement first, because at seven yards a second a clock alone
+#   goes stale inside the first corner. RouteCorner is how near counts as having reached one, and wants to be
+#   wider than a decision's travel (1.75 yd at run speed) so a corner cannot be stepped over and walked back to
+AnimusForge.Curriculum.Travel.RouteStray = 25.0
+AnimusForge.Curriculum.Travel.RouteRefresh = 5.0
+AnimusForge.Curriculum.Travel.RouteCorner = 5.0
+
+#   Flag match (Warsong Gulch's rules). Yards between the bases, by path
+AnimusForge.Curriculum.Flag.BaseMin = 100.0
+AnimusForge.Curriculum.Flag.BaseMax = 180.0
+AnimusForge.Curriculum.Flag.CapturesToWin = 3
+#   the dead stand up at their base after this (a graveyard wave)
+AnimusForge.Curriculum.Flag.RespawnMs = 15000
+#   a dropped flag goes home on its own after this
+AnimusForge.Curriculum.Flag.DroppedReturnMs = 10000
+#   yards to pick up, return or capture
+AnimusForge.Curriculum.Flag.TouchDistance = 4.0
+AnimusForge.Curriculum.Flag.Capture = 5.0
+AnimusForge.Curriculum.Flag.Pickup = 1.0
+AnimusForge.Curriculum.Flag.Return = 1.0
+#   killing the one carrying the seat's flag
+AnimusForge.Curriculum.Flag.CarrierKill = 1.5
+#   the other side captured the seat's flag
+AnimusForge.Curriculum.Flag.Lost = 3.0
+#   potential shaping toward the seat's current objective, per 100 yd
+AnimusForge.Curriculum.Flag.Progress = 0.5
+AnimusForge.Curriculum.Flag.Death = 1.0
+#   per decision
+AnimusForge.Curriculum.Flag.StepCost = 0.0002
+
+###################################################################################################
+
+###################################################################################################
+#
+# FORGE END
+#
+###################################################################################################

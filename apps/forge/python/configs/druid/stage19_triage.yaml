@@ -1,0 +1,13 @@
+# The restoration druid's drill, and the leaf of the class curriculum: the last stage before the druid meets the
+# other nine classes and the director.
+#
+# Its pinned seat is a build that can keep the hurt one up, which in a druid-only run is restoration. What makes
+# the druid's version of this its own lesson is that its healing is mostly over time rather than on demand, and
+# that it has to shift out of a form to cast at all -- so overhealing and healing per mana read differently for
+# it than for a paladin, and the floors are set against what a druid actually does.
+
+extends: ../stage19_triage.yaml
+run_name: stage19_triage
+
+eval:
+  report: [low_health_seconds, overheal_share, healing_per_mana, hot_healing_share, pulls_cleared, wipes]

@@ -1,0 +1,1385 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "AnimusForge.h"
+#include "WarmCaches.h"
+#include "Forge.h"
+#include "AnimusHooks.h"
+#include "Config.h"
+#include "Log.h"
+#include "MapMgr.h"
+#include "MapUpdater.h"
+#include "StageDefinition.h"
+#include "StringFormat.h"
+#include "World.h"
+#include <algorithm>
+#include <boost/json/object.hpp>
+#include <boost/json/array.hpp>
+#include <boost/json/parse.hpp>
+#include <boost/json/serialize.hpp>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <thread>
+
+namespace
+{
+    /// How long an idle or paused world thread sleeps per tick: an idle sim would otherwise spin a core.
+    constexpr std::chrono::milliseconds IDLE_SLEEP{ 50 };
+
+    /// How long a cancelled or skipped learner gets to save its checkpoint before it is interrupted.
+    constexpr std::chrono::seconds LEARNER_STOP_GRACE{ 15 };
+
+    void LogInfo(std::string const& line)
+    {
+        LOG_INFO("module.animus", "{}", line);
+    }
+
+    void LogWarn(std::string const& line)
+    {
+        LOG_WARN("module.animus", "{}", line);
+    }
+
+    /// The worldserver's resident memory, MB (0 when /proc is not there).
+    uint64 ResidentMb()
+    {
+        std::ifstream status("/proc/self/status");
+        for (std::string line; std::getline(status, line);)
+            if (line.rfind("VmRSS:", 0) == 0)
+                return uint64(std::strtoull(line.c_str() + 6, nullptr, 10) / 1024);
+
+        return 0;
+    }
+
+    /// How much of the machine's memory is in use, percent (0 when /proc is not there).
+    uint32 MemoryUsedPercent()
+    {
+        uint64 total = 0;
+        uint64 available = 0;
+        std::ifstream meminfo("/proc/meminfo");
+        for (std::string line; std::getline(meminfo, line);)
+        {
+            if (line.rfind("MemTotal:", 0) == 0)
+                total = std::strtoull(line.c_str() + 9, nullptr, 10);
+            else if (line.rfind("MemAvailable:", 0) == 0)
+                available = std::strtoull(line.c_str() + 13, nullptr, 10);
+        }
+
+        return total ? uint32(100 - std::min<uint64>(100, available * 100 / total)) : 0;
+    }
+}
+
+AnimusForge::Forge* AnimusForge::Forge::Instance()
+{
+    static Forge instance;
+    return &instance;
+}
+
+void AnimusForge::Forge::OnStartup()
+{
+    _config.Load();
+    _fastConfig = _config.FastProfile(_config.FastBudget);
+    _progressInterval = _config.ProgressInterval;
+
+    if (!_config.Enable)
+    {
+        LOG_INFO("module.animus", "Animus Forge is disabled (AnimusForge.Enable = 0)");
+        return;
+    }
+
+    // Every world table the curriculum reads on first use, read now: the database pools are sealed right after
+    // this and an episode must never query.
+    Animus::Curriculum::WarmCaches();
+
+    // Open the socket now, so a learner started by hand can connect as soon as a plan starts.
+    if (_config.IsRemote())
+        _server.Listen(_config.SocketPath);
+
+    LOG_INFO("module.animus", "Animus Forge is idle. Type `forge start` on the console to train AnimusForge.Queue, "
+        "or `forge help` for every command.");
+    CommandStatus(LogInfo);
+}
+
+void AnimusForge::Forge::OnUpdate(uint32 diff)
+{
+    if (!_config.Enable)
+        return;
+
+    // Everything between the end of the last decision and here is the world tick: the map update above all.
+    auto const tickStarted = std::chrono::steady_clock::now();
+    if (_lastUpdateEnd && _state != State::Idle && _state != State::Paused)
+        _worldNs += uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(tickStarted - *_lastUpdateEnd).count());
+    _tickLearnerNs = 0;
+
+    PollExport();
+    ApplyRequest();
+
+    if (_pauseRequested && (_state == State::Training || _state == State::Running))
+    {
+        _pauseRequested = false;
+        _pausedFrom = _state;
+        _state = State::Paused;
+        LOG_INFO("module.animus", "Paused {}: the sim is frozen{}. `forge resume` continues, `forge cancel` stops.",
+            _current, _plan.Remote() ? " and the learner waits" : "");
+    }
+
+    if (_state == State::Paused)
+    {
+        HoldWhilePaused();
+        return;
+    }
+
+    if (_state == State::Idle)
+    {
+        std::this_thread::sleep_for(IDLE_SLEEP);
+        return;
+    }
+
+    ForgeConfig const& run = RunConfig();
+
+    // The forge core sizes its tick from the same two keys; a different tick means a worldserver built before they
+    // were one, and every reward scaled per decision would be off.
+    if (diff != run.TickMs() && !ForgeCore::Playtest() && !_tickMismatchLogged)
+    {
+        _tickMismatchLogged = true;
+        LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {} "
+            "wants {} ms: rebuild the worldserver (./forge.sh --build)", diff, run.DecisionMs, run.TicksPerDecision,
+            run.TickMs());
+    }
+
+    // Game time accrues every tick, whether or not the policy chose on this one: an episode's clock, and everything
+    // the library measures against it, is in game milliseconds and does not care how often anyone decides.
+    _pool->AdvanceClock(diff);
+
+    // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move splines,
+    // auras and the fight at the finer step and are otherwise silent -- no observation, no action, no learner. That is
+    // the whole point: movement wants a fast world, the policy does not want a faster decision. Counting ticks rather
+    // than accumulating milliseconds keeps a decision exactly TicksPerDecision ticks whatever the tick rounds to.
+    bool const decided = ++_ticksSinceDecision >= run.TicksPerDecision;
+    if (decided)
+    {
+        _ticksSinceDecision = 0;
+
+        // _ticks counts decisions, not world updates: it is the denominator of every per-decision figure in the
+        // report (EnvStepsPerSecond, the ms-per-tick buckets) and of the bench's measurement window.
+        ++_ticks;
+
+        MaybeReport();
+
+        if (_plan.Remote())
+            RemoteDecision();
+        else
+            LocalDecision();
+
+        // What the pool spent this decision on, totalled for the report.
+        if (_pool)
+        {
+            Animus::EnvPool::CollectTiming const& collect = _pool->LastCollect();
+            _collect.RewardNs += collect.RewardNs;
+            _collect.ObserveNs += collect.ObserveNs;
+            _collect.FinalObserveNs += collect.FinalObserveNs;
+            _collect.ResetNs += collect.ResetNs;
+            _collect.ApplyNs += collect.ApplyNs;
+            _collect.Observes += collect.Observes;
+            _collect.Resets += collect.Resets;
+        }
+    }
+
+    // What is left of this module's time in the tick, once the waiting on the learner is taken out.
+    auto const tickEnded = std::chrono::steady_clock::now();
+    uint64 const inModule =
+        uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(tickEnded - tickStarted).count());
+    _simNs += inModule > _tickLearnerNs ? inModule - _tickLearnerNs : 0;
+    _lastUpdateEnd = tickEnded;
+
+    if (_benching && decided)
+        BenchTick();
+}
+
+void AnimusForge::Forge::OnShutdown()
+{
+    // The core's damage, heal and spell calls stop feeding the pool before it goes.
+    Animus::Hooks::SetActivePool(nullptr);
+
+    // Closing the socket is what tells the learner to save and exit; give it time to do so.
+    if (_learner.IsRunning())
+        _learner.ExpectExit();
+
+    // An export cut short by the shutdown is expected, not a failure.
+    if (_export.IsRunning())
+        _export.ExpectExit();
+
+    _server.Shutdown();
+    _learner.Stop(std::chrono::seconds(10));
+    _export.Stop(std::chrono::seconds(10));
+
+    if (_pool)
+        _pool->Teardown();
+
+    _pool.reset();
+    _scenario.reset();
+    _state = State::Idle;
+}
+
+void AnimusForge::Forge::ApplyRequest()
+{
+    Request const request = _request;
+    _request = Request::None;
+
+    switch (request)
+    {
+        case Request::None:
+            break;
+        case Request::Start:
+            _plan = std::move(_requested);
+            _requested = {};
+            _plan.Index = 0;
+            LOG_DEBUG("module.animus", "Plan: {} scenario{} with policy {}", _plan.Entries.size(),
+                _plan.Entries.size() == 1 ? "" : "s", _plan.Policy);
+            if (!StartCurrent())
+            {
+                _plan.Entries[_plan.Index].Result = Outcome::Failed;
+                TeardownScenario(true);
+                EndPlan("its first scenario failed to start");
+            }
+            break;
+        case Request::Cancel:
+        {
+            if (_state == State::Idle)
+                break;
+            // Only a learner that is running or connected has a run to save.
+            bool const learnerSaves = _plan.Remote() && (_learner.IsRunning() || _server.HasClient());
+            if (_benching)
+                BenchEnd();
+            _plan.Entries[_plan.Index].Result = Outcome::Cancelled;
+            TeardownScenario(true);
+            EndPlan(learnerSaves ? "cancelled; the learner saved latest.pt, `forge resume` continues it" : "cancelled");
+            break;
+        }
+        case Request::Skip:
+            if (_state != State::Idle)
+                FinishCurrent(Outcome::Skipped);
+            break;
+    }
+}
+
+void AnimusForge::Forge::HoldWhilePaused()
+{
+    // Nothing ticks while paused: maps, episode clocks and the learner all wait, so a paused episode resumes
+    // exactly where it stopped. Console commands still run here.
+    while (_state == State::Paused && !World::IsStopped())
+    {
+        if (_resumeRequested)
+        {
+            _resumeRequested = false;
+            _state = _pausedFrom;
+            _lastReport = std::chrono::steady_clock::now();
+            _rateTime = _lastReport;
+            _rateTicks = _ticks;
+            _rateEpisodes = _pool ? _pool->CompletedEpisodes() : 0;
+            if (_lastAct)
+                _lastAct = _lastReport;
+            LOG_INFO("module.animus", "Resumed {}", _current);
+            return;
+        }
+
+        if (_request != Request::None)
+        {
+            ApplyRequest();
+            return;
+        }
+
+        _learner.Poll();
+        Pump();
+        std::this_thread::sleep_for(IDLE_SLEEP);
+    }
+}
+
+bool AnimusForge::Forge::StartCurrent()
+{
+    // A stage none of this run's classes can play (the stealth drill in a run of classes that cannot stealth) is
+    // skipped rather than failed: the plan moves to the next entry, and that entry's learner seeds from the stage
+    // before the skipped one (its seed chain walks past a checkpoint that lacks a layout). A plan whose remaining
+    // entries are all skipped ends here, as it would after its last scenario.
+    while (!_scenario)
+    {
+        PlanEntry const& skipped = _plan.Entries[_plan.Index];
+        std::unique_ptr<Animus::Scenario> scenario = Animus::CreateScenario(skipped.Scenario,
+            RunConfig().Stage(skipped.Scenario));
+        if (!scenario)
+        {
+            LOG_ERROR("module.animus", "Unknown scenario '{}'", skipped.Scenario);
+            return false;
+        }
+        if (scenario->Playable())
+        {
+            _scenario = std::move(scenario);
+            break;
+        }
+
+        LOG_INFO("module.animus", "Skipping {}: none of this run's classes can play it", skipped.Scenario);
+        _plan.Entries[_plan.Index].Result = Outcome::Skipped;
+        if (_plan.Index + 1 >= _plan.Entries.size())
+        {
+            EndPlan("every scenario has ended");
+            return true;
+        }
+        ++_plan.Index;
+    }
+
+    PlanEntry const& entry = _plan.Entries[_plan.Index];
+    ForgeConfig const& config = RunConfig();
+    _current = entry.Scenario;
+
+    std::string const position = _plan.Entries.size() > 1
+        ? Acore::StringFormat(" ({} of {})", _plan.Index + 1, _plan.Entries.size()) : "";
+
+    LOG_INFO("module.animus", "Starting {}{}{} with policy {}{}", entry.Scenario, position,
+        entry.Resume ? ", resuming its latest checkpoint" : "", _plan.Policy, _plan.Fast
+        ? Acore::StringFormat(" (fast: {}; in {})", FastSummary(), config.OutputDir) : "");
+
+    // Reject a local policy name before building anything, rather than on the first decision.
+    if (!_plan.Remote() && !KnowsPolicy(_plan.Policy))
+    {
+        LOG_ERROR("module.animus", "Scenario {} has no policy '{}'", _scenario->Name(), _plan.Policy);
+        return false;
+    }
+
+    // A benchmark trial runs at its own map update thread count; every other entry leaves the pool alone.
+    if (entry.MapThreads)
+        ApplyMapThreads(entry.MapThreads);
+
+    _pool = std::make_unique<Animus::EnvPool>(*_scenario, config.Stage(entry.Scenario));
+    if (!_pool->Setup())
+        return false;
+
+    _learnerStarted = false;
+    if (_plan.Remote())
+    {
+        if (!_server.Listen(config.SocketPath))
+            return false;
+
+        // A learner that cannot be started is not fatal: the sim keeps waiting on the socket, so one started by
+        // hand still works (and `forge cancel` gives up).
+        if (config.LearnerAutoStart)
+        {
+            _learnerStarted = _learner.Start(config, entry.Scenario, entry.Resume);
+            if (!_learnerStarted)
+                LOG_ERROR("module.animus", "Learner auto-start failed; start it by hand: {}",
+                    LearnerProcess::ManualCommand(config, entry.Scenario, entry.Resume));
+        }
+        else
+            LOG_INFO("module.animus", "Waiting for a learner started by hand: {}",
+                LearnerProcess::ManualCommand(config, entry.Scenario, entry.Resume));
+    }
+
+    _pool->ResetAll();
+
+    auto const now = std::chrono::steady_clock::now();
+    _ticks = 0;
+    _ticksSinceDecision = 0;
+    _decisions = 0;
+    _worldNs = 0;
+    _simNs = 0;
+    _learnerNs = 0;
+    _tickLearnerNs = 0;
+    _lastUpdateEnd.reset();
+    _rateWorldNs = 0;
+    _rateSimNs = 0;
+    _rateLearnerNs = 0;
+    _collect = Animus::EnvPool::CollectTiming();
+    _rateCollect = Animus::EnvPool::CollectTiming();
+    _collectMs = SimSnapshot::CollectMs();
+    _scenarioStarted = now;
+    _lastReport = now;
+    _lastAct.reset();
+    _rateTime = now;
+    _rateTicks = 0;
+    _rateEpisodes = 0;
+    _ticksPerSecond = 0.0;
+    _episodesPerSecond = 0.0;
+    _worldMsPerTick = 0.0;
+    _simMsPerTick = 0.0;
+    _learnerMsPerTick = 0.0;
+    _monitor.Begin(entry.Scenario);
+
+    // From here on the core's damage, heal and spell calls feed the pool.
+    Animus::Hooks::SetActivePool(_pool.get());
+    _state = _plan.Remote() ? State::Training : State::Running;
+    return true;
+}
+
+void AnimusForge::Forge::TeardownScenario(bool stopLearner)
+{
+    // The core's damage, heal and spell calls stop feeding the pool before it goes.
+    Animus::Hooks::SetActivePool(nullptr);
+
+    if (stopLearner && _learner.IsRunning())
+    {
+        _learner.ExpectExit();
+        _server.DropClient();
+        LOG_INFO("module.animus", "Waiting for the learner (pid {}) to save and exit...", _learner.Pid());
+        _learner.Stop(LEARNER_STOP_GRACE);
+    }
+    else
+        _server.DropClient();
+
+    if (_pool)
+        _pool->Teardown();
+
+    _pool.reset();
+    _scenario.reset();
+    _learnerStarted = false;
+    _pauseRequested = false;
+    _resumeRequested = false;
+    _lastAct.reset();
+}
+
+char const* AnimusForge::Forge::OutcomeName(Outcome outcome)
+{
+    switch (outcome)
+    {
+        case Outcome::None:        return "not started";
+        case Outcome::Done:        return "done";
+        case Outcome::Skipped:     return "skipped";
+        case Outcome::Failed:      return "failed";
+        case Outcome::Cancelled:   return "cancelled";
+    }
+
+    return "unknown";
+}
+
+void AnimusForge::Forge::FinishCurrent(Outcome outcome)
+{
+    PlanEntry& entry = _plan.Entries[_plan.Index];
+    entry.Result = outcome;
+
+    ReportStageEnd();
+    LOG_INFO("module.animus", "{} {} after {}{}", entry.Scenario, OutcomeName(outcome),
+        Format::Duration(std::chrono::duration<double>(std::chrono::steady_clock::now() - _scenarioStarted).count()),
+        _plan.Entries.size() > 1 ? Acore::StringFormat(" ({} of {})", _plan.Index + 1, _plan.Entries.size()) : "");
+
+    // A learner that finished its run has already exited; any other ending stops it. A benchmark trial is the
+    // exception that ends well with its learner still training -- its budget is one no trial ever reaches -- so
+    // that one is stopped and waited for here, or the next trial finds it running and cannot start its own.
+    TeardownScenario(outcome != Outcome::Done || _benching);
+
+    if (++_plan.Index >= _plan.Entries.size())
+    {
+        _plan.Index = uint32(_plan.Entries.size()) - 1;
+        EndPlan("every scenario has ended");
+        return;
+    }
+
+    if (!StartCurrent())
+    {
+        _plan.Entries[_plan.Index].Result = Outcome::Failed;
+        TeardownScenario(true);
+        EndPlan("the next scenario failed to start");
+    }
+}
+
+void AnimusForge::Forge::EndPlan(char const* reason)
+{
+    _state = State::Idle;
+    _lastPlan = _plan;
+
+    LOG_INFO("module.animus", "Plan ended: {}. The sim is idle.", reason);
+
+    if (_benching)
+    {
+        BenchPlanEnded();
+        return;
+    }
+
+    if (_plan.Entries.size() > 1)
+    {
+        TextTable table({ { "#", TextTable::Align::Right }, { "Scenario" }, { "Outcome" } });
+        for (std::size_t i = 0; i < _plan.Entries.size(); ++i)
+            table.AddRow({ std::to_string(i + 1), _plan.Entries[i].Scenario, OutcomeName(_plan.Entries[i].Result) });
+
+        table.Write(LogInfo, "  ");
+    }
+}
+
+bool AnimusForge::Forge::LearnerFinished() const
+{
+    return _plan.Remote() && _learnerStarted && _learner.FinishedCleanly();
+}
+
+std::vector<std::string> AnimusForge::Forge::DefaultQueue() const
+{
+    if (!_config.Queue.empty())
+        return _config.Queue;
+
+    std::vector<std::string> stages;
+    for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
+        if (stage.InDefaultQueue)
+            stages.push_back(stage.Name);
+
+    return stages;
+}
+
+std::vector<std::string> AnimusForge::Forge::FastQueue() const
+{
+    if (!_config.FastQueue.empty())
+        return _config.FastQueue;
+
+    std::vector<std::string> stages;
+    for (Animus::Curriculum::StageDefinition const& stage : Animus::Curriculum::CurriculumStages())
+        stages.push_back(stage.Name);
+
+    return stages;
+}
+
+bool AnimusForge::Forge::RunAdvanced(ForgeConfig const& config, std::string const& scenario) const
+{
+    ProgressFile finished;
+    if (!finished.Load(config.RunsDir() / scenario / "finished.json"))
+        return false;
+
+    // Every finished run advanced: there are no stage targets. A finished.json from before that, with
+    // "advanced": false, is a run that was judged and failed under rules that no longer exist.
+    std::optional<double> const advanced = finished.Number("advanced");
+    return !advanced || *advanced != 0.0;
+}
+
+/// What the learner will actually seed from, which is the checkpoint and not the verdict.
+///
+/// animus.config.resolved_init_from walks the seed chain and takes the first best.pt that exists, whether or not
+/// that stage finished -- an interrupted run does not write finished.json. RunAdvanced answers a different question
+/// (did this stage finish), and using it here warned that a parent would not be seeded from whenever its run had
+/// merely been cancelled, while the learner went on to seed from it: every `forge start stage19_duo_led` this
+/// session printed that warning and then seeded from stage15_arena's best.pt in the next breath. A warning that is
+/// usually wrong teaches operators to skip them.
+bool AnimusForge::Forge::RunSeedable(ForgeConfig const& config, std::string const& scenario) const
+{
+    std::error_code error;
+    return std::filesystem::exists(config.RunsDir() / scenario / "best.pt", error);
+}
+
+void AnimusForge::Forge::WarnSeedOrder(ForgeConfig const& config, std::vector<std::string> const& scenarios,
+    LineSink const& out) const
+{
+    // A stage seeds from the closest stage it extends that has a checkpoint (and a merge from its other parents).
+    for (std::size_t index = 0; index < scenarios.size(); ++index)
+    {
+        Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenarios[index]);
+        if (!stage || stage->Extends.empty())
+            continue;
+
+        std::vector<std::string> parents = { stage->Extends };
+        parents.insert(parents.end(), stage->Merges.begin(), stage->Merges.end());
+        for (std::string const& parent : parents)
+        {
+            // Trained earlier in this plan: it will have a checkpoint by the time this stage starts.
+            if (std::find(scenarios.begin(), scenarios.begin() + index, parent) != scenarios.begin() + index)
+                continue;
+
+            if (RunSeedable(config, parent))
+            {
+                // It will be seeded from. Worth saying only that the run never finished (it was cancelled), which
+                // is a reason to read this stage's scores carefully and not a reason to retrain anything.
+                //
+                // It does not say which checkpoint: that is the learner's to decide (TrainConfig.seed_from, and
+                // the run's own seed_from file), and it said "best" here while the learner took latest.pt.
+                if (!RunAdvanced(config, parent))
+                    out(Acore::StringFormat("  {} seeds from {}, whose run did not finish (it was cancelled).",
+                        stage->Name, parent));
+                continue;
+            }
+
+            if (std::find(scenarios.begin() + index + 1, scenarios.end(), parent) != scenarios.end())
+                out(Acore::StringFormat("  Warning: {} comes before {}, which it builds on and seeds from; it will "
+                    "not seed from it. List {} first.", stage->Name, parent, parent));
+            else
+                out(Acore::StringFormat("  Warning: {} builds on {}, which has no checkpoint in {}; it will not "
+                    "seed from it and starts from scratch. Train {} first.", stage->Name, parent,
+                    config.RunsDir().string(), parent));
+        }
+    }
+}
+
+void AnimusForge::Forge::Pump()
+{
+    if (_pumping)
+        return;
+
+    _pumping = true;
+    sWorld->ProcessCliCommands();
+    PollExport();
+    MaybeReport();
+    _pumping = false;
+}
+
+void AnimusForge::Forge::PollExport()
+{
+    if (!_export.IsRunning())
+        return;
+
+    _export.Poll();
+    if (_export.FinishedCleanly())
+        LOG_INFO("module.animus", "Export of {} finished: models in {}", _exportScenario, _exportModelDir);
+}
+
+void AnimusForge::Forge::MaybeReport()
+{
+    if (!_progressInterval || (_state != State::Training && _state != State::Running))
+        return;
+
+    auto const now = std::chrono::steady_clock::now();
+    if (now - _lastReport < std::chrono::seconds(_progressInterval))
+        return;
+
+    _lastReport = now;
+    _learner.Poll();
+    _monitor.Report(RunConfig(), Snapshot(true), PlanRows(_plan, true), LogInfo, LogWarn, true);
+}
+
+void AnimusForge::Forge::ReportStageEnd()
+{
+    // The report `forge status` shows, once more as the stage ends: its final evaluation and the plan so far.
+    _learner.Poll();
+    _monitor.Report(RunConfig(), Snapshot(false), PlanRows(_plan, true), LogInfo, LogWarn, false);
+}
+
+uint32 AnimusForge::Forge::ConfiguredMapThreads()
+{
+    return uint32(std::max<int32>(0, sConfigMgr->GetOption<int32>("MapUpdate.Threads", 1)));
+}
+
+void AnimusForge::Forge::ApplyMapThreads(uint32 threads)
+{
+    MapUpdater* updater = sMapMgr->GetMapUpdater();
+    if (!updater)
+        return;
+
+    // Between decisions, with no map update running: deactivate joins the pool's threads, activate starts new ones.
+    if (updater->activated())
+        updater->deactivate();
+
+    if (threads)
+        updater->activate(threads);
+
+    LOG_DEBUG("module.animus", "Map update threads: {}", threads);
+}
+
+AnimusForge::Forge::Plan AnimusForge::Forge::BenchPlan(std::string const& scenario,
+    std::vector<BenchTrial> const& trials) const
+{
+    Plan plan;
+    plan.Policy = _config.Bench.Policy;
+    for (BenchTrial const& trial : trials)
+    {
+        PlanEntry entry;
+        entry.Scenario = scenario;
+        entry.Config = _config.BenchProfile(trial.Envs, trial.Learner, trial.TorchThreads);
+        entry.MapThreads = trial.MapThreads;
+        plan.Entries.push_back(std::move(entry));
+    }
+
+    // Every trial carries its own settings; the plan's policy is only what `forge status` shows.
+    if (!trials.empty() && trials.front().Learner)
+        plan.Policy = "remote";
+
+    return plan;
+}
+
+void AnimusForge::Forge::BenchTick()
+{
+    // Trials dropped before they ran (out of memory) keep no plan entry: walk past them.
+    while (_benchTrial < _benchTrials.size() && !_benchTrials[_benchTrial].Note.empty())
+        ++_benchTrial;
+
+    if (_benchTrial >= _benchTrials.size())
+        return;
+
+    BenchTrial& trial = _benchTrials[_benchTrial];
+    ForgeConfig const& config = RunConfig();
+
+    // The learner phase times a handful of settings rather than a grid, so it can afford the longer window its
+    // start-up and its updates need; the sim-only grid runs on the short one.
+    uint32 const warmupTicks = _benchLearnerPhase ? _config.Bench.LearnerWarmupTicks : _config.Bench.WarmupTicks;
+    uint32 const measureTicks = _benchLearnerPhase ? _config.Bench.LearnerMeasureTicks : _config.Bench.MeasureTicks;
+
+    // The warm-up covers the first episodes and, for a learner trial, its start-up and first update.
+    if (_ticks == warmupTicks)
+    {
+        _benchMeasuredFrom = std::chrono::steady_clock::now();
+        _benchWorldNs = _worldNs;
+        _benchSimNs = _simNs;
+        _benchLearnerNs = _learnerNs;
+        return;
+    }
+
+    if (_ticks < uint64(warmupTicks) + measureTicks)
+        return;
+
+    double const seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - _benchMeasuredFrom).count();
+    double const ticks = double(measureTicks);
+    uint32 const agents = _pool ? _pool->Spec().AgentsPerEnv : 1;
+
+    trial.Agents = agents;
+    trial.Envs = config.Envs;
+    trial.EnvStepsPerSecond = seconds > 0.0 ? ticks * double(config.Envs) * double(agents) / seconds : 0.0;
+    trial.WorldMsPerTick = double(_worldNs - _benchWorldNs) / ticks / 1e6;
+    trial.SimMsPerTick = double(_simNs - _benchSimNs) / ticks / 1e6;
+    trial.LearnerMsPerTick = double(_learnerNs - _benchLearnerNs) / ticks / 1e6;
+    trial.MemoryMb = ResidentMb();
+    trial.WarmupTicks = warmupTicks;
+    trial.MeasureTicks = measureTicks;
+    trial.Measured = true;
+
+    LOG_INFO("module.animus", "Bench {} of {}: {} threads, {} envs{} -> {:.0f} env steps/s (world {:.1f} ms, sim "
+        "{:.1f} ms, learner {:.1f} ms per decision; {} MB)", _benchTrial + 1, _benchTrials.size(), trial.MapThreads,
+        trial.Envs, trial.Learner ? Acore::StringFormat(", learner (torch threads {})",
+            trial.TorchThreads ? std::to_string(trial.TorchThreads) : "default") : "", trial.EnvStepsPerSecond,
+        trial.WorldMsPerTick, trial.SimMsPerTick, trial.LearnerMsPerTick, trial.MemoryMb);
+
+    // Skip what is left of this thread count once the machine is running out of memory: bigger envs only cost more.
+    // The trials go from the plan too, so their envs are never built. Trial i is plan entry _plan.Index + i -
+    // _benchTrial, so both are walked from the back.
+    if (uint32 const used = MemoryUsedPercent(); used > _config.Bench.MaxMemoryPercent)
+    {
+        for (std::size_t i = _benchTrials.size(); i-- > _benchTrial + 1;)
+        {
+            BenchTrial& later = _benchTrials[i];
+            if (later.MapThreads != trial.MapThreads || later.Envs <= trial.Envs || !later.Note.empty())
+                continue;
+
+            later.Note = Acore::StringFormat("skipped: memory {}% used", used);
+            std::size_t const entry = _plan.Index + (i - _benchTrial);
+            if (entry < _plan.Entries.size())
+                _plan.Entries.erase(_plan.Entries.begin() + entry);
+        }
+    }
+
+    ++_benchTrial;
+    FinishCurrent(Outcome::Done);
+}
+
+void AnimusForge::Forge::BenchPlanEnded()
+{
+    // Phase 1 is over: the best few settings run again with the learner, which is what training actually costs.
+    if (!_benchLearnerPhase && _config.Bench.LearnerTop)
+    {
+        std::vector<BenchTrial> best;
+        for (BenchTrial const& trial : _benchTrials)
+            if (trial.Measured)
+                best.push_back(trial);
+
+        std::sort(best.begin(), best.end(), [](BenchTrial const& left, BenchTrial const& right)
+        {
+            return left.EnvStepsPerSecond > right.EnvStepsPerSecond;
+        });
+        best.resize(std::min<std::size_t>(best.size(), _config.Bench.LearnerTop));
+
+        std::vector<BenchTrial> learnerTrials;
+        for (BenchTrial const& trial : best)
+            for (uint32 threads : _config.Bench.LearnerTorchThreads)
+            {
+                BenchTrial next = trial;
+                next.Learner = true;
+                next.TorchThreads = threads;
+                next.Measured = false;
+                next.EnvStepsPerSecond = 0.0;
+                next.Note.clear();
+                learnerTrials.push_back(next);
+            }
+
+        if (!learnerTrials.empty())
+        {
+            _benchLearnerPhase = true;
+            _benchTrials.insert(_benchTrials.end(), learnerTrials.begin(), learnerTrials.end());
+            _benchTrial = _benchTrials.size() - learnerTrials.size();
+
+            LOG_INFO("module.animus", "Bench: the {} fastest settings run again with the learner", best.size());
+            _requested = BenchPlan(_benchScenario, learnerTrials);
+            _request = Request::Start;
+            return;
+        }
+    }
+
+    BenchReport(LogInfo);
+    BenchSave();
+    BenchEnd();
+}
+
+void AnimusForge::Forge::BenchEnd()
+{
+    _benching = false;
+    _benchLearnerPhase = false;
+    ApplyMapThreads(ConfiguredMapThreads());
+}
+
+void AnimusForge::Forge::BenchReport(LineSink const& out) const
+{
+    out(Acore::StringFormat("Benchmark of {} ({} decisions timed per trial, {} ms per decision):", _benchScenario,
+        _config.Bench.MeasureTicks, _config.DecisionMs));
+
+    TextTable table({ { "Threads", TextTable::Align::Right }, { "Envs", TextTable::Align::Right }, { "Learner" },
+        { "Env steps/s", TextTable::Align::Right }, { "World ms", TextTable::Align::Right },
+        { "Sim ms", TextTable::Align::Right }, { "Learner ms", TextTable::Align::Right },
+        { "Memory MB", TextTable::Align::Right } });
+
+    BenchTrial const* winner = nullptr;
+    for (BenchTrial const& trial : _benchTrials)
+    {
+        std::string const learner = !trial.Learner ? "-"
+            : trial.TorchThreads ? Acore::StringFormat("torch {}", trial.TorchThreads) : "torch default";
+
+        if (!trial.Measured)
+        {
+            table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs), learner,
+                trial.Note.empty() ? "not run" : trial.Note, "", "", "", "" });
+            continue;
+        }
+
+        table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs), learner,
+            Acore::StringFormat("{:.0f}", trial.EnvStepsPerSecond),
+            Acore::StringFormat("{:.1f}", trial.WorldMsPerTick), Acore::StringFormat("{:.1f}", trial.SimMsPerTick),
+            Acore::StringFormat("{:.1f}", trial.LearnerMsPerTick), std::to_string(trial.MemoryMb) });
+
+        // The learner phase is what training costs, so it decides once it has run.
+        bool const better = !winner || (trial.Learner && !winner->Learner)
+            || (trial.Learner == winner->Learner && trial.EnvStepsPerSecond > winner->EnvStepsPerSecond);
+        if (better)
+            winner = &trial;
+    }
+
+    table.Write(out, "  ");
+
+    if (!winner)
+    {
+        out("No trial was measured.");
+        return;
+    }
+
+    out(Acore::StringFormat("Fastest: MapUpdate.Threads = {}, AnimusForge.Envs = {}{} at {:.0f} env steps/s "
+        "({:.1f}x the {} threads / {} envs you run now).", winner->MapThreads, winner->Envs,
+        winner->Learner && winner->TorchThreads
+            ? Acore::StringFormat(", AnimusForge.Learner.TorchThreads = {}", winner->TorchThreads) : "",
+        winner->EnvStepsPerSecond, [&]
+        {
+            for (BenchTrial const& trial : _benchTrials)
+                if (trial.Measured && trial.Learner == winner->Learner && trial.MapThreads == ConfiguredMapThreads()
+                    && trial.Envs == _config.Envs && trial.EnvStepsPerSecond > 0.0)
+                    return winner->EnvStepsPerSecond / trial.EnvStepsPerSecond;
+
+            return 1.0;
+        }(), ConfiguredMapThreads(), _config.Envs));
+
+    if (winner->Envs != _config.Envs)
+        out(Acore::StringFormat("Note: {} envs instead of {} changes what the learner sees in one update (its batch "
+            "is rollout_length x envs x seats), not only the speed.", winner->Envs, _config.Envs));
+
+    out("`forge bench apply` writes these into your configs (the thread count needs a restart).");
+}
+
+void AnimusForge::Forge::BenchSave() const
+{
+    namespace fs = std::filesystem;
+
+    boost::json::object file;
+    file["scenario"] = _benchScenario;
+    file["decision_ms"] = _config.DecisionMs;
+    file["ticks_per_decision"] = _config.TicksPerDecision;
+    file["measure_ticks"] = _config.Bench.MeasureTicks;
+    file["warmup_ticks"] = _config.Bench.WarmupTicks;
+    file["learner_measure_ticks"] = _config.Bench.LearnerMeasureTicks;
+    file["learner_warmup_ticks"] = _config.Bench.LearnerWarmupTicks;
+    file["cores"] = uint32(std::thread::hardware_concurrency());
+    file["configured_threads"] = ConfiguredMapThreads();
+    file["configured_envs"] = _config.Envs;
+
+    boost::json::array& trials = file["trials"].emplace_array();
+    boost::json::object const* bestEntry = nullptr;
+    double best = 0.0;
+    bool bestLearner = false;
+    for (BenchTrial const& trial : _benchTrials)
+    {
+        boost::json::object& entry = trials.emplace_back(boost::json::object()).get_object();
+        entry["map_threads"] = trial.MapThreads;
+        entry["envs"] = trial.Envs;
+        entry["agents"] = trial.Agents;
+        entry["learner"] = trial.Learner;
+        entry["torch_threads"] = trial.TorchThreads;
+        entry["measured"] = trial.Measured;
+        entry["env_steps_per_second"] = trial.EnvStepsPerSecond;
+        entry["world_ms"] = trial.WorldMsPerTick;
+        entry["sim_ms"] = trial.SimMsPerTick;
+        entry["learner_ms"] = trial.LearnerMsPerTick;
+        entry["memory_mb"] = trial.MemoryMb;
+        entry["warmup_ticks"] = trial.WarmupTicks;
+        entry["measure_ticks"] = trial.MeasureTicks;
+        if (!trial.Note.empty())
+            entry["note"] = trial.Note;
+
+        if (trial.Measured && ((trial.Learner && !bestLearner) || (trial.Learner == bestLearner
+            && trial.EnvStepsPerSecond > best)))
+        {
+            best = trial.EnvStepsPerSecond;
+            bestLearner = trial.Learner;
+            bestEntry = &entry;
+        }
+    }
+
+    if (bestEntry)
+        file["best"] = *bestEntry;
+
+    std::error_code error;
+    fs::create_directories(_config.Bench.OutputDir, error);
+    fs::path const path = fs::path(_config.Bench.OutputDir) / "bench.json";
+    std::ofstream out(path, std::ios::trunc);
+    out << boost::json::serialize(file);
+    if (!out)
+        LOG_ERROR("module.animus", "Could not write {}", path.string());
+    else
+        LOG_INFO("module.animus", "Bench results: {}", path.string());
+}
+
+AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
+{
+    SimSnapshot sim;
+    auto const now = std::chrono::steady_clock::now();
+
+    sim.Scenario = _current;
+    sim.State = StateName() + (_plan.Fast && _state != State::Idle ? " (fast)" : "");
+    sim.PlanPosition = _plan.Index + 1;
+    sim.PlanSize = uint32(_plan.Entries.size());
+    sim.Remote = _plan.Remote();
+    sim.Decisions = _decisions;
+    sim.EpisodeLimit = _plan.Remote() ? 0 : _plan.LocalEpisodes;
+    sim.ScenarioSeconds = std::chrono::duration<double>(now - _scenarioStarted).count();
+
+    if (_pool)
+    {
+        sim.Envs = _pool->NumEnvs();
+        sim.AgentsPerEnv = _pool->Spec().AgentsPerEnv;
+        sim.Episodes = _pool->CompletedEpisodes();
+        sim.EpisodeMeans = _pool->LastEpisodeMeans();
+        sim.EpisodeMeansCount = _pool->LastEpisodeMeansCount();
+    }
+
+    // Rates over the time since the last periodic report; a status in between shows the rate so far.
+    double const seconds = std::chrono::duration<double>(now - _rateTime).count();
+    uint64 const ticks = _ticks - std::min(_ticks, _rateTicks);
+    if (seconds >= 1.0 && _state != State::Paused)
+    {
+        _ticksPerSecond = double(ticks) / seconds;
+        _episodesPerSecond = double(sim.Episodes - std::min(sim.Episodes, _rateEpisodes)) / seconds;
+
+        // Where those decisions' wall time went, per decision.
+        if (ticks)
+        {
+            double const perTick = double(ticks) * 1e6;
+            _worldMsPerTick = double(_worldNs - std::min(_worldNs, _rateWorldNs)) / perTick;
+            _simMsPerTick = double(_simNs - std::min(_simNs, _rateSimNs)) / perTick;
+            _learnerMsPerTick = double(_learnerNs - std::min(_learnerNs, _rateLearnerNs)) / perTick;
+
+            auto const since = [](uint64 now, uint64 then) { return double(now - std::min(now, then)); };
+            _collectMs.Reward = since(_collect.RewardNs, _rateCollect.RewardNs) / perTick;
+            _collectMs.Observe = since(_collect.ObserveNs, _rateCollect.ObserveNs) / perTick;
+            _collectMs.FinalObserve = since(_collect.FinalObserveNs, _rateCollect.FinalObserveNs) / perTick;
+            _collectMs.Reset = since(_collect.ResetNs, _rateCollect.ResetNs) / perTick;
+            _collectMs.ResetCreate = since(_collect.ResetCreateNs, _rateCollect.ResetCreateNs) / perTick;
+            _collectMs.ResetPlace = since(_collect.ResetPlaceNs, _rateCollect.ResetPlaceNs) / perTick;
+            _collectMs.ResetConfigure = since(_collect.ResetConfigureNs, _rateCollect.ResetConfigureNs) / perTick;
+            _collectMs.ResetDestroy = since(_collect.ResetDestroyNs, _rateCollect.ResetDestroyNs) / perTick;
+
+            Map::UpdateTiming const& mapTiming = sMapMgr->GetUpdateTiming();
+            _worldMs.Sessions = since(mapTiming.SessionsNs, _rateMapTiming.SessionsNs) / perTick;
+            _worldMs.Players = since(mapTiming.PlayersNs, _rateMapTiming.PlayersNs) / perTick;
+            _worldMs.Objects = since(mapTiming.ObjectsNs, _rateMapTiming.ObjectsNs) / perTick;
+            _worldMs.Scripts = since(mapTiming.ScriptsNs, _rateMapTiming.ScriptsNs) / perTick;
+            _worldMs.Relocation = since(mapTiming.RelocationNs, _rateMapTiming.RelocationNs) / perTick;
+            _worldMs.Visibility = since(mapTiming.VisibilityNs, _rateMapTiming.VisibilityNs) / perTick;
+            _worldMs.Delayed = since(mapTiming.DelayedNs, _rateMapTiming.DelayedNs) / perTick;
+            _collectMs.Apply = since(_collect.ApplyNs, _rateCollect.ApplyNs) / perTick;
+            _collectMs.ResetsPerTick = since(_collect.Resets, _rateCollect.Resets) / double(ticks);
+            _collectMs.ReusedPerTick = since(_collect.Reused, _rateCollect.Reused) / double(ticks);
+        }
+    }
+
+    if (advanceRates)
+    {
+        _rateTime = now;
+        _rateTicks = _ticks;
+        _rateEpisodes = sim.Episodes;
+        _rateWorldNs = _worldNs;
+        _rateSimNs = _simNs;
+        _rateLearnerNs = _learnerNs;
+        _rateCollect = _collect;
+        _rateMapTiming = sMapMgr->GetUpdateTiming();
+    }
+
+    sim.TicksPerSecond = _ticksPerSecond;
+    sim.EpisodesPerSecond = _episodesPerSecond;
+    sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);
+    sim.WorldMsPerTick = _worldMsPerTick;
+    sim.SimMsPerTick = _simMsPerTick;
+    sim.LearnerMsPerTick = _learnerMsPerTick;
+    sim.Collect = _collectMs;
+    sim.World = _worldMs;
+
+    sim.LearnerRunning = _learner.IsRunning();
+    sim.LearnerPid = _learner.IsRunning() ? int32(_learner.Pid()) : -1;
+    sim.LearnerConnected = _server.HasClient();
+    sim.LearnerFailed = _learnerStarted && _learner.FailedUnexpectedly();
+    sim.SecondsSinceAct = _lastAct ? std::chrono::duration<double>(now - *_lastAct).count() : -1.0;
+    return sim;
+}
+
+std::vector<AnimusForge::PlanRow> AnimusForge::Forge::PlanRows(Plan const& plan, bool live) const
+{
+    std::vector<PlanRow> rows;
+    for (std::size_t i = 0; i < plan.Entries.size(); ++i)
+    {
+        PlanEntry const& entry = plan.Entries[i];
+
+        PlanRow row;
+        row.Scenario = entry.Scenario;
+        row.Resume = entry.Resume;
+        row.Current = live && i == plan.Index;
+        row.Pending = entry.Result == Outcome::None && !row.Current;
+        row.Status = entry.Result != Outcome::None ? OutcomeName(entry.Result) : row.Current ? StateName() : "pending";
+        rows.push_back(std::move(row));
+    }
+
+    return rows;
+}
+
+std::string AnimusForge::Forge::StateName() const
+{
+    switch (_state)
+    {
+        case State::Idle:
+            return "idle";
+        case State::Training:
+            return _server.HasClient() ? "training" : "waiting for learner";
+        case State::Running:
+            return "running " + _plan.Policy;
+        case State::Paused:
+            return "paused";
+    }
+
+    return "unknown";
+}
+
+void AnimusForge::Forge::WaitedForLearner(std::chrono::steady_clock::time_point from)
+{
+    uint64 const waited = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - from).count());
+    _learnerNs += waited;
+    _tickLearnerNs += waited;
+}
+
+void AnimusForge::Forge::LocalDecision()
+{
+    _pool->Collect();
+
+    if (_plan.LocalEpisodes && _pool->CompletedEpisodes() >= _plan.LocalEpisodes)
+    {
+        FinishCurrent(Outcome::Done);
+        return;
+    }
+
+    if (!_pool->ChooseLocalActions(_plan.Policy))
+    {
+        LOG_ERROR("module.animus", "Scenario {} could not choose actions with policy '{}'", _current, _plan.Policy);
+        FinishCurrent(Outcome::Failed);
+        return;
+    }
+
+    _pool->ApplyActions();
+}
+
+void AnimusForge::Forge::RemoteDecision()
+{
+    // While the world thread waits on the learner: answer console commands, report progress, and stop waiting
+    // when a command needs this scenario to end.
+    auto const onIdle = [this]()
+    {
+        _learner.Poll();
+        Pump();
+        return _request == Request::None;
+    };
+
+    // Waiting for a learner to connect holds no decision, so a pause applies right away (OnUpdate pauses next tick).
+    auto const onAccepting = [this, &onIdle]()
+    {
+        return onIdle() && !_pauseRequested && !LearnerFinished();
+    };
+
+    if (!_server.HasClient())
+    {
+        // Blocks until the learner connects; returns false on shutdown, a cancel or skip, or when the scenario's
+        // learner has finished its run.
+        auto const waitFrom = std::chrono::steady_clock::now();
+        bool const connected = _server.AcceptClient(onAccepting);
+        WaitedForLearner(waitFrom);
+
+        if (!connected)
+        {
+            if (LearnerFinished())
+                FinishCurrent(Outcome::Done);
+            return;
+        }
+
+        if (!SendSpec())
+            return;
+
+        // A new learner starts from fresh training episodes; whatever ran unobserved is discarded. An evaluation the
+        // previous learner left unfinished ends here, or its baseline would keep replacing this learner's actions.
+        // Its replay seeds were its evaluations' losses: this learner sends its own.
+        _pool->SetEvaluation(false, 0, 0, {});
+        _pool->SetReplay(0, 0.0f, {});
+        _pool->ResetAll();
+    }
+    else
+        _pool->Collect();
+
+    if (!SendStep())
+        return;
+
+    std::size_t const actionBytes = _pool->Actions.size() * sizeof(int32);
+    std::size_t const weightBytes = sizeof(WeightsHeader) + _pool->Spec().Layouts.size() * sizeof(float);
+    std::size_t const replayBytes = sizeof(ReplayHeader) + MAX_REPLAY_SEEDS * sizeof(uint32);
+
+    // ACT, or MODE, WEIGHTS or REPLAY first: a mode switch resets every env and answers with a fresh STEP before the
+    // ACT; weights and replay seeds are applied without an answer.
+    for (;;)
+    {
+        MsgType type;
+        std::vector<char> payload;
+        auto const waitFrom = std::chrono::steady_clock::now();
+        bool const received = _server.ReceiveAny(type, payload,
+            std::max({ 2 * actionBytes, sizeof(ModeMsg), weightBytes, replayBytes }), onIdle);
+        WaitedForLearner(waitFrom);
+        if (!received)
+        {
+            _server.DropClient();
+            return;
+        }
+
+        // ACT carries the actions, and the goals after them when the policy has a goal head.
+        if (type == MsgType::Act && (payload.size() == actionBytes || payload.size() == 2 * actionBytes))
+        {
+            std::memcpy(_pool->Actions.data(), payload.data(), actionBytes);
+            if (payload.size() == 2 * actionBytes)
+                std::memcpy(_pool->Goals.data(), payload.data() + actionBytes, actionBytes);
+            else
+                std::fill(_pool->Goals.begin(), _pool->Goals.end(), -1);
+
+            _lastAct = std::chrono::steady_clock::now();
+            break;
+        }
+
+        if (type == MsgType::Mode && payload.size() == sizeof(ModeMsg))
+        {
+            ModeMsg mode{};
+            std::memcpy(&mode, payload.data(), sizeof(mode));
+            if (!ApplyMode(mode))
+            {
+                _server.DropClient();
+                return;
+            }
+
+            _pool->ResetAll();
+            if (!SendStep())
+                return;
+
+            continue;
+        }
+
+        if (type == MsgType::Weights && payload.size() >= sizeof(WeightsHeader))
+        {
+            WeightsHeader header{};
+            std::memcpy(&header, payload.data(), sizeof(header));
+            if (payload.size() != sizeof(WeightsHeader) + header.Count * sizeof(float))
+            {
+                LOG_ERROR("module.animus", "Learner sent WEIGHTS with {} bytes for {} weights", payload.size(),
+                    header.Count);
+                _server.DropClient();
+                return;
+            }
+
+            std::vector<float> weights(header.Count);
+            if (header.Count)
+                std::memcpy(weights.data(), payload.data() + sizeof(WeightsHeader), header.Count * sizeof(float));
+
+            // Takes effect as envs reset; the episodes already running keep the classes they were built with.
+            _pool->SetLayoutWeights(weights);
+            continue;
+        }
+
+        if (type == MsgType::Replay && payload.size() >= sizeof(ReplayHeader))
+        {
+            ReplayHeader header{};
+            std::memcpy(&header, payload.data(), sizeof(header));
+            if (header.Count > MAX_REPLAY_SEEDS
+                || payload.size() != sizeof(ReplayHeader) + header.Count * sizeof(uint32))
+            {
+                LOG_ERROR("module.animus", "Learner sent REPLAY with {} bytes for {} seeds", payload.size(),
+                    header.Count);
+                _server.DropClient();
+                return;
+            }
+
+            std::vector<uint32> seeds(header.Count);
+            if (header.Count)
+                std::memcpy(seeds.data(), payload.data() + sizeof(ReplayHeader), header.Count * sizeof(uint32));
+
+            // Takes effect as envs reset, like the weights.
+            _pool->SetReplay(header.SeedBase, header.Fraction, std::move(seeds));
+            continue;
+        }
+
+        // CLOSE (the client is already gone) or a protocol error: the next decision waits for a new learner.
+        if (type != MsgType::Close)
+            LOG_ERROR("module.animus", "Learner sent message type {} with {} bytes where ACT, MODE, WEIGHTS or REPLAY "
+                "was expected", uint32(type), payload.size());
+
+        _server.DropClient();
+        return;
+    }
+
+    // Scoring a scripted baseline on the evaluation seeds: its actions replace the learner's (only the opponent
+    // seats' when the learner plays against it).
+    if (!_pool->EvalBaseline().empty()
+        && !_pool->ChooseLocalActions(_pool->EvalBaseline(), _pool->EvalOpponentsOnly()))
+    {
+        LOG_ERROR("module.animus", "Scenario {} could not run baseline '{}'; dropping the learner", _current,
+            _pool->EvalBaseline());
+        _server.DropClient();
+        return;
+    }
+
+    _pool->ApplyActions();
+}
+
+bool AnimusForge::Forge::KnowsPolicy(std::string const& policy) const
+{
+    if (policy == "random")
+        return true;
+
+    // Only a built scenario can answer, and `forge bench` asks while the forge is idle, where there is none:
+    // say yes rather than crash on it. A trial that turns out not to know the policy reports as failed.
+    if (!_scenario)
+        return true;
+
+    // ScriptedAction answers whether the scenario has the policy; a blank row is enough to ask.
+    Animus::ScenarioSpec const spec = _scenario->Spec();
+    std::vector<float> obs(spec.ObsDim, 0.0f);
+    std::vector<uint8> mask(spec.NumActions, 0);
+    int32 action = 0;
+    return _scenario->ScriptedAction(policy, obs.data(), mask.data(), 0, action);
+}
+
+bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
+{
+    std::string const baseline(mode.Baseline, strnlen(mode.Baseline, POLICY_NAME_SIZE));
+
+    if (mode.Mode > 1)
+    {
+        LOG_ERROR("module.animus", "Learner asked for unknown mode {}", mode.Mode);
+        return false;
+    }
+
+    if (mode.Mode == 1 && !baseline.empty() && !KnowsPolicy(baseline))
+    {
+        LOG_ERROR("module.animus", "Learner asked for baseline '{}', which scenario {} does not have", baseline,
+            _scenario->Name());
+        return false;
+    }
+
+    bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
+    _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly);
+
+    if (mode.Mode == 1)
+        LOG_DEBUG("module.animus", "Evaluation: {} seeded episodes from seed {}, policy {}", mode.Episodes,
+            mode.SeedBase, baseline.empty() ? "learner" : opponentsOnly ? "learner against " + baseline : baseline);
+    else
+        LOG_DEBUG("module.animus", "Evaluation finished; training");
+
+    return true;
+}
+
+bool AnimusForge::Forge::SendSpec()
+{
+    Animus::ScenarioSpec const spec = _pool->Spec();
+
+    SpecMsg msg{};
+    msg.Version = PROTOCOL_VERSION;
+    msg.NumEnvs = _pool->NumEnvs();
+    msg.AgentsPerEnv = spec.AgentsPerEnv;
+    msg.ObsDim = spec.ObsDim;
+    msg.StateDim = spec.StateDim;
+    msg.NumActions = spec.NumActions;
+    msg.EpisodeInfoDim = spec.EpisodeInfoDim;
+    msg.GoalCount = spec.GoalCount;
+    // The learner reads a step as tick_ms * decision_ticks, which is AnimusForge.DecisionMs however the two are
+    // split; the split itself is what tells it how finely the world moved underneath a decision.
+    msg.TickMs = RunConfig().TickMs();
+    msg.DecisionTicks = RunConfig().TicksPerDecision;
+    // The longest episode the scenario can have: the learner sizes evaluation windows by it.
+    msg.EpisodeSeconds = std::max(RunConfig().EpisodeSeconds, spec.LongestEpisodeSeconds);
+    std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
+
+    uint32 const layoutCount = uint32(spec.Layouts.size());
+    std::vector<LayoutMsg> layouts(layoutCount);
+    for (uint32 i = 0; i < layoutCount; ++i)
+    {
+        layouts[i].ObsDim = spec.Layouts[i].ObsDim;
+        layouts[i].NumActions = spec.Layouts[i].NumActions;
+        std::strncpy(layouts[i].Name, spec.Layouts[i].Name.c_str(), LAYOUT_NAME_SIZE - 1);
+    }
+
+    std::string names;
+    for (std::string const& name : _scenario->EpisodeInfoNames())
+        names += (names.empty() ? "" : ",") + name;
+
+    return _server.Send(MsgType::Spec, { { &msg, sizeof(msg) }, { &layoutCount, sizeof(layoutCount) },
+        { layouts.data(), layouts.size() * sizeof(LayoutMsg) }, { names.data(), names.size() } });
+}
+
+bool AnimusForge::Forge::SendStep()
+{
+    StepHeader header{ _decisions++ };
+
+    auto chunk = [](auto const& vec) { return Chunk{ vec.data(), vec.size() * sizeof(vec[0]) }; };
+
+    return _server.Send(MsgType::Step,
+    {
+        { &header, sizeof(header) },
+        chunk(_pool->Obs),
+        chunk(_pool->State),
+        chunk(_pool->Mask),
+        chunk(_pool->Layout),
+        chunk(_pool->Present),
+        chunk(_pool->Rewards),
+        chunk(_pool->Done),
+        chunk(_pool->Terminated),
+        chunk(_pool->FinalObs),
+        chunk(_pool->FinalState),
+        chunk(_pool->EpisodeInfo),
+        chunk(_pool->EpisodeSeed),
+    });
+}

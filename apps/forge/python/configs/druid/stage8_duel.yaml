@@ -1,0 +1,31 @@
+# The druid's duel: the root of the fighting half, and the stage that carries its whole action catalog.
+#
+# This is where the build gates earn their keep. Under a role, `feral_cat` and `balance` were both "damage" and
+# were graded as one number, so a strong cat could carry a weak boomkin through the gate and nothing would ask
+# for more boomkin episodes. They are separate now, and the floors say so.
+#
+# The four are not equally easy and the floors are not equal:
+#   balance     a ranged caster with a full kit: the highest floor
+#   feral_cat   melee burst, and it can open from Prowl where the level allows
+#   feral_bear  holds up well and kills slowly, so its risk is the clock rather than dying
+#   restoration the weakest solo by some way, and it still has to be able to kill a same-level creature
+
+extends: ../stage8_duel.yaml
+run_name: stage8_duel
+
+# Where the class curriculum branches off the shared root.
+#
+# Stages 1-4 are trained once for all ten classes, in their own output directory, because there is no
+# druid-specific way to cross a field -- everyone walks with the same bearings, the same held turn, the same
+# reading of the ground. So this stage seeds from that shared run rather than from a druid-only stage7_flight,
+# which does not exist. `init_from: auto` cannot find it: the seed chain looks under this run's own runs
+# directory, and the shared root is a sibling of it.
+#
+# Seeding across is allowed because the check is one-directional -- every layout this run has must be in the
+# checkpoint, not the other way round -- so a druid-only run takes the druid out of an all-class checkpoint and
+# leaves the other nine behind (animus.bootstrap).
+init_from:
+  - "{shared_runs}/stage7_flight/best.pt"
+
+eval:
+  report: [clean_kill, killed, died, time_to_kill, health_left, livelocked, form_at_end]

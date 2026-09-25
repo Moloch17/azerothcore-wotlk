@@ -59,7 +59,7 @@ RUN apt-get update \
         util-linux \
         # Certificates for downloading client data
         ca-certificates \
-        # Python for mod-animus-forge's learner (its venv lives on the bind mount)
+        # Python for the forge learner (its venv lives on the bind mount)
         python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 

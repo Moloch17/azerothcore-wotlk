@@ -1,0 +1,12 @@
+# Stage 21: a field of the band's herb and ore nodes, with the zone's creatures among them, and the professions at
+# the band's skill (GatherEncounter). Scored by the nodes gathered before the clock; dying to what lives there
+# costs. Extends the quest stage, whose world block it keeps.
+extends: stage20_quest.yaml
+run_name: stage21_gather
+total_env_steps: 30000000
+eval:
+  every_env_steps: 10000000
+  # 240 s episodes at 128 envs: 1024 is 1,920 sim-seconds an evaluation.
+  episodes: 1024
+  baseline: life
+  report: [nodes_gathered, nodes_spawned, skill_ups, skinned, corpses_looted, wasted_presses, died, gather_band]

@@ -1,0 +1,15 @@
+# Stage 29 of the curriculum: a raid clearing pull after pull and recovering between them. The raid version of
+# stage10_gauntlet at forty seats; nothing seeds from it, and it is trained by name like stage28_raid_single.
+
+extends: stage28_raid_single.yaml
+run_name: stage29_raid_gauntlet
+
+total_env_steps: 40000000
+
+eval:
+  every_env_steps: 20000000
+  # 600 s episodes: 256 at 32 envs is 4,800 sim-seconds an evaluation.
+  episodes: 256
+  baseline: fight
+  report: [pulls_cleared, died, engage_health, engage_mana, low_health_seconds]
+

@@ -16,6 +16,7 @@
  */
 
 #include "Spell.h"
+#include "AnimusHooks.h"
 #include "Forge.h"
 #include "ArenaSpectator.h"
 #include "BattlefieldMgr.h"
@@ -3770,6 +3771,7 @@ void Spell::cancel(bool bySelf)
     m_spellState = oldState;
 
     sScriptMgr->OnSpellCastCancel(this, m_caster, m_spellInfo, bySelf);
+    Animus::Hooks::CastCancelled(m_caster, this, bySelf);
 
     finish(false);
 }
@@ -4085,6 +4087,7 @@ void Spell::_cast(bool skipCheck)
             m_caster->ToPlayer()->RemoveSpellCooldown(m_spellInfo->Id, true);
 
     sScriptMgr->OnSpellCast(this, m_caster, m_spellInfo, skipCheck);
+    Animus::Hooks::CastCompleted(m_caster, this);
 
     SetExecutedCurrently(false);
 
@@ -4719,7 +4722,7 @@ void Spell::SendPetCastResult(SpellCastResult result)
 
 void Spell::SendSpellStart()
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     if (!IsNeedSendToClient(false))
@@ -4802,7 +4805,7 @@ void Spell::SendSpellStart()
 
 void Spell::SendSpellGo()
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     // not send invisible spell casting

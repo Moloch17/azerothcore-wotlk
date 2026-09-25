@@ -16,6 +16,7 @@
  */
 
 #include "Unit.h"
+#include "AnimusHooks.h"
 #include "Forge.h"
 #include "AbstractFollower.h"
 #include "AreaDefines.h"
@@ -983,6 +984,7 @@ void Unit::DealDamageMods(Unit const* victim, uint32& damage, uint32* absorb)
 uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage const* cleanDamage, DamageEffectType damagetype, SpellSchoolMask damageSchoolMask, SpellInfo const* spellProto, bool durabilityLoss, bool /*allowGM*/, Spell const* damageSpell /*= nullptr*/)
 {
     damage = sScriptMgr->DealDamage(attacker, victim, damage, damagetype);
+    Animus::Hooks::Damage(attacker, victim, damage, damagetype, spellProto);
     // Xinef: initialize damage done for rage calculations
     // Xinef: its rare to modify damage in hooks, however training dummy's sets damage to 0
     uint32 rage_damage = damage + ((cleanDamage != nullptr) ? cleanDamage->absorbed_damage : 0);
@@ -6740,7 +6742,7 @@ void Unit::SendSpellNonMeleeReflectLog(SpellNonMeleeDamage* log, Unit* attacker)
 
 void Unit::SendSpellNonMeleeDamageLog(SpellNonMeleeDamage* log)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_SPELLNONMELEEDAMAGELOG, (16 + 4 + 4 + 4 + 1 + 4 + 4 + 1 + 1 + 4 + 4 + 1)); // we guess size
@@ -6790,7 +6792,7 @@ void Unit::SendSpellNonMeleeDamageLog(SpellNonMeleeDamage* log)
 
 void Unit::SendSpellNonMeleeDamageLog(Unit* target, SpellInfo const* spellInfo, uint32 Damage, SpellSchoolMask damageSchoolMask, uint32 AbsorbedDamage, uint32 Resist, bool PhysicalDamage, uint32 Blocked, bool CriticalHit /*= false*/, bool Split /*= false*/)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     SpellNonMeleeDamage log(this, target, spellInfo, damageSchoolMask);
@@ -6847,7 +6849,7 @@ void Unit::ProcSkillsAndAuras(Unit* actor, Unit* victim, uint32 procAttacker, ui
 
 void Unit::SendPeriodicAuraLog(SpellPeriodicAuraLogInfo* pInfo)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     AuraEffect const* aura = pInfo->auraEff;
@@ -6906,7 +6908,7 @@ void Unit::SendPeriodicAuraLog(SpellPeriodicAuraLogInfo* pInfo)
 
 void Unit::SendSpellMiss(Unit* target, uint32 spellID, SpellMissInfo missInfo)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_SPELLLOGMISS, (4 + 8 + 1 + 4 + 8 + 1));
@@ -6923,7 +6925,7 @@ void Unit::SendSpellMiss(Unit* target, uint32 spellID, SpellMissInfo missInfo)
 
 void Unit::SendSpellDamageResist(Unit* target, uint32 spellId)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_PROCRESIST, 8 + 8 + 4 + 1);
@@ -6936,7 +6938,7 @@ void Unit::SendSpellDamageResist(Unit* target, uint32 spellId)
 
 void Unit::SendSpellDamageImmune(Unit* target, uint32 spellId)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_SPELLORDAMAGE_IMMUNE, 8 + 8 + 4 + 1);
@@ -6949,7 +6951,7 @@ void Unit::SendSpellDamageImmune(Unit* target, uint32 spellId)
 
 void Unit::SendAttackStateUpdate(CalcDamageInfo* damageInfo)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     LOG_DEBUG("entities.unit", "WORLD: Sending SMSG_ATTACKERSTATEUPDATE");
@@ -7039,7 +7041,7 @@ void Unit::SendAttackStateUpdate(CalcDamageInfo* damageInfo)
 
 void Unit::SendAttackStateUpdate(uint32 HitInfo, Unit* target, uint8 /*SwingType*/, SpellSchoolMask damageSchoolMask, uint32 Damage, uint32 AbsorbDamage, uint32 Resist, VictimState TargetState, uint32 BlockedAmount)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     CalcDamageInfo dmgInfo;
@@ -8125,7 +8127,7 @@ void Unit::SetCharm(Unit* charm, bool apply)
     }
 }
 
-int32 Unit::DealHeal(Unit* healer, Unit* victim, uint32 addhealth)
+int32 Unit::DealHeal(Unit* healer, Unit* victim, uint32 addhealth, bool periodic /*= false*/)
 {
     int32 gain = 0;
 
@@ -8143,6 +8145,7 @@ int32 Unit::DealHeal(Unit* healer, Unit* victim, uint32 addhealth)
 
     // Hook for OnHeal Event
     sScriptMgr->OnHeal(healer, victim, (uint32&)gain);
+    Animus::Hooks::Heal(healer, victim, uint32(gain), periodic);
 
     Unit* unit = healer;
 
@@ -8407,7 +8410,7 @@ void Unit::UnsummonAllTotems(bool onDeath /*= false*/)
 
 void Unit::SendHealSpellLog(HealInfo const& healInfo, bool critical)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     uint32 overheal = healInfo.GetHeal() - healInfo.GetEffectiveHeal();
@@ -8429,6 +8432,7 @@ int32 Unit::HealBySpell(HealInfo& healInfo, bool critical)
 {
     uint32 heal = healInfo.GetHeal();
     sScriptMgr->ModifyHealReceived(this, healInfo.GetTarget(), heal, healInfo.GetSpellInfo());
+    Animus::Hooks::HealCast(this, healInfo.GetTarget(), heal);
     healInfo.SetHeal(heal);
 
     // calculate heal absorb and reduce healing
@@ -8443,7 +8447,7 @@ int32 Unit::HealBySpell(HealInfo& healInfo, bool critical)
 
 void Unit::SendEnergizeSpellLog(Unit* victim, uint32 spellID, uint32 damage, Powers powerType)
 {
-    if (!Forge::HasClients())
+    if (!ForgeCore::HasClients())
         return;
 
     WorldPacket data(SMSG_SPELLENERGIZELOG, (8 + 8 + 4 + 4 + 4 + 1));

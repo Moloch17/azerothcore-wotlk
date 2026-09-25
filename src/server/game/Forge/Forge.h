@@ -17,8 +17,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ACORE_FORGE_H
-#define ACORE_FORGE_H
+#ifndef ACORE_FORGE_CORE_H
+#define ACORE_FORGE_CORE_H
 
 #include "Define.h"
 
@@ -28,7 +28,7 @@
 /// exception is playtest mode, which exists so a human can log a real client in and confirm the world
 /// is joinable and behaves: the game clock follows the wall clock, the world listener starts, Warden
 /// runs and the database stays open. Everything else in the fork is the same in both modes.
-namespace Forge
+namespace ForgeCore
 {
     /// Read Forge.Playtest once, after the configs are loaded and before anything asks. Never re-read.
     AC_GAME_API void LoadSettings();

@@ -1,0 +1,34 @@
+# Down again, into the water this time.
+#
+# stage1_move's water arena taught one decision, swim across or walk round, at the surface: nothing ever asked the
+# seat to go under. Here the objective is on the bed of Stonebull Lake in Mulgore (Lake Elune'ara in Moonglade is
+# held out) under 6-40 yd of water, and arriving means standing on it. Not the Barrens oases stage1_move swims in:
+# those are under three yards deep, and the first run here built every episode as a plain trip because of it.
+#
+# The breath is the core's own (WaterBreath.Timer, three minutes) and so is the drowning after it, a fifth of the
+# seat's health a second; what the seat sees is how much of its breath is spent (OBS_SUBMERGED_TIME, run up under
+# water and back down ten times as fast above it, as the core runs it) and how deep the place is, and what it learns
+# is when to come up. The deep places cannot be reached on one breath.
+#
+# Unending Breath and Water Breathing are open: the two classes that have one learn when a cast is worth it, and
+# the rest learn the bare price of the dive.
+#
+# A third of the episodes (the `chain` arena) are longer than a breath: a chain of lakebeds thirty to sixty yards
+# apart for four minutes. A seat that stays down for the whole chain drowns at three minutes; one that surfaces
+# between legs, or casts a breathing spell first, does not. checkpoints, chain_broken, breaths, breathing_casts
+# and aquatic_seconds say how each class managed it.
+
+extends: stage1_move.yaml
+run_name: stage4_dive
+
+total_env_steps: 20000000
+
+eval:
+  every_env_steps: 2000000
+  trace_episodes: 64
+  # dive: the episode was built on a lakebed at all (a spawn point with no deep water in reach builds a plain trip).
+  # breaths, breath_spent (past 1 while drowning), drowning_damage and drowned are what the seat did with its air.
+  report: [arrived, spl, lost, wedged, dive, dive_depth, swim_seconds, dive_seconds, breaths, breath_spent,
+           drowning_damage, drowned, checkpoints, chain_broken, breathing_casts, aquatic_seconds, damage_taken,
+           saved, travel_seconds, start_distance, walk_distance, distance_travelled, objective_distance_at_end,
+           trip_share, died, timed_out]

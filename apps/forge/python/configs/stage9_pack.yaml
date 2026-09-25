@@ -1,0 +1,35 @@
+# Stage 2: the duel's random characters against a pack of 2-4 same-level creatures,
+# casters included, usually linked. The policy picks targets, interrupts, crowd-controls and clears the pack fast while
+# losing little health. Episodes end when the pack is cleared, the bot dies or the 150 s clock runs out (a lost fight,
+# as in the duel).
+
+extends: stage8_duel.yaml
+run_name: stage9_pack
+total_env_steps: 40000000
+
+# A pack is not a duel: targets are picked, interrupts are saved, and a clear takes far longer than one kill,
+# so the duel's 33 s horizon is too short to carry credit from a clear back to the opening. These are the gauntlet's
+# numbers, one stage early (~100 s horizon; gamma and lambda are per 100 ms of game time), which is
+# the shape the rest of the PvE line uses.
+rollout_length: 256
+
+# The GAE trace decides how far credit reaches back: at lambda 0.99 per 100 ms it was about 9 s, while a pull, its
+# recovery and the setup that made it winnable take 30-60 s, so what caused an outcome fell outside the trace and was
+# learned only through the critic. 0.995 is about 17 s of credit, for more variance than the critic (explained variance
+# ~0.93 through stages 2 and 3) has trouble with.
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+# The floors are the duel's shape, lower: clean wins of 85% overall and 65% per class/build by the Wilson bound. The
+# first stage 2 run, without a ladder, calibrated them (80% at the seeded start, 90% at 20M steps). A stage below them
+# halts instead of training on forever: converging short of the target restarts from best.pt as usual, then the plan
+# stops here with the numbers to reset the floors from.
+#
+# Packs climb a ladder per class/build (Pulls.MaxTier, rungs 0-5), and an evaluation spreads its seeds over every rung.
+# The floors hold on rungs 0-2, the 2-4 creature packs the first stage 2 run was measured on (90% clean at 20M steps
+# without a ladder); two casters, an elite and a level more above that count through the score. 2048 episodes put
+# ~57 of each class/build on rungs 0-2, so 0.65 needs about 77% of them won. The per-class/build floor was 0.75 until the
+# first laddered run: at 30M steps it held 91% overall (bound 0.89) but rogues (70%, bound 0.57, stuck between the 2- and
+# 3-creature rungs), druid healers, priest DPS and warlocks (81-82%) stayed under it. Taking adds out with crowd control
+# is stage 3's to teach (its control reward).

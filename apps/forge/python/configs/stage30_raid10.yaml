@@ -1,0 +1,18 @@
+# Stage 30 of the curriculum, by name: ten seats against Karazhan's and Naxxramas's bosses.
+# Real instances (InstanceEncounter): the seats spawn at the raid's front door and are taken to the boss along the
+# server's own path; the boss fights with the core's script; seat 0 leads the raid group. A tenth of the episodes are
+# the synthetic single pack at the same seat count, the control the real bosses are graded against.
+#
+# Not in the default queue: 10 seats an env, so AnimusForge.Stage.stage30_raid10.Envs runs it at 32 envs
+# (forge start stage30_raid10); the evaluation's 128 episodes of 360 s at 32 envs are 1,440 sim-seconds.
+extends: stage23_dungeon.yaml
+run_name: stage30_raid10
+total_env_steps: 40000000
+eval:
+  every_env_steps: 10000000
+  episodes: 128
+  baseline: fight
+  report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, teammates_died, boss_rung, instance_map]
+# No owner in a raid: the cast is off.
+cast:
+  agents: {}

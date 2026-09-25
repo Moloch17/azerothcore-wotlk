@@ -51,6 +51,7 @@
  */
 
 #include "ACSoap.h"
+#include "AnimusForge.h"
 #include "BattlegroundMgr.h"
 #include "BigNumber.h"
 #include "CliRunnable.h"
@@ -178,7 +179,7 @@ namespace
         // read and its offline flag cleared as on a stock realm.
         realm.Id.Realm = sConfigMgr->GetOption<uint32>("RealmID", 1);  // scopes accounts, characters and GUIDs
 
-        if (Forge::Playtest())
+        if (ForgeCore::Playtest())
         {
             LoginDatabase.DirectExecute("UPDATE realmlist SET flag = (flag & ~{}) | {} WHERE id = '{}'", REALM_FLAG_OFFLINE, REALM_FLAG_VERSION_MISMATCH, realm.Id.Realm);
             if (!ForgeLoadRealmInfo())
@@ -197,7 +198,7 @@ namespace
 
     void ForgeStopDB()
     {
-        if (Forge::Playtest())
+        if (ForgeCore::Playtest())
             LoginDatabase.DirectExecute("UPDATE realmlist SET flag = flag | {} WHERE id = '{}'", REALM_FLAG_OFFLINE, realm.Id.Realm);
 
         CharacterDatabase.Close();
@@ -209,16 +210,16 @@ namespace
 
     /// Fixed-tick world loop.
     ///
-    /// One tick is one agent decision: its length is mod-animus-forge's AnimusForge.DecisionMs, read once here
+    /// One tick is one agent decision: its length is the training host's AnimusForge.DecisionMs, read once here
     /// (module configs are loaded by then), so game time and decisions advance together.
     ///
     /// Caveat: much of game/ reads getMSTime() directly, so the synthetic diff decouples this
     /// loop from wall clock but not every downstream timer. A clock shim behind getMSTime() is
     /// what closes that gap; it does not belong in this file.
-    /// Whether the seal closes the synchronous connections too and aborts on any read. Staged: false
-    /// until the module warms its lazy world-table caches at startup (its scenario pools and class
-    /// assets query on first use) and a full sweep of every stage logs no "Synchronous query on sealed
-    /// DatabasePool" line. Then this flips, the connections close, and the MySQL container can stop.
+    /// Whether the seal closes the synchronous connections too and aborts on any read. Staged: the
+    /// curriculum now warms every world-table cache at startup (Animus::Curriculum::WarmCaches), so this
+    /// flips to true once one full sweep of every stage logs no "Synchronous query on sealed DatabasePool"
+    /// line. Then the connections close and the MySQL container can stop after startup.
     constexpr bool ForgeSealStrict = false;
 
     /// After the world and the modules have loaded: memory is the truth, the database is done.
@@ -317,7 +318,11 @@ int main(int argc, char** argv)
     if (!sConfigMgr->LoadAppConfigs())
         return 1;
 
-    Forge::LoadSettings();
+    ForgeCore::LoadSettings();
+
+    // The training host's keys live in worldserver.conf now; a modules/mod_animus_forge.conf left from the module
+    // days is still read, after it, so a tuned installation keeps its values.
+    sConfigMgr->LoadAdditionalFile(sConfigMgr->GetConfigPath() + "modules/mod_animus_forge.conf", true);
 
     std::shared_ptr<Acore::Asio::IoContext> ioContext = std::make_shared<Acore::Asio::IoContext>();
 
@@ -388,7 +393,7 @@ int main(int argc, char** argv)
 
     // Playtest mode: the world listener, so a real client can connect. Sim mode opens no port here.
     std::shared_ptr<void> worldSocketHandle;
-    if (Forge::Playtest())
+    if (ForgeCore::Playtest())
     {
         std::string const worldListener = sConfigMgr->GetOption<std::string>("BindIP", "0.0.0.0");
         uint16 const worldPort = uint16(sWorld->getIntConfig(CONFIG_PORT_WORLD));
@@ -414,9 +419,10 @@ int main(int argc, char** argv)
     LOG_INFO("server.worldserver", "{} (Animus Forge) ready...", GitRevision::GetFullVersion());
 
     sScriptMgr->OnStartup();
+    sAnimusForge->OnStartup();   // reads its config, warms the curriculum's caches, opens the learner socket
 
     // Sim mode: every table is in memory now. Playtest keeps the database open for the real login.
-    if (!Forge::Playtest())
+    if (!ForgeCore::Playtest())
         ForgeSealDatabases();
 
     // The console: commands typed into the worldserver's terminal are queued and run on the world
@@ -452,7 +458,7 @@ int main(int argc, char** argv)
             LOG_INFO("server.worldserver", "Console disabled: stdin is not a terminal");
     }
 
-    if (Forge::Playtest())
+    if (ForgeCore::Playtest())
         ForgePlaytestLoop();
     else
         ForgeUpdateLoop();
@@ -466,6 +472,7 @@ int main(int argc, char** argv)
 
     sLog->SetSynchronous();
 
+    sAnimusForge->OnShutdown();
     sScriptMgr->OnShutdown();
 
     LOG_INFO("server.worldserver", "Halting process...");

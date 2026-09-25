@@ -1,0 +1,16 @@
+# Stage 20 of the curriculum: life outside the fight begins. One seat, a quest of its level band (15-20, 35-40,
+# 58-60: the rung is the band) in the world's own zone -- the giver, the creatures around the objectives, the turn-in,
+# copied out of the spawn tables into the env's phase (QuestEncounter, LifeWorld). Take it, do it, hand it in, with
+# the fighting the endurance run taught and the trips the travel stage taught. The world block is new here:
+# INTERACT, LOOT_ALL and the rest start fresh; everything else is seeded.
+extends: stage11_endurance.yaml
+run_name: stage20_quest
+total_env_steps: 60000000
+eval:
+  every_env_steps: 10000000
+  # 300 s episodes at 128 envs: 1024 is 2,400 sim-seconds an evaluation (manual 4, "What an evaluation costs").
+  episodes: 1024
+  # The scripted life: use what is in reach, fight what fights back, walk to the next thing.
+  baseline: life
+  report: [quest_turned_in, quest_accepted, quest_progress, quest_complete, quest_kills, corpses_looted,
+           wasted_presses, died, quest_band]

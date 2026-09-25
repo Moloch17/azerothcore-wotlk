@@ -4,8 +4,8 @@
 # the first start, then run the forge sim in the foreground so its console is the container's terminal.
 #
 #   1. build and install the worldserver if env/dist/bin has none yet, or once when ./forge.sh --build asked for it
-#   2. put back missing config files: mod-animus-forge's template, and any .conf from its .dist
-#   3. install whatever mod-animus-forge's Python venv is missing (animus-venv.sh)
+#   2. put back missing config files: any .conf from its .dist
+#   3. install whatever the forge learner's Python venv is missing (animus-venv.sh)
 #   4. start TensorBoard in the background
 #   5. exec the worldserver, which starts the learner itself (AnimusForge.Learner.AutoStart)
 
@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT=/azerothcore
 BIN="$ROOT/env/dist/bin"
 LOGS="$ROOT/env/dist/logs"
-LEARNER="$ROOT/modules/mod-animus-forge/python"
+LEARNER="$ROOT/apps/forge/python"
 VENV="$LEARNER/.venv"
 # Left by ./forge.sh --build: compile before this start.
 BUILD_REQUEST="$ROOT/env/dist/.forge-build"
@@ -45,7 +45,6 @@ rm -f "$BUILD_REQUEST"
 # its .dist. An existing .conf is never overwritten.
 CONF="$ROOT/env/dist/etc"
 mkdir -p "$CONF/modules"
-cp -n "$ROOT/modules/mod-animus-forge/conf/"*.conf.dist "$CONF/modules/" 2>/dev/null || true
 for dist in "$CONF"/*.conf.dist "$CONF"/modules/*.conf.dist; do
     [[ -e "$dist" ]] || continue
     [[ -f "${dist%.dist}" ]] || cp -v "$dist" "${dist%.dist}"
@@ -65,7 +64,7 @@ fi
 # The forge dashboard (http://localhost:18800): the run's config and its live progress in one page. Standard library
 # only, so it runs on the image's python rather than the learner's venv, and it reads the run files without touching
 # the sim -- a crash or a restart of it costs nothing.
-DASHBOARD="$ROOT/modules/mod-animus-forge/python/animus/dashboard.py"
+DASHBOARD="$ROOT/apps/forge/python/animus/dashboard.py"
 # The page's stage controls (pause, resume, skip, cancel) go to the sim over SOAP and need an account to do it
 # as. They exist only when this file does: `user:password` for an account with SEC_ADMINISTRATOR, alongside
 # SOAP.Enabled in worldserver.conf. Absent -- which is the default -- the dashboard is read-only, exactly as it
@@ -79,7 +78,7 @@ if [[ -f "$DASHBOARD" ]]; then
     fi
     python3 "$DASHBOARD" --host 0.0.0.0 --port 8800 \
         --runs "${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs" \
-        --conf "$CONF/modules/mod_animus_forge.conf" \
+        --conf "$CONF/worldserver.conf" \
         ${dashboard_soap[@]+"${dashboard_soap[@]}"} > "$LOGS/dashboard.log" 2>&1 &
 fi
 
