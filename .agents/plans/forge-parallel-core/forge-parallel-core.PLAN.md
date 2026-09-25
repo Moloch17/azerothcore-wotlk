@@ -457,6 +457,23 @@ open): 64 envs trained as one pool, seeds 0-63 played once each per evaluation.
 Not yet: `forge bench` stays on the host alone; a worker that drops mid-scenario ends the learner's run (it
 reconnects for the next scenario, not the current one); workers do not report progress to the host's console.
 
+## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
+
+- **More learner processes on one GPU do not scale**: 1 / 2 / 3 learners at once (bench_learner, each with its own
+  fake sim and cores) gave 22,637 / 22,227 / 18,721 env steps/s in all; each update slowed 0.72 -> 2.1-3.4 s.
+  Processes' kernels are time-sliced on the GPU, not run side by side.
+- **The learner is GPU-latency-bound, not CPU-bound**: graph-capturing the 128-step GRU replay (forward, backward,
+  Adam) saved only 14% (15.9 -> 13.6 ms), so the cost is the GPU running ~1,300 dependent tiny kernels, not the CPU
+  issuing them. Two streams in one process do overlap such chains (31.1 -> 20.8 ms for the actor's and the critic's
+  replays): the update now runs each minibatch's actor and critic halves on two streams (0.694 -> 0.656 s).
+- What is left of the update's GPU time is ~45% the GRU replays inside MIOpen (per-timestep kernels) and the rest
+  spread thinly. The replay count (epochs x minibatches x 2) is the knob; a persistent RNN kernel that keeps W_hh
+  on chip across workgroups (grid sync per step) is the research option, the Triton attempt having lost at 16 rows.
+- So on one machine, cores beyond the sim's and one learner's do not turn into throughput. What does: more envs
+  per decision (the update's cost barely grows with the batch: 192 envs ~30k against ~22k at 128; the user's call,
+  it is the learner's batch), more machines (the cluster), and one learner per GPU with averaged gradients
+  (data-parallel; not built -- only worth it with more than one GPU).
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
