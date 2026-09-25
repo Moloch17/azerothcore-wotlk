@@ -247,6 +247,7 @@ void AnimusForge::ForgeConfig::Load()
 
     LearnerTorchThreads = sConfigMgr->GetOption<uint32>("AnimusForge.Learner.TorchThreads", 0);
     LearnerDevice = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Device", "");
+    LearnerRanks = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("AnimusForge.Learner.Ranks", 1), 1, 16);
 
     std::string role = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Role", "standalone");
     std::transform(role.begin(), role.end(), role.begin(), [](unsigned char c) { return std::tolower(c); });

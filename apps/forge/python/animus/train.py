@@ -45,6 +45,7 @@ from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
 from .progress import ProgressWriter
 from . import protocol
+from .parallel import Ranks, Silent, share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
 
@@ -391,7 +392,11 @@ class TrainingRun:
     def __init__(self, config: TrainConfig, resume: bool):
         self.config = config
         use_threads(config.torch_threads)
-        seed_everything(config.seed)
+        # Data-parallel learners (animus.parallel): each rank samples its own actions and shuffles its own
+        # minibatches, and rank 0 alone writes the run.
+        self.ranks = Ranks(config.rank, config.ranks, config.dist_address, config.resolved_train_device())
+        leader = self.ranks.leader
+        seed_everything(config.seed + config.rank)
 
         self.run_dir = Path(config.runs_dir) / config.run_name
         self.resume_path: Path | None = None
@@ -400,22 +405,30 @@ class TrainingRun:
                 self.resume_path = resume_checkpoint_path(self.run_dir)
             except FileNotFoundError as error:
                 raise SystemExit(str(error)) from None
-        elif archived := archive_run(self.run_dir):
+        elif leader and (archived := archive_run(self.run_dir)):
             print(f"Archived the earlier {config.run_name} run to {archived}; training from scratch", flush=True)
+        self.ranks.barrier()  # the others read the run directory only once the leader has archived it
         self.finished_path = self.run_dir / FINISHED_FILE
-        if self.resume_path:
+        if self.resume_path and leader:
             self.finished_path.unlink(missing_ok=True)
-        (self.run_dir / "config.yaml").write_text(yaml.safe_dump(config.to_dict(), sort_keys=False))
+        if leader:
+            (self.run_dir / "config.yaml").write_text(yaml.safe_dump(config.to_dict(), sort_keys=False))
 
-        print(f"Connecting to {config.socket} ...", flush=True)
-        self.env = (ClusterEnv([config.socket, *config.cluster_sims]) if config.cluster_sims
-                    else ForgeEnv(config.socket))
+        # Every rank shares the host's sim (its own share of the pool); a cluster's workers are dealt round.
+        workers = config.cluster_sims[self.ranks.rank::self.ranks.world]
+        print(f"Connecting to {config.socket}{f' (rank {config.rank} of {config.ranks})' if config.ranks > 1 else ''}"
+              " ...", flush=True)
+        self.env = (ClusterEnv([config.socket, *workers], rank=config.rank, ranks=config.ranks)
+                    if workers else ForgeEnv(config.socket, rank=config.rank, ranks=config.ranks))
         self.spec = spec = self.env.spec
-        (self.run_dir / "spec.json").write_text(json.dumps(asdict(spec), indent=2))
+        # Env steps count every rank's envs: budgets, schedules and evaluations are the run's, not a rank's.
+        self.run_envs = int(self.ranks.sum(torch.tensor(spec.num_envs)))
+        if leader:
+            (self.run_dir / "spec.json").write_text(json.dumps(asdict(spec), indent=2))
 
         # The sim writes stage.json once it has built the scenario, which is before it accepts a learner.
         self.stage = load_stage(config.layouts_dir, spec.scenario)
-        if self.stage is not None:
+        if self.stage is not None and leader:
             (self.run_dir / STAGE_FILE).write_text(json.dumps(self.stage, indent=2))
         print(
             f"Scenario {spec.scenario}: {spec.num_envs} envs x {spec.agents_per_env} agents, {len(spec.layouts)} "
@@ -452,6 +465,7 @@ class TrainingRun:
             train_device=config.resolved_train_device(),
             rollout_device=config.resolved_rollout_device(),
             slow_layout=self.slow_layout,
+            ranks=self.ranks.update,
         )
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
@@ -499,6 +513,11 @@ class TrainingRun:
         self.update = 0
         self.env_steps = 0
         self._load_or_seed()
+        # Every rank starts as the leader's networks: whatever each seeded or resumed from, one network.
+        for module in (self.trainer.actor, self.trainer.critic, self.trainer.value_norm):
+            if module is not None:
+                self.ranks.broadcast_module(module)
+        self.trainer.sync_rollout()
 
         def new_buffer() -> RolloutBuffer:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
@@ -531,16 +550,16 @@ class TrainingRun:
             # the share of decisions spent under each goal.
             columns += ["goal_entropy", "goal_kept_share",
                         *(f"goal_{index}_share" for index in range(self.trainer.goal_count))]
-        self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None)
+        self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         self.report = tuple(config.eval.report)
-        self.eval_log = EvalLog(self.run_dir, self.logger.tb)
+        self.eval_log = EvalLog(self.run_dir, self.logger.tb) if leader else Silent()
         # Self-play arenas scored against the baseline as their opponent (eval.opponent_baseline).
         self.opponents = config.eval.baseline if config.eval.opponent_baseline else ""
         self.baselines: dict[tuple[int, int], dict] = {}
         self.best_path = self.run_dir / "best.pt"
 
-        self.progress = ProgressWriter(self.run_dir, config, spec, resumed_update=self.update,
-                                       resumed_env_steps=self.env_steps)
+        self.progress = (ProgressWriter(self.run_dir, config, spec, resumed_update=self.update,
+                                        resumed_env_steps=self.env_steps) if leader else Silent())
         cached_baseline_score = None
         if self.resume_path and (self.run_dir / "eval_baseline.json").exists():
             cached = json.loads((self.run_dir / "eval_baseline.json").read_text())
@@ -684,6 +703,8 @@ class TrainingRun:
 
     def _save(self, path: Path) -> None:
         self.drain_update()
+        if not self.ranks.leader:
+            return  # the leader's networks are every rank's: it alone writes them
         save_checkpoint(path, self.trainer, self.config, self.spec, self.update, self.env_steps,
                         self._checkpoint_extra())
 
@@ -714,6 +735,15 @@ class TrainingRun:
 
         return choose
 
+    def _evaluate_share(self, choose_actions, episodes: int, seed: int, **options) -> EvalResult | None:
+        """run_evaluation on this rank's run of the seeds; on the leader, every rank's results merged (None on the
+        others). Alone, the whole evaluation."""
+        first, count = share(episodes, self.ranks.world, self.ranks.rank)
+        result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
+                                           **options)
+        parts = self.ranks.gather(result)
+        return EvalResult.merged(parts) if self.ranks.leader else None
+
     def baseline_for(self, seed: int, episodes: int) -> dict | None:
         """The eval.baseline policy's summary on these seeds, scored once per run."""
         config = self.config
@@ -730,17 +760,21 @@ class TrainingRun:
                # The tuning prices the reward terms the baseline is scored in: a change must score it again.
                "tuning": (self.stage or {}).get("tuning")}
         cached = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
-        if cached and cached.get("key") == key:
-            summary = cached["summary"]
+        # The leader's cache decides for every rank: they all play the baseline, or none does.
+        fresh = self.ranks.broadcast(not (cached and cached.get("key") == key))
+        summary = None
+        if not fresh:
+            summary = cached["summary"] if self.ranks.leader else None
         else:
-            result, _ = run_evaluation(self.env, self.spec, self.learner_actions(), episodes, seed,
-                                       baseline=config.eval.baseline, opponents=self.opponents,
-                                       arenas=self.arena_names, action_names=self.action_names)
-            summary = result.summary(self.report)
-            baseline_path.write_text(json.dumps({"key": key, "summary": summary}, indent=2))
-            self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
-            print(f"Baseline {config.eval.baseline}: score {result.score:.4g} over {result.episodes} seeded "
-                  f"episodes (seed {seed}, {result.seconds:.0f} s)", flush=True)
+            result = self._evaluate_share(self.learner_actions(), episodes, seed, baseline=config.eval.baseline,
+                                          opponents=self.opponents, arenas=self.arena_names,
+                                          action_names=self.action_names)
+            if self.ranks.leader:
+                summary = result.summary(self.report)
+                baseline_path.write_text(json.dumps({"key": key, "summary": summary}, indent=2))
+                self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
+                print(f"Baseline {config.eval.baseline}: score {result.score:.4g} over {result.episodes} seeded "
+                      f"episodes (seed {seed}, {result.seconds:.0f} s)", flush=True)
         self.baselines[seed, episodes] = summary
         return summary
 
@@ -755,61 +789,77 @@ class TrainingRun:
         self.last_snapshot_env_steps = self.env_steps
         latest = self.run_dir / "latest.pt"
         self._save(latest)
-        if league_snapshot(self.run_dir, latest, f"step_{self.env_steps}") is not None:
+        joined = self.ranks.leader and league_snapshot(self.run_dir, latest, f"step_{self.env_steps}") is not None
+        # The leader writes the league; every rank plays from it.
+        if self.ranks.broadcast(joined):
             self.cast.pool.reload()
-            self.cast.pool.write()
-            print(f"League: latest.pt at {self.env_steps} env steps joined ({len(self.cast.pool.active())} members)",
-                  flush=True)
+            if self.ranks.leader:
+                self.cast.pool.write()
+                print(f"League: latest.pt at {self.env_steps} env steps joined ({len(self.cast.pool.active())} "
+                      f"members)", flush=True)
 
     def evaluate(self) -> None:
-        """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current."""
+        """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current.
+        With data-parallel learners every rank plays its share of the seeds and the leader scores them all."""
         self.drain_update()
         config, tracker, controller = self.config, self.tracker, self.controller
+        leader = self.ranks.leader
         controller.baseline_summary = self.baseline_for(config.eval.seed, config.eval.episodes)
         baseline_summary = controller.baseline_summary
 
         self.progress.write("evaluating", self.update, self.env_steps)
-        result, self.step = run_evaluation(self.env, self.spec, self.learner_actions(), config.eval.episodes,
-                                           config.eval.seed, opponents=self.opponents, arenas=self.arena_names,
-                                           action_names=self.action_names,
-                                           trace_episodes=config.eval.trace_episodes)
-        summary = result.summary(self.report)
+        result = self._evaluate_share(self.learner_actions(), config.eval.episodes, config.eval.seed,
+                                      opponents=self.opponents, arenas=self.arena_names,
+                                      action_names=self.action_names, trace_episodes=config.eval.trace_episodes)
         if self.cast is not None:
             self.cast.reset_all()
-            controller.observe_league(self.cast.league_stats([layout.name for layout in self.spec.layouts]))
-        improved = controller.observe(summary, self.env_steps)
-        self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
-        self.progress.evaluated(self.env_steps, result.score, baseline_summary["score"] if baseline_summary else None,
-                                tracker, controller)
-        self.progress.write("training", self.update, self.env_steps)
         self.last_eval_env_steps = self.env_steps
 
-        against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""
-        print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
-              f"(best {tracker.best:.4g}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
-              f"{against}; "
-              f"{result.episodes} episodes in {result.seconds:.0f} s"
-              f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
+        summary, sampled, joined = None, False, False
+        if leader:
+            summary = result.summary(self.report)
+            if self.cast is not None:
+                controller.observe_league(self.cast.league_stats([layout.name for layout in self.spec.layouts]))
+            improved = controller.observe(summary, self.env_steps)
+            self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
+            self.progress.evaluated(self.env_steps, result.score,
+                                    baseline_summary["score"] if baseline_summary else None, tracker, controller)
+            self.progress.write("training", self.update, self.env_steps)
 
-        if improved:
-            self._save(self.best_path)
-            if self.cast is not None and self.cast.pool is not None and config.cast.opponents == LEAGUE:
-                if league_snapshot(self.run_dir, self.best_path, f"best_{self.env_steps}") is not None:
-                    self.cast.pool.reload()
-        if self.cast is not None and self.cast.pool is not None:
-            self.cast.pool.write()
+            against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""
+            print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
+                  f"(best {tracker.best:.4g}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
+                  f"{against}; "
+                  f"{result.episodes} episodes in {result.seconds:.0f} s"
+                  f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
 
-        sampled_every = config.eval.sampled_every
-        if sampled_every > 0 and len(tracker.history) % sampled_every == 0:
+            if improved:
+                self._save(self.best_path)
+                if self.cast is not None and self.cast.pool is not None and config.cast.opponents == LEAGUE:
+                    if league_snapshot(self.run_dir, self.best_path, f"best_{self.env_steps}") is not None:
+                        self.cast.pool.reload()
+                        joined = True
+            if self.cast is not None and self.cast.pool is not None:
+                self.cast.pool.write()
+
+            sampled_every = config.eval.sampled_every
+            sampled = sampled_every > 0 and len(tracker.history) % sampled_every == 0
+
+        # What the leader decided, carried out on every rank.
+        sampled, joined = self.ranks.broadcast((sampled, joined))
+        if joined and not leader:
+            self.cast.pool.reload()
+        if sampled:
             self.evaluate_sampled(summary)
 
         self.apply_holds()
-        self.send_layout_weights(summary, baseline_summary)
-        self.send_replay(result)
+        if leader:
+            self.send_layout_weights(summary, baseline_summary)
+            self.send_replay(result)
 
     def apply_holds(self) -> None:
         """Freeze the classes that have converged (animus.stage) and keep them out of the rollout's samples."""
-        converged = set(self.controller.converged_layouts())
+        converged = set(self.ranks.broadcast(sorted(self.controller.converged_layouts())))
         frozen = [index for index, layout in enumerate(self.spec.layouts) if layout.name in converged]
         if set(frozen) != set(int(index) for index in self.frozen):
             entering = sorted(converged - {self.spec.layouts[i].name for i in self.frozen})
@@ -824,14 +874,14 @@ class TrainingRun:
     def evaluate_sampled(self, argmax: dict) -> None:
         """Score sampled actions on the evaluation seeds, next to the argmax evaluation that just ran."""
         config = self.config
-        result, self.step = run_evaluation(
-            self.env, self.spec,
-            self._acting(False),
-            config.eval.episodes, config.eval.seed, opponents=self.opponents, arenas=self.arena_names,
-            action_names=self.action_names)
-        result.policy = "learner_sampled"
+        result = self._evaluate_share(self._acting(False), config.eval.episodes, config.eval.seed,
+                                      opponents=self.opponents, arenas=self.arena_names,
+                                      action_names=self.action_names)
         if self.cast is not None:
             self.cast.reset_all()
+        if not self.ranks.leader:
+            return
+        result.policy = "learner_sampled"
         summary = result.summary(self.report)
         fields = [name for name in ("score", "clean_kill", "killed", "died", "timed_out", "arrived")
                   if name in summary]
@@ -892,6 +942,8 @@ class TrainingRun:
         """Carry out the controller's decision; True when training stops."""
         if outcome.action != ADVANCE:
             return False
+        if not self.ranks.leader:
+            return True
         tracker = self.tracker
         self.eval_log.write_outcome(self.update, self.env_steps, outcome)
         pending = {name: row["missing"] for name, row in (outcome.report or {}).items() if not row["converged"]}
@@ -990,17 +1042,18 @@ class TrainingRun:
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions = buffer.mean_allowed_actions()
         self.layout_allowed = self.allowed_actions_by_layout(buffer)
-        trainer.entropy_coef = self.controller.entropy_coef(self.env_steps)
+        # The leader's controller decides, for every rank.
+        trainer.entropy_coef = self.ranks.broadcast(self.controller.entropy_coef(self.env_steps))
         # With an overlapped update this applies to the update submitted below: a rollout's worth late, which a
         # schedule over hundreds of millions of steps does not notice. The scale is the controller's: held at full
         # until the score first plateaus, so the KL it reads is the policy's and not the schedule's.
-        self.lr_scale_now = self.controller.lr_scale(self.env_steps)
+        self.lr_scale_now = self.ranks.broadcast(self.controller.lr_scale(self.env_steps))
         trainer.set_learning_rate_scale(self.lr_scale_now)
         if self.distiller is not None:
             self.distiller.coef = self.config.distill.coef_at(self.env_steps)
 
         self.update += 1
-        self.env_steps += self.config.rollout_length * envs * agents
+        self.env_steps += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
 
         if self.updater is None:
@@ -1137,6 +1190,15 @@ class TrainingRun:
 
     def log_update(self, stats: dict[str, float], started: float, rollout_seconds: float) -> None:
         config, spec = self.config, self.spec
+        # Every rank's ended training episodes, for the leader's controller and log.
+        gathered = self.ranks.gather((self.finished_episodes, self.finished_layouts))
+        if self.ranks.active:
+            if self.ranks.leader:
+                self.finished_episodes = [row for rows, _ in gathered for row in rows]
+                self.finished_layouts = [layout for _, layouts in gathered for layout in layouts]
+            else:
+                self.finished_episodes.clear()
+                self.finished_layouts.clear()
         self.last_layout_stats = self.named_layout_stats()
         self.controller.observe_update(self.last_layout_stats, self.lr_scale_now)
         if self.difficulty_column is not None and self.finished_episodes:
@@ -1152,7 +1214,7 @@ class TrainingRun:
         row: dict[str, float] = {
             "update": self.update,
             "env_steps": self.env_steps,
-            "env_steps_per_sec": config.rollout_length * spec.num_envs * spec.agents_per_env / rollout_seconds,
+            "env_steps_per_sec": config.rollout_length * self.run_envs * spec.agents_per_env / rollout_seconds,
             "update_seconds": time.perf_counter() - started - rollout_seconds,
             "reward_per_decision": self.rollout_reward,
             # Entropy is only readable against how many actions were legal to begin with.
@@ -1291,13 +1353,14 @@ class TrainingRun:
                 # The evaluation resets every env: the training episodes in progress are cut short, and the next
                 # rollout starts from fresh ones (this rollout's advantages were already computed above).
                 self.evaluate()
-                if self.handle(decision := controller.after_eval(self.env_steps)):
+                decision = self.ranks.broadcast(controller.after_eval(self.env_steps) if self.ranks.leader else None)
+                if self.handle(decision):
                     return decision
 
         # One last score, so the best model also considers the final networks.
         if self.evaluating and self.last_eval_env_steps < self.env_steps:
             self.evaluate()
-        outcome = controller.at_budget()
+        outcome = self.ranks.broadcast(controller.at_budget() if self.ranks.leader else None)
         self.handle(outcome)
         return outcome
 
@@ -1307,9 +1370,10 @@ class TrainingRun:
         if self.cast is not None:
             self.cast.reset_all()
         self.progress.write("training", self.update, self.env_steps)
-        if self.evaluating and self.config.eval.at_start and not self.tracker.history:
+        if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.tracker.history):
             self.evaluate()
-        self.last_eval_env_steps = self.tracker.history[-1][0] if self.tracker.history else self.env_steps
+        self.last_eval_env_steps = self.ranks.broadcast(self.tracker.history[-1][0] if self.tracker.history
+                                                        else self.env_steps)
 
         outcome: Outcome | None = None
         try:
@@ -1323,7 +1387,7 @@ class TrainingRun:
         """Save latest.pt and, when the stage was decided, finished.json; close the logs and the connection."""
         tracker = self.tracker
         self._save(self.run_dir / "latest.pt")
-        if outcome:
+        if outcome and self.ranks.leader:
             self.finished_path.write_text(json.dumps({
                 "reason": outcome.reason,
                 "advanced": outcome.action == ADVANCE,
@@ -1341,6 +1405,7 @@ class TrainingRun:
             self.updater.shutdown()
         self.logger.close()
         self.env.close()
+        self.ranks.close()
 
 
 def main() -> int:

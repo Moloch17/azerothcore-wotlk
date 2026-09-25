@@ -135,6 +135,7 @@ def main() -> int:
     parser.add_argument("--half-batch", action="store_true",
                         help="the sim ticks the two halves' maps in turn and sends each half's STEP on its own")
     parser.add_argument("--updates", type=int, default=6, help="updates to run; the first is reported apart")
+    parser.add_argument("--envs", type=int, default=0, help="envs instead of the spec's own (0 = the spec's)")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="config override")
     args = parser.parse_args()
 
@@ -142,6 +143,8 @@ def main() -> int:
     from .train import TrainingRun
 
     spec = load_spec(Path(args.spec))
+    if args.envs:
+        spec = dataclasses.replace(spec, num_envs=args.envs)
     if args.half_batch:
         spec = dataclasses.replace(spec, env_groups=2)
     steps_per_update = None

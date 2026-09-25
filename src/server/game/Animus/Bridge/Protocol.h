@@ -101,7 +101,8 @@ namespace AnimusForge
     // 11: STEP and ACT name the envs they cover (StepHeader, ActHeader) and SPEC how many groups the pool is sent
     // in, so a half-batch sim can send each half on its own.
     // 12: MODE says which seed index an evaluation starts from, so a cluster's sims share one evaluation's seeds.
-    constexpr uint32 PROTOCOL_VERSION = 12;
+    // 13: HELLO names the learner's rank and how many there are (data-parallel learners share one sim's pool).
+    constexpr uint32 PROTOCOL_VERSION = 13;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -131,6 +132,8 @@ namespace AnimusForge
     struct HelloMsg
     {
         uint32 Version;
+        uint32 Rank;            // this learner's rank among Ranks data-parallel learners (0 of 1 alone)
+        uint32 Ranks;
     };
 
     struct SpecMsg

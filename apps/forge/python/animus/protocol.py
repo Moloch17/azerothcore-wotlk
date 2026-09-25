@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -33,7 +33,7 @@ class MsgType(IntEnum):
 
 
 HEADER = struct.Struct("<II")  # type, payload length
-HELLO = struct.Struct("<I")  # version
+HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
 SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name

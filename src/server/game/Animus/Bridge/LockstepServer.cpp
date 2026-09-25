@@ -20,6 +20,7 @@
 #include "Log.h"
 #include "World.h"
 #include <arpa/inet.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -142,13 +143,13 @@ void AnimusForge::LockstepServer::Shutdown()
     }
 }
 
-bool AnimusForge::LockstepServer::AcceptClient(std::function<bool()> const& onIdle)
+bool AnimusForge::LockstepServer::AcceptClients(uint32 ranks, std::function<bool()> const& onIdle)
 {
     DropClient();
+    std::vector<int> clients(std::max<uint32>(1, ranks), -1);
+    uint32 connected = 0;
 
-    LOG_DEBUG("module.animus", "Waiting for the learner to connect...");
-
-    while (WaitReadable(_listener, onIdle))
+    while (connected < clients.size() && WaitReadable(_listener, onIdle))
     {
         int const fd = ::accept4(_listener, nullptr, nullptr, SOCK_CLOEXEC);
         if (fd < 0)
@@ -162,37 +163,59 @@ bool AnimusForge::LockstepServer::AcceptClient(std::function<bool()> const& onId
         }
 
         _client = fd;
-
         MsgType type;
         HelloMsg hello{};
-        if (!Receive(type, &hello, sizeof(hello)) || type != MsgType::Hello)
+        bool const greeted = Receive(type, &hello, sizeof(hello)) && type == MsgType::Hello;
+        _client = -1;
+        if (!greeted)
         {
             LOG_WARN("module.animus", "Learner connection did not start with HELLO, dropping it");
-            DropClient();
+            ::close(fd);
             continue;
         }
 
         if (hello.Version != PROTOCOL_VERSION)
         {
             LOG_ERROR("module.animus", "Learner speaks protocol {}, sim speaks {}", hello.Version, PROTOCOL_VERSION);
-            DropClient();
+            ::close(fd);
             continue;
         }
 
-        LOG_DEBUG("module.animus", "Learner connected");
-        return true;
+        if (hello.Ranks != clients.size() || hello.Rank >= clients.size() || clients[hello.Rank] >= 0)
+        {
+            LOG_ERROR("module.animus", "A learner says it is rank {} of {}; this sim expects {} learner{} "
+                "(AnimusForge.Learner.Ranks) and {}", hello.Rank, hello.Ranks, clients.size(),
+                clients.size() == 1 ? "" : "s", hello.Rank < clients.size() && clients[hello.Rank] >= 0
+                ? "has that rank already" : "no such rank");
+            ::close(fd);
+            continue;
+        }
+
+        clients[hello.Rank] = fd;
+        ++connected;
+        LOG_DEBUG("module.animus", "Learner rank {} of {} connected", hello.Rank, clients.size());
     }
 
-    return false;
+    if (connected < clients.size())
+    {
+        for (int fd : clients)
+            if (fd >= 0)
+                ::close(fd);
+        return false;
+    }
+
+    _clients = std::move(clients);
+    _client = _clients.front();
+    return true;
 }
 
 void AnimusForge::LockstepServer::DropClient()
 {
-    if (_client >= 0)
-    {
-        ::close(_client);
-        _client = -1;
-    }
+    for (int fd : _clients)
+        if (fd >= 0)
+            ::close(fd);
+    _clients.clear();
+    _client = -1;
 }
 
 bool AnimusForge::LockstepServer::Send(MsgType type, std::vector<Chunk> const& chunks)

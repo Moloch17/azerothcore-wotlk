@@ -71,13 +71,26 @@ class RunningNorm(nn.Module):
         self.bypass = False
 
     @torch.no_grad()
-    def update(self, rows: torch.Tensor) -> None:
-        """Fold a batch of observations into the statistics (Chan's parallel variance)."""
-        if rows.shape[0] == 0:
-            return
-
-        batch_count = torch.tensor(float(rows.shape[0]), device=self.count.device)
-        batch_mean, batch_var = rows.mean(dim=0), rows.var(dim=0, unbiased=False)
+    def update(self, rows: torch.Tensor, ranks=None) -> None:
+        """Fold a batch of observations into the statistics (Chan's parallel variance). With data-parallel `ranks`
+        (animus.parallel) the batch is every rank's rows together, so every rank's statistics stay the same; every
+        rank must then call it, with or without rows of its own."""
+        if ranks is not None and ranks.active:
+            wide = rows.to(torch.float64)
+            packed = ranks.sum(torch.cat([wide.new_tensor([float(rows.shape[0])]), wide.sum(dim=0),
+                                          (wide * wide).sum(dim=0)]))
+            if float(packed[0]) == 0.0:
+                return
+            width = rows.shape[1]
+            batch_count = packed[0].to(torch.float32)
+            batch_mean = (packed[1:1 + width] / packed[0]).to(torch.float32)
+            batch_var = (packed[1 + width:] / packed[0] - (packed[1:1 + width] / packed[0]) ** 2).clamp(min=0.0)
+            batch_var = batch_var.to(torch.float32)
+        else:
+            if rows.shape[0] == 0:
+                return
+            batch_count = torch.tensor(float(rows.shape[0]), device=self.count.device)
+            batch_mean, batch_var = rows.mean(dim=0), rows.var(dim=0, unbiased=False)
         total = self.count + batch_count
         delta = batch_mean - self.mean
         self.mean += delta * (batch_count / total)
@@ -165,8 +178,13 @@ def skip_distribution_checks() -> None:
 
 
 @torch.no_grad()
-def update_norms(norms: nn.ModuleList, obs: torch.Tensor, layout: torch.Tensor, obs_dims) -> None:
-    """Fold a rollout's observations into each layout's statistics, each from its own rows and own features."""
+def update_norms(norms: nn.ModuleList, obs: torch.Tensor, layout: torch.Tensor, obs_dims, ranks=None) -> None:
+    """Fold a rollout's observations into each layout's statistics, each from its own rows and own features. With
+    data-parallel `ranks` every layout is visited on every rank, rows or none: each is a collective."""
+    if ranks is not None and ranks.active:
+        for index, norm in enumerate(norms):
+            norm.update(obs[layout == index, : obs_dims[index]], ranks)
+        return
     for index, rows in _per_layout(layout, len(norms)):
         norms[index].update(obs[rows, : obs_dims[index]])
 

@@ -101,6 +101,9 @@ namespace AnimusForge
         /// empty = the stage config's train_device and rollout_device). A GPU the machine does not have falls back
         /// to the first one, so the key can name the machine as it will be.
         std::string LearnerDevice;
+        /// AnimusForge.Learner.Ranks: data-parallel learners sharing this sim's pool, one per GPU, gradients averaged
+        /// every step. Each owns an equal share of every group of envs.
+        uint32 LearnerRanks = 1;
 
         /// AnimusForge.Cluster.Role: several machines training one learner. A worker runs only its sim, of the
         /// scenario its host orders, and the host's learner trains on every sim's envs as one pool (the learner's

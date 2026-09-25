@@ -260,8 +260,21 @@ namespace AnimusForge
 
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
-        bool SendSpec();
+        bool SendSpec(uint32 rank);
         bool SendStep(uint32 group);
+        /// Data-parallel learners (AnimusForge.Learner.Ranks): rank `rank`'s share of group `group`, as the first
+        /// env of the pool, how many, and the first env in that learner's own numbering (its envs are its share of
+        /// each group, one after another).
+        struct RankRows
+        {
+            uint32 Global = 0;
+            uint32 Count = 0;
+            uint32 Local = 0;
+        };
+        [[nodiscard]] RankRows RankGroup(uint32 rank, uint32 group) const;
+        [[nodiscard]] uint32 RankEnvs(uint32 rank) const;
+        /// Every rank's MODE is in (they evaluate on the same update): the first sets the mode, each its seed run.
+        bool ApplyModes(std::vector<ModeMsg> const& modes);
         /// After a reset (a new learner, a MODE): every group's STEP, and group 0's maps tick next.
         bool SendEveryGroup();
         bool ApplyMode(ModeMsg const& mode);
@@ -315,6 +328,7 @@ namespace AnimusForge
         uint32 _nextTurn = 0;
         /// A group's STEP went to the learner and its answer has not come back.
         bool _awaitingAnswer[2] = { false, false };
+        uint32 _ranks = 1;                  // learners connected to this sim's pool
         /// This tick ends a decision: set by OnWorldPrologue, read by the map epilogues that score and observe
         /// on it, cleared when OnUpdate closes the decision.
         ///

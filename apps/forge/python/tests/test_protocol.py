@@ -2,7 +2,6 @@
 
 import dataclasses
 import socket
-import struct
 import threading
 
 import numpy as np
@@ -123,7 +122,7 @@ def test_lockstep_exchange(tmp_path):
         with conn:
             msg_type, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
             assert msg_type == p.MsgType.HELLO
-            assert struct.unpack("<I", read_exact(conn, length))[0] == p.PROTOCOL_VERSION
+            assert p.HELLO.unpack(read_exact(conn, length)) == (p.PROTOCOL_VERSION, 0, 1)
 
             spec_payload = p.encode_spec(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec_payload)) + spec_payload)

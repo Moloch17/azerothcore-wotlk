@@ -52,12 +52,17 @@ namespace AnimusForge
         bool Listen(std::string const& path);
         void Shutdown();
 
-        /// Block until a client connects and sends a valid HELLO, or the world stops. `onIdle` runs
-        /// every poll interval while nobody is connecting; returning false stops waiting (and
-        /// AcceptClient returns false).
-        bool AcceptClient(std::function<bool()> const& onIdle = {});
+        /// Block until `ranks` clients have connected, each with a valid HELLO naming a different rank of that many
+        /// (data-parallel learners each own a share of the pool), or the world stops. `onIdle` runs every poll
+        /// interval while waiting; returning false stops waiting (and AcceptClients returns false).
+        bool AcceptClients(uint32 ranks, std::function<bool()> const& onIdle = {});
+        bool AcceptClient(std::function<bool()> const& onIdle = {}) { return AcceptClients(1, onIdle); }
+        /// Drop every client: a data-parallel job with a rank gone cannot go on.
         void DropClient();
         [[nodiscard]] bool HasClient() const { return _client >= 0; }
+        [[nodiscard]] uint32 Clients() const { return uint32(_clients.size()); }
+        /// Send and receive with rank `rank`'s client from here on.
+        void Use(uint32 rank) { _client = rank < _clients.size() ? _clients[rank] : -1; }
 
         /// Send one message; the payload is the concatenation of `chunks`.
         bool Send(MsgType type, std::vector<Chunk> const& chunks);
@@ -80,7 +85,8 @@ namespace AnimusForge
 
         std::string _path;
         int _listener = -1;
-        int _client = -1;
+        int _client = -1;               // the client Send and Receive use (Use)
+        std::vector<int> _clients;      // by rank
     };
 }
 

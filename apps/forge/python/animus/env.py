@@ -16,10 +16,13 @@ from . import protocol as p
 
 
 class ForgeEnv:
-    def __init__(self, socket_path: str, connect_timeout: float = 600.0):
+    def __init__(self, socket_path: str, connect_timeout: float = 600.0, rank: int = 0, ranks: int = 1):
+        """`rank` of `ranks` data-parallel learners sharing the sim's pool (animus.parallel): the sim hands each its
+        own share of the envs, and this learner sees only its share."""
         self.socket_path = socket_path
         self.sock = self._connect(socket_path, connect_timeout)
-        self.sock.sendall(p.encode_header(p.MsgType.HELLO, p.HELLO.size) + p.HELLO.pack(p.PROTOCOL_VERSION))
+        hello = p.HELLO.pack(p.PROTOCOL_VERSION, rank, ranks)
+        self.sock.sendall(p.encode_header(p.MsgType.HELLO, len(hello)) + hello)
 
         msg_type, payload = self._receive()
         if msg_type != p.MsgType.SPEC:
@@ -174,8 +177,10 @@ class ClusterEnv:
     and goals. How many envs each runs may differ.
     """
 
-    def __init__(self, endpoints: list[str], connect_timeout: float = 600.0):
-        self.sims = [ForgeEnv(endpoint, connect_timeout) for endpoint in endpoints]
+    def __init__(self, endpoints: list[str], connect_timeout: float = 600.0, rank: int = 0, ranks: int = 1):
+        # The first sim is the host's, shared by every data-parallel learner; a worker's sim is one learner's alone.
+        self.sims = [ForgeEnv(endpoint, connect_timeout, rank if index == 0 else 0, ranks if index == 0 else 1)
+                     for index, endpoint in enumerate(endpoints)]
         first = self.sims[0].spec
         for endpoint, sim in zip(endpoints[1:], self.sims[1:]):
             mine = dataclasses.replace(sim.spec, num_envs=first.num_envs, env_groups=first.env_groups)

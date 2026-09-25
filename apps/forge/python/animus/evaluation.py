@@ -150,6 +150,29 @@ class EvalResult:
     def column(self, name: str) -> np.ndarray | None:
         return self.infos[:, self.info_names.index(name)] if name in self.info_names else None
 
+    @staticmethod
+    def merged(parts: list["EvalResult"]) -> "EvalResult":
+        """One evaluation from the results of its shares of seeds (data-parallel learners each play their own run
+        of them), rows in rank order. Seconds are the slowest share's: they ran at once."""
+        parts = [part for part in parts if part is not None]
+        first = parts[0]
+        if len(parts) == 1:
+            return first
+
+        def stacked(name):
+            arrays = [getattr(part, name) for part in parts]
+            return None if any(array is None for array in arrays) else np.concatenate(arrays)
+
+        return EvalResult(
+            policy=first.policy, returns=np.concatenate([part.returns for part in parts]),
+            infos=np.concatenate([part.infos for part in parts]), info_names=first.info_names,
+            layouts=tuple(layout for part in parts for layout in part.layouts),
+            seeds=tuple(seed for part in parts for seed in part.seeds), arenas=first.arenas,
+            seconds=max(part.seconds for part in parts), decisions=sum(part.decisions for part in parts),
+            action_counts=stacked("action_counts"), allowed_counts=stacked("allowed_counts"),
+            action_names=first.action_names, spec_names=first.spec_names,
+            trace=[row for part in parts for row in part.trace])
+
     def failed_seeds(self, metric: str) -> list[int]:
         """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 field per episode: a
         derived one such as clean_kill, or an episode info column), for replaying them in training."""
@@ -367,8 +390,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    max_decisions: int | None = None, opponents: str = "",
                    arenas: tuple[str, ...] = (),
                    action_names: dict[str, list[str]] | None = None,
-                   trace_episodes: int = 0) -> tuple[EvalResult, p.Step]:
-    """Run seeded episodes 0..episodes-1 and return their results and the fresh training STEP after them.
+                   trace_episodes: int = 0, first_seed: int = 0) -> tuple[EvalResult, p.Step]:
+    """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
+    episodes-1 alone) and return their results and the fresh training STEP after them.
 
     choose_actions(step) -> [E, A] actions, or (actions, goals) from a policy with a goal head (the goals go to the
     sim, which scores and reports them); ignored by the sim when `baseline` names a scripted policy. `opponents`
@@ -386,10 +410,11 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         # Seeds go out as envs reset, so the last one can start up to one episode after the others.
         max_decisions = per_episode * (-(-episodes // envs) + 2)
 
+    share = {"first_seed": first_seed} if first_seed else {}
     if baseline:
-        step = env.set_mode(True, seed, episodes, baseline)
+        step = env.set_mode(True, seed, episodes, baseline, **share)
     else:
-        step = env.set_mode(True, seed, episodes, opponents, opponents_only=bool(opponents))
+        step = env.set_mode(True, seed, episodes, opponents, opponents_only=bool(opponents), **share)
     # Decisions of the envs that might be tracing, kept until their episode ends and its seed is known.
     tracing: dict[int, list[dict]] = {env: [] for env in range(envs)} if trace_episodes else {}
     trace: list[dict] = []
@@ -433,7 +458,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         running += step.reward
         for e in np.flatnonzero(step.done):
             index = int(step.episode_seed[e])
-            if index != p.NO_EPISODE_SEED and index < episodes and index not in finished:
+            if index != p.NO_EPISODE_SEED and first_seed <= index < first_seed + episodes and index not in finished:
                 finished[index] = [
                     (float(running[e, a]), step.episode_info[e, a].copy(), names[int(layout[e, a])], taken[e, a].copy(),
                      allowed[e, a].copy())

@@ -418,6 +418,17 @@ void Animus::EnvPool::SetEvaluation(bool enabled, uint32 seedBase, uint32 episod
     _evalNextSeed = enabled ? firstSeed : 0;
     _evalBaseline = enabled ? baseline : std::string();
     _evalOpponentsOnly = enabled && !_evalBaseline.empty() && opponentsOnly;
+    _evalRuns.clear();
+    _evalRunOfEnv.clear();
+}
+
+void Animus::EnvPool::SetEvaluationRuns(std::vector<std::pair<uint32, uint32>> const& runs,
+    std::vector<uint32> rangeOfEnv)
+{
+    _evalRuns.clear();
+    for (auto const& [first, episodes] : runs)
+        _evalRuns.push_back({ first, _evaluating ? first + episodes : first });
+    _evalRunOfEnv = std::move(rangeOfEnv);
 }
 
 void Animus::EnvPool::SetReplay(uint32 seedBase, float fraction, std::vector<uint32> seeds)
@@ -586,9 +597,18 @@ void Animus::EnvPool::ResetEnv(Env& env)
 
     _envSeed[env.Index] = NO_EPISODE_SEED;
     uint32 buildSeed = NO_EPISODE_SEED;
-    if (_evaluating && _evalNextSeed < _evalEpisodes)
+    // The run of seeds this env draws from: its learner's, with data-parallel learners, else the pool's one.
+    uint32* next = &_evalNextSeed;
+    uint32 end = _evalEpisodes;
+    if (!_evalRuns.empty() && env.Index < _evalRunOfEnv.size() && _evalRunOfEnv[env.Index] < _evalRuns.size())
     {
-        uint32 const index = _evalNextSeed++;
+        EvalRun& run = _evalRuns[_evalRunOfEnv[env.Index]];
+        next = &run.Next;
+        end = run.End;
+    }
+    if (_evaluating && *next < end)
+    {
+        uint32 const index = (*next)++;
         rand_seed(seedFor(_evalSeedBase, index));
         _envSeed[env.Index] = index;
         buildSeed = index;

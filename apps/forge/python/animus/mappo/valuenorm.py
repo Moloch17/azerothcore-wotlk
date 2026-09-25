@@ -23,10 +23,18 @@ class ValueNorm(nn.Module):
         return mean, var
 
     @torch.no_grad()
-    def update(self, values: torch.Tensor) -> None:
+    def update(self, values: torch.Tensor, ranks=None) -> None:
+        """Fold a batch of returns in; with data-parallel `ranks` (animus.parallel), every rank's together."""
         values = values.detach().to(torch.float32)
-        self.running_mean.mul_(self.beta).add_(values.mean() * (1.0 - self.beta))
-        self.running_mean_sq.mul_(self.beta).add_((values**2).mean() * (1.0 - self.beta))
+        if ranks is not None and ranks.active:
+            wide = values.to(torch.float64).reshape(-1)
+            packed = ranks.sum(torch.stack([wide.new_tensor(float(wide.numel())), wide.sum(), (wide * wide).sum()]))
+            count = packed[0].clamp(min=1.0)
+            mean, mean_sq = (packed[1] / count).to(torch.float32), (packed[2] / count).to(torch.float32)
+        else:
+            mean, mean_sq = values.mean(), (values**2).mean()
+        self.running_mean.mul_(self.beta).add_(mean * (1.0 - self.beta))
+        self.running_mean_sq.mul_(self.beta).add_(mean_sq * (1.0 - self.beta))
         self.debiasing_term.mul_(self.beta).add_(1.0 - self.beta)
 
     def normalize(self, values: torch.Tensor) -> torch.Tensor:

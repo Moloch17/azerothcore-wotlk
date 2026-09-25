@@ -111,6 +111,9 @@ namespace Animus
         void SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
             bool opponentsOnly = false, uint32 firstSeed = 0);
         [[nodiscard]] bool IsEvaluating() const { return _evaluating; }
+        /// Data-parallel learners each play their own run of an evaluation's seeds on their own envs: after
+        /// SetEvaluation, `runs[r]` = (first seed index, episodes) for the envs whose `rangeOfEnv` entry is r.
+        void SetEvaluationRuns(std::vector<std::pair<uint32, uint32>> const& runs, std::vector<uint32> rangeOfEnv);
 
         /// How often training episodes draw each of the scenario's layouts (the forge's WEIGHTS message), in layout
         /// order; empty restores the even draw. Takes effect as envs reset; evaluation episodes are never weighted.
@@ -287,6 +290,13 @@ namespace Animus
         bool _evaluating = false;
         uint32 _evalSeedBase = 0;
         uint32 _evalEpisodes = 0;
+        struct EvalRun
+        {
+            uint32 Next = 0;
+            uint32 End = 0;
+        };
+        std::vector<EvalRun> _evalRuns;             // SetEvaluationRuns; empty = the one run above
+        std::vector<uint32> _evalRunOfEnv;
         uint32 _evalNextSeed = 0;
         std::string _evalBaseline;
         bool _evalOpponentsOnly = false;

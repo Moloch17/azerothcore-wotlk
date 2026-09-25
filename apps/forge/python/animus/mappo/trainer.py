@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from ..parallel import Ranks
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, per_layout, per_layout_host, skip_distribution_checks, to_device,
                        update_norms)
@@ -225,6 +226,7 @@ class MappoTrainer:
         train_device: str = "cpu",
         rollout_device: str = "cpu",
         slow_layout: int = -1,
+        ranks=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `slow_layout` is the
         index of config.slow_layout among them, resolved by the caller (layouts carry no names here); -1 when the
@@ -233,6 +235,8 @@ class MappoTrainer:
         self.config = config
         self.layouts = list(layouts)
         self.slow_layout = slow_layout if config.slow_layout else -1
+        # Data-parallel learners (animus.parallel.Ranks): gradients and statistics reduced across them; alone, none.
+        self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
         self.train_device = torch.device(train_device)
         self.rollout_device = torch.device(rollout_device)
@@ -318,6 +322,11 @@ class MappoTrainer:
 
     def _finish_layout_stats(self, totals: dict) -> None:
         sums = totals.get("sums")
+        if self.ranks.active:
+            # Every rank's rows: a collective, so a rank that had none contributes zeros rather than skipping it.
+            if sums is None:
+                sums = torch.zeros((len(self.layouts), 3), device=self.train_device)
+            sums = self.ranks.sum(sums)
         read = sums.double().cpu().tolist() if sums is not None else []
         self.layout_stats = {index: {"entropy": e / max(n, 1e-9), "approx_kl": k / max(n, 1e-9), "rows": n}
                              for index, (e, k, n) in enumerate(read) if n > 0}
@@ -617,13 +626,13 @@ class MappoTrainer:
         if foresight:
             stats["foresight_loss"] = 0.0
         data = {k: torch.as_tensor(v, device=self.train_device) for k, v in buffer.flat().items()}
-        if data["actions"].shape[0] == 0:
+        if data["actions"].shape[0] == 0 and not self.ranks.active:
             return stats  # no seat had a character this rollout: nothing to learn from
 
         data["advantages"] = self._normalise_advantages(data["advantages"], data["layout"])
 
         if self.value_norm is not None:
-            self.value_norm.update(data["returns"])
+            self.value_norm.update(data["returns"], self.ranks)
             data["returns_target"] = self.value_norm.normalize(data["returns"])
             data["old_values"] = self.value_norm.normalize(data["values"])
         else:
@@ -710,6 +719,7 @@ class MappoTrainer:
 
                 self.actor_opt.zero_grad()
                 actor_loss.backward()
+                self.ranks.average_gradients(self.actor.parameters())
                 actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
                 self.actor_opt.step()
 
@@ -721,6 +731,7 @@ class MappoTrainer:
 
                 self.critic_opt.zero_grad()
                 (cfg.value_coef * value_loss).backward()
+                self.ranks.average_gradients(self.critic.parameters())
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
 
@@ -744,8 +755,9 @@ class MappoTrainer:
             epochs_run += 1
             # One read per epoch, not per minibatch: enough to stop before the next epoch pulls the policy
             # further from the rollout that justified it.
+            # Every rank stops on the same epoch: on the ranks' mean KL, not its own.
             if cfg.target_kl > 0.0 and epoch_updates \
-                    and float(epoch_kl) / epoch_updates > EPOCH_KL_TOLERANCE * cfg.target_kl:
+                    and float(self.ranks.mean(epoch_kl)) / epoch_updates > EPOCH_KL_TOLERANCE * cfg.target_kl:
                 break
 
         # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are
@@ -753,9 +765,9 @@ class MappoTrainer:
         # other than 1 at epoch 0 -- a normaliser shift read as a policy change. Updating here and syncing the
         # rollout copies below keeps the acting and training views of a feature identical, one rollout apart.
         if cfg.normalise_observations:
-            update_norms(self.actor.norms, data["obs"], data["layout"], self.actor.obs_dims)
-            update_norms(self.critic.norms, data["obs"], data["layout"], self.critic.obs_dims)
-            self.critic.state_norm.update(data["state"])
+            update_norms(self.actor.norms, data["obs"], data["layout"], self.actor.obs_dims, self.ranks)
+            update_norms(self.critic.norms, data["obs"], data["layout"], self.critic.obs_dims, self.ranks)
+            self.critic.state_norm.update(data["state"], self.ranks)
 
         if sync:
             self._sync_rollout()
@@ -818,8 +830,8 @@ class MappoTrainer:
             raise ValueError("the actor chooses goals but the rollout buffer did not keep them")
         steps, envs, agents = data["actions"].shape
         valid = data["valid"]
-        if not bool(valid.any()):
-            return stats
+        if not bool(valid.any()) and not self.ranks.active:
+            return stats  # nothing to learn from -- alone; with other ranks this one still joins every all-reduce
 
         rows = valid.reshape(-1)
         flat_layout = data["layout"].reshape(-1)
@@ -828,7 +840,7 @@ class MappoTrainer:
         data["advantages"] = advantages.reshape(steps, envs, agents)
 
         if self.value_norm is not None:
-            self.value_norm.update(data["returns"].reshape(-1)[rows])
+            self.value_norm.update(data["returns"].reshape(-1)[rows], self.ranks)
             returns_target = self.value_norm.normalize(data["returns"])
             old_values = self.value_norm.normalize(data["values"])
         else:
@@ -956,6 +968,7 @@ class MappoTrainer:
 
                 self.actor_opt.zero_grad()
                 actor_loss.backward()
+                self.ranks.average_gradients(self.actor.parameters())
                 actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
                 self.actor_opt.step()
 
@@ -981,6 +994,7 @@ class MappoTrainer:
 
                 self.critic_opt.zero_grad()
                 (cfg.value_coef * value_loss).backward()
+                self.ranks.average_gradients(self.critic.parameters())
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
 
@@ -1007,8 +1021,9 @@ class MappoTrainer:
                 epoch_updates += 1
 
             epochs_run += 1
+            # Every rank stops on the same epoch: on the ranks' mean KL, not its own.
             if cfg.target_kl > 0.0 and epoch_updates \
-                    and float(epoch_kl) / epoch_updates > EPOCH_KL_TOLERANCE * cfg.target_kl:
+                    and float(self.ranks.mean(epoch_kl)) / epoch_updates > EPOCH_KL_TOLERANCE * cfg.target_kl:
                 break
 
         self._finish_layout_stats(layout_totals)
@@ -1025,10 +1040,10 @@ class MappoTrainer:
         # rollout copies below keeps the acting and training views of a feature identical, one rollout apart.
         if cfg.normalise_observations:
             flat_obs = data["obs"].reshape(-1, data["obs"].shape[-1])[rows]
-            update_norms(self.actor.norms, flat_obs, flat_layout[rows], self.actor.obs_dims)
-            update_norms(self.critic.norms, flat_obs, flat_layout[rows], self.critic.obs_dims)
+            update_norms(self.actor.norms, flat_obs, flat_layout[rows], self.actor.obs_dims, self.ranks)
+            update_norms(self.critic.norms, flat_obs, flat_layout[rows], self.critic.obs_dims, self.ranks)
             states = data["state"][:, :, None, :].expand(steps, envs, agents, data["state"].shape[-1])
-            self.critic.state_norm.update(states.reshape(-1, data["state"].shape[-1])[rows])
+            self.critic.state_norm.update(states.reshape(-1, data["state"].shape[-1])[rows], self.ranks)
 
         stats["update_compute_seconds"] = time.perf_counter() - started
         if sync:

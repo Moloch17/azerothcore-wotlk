@@ -213,6 +213,11 @@ class TrainConfig:
     # A cluster host's workers' sims ("tcp://host:port" each; AnimusForge.Cluster): trained on together with the sim
     # at `socket` as one pool (animus.env.ClusterEnv). Empty = the one sim. The host's sim passes it.
     cluster_sims: list[str] = field(default_factory=list)
+    # Data-parallel learners (animus.parallel; the sim's AnimusForge.Learner.Ranks): this learner's rank, how many
+    # there are, and where rank 0 meets the others. One rank is the plain learner.
+    rank: int = 0
+    ranks: int = 1
+    dist_address: str = "127.0.0.1:29500"
     seed: int = 1
 
     total_env_steps: int = 5_000_000  # decisions x envs x agents

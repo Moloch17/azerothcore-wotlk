@@ -792,6 +792,7 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
     config.Policy = "remote";
     config.LearnerAutoStart = false;
     config.SocketPath = Acore::StringFormat("tcp://0.0.0.0:{}", _config.ClusterDataPort);
+    config.LearnerRanks = 1;        // a worker's sim is one rank's, whichever of the host's learners that is
 
     Plan plan;
     plan.Policy = "remote";
@@ -1386,7 +1387,9 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         // Blocks until the learner connects; returns false on shutdown, a cancel or skip, or when the scenario's
         // learner has finished its run.
         auto const waitFrom = std::chrono::steady_clock::now();
-        bool const connected = _server.AcceptClient(onAccepting);
+        _ranks = std::clamp<uint32>(RunConfig().LearnerRanks, 1, std::max<uint32>(1, _pool->NumEnvs()
+            / _pool->GroupCount()));
+        bool const connected = _server.AcceptClients(_ranks, onAccepting);
         WaitedForLearner(waitFrom);
 
         if (!connected)
@@ -1396,8 +1399,9 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             return;
         }
 
-        if (!SendSpec())
-            return;
+        for (uint32 rank = 0; rank < _ranks; ++rank)
+            if (!SendSpec(rank))
+                return;
 
         // A new learner starts from fresh training episodes; whatever ran unobserved is discarded. An evaluation the
         // previous learner left unfinished ends here, or its baseline would keep replacing this learner's actions.
@@ -1422,18 +1426,19 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
     if (!_awaitingAnswer[target])
         return;
 
-    auto actionBytesOf = [this](uint32 g)
-    {
-        return std::size_t(_pool->GroupRange(g).second) * _pool->Spec().AgentsPerEnv * sizeof(int32);
-    };
     std::size_t const actionBytes = _pool->Actions.size() * sizeof(int32);
     std::size_t const weightBytes = sizeof(WeightsHeader) + _pool->Spec().Layouts.size() * sizeof(float);
     std::size_t const replayBytes = sizeof(ReplayHeader) + MAX_REPLAY_SEEDS * sizeof(uint32);
+    uint32 const agents = _pool->Spec().AgentsPerEnv;
 
-    // ACT, or MODE, WEIGHTS or REPLAY first: a mode switch resets every env and answers with a fresh STEP before the
-    // ACT; weights and replay seeds are applied without an answer.
-    for (;;)
+    // Every learner's answer for the group awaited, rank by rank: an ACT for its share, or a MODE, WEIGHTS or REPLAY
+    // first. A mode switch resets every env and answers with every group's fresh STEP before the ACT -- once every
+    // rank has asked for it, since data-parallel learners evaluate on the same update. Weights and replay seeds are
+    // applied without an answer.
+    std::vector<ModeMsg> modes;
+    for (uint32 rank = 0; rank < _ranks;)
     {
+        _server.Use(rank);
         MsgType type;
         std::vector<char> payload;
         auto const waitFrom = std::chrono::steady_clock::now();
@@ -1446,18 +1451,19 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             return;
         }
 
-        // ACT names the envs it answers for -- the group awaited, as the learner answers STEPs in the order they
-        // went out -- then carries their actions, and the goals after them when the policy has a goal head.
+        // ACT names the envs it answers for -- the group awaited, as a learner answers STEPs in the order they went
+        // out -- in the learner's own numbering, then carries their actions, and the goals after them when the
+        // policy has a goal head.
         ActHeader act{};
         if (type == MsgType::Act && payload.size() >= sizeof(act))
             std::memcpy(&act, payload.data(), sizeof(act));
-        auto const [begin, count] = _pool->GroupRange(target);
-        std::size_t const groupBytes = actionBytesOf(target);
+        RankRows const rows = RankGroup(rank, target);
+        std::size_t const groupBytes = std::size_t(rows.Count) * agents * sizeof(int32);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
-        if (type == MsgType::Act && act.EnvBegin == begin && act.EnvCount == count
+        if (type == MsgType::Act && modes.empty() && act.EnvBegin == rows.Local && act.EnvCount == rows.Count
             && (body == groupBytes || body == 2 * groupBytes))
         {
-            std::size_t const first = std::size_t(begin) * _pool->Spec().AgentsPerEnv;
+            std::size_t const first = std::size_t(rows.Global) * agents;
             char const* actions = payload.data() + sizeof(act);
             std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
             if (body == 2 * groupBytes)
@@ -1465,28 +1471,33 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             else
                 std::fill_n(_pool->Goals.begin() + first, groupBytes / sizeof(int32), -1);
 
-            _awaitingAnswer[target] = false;
             _lastAct = std::chrono::steady_clock::now();
-            break;
+            ++rank;
+            continue;
         }
 
-        if (type == MsgType::Mode && payload.size() == sizeof(ModeMsg))
+        if (type == MsgType::Mode && payload.size() == sizeof(ModeMsg) && modes.size() == rank)
         {
             ModeMsg mode{};
             std::memcpy(&mode, payload.data(), sizeof(mode));
-            if (!ApplyMode(mode))
+            modes.push_back(mode);
+            if (++rank < _ranks)
+                continue;
+
+            // A MODE comes where every learner holds every group's STEP (between whole decisions), so nothing they
+            // have not read is lost: every env starts again, and every group's fresh STEP goes out.
+            if (!ApplyModes(modes))
             {
                 _server.DropClient();
                 return;
             }
-
-            // A MODE comes where the learner holds every group's STEP (between whole decisions), so nothing it has
-            // not read is lost: every env starts again, and every group's fresh STEP goes out.
             _pool->ResetAll();
             if (!SendEveryGroup())
                 return;
 
             target = 0;
+            modes.clear();
+            rank = 0;
             continue;
         }
 
@@ -1533,14 +1544,16 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             continue;
         }
 
-        // CLOSE (the client is already gone) or a protocol error: the next decision waits for a new learner.
+        // CLOSE (the client is already gone), a protocol error, or learners out of step (one evaluating while
+        // another trains): the next decision waits for new learners.
         if (type != MsgType::Close)
-            LOG_ERROR("module.animus", "Learner sent message type {} with {} bytes where ACT, MODE, WEIGHTS or REPLAY "
-                "was expected", uint32(type), payload.size());
+            LOG_ERROR("module.animus", "Learner rank {} sent message type {} with {} bytes where ACT, MODE, WEIGHTS or "
+                "REPLAY was expected", rank, uint32(type), payload.size());
 
         _server.DropClient();
         return;
     }
+    _awaitingAnswer[target] = false;
 
     // Scoring a scripted baseline on the evaluation seeds: its actions replace the learner's (only the opponent
     // seats' when the learner plays against it).
@@ -1606,13 +1619,14 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
     return true;
 }
 
-bool AnimusForge::Forge::SendSpec()
+bool AnimusForge::Forge::SendSpec(uint32 rank)
 {
     Animus::ScenarioSpec const spec = _pool->Spec();
+    _server.Use(rank);
 
     SpecMsg msg{};
     msg.Version = PROTOCOL_VERSION;
-    msg.NumEnvs = _pool->NumEnvs();
+    msg.NumEnvs = RankEnvs(rank);
     msg.AgentsPerEnv = spec.AgentsPerEnv;
     msg.ObsDim = spec.ObsDim;
     msg.StateDim = spec.StateDim;
@@ -1657,32 +1671,103 @@ bool AnimusForge::Forge::SendEveryGroup()
 
 bool AnimusForge::Forge::SendStep(uint32 group)
 {
-    auto const [begin, count] = _pool->GroupRange(group);
-    StepHeader header{ _decisions++, begin, count };
     _awaitingAnswer[group] = true;
-
-    // Every array is env-major, so a group's rows are one contiguous run of each.
-    uint32 const envs = std::max<uint32>(1, _pool->NumEnvs());
-    auto chunk = [begin, count, envs](auto const& vec)
+    uint64 const decision = _decisions++;
+    for (uint32 rank = 0; rank < std::max<uint32>(1, _server.Clients()); ++rank)
     {
-        std::size_t const perEnv = vec.size() / envs;
-        return Chunk{ vec.data() + std::size_t(begin) * perEnv, std::size_t(count) * perEnv * sizeof(vec[0]) };
-    };
+        // Each learner gets its share of the group, numbered as its own envs.
+        RankRows const rows = RankGroup(rank, group);
+        _server.Use(rank);
+        StepHeader header{ decision, rows.Local, rows.Count };
 
-    return _server.Send(MsgType::Step,
+        // Every array is env-major, so a share's rows are one contiguous run of each.
+        uint32 const envs = std::max<uint32>(1, _pool->NumEnvs());
+        uint32 const begin = rows.Global;
+        uint32 const count = rows.Count;
+        auto chunk = [begin, count, envs](auto const& vec)
+        {
+            std::size_t const perEnv = vec.size() / envs;
+            return Chunk{ vec.data() + std::size_t(begin) * perEnv, std::size_t(count) * perEnv * sizeof(vec[0]) };
+        };
+
+        if (!_server.Send(MsgType::Step,
+            {
+                { &header, sizeof(header) },
+                chunk(_pool->Obs),
+                chunk(_pool->State),
+                chunk(_pool->Mask),
+                chunk(_pool->Layout),
+                chunk(_pool->Present),
+                chunk(_pool->Rewards),
+                chunk(_pool->Done),
+                chunk(_pool->Terminated),
+                chunk(_pool->FinalObs),
+                chunk(_pool->FinalState),
+                chunk(_pool->EpisodeInfo),
+                chunk(_pool->EpisodeSeed),
+            }))
+            return false;
+    }
+    return true;
+}
+
+AnimusForge::Forge::RankRows AnimusForge::Forge::RankGroup(uint32 rank, uint32 group) const
+{
+    RankRows rows;
+    for (uint32 g = 0; g <= group; ++g)
     {
-        { &header, sizeof(header) },
-        chunk(_pool->Obs),
-        chunk(_pool->State),
-        chunk(_pool->Mask),
-        chunk(_pool->Layout),
-        chunk(_pool->Present),
-        chunk(_pool->Rewards),
-        chunk(_pool->Done),
-        chunk(_pool->Terminated),
-        chunk(_pool->FinalObs),
-        chunk(_pool->FinalState),
-        chunk(_pool->EpisodeInfo),
-        chunk(_pool->EpisodeSeed),
-    });
+        auto const [begin, count] = _pool->GroupRange(g);
+        uint64 const first = begin + uint64(count) * rank / _ranks;
+        uint64 const last = begin + uint64(count) * (rank + 1) / _ranks;
+        if (g < group)
+            rows.Local += uint32(last - first);
+        else
+        {
+            rows.Global = uint32(first);
+            rows.Count = uint32(last - first);
+        }
+    }
+    return rows;
+}
+
+uint32 AnimusForge::Forge::RankEnvs(uint32 rank) const
+{
+    uint32 envs = 0;
+    for (uint32 group = 0; group < _pool->GroupCount(); ++group)
+        envs += RankGroup(rank, group).Count;
+    return envs;
+}
+
+bool AnimusForge::Forge::ApplyModes(std::vector<ModeMsg> const& modes)
+{
+    for (ModeMsg const& mode : modes)
+    {
+        if (mode.Mode != modes.front().Mode || mode.SeedBase != modes.front().SeedBase
+            || mode.Flags != modes.front().Flags || std::strncmp(mode.Baseline, modes.front().Baseline,
+                POLICY_NAME_SIZE) != 0)
+        {
+            LOG_ERROR("module.animus", "Data-parallel learners asked for different modes on the same decision");
+            return false;
+        }
+    }
+
+    if (!ApplyMode(modes.front()))
+        return false;
+    if (modes.size() == 1)
+        return true;
+
+    // Each learner's envs play its own run of the evaluation's seeds.
+    std::vector<std::pair<uint32, uint32>> runs;
+    std::vector<uint32> runOfEnv(_pool->NumEnvs(), 0);
+    for (uint32 rank = 0; rank < modes.size(); ++rank)
+    {
+        runs.emplace_back(modes[rank].FirstSeed, modes[rank].Episodes);
+        for (uint32 group = 0; group < _pool->GroupCount(); ++group)
+        {
+            RankRows const rows = RankGroup(rank, group);
+            std::fill_n(runOfEnv.begin() + rows.Global, rows.Count, rank);
+        }
+    }
+    _pool->SetEvaluationRuns(runs, std::move(runOfEnv));
+    return true;
 }
