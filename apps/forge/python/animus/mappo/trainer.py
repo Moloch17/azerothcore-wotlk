@@ -13,8 +13,8 @@ from torch import nn
 
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, log_prob_of, per_layout, per_layout_host, sample_logits,
-                       skip_distribution_checks, to_device, update_norms)
+from .networks import (LayoutActor, LayoutCritic, SharedInputDense, log_prob_of, per_layout, per_layout_host,
+                       sample_logits, skip_distribution_checks, to_device, update_norms)
 from .valuenorm import ValueNorm
 
 
@@ -237,6 +237,38 @@ class _Decided:
         return taken, fetched[self.log_probs_at], foresight, goals, self.chosen
 
 
+class _Packed:
+    """Named arrays laid out in one pinned host buffer and one device buffer, so moving them all between the two
+    is one copy: in a captured rollout decision each copy is a DMA with its own setup latency, and there were
+    seventeen. `host[name]` and `device[name]` are typed views into them."""
+
+    ALIGN = 16
+
+    def __init__(self, specs: list[tuple[str, tuple[int, ...], torch.dtype]], device):
+        offsets, size = {}, 0
+        for name, shape, dtype in specs:
+            offsets[name] = size
+            nbytes = int(np.prod(shape)) * torch.empty((), dtype=dtype).element_size()
+            size += -(-nbytes // self.ALIGN) * self.ALIGN
+        self.host_bytes = torch.zeros(max(size, self.ALIGN), dtype=torch.uint8, pin_memory=True)
+        self.device_bytes = torch.zeros_like(self.host_bytes, device=device)
+
+        def views(buffer):
+            out = {}
+            for name, shape, dtype in specs:
+                nbytes = int(np.prod(shape)) * torch.empty((), dtype=dtype).element_size()
+                out[name] = buffer[offsets[name]:offsets[name] + nbytes].view(dtype).view(shape)
+            return out
+
+        self.host, self.device = views(self.host_bytes), views(self.device_bytes)
+
+    def upload(self) -> None:
+        self.device_bytes.copy_(self.host_bytes, non_blocking=True)
+
+    def download(self) -> None:
+        self.host_bytes.copy_(self.device_bytes, non_blocking=True)
+
+
 class _RolloutGraph:
     """One rollout decision (MappoTrainer.act_and_value with an acting state) captured as a CUDA / HIP graph for one
     batch shape: upload from fixed pinned buffers, the actor (goal, actions, foresight, memory) and the critic
@@ -252,26 +284,21 @@ class _RolloutGraph:
         device, rows = trainer.rollout_device, envs * agents
         recurrent, goals = trainer.recurrent_size, trainer.goal_count
 
-        def pinned(shape, dtype):
-            return torch.zeros(shape, dtype=dtype, pin_memory=True)
-
-        # Inputs: a pinned host copy the caller fills and a device copy the graph uploads it into.
-        self.host_in = {
-            "obs": pinned((envs, agents, obs.shape[-1]), torch.float32),
-            "layout": pinned((envs, agents), torch.long),
-            "mask": pinned((envs, agents, mask.shape[-1]), torch.bool),
-            "state": pinned((envs, state_features.shape[-1]), torch.float32),
-        }
+        # Inputs: one pinned host buffer the caller fills and one device buffer the graph uploads it into.
+        specs = [("obs", (envs, agents, obs.shape[-1]), torch.float32), ("layout", (envs, agents), torch.long),
+                 ("mask", (envs, agents, mask.shape[-1]), torch.bool),
+                 ("state", (envs, state_features.shape[-1]), torch.float32)]
         if recurrent:
-            self.host_in["memory"] = pinned((envs, agents, recurrent), torch.float32)
-            self.host_in["critic_memory"] = pinned((envs, agents, recurrent), torch.float32)
+            specs += [("memory", (envs, agents, recurrent), torch.float32),
+                      ("critic_memory", (envs, agents, recurrent), torch.float32)]
         if goals:
-            self.host_in["goal"] = pinned((envs, agents), torch.long)
-            self.host_in["chosen"] = pinned((envs, agents), torch.bool)
-        self.device_in = {name: torch.empty_like(host, device=device) for name, host in self.host_in.items()}
-        self.host_out: dict[str, torch.Tensor] = {}
+            specs += [("goal", (envs, agents), torch.long), ("chosen", (envs, agents), torch.bool)]
+        self.inputs = _Packed(specs, device)
+        self.host_in = self.inputs.host
+        self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
 
         stream = trainer._rollout_stream
+        self.side = torch.cuda.Stream(device=device, priority=-1)
         # Warm up on the capture stream (allocator and library workspaces), then capture.
         stream.wait_stream(torch.cuda.current_stream(device))
         with torch.no_grad():
@@ -287,15 +314,25 @@ class _RolloutGraph:
         trainer = self.trainer
         envs, agents = self.envs, self.agents
         actor, critic = trainer._rollout_actor, trainer._rollout_critic
-        inputs = self.device_in
-        for name, host in self.host_in.items():
-            inputs[name].copy_(host, non_blocking=True)
+        self.inputs.upload()
+        inputs = self.inputs.device
 
         obs_t = inputs["obs"].reshape(rows, -1)
         layout_t = inputs["layout"].reshape(rows)
         mask_t = inputs["mask"].reshape(rows, -1)
         memory = inputs["memory"].reshape(rows, -1) if "memory" in inputs else None
-        features = actor.features(obs_t, layout_t, memory, None)
+        state_t = inputs["state"][:, None, :].expand(envs, agents, inputs["state"].shape[-1]).reshape(rows, -1)
+
+        # Two branches: the critic's goal-free encoding (its two large products) on the side stream while the actor
+        # carries its memory and chooses the goal here, then the critic's goal-dependent rest there while the actor
+        # chooses the actions here. Captured with the fork and the joins, so a replay runs them side by side.
+        main, side = torch.cuda.current_stream(), self.side
+        side.wait_stream(main)
+        with torch.cuda.stream(side):
+            critic_hidden = critic.state_encoder(critic.state_norm(state_t))
+        # Both networks' adapters read the observation: one product (SharedInputDense), the critic's half handed over.
+        actor_own, critic_own = trainer._shared_adapters(obs_t, layout_t)
+        features = actor.features_from(actor.trunk(actor_own), memory)
 
         out: dict[str, torch.Tensor] = {}
         goal_t = None
@@ -308,6 +345,18 @@ class _RolloutGraph:
             out["goal"] = goal_t.reshape(envs, agents)
             out["goal_log_prob"] = log_prob_of(goal_logits, goal_t).reshape(envs, agents)
 
+        side.wait_stream(main)
+        critic_out: dict[str, torch.Tensor] = {}
+        with torch.cuda.stream(side):
+            critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
+            values, carried = critic.step_encoded(critic.encode_goal(critic_hidden, critic_own, goal_t), (rows,),
+                                                  critic_memory)
+            if trainer._rollout_value_norm is not None:
+                values = trainer._rollout_value_norm.denormalize(values)
+            critic_out["values"] = values.reshape(envs, agents)
+            if critic_memory is not None:
+                critic_out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
+
         logits = actor.action_logits(features, layout_t, mask_t, goal_t, None)
         actions, log_probs = sample_logits(logits, self.deterministic)
         out["actions"] = actions.reshape(envs, agents)
@@ -317,20 +366,17 @@ class _RolloutGraph:
         if memory is not None:
             out["memory"] = features.reshape(envs, agents, trainer.recurrent_size)
 
-        state_t = inputs["state"][:, None, :].expand(envs, agents, inputs["state"].shape[-1]).reshape(rows, -1)
-        critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
-        values, carried = critic.step(state_t, obs_t, layout_t, goal_t, None, memory=critic_memory)
-        if trainer._rollout_value_norm is not None:
-            values = trainer._rollout_value_norm.denormalize(values)
-        out["values"] = values.reshape(envs, agents)
-        if critic_memory is not None:
-            out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
-
-        if not self.host_out:
-            self.host_out = {name: torch.empty(value.shape, dtype=value.dtype, pin_memory=True)
-                             for name, value in out.items()}
+        if self.outputs is None:
+            self.outputs = _Packed([(name, tuple(value.shape), value.dtype)
+                                    for name, value in {**out, **critic_out}.items()], trainer.rollout_device)
+        # Gathered into the output buffer on the device (small copy kernels), then down in one transfer.
         for name, value in out.items():
-            self.host_out[name].copy_(value, non_blocking=True)
+            self.outputs.device[name].copy_(value)
+        with torch.cuda.stream(side):
+            for name, value in critic_out.items():
+                self.outputs.device[name].copy_(value)
+        main.wait_stream(side)
+        self.outputs.download()
 
     def run(self, obs, mask, layout, state_features, state: "ActingState"):
         """One decision: fill the inputs, replay, wait once. Returns the act_and_value tuple and updates `state`."""
@@ -354,7 +400,7 @@ class _RolloutGraph:
         self.graph.replay()
         trainer._rollout_stream.synchronize()
         # Copies: the pinned outputs are overwritten by the next replay.
-        fetched = {name: value.numpy().copy() for name, value in self.host_out.items()}
+        fetched = {name: value.numpy().copy() for name, value in self.outputs.host.items()}
 
         goals = None
         if trainer.goal_count:
@@ -414,6 +460,7 @@ class MappoTrainer:
         self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
                                 if self.train_device.type == "cuda" else (None, None))
         self._rollout_graphs: dict[tuple, _RolloutGraph] = {}
+        self._shared_adapters: SharedInputDense | None = None   # the rollout graph's actor + critic adapters
         self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
         self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
         self._rollout_value_norm = (
@@ -522,6 +569,11 @@ class MappoTrainer:
         if self.rollout_device.type == "cuda":
             self._rollout_actor.densify(max(self._rollout_actor.obs_dims))
             self._rollout_critic.densify(max(self._rollout_critic.obs_dims))
+            actor_dense, critic_dense = self._rollout_actor.dense_adapters, self._rollout_critic.dense_adapters
+            if self._shared_adapters is None:
+                self._shared_adapters = SharedInputDense(actor_dense, critic_dense)
+            else:
+                self._shared_adapters.refresh(actor_dense, critic_dense)
         # The rollout's stream reads these copies next: after them, not beside them.
         if self._rollout_stream is not None:
             self._rollout_stream.wait_stream(torch.cuda.current_stream(self.rollout_device))

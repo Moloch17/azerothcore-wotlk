@@ -183,6 +183,36 @@ class DenseLayouts:
         return every.gather(1, layout.long().view(-1, 1, 1).expand(-1, 1, self.out)).squeeze(1)
 
 
+class SharedInputDense:
+    """Two DenseLayouts that read the same rows (the actor's and the critic's adapters both read the observation) as
+    one product: [first | second] stacked, and computed transposed -- W^T x^T -- which is the shape the GPU's
+    library runs well at a rollout's ~100 rows (96 x 909 x 2560: 59 us, against 113 us for the two products as
+    they were). For the rollout graph (MappoTrainer); refreshed in place after each sync, as DenseLayouts are."""
+
+    @torch.no_grad()
+    def __init__(self, first: DenseLayouts, second: DenseLayouts):
+        assert (first.layouts, first.out, first.weight.shape[0]) == (second.layouts, second.out, second.weight.shape[0])
+        self.layouts, self.out = first.layouts, first.out
+        self.weight_t = torch.empty((2 * first.weight.shape[1], first.weight.shape[0]), device=first.weight.device)
+        self.bias = torch.empty((2 * first.weight.shape[1], 1), device=first.weight.device)
+        self.refresh(first, second)
+
+    @torch.no_grad()
+    def refresh(self, first: DenseLayouts, second: DenseLayouts) -> None:
+        width = first.weight.shape[1]
+        self.weight_t[:width].copy_(first.weight.t())
+        self.weight_t[width:].copy_(second.weight.t())
+        self.bias[:width, 0].copy_(first.bias)
+        self.bias[width:, 0].copy_(second.bias)
+
+    def __call__(self, rows: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """rows [N, in], layout [N] -> (first's output, second's) for each row's own layout, each [N, out]."""
+        every = torch.addmm(self.bias, self.weight_t, rows.t()).view(2, self.layouts, self.out, rows.shape[0])
+        index = layout.long().view(1, 1, 1, -1).expand(2, 1, self.out, rows.shape[0])
+        own = every.gather(1, index).squeeze(1).transpose(1, 2).contiguous()
+        return own[0], own[1]
+
+
 class _Trunk(nn.Module):
     """tanh, then Linear + tanh for every hidden layer after the first."""
 
@@ -434,7 +464,10 @@ class LayoutActor(nn.Module):
     def features(self, obs: torch.Tensor, layout: torch.Tensor, memory: torch.Tensor | None = None,
                  groups=None) -> torch.Tensor:
         """The trunk's output for flat rows, through the GRU when there is one: what every head reads."""
-        hidden = self.encode(obs, layout, groups)
+        return self.features_from(self.encode(obs, layout, groups), memory)
+
+    def features_from(self, hidden: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
+        """features() from the trunk's output on: the GRU, when there is one."""
         if self.memory is not None:
             carried = (memory.reshape(-1, self.recurrent_size) if memory is not None
                        else hidden.new_zeros(hidden.shape[0], self.recurrent_size))
@@ -519,6 +552,13 @@ class LayoutCritic(nn.Module):
         """Everything that depends only on this decision -- the state, the seat's own observation and its goal --
         for flat rows, before the GRU. A replayed sequence encodes every step in one pass and then carries the memory
         through them (carry)."""
+        hidden, own = self.encode_goal_free(state, obs, layout, groups)
+        return self.encode_goal(hidden, own, goal)
+
+    def encode_goal_free(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
+                         groups=None) -> tuple[torch.Tensor, torch.Tensor]:
+        """encode's first half, which does not need the goal: (the state's encoding, the seat's own). The larger
+        part of the critic's work, so a rollout decision runs it beside the actor choosing the goal."""
         hidden = self.state_encoder(self.state_norm(state))
         if self.dense_adapters is not None:
             own = self.dense_adapters(obs, layout)
@@ -526,6 +566,10 @@ class LayoutCritic(nn.Module):
             own = torch.zeros_like(hidden)
             for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
                 own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]]))
+        return hidden, own
+
+    def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:
+        """encode's second half: the goal, then the trunk."""
         if self.goal_embedding is not None and goal is not None:
             own = own + self.goal_embedding(goal.reshape(-1))
         return self.trunk(hidden + own)
@@ -562,7 +606,10 @@ class LayoutCritic(nn.Module):
         """One decision: (value [...], the memory carried out). Without a GRU the memory out is whatever came in."""
         lead = obs.shape[:-1]
         state, obs, layout = state.reshape(-1, state.shape[-1]), obs.reshape(-1, obs.shape[-1]), layout.reshape(-1)
-        encoded = self.encode(state, obs, layout, goal, groups)
+        return self.step_encoded(self.encode(state, obs, layout, goal, groups), lead, memory)
+
+    def step_encoded(self, encoded: torch.Tensor, lead, memory: torch.Tensor | None = None):
+        """step() from the encoding on: the GRU and the value head."""
         if self.memory is None:
             return self.head(encoded).reshape(lead), (memory if memory is not None else encoded.new_zeros((*lead, 0)))
 
