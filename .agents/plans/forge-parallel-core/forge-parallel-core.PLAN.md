@@ -180,6 +180,58 @@ container and the learner's torch sees `gfx1100`, 20 GiB.
 Still unmeasured: the per-decision `forge status` line every phase is supposed to record needs a training
 run, which memory `feedback-no-smoke-until-stages-added` gates on the user.
 
+## First measurement, 2026-09-25 (revision 7558137fa, `forge bench` on `stage8_duel`, policy `random`)
+
+The user granted a one-off permission for this run, overriding memory `feedback-no-smoke-until-stages-added`.
+16 trials, no abort, no scripted policy. The previous attempt aborted at spawn time; two fixes had to
+land first, both recorded in the commit above.
+
+**Sim only, no learner** (env steps/s; `world` is the map update, `sim` is observe + apply + reset):
+
+| threads | 64 envs | 128 envs | 192 envs |
+| --- | --- | --- | --- |
+| 4 | 16,300 (world 3.7 ms) | 26,561 (4.4 ms) | 25,056 (7.0 ms) |
+| 8 | 16,536 (3.6 ms) | 28,337 (4.1 ms) | **36,198 (4.7 ms)** |
+| 12 | 12,840 (4.8 ms) | 19,780 (6.0 ms) | 26,716 (6.5 ms) |
+| 16 | 12,119 (5.1 ms) | see below | see below |
+
+**With the learner**, the two fastest settings re-run (this is the like-for-like against the anchor):
+
+| threads | envs | torch threads | env steps/s | per decision | world | sim | learner |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 8 | 192 | default | 7,272 | 29.9 ms | 6.3 | 5.2 | 18.4 |
+| 8 | 192 | 8 | 7,259 | 29.5 ms | 6.2 | 4.8 | 18.4 |
+| 8 | 128 | default | 5,403 | 26.4 ms | 5.6 | 4.1 | 16.7 |
+| 8 | 128 | 8 | 5,470 | 26.2 ms | 5.4 | 4.2 | 16.7 |
+
+RSS 1.6 GB at the first trial, 2.3 GB from the fourth on, then flat: replicas and their grids persist
+across trials rather than being rebuilt per trial.
+
+What the numbers say, in the order that matters:
+
+1. **End to end, nothing has changed yet.** The anchor is 24 ms per decision at 128 envs on 2026-09-17,
+   which is 5,333 env steps/s. With the learner in the loop today it is 26.2 ms, 5,470 env steps/s. The
+   whole gain of Phases 0-3 is currently invisible from outside, because the learner exchange, not the
+   sim, is the wall.
+2. **The sim itself did move, a lot.** World plus sim at 128 envs is now 9.6 ms of the 26.2, and 4.5 ms
+   of it without the learner attached. The plan predicted ~14 ms at this point (Phase 3) and ~5-6 ms only
+   after Phase 4. The map side is already past its Phase 4 forecast; the exchange is not.
+3. **Phase 4 is therefore the next phase, and the plan's own forecast for it is now the whole story.**
+   16.7 ms of a 26.2 ms decision is the socket exchange and the learner's own step. Halving it would be
+   worth more than everything Phases 5-7 promise at this scale.
+4. **Thread scaling is wrong above 8, and CPU inside the map update grows with threads.** 12 and 16
+   threads are slower than 8 at every env count. Worse, the summed per-map `world parts objects` thread
+   time at 128 envs goes 5.7 ms on 4 threads to 12.4 ms on 8, for flat wall time: the work itself doubles.
+   With 31 envs per replica, 128 envs is only 5 map tasks, so threads beyond 8 cannot help, but they
+   should not cost. This is a contention or pinning signature and it is exactly what Phase 3's
+   verification item (per-map task times in the timing line) was meant to expose. That line does not
+   exist yet. **Next measurement: add it, then re-run this sweep.**
+5. `forge bench` now reports the fastest setting as 8 threads / 192 envs, 1.0x what the live config runs
+   (16 threads / 128 envs), and warns that 192 envs changes the learner's batch, not only the speed.
+
+Claims deliberately not made: the pet guard cannot be observed firing, only that the scenario which
+aborted at spawn now completes 16 trials. The gain is Phases 0-3 together, not replicas alone.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
@@ -689,3 +741,39 @@ thousands of bots puts that on the critical path:
   bitset mask, sparse aura store, atomic guid generator and hot-state sync.
 - Note: memory `feedback-no-smoke-until-stages-added` currently forbids `forge run/start`; the user
   decides when the smoke runs begin.
+
+## Resume here (2026-09-25, end of session)
+
+State: `forge` and `worktree-forge-parallel-core` both at the commit below, clean. The server is built
+Release + LTO and was running idle when the session ended. `forge` is ~17 commits ahead of
+`origin/forge` and unpushed, deliberately; the user has not asked for a push.
+
+Open items, most useful first:
+
+1. **Per-map task times in the `forge status` timing line.** Phase 3's own verification item, still
+   missing, and now the blocker on explaining finding 4 above (threads above 8 make it slower and the
+   CPU inside the map update doubles from 4 to 8 threads). Add it, then re-run `forge bench`.
+2. **Phase 4, the learner exchange.** 16.7 ms of a 26.2 ms decision. Everything else is noise beside it.
+3. **The folded-module config fix depends on an untracked directory.** `modules/CMakeLists.txt` keeps a
+   folded module's `.conf` in `CONFIG_FILE_LIST` by globbing `modules/<module>/conf/*.conf.dist`. That
+   directory exists only as an untracked leftover in the main checkout; the tracked tree deleted it with
+   the fold, and the worktree has no such path. A `git clean -fdx` or a fresh clone prints "folded into
+   core, no config directory left" and silently stops reading the user's tuned
+   `env/dist/etc/modules/mod_animus_forge.conf` again, which is the exact failure just fixed. Fix by
+   declaring the filenames in a tracked variable next to `MODULES_FOLDED_INTO_CORE` and appending them to
+   `CONFIG_LIST` unconditionally, keeping the dist copy only when the directory is still there. Verify
+   with a warm rebuild: `Using modules configuration: > mod_animus_forge.conf` must still appear.
+4. **The abort handler segfaults before printing a backtrace** (exit 139 right after `ABORTED`), so the
+   database tripwire cannot name its own caller. Frame pointers are not the cause: the clang settings
+   already pass `-fno-omit-frame-pointer`. Until this is fixed, every further sealed-pool read costs a
+   guess-and-rebuild cycle, as `Pet::LoadPetFromDB` did.
+5. **The live `env/dist/etc/worldserver.conf` still predates the fold.** Only one missing-property
+   warning is left (`AnimusForge.ContinentReplicas`, since added to the live module conf), so this is
+   cosmetic now. Regenerate from the `.dist` when convenient.
+6. `AnimusForge.Bench.Policy` is left at `"random"` in the live module conf; it was `"fight"` before.
+   A backup of the pre-bench file is gone with the job directory, but the only edited line is that one.
+
+How to re-run the measurement: `docker compose up -d ac-worldserver`, wait for `SOAP is listening`, then
+send `forge bench` over SOAP at 127.0.0.1:7878 with the credentials in
+`env/dist/etc/animus-dashboard.auth`. The sweep is 12 sim trials plus 4 learner trials and takes a few
+minutes. Rebuild with `touch env/dist/.forge-build && docker compose up -d --force-recreate ac-worldserver`.
