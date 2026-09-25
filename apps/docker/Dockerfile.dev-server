@@ -32,7 +32,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         # Classic install
         git \
-        clang lldb lld clang-format clang-tidy \
+        clang llvm lldb lld clang-format clang-tidy \
         make cmake \
         gcc g++ \
         libmysqlclient-dev \

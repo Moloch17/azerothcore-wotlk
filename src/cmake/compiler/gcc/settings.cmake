@@ -35,6 +35,45 @@ if(ACORE_SYSTEM_PROCESSOR MATCHES "x86|amd64")
   message(STATUS "GCC: SFMT enabled, SSE2 flags forced")
 endif()
 
+# Forge: the sim host is compiled for the machine it runs on. -O3 in every non-Debug configuration
+# (RelWithDebInfo's -O2 is overridden, the option comes later on the command line), the native
+# instruction set with the newest Zen tuning the compiler knows, and no semantic interposition so
+# LTO can inline across the shared boundaries. 32-bit and non-x86 hosts keep the stock flags.
+if(PLATFORM EQUAL 64 AND ACORE_SYSTEM_PROCESSOR MATCHES "x86|amd64")
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag("-march=znver5" FORGE_HAVE_ZNVER5)
+  check_cxx_compiler_flag("-mtune=znver4" FORGE_HAVE_ZNVER4_TUNE)
+  if(FORGE_HAVE_ZNVER5)
+    set(FORGE_ARCH_FLAGS -march=znver5)
+  elseif(FORGE_HAVE_ZNVER4_TUNE)
+    # The compiler does not know Zen 5: -march=native still enables every instruction the CPU has
+    # (AVX-512 included), and the Zen 4 model is the closest scheduling description it can use.
+    set(FORGE_ARCH_FLAGS -march=native -mtune=znver4)
+  else()
+    set(FORGE_ARCH_FLAGS -march=native)
+  endif()
+  target_compile_options(acore-compile-option-interface
+    INTERFACE
+      $<$<NOT:$<CONFIG:Debug>>:-O3>
+      ${FORGE_ARCH_FLAGS}
+      -fno-semantic-interposition)
+  message(STATUS "Forge: native tuning ${FORGE_ARCH_FLAGS}, -O3 for non-Debug configurations")
+endif()
+
+# Forge: profile-guided optimisation. Pass 1 (FORGE_PGO=generate) builds an instrumented
+# worldserver that writes its profile into FORGE_PGO_DIR while it runs a representative training
+# sweep; pass 2 (FORGE_PGO=use) rebuilds with that profile. The profile format differs per compiler,
+# so both passes must use the same one.
+if(FORGE_PGO STREQUAL "generate")
+  target_compile_options(acore-compile-option-interface INTERFACE -fprofile-generate=${FORGE_PGO_DIR} -fprofile-update=atomic)
+  target_link_options(acore-compile-option-interface INTERFACE -fprofile-generate=${FORGE_PGO_DIR})
+  message(STATUS "Forge: PGO instrumented build, profile written to ${FORGE_PGO_DIR}")
+elseif(FORGE_PGO STREQUAL "use")
+  target_compile_options(acore-compile-option-interface INTERFACE -fprofile-use=${FORGE_PGO_DIR} -fprofile-correction -Wno-missing-profile)
+  target_link_options(acore-compile-option-interface INTERFACE -fprofile-use=${FORGE_PGO_DIR})
+  message(STATUS "Forge: PGO optimised build from ${FORGE_PGO_DIR}")
+endif()
+
 if( WITH_WARNINGS )
   target_compile_options(acore-warning-interface
   INTERFACE

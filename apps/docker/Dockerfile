@@ -44,7 +44,7 @@ WORKDIR /azerothcore
 FROM skeleton AS build
 
 ARG CTOOLS_BUILD="all"
-ARG CTYPE="RelWithDebInfo"
+ARG CTYPE="Release"
 ARG CCACHE_CPP2="true"
 ARG CSCRIPTPCH="OFF"
 ARG CSCRIPTS="static"
@@ -64,7 +64,7 @@ ARG CCACHE_LOGFILE=""
 
 RUN apt-get update                                                     \
     && apt-get install -y --no-install-recommends                         \
-        build-essential ccache libtool cmake-data ninja-build cmake clang    \
+        build-essential ccache libtool cmake-data ninja-build cmake clang llvm lld \
         git lsb-base curl unzip default-mysql-client openssl                  \
         default-libmysqlclient-dev libboost-all-dev libssl-dev libmysql++-dev \
         libreadline-dev zlib1g-dev libbz2-dev libncurses5-dev liblzma-dev  \

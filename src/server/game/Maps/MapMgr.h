@@ -142,6 +142,10 @@ public:
     /// An instance was just destroyed (MapInstanced::Update, on a map thread): ask for a heap trim.
     void NoteInstanceDestroyed();
 
+    /// Every map's Map::UpdateTiming summed, refreshed at the end of each Update() while no map thread runs.
+    /// Cumulative; readers diff two snapshots. Instances are included through their container.
+    [[nodiscard]] Map::UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
+
     Map::EnterState PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck = false);
     void InitializeVisibilityDistanceInfo();
 
@@ -174,6 +178,8 @@ private:
 
     /// Give the heap freed by destroyed instances back to the OS, at most once per trim interval.
     void ForgeTrimHeap(uint32 diff);
+
+    Map::UpdateTiming _updateTiming;
 
     /// Instances destroyed since the last trim, and the countdown to the next one.
     std::atomic<uint32> _destroyedInstances{ 0 };

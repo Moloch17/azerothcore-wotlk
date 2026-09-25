@@ -197,6 +197,38 @@ public:
 
     virtual void Update(const uint32, const uint32, bool thread = true);
 
+    /// Where a map's tick goes, in nanoseconds, accumulated across ticks by the map thread and read by the
+    /// world thread between ticks (MapMgr sums them). Sessions covers WorldSession::Update of every player on
+    /// the map; Players is Player::Update (both loops); Objects is UpdateNonPlayerObjects; Relocation the
+    /// deferred creature/gameobject/dynobject moves; Visibility HandleDelayedVisibility; Scripts the map's
+    /// script queue and OnMapUpdate; Delayed the transports and the remove list (DelayedUpdate).
+    struct UpdateTiming
+    {
+        uint64 SessionsNs = 0;
+        uint64 PlayersNs = 0;
+        uint64 ObjectsNs = 0;
+        uint64 RelocationNs = 0;
+        uint64 VisibilityNs = 0;
+        uint64 ScriptsNs = 0;
+        uint64 DelayedNs = 0;
+        uint64 Ticks = 0;               ///< full (t_diff != 0) updates counted
+
+        UpdateTiming& operator+=(UpdateTiming const& other)
+        {
+            SessionsNs += other.SessionsNs;
+            PlayersNs += other.PlayersNs;
+            ObjectsNs += other.ObjectsNs;
+            RelocationNs += other.RelocationNs;
+            VisibilityNs += other.VisibilityNs;
+            ScriptsNs += other.ScriptsNs;
+            DelayedNs += other.DelayedNs;
+            Ticks += other.Ticks;
+            return *this;
+        }
+    };
+
+    [[nodiscard]] UpdateTiming const& GetUpdateTiming() const { return _updateTiming; }
+
     [[nodiscard]] float GetVisibilityRange() const { return m_VisibleDistance; }
     void SetVisibilityRange(float range) { m_VisibleDistance = range; }
     void OnCreateMap();
@@ -709,6 +741,8 @@ private:
 
     TimeTrackerSmall _redirectKickTimer;
     TimeTrackerSmall _lastAnnounceRedirectKickTimer;
+
+    UpdateTiming _updateTiming;
 };
 
 enum InstanceResetMethod

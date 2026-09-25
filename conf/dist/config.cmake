@@ -109,6 +109,12 @@ option(WITH_DETAILED_METRICS  "Enable detailed metrics reporting (i.e. time each
 option(TOOL_CONFIG_MERGER     "Install the Python config merger tool alongside config files" 0)
 option(USE_REAL_LIBSIDECAR "Use real libsidecar and expect that compiled shared lib is in deps/libsidecar folder." 0)
 
+# Forge: the sim host is built for the machine it runs on. These are build-time knobs, not runtime gates.
+option(WITH_LTO            "Link-time optimisation for every non-Debug configuration (needs lld with clang)" 1)
+set(FORGE_PGO "off" CACHE STRING "Profile-guided optimisation pass: off, generate (instrumented build) or use (optimised with the profile)")
+set_property(CACHE FORGE_PGO PROPERTY STRINGS off generate use)
+set(FORGE_PGO_DIR "${CMAKE_BINARY_DIR}/pgo" CACHE PATH "Where the instrumented worldserver writes its profile and the use pass reads it")
+
 CheckApplicationsBuildList()
 CheckToolsBuildList()
 IsDynamicLinkingRequired(WITH_DYNAMIC_LINKING_FORCED)

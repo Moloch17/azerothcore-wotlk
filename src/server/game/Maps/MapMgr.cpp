@@ -345,6 +345,17 @@ void MapMgr::Update(uint32 diff)
 
     // After the updaters are done and before the next tick schedules any: no map is being updated here.
     ForgeTrimHeap(diff);
+
+    // Roll every map's phase timers into one figure the status line can diff between reports.
+    Map::UpdateTiming total;
+    for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
+    {
+        total += iter->second->GetUpdateTiming();
+        if (MapInstanced* container = iter->second->ToMapInstanced())
+            for (auto const& [id, instance] : container->GetInstancedMaps())
+                total += instance->GetUpdateTiming();
+    }
+    _updateTiming = total;
 }
 
 void MapMgr::NoteInstanceDestroyed()

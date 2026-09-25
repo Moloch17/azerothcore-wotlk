@@ -86,9 +86,10 @@ ENDFOREACH()
 
 CU_RUN_HOOK("AFTER_LOAD_CONF")
 
-# build in Release-mode by default if not explicitly set
+# build in Release-mode by default if not explicitly set. Forge: Release, not RelWithDebInfo --
+# the sim host is a throughput build; ASSERT is not tied to NDEBUG so nothing is lost but -g.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+    set(CMAKE_BUILD_TYPE "Release")
 endif()
 
 # turn off PCH totally if enabled (hidden setting, mainly for devs)
@@ -99,6 +100,7 @@ endif()
 
 include(ConfigureBaseTargets)
 include(CheckPlatform)
+include(ConfigureLTO)
 include(GroupSources)
 include(AutoCollect)
 include(ConfigInstall)

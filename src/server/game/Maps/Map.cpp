@@ -16,6 +16,7 @@
  */
 
 #include "Map.h"
+#include <chrono>
 #include "Battleground.h"
 #include "CellImpl.h"
 #include "Chat.h"
@@ -433,8 +434,22 @@ void Map::UpdatePlayerZoneStats(uint32 oldZone, uint32 newZone)
         ++_zonePlayerCountMap[newZone];
 }
 
+namespace
+{
+    /// Nanoseconds since `from`, and move `from` to now: one clock read per phase boundary.
+    inline uint64 SinceNs(std::chrono::steady_clock::time_point& from)
+    {
+        auto const now = std::chrono::steady_clock::now();
+        uint64 const ns = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(now - from).count());
+        from = now;
+        return ns;
+    }
+}
+
 void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
 {
+    auto mark = std::chrono::steady_clock::now();
+
     if (t_diff)
         _mapCollisionData.GetDynamicTree().update(t_diff);
 
@@ -456,12 +471,16 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
     }
 
     Events.Update(t_diff);
+    _updateTiming.SessionsNs += SinceNs(mark);
 
     if (!t_diff)
     {
         HandleDelayedVisibility();
+        _updateTiming.VisibilityNs += SinceNs(mark);
         return;
     }
+
+    ++_updateTiming.Ticks;
 
     /// Process any due respawns (non-compatibility mode spawns)
     if (!sWorld->getBoolConfig(CONFIG_RESPAWN_FORCE_COMPATIBILITY_MODE))
@@ -503,9 +522,12 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
         }
     }
 
+    _updateTiming.PlayersNs += SinceNs(mark);
+
     UpdateNonPlayerObjects(t_diff);
 
     SendObjectUpdates();
+    _updateTiming.ObjectsNs += SinceNs(mark);
 
     ///- Process necessary scripts
     if (!m_scriptSchedule.empty())
@@ -514,12 +536,15 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
         ScriptsProcess();
         i_scriptLock = false;
     }
+    _updateTiming.ScriptsNs += SinceNs(mark);
 
     MoveAllCreaturesInMoveList();
     MoveAllGameObjectsInMoveList();
     MoveAllDynamicObjectsInMoveList();
+    _updateTiming.RelocationNs += SinceNs(mark);
 
     HandleDelayedVisibility();
+    _updateTiming.VisibilityNs += SinceNs(mark);
 
     UpdatePlayersRedirectKickEvent(t_diff);
 
@@ -527,6 +552,7 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
     UpdateExpiredCorpses(t_diff);
 
     sScriptMgr->OnMapUpdate(this, t_diff);
+    _updateTiming.ScriptsNs += SinceNs(mark);
 
     METRIC_VALUE("map_creatures", uint64(GetObjectsStore().Size<Creature>()),
         METRIC_TAG("map_id", std::to_string(GetId())),
@@ -1783,6 +1809,8 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
 
 void Map::DelayedUpdate(const uint32 t_diff)
 {
+    auto mark = std::chrono::steady_clock::now();
+
     for (_transportsUpdateIter = _transports.begin(); _transportsUpdateIter != _transports.end();)
     {
         Transport* transport = *_transportsUpdateIter;
@@ -1795,6 +1823,7 @@ void Map::DelayedUpdate(const uint32 t_diff)
     }
 
     RemoveAllObjectsInRemoveList();
+    _updateTiming.DelayedNs += SinceNs(mark);
 }
 
 void Map::AddObjectToRemoveList(WorldObject* obj)
