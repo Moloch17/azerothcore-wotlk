@@ -67,6 +67,8 @@ class RunningNorm(nn.Module):
         self.register_buffer("mean", torch.zeros(dim))
         self.register_buffer("var", torch.ones(dim))
         self.register_buffer("count", torch.zeros(()))
+        # Folded into the layer that reads it (fold_into): the rollout copies pass rows through untouched.
+        self.bypass = False
 
     @torch.no_grad()
     def update(self, rows: torch.Tensor) -> None:
@@ -84,6 +86,8 @@ class RunningNorm(nn.Module):
         self.count.copy_(total)
 
     def forward(self, rows: torch.Tensor) -> torch.Tensor:
+        if self.bypass:
+            return rows
         # Nothing seen yet: the raw features are the best estimate of themselves. Chosen on the device rather than by
         # reading the count back: on a GPU that read waits for every queued kernel, once per layout per forward pass.
         normalised = (rows - self.mean) / torch.sqrt(self.var + self.epsilon)
@@ -96,6 +100,17 @@ class RunningNorm(nn.Module):
             return torch.zeros_like(self.mean), torch.ones_like(self.var)
 
         return self.mean.clone(), torch.sqrt(self.var + self.epsilon)
+
+
+@torch.no_grad()
+def fold_into(norm: RunningNorm, linear: nn.Linear) -> None:
+    """Fold `norm` into the `linear` that reads its output, as animus.export does for the exported models, and
+    bypass it: W' = W / sigma, b' = b - W (mu / sigma). The same map in one matrix product instead of five
+    elementwise passes before it, which on the rollout's 128-row batches is most of what normalising cost."""
+    mean, std = norm.scale()
+    linear.bias.sub_(linear.weight @ (mean / std))
+    linear.weight.div_(std[None, :])
+    norm.bypass = True
 
 
 class _Trunk(nn.Module):
@@ -296,6 +311,12 @@ class LayoutActor(nn.Module):
             memory if memory is not None else features.new_zeros((*lead, 0)))
         return dist, carried, predictions
 
+    def fold_normalisation(self) -> None:
+        """Fold every layout's RunningNorm into its adapter (fold_into): for the rollout copy only, which is
+        overwritten from the trained network at every sync and folded again."""
+        for norm, adapter in zip(self.norms, self.adapters):
+            fold_into(norm, adapter)
+
     def initial_memory(self, *lead: int, device=None) -> torch.Tensor:
         """A cleared memory for `lead` rows (what an episode starts with)."""
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
@@ -402,6 +423,12 @@ class LayoutCritic(nn.Module):
         if self.goal_embedding is not None and goal is not None:
             own = own + self.goal_embedding(goal.reshape(-1))
         return self.trunk(hidden + own)
+
+    def fold_normalisation(self) -> None:
+        """As LayoutActor.fold_normalisation, and the state's normaliser into the state encoder."""
+        for norm, adapter in zip(self.norms, self.adapters):
+            fold_into(norm, adapter)
+        fold_into(self.state_norm, self.state_encoder)
 
     def carry(self, encoded: torch.Tensor, memory: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
         """The critic's GRU over a replayed sequence, as LayoutActor.carry is for the actor's."""

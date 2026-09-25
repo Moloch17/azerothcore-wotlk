@@ -1,5 +1,7 @@
 """Masked sampling never picks a disallowed action, and the trainer runs one update end to end."""
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -167,7 +169,14 @@ def test_rollout_networks_mirror_the_trained_ones_after_an_update():
     assert not torch.equal(before, trainer._rollout_actor.trunk.layers[0].weight), "the update changed nothing"
     for network, rollout in ((trainer.actor, trainer._rollout_actor), (trainer.critic, trainer._rollout_critic)):
         for (name, trained), (_, copied) in zip(network.named_parameters(), rollout.named_parameters()):
+            if name.startswith(("adapters.", "state_encoder.")):
+                continue  # the rollout copies carry the normalisers folded in: compared through fold_into below
             assert torch.equal(trained.cpu(), copied.cpu()), f"{name} was not mirrored"
+        expected = copy.deepcopy(network).cpu()
+        expected.fold_normalisation()
+        for (name, folded), (_, copied) in zip(expected.named_parameters(), rollout.named_parameters()):
+            if name.startswith(("adapters.", "state_encoder.")):
+                assert torch.equal(folded, copied.cpu()), f"{name} was not mirrored and folded"
     if trainer.value_norm is not None:
         assert torch.equal(trainer.value_norm.running_mean.cpu(), trainer._rollout_value_norm.running_mean.cpu())
 

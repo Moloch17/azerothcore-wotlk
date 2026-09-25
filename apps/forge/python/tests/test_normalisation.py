@@ -62,3 +62,32 @@ def test_the_statistics_still_move_and_reach_the_rollout_copies():
     assert float(trainer.actor.norms[0].count) == 8          # four decisions of two envs
     torch.testing.assert_close(trainer._rollout_actor.norms[0].mean, trainer.actor.norms[0].mean)
     torch.testing.assert_close(trainer._rollout_actor.norms[0].count, trainer.actor.norms[0].count)
+
+
+def test_the_rollout_copies_fold_the_normalisers_into_their_adapters():
+    """The rollout copies bypass their normalisers and carry them in the adapters' weights instead: the same
+    distributions and values as the trained networks, which keep them apart."""
+    torch.manual_seed(0)
+    layouts = [(6, 3), (4, 2)]
+    trainer = MappoTrainer(layouts, 5, MappoConfig(hidden=(8, 8), recurrent_size=4))
+    obs, state = torch.randn(64, 6) * 3.0 + 2.0, torch.randn(64, 5) * 5.0 - 1.0
+    layout = torch.arange(64) % 2
+    for index, (dim, _) in enumerate(layouts):
+        rows = layout == index
+        trainer.actor.norms[index].update(obs[rows, :dim])
+        trainer.critic.norms[index].update(obs[rows, :dim])
+    trainer.critic.state_norm.update(state)
+    trainer.sync_rollout()
+
+    assert all(norm.bypass for norm in trainer._rollout_actor.norms)
+    assert not any(norm.bypass for norm in trainer.actor.norms)
+    mask = torch.ones(64, 3, dtype=torch.bool)
+    mask[layout == 1, 2] = False
+    memory = torch.randn(64, 4)
+    with torch.no_grad():
+        trained = trainer.actor(obs, layout, mask, memory=memory).logits
+        folded = trainer._rollout_actor(obs, layout, mask, memory=memory).logits
+        torch.testing.assert_close(folded, trained, rtol=1e-4, atol=1e-4)
+        trained_value = trainer.critic(state, obs, layout, memory=memory)
+        folded_value = trainer._rollout_critic(state, obs, layout, memory=memory)
+        torch.testing.assert_close(folded_value, trained_value, rtol=1e-4, atol=1e-4)

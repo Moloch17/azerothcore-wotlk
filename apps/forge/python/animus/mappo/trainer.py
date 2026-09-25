@@ -200,6 +200,7 @@ class MappoTrainer:
         # (trained tensor, rollout tensor) for every parameter and buffer the rollout networks mirror, paired
         # once here so a sync is a copy rather than a state dict.
         self._rollout_pairs = self._pair_tensors()
+        self._sync_rollout()
 
     def _pair_tensors(self) -> list[tuple[torch.Tensor, torch.Tensor]]:
         """Every tensor a rollout copy mirrors, next to the trained tensor it comes from."""
@@ -286,6 +287,10 @@ class MappoTrainer:
         # GPU is the whole model over the bus; the rollout copies only ever need the values.
         for source, destination in self._rollout_pairs:
             destination.copy_(source)
+        # The rollout copies act on 128-row batches, where each normaliser's five elementwise passes cost more than
+        # the adapter after it: folded into the adapters, on the copies only.
+        self._rollout_actor.fold_normalisation()
+        self._rollout_critic.fold_normalisation()
 
     def _tensor(self, array: np.ndarray, dtype=None) -> torch.Tensor:
         return torch.as_tensor(array, device=self.rollout_device, dtype=dtype)
@@ -310,17 +315,20 @@ class MappoTrainer:
         decisions are samples (a slow layout's held ones are not; None when the run has no slow layout)."""
         envs, agents = layout.shape
         rows = envs * agents
-        actions, log_probs, foresight, goals, chosen = self._decide(obs, mask, layout, deterministic, state)
-
+        # Converted and grouped by layout once, for the actor and the critic both.
         obs_t = self._tensor(obs).reshape(rows, -1)
         layout_t = self._tensor(layout, torch.long).reshape(rows)
+        groups = per_layout(layout_t, len(self.layouts))
+        actions, log_probs, foresight, goals, chosen = self._decide(obs, mask, layout, deterministic, state,
+                                                                    (obs_t, layout_t, groups))
+
         state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
             rows, -1)
         goal_t = (self._tensor(goals[0], torch.long).reshape(rows)
                   if self.goal_count and goals is not None else None)
         critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
                          if self.recurrent_size else None)
-        values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, memory=critic_memory)
+        values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups, memory=critic_memory)
         if self.recurrent_size and state is not None:
             state.critic_memory = carried.reshape(envs, agents, self.recurrent_size).cpu().numpy()
         if self._rollout_value_norm is not None:
@@ -329,15 +337,19 @@ class MappoTrainer:
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
-                state: "ActingState | None"):
+                state: "ActingState | None", prepared=None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
-        acting state's memory and goal are updated in place."""
+        acting state's memory and goal are updated in place. `prepared` is (obs, layout, groups) as tensors when the
+        caller has them already."""
         envs, agents = layout.shape
         rows = envs * agents
-        obs_t = self._tensor(obs).reshape(rows, -1)
-        layout_t = self._tensor(layout, torch.long).reshape(rows)
+        if prepared is None:
+            obs_t = self._tensor(obs).reshape(rows, -1)
+            layout_t = self._tensor(layout, torch.long).reshape(rows)
+            groups = per_layout(layout_t, len(self.layouts))
+        else:
+            obs_t, layout_t, groups = prepared
         mask_t = self._tensor(mask).reshape(rows, -1)
-        groups = per_layout(layout_t, len(self.layouts))
 
         memory = state.memory if state is not None else None
         features = self._rollout_actor.features(
