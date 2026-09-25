@@ -348,6 +348,9 @@ namespace AnimusForge
         bool _actionsPending[2] = { false, false };        // per group
         bool _applyTick = false;
         uint64 _decisions = 0;
+        /// SendStep's gather of the ended envs' final obs and state (protocol 14), kept to reuse the allocations.
+        std::vector<float> _endedObs;
+        std::vector<float> _endedState;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
         uint32 _progressInterval = 0;
 

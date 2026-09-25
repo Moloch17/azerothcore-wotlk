@@ -441,3 +441,41 @@ def test_the_update_on_two_streams_is_the_update_on_one():
         torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-6, msg=lambda text: f"actor {name}: {text}")
     for (name, got), (_, want) in zip(trainer.critic.state_dict().items(), single.critic.state_dict().items()):
         torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-6, msg=lambda text: f"critic {name}: {text}")
+
+
+@pytest.mark.parametrize("chunk_length", [0, 4, 2])
+def test_a_chunked_replay_starts_each_chunk_from_its_stored_memory(monkeypatch, chunk_length):
+    """mappo.chunk_length: the rollout replayed as chunks side by side, each from the memory the rollout stored at
+    its first decision. Before any step the replay is the rollout itself, so every taken action's log-probability
+    comes back exactly as the rollout stored it -- which only holds if every chunk met its own memory."""
+    from animus.mappo import trainer as trainer_module
+    from animus.mappo.trainer import chunked
+
+    torch.manual_seed(0)
+    steps, envs = 8, 2
+    trainer = MappoTrainer([(3, 2)], 4, MappoConfig(hidden=(8, 8), recurrent_size=4, epochs=1, minibatches=1,
+                                                   chunk_length=chunk_length, normalise_observations=False))
+    buffer = RolloutBuffer(steps, envs, 1, 3, 4, 2, 0, trainer.recurrent_size)
+    fill(trainer, buffer, steps, envs, 1, 3, 4, 2, done_at=5)
+    stored = torch.as_tensor(buffer.log_probs)
+    actions = torch.as_tensor(buffer.actions)
+    if chunk_length:
+        stored, actions = chunked(stored, chunk_length), chunked(actions, chunk_length)
+
+    replayed = []
+
+    class Watcher:
+        """Teaches nothing (so the replay may be chunked); keeps the replay's logits."""
+        coef = 0.0
+
+        def sequence_loss(self, obs, state, layout, mask, logits, dones):
+            replayed.append(logits.detach().clone())
+            return None
+
+    monkeypatch.setattr(trainer_module.torch, "randperm", lambda n, **_: torch.arange(n))
+    trainer.update(buffer, auxiliary=Watcher())
+
+    logits = replayed[0]
+    assert logits.shape[:2] == (chunk_length or steps, (steps // (chunk_length or steps)) * envs)
+    log_probs = torch.log_softmax(logits, dim=-1).gather(-1, actions.reshape(*logits.shape[:2], 1)).squeeze(-1)
+    torch.testing.assert_close(log_probs, stored.reshape(*logits.shape[:2]), rtol=1e-5, atol=1e-5)

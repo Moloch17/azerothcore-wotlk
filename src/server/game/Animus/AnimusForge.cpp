@@ -1730,6 +1730,18 @@ bool AnimusForge::Forge::SendStep(uint32 group)
             return Chunk{ vec.data() + std::size_t(begin) * perEnv, std::size_t(count) * perEnv * sizeof(vec[0]) };
         };
 
+        // The ended envs' last observation and state, gathered: a few rows a decision, where every row went before.
+        auto ended = [this, begin, count, envs](std::vector<float> const& vec, std::vector<float>& rows)
+        {
+            std::size_t const perEnv = vec.size() / envs;
+            rows.clear();
+            for (uint32 env = begin; env < begin + count; ++env)
+                if (_pool->Done[env])
+                    rows.insert(rows.end(), vec.begin() + std::ptrdiff_t(env * perEnv),
+                        vec.begin() + std::ptrdiff_t((env + 1) * perEnv));
+            return Chunk{ rows.data(), rows.size() * sizeof(float) };
+        };
+
         if (!_server.Send(MsgType::Step,
             {
                 { &header, sizeof(header) },
@@ -1741,8 +1753,8 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 chunk(_pool->Rewards),
                 chunk(_pool->Done),
                 chunk(_pool->Terminated),
-                chunk(_pool->FinalObs),
-                chunk(_pool->FinalState),
+                ended(_pool->FinalObs, _endedObs),
+                ended(_pool->FinalState, _endedState),
                 chunk(_pool->EpisodeInfo),
                 chunk(_pool->EpisodeSeed),
             }))

@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 13
+PROTOCOL_VERSION = 14
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -90,10 +90,14 @@ class Spec:
         half = self.num_envs // 2
         return [(0, half), (half, self.num_envs - half)]
 
-    def step_layout(self, envs: int | None = None) -> list[tuple[str, np.dtype, tuple[int, ...]]]:
+    def step_layout(self, envs: int | None = None, ended: int | None = None) -> list[tuple[str, np.dtype,
+                                                                                         tuple[int, ...]]]:
         """STEP payload arrays after the header, in wire order: (name, dtype, shape), for `envs` envs (all of them by
-        default; a half-batch STEP carries one group's)."""
+        default; a half-batch STEP carries one group's). final_obs and final_state carry only the `ended` envs whose
+        done is set, in env order (every env's by default: the largest a STEP can be) -- protocol 14; the others'
+        would be ~half of every STEP for rows nobody reads."""
         e, a = self.num_envs if envs is None else envs, self.agents_per_env
+        d = e if ended is None else ended
         f32, u8, u16, u32 = np.dtype("<f4"), np.dtype("u1"), np.dtype("<u2"), np.dtype("<u4")
         return [
             ("obs", f32, (e, a, self.obs_dim)),
@@ -104,15 +108,15 @@ class Spec:
             ("reward", f32, (e, a)),
             ("done", u8, (e,)),
             ("terminated", u8, (e,)),
-            ("final_obs", f32, (e, a, self.obs_dim)),
-            ("final_state", f32, (e, self.state_dim)),
+            ("final_obs", f32, (d, a, self.obs_dim)),
+            ("final_state", f32, (d, self.state_dim)),
             ("episode_info", f32, (e, a, self.episode_info_dim)),
             ("episode_seed", u32, (e,)),
         ]
 
-    def step_payload_size(self, envs: int | None = None) -> int:
+    def step_payload_size(self, envs: int | None = None, ended: int | None = None) -> int:
         size = STEP_HEADER.size
-        for _, dtype, shape in self.step_layout(envs):
+        for _, dtype, shape in self.step_layout(envs, ended):
             size += dtype.itemsize * int(np.prod(shape))
         return size
 
@@ -195,27 +199,48 @@ def decode_spec(payload: bytes) -> Spec:
     )
 
 
+# Carried for the ended envs only (Spec.step_layout); the decoder gives them back full-sized, zero elsewhere.
+ENDED_ONLY = ("final_obs", "final_state")
+
+
 def encode_step(spec: Spec, step: Step) -> bytes:
     envs = step.done.shape[0]
+    done = np.asarray(step.done, dtype=bool)
     parts = [STEP_HEADER.pack(step.decision, step.env_begin, envs)]
-    for name, dtype, shape in spec.step_layout(envs):
-        array = np.ascontiguousarray(getattr(step, name), dtype=dtype).reshape(shape)
-        parts.append(array.tobytes())
+    for name, dtype, shape in spec.step_layout(envs, int(done.sum())):
+        array = getattr(step, name)
+        if name in ENDED_ONLY:
+            array = np.asarray(array)[done]
+        parts.append(np.ascontiguousarray(array, dtype=dtype).reshape(shape).tobytes())
     return b"".join(parts)
 
 
 def decode_step(spec: Spec, payload: bytes | bytearray | memoryview) -> Step:
-    """Decode a STEP payload. Arrays are copies, so the receive buffer can be reused."""
+    """Decode a STEP payload. Arrays are copies, so the receive buffer can be reused. Raises ValueError when the
+    payload is not the size its envs and ended envs make."""
     decision, env_begin, envs = STEP_HEADER.unpack_from(payload)
     offset = STEP_HEADER.size
     arrays = {}
-    for name, dtype, shape in spec.step_layout(envs):
-        count = int(np.prod(shape))
-        array = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(shape).copy()
+    done = None
+    layout = spec.step_layout(envs)
+    for name, dtype, shape in layout:
+        if name in ENDED_ONLY:
+            ended = np.flatnonzero(done)
+            rows = (len(ended),) + shape[1:]
+            count = int(np.prod(rows))
+            array = np.zeros(shape, dtype)
+            array[ended] = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(rows)
+        else:
+            count = int(np.prod(shape))
+            array = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(shape).copy()
         offset += dtype.itemsize * count
         if dtype == np.dtype("u1"):
             array = array.astype(bool)
+        if name == "done":
+            done = array
         arrays[name] = array
+    if offset != len(payload):
+        raise ValueError(f"STEP of {len(payload)} bytes does not hold the {envs} envs it says")
     return Step(decision=decision, env_begin=env_begin, **arrays)
 
 

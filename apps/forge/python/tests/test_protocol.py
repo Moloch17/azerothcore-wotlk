@@ -51,10 +51,17 @@ def make_step(decision: int, rng: np.random.Generator, spec: p.Spec = SPEC, envs
 
 
 def assert_steps_equal(left: p.Step, right: p.Step) -> None:
+    """`left` decoded from `right`: equal, except that the final obs and state come back only for the envs that ended
+    (protocol 14) and as zeros for the others."""
     assert left.decision == right.decision
     assert left.env_begin == right.env_begin
+    done = np.asarray(right.done, bool)
     for name, *_ in SPEC.step_layout():
-        np.testing.assert_array_equal(getattr(left, name), getattr(right, name))
+        if name in p.ENDED_ONLY:
+            np.testing.assert_array_equal(getattr(left, name)[done], getattr(right, name)[done])
+            assert not getattr(left, name)[~done].any()
+        else:
+            np.testing.assert_array_equal(getattr(left, name), getattr(right, name))
 
 
 def test_spec_round_trip():
@@ -93,8 +100,11 @@ def test_weights_round_trip():
 def test_step_round_trip_and_size():
     step = make_step(7, np.random.default_rng(0))
     payload = p.encode_step(SPEC, step)
-    assert len(payload) == SPEC.step_payload_size()
+    assert 0 < step.done.sum() < len(step.done)
+    assert len(payload) == SPEC.step_payload_size(ended=int(step.done.sum())) < SPEC.step_payload_size()
     assert_steps_equal(p.decode_step(SPEC, payload), step)
+    with pytest.raises(ValueError):
+        p.decode_step(SPEC, payload[:-4])
 
 
 def read_exact(conn: socket.socket, size: int) -> bytes:

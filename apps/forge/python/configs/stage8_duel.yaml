@@ -82,6 +82,11 @@ mappo:
   # rest first) is gone by the next decision. It carries across rollouts too, so what it can remember is bounded by
   # the episode rather than by rollout_length; only the gradient is truncated at the rollout.
   recurrent_size: 128
+  # The update replays the rollout as 32-decision chunks (8 s of game time, beyond GAE's ~5.6 s of credit), each from
+  # the memory the rollout stored at its start, rather than one 128-decision chain: 2026-09-25, by the user's
+  # decision. The replay is launch-bound, so 4x fewer sequential steps took the update from 0.72 to 0.44 s at 192
+  # envs, below a rollout's time, so the learner no longer waits on it. The gradient now spans 32 decisions.
+  chunk_length: 32
   # Goals (SeatGoal in the sim): the policy picks one of fight, control, recover, protect, position or prepare every
   # goal_every_decisions and keeps it until the next choice, and sends it with its actions. The sim scores whether
   # the decisions matched it (Goals.Match), reports how each goal was used, and shows a party its teammates' goals.

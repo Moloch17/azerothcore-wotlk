@@ -42,8 +42,9 @@
  *                              u8  terminated[E]      1 = it ended in a terminal state (no
  *                                                     bootstrap); done without terminated is a
  *                                                     time-limit truncation
- *                              f32 final_obs[E*A*O]   last obs of the ended episode (valid if done)
- *                              f32 final_state[E*S]   last state of the ended episode (valid if done)
+ *                              f32 final_obs[D*A*O]   last obs of each ended episode: only the D envs
+ *                                                     whose done is 1, in env order
+ *                              f32 final_state[D*S]   last state of each ended episode, the same D envs
  *                              f32 episode_info[E*A*K] per agent totals for the ended episode (valid if done)
  *                              u32 episode_seed[E]    evaluation seed index of the ended episode (valid if
  *                                                     done); NO_EPISODE_SEED for a training episode
@@ -102,7 +103,9 @@ namespace AnimusForge
     // in, so a half-batch sim can send each half on its own.
     // 12: MODE says which seed index an evaluation starts from, so a cluster's sims share one evaluation's seeds.
     // 13: HELLO names the learner's rank and how many there are (data-parallel learners share one sim's pool).
-    constexpr uint32 PROTOCOL_VERSION = 13;
+    // 14: STEP's final_obs and final_state carry only the envs whose done is set: every other env's were ~half of
+    // each STEP's bytes, for rows the learner never reads.
+    constexpr uint32 PROTOCOL_VERSION = 14;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

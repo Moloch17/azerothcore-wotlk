@@ -143,10 +143,10 @@ class ForgeEnv:
                                   f"{length}")
         view = memoryview(self._step_buffer)[:length]
         self._read_into(view)
-        step = p.decode_step(self.spec, view)
-        if length != self.spec.step_payload_size(step.done.shape[0]):
-            raise ConnectionError(f"STEP of {length} bytes does not hold the {step.done.shape[0]} envs it says")
-        return step
+        try:
+            return p.decode_step(self.spec, view)
+        except ValueError as error:
+            raise ConnectionError(str(error)) from None
 
     def _receive(self) -> tuple[int, bytes]:
         msg_type, length = self._receive_header()

@@ -18,6 +18,17 @@ from .networks import (LayoutActor, LayoutCritic, per_layout, per_layout_host, s
 from .valuenorm import ValueNorm
 
 
+def chunked(value, length: int):
+    """A [T, E, ...] rollout array (numpy or torch) as [length, T / length * E, ...]: its T/length chunks of `length`
+    decisions side by side, chunk k of env e at column k * E + e."""
+    steps, envs = value.shape[0], value.shape[1]
+    rest = tuple(value.shape[2:])
+    split = value.reshape(steps // length, length, envs, *rest)
+    if isinstance(value, torch.Tensor):
+        return split.transpose(0, 1).reshape(length, -1, *rest)
+    return np.ascontiguousarray(split.swapaxes(0, 1)).reshape(length, -1, *rest)
+
+
 @dataclass
 class MappoConfig:
     hidden: tuple[int, ...] = (128, 128)
@@ -69,6 +80,14 @@ class MappoConfig:
     # global state is a snapshot, so every part of the return that follows from memory lands in the advantage as
     # noise.
     recurrent_size: int = 0
+    # The recurrent update's sequence length (0 = the whole rollout). The replay is a chain of per-step kernels the
+    # GPU runs one after another, so its time goes with the steps, not the rows: chunks of this many decisions, each
+    # replayed from the memory the rollout stored at its first decision, are rollout_length / chunk_length times
+    # fewer steps over as many times the rows. What it gives up: no gradient flows across a chunk's start, and a
+    # chunk starts from the memory the rollout's policy carried rather than one the current weights would have. The
+    # reference MAPPO replays 10-step chunks. Rounded down to a divisor of rollout_length; off while a distiller is
+    # teaching (the teachers' memories are not stored).
+    chunk_length: int = 0
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
     # between, and its action head is conditioned on it. The chooser then decides on a clock that many times slower
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
@@ -805,6 +824,16 @@ class MappoTrainer:
 
     # ------------------------------------------------------------------ checkpoints
 
+    def _chunk_length(self, steps: int, auxiliary) -> int:
+        """The replay's chunk length for a rollout of `steps` (0 = unchunked): the largest divisor of `steps` at most
+        mappo.chunk_length."""
+        wanted = self.config.chunk_length
+        # A distiller still teaching replays its recurrent teachers from zero memory at each sequence's start.
+        teaching = auxiliary is not None and getattr(auxiliary, "coef", 1.0) >= 1e-4
+        if wanted <= 0 or wanted >= steps or teaching:
+            return 0
+        return max(length for length in range(1, wanted + 1) if steps % length == 0)
+
     def _update_recurrent(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update that replays the rollout in order, so the GRU learns what to remember.
 
@@ -826,6 +855,12 @@ class MappoTrainer:
         # be read back from the device.
         host = buffer.sequences()
         data = {name: torch.as_tensor(value, device=self.train_device) for name, value in host.items()}
+        chunk_length = self._chunk_length(host["actions"].shape[0], auxiliary)
+        if chunk_length:
+            # [T, E, ...] as [L, T/L * E, ...]: chunk k of env e is "env" k * E + e, replayed from memory[k * L, e].
+            # Everything after this sees a rollout of L steps over that many envs.
+            host = {name: chunked(value, chunk_length) for name, value in host.items() if name in ("layout", "dones")}
+            data = {name: chunked(value, chunk_length) for name, value in data.items()}
         if self.goal_count and "goal" not in data:
             raise ValueError("the actor chooses goals but the rollout buffer did not keep them")
         steps, envs, agents = data["actions"].shape
