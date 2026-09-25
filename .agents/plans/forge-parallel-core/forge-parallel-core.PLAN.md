@@ -400,6 +400,36 @@ updates them every tick although phased envs never see them. Measure what share 
 if it is most of it, a per-stage "no world spawns" option (stages that need the world -- quests, gathering, town
 -- keep them) would cut the map tick, which is now the wall.
 
+## Seventh measurement, 2026-09-25: unseen spawns, GPU rollouts (7e44e7def) -- 4x the session's start
+
+Two changes since the sixth measurement, each in its own commit:
+
+1. **World spawns no player on a map shares a phase with are left alone** (9a695a79a). Split by kind, ~90% of the
+   map update's object time was the continent's own creatures and gameobjects that every replica loads for its
+   envs' grids, in the normal phase no env is in (~9,000 updates, 11-14 ms of thread time per decision). A map now
+   ORs its players' phases each tick and skips world spawns outside them; stages played in the world keep them.
+   Objects 12-14 -> ~1 ms per decision; the sim alone doubled. Episode statistics unchanged.
+2. **Rollout inference on the GPU** (7e44e7def): pinned non-blocking uploads, one wait per decision, a
+   high-priority stream beside the update, no read-back in masked_distribution, and the rollout copies' adapters
+   and heads as one product over every layout (DenseLayouts, exact: a layout's padding meets zero weights). 1.21 ms
+   per 64-row half against the CPU's 1.72. Also torch_threads 4 (half-batch leaves the CPU to the update).
+
+`forge bench`, stage8_duel, half-batch, 7 threads, overlap, 4 minibatches (env steps/s):
+
+| | 128 envs | 192 envs |
+| --- | --- | --- |
+| session start (2026-09-25 morning, with learner) | ~5,480 | ~7,480 |
+| with learner, 8 replicas | 22,272 | 29,619 |
+| with learner, 16 replicas | 22,411 | 30,038 |
+| sim alone, 8 / 16 replicas | 43,824 / 65,279 | 50,958 / 77,367 |
+
+The sim alone now runs 2-3x faster than the learner consumes it: the wall is the learner. At 128 envs a rollout
+(~0.7 s) and the overlapped update (~0.7 s, launch-bound, now sharing the GPU with inference) are about equal, and
+per decision inference is ~1.6 ms of the learner's time. Next levers, all learner side: the update's sequential
+GRU replays (MIOpen launches per timestep), inference's remaining ~0.9 ms of device time (11 products, sampling),
+and more envs per decision (192: the learner's batch, the user's call). Replicas stay 8 (same with the learner,
+less memory).
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
