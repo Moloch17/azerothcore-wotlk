@@ -430,6 +430,33 @@ GRU replays (MIOpen launches per timestep), inference's remaining ~0.9 ms of dev
 and more envs per decision (192: the learner's batch, the user's call). Replicas stay 8 (same with the learner,
 less memory).
 
+## A second GPU and clusters (2026-09-25, 2636b91e3 and 413e174dc)
+
+**Learner on a second GPU**: `AnimusForge.Learner.Device = "cuda:1"` passes train_device and rollout_device to the
+learner (AnimusForge.Learner.Args still override). A GPU the machine does not have falls back to cuda:0 (or the
+CPU) with a line in the learner log, so it can be set before the card is fitted. Untested on two cards: the
+update-to-rollout weight copy then crosses devices (torch handles it; the rollout stream waits on the rollout
+device's current stream after the copy).
+
+**Clusters** -- one learner, several machines' sims. Every machine needs the same build, world data and scenario
+settings; each may run its own AnimusForge.Envs.
+
+- Host: `AnimusForge.Cluster.Role = "host"`, `AnimusForge.Cluster.ControlPort = 7700` (open to the workers).
+- Worker: `AnimusForge.Cluster.Role = "worker"`, `AnimusForge.Cluster.Host = "<host address>:7700"`,
+  `AnimusForge.Cluster.DataPort = 7701` (open to the host), `AnimusForge.Cluster.Advertise` if the host must reach
+  it at another address than the one it connects from.
+- Start the workers first (they reconnect every few seconds if the host is not up yet); a worker that registers
+  joins the next scenario the host starts. Then `forge start` / `forge fast` on the host as usual.
+
+Protocol: a text control channel (ClusterLink: REGISTER / START / STOP) and the lock-step protocol over TCP for
+the data. The host's learner (ClusterEnv) pools every sim's envs; evaluations share their seeds out (protocol 12's
+MODE FirstSeed). Tested on this machine with a second worldserver as a worker (`AC_ANIMUS_FORGE_CLUSTER_ROLE=worker
+AC_ANIMUS_FORGE_CLUSTER_HOST=127.0.0.1:7700 AC_SOAP_ENABLED=0 AC_LOGS_DIR=<own dir> ./worldserver`, stdin held
+open): 64 envs trained as one pool, seeds 0-63 played once each per evaluation.
+
+Not yet: `forge bench` stays on the host alone; a worker that drops mid-scenario ends the learner's run (it
+reconnects for the next scenario, not the current one); workers do not report progress to the host's console.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
