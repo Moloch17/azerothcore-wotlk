@@ -20,6 +20,7 @@
 */
 
 #include "World.h"
+#include "Forge.h"
 #include "AccountMgr.h"
 #include "AchievementMgr.h"
 #include "AddonMgr.h"
@@ -1129,18 +1130,17 @@ void World::DetectDBCLang()
 ///                                      session is deleted (and its player saved) there. Bots are
 ///                                      driven by Map::Update through MapSessionFilter instead
 ///   - DynamicVisibilityMgr::Update  -- see below
-///   - sAuctionMgr, sLFGMgr (x2), sOutdoorPvPMgr, sWorldState, sBattlefieldMgr
-///                                   -- ungated every-tick calls the sim has had no use for so far.
-///                                      They come back with the in-memory persistence work.
 ///   - WUPDATE_5_SECS (expired ban delete), WUPDATE_WHO_LIST, WUPDATE_UPTIME, WUPDATE_CLEANDB,
-///     WUPDATE_AUTOBROADCAST         -- these advance on our fixed diff, so at 50 ms/tick the
-///                                      5-second ones fire every 100 ticks: hundreds of DB
-///                                      statements per wall-second at sim speed
-///   - quest/BG/calendar/guild-cap resets, mail expiry
-///                                   -- wall-clock deadlines, so nearly free either way; dropped
-///                                      for surface area rather than speed
+///     WUPDATE_AUTOBROADCAST, mail expiry
+///                                   -- row sweeps: they read and delete database rows through
+///                                      synchronous queries, which a sealed pool no longer serves,
+///                                      and none of it is state a sim session holds
 ///   - WUPDATE_EVENTS                -- sGameEventMgr changes which creatures exist; a content
 ///                                      decision, the director drives events itself
+///
+/// Kept, because their state is memory-resident and a fully functional world needs them: the
+/// auction house, the dungeon finder, outdoor PvP, world states, battlefields, and the quest,
+/// random-battleground, calendar and guild-cap resets. Their writes are discarded by the seal.
 ///
 /// Fixed visibility: DynamicVisibilityMgr::visibilitySettingsIndex is a static initialised to 0
 /// and only ever rises once session count reaches 500. With bots that can never leave tier 0,
@@ -1151,11 +1151,15 @@ void World::Update(uint32 diff)
     ///- Update the game time and check for shutdown time. This is stock _UpdateGameTime() with one
     /// change: the clock advances by the fixed tick diff (the sim clock) instead of being re-read
     /// from the wall clock, so every GameTime reader -- cooldowns, GCD, procs, respawns -- moves on
-    /// game time. See GameTime::AdvanceGameTimers.
+    /// game time. See GameTime::AdvanceGameTimers. Playtest mode is the stock wall clock.
     Seconds lastGameTime = GameTime::GetGameTime();
-    GameTime::AdvanceGameTimers(Milliseconds(diff));
+    if (Forge::Playtest())
+        GameTime::UpdateGameTimers();
+    else
+        GameTime::AdvanceGameTimers(Milliseconds(diff));
 
-    Seconds elapsed = GameTime::GetGameTime() - lastGameTime;
+    Seconds currentGameTime = GameTime::GetGameTime();
+    Seconds elapsed = currentGameTime - lastGameTime;
 
     ///- if there is a shutdown timer
     if (!IsStopped() && _shutdownTimer > 0 && elapsed > 0s)
@@ -1192,11 +1196,50 @@ void World::Update(uint32 diff)
             _timers[i].SetCurrent(0);
     }
 
+    ///- Timed resets: daily/weekly/monthly quests, the random battleground, old calendar events and the
+    /// guild cap. Game-time deadlines, so at sim speed they come around in wall-minutes; every one of
+    /// them is in-memory state plus a discarded write.
+    if (currentGameTime > _nextDailyQuestReset)
+        ResetDailyQuests();
+
+    if (currentGameTime > _nextWeeklyQuestReset)
+        ResetWeeklyQuests();
+
+    if (currentGameTime > _nextMonthlyQuestReset)
+        ResetMonthlyQuests();
+
+    if (currentGameTime > _nextRandomBGReset)
+        ResetRandomBG();
+
+    if (currentGameTime > _nextCalendarOldEventsDeletionTime)
+        CalendarDeleteOldEvents();
+
+    if (currentGameTime > _nextGuildReset)
+        ResetGuildCap();
+
+    ///- Expired auctions.
+    sAuctionMgr->Update(diff);
+
+    ///- Real client sessions (playtest mode only; sim sessions are driven by their map).
+    if (Forge::Playtest())
+        sWorldSessionMgr->UpdateSessions(diff);
+
+    ///- Dungeon finder: remove obsolete entries before the maps look for compatibles.
+    sLFGMgr->Update(diff, 0);
+
     ///- The simulation itself.
     sMapMgr->Update(diff);
 
     ///- Battlegrounds are instances the sim will run.
     sBattlegroundMgr->Update(diff);
+
+    ///- Outdoor PvP, world states and battlefields: the open world's own systems.
+    sOutdoorPvPMgr->Update(diff);
+    sWorldState->Update(diff);
+    sBattlefieldMgr->Update(diff);
+
+    ///- Dungeon finder: handle the proposals the map pass created.
+    sLFGMgr->Update(diff, 2);
 
     ///- Complete async queries. Without this the callback queue grows without bound and
     /// character loads never finish.

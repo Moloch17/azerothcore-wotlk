@@ -300,7 +300,9 @@ void MapMgr::Update(uint32 diff)
     for (uint8 i = 0; i < 4; ++i)
         i_timer[i].Update(diff);
 
-    // Stock schedules an LFG update here. The sim has no dungeon finder, so it is dropped.
+    // The dungeon finder's compatibility pass, which stock hands to the updater as its own task. Run inline: it
+    // is empty unless somebody queued, and one fewer task keeps the join simple.
+    sLFGMgr->Update(diff, 1);
 
     for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
     {

@@ -16,6 +16,7 @@
  */
 
 #include "Map.h"
+#include "Forge.h"
 #include <chrono>
 #include "Battleground.h"
 #include "CellImpl.h"
@@ -1731,30 +1732,51 @@ void Map::SendRemoveTransports(Player* player)
     player->SendDirectMessage(&packet);
 }
 
-/// Object updates without packets.
+/// Object updates, with packets only while a real client is connected.
 ///
 /// Stock walks every object whose update fields changed this tick and, for each one, builds a
 /// values-update block for itself and for every player that can see it, then assembles and sends
-/// one packet per player. The sim host has no listener, so no session ever has a socket and every
-/// one of those blocks is thrown away inside WorldSession::SendPacket. With bots all visible to
-/// each other and health/power changing on every regen tick, that is roughly changed objects x
-/// visible players of wasted work per tick.
+/// one packet per player. Without a client every one of those blocks is thrown away inside
+/// WorldSession::SendPacket. With bots all visible to each other and health/power changing on every
+/// regen tick, that is roughly changed objects x visible players of wasted work per tick.
 ///
 /// The only state the builders change is the object's update bookkeeping: every BuildUpdate
-/// override (WorldObject, Item, MotionTransport, StaticTransport) ends in ClearUpdateMask. So this
-/// drains the queue and clears each mask directly, which keeps field-change tracking correct --
-/// the next change re-queues the object exactly as before -- without building anything.
-///
-/// Other packet builders skipped for the same reason carry a "Forge: no client sockets" comment.
+/// override (WorldObject, Item, MotionTransport, StaticTransport) ends in ClearUpdateMask. So with
+/// nobody connected this drains the queue and clears each mask directly, which keeps field-change
+/// tracking correct -- the next change re-queues the object exactly as before -- without building
+/// anything. Every other packet builder gates on the same Forge::HasClients().
 void Map::SendObjectUpdates()
 {
+    if (!Forge::HasClients())
+    {
+        while (!_updateObjects.empty())
+        {
+            Object* obj = *_updateObjects.begin();
+            ASSERT(obj->IsInWorld());
+
+            _updateObjects.erase(_updateObjects.begin());
+            obj->ClearUpdateMask(false);
+        }
+        return;
+    }
+
+    UpdateDataMapType update_players;
+
     while (!_updateObjects.empty())
     {
         Object* obj = *_updateObjects.begin();
         ASSERT(obj->IsInWorld());
 
         _updateObjects.erase(_updateObjects.begin());
-        obj->ClearUpdateMask(false);
+        obj->BuildUpdate(update_players);
+    }
+
+    WorldPacket packet;                                     // here we allocate a std::vector with a size of 0x10000
+    for (UpdateDataMapType::iterator iter = update_players.begin(); iter != update_players.end(); ++iter)
+    {
+        iter->second.BuildPacket(packet);
+        iter->first->SendDirectMessage(&packet);
+        packet.clear();                                     // clean the string
     }
 }
 
@@ -2572,6 +2594,10 @@ void Map::RemoveGORespawnTime(ObjectGuid::LowType spawnId)
 
 void Map::LoadRespawnTimes()
 {
+    // Sealed pool: respawn state lives in this Map's members for its lifetime; nothing was persisted to load.
+    if (CharacterDatabase.IsSealed())
+        return;
+
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CREATURE_RESPAWNS);
     stmt->SetData(0, GetId());
     stmt->SetData(1, GetInstanceId());
@@ -3537,6 +3563,10 @@ bool Map::CheckCollisionAndGetValidCoords(WorldObject const* source, float start
 
 void Map::LoadCorpseData()
 {
+    // Sealed pool: corpses live in memory for the map's lifetime; nothing was persisted to load.
+    if (CharacterDatabase.IsSealed())
+        return;
+
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CORPSES);
     stmt->SetData(0, GetId());
     stmt->SetData(1, GetInstanceId());

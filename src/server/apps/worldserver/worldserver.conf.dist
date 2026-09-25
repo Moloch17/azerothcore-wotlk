@@ -93,6 +93,18 @@
 RealmID = 1
 
 #
+#    Forge.Playtest
+#        Description: Forge: run the sim host as a joinable realm so a human can verify the world.
+#                     The game clock follows the wall clock, the world listener starts on
+#                     WorldServerPort, Warden runs as Warden.Enabled says, and the database stays
+#                     open for the login and the character's saves. Off is the training sim: fixed
+#                     game-time ticks, no listener, every table in memory after startup.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+Forge.Playtest = 0
+
+#
 #    WorldServerPort
 #        Description: TCP port to reach the world server.
 #        Default:     8085

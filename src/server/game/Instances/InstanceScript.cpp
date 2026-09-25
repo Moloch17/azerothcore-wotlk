@@ -807,6 +807,10 @@ void InstanceScript::LoadInstanceSavedGameobjectStateData()
 {
     _objectStateMap.clear();
 
+    // Sealed pool: a sim instance is born fresh; its gameobject states were never persisted.
+    if (CharacterDatabase.IsSealed())
+        return;
+
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SELECT_INSTANCE_SAVED_DATA);
     stmt->SetData(0, instance->GetInstanceId());
 

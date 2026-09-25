@@ -29,7 +29,8 @@
  *
  * Removed relative to the stock worldserver main, and why:
  *   - all Windows/service/winmm logic        -- Linux-only sim host
- *   - WorldSocketMgr listener + WorldSocket  -- bots are in-process and sessionless
+ *   - WorldSocketMgr listener + WorldSocket  -- bots are in-process and sessionless (playtest mode,
+ *                                               Forge.Playtest, starts it so a human can log in)
  *   - Remote Access                          -- no network operators; the console is enough
  *   - Metric, AppenderDB, PID file, banner   -- telemetry/ops surface the sim does not use
  *   - FreezeDetector                         -- it ABORT()s; a sim tick is allowed to be slow
@@ -57,6 +58,7 @@
 #include "Config.h"
 #include "DatabaseEnv.h"
 #include "DatabaseLoader.h"
+#include "Forge.h"
 #include "GameTime.h"
 #include "GitRevision.h"
 #include "IoContext.h"
@@ -69,12 +71,15 @@
 #include "OutdoorPvPMgr.h"
 #include "ProcessPriority.h"
 #include "Realm.h"
+#include "Resolver.h"
 #include "ScriptLoader.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
 #include "Timer.h"
 #include "Unit.h"
 #include "World.h"
+#include "WorldSessionMgr.h"
+#include "WorldSocketMgr.h"
 #include <boost/asio/signal_set.hpp>
 #include <algorithm>
 #include <csignal>
@@ -107,6 +112,53 @@ namespace
             World::StopNow(SHUTDOWN_EXIT_CODE);
     }
 
+    /// The realmlist row, as stock LoadRealmInfo reads it: name, addresses and port the client is
+    /// told about. Playtest mode only.
+    bool ForgeLoadRealmInfo()
+    {
+        QueryResult result = LoginDatabase.Query("SELECT id, name, address, localAddress, localSubnetMask, port, icon, flag, timezone, allowedSecurityLevel, population, gamebuild FROM realmlist WHERE id = {}", realm.Id.Realm);
+        if (!result)
+        {
+            LOG_ERROR("server.worldserver", "Playtest: no realmlist row with id {}", realm.Id.Realm);
+            return false;
+        }
+
+        Acore::Asio::IoContext resolveContext;
+        Acore::Asio::Resolver resolver(resolveContext);
+
+        Field* fields = result->Fetch();
+        realm.Name = fields[1].Get<std::string>();
+
+        auto resolveField = [&](uint8 index) -> Optional<boost::asio::ip::address>
+        {
+            Optional<boost::asio::ip::tcp::endpoint> endpoint = resolver.Resolve(boost::asio::ip::tcp::v4(), fields[index].Get<std::string>(), "");
+            if (!endpoint)
+            {
+                LOG_ERROR("server.worldserver", "Playtest: could not resolve address {}", fields[index].Get<std::string>());
+                return {};
+            }
+            return endpoint->address();
+        };
+
+        Optional<boost::asio::ip::address> external = resolveField(2);
+        Optional<boost::asio::ip::address> local = resolveField(3);
+        Optional<boost::asio::ip::address> subnet = resolveField(4);
+        if (!external || !local || !subnet)
+            return false;
+
+        realm.ExternalAddress = std::make_unique<boost::asio::ip::address>(*external);
+        realm.LocalAddress = std::make_unique<boost::asio::ip::address>(*local);
+        realm.LocalSubnetMask = std::make_unique<boost::asio::ip::address>(*subnet);
+        realm.Port = fields[5].Get<uint16>();
+        realm.Type = fields[6].Get<uint8>();
+        realm.Flags = RealmFlags(fields[7].Get<uint8>());
+        realm.Timezone = fields[8].Get<uint8>();
+        realm.AllowedSecurityLevel = AccountTypes(fields[9].Get<uint8>());
+        realm.PopulationLevel = fields[10].Get<float>();
+        realm.Build = fields[11].Get<uint32>();
+        return true;
+    }
+
     bool ForgeStartDB()
     {
         MySQL::Library_Init();
@@ -121,8 +173,17 @@ namespace
             return false;
 
         // No realmlist row is read and no realmlist flags are written: the sim never advertises
-        // itself to a client. Only the fields the core actually reads are populated.
-        realm.Id.Realm = 1;  // scopes accounts, characters and GUIDs
+        // itself to a client. Only the fields the core actually reads are populated. Playtest mode
+        // is the exception: the realmlist row is what the authserver hands the client, so it is
+        // read and its offline flag cleared as on a stock realm.
+        realm.Id.Realm = sConfigMgr->GetOption<uint32>("RealmID", 1);  // scopes accounts, characters and GUIDs
+
+        if (Forge::Playtest())
+        {
+            LoginDatabase.DirectExecute("UPDATE realmlist SET flag = (flag & ~{}) | {} WHERE id = '{}'", REALM_FLAG_OFFLINE, REALM_FLAG_VERSION_MISMATCH, realm.Id.Realm);
+            if (!ForgeLoadRealmInfo())
+                return false;
+        }
 
         sWorld->LoadDBVersion();
 
@@ -136,6 +197,9 @@ namespace
 
     void ForgeStopDB()
     {
+        if (Forge::Playtest())
+            LoginDatabase.DirectExecute("UPDATE realmlist SET flag = flag | {} WHERE id = '{}'", REALM_FLAG_OFFLINE, realm.Id.Realm);
+
         CharacterDatabase.Close();
         WorldDatabase.Close();
         LoginDatabase.Close();
@@ -151,6 +215,43 @@ namespace
     /// Caveat: much of game/ reads getMSTime() directly, so the synthetic diff decouples this
     /// loop from wall clock but not every downstream timer. A clock shim behind getMSTime() is
     /// what closes that gap; it does not belong in this file.
+    /// Whether the seal closes the synchronous connections too and aborts on any read. Staged: false
+    /// until the module warms its lazy world-table caches at startup (its scenario pools and class
+    /// assets query on first use) and a full sweep of every stage logs no "Synchronous query on sealed
+    /// DatabasePool" line. Then this flips, the connections close, and the MySQL container can stop.
+    constexpr bool ForgeSealStrict = false;
+
+    /// After the world and the modules have loaded: memory is the truth, the database is done.
+    void ForgeSealDatabases()
+    {
+        LoginDatabase.Seal(ForgeSealStrict);
+        CharacterDatabase.Seal(ForgeSealStrict);
+        WorldDatabase.Seal(ForgeSealStrict);
+    }
+
+    /// Playtest mode's world loop: stock real-time ticks, a wall-clock diff, sleeping to MinWorldUpdateTime.
+    void ForgePlaytestLoop()
+    {
+        uint32 const minUpdateDiff = uint32(sConfigMgr->GetOption<int32>("MinWorldUpdateTime", 1));
+        uint32 realPrevTime = getMSTime();
+
+        while (!World::IsStopped())
+        {
+            ++World::m_worldLoopCounter;
+            uint32 const realCurrTime = getMSTime();
+
+            uint32 const diff = getMSTimeDiff(realPrevTime, realCurrTime);
+            if (diff < minUpdateDiff)
+            {
+                std::this_thread::sleep_for(Milliseconds(minUpdateDiff - diff));
+                continue;
+            }
+
+            sWorld->Update(diff);
+            realPrevTime = realCurrTime;
+        }
+    }
+
     void ForgeUpdateLoop()
     {
         // Game milliseconds advanced per tick, independent of how long the tick really took.
@@ -215,6 +316,8 @@ int main(int argc, char** argv)
 
     if (!sConfigMgr->LoadAppConfigs())
         return 1;
+
+    Forge::LoadSettings();
 
     std::shared_ptr<Acore::Asio::IoContext> ioContext = std::make_shared<Acore::Asio::IoContext>();
 
@@ -283,9 +386,38 @@ int main(int argc, char** argv)
         sScriptMgr->OnAfterUnloadAllMaps();
     });
 
+    // Playtest mode: the world listener, so a real client can connect. Sim mode opens no port here.
+    std::shared_ptr<void> worldSocketHandle;
+    if (Forge::Playtest())
+    {
+        std::string const worldListener = sConfigMgr->GetOption<std::string>("BindIP", "0.0.0.0");
+        uint16 const worldPort = uint16(sWorld->getIntConfig(CONFIG_PORT_WORLD));
+        int const networkThreads = std::max(1, sConfigMgr->GetOption<int32>("Network.Threads", 1));
+
+        if (!sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort, networkThreads))
+        {
+            LOG_ERROR("server.worldserver", "Playtest: failed to start the world listener on {}:{}", worldListener, worldPort);
+            World::StopNow(ERROR_EXIT_CODE);
+            return 1;
+        }
+
+        worldSocketHandle = std::shared_ptr<void>(nullptr, [](void*)
+        {
+            sWorldSessionMgr->KickAll();             // save and kick all players
+            sWorldSessionMgr->UpdateSessions(1);     // real players unload required UpdateSessions call
+            sWorldSocketMgr.StopNetwork();
+        });
+
+        LOG_INFO("server.worldserver", "Playtest: world listener on {}:{}", worldListener, worldPort);
+    }
+
     LOG_INFO("server.worldserver", "{} (Animus Forge) ready...", GitRevision::GetFullVersion());
 
     sScriptMgr->OnStartup();
+
+    // Sim mode: every table is in memory now. Playtest keeps the database open for the real login.
+    if (!Forge::Playtest())
+        ForgeSealDatabases();
 
     // The console: commands typed into the worldserver's terminal are queued and run on the world
     // thread between ticks (World::ProcessCliCommands), so they work while the sim trains; a module
@@ -320,7 +452,10 @@ int main(int argc, char** argv)
             LOG_INFO("server.worldserver", "Console disabled: stdin is not a terminal");
     }
 
-    ForgeUpdateLoop();
+    if (Forge::Playtest())
+        ForgePlaytestLoop();
+    else
+        ForgeUpdateLoop();
 
     // Shutdown starts here. The console thread notices the stopped world and exits. Stop the
     // IoContext next so nothing posts work into a world that is being torn down; the remaining

@@ -16,6 +16,7 @@
  */
 
 #include "Bag.h"
+#include "Forge.h"
 #include "DatabaseEnv.h"
 #include "Log.h"
 #include "ObjectMgr.h"
@@ -168,8 +169,8 @@ void Bag::StoreItem(uint8 slot, Item* pItem, bool /*update*/)
 
 void Bag::BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target)
 {
-    // Forge: no client sockets exist in the sim host
-    return;
+    if (!Forge::HasClients())
+        return;
 
     Item::BuildCreateUpdateBlockForPlayer(data, target);
 

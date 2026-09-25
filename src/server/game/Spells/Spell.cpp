@@ -16,6 +16,7 @@
  */
 
 #include "Spell.h"
+#include "Forge.h"
 #include "ArenaSpectator.h"
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
@@ -4718,8 +4719,8 @@ void Spell::SendPetCastResult(SpellCastResult result)
 
 void Spell::SendSpellStart()
 {
-    // Forge: no client sockets exist in the sim host
-    return;
+    if (!Forge::HasClients())
+        return;
 
     if (!IsNeedSendToClient(false))
         return;
@@ -4801,8 +4802,8 @@ void Spell::SendSpellStart()
 
 void Spell::SendSpellGo()
 {
-    // Forge: no client sockets exist in the sim host
-    return;
+    if (!Forge::HasClients())
+        return;
 
     // not send invisible spell casting
     if (!IsNeedSendToClient(true))

@@ -16,6 +16,7 @@
  */
 
 #include "ArenaSpectator.h"
+#include "Forge.h"
 #include "CellImpl.h"
 #include "Common.h"
 #include "GameTime.h"
@@ -226,8 +227,9 @@ void AuraApplication::ClientUpdate(bool remove)
 {
     _needClientUpdate = false;
 
-    // Forge: no client sockets exist in the sim host; the flag reset above is the only state change
-    return;
+    // The flag reset above is the only state change; the packet is only for clients.
+    if (!Forge::HasClients())
+        return;
 
     WorldPacket data(SMSG_AURA_UPDATE);
     data << GetTarget()->GetPackGUID();

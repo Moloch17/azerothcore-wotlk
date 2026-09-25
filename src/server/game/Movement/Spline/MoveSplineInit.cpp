@@ -16,6 +16,7 @@
  */
 
 #include "MoveSplineInit.h"
+#include "Forge.h"
 #include "MoveSpline.h"
 #include "MovementPacketBuilder.h"
 #include "Opcodes.h"
@@ -111,9 +112,9 @@ namespace Movement
         unit->m_movementInfo.SetMovementFlags(moveFlags);
         move_spline.Initialize(args);
 
-        // Forge: no client sockets exist in the sim host; the spline above is the movement,
-        // the monster-move packet below is only for clients.
-        return move_spline.Duration();
+        // The spline above is the movement; the monster-move packet below is only for clients.
+        if (!Forge::HasClients())
+            return move_spline.Duration();
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
         data << unit->GetPackGUID();
@@ -161,8 +162,9 @@ namespace Movement
         move_spline.onTransport = transport;
         move_spline.Initialize(args);
 
-        // Forge: no client sockets exist in the sim host; the stop-movement packet is only for clients.
-        return;
+        // The stop-movement packet is only for clients.
+        if (!Forge::HasClients())
+            return;
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
         data << unit->GetPackGUID();

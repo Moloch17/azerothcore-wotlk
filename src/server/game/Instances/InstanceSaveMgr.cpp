@@ -783,6 +783,21 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool 
         }
         else
         {
+            // A global reset arrives every game-week, which at sim speed is every few wall-minutes, and it
+            // would teleport every sim seat out of its episode. An instance holding sim sessions is never reset
+            // by the calendar: the scenario that owns it decides when it ends.
+            bool simSeated = false;
+            Map::PlayerList const& players = map2->GetPlayers();
+            for (Map::PlayerList::const_iterator pitr = players.begin(); pitr != players.end(); ++pitr)
+                if (Player* seat = pitr->GetSource())
+                    if (seat->GetSession() && seat->GetSession()->IsSimSession())
+                    {
+                        simSeated = true;
+                        break;
+                    }
+            if (simSeated)
+                continue;
+
             InstanceSave* save = GetInstanceSave(map2->GetInstanceId());
             map2->ToInstanceMap()->Reset(INSTANCE_RESET_GLOBAL, (save ? & (save->m_playerList) : nullptr));
         }

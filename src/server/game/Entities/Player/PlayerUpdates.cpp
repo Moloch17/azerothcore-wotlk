@@ -16,6 +16,7 @@
  */
 
 #include "AchievementMgr.h"
+#include "Forge.h"
 #include "BattlefieldMgr.h"
 #include "CellImpl.h"
 #include "Channel.h"
@@ -1712,8 +1713,8 @@ void Player::UpdateVisibilityOf(T* target, UpdateData& data,
 
 void Player::GetInitialVisiblePackets(Unit* target)
 {
-    // Forge: no client sockets exist in the sim host
-    return;
+    if (!Forge::HasClients())
+        return;
 
     GetAurasForTarget(target);
     if (target->IsAlive())

@@ -16,6 +16,7 @@
  */
 
 #include "DatabaseWorkerPool.h"
+#include <future>
 #include "AdhocStatement.h"
 #include "CharacterDatabase.h"
 #include "Errors.h"
@@ -134,6 +135,25 @@ void DatabaseWorkerPool<T>::Close()
 }
 
 template <class T>
+void DatabaseWorkerPool<T>::Seal(bool strict)
+{
+    LOG_INFO("sql.driver", "Sealing DatabasePool '{}' ({}): in memory from here on, waiting for {} queued operations to finish...",
+        GetDatabaseName(), strict ? "strict, no connection stays open" : "staged, synchronous reads still served and logged", _queue->Size());
+
+    _queue->Shutdown();
+    _connections[IDX_ASYNC].clear();
+
+    if (strict)
+        _connections[IDX_SYNCH].clear();
+
+    _sealed = true;
+    _sealStrict = strict;
+
+    LOG_INFO("sql.driver", "DatabasePool '{}' sealed: {} worker threads, {} synchronous connections left.",
+        GetDatabaseName(), _connections[IDX_ASYNC].size(), _connections[IDX_SYNCH].size());
+}
+
+template <class T>
 bool DatabaseWorkerPool<T>::PrepareStatements()
 {
     for (auto const& connections : _connections)
@@ -180,6 +200,13 @@ bool DatabaseWorkerPool<T>::PrepareStatements()
 template <class T>
 QueryResult DatabaseWorkerPool<T>::Query(std::string_view sql)
 {
+    if (_sealed)
+    {
+        if (_sealStrict)
+            ABORT("Synchronous query on sealed DatabasePool '{}': {}", GetDatabaseName(), sql);
+        LOG_WARN("sql.driver", "Synchronous query on sealed DatabasePool '{}' (remove before the seal is strict): {}", GetDatabaseName(), sql);
+    }
+
     auto connection = GetFreeConnection();
 
     ResultSet* result = connection->Query(sql);
@@ -197,6 +224,13 @@ QueryResult DatabaseWorkerPool<T>::Query(std::string_view sql)
 template <class T>
 PreparedQueryResult DatabaseWorkerPool<T>::Query(PreparedStatement<T>* stmt)
 {
+    if (_sealed)
+    {
+        if (_sealStrict)
+            ABORT("Synchronous prepared query {} on sealed DatabasePool '{}'", stmt->GetIndex(), GetDatabaseName());
+        LOG_WARN("sql.driver", "Synchronous prepared query {} on sealed DatabasePool '{}' (remove before the seal is strict)", stmt->GetIndex(), GetDatabaseName());
+    }
+
     auto connection = GetFreeConnection();
     PreparedResultSet* ret = connection->Query(stmt);
     connection->Unlock();
@@ -216,6 +250,9 @@ PreparedQueryResult DatabaseWorkerPool<T>::Query(PreparedStatement<T>* stmt)
 template <class T>
 QueryCallback DatabaseWorkerPool<T>::AsyncQuery(std::string_view sql)
 {
+    if (_sealed)
+        ABORT("Asynchronous query on sealed DatabasePool '{}' (no worker would ever answer it): {}", GetDatabaseName(), sql);
+
     BasicStatementTask* task = new BasicStatementTask(sql, true);
     // Store future result before enqueueing - task might get already processed and deleted before returning from this method
     QueryResultFuture result = task->GetFuture();
@@ -226,6 +263,9 @@ QueryCallback DatabaseWorkerPool<T>::AsyncQuery(std::string_view sql)
 template <class T>
 QueryCallback DatabaseWorkerPool<T>::AsyncQuery(PreparedStatement<T>* stmt)
 {
+    if (_sealed)
+        ABORT("Asynchronous prepared query {} on sealed DatabasePool '{}' (no worker would ever answer it)", stmt->GetIndex(), GetDatabaseName());
+
     PreparedStatementTask* task = new PreparedStatementTask(stmt, true);
     // Store future result before enqueueing - task might get already processed and deleted before returning from this method
     PreparedQueryResultFuture result = task->GetFuture();
@@ -236,6 +276,9 @@ QueryCallback DatabaseWorkerPool<T>::AsyncQuery(PreparedStatement<T>* stmt)
 template <class T>
 SQLQueryHolderCallback DatabaseWorkerPool<T>::DelayQueryHolder(std::shared_ptr<SQLQueryHolder<T>> holder)
 {
+    if (_sealed)
+        ABORT("Query holder on sealed DatabasePool '{}' (no worker would ever answer it)", GetDatabaseName());
+
     SQLQueryHolderTask* task = new SQLQueryHolderTask(holder);
     // Store future result before enqueueing - task might get already processed and deleted before returning from this method
     QueryResultHolderFuture result = task->GetFuture();
@@ -269,6 +312,9 @@ void DatabaseWorkerPool<T>::CommitTransaction(SQLTransaction<T> transaction)
     }
 #endif // ACORE_DEBUG
 
+    if (_sealed)
+        return;
+
     Enqueue(new TransactionTask(transaction));
 }
 
@@ -292,6 +338,14 @@ TransactionCallback DatabaseWorkerPool<T>::AsyncCommitTransaction(SQLTransaction
     }
 #endif // ACORE_DEBUG
 
+    if (_sealed)
+    {
+        // Answer "committed" at once: memory is the truth and the caller's continuation should run.
+        std::promise<bool> done;
+        done.set_value(true);
+        return TransactionCallback(done.get_future());
+    }
+
     TransactionWithResultTask* task = new TransactionWithResultTask(transaction);
     TransactionFuture result = task->GetFuture();
     Enqueue(task);
@@ -301,6 +355,12 @@ TransactionCallback DatabaseWorkerPool<T>::AsyncCommitTransaction(SQLTransaction
 template <class T>
 void DatabaseWorkerPool<T>::DirectCommitTransaction(SQLTransaction<T>& transaction)
 {
+    if (_sealed)
+    {
+        transaction->Cleanup();
+        return;
+    }
+
     T* connection = GetFreeConnection();
     int errorCode = connection->ExecuteTransaction(transaction);
 
@@ -351,6 +411,10 @@ void DatabaseWorkerPool<T>::EscapeString(std::string& str)
 template <class T>
 void DatabaseWorkerPool<T>::KeepAlive()
 {
+    // Sealed: nothing to keep alive on the async side, and the sync side (if any) only serves stragglers.
+    if (_sealed)
+        return;
+
     //! Ping synchronous connections
     for (auto& connection : _connections[IDX_SYNCH])
     {
@@ -489,6 +553,9 @@ T* DatabaseWorkerPool<T>::GetFreeConnection()
     }
 #endif
 
+    if (_sealStrict)
+        ABORT("Synchronous connection requested on strictly sealed DatabasePool '{}'", GetDatabaseName());
+
     uint8 i = 0;
     auto const num_cons = _connections[IDX_SYNCH].size();
     T* connection = nullptr;
@@ -514,7 +581,7 @@ std::string_view DatabaseWorkerPool<T>::GetDatabaseName() const
 template <class T>
 void DatabaseWorkerPool<T>::Execute(std::string_view sql)
 {
-    if (sql.empty())
+    if (sql.empty() || _sealed)
         return;
 
     BasicStatementTask* task = new BasicStatementTask(sql);
@@ -524,6 +591,12 @@ void DatabaseWorkerPool<T>::Execute(std::string_view sql)
 template <class T>
 void DatabaseWorkerPool<T>::Execute(PreparedStatement<T>* stmt)
 {
+    if (_sealed)
+    {
+        delete stmt;
+        return;
+    }
+
     PreparedStatementTask* task = new PreparedStatementTask(stmt);
     Enqueue(task);
 }
@@ -531,7 +604,7 @@ void DatabaseWorkerPool<T>::Execute(PreparedStatement<T>* stmt)
 template <class T>
 void DatabaseWorkerPool<T>::DirectExecute(std::string_view sql)
 {
-    if (sql.empty())
+    if (sql.empty() || _sealed)
         return;
 
     T* connection = GetFreeConnection();
@@ -542,6 +615,12 @@ void DatabaseWorkerPool<T>::DirectExecute(std::string_view sql)
 template <class T>
 void DatabaseWorkerPool<T>::DirectExecute(PreparedStatement<T>* stmt)
 {
+    if (_sealed)
+    {
+        delete stmt;
+        return;
+    }
+
     T* connection = GetFreeConnection();
     connection->Execute(stmt);
     connection->Unlock();

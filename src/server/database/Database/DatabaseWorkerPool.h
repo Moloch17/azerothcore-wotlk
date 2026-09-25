@@ -206,6 +206,15 @@ public:
     //! Keeps all our MySQL connections alive, prevent the server from disconnecting us.
     void KeepAlive();
 
+    //! Forge: the sim keeps every table in memory after startup, so the pool is sealed once the world and the
+    //! modules have loaded. Sealing joins and closes the asynchronous workers and drops every write from then on
+    //! (memory is the truth; there is nothing to persist). Asynchronous reads abort -- with no worker their future
+    //! would never complete. Synchronous reads are the staged part: `strict` closes those connections too and
+    //! aborts on any read, which is the end state; not strict keeps them open and logs every read it serves, so a
+    //! run lists the stragglers to remove before the seal is made strict.
+    void Seal(bool strict);
+    [[nodiscard]] bool IsSealed() const { return _sealed; }
+
     void WarnAboutSyncQueries([[maybe_unused]] bool warn)
     {
 #ifdef ACORE_DEBUG
@@ -234,6 +243,8 @@ private:
     std::unique_ptr<MySQLConnectionInfo> _connectionInfo;
     std::vector<uint8> _preparedStatementSize;
     uint8 _async_threads, _synch_threads;
+    bool _sealed = false;
+    bool _sealStrict = false;
 #ifdef ACORE_DEBUG
     static inline thread_local bool _warnSyncQueries = false;
 #endif
