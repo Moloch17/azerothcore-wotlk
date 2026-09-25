@@ -86,6 +86,13 @@ namespace AnimusForge
             double ResetPlace = 0.0;        // ... phase, position, talent points
             double ResetConfigure = 0.0;    // ... talents, kit, gear
             double ResetDestroy = 0.0;      // ... destroying the previous seats
+            double ResetEncounter = 0.0;    // ... building the encounters
+            double ResetScatter = 0.0;      // ... spreading the seats
+            double ResetStock = 0.0;        // ... supplies and pets
+            double ResetPrepare = 0.0;      // ... the draws and the encounters' episode resets
+            double ResetScenario = 0.0;     // ... Scenario::Reset as a whole
+            double ResetDespawn = 0.0;      // ... the previous episode's targets despawned
+            double ResetSeats = 0.0;        // ... the seats' loop as a whole
             double Apply = 0.0;             // the actions the learner sent
             double ResetsPerTick = 0.0;     // episodes rebuilt per decision
             double ReusedPerTick = 0.0;     // characters kept across those episodes instead of rebuilt, per decision

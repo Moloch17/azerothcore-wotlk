@@ -286,6 +286,18 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
             _collect.ObserveNs += collect.ObserveNs;
             _collect.FinalObserveNs += collect.FinalObserveNs;
             _collect.ResetNs += collect.ResetNs;
+            _collect.ResetCreateNs += collect.ResetCreateNs;
+            _collect.ResetPlaceNs += collect.ResetPlaceNs;
+            _collect.ResetConfigureNs += collect.ResetConfigureNs;
+            _collect.ResetDestroyNs += collect.ResetDestroyNs;
+            _collect.ResetEncounterNs += collect.ResetEncounterNs;
+            _collect.ResetScatterNs += collect.ResetScatterNs;
+            _collect.ResetStockNs += collect.ResetStockNs;
+            _collect.ResetPrepareNs += collect.ResetPrepareNs;
+            _collect.ResetSeatsNs += collect.ResetSeatsNs;
+            _collect.ResetDespawnNs += collect.ResetDespawnNs;
+            _collect.ResetScenarioNs += collect.ResetScenarioNs;
+            _collect.Reused = collect.Reused;       // the pool's count is cumulative already
             _collect.ApplyNs += collect.ApplyNs;
             _collect.Observes += collect.Observes;
             _collect.Resets += collect.Resets;
@@ -1284,6 +1296,13 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _collectMs.ResetPlace = since(_collect.ResetPlaceNs, _rateCollect.ResetPlaceNs) / perTick;
             _collectMs.ResetConfigure = since(_collect.ResetConfigureNs, _rateCollect.ResetConfigureNs) / perTick;
             _collectMs.ResetDestroy = since(_collect.ResetDestroyNs, _rateCollect.ResetDestroyNs) / perTick;
+            _collectMs.ResetEncounter = since(_collect.ResetEncounterNs, _rateCollect.ResetEncounterNs) / perTick;
+            _collectMs.ResetScatter = since(_collect.ResetScatterNs, _rateCollect.ResetScatterNs) / perTick;
+            _collectMs.ResetStock = since(_collect.ResetStockNs, _rateCollect.ResetStockNs) / perTick;
+            _collectMs.ResetPrepare = since(_collect.ResetPrepareNs, _rateCollect.ResetPrepareNs) / perTick;
+            _collectMs.ResetSeats = since(_collect.ResetSeatsNs, _rateCollect.ResetSeatsNs) / perTick;
+            _collectMs.ResetDespawn = since(_collect.ResetDespawnNs, _rateCollect.ResetDespawnNs) / perTick;
+            _collectMs.ResetScenario = since(_collect.ResetScenarioNs, _rateCollect.ResetScenarioNs) / perTick;
 
             Map::UpdateTiming const& mapTiming = sMapMgr->GetUpdateTiming();
             _worldMs.Sessions = since(mapTiming.SessionsNs, _rateMapTiming.SessionsNs) / perTick;

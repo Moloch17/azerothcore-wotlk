@@ -34,6 +34,13 @@ namespace Animus
         uint64 PlaceNs = 0;
         uint64 ConfigureNs = 0;
         uint64 DestroyNs = 0;
+        uint64 EncounterNs = 0;     // the encounters' Build: opponents, objectives, spawn retries
+        uint64 ScatterNs = 0;       // spreading the seats around the spawn point
+        uint64 StockNs = 0;         // supplies and pets
+        uint64 PrepareNs = 0;       // Rebuild before the seats: the draws, the encounters' episode resets
+        uint64 DespawnNs = 0;       // the previous episode's targets despawned
+        uint64 SeatsNs = 0;         // the seats' loop as a whole (create, place and configure are inside it)
+        uint64 ScenarioNs = 0;      // Scenario::Reset as a whole, from the pool
     };
 
     inline thread_local ResetTiming CurrentReset;

@@ -258,6 +258,13 @@ void Animus::EnvPool::FinishEnv(Env& env)
     _collect.ResetPlaceNs += CurrentReset.PlaceNs;
     _collect.ResetConfigureNs += CurrentReset.ConfigureNs;
     _collect.ResetDestroyNs += CurrentReset.DestroyNs;
+    _collect.ResetEncounterNs += CurrentReset.EncounterNs;
+    _collect.ResetScatterNs += CurrentReset.ScatterNs;
+    _collect.ResetStockNs += CurrentReset.StockNs;
+    _collect.ResetPrepareNs += CurrentReset.PrepareNs;
+    _collect.ResetSeatsNs += CurrentReset.SeatsNs;
+    _collect.ResetDespawnNs += CurrentReset.DespawnNs;
+    _collect.ResetScenarioNs += CurrentReset.ScenarioNs;
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
         &Mask[e * agentsPerEnv * _spec.NumActions]);
@@ -597,6 +604,11 @@ void Animus::EnvPool::ResetEnv(Env& env)
 
     _envSeed[env.Index] = NO_EPISODE_SEED;
     uint32 buildSeed = NO_EPISODE_SEED;
+    // Where the world thread's random numbers carry on after a seeded build: drawn from them before the seed
+    // replaces them. rand_seed(0) would reseed from std::random_device instead, 624 draws of it, which measured
+    // ~2.3 ms per decision of the world thread's time in training (evaluation episodes and the replays of lost
+    // ones are seeded builds): more than every other part of a reset together.
+    uint32 resume = 0;
     // The run of seeds this env draws from: its learner's, with data-parallel learners, else the pool's one.
     uint32* next = &_evalNextSeed;
     uint32 end = _evalEpisodes;
@@ -609,6 +621,7 @@ void Animus::EnvPool::ResetEnv(Env& env)
     if (_evaluating && *next < end)
     {
         uint32 const index = (*next)++;
+        resume = rand32() | 1;
         rand_seed(seedFor(_evalSeedBase, index));
         _envSeed[env.Index] = index;
         buildSeed = index;
@@ -617,6 +630,7 @@ void Animus::EnvPool::ResetEnv(Env& env)
     {
         // A lost evaluation episode, rebuilt as it was built then. It is still a training episode for the learner.
         uint32 const index = _replaySeeds[urand(0, uint32(_replaySeeds.size()) - 1)];
+        resume = rand32() | 1;
         rand_seed(seedFor(_replaySeedBase, index));
         buildSeed = index;
         ++_replayed;
@@ -627,11 +641,13 @@ void Animus::EnvPool::ResetEnv(Env& env)
     env.EpisodeSeedIndex = buildSeed;
     env.Evaluating = _evaluating;
 
+    auto scenarioMark = std::chrono::steady_clock::now();
     _scenario.Reset(env);
+    CurrentReset.ScenarioNs += ResetSinceNs(scenarioMark);
     _collect.Reused = _scenario.CharactersReused();
 
     if (buildSeed != NO_EPISODE_SEED)
-        rand_seed(0);
+        rand_seed(resume);
 
     // After the reset: tearing down the old character (a cast cut short, its pet's last hit) still reports
     // to the hooks, and none of that belongs to the new episode.

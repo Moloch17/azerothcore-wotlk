@@ -1556,6 +1556,7 @@ void Animus::Curriculum::StageScenario::Reset(Env& env)
 bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 {
     EnvState& data = Data(env);
+    auto prepareMark = std::chrono::steady_clock::now();
 
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
@@ -1746,6 +1747,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     Player* firstNew = nullptr;
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->BeforeSeats(env, level);
+    CurrentReset.PrepareNs += ResetSinceNs(prepareMark);
 
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
     {
@@ -1797,8 +1799,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             firstNew = bot;
     }
 
+    CurrentReset.SeatsNs += ResetSinceNs(prepareMark);
     for (Creature* creature : oldTargets)
         creature->DespawnOrUnsummon();
+    CurrentReset.DespawnNs += ResetSinceNs(prepareMark);
 
     auto destroyMark = std::chrono::steady_clock::now();
     for (uint32 seat = 0; seat < _seatCount; ++seat)
@@ -1824,7 +1828,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         env.Bots.push_back(ObjectGuid::Empty);
     env.Targets.clear();
 
+    auto partMark = std::chrono::steady_clock::now();
     ScatterSeats(env, map);
+    CurrentReset.ScatterNs += ResetSinceNs(partMark);
 
     // A spawn point no objective can be found from used to take the whole run down with it: the plan stops when
     // its first scenario fails to start, so one bad patch in a list of twenty-six was a dead run. The ground is
@@ -1865,14 +1871,18 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         return false;
     }
 
+    CurrentReset.EncounterNs += ResetSinceNs(partMark);
+
     // Where each seat is looking starts as where the world put it. ResetEpisode cleared it to 0, which would aim
     // every seat due east; this is the first point at which the bots have stopped being teleported about.
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         if (Player const* bot = SeatBot(env, seat))
             data.Seats[seat].Facing = bot->GetOrientation();
 
+    partMark = std::chrono::steady_clock::now();
     StockSeats(env);
     GivePets(env);
+    CurrentReset.StockNs += ResetSinceNs(partMark);
     return true;
 }
 

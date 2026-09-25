@@ -177,6 +177,13 @@ namespace Animus
             uint64 ResetPlaceNs = 0;        // ... phase, position data and talent points on the map
             uint64 ResetConfigureNs = 0;    // ... talents, kit, gear
             uint64 ResetDestroyNs = 0;      // ... destroying the previous seats
+            uint64 ResetEncounterNs = 0;    // ... building the encounters (opponents, objectives)
+            uint64 ResetScatterNs = 0;      // ... spreading the seats
+            uint64 ResetStockNs = 0;        // ... supplies and pets
+            uint64 ResetPrepareNs = 0;      // ... the draws and the encounters' episode resets
+            uint64 ResetDespawnNs = 0;      // ... the previous episode's targets despawned
+            uint64 ResetSeatsNs = 0;
+            uint64 ResetScenarioNs = 0;     // ... Scenario::Reset as a whole        // ... the seats' loop as a whole
             uint64 ApplyNs = 0;             // ApplyActions, which is a decision's other half
             uint32 Observes = 0;            // envs observed (one per env per decision)
             uint32 Resets = 0;              // episodes that ended and were rebuilt
