@@ -140,6 +140,38 @@ per tick of exception work, so ~40k units cost ~8-13 ms per tick on 16 cores: ~7
 divide by five), so Phase 7's coverage line is the number to watch. Extra GPUs add learner headroom,
 not sim throughput, while the CPU is the wall.
 
+## First build, 2026-09-25 (revision a8171f29855c, `forge` fast-forwarded to this branch)
+
+The stack compiles and runs. `forge` was fast-forwarded onto this branch after aborting an unfinished
+merge of upstream master (via `worktree-curriculum-rework`) that had been left mid-conflict in the main
+checkout with 30 files unresolved.
+
+What the first build found, in order:
+
+1. **Duplicate symbols at link.** The checkout at `modules/mod-animus-forge` was still built as a module
+   and every folded symbol existed twice. `modules/CMakeLists.txt` now drops a module whose sources are
+   part of the core and says so at configure time.
+2. **Link-time optimisation is inert.** `check_ipo_supported` fails inside its own try-compile project
+   with `CMAKE_CXX_COMPILER_AR-NOTFOUND` even though `/usr/bin/llvm-ar` exists and the main cache
+   resolves it to `llvm-ar-18`: the probe's sub-project does not inherit the archiver. The configure
+   reports "link-time optimisation not supported by this toolchain" and carries on, so the Phase 0 LTO
+   deliverable is not in the binary. Fix is to pass the archiver and ranlib into the probe.
+3. **The build type is RelWithDebInfo, not Release.** Phase 0 claims Release for the forge image. `-O3`
+   still applies (Phase 0 put it in every non-Debug configuration) but the binary carries debug info and
+   is 362 MB.
+4. **47 `Missing property AnimusForge.*` warnings.** The live `env/dist/etc/worldserver.conf` predates the
+   fold, so the keys the fold moved into the template are absent from it; the legacy
+   `etc/modules/mod_animus_forge.conf` is still read afterwards and still wins, so the values in force are
+   correct and the warnings are noise. Regenerating the live conf from its `.dist`, or dropping the legacy
+   overlay, clears them.
+
+What ran clean: world load, all three pools sealed (staged), no synchronous-query straggler at startup,
+the host's status block printing the folded paths, SOAP listening, the forge idle. The GPU reaches the
+container and the learner's torch sees `gfx1100`, 20 GiB.
+
+Still unmeasured: the per-decision `forge status` line every phase is supposed to record needs a training
+run, which memory `feedback-no-smoke-until-stages-added` gates on the user.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
