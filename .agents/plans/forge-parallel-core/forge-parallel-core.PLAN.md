@@ -268,6 +268,46 @@ Full table: `var/animus-forge/shared/bench/bench.json`.
    tasks on 0-5 while torch runs unpinned. The exchange itself is still 17-19 ms of a ~24-26 ms decision, so
    Phase 4 remains the largest lever.
 
+## Third measurement, 2026-09-25: the learner, taken apart (revisions 644f7f3f3..b9e1ea090)
+
+**The "learner ms" was mostly the PPO update, not the exchange.** The sim blocks for the whole update: on
+stage8_duel 1.71 s per 128-decision rollout, 13 of the 17 ms per decision. The exchange plus rollout inference is
+~3-4 ms. So Phase 4 item 1 (shared-memory ring) is worth ~1-2 ms at most and is no longer first in line.
+
+Two tools now measure the learner without a worldserver, both reproducing the live numbers within a few percent:
+`python -m animus.bench_update` (one update on the stage's real networks) and `python -m animus.bench_learner`
+(the real TrainingRun against a fake sim process speaking the protocol, `--sim-ms` standing in for the map update).
+
+| change | update s | learner bench env steps/s (serial / overlapped) | forge bench, 8 thr, 128 / 192 envs |
+| --- | --- | --- | --- |
+| before (sweep 2) | 1.67 | - | 5,449-5,508 / 7,435-7,530 |
+| GRU replay as one fused MIOpen call per sequence | 1.29 | 6,642 / 6,657 (overlap broken) | 6,368 / 8,474 |
+| + CPU placement (pool on the V-cache die, learner on the other) | 1.29 | - | 6,878 / 9,053 |
+| + overlap_updates fixed (it had never overlapped) | 1.29 | 6,650 / 11,150 | not re-run |
+| + host syncs out of the update (3,555 -> 444) | 1.18 | 6,896 / 11,594 | not re-run |
+
+Findings, in order of consequence:
+
+1. **overlap_updates never overlapped.** The first-update wait keyed on "the previous join returned nothing",
+   which the wait itself guaranteed for the next rollout, so every update was joined where it was submitted.
+   The earlier conclusion that overlap buys nothing measured this bug. Fixed and pinned by a test; the setting
+   stays off because one update of policy staleness is a training decision for the user. On it would be
+   ~1.7x end to end on this stage.
+2. **The recurrent update is launch-bound.** 4 epochs x 8 minibatches x (actor + critic) = 64 sequential GRU
+   replays of 128 steps on 16 rows. Stepping GRUCell was ~210k launches per update; MIOpen's fused call still
+   launches per timestep internally (~190k), so it only moved the overhead into C++. A persistent Triton kernel
+   was tried and lost (one workgroup at 16 rows, 128 dependent steps, fp32 dots on gfx11 have no matrix units,
+   12 weight blocks re-read from L2 per step). What would actually shrink it is fewer, larger sequential sweeps
+   (minibatches, epochs), which are training hyperparameters, not speed ones.
+3. **CPU placement.** The world thread was unpinned and wandered onto the other die; worker k sat on CPU k,
+   spreading across both L3s above 8 threads; torch shared the map workers' CPUs. Now: `CpuPlacement` orders
+   CPUs by L3 size then cores before SMT siblings, the world thread takes the first, and the learner is pinned
+   to the CPUs sharing no core with the pool. The map update with the learner attached is back to its sim-only
+   time (4.0 ms at 128 envs).
+4. **Rollout inference on the GPU is slower today** (9,365 against 13,790 rollout env steps/s): per decision it
+   pays launches and a device round trip for its outputs. It becomes right only when observations are produced
+   on the device (Phase 6).
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
@@ -778,55 +818,24 @@ thousands of bots puts that on the critical path:
 - Note: memory `feedback-no-smoke-until-stages-added` currently forbids `forge run/start`; the user
   decides when the smoke runs begin.
 
-## Resume here (2026-09-25, end of session)
+## Resume here (2026-09-25, second session)
 
-State: `forge` and `worktree-forge-parallel-core` both at the commit below, clean. The server is built
-Release + LTO and was running idle when the session ended. `forge` is ~17 commits ahead of
-`origin/forge` and unpushed, deliberately; the user has not asked for a push.
+State: `forge` has everything committed, unpushed (the user has not asked for a push);
+`worktree-forge-parallel-core` is behind at 363cb745c. The worldserver is built with the placement change and
+running idle. The user's standing priorities: multithreading as fast and efficient as possible, and as much
+as possible offloaded to the GPU; judge by end-to-end env steps/s with the learner attached.
 
 Open items, most useful first:
 
-1. **Per-map task times in the `forge status` timing line: written, not yet built or measured.** A new
-   `map tasks` row gives, per map update, the task count, summed task wall time and its ratio to the
-   update's wall (the parallelism actually had), the mean longest task (critical path), the last update's
-   slowest map with the CPU it ran on, and the set of CPUs tasks started on. Measured in
-   `MapUpdater::RunMapTick`, rolled up in `MapMgr::Update` (`MapMgr::TaskTiming`). `forge bench` records
-   the same per trial (a second log line per trial, four new table columns: Tasks, Longest ms, Parallel,
-   CPUs; and `objects_ms`, `task_*`, `cpus` in the saved JSON), so the re-run sweep answers it directly.
-   Syntax-checked only.
-   Two things found on the way, both of which change how to read finding 4:
-   - **The `world parts` row never counted continent replicas.** `MapMgr::Update` summed `i_maps` and
-     instance children; replicas live only in `i_replicaById`. At 128 envs that is 1 map of 5, the base
-     continent. So "5.7 ms on 4 threads to 12.4 ms on 8" is the *base map's* update getting slower while
-     more replicas run beside it (contention on something the base owns and replicas share, e.g. the
-     base's grid lock in `CreateGrid` or the terrain), not total work doubling. Fixed in the same change,
-     so `world parts` figures from before it are not comparable with those after.
-   - **`PinToCpu` puts worker k on the k-th CPU, and this is a two-CCD 9950X3D.** CPUs 0-7 (+16-23) share
-     one L3 (the V-cache die), 8-15 (+24-31) the other. 8 workers sit on one die; 12 and 16 straddle
-     both, which alone fits "slower above 8 at every env count". Unconfirmed: the new row's CPU set and
-     slowest-task CPU are meant to confirm or rule it out in one sweep.
-   Next: rebuild, re-run `forge bench` (needs the user's go-ahead, as the last one did).
-2. **Phase 4, the learner exchange.** 16.7 ms of a 26.2 ms decision. Everything else is noise beside it.
-3. **The folded-module config fix depends on an untracked directory.** `modules/CMakeLists.txt` keeps a
-   folded module's `.conf` in `CONFIG_FILE_LIST` by globbing `modules/<module>/conf/*.conf.dist`. That
-   directory exists only as an untracked leftover in the main checkout; the tracked tree deleted it with
-   the fold, and the worktree has no such path. A `git clean -fdx` or a fresh clone prints "folded into
-   core, no config directory left" and silently stops reading the user's tuned
-   `env/dist/etc/modules/mod_animus_forge.conf` again, which is the exact failure just fixed. Fix by
-   declaring the filenames in a tracked variable next to `MODULES_FOLDED_INTO_CORE` and appending them to
-   `CONFIG_LIST` unconditionally, keeping the dist copy only when the directory is still there. Verify
-   with a warm rebuild: `Using modules configuration: > mod_animus_forge.conf` must still appear.
-4. **The abort handler segfaults before printing a backtrace** (exit 139 right after `ABORTED`), so the
-   database tripwire cannot name its own caller. Frame pointers are not the cause: the clang settings
-   already pass `-fno-omit-frame-pointer`. Until this is fixed, every further sealed-pool read costs a
-   guess-and-rebuild cycle, as `Pet::LoadPetFromDB` did.
-5. **The live `env/dist/etc/worldserver.conf` still predates the fold.** Only one missing-property
-   warning is left (`AnimusForge.ContinentReplicas`, since added to the live module conf), so this is
-   cosmetic now. Regenerate from the `.dist` when convenient.
-6. `AnimusForge.Bench.Policy` is left at `"random"` in the live module conf; it was `"fight"` before.
-   A backup of the pre-bench file is gone with the job directory, but the only edited line is that one.
-
-How to re-run the measurement: `docker compose up -d ac-worldserver`, wait for `SOAP is listening`, then
-send `forge bench` over SOAP at 127.0.0.1:7878 with the credentials in
-`env/dist/etc/animus-dashboard.auth`. The sweep is 12 sim trials plus 4 learner trials and takes a few
-minutes. Rebuild with `touch env/dist/.forge-build && docker compose up -d --force-recreate ac-worldserver`.
+1. **The user's decision on overlap_updates** (~1.7x on stage8_duel for one update of staleness). If on, set it
+   in configs/stage8_duel.yaml (the curriculum extends it) and re-run `forge bench` with the learner.
+2. **The rollout side is now the wall when overlapped**: ~9.8 ms per decision = sim ~5-6 ms + learner ~4 ms
+   (CPU inference for 128 envs, buffer writes, the socket copy). Phase 4's shared-memory ring and half-batch
+   double buffering attack the learner's 4 ms; profile `bench_learner` first to split inference from transport.
+3. **The pool's 9th thread with 8 map threads lands on the world thread's SMT sibling (cpu 16)**; sim-only at
+   128 envs moved 3.9 -> 4.2 ms. Consider treating MapUpdate.Threads as including the world thread.
+4. The update's remaining cost is MIOpen's per-timestep launches (~880 ms CPU of 1.18 s). Only fewer, larger
+   sequential sweeps (fewer minibatches) change that: a training hyperparameter, the user's call.
+5. Carried over from the first session: the folded-module config fix depends on an untracked directory
+   (`modules/<module>/conf`); the abort handler segfaults before its backtrace; the live worldserver.conf
+   predates the fold; `AnimusForge.Bench.Policy` is left at "random".
