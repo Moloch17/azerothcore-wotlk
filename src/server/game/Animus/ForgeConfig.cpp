@@ -246,6 +246,7 @@ void AnimusForge::ForgeConfig::Load()
         FastLearnerArgs.push_back(arg);
 
     LearnerTorchThreads = sConfigMgr->GetOption<uint32>("AnimusForge.Learner.TorchThreads", 0);
+    LearnerDevice = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Device", "");
 
     Bench = BenchSettings();
     Bench.Scenario = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Scenario", "stage8_duel");

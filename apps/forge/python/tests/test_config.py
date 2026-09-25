@@ -50,3 +50,22 @@ def test_torch_threads_defaults_to_torch_and_loads(monkeypatch):
 def test_unknown_keys_still_fail():
     with pytest.raises(ValueError, match="unknown config keys"):
         from_dict(TrainConfig, {"eval": {"evry_env_steps": 10}})
+
+
+def test_a_gpu_the_machine_does_not_have_falls_back(monkeypatch):
+    """A config can name the second GPU before it is fitted: on one card it runs on the first, without one on the CPU."""
+    import torch
+
+    from animus.config import resolve_device
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    assert resolve_device("cuda:1") == "cuda:0"
+    assert resolve_device("cuda:0") == "cuda:0"
+    assert resolve_device("auto") == "cuda:0"
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    assert resolve_device("cuda:1") == "cuda:1"
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert resolve_device("cuda:1") == "cpu"
+    assert resolve_device("auto") == "cpu"
+    assert resolve_device("cpu") == "cpu"

@@ -454,11 +454,14 @@ class TrainingRun:
         )
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
-        train_device = str(self.trainer.train_device)
-        if train_device.startswith("cuda") and torch.cuda.is_available():
+        def named(device: torch.device) -> str:
+            if device.type != "cuda":
+                return str(device)
             backend = "rocm" if torch.version.hip else "cuda"
-            train_device = f"{backend}:{torch.cuda.get_device_name(0)}"
-        print(f"Updates on {train_device}, rollouts on {config.resolved_rollout_device()}", flush=True)
+            return f"{backend}:{device.index or 0} ({torch.cuda.get_device_name(device.index or 0)})"
+
+        print(f"Updates on {named(self.trainer.train_device)}, rollouts on {named(self.trainer.rollout_device)}",
+              flush=True)
 
         # Horizons are configured in game time; each decision compounds them.
         self.discounts = per_decision(config.mappo, spec.decision_ms)

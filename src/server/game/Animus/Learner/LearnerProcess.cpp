@@ -52,6 +52,16 @@ namespace
             args.emplace_back("torch_threads=" + std::to_string(config.LearnerTorchThreads));
         }
 
+        // Before AnimusForge.Learner.Args, whose --set comes later and wins.
+        if (!config.LearnerDevice.empty())
+        {
+            for (char const* key : { "train_device=", "rollout_device=" })
+            {
+                args.emplace_back("--set");
+                args.emplace_back(key + config.LearnerDevice);
+            }
+        }
+
         args.insert(args.end(), config.LearnerArgs.begin(), config.LearnerArgs.end());
         return args;
     }

@@ -97,6 +97,10 @@ namespace AnimusForge
         /// AnimusForge.Learner.TorchThreads: CPU threads the learner's torch uses (0 = torch's own default). The
         /// learner runs beside the map update threads on the same cores, so `forge bench` sweeps both.
         uint32 LearnerTorchThreads = 0;
+        /// AnimusForge.Learner.Device: the device the learner updates and rolls out on ("cuda:1" for a second GPU;
+        /// empty = the stage config's train_device and rollout_device). A GPU the machine does not have falls back
+        /// to the first one, so the key can name the machine as it will be.
+        std::string LearnerDevice;
         std::vector<std::string> Classes;       // AnimusForge.Classes; empty = every class
 
         /// AnimusForge.SpawnPoint.*: the instanceable map and position every env's bots start at.

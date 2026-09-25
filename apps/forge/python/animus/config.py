@@ -340,12 +340,25 @@ class TrainConfig:
 
 
 def resolve_device(name: str) -> str:
-    if name != AUTO:
-        return name
-
+    """A device name torch can use. "auto" is the first GPU (CUDA or ROCm) or the CPU. A GPU that is not there --
+    "cuda:1" on a machine with one card, set ahead of the second -- falls back to the first GPU, or the CPU without
+    one, and says so, so a config written for the machine as it will be still runs on the machine as it is."""
     import torch
 
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    if name == AUTO:
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+    if not name.startswith("cuda"):
+        return name
+    if not torch.cuda.is_available():
+        print(f"Device {name} asked for, but torch sees no GPU: using the CPU", flush=True)
+        return "cpu"
+    index = torch.device(name).index or 0
+    count = torch.cuda.device_count()
+    if index >= count:
+        print(f"Device {name} asked for, but torch sees {count} GPU{'s' if count != 1 else ''}: using cuda:0",
+              flush=True)
+        return "cuda:0"
+    return f"cuda:{index}"
 
 
 def load_yaml(path: str | Path, seen: tuple[Path, ...] = ()) -> dict:
