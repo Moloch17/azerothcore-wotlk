@@ -454,8 +454,36 @@ MODE FirstSeed). Tested on this machine with a second worldserver as a worker (`
 AC_ANIMUS_FORGE_CLUSTER_HOST=127.0.0.1:7700 AC_SOAP_ENABLED=0 AC_LOGS_DIR=<own dir> ./worldserver`, stdin held
 open): 64 envs trained as one pool, seeds 0-63 played once each per evaluation.
 
-Not yet: `forge bench` stays on the host alone; a worker that drops mid-scenario ends the learner's run (it
-reconnects for the next scenario, not the current one); workers do not report progress to the host's console.
+Not yet: `forge bench` stays on the host alone; workers do not report progress to the host's console. A worker
+that drops mid-scenario no longer ends the run (93d188f6f; next section).
+
+## Cluster drop/rejoin, and data-parallel learners (2026-09-25, 93d188f6f and after)
+
+**A worker that drops out** (93d188f6f): the learner's ClusterEnv sits its envs out -- their rows in the rollout
+are invalidated, not trained on as zero-reward samples -- and retries its address every 10 s (cluster_timeout);
+evaluation seeds are shared over the sims present. The host re-orders a worker that registers again onto the
+running stage, and a worker keeps a stage already running. Tested live: killed the worker mid-stage8_duel,
+updates carried on with the host's 32 envs; restarted, it was ordered back on and its 32 envs rejoined.
+
+**Data-parallel learners** (`AnimusForge.Learner.Ranks`, 1-16; animus.parallel): the worldserver starts one learner
+per rank. Rank k: `--set rank=k ranks=N dist_address=127.0.0.1:<free port>`, device cuda:(k + the index in
+Learner.Device), whole physical cores of what the map update leaves (CpuPlacement::Split), log
+animus-learner.rank<k>.log. Each rank takes an equal share of every group of the pool's envs (PoolRanks clamps N so
+every rank has an env of every group) and of the cluster's worker sims; gradients are averaged every optimizer
+step (NCCL/RCCL with a GPU per rank, else gloo); rank 0 alone writes the run and decides. A rank that dies stops
+the others (they would block in a collective), so `forge resume` restarts the run. Minibatches are per rank: the
+batch per step grows with the ranks (stage8_duel.yaml says so).
+
+Live-tested on this one-GPU machine (both ranks fall back to cuda:0 and reduce over gloo: correct, not faster):
+fast stage8_duel, 32 envs, trained past 1M steps; evaluations at 0 and 1M each played seeds 0-63 once; a cancel
+saved latest.pt and both ranks exited with nothing interrupted. The live test found two bugs the fake-sim test
+could not, both fixed with regression tests: a rank done with its share of an evaluation switched mode while the
+other still played (the sim needs every rank on every decision: they now step until all are done, Ranks.any), and
+the gradient all-reduce mismatched when a layout head had a gradient on one rank only (every parameter now goes
+in, with a presence count). Also: NCCL ranks set their own current device (object collectives stage through it).
+
+**Untested until the second GPU is in**: NCCL/RCCL itself, and whether two ranks beat one. Expect it to: the
+learner is GPU-latency-bound per process, and two cards run two update chains side by side.
 
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
@@ -984,29 +1012,28 @@ thousands of bots puts that on the critical path:
 - Note: memory `feedback-no-smoke-until-stages-added` currently forbids `forge run/start`; the user
   decides when the smoke runs begin.
 
-## Resume here (2026-09-25, second session)
+## Resume here (2026-09-25, third session)
 
-State: `forge` has everything committed, unpushed (the user has not asked for a push);
-`worktree-forge-parallel-core` is behind at 363cb745c. The worldserver is built with the placement change and
-running idle. The user's standing priorities: multithreading as fast and efficient as possible, and as much
-as possible offloaded to the GPU; judge by end-to-end env steps/s with the learner attached.
+State: `forge` is pushed to origin (Moloch17/azerothcore-wotlk). The worldserver runs standalone at 192 envs,
+half-batch, 7 map threads, 8 replicas, Learner.Ranks 1. The user's standing priorities: multithreading as fast and
+efficient as possible, as much as possible on the GPU; judge by end-to-end env steps/s with the learner attached.
+Seventh measurement: ~22k (128 envs) / ~30k (192) env steps/s with the learner; the learner is the wall.
 
 Open items, most useful first:
 
-1. **Decided and done**: overlap_updates on (configs/stage8_duel.yaml), MapUpdate.Threads 7 and
-   AnimusForge.ContinentReplicas 8 in the live confs. **Pending the user**: mappo.minibatches (fifth measurement),
-   which decides whether the sim's half-batch tick is worth building next.
-2. **The rollout side is now the wall when overlapped**: ~9.8 ms per decision = sim ~5-6 ms + learner ~4 ms
-   (CPU inference for 128 envs, buffer writes, the socket copy). Phase 4's shared-memory ring and half-batch
-   double buffering attack the learner's 4 ms; profile `bench_learner` first to split inference from transport.
-3. **Settings to apply once the user agrees** (performance only, no training effect): MapUpdate.Threads 16 -> 7
-   and AnimusForge.ContinentReplicas 0 -> 8 (fourth measurement). Envs 192 would change the learner's batch:
-   the user's call.
-4. The update's remaining cost is MIOpen's per-timestep launches (~880 ms CPU of 1.18 s). Only fewer, larger
-   sequential sweeps (fewer minibatches) change that: a training hyperparameter, the user's call.
+1. **When the second GPU is fitted**: set `AnimusForge.Learner.Ranks = 2` and run `forge fast stage8_duel`;
+   check both learner logs say `(nccl)` and `Updates on cuda:0` / `cuda:1`, then bench 1 vs 2 ranks at 192 and
+   384 envs. Consider mappo.minibatches 8 with 2 ranks to keep the per-step batch.
+2. **Bench the real sim at 192 envs** with the learner since the drop/rejoin and data-parallel changes (should
+   match the seventh measurement: nothing on the one-rank path changed but the learner launcher).
+3. The update's remaining cost is MIOpen's per-timestep GRU launches; a persistent RNN kernel is the research
+   option (see "Using every core").
+4. Cluster: `forge bench` on the host alone; workers do not report progress to the host's console.
 5. The learner is pinned with sched_setaffinity(pid) right after posix_spawn: that pins the main thread only, and
    torch's threads inherit it because Python starts them much later. If that ever races, prefix the argv with
    `taskset -c <list>` instead.
-6. Carried over from the first session: the folded-module config fix depends on an untracked directory
+6. `tests/test_stage_names.py` fails on the 10 `apps/forge/models/*_companion.json` files (pre-existing, not
+   this plan's).
+7. Carried over from the first session: the folded-module config fix depends on an untracked directory
    (`modules/<module>/conf`); the abort handler segfaults before its backtrace; the live worldserver.conf
    predates the fold; `AnimusForge.Bench.Policy` is left at "random".
