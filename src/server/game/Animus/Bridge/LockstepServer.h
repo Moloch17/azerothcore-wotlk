@@ -80,6 +80,9 @@ namespace AnimusForge
             std::function<bool()> const& onIdle = {});
 
     private:
+        /// SO_SNDBUF asked for on a Unix-socket learner connection: a few of the largest STEPs.
+        static constexpr int SEND_BUFFER_BYTES = 8 << 20;
+        bool _sendBufferWarned = false;
         bool WaitReadable(int fd, std::function<bool()> const& onIdle = {});
         bool ReadExact(void* dst, std::size_t size, std::function<bool()> const& onIdle = {});
 

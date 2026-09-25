@@ -501,6 +501,33 @@ sim: world thread first, worker k the (k+1)-th, in the order written; auto = Cpu
 CpuPlacement::Parse, which drops CPUs outside the process's cpuset with an error line. `forge status` shows
 "learner placement" and the map update's CPUs.
 
+## Eighth measurement, 2026-09-25: chunked replay, protocol 14, send buffer (7f8a1a8e8 and after)
+
+The update was the learner's wall (0.72 s against a 0.5 s rollout at 128 envs). Three changes:
+
+1. **Chunked recurrent replay** (`mappo.chunk_length`, stage8_duel 32 by the user's decision): the rollout replayed
+   as 32-decision chunks side by side, each from the memory the rollout stored at its start. Launch-bound, so 4x
+   fewer sequential steps: update 0.72 -> 0.44 s at 192 envs (16: 0.40 s). Tested: an unshuffled replay gives back
+   every stored log-prob exactly, chunked or not.
+2. **Protocol 14**: STEP's final_obs / final_state carry only the ended envs (they were 48% of a 1.7 MB half).
+3. **SO_SNDBUF 8 MB on the Unix learner socket**: a STEP bigger than the default 208 KB buffer held the world
+   thread in writev until the learner, busy with the other half, read it (2.1 ms; 0.05 ms with the room). Warns
+   when net.core.wmem_max caps it (this machine: 7 MB).
+
+`forge bench`, half-batch, 7 threads, 8 replicas, with the learner (env steps/s):
+
+| | 128 envs | 192 envs |
+| --- | --- | --- |
+| before (seventh measurement, re-run) | 22,484 | 29,262 |
+| + chunk 32 and protocol 14 | 31,030 | 36,206 |
+| + send buffer | 31,408 | 36,458 |
+
+After 2: sim 1.7 -> 0.7 ms per decision at 192 envs, but the learner's wait rose to 1.1 ms: **the learner's
+rollout path is the wall**. Per 96-env half the learner spends ~1.5 ms in act_and_value (cProfile; mostly issuing
+small kernels), 0.2 ms taking the outcome, 0.15 ms receiving. bench_learner with a 1.75 ms fake half reproduces
+36k. Next: find out whether inference is CPU-issue- or GPU-bound and how much the overlapped update costs the
+rollout, then graph-capture whichever side it is.
+
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
 - **More learner processes on one GPU do not scale**: 1 / 2 / 3 learners at once (bench_learner, each with its own

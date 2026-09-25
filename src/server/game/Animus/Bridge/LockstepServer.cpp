@@ -161,6 +161,24 @@ bool AnimusForge::LockstepServer::AcceptClients(uint32 ranks, std::function<bool
             int const on = 1;
             ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
         }
+        else
+        {
+            // Room for whole STEPs, so sending one returns at once instead of when the learner has read it: with the
+            // default 208 KB a 0.9 MB half-batch STEP held the world thread ~2 ms while the learner finished the
+            // other half's inference (0.05 ms with the room). The kernel caps the request at net.core.wmem_max.
+            int const wanted = SEND_BUFFER_BYTES;
+            ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &wanted, sizeof(wanted));
+            int granted = 0;
+            socklen_t length = sizeof(granted);
+            ::getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &granted, &length);
+            if (granted < wanted && !_sendBufferWarned)
+            {
+                _sendBufferWarned = true;
+                LOG_WARN("module.animus", "The learner socket's send buffer is {} KB, not the {} KB asked for: each "
+                    "STEP waits for the learner to read it. Raise net.core.wmem_max (sysctl) to at least {}.",
+                    granted / 1024, wanted / 1024, wanted);
+            }
+        }
 
         _client = fd;
         MsgType type;
