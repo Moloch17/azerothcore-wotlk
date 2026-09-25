@@ -1082,9 +1082,11 @@ thousands of bots puts that on the critical path:
 ## Resume here (2026-09-25, third session)
 
 State: `forge` is pushed to origin (Moloch17/azerothcore-wotlk). The worldserver runs standalone at 192 envs,
-half-batch, 7 map threads, 8 replicas, GPU mode auto (single on this machine). The user's standing priorities: multithreading as fast and
+half-batch, 7 map threads, 16 replicas (the user's decision, ninth measurement: 45,460 env steps/s with the
+learner), GPU mode auto (single on this machine), stage8_duel chunk_length 32, rollout graphs on. The user kept
+192 envs (320 would give 52,858). The user's standing priorities: multithreading as fast and
 efficient as possible, as much as possible on the GPU; judge by end-to-end env steps/s with the learner attached.
-Seventh measurement: ~22k (128 envs) / ~30k (192) env steps/s with the learner; the learner is the wall.
+Ninth measurement: 45,460 env steps/s at 192 envs with the learner (session start: ~5,480 at 128).
 
 Open items, most useful first:
 
