@@ -61,9 +61,10 @@ namespace Animus
         /// How many Map objects a continent stage spreads its envs over (MapMgr::CreateContinentReplica), so a
         /// continent is not one map and therefore one map task for the whole pool. 0 asks for the fewest the
         /// phase cap allows: an env stands in one of the 31 phase bits its map has, so 31 envs per replica.
-        /// Sizing, like Envs or MapUpdate.Threads -- each replica is another full copy of the continent's
-        /// spawns, so the trade is parallelism against memory. At or below 31 envs the default is one map,
-        /// which is what a continent stage has always been.
+        /// Sizing, like Envs or MapUpdate.Threads. A replica shares the continent's terrain, collision tree
+        /// and navmesh with the base map and loads grids only where its envs stand, so it costs the creatures
+        /// and gameobjects of those grids rather than a copy of the continent. At or below 31 envs the default
+        /// is one map, which is what a continent stage has always been.
         uint32 ContinentReplicas = 0;
 
         /// Prefix of the curriculum tuning keys (CurriculumTuning::Load) and arena weights, with the trailing dot:

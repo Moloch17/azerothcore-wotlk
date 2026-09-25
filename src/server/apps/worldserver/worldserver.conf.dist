@@ -5089,9 +5089,10 @@ AnimusForge.Envs = 64
 #                     scored and observed on its thread; without this a whole pool shares one continent
 #                     and therefore one thread. An env stands in one of the 31 phases its map has, so a
 #                     replica holds at most 31 envs and 0 asks for the fewest replicas that allows.
-#                     Sizing, not a switch: every replica carries another full copy of the continent's
-#                     spawns, so raising it buys threads with memory. Instance stages ignore it -- every
-#                     env already has an instance of its own.
+#                     Sizing, not a switch. A replica shares the continent's terrain, collision tree and
+#                     navmesh with the base map and loads grids only where its envs stand, so it costs the
+#                     creatures and gameobjects of those grids, not a copy of the continent. Instance
+#                     stages ignore it -- every env already has an instance of its own.
 #        Default:     0 - (31 envs per continent, which is one map up to 31 envs as before)
 
 AnimusForge.ContinentReplicas = 0

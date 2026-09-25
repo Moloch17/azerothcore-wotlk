@@ -412,10 +412,18 @@ learner-driven run reaches its first reset without a "Synchronous query on seale
    31-env cap above it. `Player::TeleportTo` needed nothing: every curriculum teleport is within the map,
    and that branch keeps the map object, replica included.
 
-   Costs to know: each replica's `OnCreateMap` loads all the continent's grids and spawns its whole creature
-   set on the world thread during `Scenario::Setup` -- the ~450 MB per replica, and seconds of setup, paid
-   once per stage rather than per episode. Zone-keyed world state (outdoor PvP, weather, world states) is one
-   set per map id and is shared across a continent's replicas; nothing the sim does touches it today.
+   Costs, after the follow-up that stopped replicas loading whole continents: a replica shares terrain, the
+   collision tree and the navmesh with the base, and loads grids only where its envs stand, so it costs the
+   creatures and gameobjects of those grids. `Map::OnCreateMap` loads all grids for a map with an instance id,
+   which is right for a dungeon and wrong for a continent, so it now asks `Instanceable()` too; the base keeps
+   `PreloadAllNonInstancedMapGrids` for anyone who wants the whole world live. `MapGridManager::CreateGrid`
+   already creates the parent's grid first under the parent's lock, so a replica's terrain is always there and
+   two replicas asking at once is safe; the base ends up holding terrain-only grids for the union of what its
+   replicas touch, which is the one copy of the terrain that would exist anyway.
+
+   The plan's ~450 MB per replica was the whole-continent load, not the floor. Zone-keyed world state (outdoor
+   PvP, weather, world states) is one set per map id and is shared across a continent's replicas; nothing the
+   sim does touches it today.
 3. **Reset on the map thread.** `ObjectGuidGeneratorBase::_nextGuid` → `std::atomic` with `fetch_add`
    (`ObjectGuid.h:298-315`). `HashMapHolder::Insert/Remove` and `CharacterCache::AddCharacterCacheEntry`
    become per-thread batches applied by the world thread at the barrier. Then `BotFactory::Create` and

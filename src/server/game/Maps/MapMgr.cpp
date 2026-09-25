@@ -137,11 +137,6 @@ Map* MapMgr::CreateContinentReplica(uint32 mapId, uint32 index)
     if (replicas.empty())
         replicas.push_back(base);
 
-    // A replica's grid takes the base's terrain for the same coordinates, which has to be there already. Asked
-    // for before the lookup rather than beside the creation, so it holds whatever order replicas are asked for
-    // in; loading a loaded map is a walk over its grids.
-    base->LoadAllGrids();
-
     if (index < replicas.size())
         return replicas[index];
 
@@ -153,7 +148,10 @@ Map* MapMgr::CreateContinentReplica(uint32 mapId, uint32 index)
         replicas.push_back(replica);
         i_replicaById[ReplicaKey(mapId, instanceId)] = replica;
 
-        // Loads every grid, because the instance id is not zero. The spawns are this replica's own.
+        // No grids yet: a replica loads them where its envs go. MapGridManager::CreateGrid asks the base to
+        // create the same grid first, under the base's own lock, so the terrain a replica's grid points at is
+        // always there and two replicas asking at once is safe. Only the objects in those grids -- the
+        // continent's creatures and gameobjects -- are this replica's own.
         replica->OnCreateMap();
 
         LOG_INFO("server.loading", ">> Continent replica {} of map {} is instance {}", replicas.size() - 1, mapId,

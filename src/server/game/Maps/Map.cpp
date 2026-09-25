@@ -90,8 +90,10 @@ Map::Map(uint32 id, uint32 InstanceId, uint8 SpawnMode, Map* _parent) :
 // Hook called after map is created AND after added to map list
 void Map::OnCreateMap()
 {
-    // Instances load all grids by default (both base map and child maps)
-    if (GetInstanceId())
+    // Instances load all grids by default (both base map and child maps). A continent replica also has an
+    // instance id but is a whole continent: it loads the grids its players reach, like any continent, or it
+    // would carry a copy of every spawn on the map for the sake of the handful its envs stand in.
+    if (GetInstanceId() && Instanceable())
         LoadAllGrids();
 
     sScriptMgr->OnCreateMap(this);
