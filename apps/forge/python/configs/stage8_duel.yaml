@@ -33,8 +33,9 @@ rollout_length: 128
 # bought nothing, but it measured a bug: every overlapped update was joined where it was submitted, so nothing
 # overlapped (fixed 2026-09-25). Fixed, `python -m animus.bench_learner` puts this stage at 11,594 env steps/s
 # overlapped against 6,896 serial (update 1.2 s on the GPU, rollout ~1.2 s). The price is one update of staleness:
-# the rollout acts on the weights of the update before last. Off until someone decides that trade.
-overlap_updates: false
+# the rollout acts on the weights of the update before last. On since 2026-09-25, by the user's decision; the whole
+# curriculum extends this file.
+overlap_updates: true
 # The rollout's forward pass and the update share the CPU: 8 threads answered a decision in 2.6 ms with an update
 # running where torch's default 16 took 3.6 ms (1.5 against 1.7 ms idle).
 torch_threads: 8

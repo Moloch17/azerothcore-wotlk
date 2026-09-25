@@ -223,7 +223,7 @@ class TrainConfig:
     # joined, one rollout later), which is data one update staler than the strictly serial loop; its log_probs come
     # from the same weights, so the PPO ratio stays consistent. Update stats are logged one update late as well.
     #
-    # Off, and stage8_duel sets it off explicitly for the whole curriculum that extends it. The arithmetic argues
+    # Off by default; stage8_duel turns it on for the whole curriculum that extends it (2026-09-25). The arithmetic argues
     # the other way -- the sim blocks in ReceiveAny for the whole update, which is 36-42% of wall clock on the
     # stages measured -- and the measurement that seemed to refute it (5,365 against 5,323 env steps/s) measured a
     # bug: every overlapped update was joined in the rollout that submitted it, so nothing overlapped. Fixed
