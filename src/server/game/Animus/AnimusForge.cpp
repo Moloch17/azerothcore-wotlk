@@ -960,6 +960,7 @@ void AnimusForge::Forge::BenchTick()
     trial.SimMsPerTick = double(_simNs - _benchSimNs) / ticks / 1e6;
     trial.LearnerMsPerTick = double(_learnerNs - _benchLearnerNs) / ticks / 1e6;
     trial.MemoryMb = ResidentMb();
+    trial.Groups = _pool ? _pool->GroupCount() : 1;
 
     // Instances destroyed during the window take their share out of the map totals: clamp rather than wrap.
     uint64 const objectsNs = sMapMgr->GetUpdateTiming().ObjectsNs;
@@ -1094,6 +1095,7 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
         { "Longest ms", TextTable::Align::Right }, { "Parallel", TextTable::Align::Right }, { "CPUs" } });
 
     BenchTrial const* winner = nullptr;
+    bool unsplitTrials = false;
     for (BenchTrial const& trial : _benchTrials)
     {
         std::string const learner = !trial.Learner ? "-"
@@ -1106,7 +1108,11 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
             continue;
         }
 
-        table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs), learner,
+        // A half-batch trial whose envs could not be split ran as one group, in lock step: marked, as it measures
+        // something other than the configuration it names.
+        bool const unsplit = _config.HalfBatch && trial.Groups < 2;
+        unsplitTrials |= unsplit;
+        table.AddRow({ std::to_string(trial.MapThreads), std::to_string(trial.Envs) + (unsplit ? " *" : ""), learner,
             Acore::StringFormat("{:.0f}", trial.EnvStepsPerSecond),
             Acore::StringFormat("{:.1f}", trial.WorldMsPerTick), Acore::StringFormat("{:.1f}", trial.SimMsPerTick),
             Acore::StringFormat("{:.1f}", trial.LearnerMsPerTick), std::to_string(trial.MemoryMb),
@@ -1122,6 +1128,10 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
     }
 
     table.Write(out, "  ");
+    if (unsplitTrials)
+        out(Acore::StringFormat("* ran as one group, not in halves: those envs do not split into two halves on "
+            "separate maps with AnimusForge.ContinentReplicas = {} (each replica holds at most 31 envs; make the "
+            "replicas even, a divisor of the envs, and enough of them).", _config.ContinentReplicas));
 
     if (!winner)
     {

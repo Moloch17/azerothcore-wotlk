@@ -147,6 +147,7 @@ namespace AnimusForge
             double SimMsPerTick = 0.0;      // observing, rewarding and applying actions
             double LearnerMsPerTick = 0.0;  // blocked on the learner
             uint64 MemoryMb = 0;            // the worldserver's resident memory at the end of the trial
+            uint32 Groups = 1;              // groups the pool was sent in: 2 when half-batch applied, else 1
             double ObjectsMs = 0.0;         // UpdateNonPlayerObjects, thread time per decision over every map
             double ResetMs = 0.0;           // rebuilding ended episodes on the world thread, per decision
             double SpawnUpdates = 0.0;      // world spawns updated per decision, over every map

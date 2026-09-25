@@ -528,6 +528,30 @@ small kernels), 0.2 ms taking the outcome, 0.15 ms receiving. bench_learner with
 36k. Next: find out whether inference is CPU-issue- or GPU-bound and how much the overlapped update costs the
 rollout, then graph-capture whichever side it is.
 
+## Ninth measurement, 2026-09-25: rollout graphs, and half-batch only where the envs split (e8bafac72, 4e7da3010)
+
+- **Rollout graphs** (`mappo.rollout_graphs`, on by default on the GPU): one decision -- uploads, actor, critic,
+  downloads -- captured per batch shape and replayed as one launch. 96 rows 1.21 -> 1.00 ms in isolation (the
+  GPU's own time per small kernel dominates even in a graph); forge bench 192 envs 36,458 -> 39,691.
+- **Ended episodes valued after the next ACT is sent**, and a decision's halves joined once per rollout: +3% at 256.
+- Probes that did not pay: rollouts on the CPU (28,779 at 192), hipBLASLt (-5% inference but +15% update, and the
+  setting is process-wide), distribution validation (already off). Contention with the overlapped update costs
+  inference little (median 1.00 -> 1.15 ms, p90 1.9 ms).
+- **The finding**: every bench above 192 envs was *not half-batch*. With 8 replicas of at most 31 envs, 256 and
+  384 envs do not split into halves on separate maps and run as one group in lock step (a log line said so; the
+  bench did not). The bench table now marks such trials with `*` and says why. With envs that split:
+
+| ContinentReplicas | envs | sim alone | with learner |
+| --- | --- | --- | --- |
+| 8 | 192 | 51,419 | 40,580 |
+| 8 | 248 | 53,163 | 43,062 |
+| 16 | 192 | 74,745 | 45,460 |
+| 16 | 256 | 77,587 | 49,191 |
+| 16 | 320 | 82,114 | 52,858 |
+
+16 replicas spread the continent's envs over twice the maps: 11 map tasks per update instead of 7, 6x parallel
+instead of 3.4x, +~550 MB. At the session's start (with learner, 128 envs) this was ~5,480.
+
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
 - **More learner processes on one GPU do not scale**: 1 / 2 / 3 learners at once (bench_learner, each with its own
