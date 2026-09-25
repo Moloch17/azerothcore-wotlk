@@ -151,14 +151,22 @@ What the first build found, in order:
 1. **Duplicate symbols at link.** The checkout at `modules/mod-animus-forge` was still built as a module
    and every folded symbol existed twice. `modules/CMakeLists.txt` now drops a module whose sources are
    part of the core and says so at configure time.
-2. **Link-time optimisation is inert.** `check_ipo_supported` fails inside its own try-compile project
-   with `CMAKE_CXX_COMPILER_AR-NOTFOUND` even though `/usr/bin/llvm-ar` exists and the main cache
-   resolves it to `llvm-ar-18`: the probe's sub-project does not inherit the archiver. The configure
-   reports "link-time optimisation not supported by this toolchain" and carries on, so the Phase 0 LTO
-   deliverable is not in the binary. Fix is to pass the archiver and ranlib into the probe.
-3. **The build type is RelWithDebInfo, not Release.** Phase 0 claims Release for the forge image. `-O3`
-   still applies (Phase 0 put it in every non-Debug configuration) but the binary carries debug info and
-   is 362 MB.
+2. **Link-time optimisation was inert, and the cause was not the probe.** Fixed; the binary now has it.
+   Three layers, each hiding the next. `check_ipo_supported` builds its test through the *project* form
+   of `try_compile`, which forwards a fixed set of variables and not the archiver clang needs, so it
+   linked with `CMAKE_CXX_COMPILER_AR-NOTFOUND` and declared the toolchain incapable;
+   `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES` does not reach it, because that applies to the source-file
+   form. LTO is now enabled on this file's own `find_program` check for clang, and the probe is kept
+   only for other compilers, where nothing had to be found by hand. With LTO actually on, the *real*
+   archive steps then failed the same way: `project()` loads the compiler detection CMake stores under
+   `CMakeFiles/<version>/`, that file does a plain `set()` of the archiver, a normal variable shadows a
+   cache entry, and the build volume's copy still said NOTFOUND from before the image had llvm. The
+   archiver is now also set as an ordinary variable ahead of every `add_subdirectory`, and the stale
+   detection in the volume was deleted once so CMake re-detected it.
+3. **The build type is now Release.** It came from `conf/dist/env.ac`, which the container reads as its
+   `env_file` and which overrode the Release default in `config.sh`. `ASSERT` is the core's own macro
+   rather than the standard `assert`, so Release keeps every check. The binary went from 362 MB to
+   51.8 MB, and the whole build including the LTO link takes about a minute and a half warm.
 4. **47 `Missing property AnimusForge.*` warnings.** The live `env/dist/etc/worldserver.conf` predates the
    fold, so the keys the fold moved into the template are absent from it; the legacy
    `etc/modules/mod_animus_forge.conf` is still read afterwards and still wins, so the values in force are
