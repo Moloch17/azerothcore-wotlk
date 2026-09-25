@@ -37,8 +37,10 @@ rollout_length: 128
 # curriculum extends this file.
 overlap_updates: true
 # The rollout's forward pass and the update share the CPU: 8 threads answered a decision in 2.6 ms with an update
-# running where torch's default 16 took 3.6 ms (1.5 against 1.7 ms idle).
-torch_threads: 8
+# running where torch's default 16 took 3.6 ms (1.5 against 1.7 ms idle). 4 since 2026-09-25: with half-batch the
+# rollout acts on half the envs at a time while the overlapped update runs beside it, and 4 leaves it room
+# (animus.bench_learner --half-batch: 21,505 env steps/s against 18,622 at 8; 1 and 2 are slower).
+torch_threads: 4
 log_every: 1
 checkpoint_every: 100
 keep_checkpoints: 5
