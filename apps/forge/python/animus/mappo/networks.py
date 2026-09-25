@@ -38,15 +38,37 @@ def _linear(in_dim: int, out_dim: int, gain: float) -> nn.Linear:
     return linear
 
 
-def masked_distribution(logits: torch.Tensor, mask: torch.Tensor) -> Categorical:
-    """Categorical over allowed actions only. A row with nothing allowed falls back to action 0."""
+def masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """The logits of allowed actions only, the others MASKED_LOGIT. A row with nothing allowed falls back to action 0."""
     mask = mask.bool()
     # Chosen on the device, not with `if empty.any()`: on a GPU that read waits for everything queued before it.
     empty = ~mask.any(dim=-1, keepdim=True)
     fallback = torch.zeros_like(mask)
     fallback[..., 0] = True
     mask = torch.where(empty, fallback, mask)
-    return Categorical(logits=logits.masked_fill(~mask, MASKED_LOGIT))
+    return logits.masked_fill(~mask, MASKED_LOGIT)
+
+
+def masked_distribution(logits: torch.Tensor, mask: torch.Tensor) -> Categorical:
+    """Categorical over allowed actions only. A row with nothing allowed falls back to action 0."""
+    return Categorical(logits=masked_logits(logits, mask))
+
+
+def log_prob_of(logits: torch.Tensor, choice: torch.Tensor) -> torch.Tensor:
+    """log softmax(logits)[choice]: Categorical(logits=...).log_prob(choice), without building the distribution."""
+    return logits.gather(-1, choice.long()[..., None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
+
+
+def sample_logits(logits: torch.Tensor, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
+    """(choice, its log probability) from unnormalised logits, as Categorical(logits=...).sample() and log_prob draw
+    them, in a handful of kernels instead of the ~30 the distribution's normalising, softmax, multinomial and checks
+    take: the rollout's inner loop. Gumbel-max: argmax(logits + G), G = -log(-log U), is an exact draw. U is in
+    [0, 1), so U = 0 gives G = -inf, never +inf: a masked action cannot win on a lucky draw."""
+    if deterministic:
+        choice = logits.argmax(dim=-1)
+    else:
+        choice = (logits - torch.log(-torch.log(torch.rand_like(logits)))).argmax(dim=-1)
+    return choice, log_prob_of(logits, choice)
 
 
 class RunningNorm(nn.Module):
@@ -422,6 +444,11 @@ class LayoutActor(nn.Module):
     def action_distribution(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
                             goal: torch.Tensor | None = None, groups=None) -> Categorical:
         """The actions of flat rows whose features are `features`, under `goal` where the actor has goals."""
+        return Categorical(logits=self.action_logits(features, layout, mask, goal, groups))
+
+    def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
+                      goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
+        """action_distribution's masked logits, unnormalised (for sample_logits)."""
         if self.goal_embedding is not None and goal is not None:
             features = features + self.goal_embedding(goal.reshape(-1))
 
@@ -430,13 +457,13 @@ class LayoutActor(nn.Module):
             own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
             logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
                 own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
-            return masked_distribution(logits, mask)
+            return masked_logits(logits, mask)
 
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows])
-        return masked_distribution(logits, mask)
+        return masked_logits(logits, mask)
 
     def goal_distribution(self, features: torch.Tensor) -> Categorical:
         """Which goal to pursue next, from the same features."""

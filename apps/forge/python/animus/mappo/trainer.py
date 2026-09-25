@@ -13,8 +13,8 @@ from torch import nn
 
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, per_layout, per_layout_host, skip_distribution_checks, to_device,
-                       update_norms)
+from .networks import (LayoutActor, LayoutCritic, log_prob_of, per_layout, per_layout_host, sample_logits,
+                       skip_distribution_checks, to_device, update_norms)
 from .valuenorm import ValueNorm
 
 
@@ -299,17 +299,19 @@ class _RolloutGraph:
 
         out: dict[str, torch.Tensor] = {}
         goal_t = None
+        # The draws as Categorical makes them, in a few kernels each (sample_logits): they were two thirds of the
+        # decision's kernels.
         if trainer.goal_count:
-            distribution = actor.goal_distribution(features)
-            sampled = distribution.logits.argmax(dim=-1) if self.deterministic else distribution.sample()
+            goal_logits = actor.goal_head(features)
+            sampled, _ = sample_logits(goal_logits, self.deterministic)
             goal_t = torch.where(inputs["chosen"].reshape(rows), sampled, inputs["goal"].reshape(rows))
             out["goal"] = goal_t.reshape(envs, agents)
-            out["goal_log_prob"] = distribution.log_prob(goal_t).reshape(envs, agents)
+            out["goal_log_prob"] = log_prob_of(goal_logits, goal_t).reshape(envs, agents)
 
-        dist = actor.action_distribution(features, layout_t, mask_t, goal_t, None)
-        actions = dist.logits.argmax(dim=-1) if self.deterministic else dist.sample()
+        logits = actor.action_logits(features, layout_t, mask_t, goal_t, None)
+        actions, log_probs = sample_logits(logits, self.deterministic)
         out["actions"] = actions.reshape(envs, agents)
-        out["log_probs"] = dist.log_prob(actions).reshape(envs, agents)
+        out["log_probs"] = log_probs.reshape(envs, agents)
         if trainer.foresight_outputs:
             out["foresight"] = actor.foresight(features).reshape(envs, agents, trainer.foresight_outputs)
         if memory is not None:

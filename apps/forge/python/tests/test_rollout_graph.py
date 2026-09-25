@@ -90,3 +90,25 @@ def test_sampled_actions_respect_the_mask():
         assert np.isfinite(log_probs).all() and (log_probs <= 0).all() and np.isfinite(values).all()
         seen.update(actions.ravel().tolist())
     assert len(seen) > 1   # fresh draws each replay, not the capture's
+
+
+def test_the_lean_sampler_draws_what_categorical_draws():
+    """sample_logits (Gumbel-max) against Categorical on the same masked logits: the same log probabilities, the
+    same argmax, draws that follow the distribution, and never a masked action."""
+    from torch.distributions import Categorical
+
+    from animus.mappo.networks import MASKED_LOGIT, log_prob_of, sample_logits
+
+    torch.manual_seed(0)
+    logits = torch.randn(4, 6, device="cuda") * 2.0
+    logits[:, 4:] = MASKED_LOGIT
+    reference = Categorical(logits=logits)
+    choice, log_probs = sample_logits(logits, deterministic=True)
+    torch.testing.assert_close(choice, reference.logits.argmax(-1))
+    torch.testing.assert_close(log_probs, reference.log_prob(choice))
+
+    draws = torch.stack([sample_logits(logits)[0] for _ in range(20000)])
+    assert (draws < 4).all()
+    frequencies = torch.stack([(draws == action).float().mean(0) for action in range(6)], dim=-1)
+    torch.testing.assert_close(frequencies, reference.probs, atol=0.015, rtol=0.0)
+    torch.testing.assert_close(log_prob_of(logits, draws[0]), reference.log_prob(draws[0]))
