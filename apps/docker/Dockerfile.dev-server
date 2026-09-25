@@ -55,6 +55,14 @@ RUN apt-get update \
         libmysql++-dev \
         ccache \
         tzdata \
+        # HIP, for compiling the sim's device kernels against the AMD card (gfx1100 here). Ubuntu's own
+        # packages, so there is no third-party apt repo to trust or key to rotate; the learner's torch
+        # carries its own newer ROCm runtime in its venv and the two do not meet in one process.
+        # Compile with --offload-arch=native: this hipcc embeds code for every card it can see, and an
+        # explicit --offload-arch=gfx1100 produces a binary whose kernels fail to load ("invalid device
+        # function"), so the container needs /dev/kfd and /dev/dri at build time as well as at run time.
+        hipcc \
+        libamdhip64-dev \
         # Utility for column command used by dashboard
         util-linux \
         # Certificates for downloading client data

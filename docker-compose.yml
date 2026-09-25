@@ -40,6 +40,16 @@ x-dev-image: &dev-image
     dockerfile: ./apps/docker/Dockerfile.dev-server
     args: *build-args
     target: dev
+  # The GPU (AMD/ROCm, gfx1100 here), for the learner to train on and for hipcc to compile against: it
+  # picks its target from the cards it can see, so the compiler needs them as much as the runtime does.
+  # /dev/kfd and /dev/dri/renderD* are world-accessible on this machine, so no group_add is needed; on a
+  # host where they are not, add the ids from `getent group render video`. An NVIDIA card wants the
+  # deploy/reservations block instead (commented on ac-worldserver below).
+  devices:
+    - /dev/kfd
+    - /dev/dri
+  security_opt:
+    - seccomp=unconfined
 
 services:
   ac-database:
@@ -121,9 +131,11 @@ services:
       <<: *database-info
       AC_DATA_DIR: "/azerothcore/env/dist/data"
       AC_LOGS_DIR: "/azerothcore/env/dist/logs"
-      # torch wheel index for the first-start venv. Empty = PyPI (NVIDIA CUDA builds on Linux). AMD GPUs:
-      # https://download.pytorch.org/whl/rocm6.4, CPU only: https://download.pytorch.org/whl/cpu
-      ANIMUS_TORCH_INDEX_URL: ${ANIMUS_TORCH_INDEX_URL:-}
+      # torch wheel index for the first-start venv. This machine's card is AMD, so the default is the
+      # ROCm index and a rebuilt venv keeps the GPU; without it pip takes PyPI, which is CUDA on Linux
+      # and would leave the learner on the CPU. Override for another card: PyPI is "", CPU only is
+      # https://download.pytorch.org/whl/cpu
+      ANIMUS_TORCH_INDEX_URL: ${ANIMUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/rocm6.4}
       # Where training writes runs/ and layouts/ (AnimusForge.OutputDir): data, kept out of the source tree.
       AC_ANIMUS_FORGE_OUTPUT_DIR: ${ANIMUS_FORGE_OUTPUT_DIR:-/azerothcore/var/animus-forge}
     ports:
@@ -140,9 +152,10 @@ services:
       - ${DOCKER_VOL_DATA:-ac-animus-forge-client-data}:/azerothcore/env/dist/data:ro
     # PyTorch uses shared memory between processes.
     shm_size: 8gb
-    # GPU for the learner. Pick the block for your card, here or in docker-compose.override.yml.
+    # The AMD GPU is passed in by the shared dev-image anchor above, which both this service and
+    # ac-dev-server use. For an NVIDIA card instead (needs the NVIDIA Container Toolkit), drop the
+    # anchor's devices block and put this here or in docker-compose.override.yml:
     #
-    # NVIDIA (needs the NVIDIA Container Toolkit):
     #   deploy:
     #     resources:
     #       reservations:
@@ -150,16 +163,6 @@ services:
     #           - driver: nvidia
     #             count: all
     #             capabilities: [gpu]
-    #
-    # AMD (ROCm; set ANIMUS_TORCH_INDEX_URL to a ROCm wheel index; group ids from `getent group render video`):
-    #   devices:
-    #     - /dev/kfd
-    #     - /dev/dri
-    #   group_add:
-    #     - "<render gid>"
-    #     - "<video gid>"
-    #   security_opt:
-    #     - seccomp=unconfined
     depends_on:
       ac-database:
         condition: service_healthy
