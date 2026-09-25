@@ -103,13 +103,6 @@ foreach(APPLICATION_NAME ${APPLICATIONS_BUILD_LIST})
     # Exclude
     ${SOURCE_APP_PATH}/PrecompiledHeaders)
 
-  # Forge: ForgeMain.cpp provides main() for the sim host. Keep upstream's Main.cpp out
-  # of the build so it can churn freely upstream without ever conflicting on rebase --
-  # it stays on disk, unmodified and uncompiled.
-  if (${APPLICATION_NAME} MATCHES "worldserver")
-    list(REMOVE_ITEM APP_PRIVATE_SOURCES "${SOURCE_APP_PATH}/Main.cpp")
-  endif()
-
   if (WIN32)
     list(APPEND APP_PRIVATE_SOURCES ${winDebugging})
 

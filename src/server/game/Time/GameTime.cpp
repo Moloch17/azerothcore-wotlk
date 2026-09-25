@@ -67,4 +67,67 @@ namespace GameTime
         GameTimeSystemPoint = system_clock::now();
         GameTimeSteadyPoint = steady_clock::now();
     }
+
+    /*
+     * The sim clock.
+     *
+     * UpdateGameTimers() refills the per-tick time cache from steady_clock and system_clock, so
+     * cooldowns, GCD, proc cooldowns, respawns and instance resets all run on the wall clock while
+     * cast bars, auras and swing timers run on the tick diff. At sim speed that mismatch is
+     * enormous. The sim host's World::Update calls this instead, advancing the same four cached
+     * values by exactly the fixed tick diff, so every GameTime reader moves on game time.
+     * UpdateGameTimers() keeps its wall-clock semantics for its unit tests and for a real-time
+     * (playtest) run.
+     *
+     * getMSTime() deliberately stays on the wall clock: database timing, logging, load measurements
+     * and the throughput report in ForgeUpdateLoop all need real time.
+     *
+     * Gameplay sites that read the raw clock instead of GameTime were converted in place so they
+     * follow the sim clock too. Recorded here so the fork's divergence lives in one place:
+     *
+     *   Entities/Player/Player.cpp       HasSpellCooldown, HasSpellItemCooldown,
+     *                                    GetSpellCooldownDelay: getMSTime() -> GetGameTimeMS()
+     *   Entities/Player/Player.cpp       item proc cooldown: steady_clock::now() -> GameTime::Now()
+     *   Entities/Unit/CharmInfo.cpp      GlobalCooldownMgr::GetGlobalCooldown: getMSTime() -> GetGameTimeMS(),
+     *                                    and the time left through wrap-safe getMSTimeDiff
+     *   Entities/Unit/Unit.cpp           GetProcAurasTriggeredOnEvent: steady_clock::now() -> GameTime::Now()
+     *   Spells/Auras/SpellAuras.cpp      Aura::ResetProcCooldown: steady_clock::now() -> GameTime::Now()
+     *   scripts/Spells/spell_paladin.cpp Sacred Shield internal cooldown: steady_clock::now() -> GameTime::Now()
+     *   scripts/.../boss_xt002.cpp       getMSTime() -> GetGameTimeMS() (x2)
+     *   scripts/.../boss_jeklik.cpp      _scheduler.Update() -> _scheduler.Update(diff)
+     *   scripts/.../zone_howling_fjord   _scheduler.Update() -> _scheduler.Update(diff)
+     *   common/Utilities/TaskScheduler   GetNextGroupOccurrence: clock_t::now() -> _now
+     *
+     * Deliberately left on the wall clock -- dropped from the sim tick, or client-socket only:
+     * WorldSession time sync, MovementHandler client sync, LFGMgr, ArenaSpectator, WorldState,
+     * GameEventMgr, Battlefield, Transport first-departure sync (continents are skipped),
+     * scourge_invasion, midsummer, cs_mmaps, UpdateTime.
+     *
+     * No clock budget: the game clock is 64-bit milliseconds, and the absolute timestamps compared
+     * against it (player and creature spell cooldowns including infinityCooldownDelay "infinite"
+     * ones, creature school lockouts, gameobject cooldowns, Sanctuary, SotA demolishers, the Eclipse
+     * and turkey marker script timers) are uint64. Relative timers compared through
+     * getMSTimeDiff stay uint32 and are wrap-safe. Battleground queue join/invite times and the
+     * uint32 fields sent to clients are left as they are: the sim runs neither queues nor clients.
+     */
+    void AdvanceGameTimers(Milliseconds diff)
+    {
+        // Seed once from the wall clock so absolute times loaded from the database -- respawn
+        // times, instance saves -- are measured against the real date the sim started on.
+        static bool seeded = false;
+        if (!seeded)
+        {
+            GameMSTime = GetTimeMS();
+            GameTimeSystemPoint = system_clock::now();
+            GameTimeSteadyPoint = steady_clock::now();
+            seeded = true;
+        }
+
+        GameMSTime += diff;
+        GameTimeSystemPoint += diff;
+        GameTimeSteadyPoint += diff;
+
+        // Derive whole seconds from the system point so sub-second remainders carry across ticks.
+        GameTime = duration_cast<Seconds>(GameTimeSystemPoint.time_since_epoch());
+    }
 }

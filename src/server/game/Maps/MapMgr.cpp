@@ -35,6 +35,39 @@
 #include "Transport.h"
 #include "World.h"
 #include "WorldPacket.h"
+#include <atomic>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
+namespace
+{
+    /// How often a heap trim may run after instances were destroyed.
+    constexpr uint32 ForgeTrimInterval = 10 * IN_MILLISECONDS;
+
+    /// A non-instanceable base map (a continent) is skippable while empty. A MapInstanced is a
+    /// *container* keyed by map id and never has players itself -- they are in its child instances.
+    /// Skipping containers on !HavePlayers() would skip every instance on the server and, worse,
+    /// stop CanUnload() running, so finished instances would never be destroyed. Containers are
+    /// never skipped.
+    inline bool ForgeMapIsIdle(Map const* map)
+    {
+        return !map->Instanceable() && !map->HavePlayers();
+    }
+
+    /// Stock's round-robin selector: which map kind gets a full update on this step.
+    /// 0 = continents, 1 = battlegrounds/arenas, 2 = dungeons, 3 = none.
+    inline bool ForgeMapMatchesStep(Map const* map, uint8 step)
+    {
+        switch (step)
+        {
+            case 0:  return !map->IsBattlegroundOrArena() && !map->IsDungeon();
+            case 1:  return map->IsBattlegroundOrArena();
+            case 2:  return map->IsDungeon();
+            default: return false;
+        }
+    }
+}
 
 MapMgr::MapMgr()
 {
@@ -248,37 +281,40 @@ Map::EnterState MapMgr::PlayerCannotEnter(uint32 mapid, Player* player, bool log
     return player->Satisfy(sObjectMgr->GetAccessRequirement(mapid, targetDifficulty), mapid, true) ? Map::CAN_ENTER : Map::CANNOT_ENTER_UNSPECIFIED_REASON;
 }
 
+/// The sim host's map tick.
+///
+/// Skips maps that have nobody on them: the sim still creates the continent maps at startup, and
+/// they would otherwise tick forever with no players.
+///
+/// The stock 4-step round robin (mapUpdateStep 0-3 with the `full` flag) is reproduced exactly.
+/// It is what decides whether a map gets the accumulated timer or a session-only update, so bots
+/// observe the same update cadence they would on a stock server.
+///
+/// Destroying an instance frees tens of megabytes of small allocations, and the allocator keeps
+/// that in the process arenas rather than returning it: a sim that builds and drops pools of a
+/// hundred instances (a scenario change, `forge bench`) reads as tens of gigabytes still held. So
+/// a destroyed instance asks for a trim, at most one every ForgeTrimInterval, on the world thread
+/// with no map updating.
 void MapMgr::Update(uint32 diff)
 {
-    // Forge: the sim host runs its own map tick (src/server/game/Forge/ForgeMapMgr.cpp).
-    // Everything below is intentionally dead and kept verbatim, so upstream edits to this
-    // function merge cleanly on rebase and are simply never executed.
-    return ForgeUpdate(diff);
-
     for (uint8 i = 0; i < 4; ++i)
         i_timer[i].Update(diff);
 
-    // pussywizard: lfg compatibles update, schedule before maps so it is processed from the very beginning
-    //if (mapUpdateStep == 0)
-    {
-        if (m_updater.activated())
-        {
-            m_updater.schedule_lfg_update(diff);
-        }
-        else
-        {
-            sLFGMgr->Update(diff, 1);
-        }
-    }
+    // Stock schedules an LFG update here. The sim has no dungeon finder, so it is dropped.
 
-    MapMapType::iterator iter = i_maps.begin();
-    for (; iter != i_maps.end(); ++iter)
+    for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
     {
-        bool full = mapUpdateStep < 3 && ((mapUpdateStep == 0 && !iter->second->IsBattlegroundOrArena() && !iter->second->IsDungeon()) || (mapUpdateStep == 1 && iter->second->IsBattlegroundOrArena()) || (mapUpdateStep == 2 && iter->second->IsDungeon()));
+        Map* map = iter->second;
+
+        if (ForgeMapIsIdle(map))
+            continue;
+
+        bool const full = mapUpdateStep < 3 && ForgeMapMatchesStep(map, mapUpdateStep);
+
         if (m_updater.activated())
-            m_updater.schedule_update(*iter->second, uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
+            m_updater.schedule_update(*map, uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
         else
-            iter->second->Update(uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
+            map->Update(uint32(full ? i_timer[mapUpdateStep].GetCurrent() : 0), diff);
     }
 
     if (m_updater.activated())
@@ -286,11 +322,15 @@ void MapMgr::Update(uint32 diff)
 
     if (mapUpdateStep < 3)
     {
-        for (iter = i_maps.begin(); iter != i_maps.end(); ++iter)
+        for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
         {
-            bool full = ((mapUpdateStep == 0 && !iter->second->IsBattlegroundOrArena() && !iter->second->IsDungeon()) || (mapUpdateStep == 1 && iter->second->IsBattlegroundOrArena()) || (mapUpdateStep == 2 && iter->second->IsDungeon()));
-            if (full)
-                iter->second->DelayedUpdate(uint32(i_timer[mapUpdateStep].GetCurrent()));
+            Map* map = iter->second;
+
+            if (ForgeMapIsIdle(map))
+                continue;
+
+            if (ForgeMapMatchesStep(map, mapUpdateStep))
+                map->DelayedUpdate(uint32(i_timer[mapUpdateStep].GetCurrent()));
         }
 
         i_timer[mapUpdateStep].SetCurrent(0);
@@ -302,6 +342,27 @@ void MapMgr::Update(uint32 diff)
         mapUpdateStep = 0;
         i_timer[3].SetCurrent(0);
     }
+
+    // After the updaters are done and before the next tick schedules any: no map is being updated here.
+    ForgeTrimHeap(diff);
+}
+
+void MapMgr::NoteInstanceDestroyed()
+{
+    _destroyedInstances.fetch_add(1);
+}
+
+/// Give the heap freed by destroyed instances back to the OS.
+void MapMgr::ForgeTrimHeap(uint32 diff)
+{
+    _trimCountdown = diff < _trimCountdown ? _trimCountdown - diff : 0;
+    if (_trimCountdown || !_destroyedInstances.exchange(0))
+        return;
+
+    _trimCountdown = ForgeTrimInterval;
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }
 
 void MapMgr::DoDelayedMovesAndRemoves()

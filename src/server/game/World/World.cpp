@@ -1115,28 +1115,75 @@ void World::DetectDBCLang()
     LOG_INFO("server.loading", " ");
 }
 
-/// Update the World !
+/// Update the World -- the sim host's world tick.
+///
+/// Relative to upstream's World::Update this drops, and why:
+///   - sMetric->Update(), METRIC_*   -- Metric is never initialised
+///   - sToCloud9Sidecar block        -- single process, never clustered
+///   - sWorldUpdateTime Update/Record
+///                                   -- percentile bookkeeping only TC9Sidecar reads, plus
+///                                      per-tick slow-update logging
+///   - sWorldSessionMgr->UpdateSessions
+///                                   -- the host has no listener, so no session is ever registered;
+///                                      bot sessions stay out of WorldSessionMgr because a socketless
+///                                      session is deleted (and its player saved) there. Bots are
+///                                      driven by Map::Update through MapSessionFilter instead
+///   - DynamicVisibilityMgr::Update  -- see below
+///   - sAuctionMgr, sLFGMgr (x2), sOutdoorPvPMgr, sWorldState, sBattlefieldMgr
+///                                   -- ungated every-tick calls the sim has had no use for so far.
+///                                      They come back with the in-memory persistence work.
+///   - WUPDATE_5_SECS (expired ban delete), WUPDATE_WHO_LIST, WUPDATE_UPTIME, WUPDATE_CLEANDB,
+///     WUPDATE_AUTOBROADCAST         -- these advance on our fixed diff, so at 50 ms/tick the
+///                                      5-second ones fire every 100 ticks: hundreds of DB
+///                                      statements per wall-second at sim speed
+///   - quest/BG/calendar/guild-cap resets, mail expiry
+///                                   -- wall-clock deadlines, so nearly free either way; dropped
+///                                      for surface area rather than speed
+///   - WUPDATE_EVENTS                -- sGameEventMgr changes which creatures exist; a content
+///                                      decision, the director drives events itself
+///
+/// Fixed visibility: DynamicVisibilityMgr::visibilitySettingsIndex is a static initialised to 0
+/// and only ever rises once session count reaches 500. With bots that can never leave tier 0,
+/// *not* calling Update() pins exactly the settings a small realm would use -- 300 ms visibility
+/// notify, 150 ms AI notify, 1.0 required move distance squared.
 void World::Update(uint32 diff)
 {
-    // Forge: the sim host runs its own tick (src/server/game/Forge/ForgeWorld.cpp). Everything
-    // below is intentionally dead and kept verbatim, so upstream edits to this function merge
-    // cleanly on rebase and are simply never executed.
-    return ForgeUpdate(diff);
+    ///- Update the game time and check for shutdown time. This is stock _UpdateGameTime() with one
+    /// change: the clock advances by the fixed tick diff (the sim clock) instead of being re-read
+    /// from the wall clock, so every GameTime reader -- cooldowns, GCD, procs, respawns -- moves on
+    /// game time. See GameTime::AdvanceGameTimers.
+    Seconds lastGameTime = GameTime::GetGameTime();
+    GameTime::AdvanceGameTimers(Milliseconds(diff));
 
-    METRIC_TIMER("world_update_time_total");
+    Seconds elapsed = GameTime::GetGameTime() - lastGameTime;
 
-    ///- Update the game time and check for shutdown time
-    _UpdateGameTime();
-    Seconds currentGameTime = GameTime::GetGameTime();
+    ///- if there is a shutdown timer
+    if (!IsStopped() && _shutdownTimer > 0 && elapsed > 0s)
+    {
+        ///- ... and it is overdue, stop the world (set m_stopEvent)
+        if (_shutdownTimer <= elapsed.count())
+        {
+            ///- ... unless a Wintergrasp battle is running and deferral is enabled, in which case the
+            ///  shutdown/restart is pushed past the end of the current battle and the world keeps running
+            if (!RescheduleShutdownForWintergrasp())
+            {
+                if (!(_shutdownMask & SHUTDOWN_MASK_IDLE) || sWorldSessionMgr->GetActiveAndQueuedSessionCount() == 0)
+                    _stopEvent = true;                     // exist code already set
+                else
+                    _shutdownTimer = 1;                    // minimum timer value to wait idle state
+            }
+        }
+        ///- ... else decrease it and if necessary display a shutdown countdown to the users
+        else
+        {
+            _shutdownTimer -= elapsed.count();
 
-    sWorldUpdateTime.UpdateWithDiff(diff);
+            ShutdownMsg();
+        }
+    }
 
-    // Record update if recording set in log and diff is greater then minimum set in log
-    sWorldUpdateTime.RecordUpdateTime(GameTime::GetGameTimeMS(), diff, sWorldSessionMgr->GetActiveSessionCount());
-
-    DynamicVisibilityMgr::Update(sWorldSessionMgr->GetActiveSessionCount());
-
-    ///- Update the different timers
+    ///- Advance the interval timers. Only WUPDATE_PINGDB is acted on below, but they are all
+    /// stepped so anything that reads one sees a sane value.
     for (int i = 0; i < WUPDATE_COUNT; ++i)
     {
         if (_timers[i].GetCurrent() >= 0)
@@ -1145,231 +1192,35 @@ void World::Update(uint32 diff)
             _timers[i].SetCurrent(0);
     }
 
-    // pussywizard: our speed up and functionality
-    if (_timers[WUPDATE_5_SECS].Passed())
-    {
-        _timers[WUPDATE_5_SECS].Reset();
+    ///- The simulation itself.
+    sMapMgr->Update(diff);
 
-        // moved here from HandleCharEnumOpcode
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_EXPIRED_BANS);
-        CharacterDatabase.Execute(stmt);
-    }
+    ///- Battlegrounds are instances the sim will run.
+    sBattlegroundMgr->Update(diff);
 
-    ///- Update Who List Cache
-    if (_timers[WUPDATE_WHO_LIST].Passed())
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update who list"));
-        _timers[WUPDATE_WHO_LIST].Reset();
-        sWhoListCacheMgr->Update();
-    }
+    ///- Complete async queries. Without this the callback queue grows without bound and
+    /// character loads never finish.
+    ProcessQueryCallbacks();
 
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Check quest reset times"));
+    ///- Instance reset bookkeeping.
+    sInstanceSaveMgr->Update();
 
-        /// Handle daily quests reset time
-        if (currentGameTime > _nextDailyQuestReset)
-        {
-            ResetDailyQuests();
-        }
+    ///- Console commands (ForgeMain's CLI thread queues them). Run before the module's hook, so a
+    /// command the module defers is applied on this same tick.
+    ProcessCliCommands();
 
-        /// Handle weekly quests reset time
-        if (currentGameTime > _nextWeeklyQuestReset)
-        {
-            ResetWeeklyQuests();
-        }
+    ///- Where the bot orchestration module hooks in.
+    sScriptMgr->OnWorldUpdate(diff);
 
-        /// Handle monthly quests reset time
-        if (currentGameTime > _nextMonthlyQuestReset)
-        {
-            ResetMonthlyQuests();
-        }
-    }
-
-    if (currentGameTime > _nextRandomBGReset)
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Reset random BG"));
-        ResetRandomBG();
-    }
-
-    if (currentGameTime > _nextCalendarOldEventsDeletionTime)
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Delete old calendar events"));
-        CalendarDeleteOldEvents();
-    }
-
-    if (currentGameTime > _nextGuildReset)
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Reset guild cap"));
-        ResetGuildCap();
-    }
-
-    {
-        // pussywizard: handle expired auctions, auctions expired when realm was offline are also handled here (not during loading when many required things aren't loaded yet)
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update expired auctions"));
-        sAuctionMgr->Update(diff);
-    }
-
-    if (currentGameTime > _mail_expire_check_timer)
-    {
-        sMailMgr->ReturnOrDeleteOldMails(true);
-        _mail_expire_check_timer = currentGameTime + 6h;
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update sessions"));
-        sWorldSessionMgr->UpdateSessions(diff);
-    }
-
-    /// <li> Clean logs table
-    if (getIntConfig(CONFIG_LOGDB_CLEARTIME) > 0) // if not enabled, ignore the timer
-    {
-        if (_timers[WUPDATE_CLEANDB].Passed())
-        {
-            METRIC_TIMER("world_update_time", METRIC_TAG("type", "Clean logs table"));
-
-            _timers[WUPDATE_CLEANDB].Reset();
-
-            LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_DEL_OLD_LOGS);
-            stmt->SetData(0, getIntConfig(CONFIG_LOGDB_CLEARTIME));
-            stmt->SetData(1, uint32(currentGameTime.count()));
-            LoginDatabase.Execute(stmt);
-        }
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update LFG 0"));
-        sLFGMgr->Update(diff, 0); // pussywizard: remove obsolete stuff before finding compatibility during map update
-    }
-
-    {
-        ///- Update objects when the timer has passed (maps, transport, creatures, ...)
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update maps"));
-        sMapMgr->Update(diff);
-    }
-
-    if (getBoolConfig(CONFIG_AUTOBROADCAST))
-    {
-        if (_timers[WUPDATE_AUTOBROADCAST].Passed())
-        {
-            METRIC_TIMER("world_update_time", METRIC_TAG("type", "Send autobroadcast"));
-            _timers[WUPDATE_AUTOBROADCAST].Reset();
-            sAutobroadcastMgr->SendAutobroadcasts();
-        }
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update battlegrounds"));
-        sBattlegroundMgr->Update(diff);
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update outdoor pvp"));
-        sOutdoorPvPMgr->Update(diff);
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update worldstate"));
-        sWorldState->Update(diff);
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update battlefields"));
-        sBattlefieldMgr->Update(diff);
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update LFG 2"));
-        sLFGMgr->Update(diff, 2); // pussywizard: handle created proposals
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Process query callbacks"));
-        // execute callbacks from sql queries that were queued recently
-        ProcessQueryCallbacks();
-    }
-
-    /// <li> Update uptime table
-    if (_timers[WUPDATE_UPTIME].Passed())
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update uptime"));
-
-        _timers[WUPDATE_UPTIME].Reset();
-
-        LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_UPTIME_PLAYERS);
-        stmt->SetData(0, uint32(GameTime::GetUptime().count()));
-        stmt->SetData(1, uint16(sWorldSessionMgr->GetMaxPlayerCount()));
-        stmt->SetData(2, realm.Id.Realm);
-        stmt->SetData(3, uint32(GameTime::GetStartTime().count()));
-        LoginDatabase.Execute(stmt);
-
-        // Re-assert this realm as online in case the offline flag was set externally (e.g. an authserver restart).
-        LoginDatabasePreparedStatement* onlineStmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_REALM_ONLINE);
-        onlineStmt->SetData(0, uint8(REALM_FLAG_OFFLINE));
-        onlineStmt->SetData(1, realm.Id.Realm);
-        LoginDatabase.Execute(onlineStmt);
-    }
-
-    ///- Process Game events when necessary
-    if (_timers[WUPDATE_EVENTS].Passed())
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update game events"));
-        _timers[WUPDATE_EVENTS].Reset();                   // to give time for Update() to be processed
-        uint32 nextGameEvent = sGameEventMgr->Update();
-        _timers[WUPDATE_EVENTS].SetInterval(nextGameEvent);
-        _timers[WUPDATE_EVENTS].Reset();
-    }
-
-    ///- Ping to keep MySQL connections alive
+    ///- Ping to keep MySQL connections alive. Kept because a long run would otherwise sit idle
+    /// past the server's wait_timeout and lose its pools.
     if (_timers[WUPDATE_PINGDB].Passed())
     {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Ping MySQL"));
         _timers[WUPDATE_PINGDB].Reset();
         LOG_DEBUG("sql.driver", "Ping MySQL to keep connection alive");
         CharacterDatabase.KeepAlive();
         LoginDatabase.KeepAlive();
         WorldDatabase.KeepAlive();
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update instance reset times"));
-        // update the instance reset times
-        sInstanceSaveMgr->Update();
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Process cli commands"));
-        // And last, but not least handle the issued cli commands
-        ProcessCliCommands();
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update world scripts"));
-        sScriptMgr->OnWorldUpdate(diff);
-    }
-
-    if (sToCloud9Sidecar->ClusterModeEnabled())
-    {
-        {
-            METRIC_TIMER("world_update_time", METRIC_TAG("type", "Process TC9 async tasks"));
-            sToCloud9Sidecar->ProcessAsyncTasks();
-        }
-
-        {
-            METRIC_TIMER("world_update_time", METRIC_TAG("type", "Process TC9 hooks"));
-            sToCloud9Sidecar->ProcessHooks();
-        }
-
-        {
-            METRIC_TIMER("world_update_time", METRIC_TAG("type", "Process TC9 gRPC and HTTP requests"));
-            sToCloud9Sidecar->ProcessGrpcOrHttpRequests();
-        }
-    }
-
-    {
-        METRIC_TIMER("world_update_time", METRIC_TAG("type", "Update metrics"));
-        // Stats logger update
-        sMetric->Update();
-        METRIC_VALUE("update_time_diff", diff);
     }
 }
 
@@ -1478,42 +1329,6 @@ namespace Acore
     };
 }                                                           // namespace Acore
 
-/// Update the game time
-void World::_UpdateGameTime()
-{
-    ///- update the time
-    Seconds lastGameTime = GameTime::GetGameTime();
-    GameTime::UpdateGameTimers();
-
-    Seconds elapsed = GameTime::GetGameTime() - lastGameTime;
-
-    ///- if there is a shutdown timer
-    if (!IsStopped() && _shutdownTimer > 0 && elapsed > 0s)
-    {
-        ///- ... and it is overdue, stop the world (set m_stopEvent)
-        if (_shutdownTimer <= elapsed.count())
-        {
-            ///- ... unless a Wintergrasp battle is running and deferral is enabled, in which case the
-            ///  shutdown/restart is pushed past the end of the current battle and the world keeps running
-            if (!RescheduleShutdownForWintergrasp())
-            {
-                if (!(_shutdownMask & SHUTDOWN_MASK_IDLE) || sWorldSessionMgr->GetActiveAndQueuedSessionCount() == 0)
-                    _stopEvent = true;                     // exist code already set
-                else
-                    _shutdownTimer = 1;                    // minimum timer value to wait idle state
-            }
-        }
-        ///- ... else decrease it and if necessary display a shutdown countdown to the users
-        else
-        {
-            _shutdownTimer -= elapsed.count();
-
-            ShutdownMsg();
-        }
-    }
-}
-
-/// Defer a pending shutdown/restart if a Wintergrasp battle is currently running.
 /// Returns true when the shutdown timer was extended (world should keep running).
 bool World::RescheduleShutdownForWintergrasp()
 {

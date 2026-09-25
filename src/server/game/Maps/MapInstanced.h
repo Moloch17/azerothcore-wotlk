@@ -50,9 +50,6 @@ public:
     void InitVisibilityDistance() override;
 
 private:
-    // Forge: sim tick, replaces Update(). Defined in src/server/game/Forge/ForgeMapMgr.cpp
-    void ForgeUpdate(const uint32 t, const uint32 s_diff);
-
     InstanceMap* CreateInstance(uint32 InstanceId, InstanceSave* save, Difficulty difficulty, Player* player);
     BattlegroundMap* CreateBattleground(uint32 InstanceId, Battleground* bg);
 

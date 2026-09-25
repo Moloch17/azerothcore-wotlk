@@ -25,10 +25,7 @@
  * by in-process sessionless bots. It is unconditional -- there is no flag, config
  * switch or fallback to the stock startup path.
  *
- * This file defines main() directly. Upstream's Main.cpp is dropped from the worldserver
- * source list in src/server/apps/CMakeLists.txt, so it stays on disk untouched and
- * uncompiled: upstream can keep adding startup steps to it and a rebase never conflicts,
- * because this fork carries no diff inside it.
+ * This file defines main() directly; upstream's Main.cpp is gone from this fork.
  *
  * Removed relative to the stock worldserver main, and why:
  *   - all Windows/service/winmm logic        -- Linux-only sim host

@@ -1705,29 +1705,30 @@ void Map::SendRemoveTransports(Player* player)
     player->SendDirectMessage(&packet);
 }
 
+/// Object updates without packets.
+///
+/// Stock walks every object whose update fields changed this tick and, for each one, builds a
+/// values-update block for itself and for every player that can see it, then assembles and sends
+/// one packet per player. The sim host has no listener, so no session ever has a socket and every
+/// one of those blocks is thrown away inside WorldSession::SendPacket. With bots all visible to
+/// each other and health/power changing on every regen tick, that is roughly changed objects x
+/// visible players of wasted work per tick.
+///
+/// The only state the builders change is the object's update bookkeeping: every BuildUpdate
+/// override (WorldObject, Item, MotionTransport, StaticTransport) ends in ClearUpdateMask. So this
+/// drains the queue and clears each mask directly, which keeps field-change tracking correct --
+/// the next change re-queues the object exactly as before -- without building anything.
+///
+/// Other packet builders skipped for the same reason carry a "Forge: no client sockets" comment.
 void Map::SendObjectUpdates()
 {
-    // Forge: no client sockets exist in the sim host, so no update block is ever built
-    // (src/server/game/Forge/ForgeMap.cpp). The body below is intentionally dead.
-    return ForgeSendObjectUpdates();
-
-    UpdateDataMapType update_players;
-
     while (!_updateObjects.empty())
     {
         Object* obj = *_updateObjects.begin();
         ASSERT(obj->IsInWorld());
 
         _updateObjects.erase(_updateObjects.begin());
-        obj->BuildUpdate(update_players);
-    }
-
-    WorldPacket packet;                                     // here we allocate a std::vector with a size of 0x10000
-    for (UpdateDataMapType::iterator iter = update_players.begin(); iter != update_players.end(); ++iter)
-    {
-        iter->second.BuildPacket(packet);
-        iter->first->SendDirectMessage(&packet);
-        packet.clear();                                     // clean the string
+        obj->ClearUpdateMask(false);
     }
 }
 

@@ -41,30 +41,33 @@ void MapInstanced::InitVisibilityDistance()
     }
 }
 
+/// The sim host's instance-container tick. CanUnload() runs every tick regardless of occupancy:
+/// it is what decrements the unload timer, and skipping it would leak every instance the sim ever
+/// creates. Only a child's Update() is skipped while it is empty.
 void MapInstanced::Update(const uint32 t, const uint32 s_diff, bool /*thread*/)
 {
-    // Forge: the sim host runs its own instance tick (src/server/game/Forge/ForgeMapMgr.cpp).
-    // Everything below is intentionally dead and kept verbatim, so upstream edits to this
-    // function merge cleanly on rebase and are simply never executed.
-    return ForgeUpdate(t, s_diff);
-
     // take care of loaded GridMaps (when unused, unload it!)
     Map::Update(t, s_diff, false);
 
-    // update the instanced maps
     InstancedMaps::iterator i = m_InstancedMaps.begin();
 
     while (i != m_InstancedMaps.end())
     {
         if (i->second->CanUnload(t))
         {
-            if (!DestroyInstance(i))                             // iterator incremented
-            {
-                //m_unloadTimer
-            }
+            if (DestroyInstance(i))                              // iterator incremented either way
+                sMapMgr->NoteInstanceDestroyed();
         }
         else
         {
+            // An empty instance still exists (it is inside its unload delay, or waiting for the
+            // bots to zone in), but nothing in it needs simulating yet.
+            if (!i->second->HavePlayers())
+            {
+                ++i;
+                continue;
+            }
+
             // update only here, because it may schedule some bad things before delete
             if (sMapMgr->GetMapUpdater()->activated())
                 sMapMgr->GetMapUpdater()->schedule_update(*i->second, t, s_diff);

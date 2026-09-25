@@ -21,6 +21,7 @@
 #include "Common.h"
 #include "Define.h"
 #include "Map.h"
+#include <atomic>
 #include "MapInstanced.h"
 #include "MapUpdater.h"
 #include "Object.h"
@@ -138,6 +139,9 @@ public:
 
     void DoDelayedMovesAndRemoves();
 
+    /// An instance was just destroyed (MapInstanced::Update, on a map thread): ask for a heap trim.
+    void NoteInstanceDestroyed();
+
     Map::EnterState PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck = false);
     void InitializeVisibilityDistanceInfo();
 
@@ -168,8 +172,12 @@ private:
     MapMgr(MapMgr const&);
     MapMgr& operator=(MapMgr const&);
 
-    // Forge: sim map tick, replaces Update(). Defined in src/server/game/Forge/ForgeMapMgr.cpp
-    void ForgeUpdate(uint32 diff);
+    /// Give the heap freed by destroyed instances back to the OS, at most once per trim interval.
+    void ForgeTrimHeap(uint32 diff);
+
+    /// Instances destroyed since the last trim, and the countdown to the next one.
+    std::atomic<uint32> _destroyedInstances{ 0 };
+    uint32 _trimCountdown{ 10 * IN_MILLISECONDS };
 
     std::mutex Lock;
     MapMapType i_maps;

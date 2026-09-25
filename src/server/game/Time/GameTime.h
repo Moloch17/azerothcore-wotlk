@@ -57,9 +57,9 @@ namespace GameTime
     /// Update all timers
     void UpdateGameTimers();
 
-    /// Forge: advance all timers by a fixed simulation step instead of reading the wall clock.
-    /// Defined in src/server/game/Forge/ForgeGameTime.cpp
-    AC_GAME_API void ForgeAdvanceGameTimers(Milliseconds diff);
+    /// The sim clock: advance all timers by a fixed simulation step instead of reading the wall
+    /// clock. Seeds itself from the wall clock on the first call.
+    void AdvanceGameTimers(Milliseconds diff);
 }
 
 #endif
