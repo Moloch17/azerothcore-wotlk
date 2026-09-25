@@ -370,6 +370,36 @@ minibatches x 2 nets x 128 steps), launch-bound: minibatches is the knob, and it
 Also measured: the real sim speaks protocol 11 with the learner (forge bench: 11,871 / 14,674 env steps/s at 128 /
 192 envs, 7 threads, 8 replicas, overlap on); the rewritten rollout loop costs nothing (A/B within 1%).
 
+## Sixth measurement, 2026-09-25: half-batch on the sim (94bd1c5fc), minibatches 4
+
+`forge bench`, stage8_duel, overlap on, 4 minibatches, with the learner (env steps/s; world / learner ms):
+
+| setting | 128 envs | 192 envs |
+| --- | --- | --- |
+| lock step, 8 minibatches (before) | 11,871 | 14,674 |
+| lock step, 7 thr, 8 replicas | 17,001 (3.2 / 3.6) | 19,507 (4.2 / 4.7) |
+| half-batch, 7 thr, 8 replicas | 17,628 (5.9 / 0.5) | 21,769 (7.4 / 0.2) |
+| half-batch, 7 thr, 16 replicas | - | **23,298** (6.5 / 0.3) |
+
+The learner's wait is gone (inference overlaps the other half's map tick); the wall is the two half map ticks,
+each as long as its slowest map. Episode statistics match lock step within noise (episodes per update 63.6 / 62.8,
+time to kill 61.3 / 62.4 s, kill rate 0.70 / 0.69, casts 30.7 / 30.9), so the halves' clocks and ticks are
+right. HalfBatch is on in the live conf (replicas 8).
+
+**Resets** (the user asked about preparing the next envs in a buffer and swapping): now 0.37-0.59 ms per decision
+on the world thread, ~4-5% of a decision. A standby set of seats per env, built ahead and swapped in at episode
+end, would save at most that; worth doing after the bigger item below. Design notes: character creation and
+placement must stay on the thread that owns the map (or the world thread); the buffer would build the next
+episode's seats during the env's own map task in the ticks before its episode ends (the end is predictable for
+timeouts, not for kills), so the swap at FinishCollect is a phase flip and a teleport rather than a build.
+
+**The bigger item: world creatures on every replica.** Non-player object update time doubles with the replica
+count (8 -> 16 replicas: 14.8 -> 29.6 ms of thread time per decision at 192 envs) while bot count is unchanged:
+each replica loads its own copy of the continent's creatures and gameobjects in the grids its envs occupy, and
+updates them every tick although phased envs never see them. Measure what share of `objects` is world spawns;
+if it is most of it, a per-stage "no world spawns" option (stages that need the world -- quests, gathering, town
+-- keep them) would cut the map tick, which is now the wall.
+
 ## Ground rules
 
 - Read `.agents/docs/cpp-guidelines.md` before C++ work; `.agents/docs/build.md` before any build.
