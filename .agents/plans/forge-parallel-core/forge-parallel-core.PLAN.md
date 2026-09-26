@@ -609,8 +609,18 @@ gameobject guids (per map); pet numbers and mail ids (mutexes); map lookups (by 
 state (per env); stage logic's clock (the env's, not wall time, so half-batch is safe); MoveBlock/Travel navmesh use
 (each map's own query); scenario teleports (NearTeleportTo only); group changes (build and disband, world thread).
 
-Open: a diagnostic logs once per battleground map that cannot unload, with who is on it; remove it once a sweep is
-clean. Async-path aborts on a sealed pool stay (unreachable so far).
+The diagnostic that names whoever keeps a battleground map from unloading found the last Warsong cause: Rebuild
+reused the env's map for a new episode whenever its id matched, so each new match's bots stood on the last match's
+map, which was then unloaded under them (222b375ca: battleground maps are never reused).
+
+**Sweep result** (forge fast 200K, every stage, 32 envs, 16 replicas, half-batch, the learner attached): stages 1-24 on
+c3455c156 and 25-32 on 222b375ca -- no crash, no failed build, no map that cannot unload, no read on the sealed pools.
+Left: ~150 "TeleportTo: invalid map (560) ... Z: -200000" (an Old Hillsbrad instance rung scatters seats where no
+ground height is found; pre-existing, a content fix). Async-path aborts on a sealed pool stay (unreachable so far).
+
+Next for Phase 1: the soak (forge fast 5M stage8_duel with eval.episodes 2048 and the baseline, one forge bench, one
+export) with the seal staged; then Forge.SealStrict 1 and the acceptance test (no DatabaseWorker threads, no 3306
+sockets, `docker compose stop ac-database` mid-run, SOAP still logs in).
 
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
