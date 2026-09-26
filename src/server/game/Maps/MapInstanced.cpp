@@ -16,6 +16,8 @@
  */
 
 #include "MapInstanced.h"
+#include <set>
+#include <mutex>
 #include "Battleground.h"
 #include "Group.h"
 #include "InstanceSaveMgr.h"
@@ -280,6 +282,27 @@ bool MapInstanced::DestroyInstance(InstancedMaps::iterator& itr)
 
     if (itr->second->HavePlayers())
     {
+        // Diagnostic: which players keep a battleground map from unloading, once per map.
+        if (BattlegroundMap* bgMap = itr->second->ToBattlegroundMap())
+        {
+            static std::mutex reportedLock;
+            static std::set<uint32> reported;
+            bool first = false;
+            {
+                std::lock_guard<std::mutex> guard(reportedLock);
+                first = reported.insert(bgMap->GetInstanceId()).second;
+            }
+            if (first)
+            {
+                std::string who;
+                for (MapReference const& ref : bgMap->GetPlayers())
+                    if (Player const* player = ref.GetSource())
+                        who += Acore::StringFormat("{}{} (bg id {}, in world {})", who.empty() ? "" : ", ",
+                            player->GetName(), player->GetBattlegroundId(), player->IsInWorld());
+                LOG_ERROR("maps", "Battleground map {} instance {} cannot unload (bg attached: {}): {}", bgMap->GetId(),
+                    bgMap->GetInstanceId(), bgMap->GetBG() != nullptr, who);
+            }
+        }
         ++itr;
         return false;
     }

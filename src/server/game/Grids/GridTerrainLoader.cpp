@@ -1,6 +1,7 @@
 #include "GridTerrainLoader.h"
 #include "IVMapMgr.h"
 #include "Map.h"
+#include "MapMgr.h"
 #include "MMapMgr.h"
 #include "ScriptMgr.h"
 #include "VMapFactory.h"
@@ -12,8 +13,14 @@ void GridTerrainLoader::LoadTerrain()
 
     if (_map->GetInstanceId() == 0)
     {
-        LoadVMap();
-        LoadMMap();
+        // While map tasks run, the tiles wait for the world thread (MapMgr::MapTasksRunning).
+        if (MapMgr::MapTasksRunning.load(std::memory_order_acquire))
+            MapMgr::DeferTileLoad(_map, _grid.GetX(), _grid.GetY());
+        else
+        {
+            LoadVMap();
+            LoadMMap();
+        }
     }
 }
 

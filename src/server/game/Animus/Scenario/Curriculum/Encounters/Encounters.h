@@ -41,6 +41,7 @@
 #include <vector>
 
 class Battleground;
+class BattlegroundMap;
 struct CreatureData;
 class Group;
 class Map;
@@ -102,6 +103,9 @@ namespace Animus::Curriculum
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
         void BeforeRebuild(Env& env) override;
+        /// The stage ending: its patches and casters go with it (as a reset clears them), or they outlive the stage on
+        /// the continent replicas, which the next stage keeps.
+        void Teardown(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
         void Update(Env& env) override;
         bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
@@ -1005,6 +1009,9 @@ namespace Animus::Curriculum
         struct EnvFlags
         {
             Battleground* Match = nullptr;             // the scripted battleground, when the arena runs one
+            /// The last match's map, detached from it and emptied as its bots are destroyed; unloaded once they are
+            /// (after the seats are rebuilt, in Build), never while a bot stands on it.
+            BattlegroundMap* EndedMap = nullptr;
             std::array<Group*, TEAM_COUNT> Groups{};    // a side is a group, so its healers can reach it
             std::array<Side, TEAM_COUNT> Sides;
             std::array<SeatFlagState, TEAM_MATCH_SEATS> Seats;
@@ -1023,6 +1030,8 @@ namespace Animus::Curriculum
         [[nodiscard]] Battleground* MatchFor(Env const& env) const override { return Match(env); }
         /// Take the match down with the episode that was it.
         void EndMatch(Env& env);
+        /// Let the ended match's map unload, once no bot stands on it.
+        void ReleaseEndedMap(Env& env);
         /// The stage ending: the match and the groups go before the seats' bots are destroyed. Left standing, the
         /// battleground kept pointers to them and its next update touched a freed player (a segfault in
         /// Battleground::_ProcessJoin -> Player::ResetAllPowers once a sweep moved past stage25_warsong).

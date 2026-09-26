@@ -578,6 +578,40 @@ blocks"; apply 2.45 ms; resets 0.78 ms on the world thread; the learner 3.1 ms. 
 **Lesson**: measure what training does, not only the bench. The bench's learner phase leaves out evaluation,
 replays, the league and the reset mix of a learning policy.
 
+## Static review of every scenario against the parallel architecture (2026-09-25, the user's request)
+
+What runs where: resets (Rebuild, Setup, Teardown, the encounters' ResetEpisode/BeforeRebuild/BeforeLevel/BeforeSeats/
+Build/Deactivate/Teardown) on the world thread between map updates; everything else an episode does -- the blocks'
+Observe/Apply, the encounters' UpdateEnemies/Update/SelectTarget/BeforeSeatAction/OnSeatAction/View/ViewDirector/
+BeforeRewards/Reward/AfterRewards/WriteState/IsTerminal/OnRecovered, the damage and heal hooks -- on the thread updating
+that env's map, concurrently with every other map (continent replicas included).
+
+Fixed:
+- RoutePlanner's navmesh queries were one global map: several replicas searched one query (segfault). Per thread.
+- Item and corpse guids come from ObjectMgr's global generators, drawn on map threads (looting, vendors, conjuring):
+  ObjectGuidGenerator::_nextGuid is atomic, and every global generator is created at startup (no lazy insert).
+- Continent replicas share the base map's static vmap tree and navmesh; a base grid created from a map task loaded
+  its tiles beside other replicas' reads. MapMgr::MapTasksRunning: tiles of grids created during map tasks are queued
+  and loaded on the world thread after the join (no locks on any read path; a new tile answers "no data" for the rest
+  of one tick).
+- Warsong (FlagEncounter): no Teardown (matches outlived their stage: segfault in Battleground::_ProcessJoin); EndMatch
+  only unlisted the match (leak; its map ran the leave path on a logging-out bot: assertion); the manager deleted a sim
+  match once empty (bots never register as its players), leaving flags.Match dangling and the map unloading around
+  live bots (13 M "TeleportTo: invalid map" lines a stage). Now: Battleground::SetSimOwned (no auto-delete, no leave
+  phase); EndMatch detaches the map, deletes the match, and unloads the map only after the old bots are destroyed.
+  Seats are never reused on a battleground map (the reuse moved a bot on the ended match's map: 86 failed builds), and
+  a failed reuse falls back to a fresh build.
+- HazardEncounter had no Teardown: its casters outlived the stage on the replicas.
+
+Verified safe: the RNG (thread_local SFMT); DifficultyLadder (a mutex); ClassAssets and every world-table cache
+(warmed before the seal, read-only after); ObjectAccessor (players added on the world thread only); creature and
+gameobject guids (per map); pet numbers and mail ids (mutexes); map lookups (by id and instance); every encounter's
+state (per env); stage logic's clock (the env's, not wall time, so half-batch is safe); MoveBlock/Travel navmesh use
+(each map's own query); scenario teleports (NearTeleportTo only); group changes (build and disband, world thread).
+
+Open: a diagnostic logs once per battleground map that cannot unload, with who is on it; remove it once a sweep is
+clean. Async-path aborts on a sealed pool stay (unreachable so far).
+
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 
 - **More learner processes on one GPU do not scale**: 1 / 2 / 3 learners at once (bench_learner, each with its own

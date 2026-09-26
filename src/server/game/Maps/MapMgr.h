@@ -37,6 +37,16 @@ class MapMgr
 public:
     static MapMgr* instance();
 
+    /// Set while map tasks run on the updater threads. A base map's grid created then (a child map asks for its
+    /// parent's grid as a unit reaches it) loads its height data at once but queues its vmap and mmap tiles:
+    /// every child of that map shares its static vmap tree and navmesh, and other children are reading them on
+    /// other threads (line of sight, heights, paths) -- a tile load is not safe beside those reads. The queue is
+    /// loaded on the world thread right after the tasks join, when nothing reads. Until then that tile answers as
+    /// if it had no collision data, for what is left of one tick.
+    static inline std::atomic<bool> MapTasksRunning{ false };
+    static void DeferTileLoad(Map* map, uint16 x, uint16 y);
+    void LoadDeferredTiles();
+
     Map* CreateBaseMap(uint32 mapId);
     Map* FindBaseNonInstanceMap(uint32 mapId) const;
 

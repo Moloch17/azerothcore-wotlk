@@ -108,6 +108,11 @@ void Animus::Curriculum::HazardEncounter::BeforeRebuild(Env& env)
     Clear(env);
 }
 
+void Animus::Curriculum::HazardEncounter::Teardown(Env& env)
+{
+    Clear(env);
+}
+
 bool Animus::Curriculum::HazardEncounter::Build(Env& env, Map* map, uint8 level)
 {
     EnvHazards& state = _envs[env.Index];

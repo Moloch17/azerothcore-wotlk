@@ -273,7 +273,7 @@ void Battleground::Update(uint32 diff)
     if (!PreUpdateImpl(diff))
         return;
 
-    if (!GetPlayersSize())
+    if (!GetPlayersSize() && !_simOwned)
     {
         //BG is empty
         // if there are no players invited, delete BG
@@ -327,7 +327,8 @@ void Battleground::Update(uint32 diff)
             }
             break;
         case STATUS_WAIT_LEAVE:
-            _ProcessLeave(diff);
+            if (!_simOwned)
+                _ProcessLeave(diff);
             break;
         default:
             break;

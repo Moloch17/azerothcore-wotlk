@@ -339,6 +339,9 @@ void MapMgr::Update(uint32 diff)
     sLFGMgr->Update(diff, 1);
 
     auto const scheduled = std::chrono::steady_clock::now();
+    // Tile loads of base-map grids created from here to the join are queued (DeferTileLoad): only with updater
+    // threads, since without them one thread updates every map and no read runs beside a load.
+    MapTasksRunning.store(m_updater.activated(), std::memory_order_release);
 
     for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
     {
@@ -377,6 +380,8 @@ void MapMgr::Update(uint32 diff)
 
     if (m_updater.activated())
         m_updater.wait();
+    MapTasksRunning.store(false, std::memory_order_release);
+    LoadDeferredTiles();
 
     uint64 const wallNs = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - scheduled).count());
@@ -600,4 +605,39 @@ uint32 MapMgr::GenerateInstanceId()
     }
 
     return newInstanceId;
+}
+
+namespace
+{
+    struct DeferredTile
+    {
+        Map* BaseMap;
+        uint16 X;
+        uint16 Y;
+    };
+
+    std::mutex g_deferredTilesLock;
+    std::vector<DeferredTile> g_deferredTiles;
+}
+
+void MapMgr::DeferTileLoad(Map* map, uint16 x, uint16 y)
+{
+    std::lock_guard<std::mutex> guard(g_deferredTilesLock);
+    g_deferredTiles.push_back({ map, x, y });
+}
+
+void MapMgr::LoadDeferredTiles()
+{
+    std::vector<DeferredTile> tiles;
+    {
+        std::lock_guard<std::mutex> guard(g_deferredTilesLock);
+        tiles.swap(g_deferredTiles);
+    }
+
+    // Base maps (instance 0) live as long as the server: none of these pointers can have gone.
+    for (DeferredTile const& tile : tiles)
+    {
+        tile.BaseMap->GetMapCollisionData().LoadVMapTile(tile.X, tile.Y);
+        tile.BaseMap->GetMapCollisionData().LoadMMapTile(tile.X, tile.Y);
+    }
 }

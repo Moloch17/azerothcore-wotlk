@@ -7571,6 +7571,14 @@ AreaTriggerTeleport const* ObjectMgr::GetMapEntranceTrigger(uint32 Map) const
 
 void ObjectMgr::SetHighestGuids()
 {
+    // Every global generator exists from startup, so later calls only look one up: the map threads draw item guids
+    // (looting, vendors, conjuring), and a first-use insert into _guidGenerators from two of them would race.
+    GetGuidSequenceGenerator<HighGuid::Player>();
+    GetGuidSequenceGenerator<HighGuid::Item>();
+    GetGuidSequenceGenerator<HighGuid::Mo_Transport>();
+    GetGuidSequenceGenerator<HighGuid::Group>();
+    GetGuidSequenceGenerator<HighGuid::Instance>();
+
     QueryResult result = CharacterDatabase.Query("SELECT MAX(guid) FROM characters");
     if (result)
         GetGuidSequenceGenerator<HighGuid::Player>().Set((*result)[0].Get<uint32>() + 1);
