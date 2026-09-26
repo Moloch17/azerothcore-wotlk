@@ -205,12 +205,14 @@ QueryResult DatabaseWorkerPool<T>::Query(std::string_view sql)
 {
     if (_sealed)
     {
-        if (_sealStrict)
-            ABORT("Synchronous query on sealed DatabasePool '{}': {}", GetDatabaseName(), sql);
+        // Strict: no connection is left, so the read gets no rows -- which every caller handles -- rather than
+        // taking a long training run down with it. Logged with where it came from either way.
         std::ostringstream trace;
         trace << boost::stacktrace::stacktrace();
-        LOG_WARN("sql.driver", "Synchronous query on sealed DatabasePool '{}' (remove before the seal is strict): {}\n{}",
-            GetDatabaseName(), sql, trace.str());
+        LOG_WARN("sql.driver", "Synchronous query on sealed DatabasePool '{}' ({}): {}\n{}", GetDatabaseName(),
+            _sealStrict ? "strict: answered with no rows" : "remove before the seal is strict", sql, trace.str());
+        if (_sealStrict)
+            return QueryResult(nullptr);
     }
 
     auto connection = GetFreeConnection();
@@ -232,8 +234,6 @@ PreparedQueryResult DatabaseWorkerPool<T>::Query(PreparedStatement<T>* stmt)
 {
     if (_sealed)
     {
-        if (_sealStrict)
-            ABORT("Synchronous prepared query {} on sealed DatabasePool '{}'", stmt->GetIndex(), GetDatabaseName());
         // Once per statement, with where it came from: the sweep that clears the way to a strict seal needs the
         // caller, not the index alone.
         static std::mutex seenLock;
@@ -247,8 +247,15 @@ PreparedQueryResult DatabaseWorkerPool<T>::Query(PreparedStatement<T>* stmt)
         {
             std::ostringstream trace;
             trace << boost::stacktrace::stacktrace();
-            LOG_WARN("sql.driver", "Synchronous prepared query {} on sealed DatabasePool '{}' (remove before the seal is "
-                "strict), first seen at:\n{}", stmt->GetIndex(), GetDatabaseName(), trace.str());
+            LOG_WARN("sql.driver", "Synchronous prepared query {} on sealed DatabasePool '{}' ({}), first seen at:\n{}",
+                stmt->GetIndex(), GetDatabaseName(), _sealStrict ? "strict: answered with no rows"
+                : "remove before the seal is strict", trace.str());
+        }
+        // Strict: no connection is left; no rows, which every caller handles, rather than an abort mid-run.
+        if (_sealStrict)
+        {
+            delete stmt;
+            return PreparedQueryResult(nullptr);
         }
     }
 

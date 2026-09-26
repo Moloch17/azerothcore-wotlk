@@ -50,6 +50,7 @@
  *     not a terminal. Off by default, so the sim still opens no listener unless asked.
  */
 
+#include "AccountMgr.h"
 #include "ACSoap.h"
 #include "AnimusForge.h"
 #include "BattlegroundMgr.h"
@@ -216,18 +217,24 @@ namespace
     /// Caveat: much of game/ reads getMSTime() directly, so the synthetic diff decouples this
     /// loop from wall clock but not every downstream timer. A clock shim behind getMSTime() is
     /// what closes that gap; it does not belong in this file.
-    /// Whether the seal closes the synchronous connections too and aborts on any read. Staged: the
-    /// curriculum now warms every world-table cache at startup (Animus::Curriculum::WarmCaches), so this
-    /// flips to true once one full sweep of every stage logs no "Synchronous query on sealed DatabasePool"
-    /// line. Then the connections close and the MySQL container can stop after startup.
-    constexpr bool ForgeSealStrict = false;
+    /// Forge.SealStrict: whether the seal closes the synchronous connections too. Strict, a late read gets no rows
+    /// and is logged once with where it came from; staged (off), it is still served and logged the same way -- for
+    /// finding the reads a new stage adds. Off by default until a soak with real-size evaluations logs no read but
+    /// the console's login lookups, which come from AccountMgr::LoadSnapshot now.
+    bool ForgeSealStrict()
+    {
+        return sConfigMgr->GetOption<bool>("Forge.SealStrict", false);
+    }
 
     /// After the world and the modules have loaded: memory is the truth, the database is done.
     void ForgeSealDatabases()
     {
-        LoginDatabase.Seal(ForgeSealStrict);
-        CharacterDatabase.Seal(ForgeSealStrict);
-        WorldDatabase.Seal(ForgeSealStrict);
+        // The console (SOAP) checks its login against the accounts on every command: they come from memory now.
+        AccountMgr::LoadSnapshot();
+        bool const strict = ForgeSealStrict();
+        LoginDatabase.Seal(strict);
+        CharacterDatabase.Seal(strict);
+        WorldDatabase.Seal(strict);
     }
 
     /// Playtest mode's world loop: stock real-time ticks, a wall-clock diff, sleeping to MinWorldUpdateTime.

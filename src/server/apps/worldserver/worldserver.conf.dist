@@ -105,6 +105,18 @@ RealmID = 1
 Forge.Playtest = 0
 
 #
+#    Forge.SealStrict
+#        Description: After startup the databases are sealed: memory is the truth, writes are
+#                     discarded, and the worker threads close. 1 closes every connection too, so the
+#                     MySQL container can be stopped once the log says the pools are sealed; a later
+#                     read gets no rows. 0 keeps one connection per pool and still serves late reads.
+#                     Either way each distinct late read is logged once with where it came from, for
+#                     finding the reads a new stage adds. Playtest mode never seals.
+#        Default:     0
+
+Forge.SealStrict = 0
+
+#
 #    WorldServerPort
 #        Description: TCP port to reach the world server.
 #        Default:     8085

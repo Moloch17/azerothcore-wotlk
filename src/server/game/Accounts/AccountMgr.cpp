@@ -26,6 +26,7 @@
 #include "ScriptMgr.h"
 #include "Util.h"
 #include "WorldSession.h"
+#include <unordered_map>
 
 AccountMgr::AccountMgr() { }
 
@@ -245,8 +246,76 @@ AccountOpResult AccountMgr::ChangePassword(uint32 accountId, std::string newPass
     return AOR_OK;
 }
 
+namespace
+{
+    struct AccountSnapshot
+    {
+        std::string Username;
+        Acore::Crypto::SRP6::Salt Salt{};
+        Acore::Crypto::SRP6::Verifier Verifier{};
+        std::vector<std::pair<int32, uint8>> Access;    // (RealmID, gmlevel), in the table's order
+    };
+
+    /// AccountMgr::LoadSnapshot's copy; empty until then, and then only read.
+    bool g_accountSnapshotLoaded = false;
+    std::unordered_map<uint32, AccountSnapshot> g_accounts;
+    std::unordered_map<std::string, uint32> g_accountByName;
+
+    AccountSnapshot const* SnapshotOf(uint32 accountId)
+    {
+        auto const found = g_accounts.find(accountId);
+        return found != g_accounts.end() ? &found->second : nullptr;
+    }
+}
+
+void AccountMgr::LoadSnapshot()
+{
+    g_accounts.clear();
+    g_accountByName.clear();
+    if (QueryResult result = LoginDatabase.Query("SELECT id, username, salt, verifier FROM account"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            AccountSnapshot& account = g_accounts[fields[0].Get<uint32>()];
+            account.Username = fields[1].Get<std::string>();
+            account.Salt = fields[2].Get<Binary, Acore::Crypto::SRP6::SALT_LENGTH>();
+            account.Verifier = fields[3].Get<Binary, Acore::Crypto::SRP6::VERIFIER_LENGTH>();
+            g_accountByName[account.Username] = fields[0].Get<uint32>();
+        } while (result->NextRow());
+    }
+
+    if (QueryResult result = LoginDatabase.Query("SELECT id, RealmID, gmlevel FROM account_access"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            auto const found = g_accounts.find(fields[0].Get<uint32>());
+            if (found != g_accounts.end())
+                found->second.Access.emplace_back(fields[1].Get<int32>(), fields[2].Get<uint8>());
+        } while (result->NextRow());
+    }
+
+    g_accountSnapshotLoaded = true;
+    LOG_INFO("server.loading", ">> Accounts in memory: {} (the console logs in from them once the databases seal)",
+        g_accounts.size());
+}
+
 uint32 AccountMgr::GetId(std::string const& username)
 {
+    if (g_accountSnapshotLoaded)
+    {
+        // The table's username column compares case-insensitively; the snapshot keeps the stored spelling.
+        auto found = g_accountByName.find(username);
+        if (found == g_accountByName.end())
+        {
+            std::string upper = username;
+            Utf8ToUpperOnlyLatin(upper);
+            found = g_accountByName.find(upper);
+        }
+        return found != g_accountByName.end() ? found->second : 0;
+    }
+
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_GET_ACCOUNT_ID_BY_USERNAME);
     stmt->SetData(0, username);
     PreparedQueryResult result = LoginDatabase.Query(stmt);
@@ -256,6 +325,13 @@ uint32 AccountMgr::GetId(std::string const& username)
 
 uint32 AccountMgr::GetSecurity(uint32 accountId)
 {
+    if (g_accountSnapshotLoaded)
+    {
+        // The query's first row: whichever the table returns first, as the query did.
+        AccountSnapshot const* account = SnapshotOf(accountId);
+        return account && !account->Access.empty() ? account->Access.front().second : uint32(SEC_PLAYER);
+    }
+
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_GET_ACCOUNT_ACCESS_GMLEVEL);
     stmt->SetData(0, accountId);
     PreparedQueryResult result = LoginDatabase.Query(stmt);
@@ -265,6 +341,16 @@ uint32 AccountMgr::GetSecurity(uint32 accountId)
 
 uint32 AccountMgr::GetSecurity(uint32 accountId, int32 realmId)
 {
+    if (g_accountSnapshotLoaded)
+    {
+        AccountSnapshot const* account = SnapshotOf(accountId);
+        if (account)
+            for (auto const& [realm, level] : account->Access)
+                if (realm == realmId || realm == -1)
+                    return level;
+        return uint32(SEC_PLAYER);
+    }
+
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_GET_GMLEVEL_BY_REALMID);
     stmt->SetData(0, accountId);
     stmt->SetData(1, realmId);
@@ -275,6 +361,14 @@ uint32 AccountMgr::GetSecurity(uint32 accountId, int32 realmId)
 
 bool AccountMgr::GetName(uint32 accountId, std::string& name)
 {
+    if (g_accountSnapshotLoaded)
+    {
+        AccountSnapshot const* account = SnapshotOf(accountId);
+        if (account)
+            name = account->Username;
+        return account != nullptr;
+    }
+
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_GET_USERNAME_BY_ID);
     stmt->SetData(0, accountId);
     PreparedQueryResult result = LoginDatabase.Query(stmt);
@@ -297,6 +391,12 @@ bool AccountMgr::CheckPassword(uint32 accountId, std::string password)
 
     Utf8ToUpperOnlyLatin(username);
     Utf8ToUpperOnlyLatin(password);
+
+    if (g_accountSnapshotLoaded)
+    {
+        AccountSnapshot const* account = SnapshotOf(accountId);
+        return account && Acore::Crypto::SRP6::CheckLogin(username, password, account->Salt, account->Verifier);
+    }
 
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_CHECK_PASSWORD);
     stmt->SetData(0, accountId);

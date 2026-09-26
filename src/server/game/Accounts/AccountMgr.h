@@ -63,6 +63,13 @@ public:
     static bool GetName(uint32 accountId, std::string& name);
     static uint32 GetCharactersCount(uint32 accountId);
 
+    /// Every account's name, SRP6 salt and verifier, and access rows, read once into memory: after this the
+    /// lookups above (GetId, GetName, CheckPassword, both GetSecurity) answer from it instead of the login
+    /// database. The forge calls it just before sealing the databases, so the console (SOAP) still logs in once
+    /// they are closed. Accounts created or changed afterwards are not in it -- a sealed database discards the
+    /// writes that would have made them anyway.
+    static void LoadSnapshot();
+
     static bool IsPlayerAccount(uint32 gmlevel);
     static bool IsGMAccount(uint32 gmlevel);
     static bool IsAdminAccount(uint32 gmlevel);
