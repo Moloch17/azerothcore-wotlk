@@ -23,6 +23,7 @@
 #include "MapMgr.h"
 #include "MoveBlock.h"
 #include "ProbeBake.h"
+#include "LayeredField.h"
 #include "InstanceBosses.h"
 #include "StageDefinition.h"
 #include "World.h"
@@ -92,6 +93,7 @@ namespace
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
                 { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
+                { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
                 { "export",    HandleExport,    SEC_ADMINISTRATOR, Console::Yes },
@@ -132,6 +134,8 @@ namespace
             table.AddRow({ "forge probestage <scenario> [rebake]", "bake the ground probe tables the scenario "
                 "needs to AnimusForge.Probe.Dir: its spawn points' grids on a continent, every grid of an instanced "
                 "map (kept if already baked, unless rebake)" });
+            table.AddRow({ "forge lhfbake <map> <x> <y> [cell] [samples]", "bake the layered height field of the "
+                "grid holding (x, y) in memory; its size, and flight readings from it against live ones" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
                 "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
@@ -260,6 +264,42 @@ namespace
         {
             return GridCoord(uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridX, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)),
                 uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridY, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)));
+        }
+
+        /// `forge lhfbake <map> <x> <y> [cell] [samples]`: the layered height field prototype (LayeredField) on one
+        /// grid. Every core for the bake, on the world thread: run it with nothing training.
+        static bool HandleLhfBake(ChatHandler* handler, uint32 mapId, float x, float y, Optional<float> cell,
+            Optional<uint32> samples)
+        {
+            namespace Field = Animus::Curriculum::LayeredField;
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
+                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
+
+            Field::Grid const grid = Field::Bake(map, x, y, std::clamp(cell.value_or(1.0f), 0.25f, 8.0f));
+            std::string const report = Field::Compare(map, grid, samples.value_or(4000), 1);
+            std::string line;
+            for (char c : report)
+            {
+                if (c == '\n')
+                {
+                    handler->SendSysMessage(line);
+                    line.clear();
+                }
+                else
+                    line += c;
+            }
+            if (!line.empty())
+                handler->SendSysMessage(line);
+            return true;
         }
 
         /// `forge probestage <scenario> [rebake]`: the tables AnimusForge.Probe.Source = baked reads for this
