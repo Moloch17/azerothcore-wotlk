@@ -1734,7 +1734,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // episode fixed to another map (an instance rung) opens a new instance of that map; the old one unloads once
     // its last bot has left.
     Map* map = !firstBuild || env.InstanceId ? env.FindMap() : nullptr;
-    if (map && map->GetId() != EpisodeMapId(env))
+    // A battleground's map is its match's: a new match (FlagEncounter::BeforeSeats) gets a map of its own, which the
+    // first seat's bot opens through the invitation it carries. Reused, the new bots stood on the last match's map --
+    // "map 596 cannot unload: Forge31s19a (bg id 660)" -- and it was unloaded under them.
+    if (map && (map->GetId() != EpisodeMapId(env) || map->IsBattlegroundOrArena()))
         map = nullptr;
 
     // A continent is not one map for the whole pool any more: the envs are dealt out over replicas of it, each

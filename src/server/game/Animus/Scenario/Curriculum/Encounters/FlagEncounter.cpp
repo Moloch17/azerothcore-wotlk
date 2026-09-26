@@ -84,27 +84,13 @@ void Animus::Curriculum::FlagEncounter::ResetEpisode(Env& env)
 {
     Disband(env);
     EndMatch(env);
-    BattlegroundMap* const ended = _envs[env.Index].EndedMap;    // outlives the episode: its bots have not gone yet
     _envs[env.Index] = EnvFlags();
-    _envs[env.Index].EndedMap = ended;
 }
 
 void Animus::Curriculum::FlagEncounter::Teardown(Env& env)
 {
     Disband(env);
     EndMatch(env);
-    // The seats' bots are destroyed right after this, before any map updates again: the map is empty by the time
-    // its unload is looked at.
-    ReleaseEndedMap(env);
-}
-
-void Animus::Curriculum::FlagEncounter::ReleaseEndedMap(Env& env)
-{
-    if (BattlegroundMap*& map = _envs[env.Index].EndedMap)
-    {
-        map->SetUnload();
-        map = nullptr;
-    }
 }
 
 void Animus::Curriculum::FlagEncounter::EndMatch(Env& env)
@@ -120,17 +106,9 @@ void Animus::Curriculum::FlagEncounter::EndMatch(Env& env)
         if (player)
             player->SetBattlegroundId(0, BATTLEGROUND_TYPE_NONE, 0, false, false, TEAM_NEUTRAL);
 
-    // The map lets go of the match first, so the bots still standing on it leave it without the match's leave path
-    // (resurrect, zone update, area auras -- an assertion in Unit::_AddAura once, on a bot being logged out), and
-    // the match is deleted without its destructor unloading a map that still has players: the map would try to send
-    // them home every tick, and bots have no home. The map unloads once its bots are gone (ReleaseEndedMap).
-    if (BattlegroundMap* map = match->GetBgMap())
-    {
-        map->SetBG(nullptr);
-        ReleaseEndedMap(env);           // an earlier one still waiting: its bots are long gone
-        _envs[env.Index].EndedMap = map;
-    }
-    match->SetBgMap(nullptr);
+    // Deleted, not only taken off the manager's list: the destructor also removes the match's creatures and objects,
+    // detaches it from its map and lets the map unload. Only the last episode's bots stand on that map (each match
+    // has its own, see StageScenario::Rebuild), and they are destroyed before the map is next updated.
     delete match;
     match = nullptr;
 }
@@ -300,9 +278,6 @@ void Animus::Curriculum::FlagEncounter::Disband(Env& env)
 
 bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*/)
 {
-    // The seats are rebuilt and the last episode's bots destroyed: the ended match's map is empty now.
-    ReleaseEndedMap(env);
-
     CurriculumTuning::FlagTuning const& tuning = _scenario.Tuning().Flag;
     EnvFlags& flags = _envs[env.Index];
     Player* first = _scenario.SeatBot(env, 0);
