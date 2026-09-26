@@ -231,13 +231,15 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const outputDir = sConfigMgr->GetOption<std::string>("AnimusForge.OutputDir", "");
     OutputDir = (outputDir.empty() ? workDir : Resolve(outputDir, configDir)).lexically_normal().string();
 
-    std::string const probeSource = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Source", "live");
-    ProbeBaked = probeSource == "baked";
-    if (!ProbeBaked && probeSource != "live")
-        LOG_ERROR("server.loading", "AnimusForge.Probe.Source = \"{}\" is neither live nor baked: measuring live",
+    std::string const probeSource = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Source", "baked");
+    ProbeBaked = probeSource != "live";
+    if (ProbeBaked && probeSource != "baked")
+        LOG_ERROR("server.loading", "AnimusForge.Probe.Source = \"{}\" is neither live nor baked: reading baked",
             probeSource);
     fs::path const probeDir = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Dir", "");
-    ProbeDir = (probeDir.empty() ? fs::path(OutputDir) / "probes" : Resolve(probeDir, configDir))
+    // The tables ship with the forge, beside its models: baked ahead of time (`forge probestage`), never by a
+    // running server.
+    ProbeDir = (probeDir.empty() ? DefaultLearnerWorkDir().parent_path() / "probes" : Resolve(probeDir, configDir))
         .lexically_normal().string();
     ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Probe.CacheGrids", 64));
 

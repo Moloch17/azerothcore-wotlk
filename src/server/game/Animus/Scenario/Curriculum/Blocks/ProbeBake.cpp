@@ -20,6 +20,7 @@
 #include "DetourExtended.h"
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
+#include "Log.h"
 #include "Map.h"
 #include "MapCollisionData.h"
 #include "MapDefines.h"
@@ -853,6 +854,11 @@ namespace Animus::Curriculum::ProbeBake
                 return entry->second.Table;
             entry->second.Table = loaded;
             entry->second.LastRead.store(now, std::memory_order_relaxed);
+            // Once a grid: it is remembered as missing, so this is the only time it is asked about.
+            if (!loaded)
+                LOG_WARN("module.animus", "Ground probe: no table for map {} grid ({}, {}) in {}: seats there are "
+                    "measured live, slowly. Bake it with `forge probestage` and ship the file.", mapId,
+                    std::get<1>(key), std::get<2>(key), g_dir);
 
             // Over the cap: let the least recently read tables go. A seat still reading one keeps its own pointer.
             uint32 held = 0;

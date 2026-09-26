@@ -5237,58 +5237,29 @@ AnimusForge.Socket = "/tmp/animus-forge.sock"
 # GROUND PROBE
 #
 #    AnimusForge.Probe.Source
-#        Description: Where the move block's ground probe comes from.
-#                     live  - measured at the seat (a height march and navmesh rays), redone when the
-#                             seat has moved 3 yd, turned 22.5 degrees or 500 ms have passed.
-#                     baked - read every decision from tables baked ahead of time (`forge probestage
-#                             <scenario>`): 2 yd cells, every navmesh floor, 16 compass bearings, three rays
-#                             a bearing and a half-yard march. Where no table covers a seat it is measured
-#                             live the same way, and `forge status` counts how often.
-#                     The two are different observations: a model trained on one needs fine-tuning on
-#                     the other.
-#        Default:     "live"
-
-AnimusForge.Probe.Source = "live"
-
-#
-#    AnimusForge.Probe.Dir
-#        Description: Where the baked tables are, one file a grid (<map>_<gx>_<gy>.probe).
-#        Default:     "" - (<OutputDir>/probes)
-
-AnimusForge.Probe.Dir = ""
-
-#
-#    AnimusForge.Probe.CacheGrids
-#        Description: Most grid tables held in memory at once (about 5 MB each). Past it the one read
-#                     longest ago is let go, and read from disk again if a seat comes back to it.
-#        Default:     64
-
-AnimusForge.Probe.CacheGrids = 64
-
-###################################################################################################
-# GROUND PROBE
-#
-#    AnimusForge.Probe.Source
 #        Description: Where the move block's ground probe (reach, step, shore and burns along
 #                     sixteen rays, and the clearance around the seat) comes from.
-#                     live measures it at the seat, again whenever the seat has moved three
-#                     yards, turned 22.5 degrees or half a second has passed. baked reads it every
-#                     decision from tables made ahead of time by `forge probestage <scenario>`
-#                     (2 yd cells, every navmesh floor, 16 compass bearings, a half-yard march,
-#                     three rays a bearing); where there is no table it is measured live the same
-#                     way, and `forge status` counts how often. The two are different observations:
-#                     a policy trained on one should be fine-tuned before it is used with the other.
-#        Default:     "live"
-#                     "baked"
+#                     baked reads it every decision from the tables shipped in AnimusForge.Probe.Dir
+#                     (2 yd cells, every navmesh floor, 16 compass bearings, a half-yard march, three
+#                     rays a bearing). A running server never bakes: the tables are made ahead of time
+#                     with `forge probestage <scenario>` and shipped. Where a grid has no table the
+#                     probe is measured live the same way (slowly), `forge status` counts how often,
+#                     and the grid is logged once so it can be baked and shipped.
+#                     live measures the old five-cell probe at the seat instead, again whenever the
+#                     seat has moved three yards, turned 22.5 degrees or half a second has passed.
+#                     The two are different observations: a policy trained on one should be
+#                     fine-tuned before it is used with the other.
+#        Default:     "baked"
+#                     "live"
 
-AnimusForge.Probe.Source = "live"
+AnimusForge.Probe.Source = "baked"
 
 #
 #    AnimusForge.Probe.Dir
 #        Description: Where the baked tables are, one zstd-compressed file a grid (about 1.7 MB,
-#                     <map>_<gridX>_<gridY>.probe).
-#                     Relative paths are relative to this config file's directory.
-#        Default:     "" - (<AnimusForge.OutputDir>/probes)
+#                     <map>_<gridX>_<gridY>.probe). Relative paths are relative to this config file's
+#                     directory.
+#        Default:     "" - (apps/forge/probes, beside the forge's models)
 
 AnimusForge.Probe.Dir = ""
 

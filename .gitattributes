@@ -28,3 +28,6 @@
 
 # Ignore sql/* files
 data/sql/*    linguist-documentation
+
+# Baked ground-probe tables (apps/forge/probes): binary, never line-ending normalised.
+*.probe binary
