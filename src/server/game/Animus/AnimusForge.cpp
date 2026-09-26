@@ -17,6 +17,7 @@
  */
 
 #include "AnimusForge.h"
+#include "GpuRuntime.h"
 #include "ProbeBake.h"
 #include "SeatEncoder.h"
 #include "WarmCaches.h"
@@ -99,6 +100,8 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
+    // Before anything HIP starts, here or in the learner spawned later, which inherits it.
+    Animus::Gpu::PrepareEnvironment();
     _fastConfig = _config.FastProfile(_config.FastBudget);
     _progressInterval = _config.ProgressInterval;
 
@@ -106,6 +109,15 @@ void AnimusForge::Forge::OnStartup()
     {
         LOG_INFO("module.animus", "Animus Forge is disabled (AnimusForge.Enable = 0)");
         return;
+    }
+
+    if (_config.GpuObserve && _config.Policy == "remote")
+    {
+        std::string why;
+        if (Animus::Gpu::Load(_config.LearnerPython, _config.LearnerWorkDir, why))
+            LOG_INFO("module.animus", "Device library loaded: observations can be written on the GPU");
+        else
+            LOG_WARN("module.animus", "No device library, observations stay on the CPU: {}", why);
     }
 
     LOG_INFO("module.animus", "GPU mode: {}", _config.GpuSummary);

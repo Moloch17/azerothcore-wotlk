@@ -383,6 +383,7 @@ void AnimusForge::ForgeConfig::Load()
         sConfigMgr->GetOption<float>("AnimusForge.SpawnPoint.O", 2.96f));
 
     // Last: the mode needs the policy, the cluster role and the learner's paths, and adjusts Envs and LearnerArgs.
+    GpuObserve = sConfigMgr->GetOption<bool>("AnimusForge.Gpu.Observe", true);
     ApplyGpuMode();
 }
 

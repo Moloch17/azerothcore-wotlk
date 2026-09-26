@@ -5381,6 +5381,17 @@ AnimusForge.Learner.Cpus = "auto"
 #    animus-learner.rank<k>.log; learner 0 writes the run. A cluster worker runs no learner.
 #    `forge status` and the startup log say which mode is in force and why.
 #
+#    AnimusForge.Gpu.Observe
+#        Description: Load the forge's device library (libforge-gpu.so, beside the worldserver, built
+#                     where hipcc is) on the learner's own HIP runtime, so observations can be written
+#                     straight into GPU memory the learner reads. Without a GPU, a torch with HIP or
+#                     the library, the forge says why once and does everything on the CPU.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+AnimusForge.Gpu.Observe = 1
+
+#
 #    AnimusForge.Gpu.Mode
 #        Description: auto: count the GPUs the learner's torch sees (ROCm or CUDA) with at least
 #                     half the compute units of the largest -- an integrated GPU beside a card

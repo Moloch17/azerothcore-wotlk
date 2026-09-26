@@ -83,3 +83,41 @@ if (USE_COREPCH)
 endif ()
 
 CU_RUN_HOOK(AFTER_GAME_LIBRARY)
+
+# The forge's device code: Animus/Gpu/Device/*.hip into libforge-gpu.so, installed beside the worldserver, which
+# loads it at run time (Animus/Gpu/GpuRuntime) and only when there is a GPU to use. It is compiled with hipcc but
+# linked against no HIP runtime: its HIP symbols come from the runtime the learner's torch ships, loaded by the
+# worldserver first, because device memory can only be shared between processes on the same HIP runtime. A machine
+# without hipcc builds without it, and the forge runs everything on the CPU.
+find_program(FORGE_HIPCC hipcc)
+set(FORGE_GPU_ARCHS "gfx1100" CACHE STRING "GPU architectures libforge-gpu.so is compiled for (a ;-list)")
+if (FORGE_HIPCC)
+  file(GLOB FORGE_GPU_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/Device/*.hip)
+  set(FORGE_GPU_ARCH_FLAGS)
+  foreach(arch ${FORGE_GPU_ARCHS})
+    list(APPEND FORGE_GPU_ARCH_FLAGS --offload-arch=${arch})
+  endforeach()
+  set(FORGE_GPU_OBJECTS)
+  foreach(source ${FORGE_GPU_SOURCES})
+    get_filename_component(name ${source} NAME_WE)
+    set(object ${CMAKE_CURRENT_BINARY_DIR}/forge-gpu/${name}.o)
+    add_custom_command(
+      OUTPUT ${object}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/forge-gpu
+      COMMAND ${FORGE_HIPCC} ${FORGE_GPU_ARCH_FLAGS} -O3 -fPIC -std=c++20 -fvisibility=hidden
+        -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu -c ${source} -o ${object}
+      DEPENDS ${source} ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/DeviceApi.h
+      COMMENT "hipcc Animus/Gpu/Device/${name}.hip"
+      VERBATIM)
+    list(APPEND FORGE_GPU_OBJECTS ${object})
+  endforeach()
+  set_source_files_properties(${FORGE_GPU_OBJECTS} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+  add_library(forge-gpu SHARED ${FORGE_GPU_OBJECTS})
+  set_target_properties(forge-gpu PROPERTIES LINKER_LANGUAGE CXX FOLDER "server")
+  # The worldserver's own build brings the library along.
+  add_dependencies(game forge-gpu)
+  install(TARGETS forge-gpu LIBRARY DESTINATION bin)
+  message(STATUS "Forge device library: ${FORGE_HIPCC}, for ${FORGE_GPU_ARCHS}")
+else()
+  message(STATUS "Forge device library: no hipcc, built without it")
+endif()

@@ -132,6 +132,8 @@ namespace AnimusForge
         bool MultiGpu = false;                  // resolved: the mode in force
         std::vector<uint32> Gpus;               // resolved: the GPUs that count, by torch index (empty: none found)
         std::string GpuSummary;                 // resolved: the mode in force and why, for the log and `forge status`
+        /// AnimusForge.Gpu.Observe: load the device library (Animus/Gpu) so observations can be written on the GPU.
+        bool GpuObserve = true;
 
         /// AnimusForge.Cluster.Role: several machines training one learner. A worker runs only its sim, of the
         /// scenario its host orders, and the host's learner trains on every sim's envs as one pool (the learner's
