@@ -144,6 +144,7 @@ namespace AnimusForge
             bool Learner = false;           // false: a local policy, so the sim alone is timed
             uint32 Agents = 1;              // seats per env of the benchmarked scenario
             double EnvStepsPerSecond = 0.0;
+            double WorkerEnvStepsPerSecond = 0.0;   // a cluster host's learner trials: the workers' own, as reported
             double WorldMsPerTick = 0.0;    // map update and the rest of the world tick
             double SimMsPerTick = 0.0;      // observing, rewarding and applying actions
             double LearnerMsPerTick = 0.0;  // blocked on the learner
@@ -263,6 +264,8 @@ namespace AnimusForge
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
         bool SendSpec(uint32 rank);
+        /// Host: each connected worker and what it last reported (forge status).
+        void ReportWorkers(LineSink const& out) const;
         /// The GPU mode's learner count (ForgeConfig::LearnerRanks) as this pool can take it: every rank needs an env
         /// of every group. The learners started and the connections awaited both use it, so the two always agree.
         [[nodiscard]] uint32 PoolRanks(uint32 wanted) const;
@@ -331,6 +334,8 @@ namespace AnimusForge
         /// Host: the workers' sims the running scenario's learner trains on, and the order that started them, for
         /// one that drops out and registers again to be sent straight back to it.
         std::vector<std::string> _clusterSims;
+        /// Worker: when its next PROGRESS goes to the host.
+        std::chrono::steady_clock::time_point _nextClusterReport{};
         std::string _clusterStart;
         bool _halfBatch = false;
         uint32 _turn = 0;

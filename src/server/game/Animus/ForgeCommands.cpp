@@ -268,6 +268,18 @@ bool AnimusForge::Forge::ValidScenario(std::string const& scenario, LineSink con
     return false;
 }
 
+void AnimusForge::Forge::ReportWorkers(LineSink const& out) const
+{
+    if (_config.Cluster != ForgeConfig::ClusterRole::Host)
+        return;
+
+    std::vector<ClusterLink::WorkerStatus> const workers = _cluster.Workers();
+    out(Acore::StringFormat("Cluster: {} worker{} connected", workers.size(), workers.size() == 1 ? "" : "s"));
+    for (ClusterLink::WorkerStatus const& worker : workers)
+        out(worker.Progress.empty() ? Acore::StringFormat("  {}: no report yet", worker.Sim)
+            : Acore::StringFormat("  {}: {} ({:.0f} s ago)", worker.Sim, worker.Progress, worker.SecondsAgo));
+}
+
 void AnimusForge::Forge::CommandStatus(LineSink const& out)
 {
     if (!Enabled(out))
@@ -330,6 +342,8 @@ void AnimusForge::Forge::CommandStatus(LineSink const& out)
         out("  Cancel requested: it takes effect as soon as the learner is disconnected.");
     else if (_request == Request::Skip)
         out("  Skip requested: it takes effect as soon as the learner is disconnected.");
+
+    ReportWorkers(out);
 }
 
 void AnimusForge::Forge::CommandScenarios(LineSink const& out)

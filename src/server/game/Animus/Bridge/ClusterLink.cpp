@@ -221,6 +221,11 @@ void AnimusForge::ClusterLink::Poll()
                     _registered.push_back(it->Sim);
                     LOG_INFO("module.animus", "Cluster: worker registered, its sim at {}", it->Sim);
                 }
+                else if (line.rfind("PROGRESS ", 0) == 0)
+                {
+                    it->Progress = line.substr(9);
+                    it->ProgressAt = std::chrono::steady_clock::now();
+                }
             }
             ++it;
         }
@@ -279,4 +284,26 @@ std::optional<std::string> AnimusForge::ClusterLink::NextOrder()
     std::string order = std::move(_orders.front());
     _orders.erase(_orders.begin());
     return order;
+}
+
+void AnimusForge::ClusterLink::Report(std::string const& fields)
+{
+    if (_host.Fd >= 0)
+        Send(_host, "PROGRESS " + fields);
+}
+
+std::vector<AnimusForge::ClusterLink::WorkerStatus> AnimusForge::ClusterLink::Workers() const
+{
+    auto const now = std::chrono::steady_clock::now();
+    std::vector<WorkerStatus> workers;
+    for (Peer const& peer : _workers)
+    {
+        WorkerStatus status;
+        status.Sim = peer.Sim.empty() ? peer.Address : peer.Sim;
+        status.Progress = peer.Progress;
+        if (!peer.Progress.empty())
+            status.SecondsAgo = std::chrono::duration<double>(now - peer.ProgressAt).count();
+        workers.push_back(std::move(status));
+    }
+    return workers;
 }

@@ -481,10 +481,12 @@ bool AnimusForge::Forge::StartCurrent()
 
         // A learner that cannot be started is not fatal: the sim keeps waiting on the socket, so one started by
         // hand still works (and `forge cancel` gives up).
-        // A cluster host's workers run the same scenario, and its learner trains on their sims as well as this one.
+        // A cluster host's workers run the same scenario, and its learner trains on their sims as well as this one --
+        // a bench's learner trials too, so `forge bench` on a host measures the cluster (a worker already running the
+        // scenario carries on from one trial to the next).
         ForgeConfig learnerConfig = config;
         learnerConfig.LearnerRanks = PoolRanks(config.LearnerRanks);
-        if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
+        if (_config.Cluster == ForgeConfig::ClusterRole::Host)
         {
             _cluster.Poll();
             _cluster.TakeRegistrations();       // the workers registered by now are in this scenario from the start
@@ -643,7 +645,7 @@ void AnimusForge::Forge::EndPlan(char const* reason)
 
     LOG_INFO("module.animus", "Plan ended: {}. The sim is idle.", reason);
 
-    if (_config.Cluster == ForgeConfig::ClusterRole::Host && !_benching)
+    if (_config.Cluster == ForgeConfig::ClusterRole::Host)
     {
         _cluster.Broadcast("STOP");
         _clusterSims.clear();
@@ -801,6 +803,18 @@ void AnimusForge::Forge::PollCluster()
 
     if (_config.Cluster != ForgeConfig::ClusterRole::Worker)
         return;
+
+    // The host's console shows every worker: what it runs, how fast, and where a decision's time goes.
+    auto const now = std::chrono::steady_clock::now();
+    if (now >= _nextClusterReport)
+    {
+        _nextClusterReport = now + std::chrono::seconds(5);
+        _cluster.Report(Acore::StringFormat("state={} scenario={} envs={} env_steps_per_s={:.0f} decision_ms={:.1f} "
+            "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f}", StateName(), _current.empty() ? "-" : _current,
+            _pool ? _pool->NumEnvs() : 0, _ticksPerSecond * double(_pool ? _pool->NumEnvs() : 0),
+            _ticksPerSecond > 0.0 ? 1000.0 / _ticksPerSecond : 0.0, _worldMsPerTick, _simMsPerTick,
+            _learnerMsPerTick));
+    }
 
     // Orders only ask: the scenario is torn down and started from OnUpdate, never from inside a wait on the learner
     // (Pump runs there), exactly as a console command's are.
@@ -969,6 +983,15 @@ void AnimusForge::Forge::BenchTick()
     trial.Agents = agents;
     trial.Envs = config.Envs;
     trial.EnvStepsPerSecond = seconds > 0.0 ? ticks * double(config.Envs) * double(agents) / seconds : 0.0;
+    // A host's learner trial: its workers' own env steps, as they last reported them.
+    trial.WorkerEnvStepsPerSecond = 0.0;
+    if (trial.Learner && _config.Cluster == ForgeConfig::ClusterRole::Host)
+        for (ClusterLink::WorkerStatus const& worker : _cluster.Workers())
+        {
+            std::size_t const at = worker.Progress.find("env_steps_per_s=");
+            if (at != std::string::npos)
+                trial.WorkerEnvStepsPerSecond += std::strtod(worker.Progress.c_str() + at + 16, nullptr);
+        }
     trial.WorldMsPerTick = double(_worldNs - _benchWorldNs) / ticks / 1e6;
     trial.SimMsPerTick = double(_simNs - _benchSimNs) / ticks / 1e6;
     trial.LearnerMsPerTick = double(_learnerNs - _benchLearnerNs) / ticks / 1e6;
@@ -1141,6 +1164,15 @@ void AnimusForge::Forge::BenchReport(LineSink const& out) const
     }
 
     table.Write(out, "  ");
+    double workers = 0.0;
+    for (BenchTrial const& trial : _benchTrials)
+        workers = std::max(workers, trial.WorkerEnvStepsPerSecond);
+    if (workers > 0.0)
+        for (BenchTrial const& trial : _benchTrials)
+            if (trial.Measured && trial.Learner)
+                out(Acore::StringFormat("  cluster, {} threads / {} envs with the learner: {:.0f} env steps/s here + "
+                    "{:.0f} on the workers = {:.0f}", trial.MapThreads, trial.Envs, trial.EnvStepsPerSecond,
+                    trial.WorkerEnvStepsPerSecond, trial.EnvStepsPerSecond + trial.WorkerEnvStepsPerSecond));
     if (unsplitTrials)
         out(Acore::StringFormat("* ran as one group, not in halves: those envs do not split into two halves on "
             "separate maps with AnimusForge.ContinentReplicas = {} (each replica holds at most 31 envs; make the "

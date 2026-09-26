@@ -35,6 +35,7 @@ namespace AnimusForge
     ///   worker -> host   REGISTER <data port> <address the host should reach it at, or "-">
     ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1>
     ///   host -> worker   STOP
+    ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast
     /// A worker that loses the host reconnects every few seconds and registers again; a host that loses a worker
     /// drops it, and it joins the next scenario the host starts after it is back.
     class ClusterLink
@@ -67,6 +68,18 @@ namespace AnimusForge
         /// Worker: the next order from the host, if one has come.
         std::optional<std::string> NextOrder();
 
+        /// Worker: tell the host how this sim is doing (`fields`: "key=value ..."); dropped while the host is away.
+        void Report(std::string const& fields);
+
+        /// Host: what a connected worker last reported.
+        struct WorkerStatus
+        {
+            std::string Sim;            // "tcp://address:port", or the address before it registered
+            std::string Progress;       // its last PROGRESS fields; empty until the first
+            double SecondsAgo = -1.0;   // since that report
+        };
+        [[nodiscard]] std::vector<WorkerStatus> Workers() const;
+
     private:
         struct Peer
         {
@@ -74,6 +87,8 @@ namespace AnimusForge
             std::string In;
             std::string Sim;        // host: "tcp://address:port" once registered
             std::string Address;    // host: where the connection came from
+            std::string Progress;   // host: the worker's last PROGRESS fields
+            std::chrono::steady_clock::time_point ProgressAt{};
         };
 
         void Close(Peer& peer);
