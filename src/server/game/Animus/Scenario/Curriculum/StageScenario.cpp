@@ -1699,8 +1699,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // a battleground (the match is rebuilt with the episode), never a seat that was empty or lost.
     std::array<bool, MAX_SEATS> reuse{};
     uint8 keptLevel = 0;
-    bool const onMatch = std::any_of(ActiveEncounters(env).begin(), ActiveEncounters(env).end(),
-        [&env](Encounter const* encounter) { return encounter->MatchFor(env) != nullptr; });
+    // The encounters ended the last match in ResetEpisode above and make the next one in BeforeSeats below, so
+    // MatchFor is empty here: the map says whether the seats stand in a battleground. Reusing a seat there moved a
+    // bot within a map whose match had just been taken down; the move failed, and with it the whole build --
+    // most stage25_warsong resets, each followed by old bots on a map with no match asking to be sent home.
+    Map const* envMap = env.FindMap();
+    bool const onMatch = (envMap && envMap->IsBattlegroundOrArena())
+        || std::any_of(ActiveEncounters(env).begin(), ActiveEncounters(env).end(),
+            [&env](Encounter const* encounter) { return encounter->MatchFor(env) != nullptr; });
     // (An env whose last episode was on another map, an instance rung, rebuilds on the map this one wants.)
     bool const changesMap = env.FindMap() && env.FindMap()->GetId() != EpisodeMapId(env);
     if (!firstBuild && !env.Evaluating && !onMatch && !changesMap && _tuning.Characters.ReuseEpisodes > 0)
@@ -1769,6 +1775,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         }
 
         Player* bot = reuse[seat] ? ReuseSeat(env, seat, start) : BuildSeat(env, seat, map, level, start);
+        // A character that cannot be made ready again is replaced, not a reason to lose the episode.
+        if (!bot && reuse[seat])
+            bot = BuildSeat(env, seat, map, level, start);
         if (!bot)
         {
             // Nothing changes: the bots already made for this episode go, the old characters stay with their seats.

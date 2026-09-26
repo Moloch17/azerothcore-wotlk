@@ -1554,10 +1554,10 @@ void Battleground::DoorOpen(uint32 type)
                        type, BgObjects[type].ToString(), m_MapId, m_InstanceID);
 }
 
-GameObject* Battleground::GetBGObject(uint32 type)
+GameObject* Battleground::GetBGObject(uint32 type, bool logMissing)
 {
     GameObject* obj = GetBgMap()->GetGameObject(BgObjects[type]);
-    if (!obj)
+    if (!obj && logMissing)
         LOG_ERROR("bg.battleground", "Battleground::GetBGObject: gameobject (type: {}, {}) not found for BG (map: {}, instance id: {})!",
                        type, BgObjects[type].ToString(), m_MapId, m_InstanceID);
     return obj;

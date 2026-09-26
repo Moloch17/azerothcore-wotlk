@@ -433,7 +433,8 @@ public:
 
     void StartBattleground();
 
-    GameObject* GetBGObject(uint32 type);
+    /// `logMissing` false for a caller that polls for an object the script has not spawned yet.
+    GameObject* GetBGObject(uint32 type, bool logMissing = true);
     Creature* GetBGCreature(uint32 type);
 
     // Location

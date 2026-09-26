@@ -1023,6 +1023,10 @@ namespace Animus::Curriculum
         [[nodiscard]] Battleground* MatchFor(Env const& env) const override { return Match(env); }
         /// Take the match down with the episode that was it.
         void EndMatch(Env& env);
+        /// The stage ending: the match and the groups go before the seats' bots are destroyed. Left standing, the
+        /// battleground kept pointers to them and its next update touched a freed player (a segfault in
+        /// Battleground::_ProcessJoin -> Player::ResetAllPowers once a sweep moved past stage25_warsong).
+        void Teardown(Env& env) override;
         /// Read the script's score and flag state back into the side view the seats and rewards use.
         void ReadMatch(Env& env);
 

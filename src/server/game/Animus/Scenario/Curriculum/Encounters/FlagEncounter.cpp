@@ -87,6 +87,12 @@ void Animus::Curriculum::FlagEncounter::ResetEpisode(Env& env)
     _envs[env.Index] = EnvFlags();
 }
 
+void Animus::Curriculum::FlagEncounter::Teardown(Env& env)
+{
+    Disband(env);
+    EndMatch(env);
+}
+
 void Animus::Curriculum::FlagEncounter::EndMatch(Env& env)
 {
     Battleground*& match = _envs[env.Index].Match;
@@ -100,7 +106,11 @@ void Animus::Curriculum::FlagEncounter::EndMatch(Env& env)
         if (player)
             player->SetBattlegroundId(0, BATTLEGROUND_TYPE_NONE, 0, false, false, TEAM_NEUTRAL);
 
-    sBattlegroundMgr->RemoveBattleground(match->GetBgTypeID(), match->GetInstanceID());
+    // Deleted, not only taken off the manager's list: the destructor also detaches the battleground from its map
+    // and lets the map unload. Only unlisted, the match leaked each episode and its map kept it, so a bot leaving
+    // that map later ran the match's leave path (resurrect, zone update, area auras) on a player being logged out
+    // -- an assertion in Unit::_AddAura during a stage25_warsong reset.
+    delete match;
     match = nullptr;
 }
 
@@ -130,7 +140,7 @@ void Animus::Curriculum::FlagEncounter::ReadMatch(Env& env)
         // door with the flag out of reach, half an opportunity a seat a match. The objects only exist once the
         // script has spawned them, so this is taken here rather than in Build.
         uint32 const object = side == 0 ? BG_WS_OBJECT_A_FLAG : BG_WS_OBJECT_H_FLAG;
-        if (GameObject const* flag = match->GetBGObject(object); flag && flag->IsInWorld())
+        if (GameObject const* flag = match->GetBGObject(object, false); flag && flag->IsInWorld())
         {
             Position const at(flag->GetPositionX(), flag->GetPositionY(), flag->GetPositionZ());
             if (match->GetFlagState(team) == BG_WS_FLAG_STATE_ON_GROUND)
@@ -591,7 +601,7 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
             if (which == ours && !ownIsDropped)
                 continue;
 
-            if (GameObject* flag = scripted->GetBGObject(which); flag && bot && flag->IsInWorld()
+            if (GameObject* flag = scripted->GetBGObject(which, false); flag && bot && flag->IsInWorld()
                 && bot->IsWithinDistInMap(flag, reach))
             {
                 match.Usable = flag->GetGUID();
