@@ -5234,6 +5234,56 @@ AnimusForge.ReportEpisodes = 256
 AnimusForge.Socket = "/tmp/animus-forge.sock"
 
 ###################################################################################################
+# GROUND PROBE
+#
+#    AnimusForge.Probe.Source
+#        Description: Where the move block's ground probe comes from.
+#                     live  - measured at the seat (a height march and navmesh rays), redone when the
+#                             seat has moved 3 yd, turned 22.5 degrees or 500 ms have passed.
+#                     baked - read every decision from tables baked ahead of time (`forge probestage
+#                             <scenario>`): 2 yd cells, every navmesh floor, 16 compass bearings, three rays
+#                             a bearing and a half-yard march. Where no table covers a seat it is measured
+#                             live the same way, and `forge status` counts how often.
+#                     The two are different observations: a model trained on one needs fine-tuning on
+#                     the other.
+#        Default:     "live"
+
+AnimusForge.Probe.Source = "live"
+
+#
+#    AnimusForge.Probe.Dir
+#        Description: Where the baked tables are, one file a grid (<map>_<gx>_<gy>.probe).
+#        Default:     "" - (<OutputDir>/probes)
+
+AnimusForge.Probe.Dir = ""
+
+###################################################################################################
+# GROUND PROBE
+#
+#    AnimusForge.Probe.Source
+#        Description: Where the move block's ground probe (reach, step, shore and burns along
+#                     sixteen rays, and the clearance around the seat) comes from.
+#                     live measures it at the seat, again whenever the seat has moved three
+#                     yards, turned 22.5 degrees or half a second has passed. baked reads it every
+#                     decision from tables made ahead of time by `forge probestage <scenario>`
+#                     (2 yd cells, every navmesh floor, 16 compass bearings, a half-yard march,
+#                     three rays a bearing); where there is no table it is measured live the same
+#                     way, and `forge status` counts how often. The two are different observations:
+#                     a policy trained on one should be fine-tuned before it is used with the other.
+#        Default:     "live"
+#                     "baked"
+
+AnimusForge.Probe.Source = "live"
+
+#
+#    AnimusForge.Probe.Dir
+#        Description: Where the baked tables are, one file a grid (<map>_<gridX>_<gridY>.probe).
+#                     Relative paths are relative to this config file's directory.
+#        Default:     "" - (<AnimusForge.OutputDir>/probes)
+
+AnimusForge.Probe.Dir = ""
+
+###################################################################################################
 # LEARNER
 #
 #    AnimusForge.Learner.AutoStart

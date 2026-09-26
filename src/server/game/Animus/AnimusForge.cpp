@@ -17,6 +17,7 @@
  */
 
 #include "AnimusForge.h"
+#include "ProbeBake.h"
 #include "SeatEncoder.h"
 #include "WarmCaches.h"
 #include "Forge.h"
@@ -96,6 +97,7 @@ AnimusForge::Forge* AnimusForge::Forge::Instance()
 void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
+    Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir);
     _fastConfig = _config.FastProfile(_config.FastBudget);
     _progressInterval = _config.ProgressInterval;
 
@@ -1400,6 +1402,15 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
 
     sim.TicksPerSecond = _ticksPerSecond;
     sim.ObserveBlocks = _observeBlockMs;
+    if (Animus::Curriculum::ProbeBake::Store::Baked())
+    {
+        namespace Store = Animus::Curriculum::ProbeBake::Store;
+        uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
+        uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
+        sim.ProbeNote = Acore::StringFormat("baked: {} reads from {} grid tables, {} measured live where no table "
+            "answered ({:.1f}%)", reads, Store::Loaded(), fallbacks,
+            reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
+    }
     sim.EpisodesPerSecond = _episodesPerSecond;
     sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);
     sim.WorldMsPerTick = _worldMsPerTick;

@@ -87,6 +87,11 @@ namespace AnimusForge
         /// AnimusForge.OutputDir, resolved: where runs/ and layouts/ go. Never empty after Load.
         std::string OutputDir;
 
+        /// AnimusForge.Probe.Source = baked: the move block reads its ground probe from the tables in ProbeDir
+        /// (`forge probestage`) instead of measuring it; live (the default) measures.
+        bool ProbeBaked = false;
+        std::string ProbeDir;           // AnimusForge.Probe.Dir, resolved: never empty after Load
+
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;
         std::string LearnerPython;      // resolved: never empty after Load

@@ -21,6 +21,7 @@
 
 #include "Block.h"
 #include "GroundSense.h"
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -30,9 +31,9 @@ class Map;
 /// compass bearing -- so a seat reads its surroundings from a table instead of casting a hundred and twenty
 /// queries each time it moves three yards.
 ///
-/// This is the prototype that decides whether the table is worth having: it bakes one grid in memory and
-/// measures how far a lookup is from the probe measured live at the same spot. Nothing is written to disk and
-/// nothing reads the table at run time yet.
+/// `forge probebake` bakes one grid in memory and measures how far a lookup is from the probe measured live at
+/// the same spot; `forge probestage` bakes the grids a stage plays on to disk; and with AnimusForge.Probe.Source
+/// = baked the move block reads those files (Store) instead of measuring.
 namespace Animus::Curriculum::ProbeBake
 {
     struct Settings
@@ -92,6 +93,39 @@ namespace Animus::Curriculum::ProbeBake
     /// `radius` above 0 the places are drawn within it of (nearX, nearY) -- a room rather than the whole grid.
     std::string Compare(Map* map, Table const& table, uint32 samples, uint32 seed, float nearX = 0.0f,
         float nearY = 0.0f, float radius = 0.0f);
+
+    /// The bake a running sim reads: 2 yd cells, 16 bearings, three rays a wedge, a half-yard march. A table is
+    /// the observation's definition, so the settings are fixed rather than configured.
+    Settings StandardSettings();
+
+    /// The grid a point is in, as the table files name it.
+    int32 GridIndex(float coordinate);
+
+    /// A table as a file: the readings quantised to a byte a field (Step signed), the room to two. A table read
+    /// back holds exactly what the file does, so a baked seat sees the quantised values, the same everywhere.
+    bool Write(Table const& table, std::string const& path);
+    bool Read(std::string const& path, Table& table);
+
+    /// The live stand-in where no table answers: the same dense wedge measurement the bake makes, at the seat.
+    Reading SenseLive(Map* map, dtNavMeshQuery const* query, GroundSense::Origin const& at, float facing);
+
+    /// The tables of AnimusForge.Probe.Source = baked, one file a grid in AnimusForge.Probe.Dir, loaded the first
+    /// time a seat stands on the grid and kept.
+    namespace Store
+    {
+        void Configure(bool baked, std::string const& dir);
+        bool Baked();
+        std::string const& Dir();
+        std::string FileFor(uint32 mapId, int32 gridX, int32 gridY);
+
+        /// The table for the grid holding (x, y), or nullptr when there is no file for it. Thread safe.
+        Table const* Find(uint32 mapId, float x, float y);
+
+        /// Seat probes answered from a table, and answered live because none did.
+        inline std::atomic<uint64> Reads{ 0 };
+        inline std::atomic<uint64> Fallbacks{ 0 };
+        uint32 Loaded();
+    }
 }
 
 #endif

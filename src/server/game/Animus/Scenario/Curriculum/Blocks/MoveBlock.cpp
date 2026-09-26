@@ -18,6 +18,7 @@
 
 #include "MoveBlock.h"
 #include "GroundSense.h"
+#include "ProbeBake.h"
 #include "SeatEncoder.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
@@ -239,6 +240,10 @@ namespace
         return aim;
     }
 
+    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
+        Animus::Curriculum::GroundSense::Origin const& at, float facing,
+        std::chrono::steady_clock::time_point& partMark);
+
     /// Redo the march if it has stopped describing where the seat is standing, and say whether it is usable.
     ///
     /// Eighty height samples and forty-eight rays against the eight queries the old probe made is too much to
@@ -256,24 +261,93 @@ namespace
         if (!map)
             return;
 
+        namespace Bake = Animus::Curriculum::ProbeBake;
+        bool stale = !probe->Valid;
         if (probe->Valid)
         {
             float const moved = bot->GetExactDist(&probe->From);
             float const turned = std::fabs(std::atan2(std::sin(facing - probe->Facing),
                 std::cos(facing - probe->Facing)));
-            if (moved < MoveBlock::MARCH_REFRESH_YARDS && turned < MoveBlock::MARCH_REFRESH_RADIANS
-                && view.NowMs - probe->Ms < MoveBlock::MARCH_REFRESH_MS)
-                return;
+            stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
+                || view.NowMs - probe->Ms >= MoveBlock::MARCH_REFRESH_MS;
         }
+
+        // A baked probe is a lookup, so it is read every decision and is never stale; only the jump test below
+        // keeps the refresh cadence. A live one is measured when it has gone stale.
+        bool const baked = Bake::Store::Baked();
+        if (!baked && !stale)
+            return;
 
         namespace Encoder = Animus::Curriculum::SeatEncoder;
         auto probeMark = std::chrono::steady_clock::now();
         auto partMark = probeMark;
 
-        // The seat's own polygon, once for all sixteen rays.
         Ground::Origin const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
             bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
+
+        if (baked)
+        {
+            // The rays from the nearest cell and the clearance blended over the four around the seat -- what the
+            // bake measured best. Where no table answers, the same measurement made live, and counted.
+            Bake::Reading reading;
+            Bake::Reading room;
+            Bake::Table const* table = Bake::Store::Find(map->GetId(), at.X, at.Y);
+            if (table && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
+                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room))
+            {
+                reading.Room = room.Room;
+                Bake::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                reading = Bake::SenseLive(map, query, at, facing);
+                Bake::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+            {
+                probe->Reach[ray] = reading.Rays[ray].Reach;
+                probe->Step[ray] = reading.Rays[ray].Step;
+                probe->Shore[ray] = reading.Rays[ray].Shore;
+                probe->Burns[ray] = reading.Rays[ray].Burns;
+            }
+            probe->Clearance = reading.Room.Clearance;
+            probe->ClearanceSin = reading.Room.Directed ? std::sin(reading.Room.Away - facing) : 0.0f;
+            probe->ClearanceCos = reading.Room.Directed ? std::cos(reading.Room.Away - facing) : 0.0f;
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
+
+            if (!stale)
+            {
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
+                return;
+            }
+        }
+        else
+            RefreshLive(probe, map, query, at, facing, partMark);
+
+        // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
+        // the cache still describes where the seat stands, and measures again once it has moved or turned.
+        JumpAim const aim = JumpLandingTest(map, query, bot, facing, view.JumpDropSearch);
+        probe->CanJump = !Descending(bot) && !probe->JumpDropPending && aim.Ok;
+        probe->JumpLanding = aim.Landing;
+        probe->JumpDrop = aim.Ok ? aim.Drop : 0.0f;
+
+        probe->From.Relocate(bot);
+        probe->Facing = facing;
+        probe->Ms = view.NowMs;
+        probe->Valid = true;
+        Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
+    }
+
+    /// The probe measured where the seat stands: the five-cell march and the rays along its sixteen headings, and
+    /// the room around it.
+    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
+        Animus::Curriculum::GroundSense::Origin const& at, float facing,
+        std::chrono::steady_clock::time_point& partMark)
+    {
+        namespace Encoder = Animus::Curriculum::SeatEncoder;
+        // The seat's own polygon, once for all sixteen rays.
         dtPolyRef const startRef = Ground::StartPoly(query, at);
 
         for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
@@ -297,19 +371,6 @@ namespace
         probe->Clearance = room.Clearance;
         probe->ClearanceSin = room.Directed ? std::sin(room.Away - facing) : 0.0f;
         probe->ClearanceCos = room.Directed ? std::cos(room.Away - facing) : 0.0f;
-
-        // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
-        // the cache still describes where the seat stands, and measures again once it has moved or turned.
-        JumpAim const aim = JumpLandingTest(map, query, bot, facing, view.JumpDropSearch);
-        probe->CanJump = !Descending(bot) && !probe->JumpDropPending && aim.Ok;
-        probe->JumpLanding = aim.Landing;
-        probe->JumpDrop = aim.Ok ? aim.Drop : 0.0f;
-
-        probe->From.Relocate(bot);
-        probe->Facing = facing;
-        probe->Ms = view.NowMs;
-        probe->Valid = true;
-        Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
     }
 
     /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset

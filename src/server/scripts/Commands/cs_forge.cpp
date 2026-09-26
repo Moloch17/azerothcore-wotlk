@@ -23,6 +23,10 @@
 #include "MapMgr.h"
 #include "MoveBlock.h"
 #include "ProbeBake.h"
+#include "StageDefinition.h"
+#include <chrono>
+#include <filesystem>
+#include <set>
 #include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
@@ -85,6 +89,7 @@ namespace
                 { "rays",      HandleRays,      SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
+                { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
                 { "export",    HandleExport,    SEC_ADMINISTRATOR, Console::Yes },
@@ -122,6 +127,8 @@ namespace
                 "[radius]",
                 "bake the ground probe for the grid holding (x, y), in memory, and compare it with the live "
                 "probe (within radius of (x, y) if given)" });
+            table.AddRow({ "forge probestage <scenario>", "bake the ground probe tables for every grid the "
+                "scenario's spawn points are on, to AnimusForge.Probe.Dir (grids already baked are kept)" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
                 "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
@@ -241,6 +248,88 @@ namespace
             if (!line.empty())
                 handler->SendSysMessage(line);
 
+            return true;
+        }
+
+        /// `forge probestage <scenario>`: the tables AnimusForge.Probe.Source = baked reads for this scenario --
+        /// the grid under every spawn point, and a neighbour when the point is near enough its edge for a march
+        /// or an objective to cross it. A grid with a file already is left as it is.
+        ///
+        /// Each grid takes about half a minute of every core, on the world thread: run it with nothing training.
+        static bool HandleProbeStage(ChatHandler* handler, std::string scenario)
+        {
+            namespace Bake = Animus::Curriculum::ProbeBake;
+            Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
+            if (!stage)
+            {
+                handler->PSendSysMessage("No such scenario: {}", scenario);
+                return true;
+            }
+
+            Map* map = sMapMgr->CreateBaseMap(stage->MapId);
+            if (!map || map->Instanceable())
+            {
+                handler->PSendSysMessage("{} plays on map {}, which is not a continent: its seats measure live",
+                    scenario, stage->MapId);
+                return true;
+            }
+
+            std::vector<Position> points = stage->SpawnPoints;
+            points.insert(points.end(), stage->HeldOutSpawnPoints.begin(), stage->HeldOutSpawnPoints.end());
+            for (Animus::Curriculum::ArenaDefinition const& arena : stage->Arenas)
+            {
+                points.insert(points.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
+                points.insert(points.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
+            }
+
+            // An objective is at most forty yards from its spawn and the march looks forty further: a neighbour
+            // within eighty of the point is on the stage too.
+            constexpr float REACH = 80.0f;
+            std::set<std::pair<int32, int32>> grids;
+            for (Position const& point : points)
+                for (int32 dx = -1; dx <= 1; ++dx)
+                    for (int32 dy = -1; dy <= 1; ++dy)
+                    {
+                        int32 const gx = Bake::GridIndex(point.GetPositionX() + float(dx) * REACH);
+                        int32 const gy = Bake::GridIndex(point.GetPositionY() + float(dy) * REACH);
+                        grids.emplace(gx, gy);
+                    }
+
+            handler->PSendSysMessage("{}: {} spawn points on {} grids of map {}, into {}", scenario, points.size(),
+                grids.size(), stage->MapId, Bake::Store::Dir());
+            uint32 baked = 0;
+            uint32 kept = 0;
+            uint32 failed = 0;
+            auto const started = std::chrono::steady_clock::now();
+            for (auto const& [gx, gy] : grids)
+            {
+                std::string const path = Bake::Store::FileFor(stage->MapId, gx, gy);
+                std::error_code error;
+                if (std::filesystem::exists(path, error))
+                {
+                    ++kept;
+                    continue;
+                }
+
+                float const centreX = (float(gx) + 0.5f) * SIZE_OF_GRIDS;
+                float const centreY = (float(gy) + 0.5f) * SIZE_OF_GRIDS;
+                for (int32 dx = -1; dx <= 1; ++dx)
+                    for (int32 dy = -1; dy <= 1; ++dy)
+                        map->LoadGrid(centreX + float(dx) * SIZE_OF_GRIDS, centreY + float(dy) * SIZE_OF_GRIDS);
+
+                Bake::Table const table = Bake::Bake(map, centreX, centreY, Bake::StandardSettings());
+                if (Bake::Write(table, path))
+                    ++baked;
+                else
+                {
+                    ++failed;
+                    handler->PSendSysMessage("  could not write {}", path);
+                }
+            }
+
+            double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            handler->PSendSysMessage("{}: {} grids baked, {} already there, {} failed, in {:.0f} s", scenario, baked,
+                kept, failed, seconds);
             return true;
         }
 

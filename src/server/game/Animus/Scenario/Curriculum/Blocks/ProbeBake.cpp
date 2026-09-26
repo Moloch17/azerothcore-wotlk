@@ -25,14 +25,23 @@
 #include "MapDefines.h"
 #include "MoveBlock.h"
 #include "Object.h"
+#include "StringFormat.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <random>
 #include <sstream>
 #include <thread>
+#include <tuple>
 
 namespace
 {
@@ -571,5 +580,231 @@ namespace Animus::Curriculum::ProbeBake
             tables[way].Print(out, TABLE_NAMES[way]);
         total.Print(out, "today vs table overlap");
         return out.str();
+    }
+
+    Settings StandardSettings()
+    {
+        return Settings{ 2.0f, 16, 3, 0.5f, 0 };
+    }
+
+    int32 GridIndex(float coordinate)
+    {
+        return int32(std::floor(coordinate / SIZE_OF_GRIDS));
+    }
+
+    Reading SenseLive(Map* map, dtNavMeshQuery const* query, Ground::Origin const& at, float facing)
+    {
+        Settings const standard = StandardSettings();
+        return Live(map, query, at, facing, standard.WedgeRays, standard.Pitch, false);
+    }
+
+    namespace
+    {
+        constexpr uint32 FILE_MAGIC = 0x42525041;      // "APRB"
+        constexpr uint32 FILE_VERSION = 1;
+        /// A room's way out in a byte: 0-254 around the circle, 255 for none.
+        constexpr uint8 NO_WAY_OUT = 255;
+
+        struct Header
+        {
+            uint32 Magic = FILE_MAGIC;
+            uint32 Version = FILE_VERSION;
+            uint32 MapId = 0;
+            int32 GridX = 0;
+            int32 GridY = 0;
+            float Cell = 0.0f;
+            uint32 Bearings = 0;
+            uint32 WedgeRays = 0;
+            float Pitch = 0.0f;
+            uint32 Side = 0;
+            float MinX = 0.0f;
+            float MinY = 0.0f;
+            uint32 Floors = 0;
+        };
+
+        uint8 Unit(float value)
+        {
+            return uint8(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+        }
+
+        int8 Signed(float value)
+        {
+            return int8(std::lround(std::clamp(value, -1.0f, 1.0f) * 127.0f));
+        }
+
+        template <typename T>
+        void Put(std::ofstream& out, std::vector<T> const& values)
+        {
+            out.write(reinterpret_cast<char const*>(values.data()), std::streamsize(values.size() * sizeof(T)));
+        }
+
+        template <typename T>
+        bool Take(std::ifstream& in, std::vector<T>& values, std::size_t count)
+        {
+            values.resize(count);
+            in.read(reinterpret_cast<char*>(values.data()), std::streamsize(count * sizeof(T)));
+            return bool(in);
+        }
+    }
+
+    bool Write(Table const& table, std::string const& path)
+    {
+        Header header;
+        header.MapId = table.MapId;
+        header.GridX = GridIndex(table.MinX);
+        header.GridY = GridIndex(table.MinY);
+        header.Cell = table.Bake.Cell;
+        header.Bearings = table.Bake.Bearings;
+        header.WedgeRays = table.Bake.WedgeRays;
+        header.Pitch = table.Bake.Pitch;
+        header.Side = table.Side;
+        header.MinX = table.MinX;
+        header.MinY = table.MinY;
+        header.Floors = uint32(table.FloorZ.size());
+
+        std::vector<uint8> readings;
+        readings.reserve(table.Readings.size() * 4);
+        for (Ground::Bearing const& bearing : table.Readings)
+        {
+            readings.push_back(Unit(bearing.Reach));
+            readings.push_back(uint8(Signed(bearing.Step)));
+            readings.push_back(Unit(bearing.Shore));
+            readings.push_back(Unit(bearing.Burns));
+        }
+        std::vector<uint8> rooms;
+        rooms.reserve(table.Rooms.size() * 2);
+        for (Ground::Room const& room : table.Rooms)
+        {
+            rooms.push_back(Unit(room.Clearance));
+            float const turn = Position::NormalizeOrientation(room.Away) / TWO_PI;
+            rooms.push_back(room.Directed ? uint8(std::lround(turn * 255.0f) % 255) : NO_WAY_OUT);
+        }
+
+        // Written beside and renamed over, so a reader never meets half a file.
+        std::filesystem::path const target(path);
+        std::error_code error;
+        std::filesystem::create_directories(target.parent_path(), error);
+        std::string const partial = path + ".partial";
+        {
+            std::ofstream out(partial, std::ios::binary | std::ios::trunc);
+            if (!out)
+                return false;
+            out.write(reinterpret_cast<char const*>(&header), sizeof(header));
+            Put(out, table.First);
+            Put(out, table.FloorZ);
+            Put(out, readings);
+            Put(out, rooms);
+            if (!out)
+                return false;
+        }
+        std::filesystem::rename(partial, target, error);
+        return !error;
+    }
+
+    bool Read(std::string const& path, Table& table)
+    {
+        std::ifstream in(path, std::ios::binary);
+        Header header;
+        if (!in || !in.read(reinterpret_cast<char*>(&header), sizeof(header)) || header.Magic != FILE_MAGIC
+            || header.Version != FILE_VERSION || header.Side == 0 || header.Side > 4096 || header.Bearings == 0
+            || header.Bearings > 256)
+            return false;
+
+        table.MapId = header.MapId;
+        table.Bake = Settings{ header.Cell, header.Bearings, header.WedgeRays, header.Pitch, 0 };
+        table.Side = header.Side;
+        table.MinX = header.MinX;
+        table.MinY = header.MinY;
+        std::size_t const cells = std::size_t(header.Side) * header.Side;
+        std::vector<uint8> readings;
+        std::vector<uint8> rooms;
+        if (!Take(in, table.First, cells + 1) || table.First.back() != header.Floors
+            || !Take(in, table.FloorZ, header.Floors)
+            || !Take(in, readings, std::size_t(header.Floors) * header.Bearings * 4)
+            || !Take(in, rooms, std::size_t(header.Floors) * 2))
+            return false;
+
+        table.Readings.resize(std::size_t(header.Floors) * header.Bearings);
+        for (std::size_t index = 0; index < table.Readings.size(); ++index)
+        {
+            uint8 const* raw = &readings[index * 4];
+            table.Readings[index] = { float(raw[0]) / 255.0f, float(int8(raw[1])) / 127.0f, float(raw[2]) / 255.0f,
+                float(raw[3]) / 255.0f };
+        }
+        table.Rooms.resize(header.Floors);
+        for (std::size_t index = 0; index < table.Rooms.size(); ++index)
+        {
+            Ground::Room& room = table.Rooms[index];
+            room.Clearance = float(rooms[index * 2]) / 255.0f;
+            room.Directed = rooms[index * 2 + 1] != NO_WAY_OUT;
+            room.Away = room.Directed ? float(rooms[index * 2 + 1]) / 255.0f * TWO_PI : 0.0f;
+        }
+        return true;
+    }
+
+    namespace Store
+    {
+        namespace
+        {
+            bool g_baked = false;
+            std::string g_dir;
+            std::shared_mutex g_lock;
+            /// Every grid asked about, with its table or nullptr for a grid that has no file: asked once.
+            std::map<std::tuple<uint32, int32, int32>, std::unique_ptr<Table>> g_tables;
+        }
+
+        void Configure(bool baked, std::string const& dir)
+        {
+            std::unique_lock lock(g_lock);
+            g_baked = baked;
+            g_dir = dir;
+            g_tables.clear();
+        }
+
+        bool Baked()
+        {
+            return g_baked;
+        }
+
+        std::string const& Dir()
+        {
+            return g_dir;
+        }
+
+        std::string FileFor(uint32 mapId, int32 gridX, int32 gridY)
+        {
+            return (std::filesystem::path(g_dir) / Acore::StringFormat("{:03}_{}_{}.probe", mapId, gridX, gridY))
+                .string();
+        }
+
+        Table const* Find(uint32 mapId, float x, float y)
+        {
+            auto const key = std::make_tuple(mapId, GridIndex(x), GridIndex(y));
+            {
+                std::shared_lock lock(g_lock);
+                auto const found = g_tables.find(key);
+                if (found != g_tables.end())
+                    return found->second.get();
+            }
+
+            // The first seat on this grid reads its file; any other waiting on the lock finds it done.
+            std::unique_lock lock(g_lock);
+            auto const found = g_tables.find(key);
+            if (found != g_tables.end())
+                return found->second.get();
+            auto table = std::make_unique<Table>();
+            if (!Read(FileFor(mapId, std::get<1>(key), std::get<2>(key)), *table))
+                table.reset();
+            return g_tables.emplace(key, std::move(table)).first->second.get();
+        }
+
+        uint32 Loaded()
+        {
+            std::shared_lock lock(g_lock);
+            uint32 count = 0;
+            for (auto const& [key, table] : g_tables)
+                count += table ? 1 : 0;
+            return count;
+        }
     }
 }

@@ -133,6 +133,7 @@ namespace AnimusForge
         /// Observation thread time per decision by block (and "view", the seat's work before its blocks), largest
         /// first.
         std::vector<std::pair<std::string, double>> ObserveBlocks;
+        std::string ProbeNote;          // where the ground probe came from, when it is baked
         bool LearnerRunning = false;
         int32 LearnerPid = -1;
         bool LearnerConnected = false;
