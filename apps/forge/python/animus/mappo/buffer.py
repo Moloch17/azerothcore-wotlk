@@ -1,12 +1,17 @@
 """Rollout storage and GAE for auto-resetting vectorised envs.
 
-Everything is numpy on the CPU: at [T, E, A] = [128, 64, 1] the whole rollout is a few MB, and GAE
-is a single backwards loop over T.
+Everything is numpy on the CPU -- at [T, E, A] = [128, 64, 1] the whole rollout is a few MB, and GAE
+is a single backwards loop over T -- except obs, state and mask when the sim writes them into device
+memory (protocol 15, animus.device): then they are kept on that device, where the update reads them,
+and never cross to the host at all.
 """
 
 from __future__ import annotations
 
 import numpy as np
+
+# Kept where the sim put them when it put them on the device.
+DEVICE_FIELDS = ("obs", "state", "mask")
 
 
 def compute_gae(
@@ -218,9 +223,8 @@ class RolloutBuffer:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all)."""
         t = self.cursor
-        self.obs[t] = obs
-        self.state[t] = state
-        self.mask[t] = mask
+        for name, value in (("obs", obs), ("state", state), ("mask", mask)):
+            self._store(name, t, value)
         self.layout[t] = layout
         self.valid[t] = True if present is None else present
         self.chosen[t] = True if chosen is None else chosen
@@ -235,6 +239,19 @@ class RolloutBuffer:
             self.critic_memory[t] = critic_memory
         if self.goals and goals is not None:
             self.goal[t], self.goal_log_probs[t], self.goal_chosen[t] = goals
+
+    def _store(self, name: str, t: int, value) -> None:
+        """Step `t` of obs, state or mask. The first device tensor moves that array to its device for good."""
+        import torch
+
+        target = getattr(self, name)
+        if isinstance(value, torch.Tensor) and isinstance(target, np.ndarray):
+            target = torch.from_numpy(target).to(value.device)
+            setattr(self, name, target)
+        if isinstance(target, np.ndarray):
+            target[t] = value
+        else:
+            target[t] = torch.as_tensor(value, device=target.device)
 
     def add_outcome(self, rewards, dones, terminated, final_values, final_foresight=None) -> None:
         """Record the result of the step-`cursor` actions and advance."""
@@ -319,12 +336,24 @@ class RolloutBuffer:
         steps, envs, agents = self.actions.shape
         keep = self.samples.reshape(-1)
         # Boolean indexing copies, so torch gets writable arrays.
-        state = np.broadcast_to(self.state[:, :, None, :], (steps, envs, agents, self.state.shape[-1]))
+        if isinstance(self.state, np.ndarray):
+            state = np.broadcast_to(self.state[:, :, None, :], (steps, envs, agents, self.state.shape[-1]))
+        else:
+            state = self.state[:, :, None, :].expand(steps, envs, agents, self.state.shape[-1])
+
+        def kept(array, width: int):
+            rows = array.reshape(-1, width)
+            if isinstance(rows, np.ndarray):
+                return rows[keep]
+            import torch
+
+            return rows[torch.as_tensor(keep, device=rows.device)]
+
         return {
-            "obs": self.obs.reshape(-1, self.obs.shape[-1])[keep],
-            "state": state.reshape(-1, self.state.shape[-1])[keep],
+            "obs": kept(self.obs, self.obs.shape[-1]),
+            "state": kept(state, self.state.shape[-1]),
             "layout": self.layout.reshape(-1)[keep],
-            "mask": self.mask.reshape(-1, self.mask.shape[-1])[keep],
+            "mask": kept(self.mask, self.mask.shape[-1]),
             "actions": self.actions.reshape(-1)[keep],
             "log_probs": self.log_probs.reshape(-1)[keep],
             "values": self.values.reshape(-1)[keep],
@@ -369,7 +398,12 @@ class RolloutBuffer:
         if not self.valid.any():
             return 0.0
 
-        return float(self.mask[self.valid].sum(axis=-1).mean())
+        if isinstance(self.mask, np.ndarray):
+            return float(self.mask[self.valid].sum(axis=-1).mean())
+        import torch
+
+        valid = torch.as_tensor(self.valid, device=self.mask.device)
+        return float(self.mask[valid].sum(dim=-1).float().mean())
 
     def mean_reward(self) -> float:
         """Mean reward per decision over the valid samples (0 when there are none)."""

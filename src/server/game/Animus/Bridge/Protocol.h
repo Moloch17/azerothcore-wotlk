@@ -105,7 +105,10 @@ namespace AnimusForge
     // 13: HELLO names the learner's rank and how many there are (data-parallel learners share one sim's pool).
     // 14: STEP's final_obs and final_state carry only the envs whose done is set: every other env's were ~half of
     // each STEP's bytes, for rows the learner never reads.
-    constexpr uint32 PROTOCOL_VERSION = 14;
+    // 15: DEVICE and DEVICE_ACK. After SPEC a sim with the device library offers the learner device buffers for obs,
+    // state and mask by their IPC handles; a learner that opens them says so, and from then on its STEPs carry
+    // neither (the sim writes them into the buffers first). A learner that declines keeps the socket path.
+    constexpr uint32 PROTOCOL_VERSION = 15;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -123,6 +126,8 @@ namespace AnimusForge
         Mode  = 6,
         Weights = 7,
         Replay = 8,
+        Device = 9,
+        DeviceAck = 10,
     };
 
 #pragma pack(push, 1)
@@ -195,6 +200,24 @@ namespace AnimusForge
     };
 
     /// Then the arrays of envs [EnvBegin, EnvBegin + EnvCount), in the order of the learner's Spec.step_layout.
+    /// DEVICE: device buffers holding this rank's obs [E, A, O] float, state [E, S] float and mask [E, A, N] uint8,
+    /// env-major in the rank's own env numbering, on HIP device `Device`. Handles are hipIpcMemHandle_t bytes.
+    constexpr uint32 DEVICE_HANDLE_BYTES = 64;
+    struct DeviceMsg
+    {
+        uint32 Device;
+        uint32 Envs;
+        uint8 ObsHandle[DEVICE_HANDLE_BYTES];
+        uint8 StateHandle[DEVICE_HANDLE_BYTES];
+        uint8 MaskHandle[DEVICE_HANDLE_BYTES];
+    };
+
+    /// DEVICE_ACK: 1 when the learner opened the buffers and reads obs, state and mask from them from now on.
+    struct DeviceAckMsg
+    {
+        uint32 Accepted;
+    };
+
     struct StepHeader
     {
         uint64 Decision;

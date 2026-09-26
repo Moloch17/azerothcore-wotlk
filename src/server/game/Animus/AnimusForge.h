@@ -266,6 +266,11 @@ namespace AnimusForge
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
         bool SendSpec(uint32 rank);
+        /// After SPEC: offer rank `rank`'s learner device buffers for obs, state and mask (DEVICE) and wait for its
+        /// answer. True unless the connection failed; the rank uses them only when the learner accepted.
+        bool OfferDevice(uint32 rank);
+        /// Copy rank `rank`'s share of group rows into its device buffers and wait for the copies: before its STEP.
+        bool UploadRows(uint32 rank, uint32 begin, uint32 local, uint32 count);
         /// Host: each connected worker and what it last reported (forge status).
         void ReportWorkers(LineSink const& out) const;
         /// The GPU mode's learner count (ForgeConfig::LearnerRanks) as this pool can take it: every rank needs an env
@@ -358,6 +363,16 @@ namespace AnimusForge
         bool _applyTick = false;
         uint64 _decisions = 0;
         /// SendStep's gather of the ended envs' final obs and state (protocol 14), kept to reuse the allocations.
+        /// A rank's device buffers (OfferDevice): obs, state and mask, written before each STEP instead of sent.
+        struct RankDevice
+        {
+            void* Obs = nullptr;
+            void* State = nullptr;
+            void* Mask = nullptr;
+            int Device = 0;
+            bool On = false;
+        };
+        std::vector<RankDevice> _rankDevices;
         std::vector<float> _endedObs;
         std::vector<float> _endedState;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once

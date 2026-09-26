@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -30,6 +30,8 @@ class MsgType(IntEnum):
     MODE = 6
     WEIGHTS = 7
     REPLAY = 8
+    DEVICE = 9
+    DEVICE_ACK = 10
 
 
 HEADER = struct.Struct("<II")  # type, payload length
@@ -44,6 +46,12 @@ MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; 
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
 MAX_REPLAY_SEEDS = 65536
+# DEVICE (protocol 15): the sim's device buffers for this learner's obs, state and mask -- GPU, envs, then the three
+# hipIpcMemHandle_t -- offered after SPEC; DEVICE_ACK answers 1 when they were opened (animus.device).
+DEVICE = struct.Struct("<II64s64s64s")
+DEVICE_ACK = struct.Struct("<I")
+# What a STEP leaves out when the learner reads them from the device buffers.
+DEVICE_FIELDS = ("obs", "state", "mask")
 
 
 @dataclass(frozen=True)
@@ -90,16 +98,17 @@ class Spec:
         half = self.num_envs // 2
         return [(0, half), (half, self.num_envs - half)]
 
-    def step_layout(self, envs: int | None = None, ended: int | None = None) -> list[tuple[str, np.dtype,
-                                                                                         tuple[int, ...]]]:
+    def step_layout(self, envs: int | None = None, ended: int | None = None,
+                    device: bool = False) -> list[tuple[str, np.dtype, tuple[int, ...]]]:
         """STEP payload arrays after the header, in wire order: (name, dtype, shape), for `envs` envs (all of them by
         default; a half-batch STEP carries one group's). final_obs and final_state carry only the `ended` envs whose
         done is set, in env order (every env's by default: the largest a STEP can be) -- protocol 14; the others'
-        would be ~half of every STEP for rows nobody reads."""
+        would be ~half of every STEP for rows nobody reads. With `device` (protocol 15) obs, state and mask are in the
+        sim's device buffers instead, and not in the STEP."""
         e, a = self.num_envs if envs is None else envs, self.agents_per_env
         d = e if ended is None else ended
         f32, u8, u16, u32 = np.dtype("<f4"), np.dtype("u1"), np.dtype("<u2"), np.dtype("<u4")
-        return [
+        layout = [
             ("obs", f32, (e, a, self.obs_dim)),
             ("state", f32, (e, self.state_dim)),
             ("mask", u8, (e, a, self.num_actions)),
@@ -113,10 +122,11 @@ class Spec:
             ("episode_info", f32, (e, a, self.episode_info_dim)),
             ("episode_seed", u32, (e,)),
         ]
+        return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
 
-    def step_payload_size(self, envs: int | None = None, ended: int | None = None) -> int:
+    def step_payload_size(self, envs: int | None = None, ended: int | None = None, device: bool = False) -> int:
         size = STEP_HEADER.size
-        for _, dtype, shape in self.step_layout(envs, ended):
+        for _, dtype, shape in self.step_layout(envs, ended, device):
             size += dtype.itemsize * int(np.prod(shape))
         return size
 
@@ -154,7 +164,16 @@ def join_steps(parts: list[Step]) -> Step:
         return parts[0]
     names = [name for name in Step.__dataclass_fields__ if name not in ("decision", "env_begin")]
     return Step(decision=parts[0].decision, env_begin=0,
-                **{name: np.concatenate([getattr(part, name) for part in parts]) for name in names})
+                **{name: _concatenate([getattr(part, name) for part in parts]) for name in names})
+
+
+def _concatenate(arrays):
+    """numpy's concatenate, or torch's for the device views of protocol 15. Groups of one decision are consecutive
+    rows of one buffer, so their views are joined without a copy when they are."""
+    if hasattr(arrays[0], "detach"):
+        import torch
+        return torch.cat(arrays)
+    return np.concatenate(arrays)
 
 
 def encode_spec(spec: Spec) -> bytes:
@@ -215,14 +234,17 @@ def encode_step(spec: Spec, step: Step) -> bytes:
     return b"".join(parts)
 
 
-def decode_step(spec: Spec, payload: bytes | bytearray | memoryview) -> Step:
+def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None) -> Step:
     """Decode a STEP payload. Arrays are copies, so the receive buffer can be reused. Raises ValueError when the
-    payload is not the size its envs and ended envs make."""
+    payload is not the size its envs and ended envs make. With `device` (animus.device.DeviceBuffers, protocol 15)
+    obs, state and mask are views of the sim's device buffers, valid until this group's next STEP."""
     decision, env_begin, envs = STEP_HEADER.unpack_from(payload)
     offset = STEP_HEADER.size
     arrays = {}
+    if device is not None:
+        arrays["obs"], arrays["state"], arrays["mask"] = device.rows(env_begin, envs)
     done = None
-    layout = spec.step_layout(envs)
+    layout = spec.step_layout(envs, device=device is not None)
     for name, dtype, shape in layout:
         if name in ENDED_ONLY:
             ended = np.flatnonzero(done)

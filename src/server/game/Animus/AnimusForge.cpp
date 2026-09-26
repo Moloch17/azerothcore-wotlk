@@ -1569,7 +1569,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         }
 
         for (uint32 rank = 0; rank < _ranks; ++rank)
-            if (!SendSpec(rank))
+            if (!SendSpec(rank) || !OfferDevice(rank))
                 return;
 
         // A new learner starts from fresh training episodes; whatever ran unobserved is discarded. An evaluation the
@@ -1828,6 +1828,88 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
         { layouts.data(), layouts.size() * sizeof(LayoutMsg) }, { names.data(), names.size() } });
 }
 
+bool AnimusForge::Forge::OfferDevice(uint32 rank)
+{
+    if (_rankDevices.size() < _ranks)
+        _rankDevices.resize(_ranks);
+    RankDevice& device = _rankDevices[rank];
+    ForgeGpuApi const* gpu = Animus::Gpu::Api();
+
+    // A learner reconnecting gets fresh buffers; whatever it had opened it closed when it went.
+    if (gpu)
+        for (void* pointer : { device.Obs, device.State, device.Mask })
+            if (pointer)
+                gpu->Free(pointer);
+    device = RankDevice();
+    if (!gpu)
+        return true;
+
+    Animus::ScenarioSpec const spec = _pool->Spec();
+    uint32 const envs = RankEnvs(rank);
+    std::size_t const obsBytes = std::size_t(envs) * spec.AgentsPerEnv * spec.ObsDim * sizeof(float);
+    std::size_t const stateBytes = std::size_t(envs) * spec.StateDim * sizeof(float);
+    std::size_t const maskBytes = std::size_t(envs) * spec.AgentsPerEnv * spec.NumActions * sizeof(uint8);
+    // The GPU the rank's learner trains on: the one it can open the buffers on.
+    std::vector<uint32> const& gpus = _config.Gpus;
+    device.Device = int(rank < gpus.size() ? gpus[rank] : 0);
+
+    DeviceMsg msg{};
+    msg.Device = uint32(device.Device);
+    msg.Envs = envs;
+    if (gpu->Init(device.Device) || gpu->Alloc(&device.Obs, std::max<std::size_t>(obsBytes, 4))
+        || gpu->Alloc(&device.State, std::max<std::size_t>(stateBytes, 4))
+        || gpu->Alloc(&device.Mask, std::max<std::size_t>(maskBytes, 4))
+        || gpu->Export(device.Obs, msg.ObsHandle) || gpu->Export(device.State, msg.StateHandle)
+        || gpu->Export(device.Mask, msg.MaskHandle))
+    {
+        LOG_WARN("module.animus", "Rank {}: no device buffers, the learner gets obs over the socket: {}", rank,
+            gpu->LastError());
+        for (void* pointer : { device.Obs, device.State, device.Mask })
+            if (pointer)
+                gpu->Free(pointer);
+        device = RankDevice();
+        return true;
+    }
+
+    _server.Use(rank);
+    DeviceAckMsg ack{};
+    MsgType type = MsgType::Close;
+    if (!_server.Send(MsgType::Device, { { &msg, sizeof(msg) } }) || !_server.Receive(type, &ack, sizeof(ack))
+        || type != MsgType::DeviceAck)
+        return false;
+
+    device.On = ack.Accepted != 0;
+    LOG_INFO("module.animus", "Rank {}: {}", rank, device.On
+        ? Acore::StringFormat("obs, state and mask in device memory on GPU {} ({:.1f} MB)", device.Device,
+            double(obsBytes + stateBytes + maskBytes) / (1024.0 * 1024.0))
+        : std::string("the learner declined device buffers; obs over the socket"));
+    if (!device.On)
+    {
+        for (void* pointer : { device.Obs, device.State, device.Mask })
+            gpu->Free(pointer);
+        device = RankDevice();
+    }
+    return true;
+}
+
+bool AnimusForge::Forge::UploadRows(uint32 rank, uint32 begin, uint32 local, uint32 count)
+{
+    ForgeGpuApi const* gpu = Animus::Gpu::Api();
+    RankDevice const& device = _rankDevices[rank];
+    uint32 const envs = std::max<uint32>(1, _pool->NumEnvs());
+    auto copy = [&](void* target, auto const& vec) -> bool
+    {
+        std::size_t const perEnv = vec.size() / envs * sizeof(vec[0]);
+        return gpu->CopyToDevice(static_cast<char*>(target) + std::size_t(local) * perEnv,
+            reinterpret_cast<char const*>(vec.data()) + std::size_t(begin) * perEnv, std::size_t(count) * perEnv) == 0;
+    };
+    if (gpu->Init(device.Device) == 0 && copy(device.Obs, _pool->Obs) && copy(device.State, _pool->State)
+        && copy(device.Mask, _pool->Mask) && gpu->Synchronize() == 0)
+        return true;
+    LOG_ERROR("module.animus", "Rank {}: writing obs to the device failed: {}", rank, gpu->LastError());
+    return false;
+}
+
 bool AnimusForge::Forge::SendEveryGroup()
 {
     _nextTurn = 0;
@@ -1871,12 +1953,18 @@ bool AnimusForge::Forge::SendStep(uint32 group)
             return Chunk{ rows.data(), rows.size() * sizeof(float) };
         };
 
+        // With device buffers the obs, state and mask are in them before the STEP says they are there.
+        bool const device = rank < _rankDevices.size() && _rankDevices[rank].On;
+        if (device && !UploadRows(rank, begin, rows.Local, count))
+            return false;
+        Chunk const none{ nullptr, 0 };
+
         if (!_server.Send(MsgType::Step,
             {
                 { &header, sizeof(header) },
-                chunk(_pool->Obs),
-                chunk(_pool->State),
-                chunk(_pool->Mask),
+                device ? none : chunk(_pool->Obs),
+                device ? none : chunk(_pool->State),
+                device ? none : chunk(_pool->Mask),
                 chunk(_pool->Layout),
                 chunk(_pool->Present),
                 chunk(_pool->Rewards),

@@ -1001,6 +1001,32 @@ So the device runtime skeleton (step 2) no longer has the probe as its first con
 tables for the instanced and battleground maps (bake needs a map object with the grids loaded), the table's hash in
 the exported model's metadata, and the user's decision to make baked the default.
 
+### Step 2 and the transport as built (2026-09-26): the device runtime on torch's HIP, obs in shared device memory
+
+Measured first, because it decides the architecture: device memory exported by one HIP runtime opens only in the same
+one. HIP 5.7 (the container's hipcc/libamdhip64.so.5) -> torch's ROCm 6.4 fails (hipIpcOpenMemHandle 17) in both IPC
+modes; 6.4 -> 6.4 works, but only with HSA_ENABLE_IPC_MODE_LEGACY=0 (this ROCm build defaults to legacy, whose
+hipIpcGetMemHandle fails here even for a plain hipMalloc). So:
+
+- `libforge-gpu.so` (Animus/Gpu/Device/*.hip, hipcc 5.7, gfx1100) links against no HIP runtime and installs beside
+  the worldserver. `Animus::Gpu::Load` asks the learner's python where torch lives, dlopens torch's libamdhip64.so
+  RTLD_GLOBAL by path, then the library, whose NEEDED-less HIP symbols resolve against it. The worldserver links no
+  HIP; without a GPU/HIP torch/library it logs why and stays on the CPU (an end user's CPU-only bot never loads it).
+- Compiled with 5.7 headers against a 6.4 runtime: only ABI-stable calls (malloc, copies, streams, IPC, launches;
+  never hipGetDeviceProperties). Follow-up that removes the mismatch: ROCm 6.4 hip-dev in the image.
+- `DeviceApi.h` is the one C boundary (versioned function table). `AnimusForge.Gpu.Observe` (default 1).
+- Protocol 15: after SPEC the sim offers each rank device buffers for obs/state/mask (DEVICE, IPC handles); the
+  learner opens them through torch's runtime (animus/device.py, ctypes + __cuda_array_interface__) when its rollouts
+  run on that GPU and answers DEVICE_ACK. From then on the sim copies each group's rows into them before its STEP,
+  and the STEP omits them. The learner's captured rollout graph copies them device-to-device into its inputs; the
+  rollout buffer keeps obs/state/mask on the device, and the update reads them there (no rollout upload). Every other
+  consumer (evaluation, cast, bootstraps) takes a host copy (animus.device.host). Cluster connections always decline.
+
+What this does not do yet: the obs are still built on the CPU and copied up. The next device work is producing them
+there, which needs the game state they are built from on the device -- the hot-state mirror (step 3). The probe
+kernel on its own saves nothing (a baked lookup is ~1 us, and rewards and masks read the CPU probe too), so the probe
+tables move to VRAM as part of the move block's kernel, not before it.
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,

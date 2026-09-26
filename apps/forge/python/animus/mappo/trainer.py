@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from ..device import host
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, log_prob_of, per_layout, per_layout_host,
@@ -278,23 +279,28 @@ class _RolloutGraph:
     place and DenseLayouts.refresh keeps the dense matrices where they are, so a replay always uses the latest
     weights. Sampling draws from the device generator, which the capture registers (fresh draws each replay)."""
 
-    def __init__(self, trainer: "MappoTrainer", envs: int, agents: int, obs: np.ndarray, mask: np.ndarray,
-                 state_features: np.ndarray, deterministic: bool):
+    def __init__(self, trainer: "MappoTrainer", envs: int, agents: int, obs, mask, state_features,
+                 deterministic: bool, device_fed: bool = False):
         self.trainer, self.envs, self.agents, self.deterministic = trainer, envs, agents, deterministic
+        # Fed from the device (the sim's buffers, protocol 15): the observation, mask and state are copied device to
+        # device into the graph's inputs before a replay, and only the small host inputs are uploaded by it.
+        self.device_fed = device_fed
         device, rows = trainer.rollout_device, envs * agents
         recurrent, goals = trainer.recurrent_size, trainer.goal_count
 
-        # Inputs: one pinned host buffer the caller fills and one device buffer the graph uploads it into.
-        specs = [("obs", (envs, agents, obs.shape[-1]), torch.float32), ("layout", (envs, agents), torch.long),
-                 ("mask", (envs, agents, mask.shape[-1]), torch.bool),
-                 ("state", (envs, state_features.shape[-1]), torch.float32)]
+        # The large inputs, and the small ones: each a pinned host buffer the caller fills and a device buffer the graph
+        # uploads it into -- the large ones only when they came from the host.
+        self.large = _Packed([("obs", (envs, agents, obs.shape[-1]), torch.float32),
+                              ("mask", (envs, agents, mask.shape[-1]), torch.bool),
+                              ("state", (envs, state_features.shape[-1]), torch.float32)], device)
+        specs = [("layout", (envs, agents), torch.long)]
         if recurrent:
             specs += [("memory", (envs, agents, recurrent), torch.float32),
                       ("critic_memory", (envs, agents, recurrent), torch.float32)]
         if goals:
             specs += [("goal", (envs, agents), torch.long), ("chosen", (envs, agents), torch.bool)]
         self.inputs = _Packed(specs, device)
-        self.host_in = self.inputs.host
+        self.host_in = {**self.inputs.host, **self.large.host}
         self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
 
         stream = trainer._rollout_stream
@@ -314,7 +320,9 @@ class _RolloutGraph:
         envs, agents = self.envs, self.agents
         actor, critic = trainer._rollout_actor, trainer._rollout_critic
         self.inputs.upload()
-        inputs = self.inputs.device
+        if not self.device_fed:
+            self.large.upload()
+        inputs = {**self.inputs.device, **self.large.device}
 
         obs_t = inputs["obs"].reshape(rows, -1)
         layout_t = inputs["layout"].reshape(rows)
@@ -371,10 +379,17 @@ class _RolloutGraph:
         """One decision: fill the inputs, replay, wait once. Returns the act_and_value tuple and updates `state`."""
         trainer = self.trainer
         host = self.host_in
-        np.copyto(host["obs"].numpy(), obs)
+        if self.device_fed:
+            # On the rollout stream, ahead of the replay that reads them.
+            large = self.large.device
+            large["obs"].copy_(obs)
+            large["mask"].copy_(mask)
+            large["state"].copy_(state_features)
+        else:
+            np.copyto(host["obs"].numpy(), obs)
+            np.copyto(host["mask"].numpy(), mask)
+            np.copyto(host["state"].numpy(), state_features)
         np.copyto(host["layout"].numpy(), layout, casting="unsafe")
-        np.copyto(host["mask"].numpy(), mask)
-        np.copyto(host["state"].numpy(), state_features)
         if trainer.recurrent_size:
             np.copyto(host["memory"].numpy(), state.memory)
             np.copyto(host["critic_memory"].numpy(), state.critic_memory)
@@ -582,11 +597,12 @@ class MappoTrainer:
                 or self.slow_layout >= 0):
             return None
         envs, agents = layout.shape
-        key = (envs, agents, obs.shape[-1], mask.shape[-1], state_features.shape[-1], bool(deterministic))
+        device_fed = isinstance(obs, torch.Tensor)
+        key = (envs, agents, obs.shape[-1], mask.shape[-1], state_features.shape[-1], bool(deterministic), device_fed)
         graph = self._rollout_graphs.get(key)
         if graph is None:
             graph = self._rollout_graphs[key] = _RolloutGraph(self, envs, agents, obs, mask, state_features,
-                                                              bool(deterministic))
+                                                              bool(deterministic), device_fed)
         return graph
 
     def _groups(self, layout: np.ndarray, layout_t: torch.Tensor):
@@ -618,6 +634,7 @@ class MappoTrainer:
         `state` is carried in and updated in place (memory, goal): the policy of a decision is the policy of what it
         remembers and is pursuing.
         """
+        obs, mask = host(obs), host(mask)
         with self._rollout_context():
             actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state)
         return actions, log_probs
@@ -634,6 +651,8 @@ class MappoTrainer:
             graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
             if graph is not None:
                 return graph.run(obs, mask, layout, state_features, state)
+            # Device inputs (protocol 15) are for the captured decision; every other path reads the host's.
+            obs, mask, state_features = host(obs), host(mask), host(state_features)
             rows = envs * agents
             downloads = _Downloads(self._rollout_stream)
             # Converted and grouped by layout once, for the actor and the critic both.
@@ -734,6 +753,7 @@ class MappoTrainer:
         if not self.foresight_outputs:
             return None
 
+        obs = host(obs)
         lead = layout.shape
         rows = int(np.prod(lead))
         with self._rollout_context():
@@ -779,6 +799,7 @@ class MappoTrainer:
         [E, A]. The value depends on the goal the actor is pursuing, so pass the same goal the decision used, and on
         what the critic remembers of the episode, so pass the memory those decisions left (bootstrapping a truncated
         episode from a cleared memory values a fight in progress as if it had just begun)."""
+        state, obs = host(state), host(obs)
         envs, agents = layout.shape
         with self._rollout_context():
             downloads = _Downloads(self._rollout_stream)

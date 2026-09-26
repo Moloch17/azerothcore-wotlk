@@ -33,6 +33,7 @@ import torch
 
 from .distill import Teacher, build_teacher
 from .stages import arena_state_span
+from .device import host
 
 LEAGUE_DIR = "league"
 LEAGUE_FILE = "league.json"
@@ -390,7 +391,7 @@ class Cast:
             self.last_rows, self.last_present = rows, step.present
             return rows
         if self.pool is not None and self.cast_env.any():
-            opponents = self.rule.opponent_rows(step.state, agents)
+            opponents = self.rule.opponent_rows(host(step.state), agents)
             rows |= opponents & self.cast_env[:, None] & step.present
         if self.statics:
             static = self.rule.static_rows(step.present)
@@ -412,13 +413,13 @@ class Cast:
                     mine[:, agent] = False
                 if mine.any():
                     actor = self.pool.actor_of(self.pool.members[int(index)])
-                    actions = actor.act(step.obs, step.mask, step.layout, mine, actions)
+                    actions = actor.act(host(step.obs), host(step.mask), step.layout, mine, actions)
                     self.fallback_total += actor.fallback_rows
         for agent, actor in self.statics.items():
             mine = np.zeros_like(rows)
             mine[:, agent] = rows[:, agent]
             if mine.any():
-                actions = actor.act(step.obs, step.mask, step.layout, mine, actions)
+                actions = actor.act(host(step.obs), host(step.mask), step.layout, mine, actions)
                 self.fallback_total += actor.fallback_rows
         return actions
 

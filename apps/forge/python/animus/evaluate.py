@@ -30,6 +30,7 @@ from .evaluation import action_mask_table, format_summary, run_evaluation
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE
+from .device import host
 
 
 def main() -> None:
@@ -89,7 +90,7 @@ def main() -> None:
     def actions(step):
         acting.clear(step.done)
         # The sim's mask less the actions this scoring may not take, per layout.
-        mask = step.mask if forbidden is None else np.logical_and(step.mask, ~forbidden[step.layout])
+        mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
         return trainer.act(step.obs, mask, step.layout, not args.stochastic, acting)[0]
 
     try:

@@ -58,6 +58,7 @@ STALL_MIN_UPDATES = 20
 from .runs import FINISHED_FILE, archive_run, prune_checkpoints, resume_checkpoint_path, resume_mismatch
 from .stage import ADVANCE, ConvergenceController, Outcome
 from .stages import STAGE_FILE, load_stage
+from .device import host
 
 
 def _rotate(path: Path, columns: list[str]) -> bool:
@@ -354,7 +355,11 @@ class DecisionRows:
                 continue
             array = self.arrays.get(name)
             if array is None:
-                array = self.arrays[name] = np.empty((self.envs, *value.shape[1:]), dtype=value.dtype)
+                # A device view (protocol 15) is kept on its device, copied there: it is the sim's buffer, which the
+                # next STEP of this group overwrites.
+                array = self.arrays[name] = (torch.empty((self.envs, *value.shape[1:]), dtype=value.dtype,
+                                                         device=value.device) if isinstance(value, torch.Tensor)
+                                             else np.empty((self.envs, *value.shape[1:]), dtype=value.dtype))
             array[rows] = value
 
     def __getattr__(self, name: str):
@@ -421,7 +426,8 @@ class TrainingRun:
               " ...", flush=True)
         self.env = (ClusterEnv([config.socket, *workers], rank=config.rank, ranks=config.ranks,
                                timeout=config.cluster_timeout)
-                    if workers else ForgeEnv(config.socket, rank=config.rank, ranks=config.ranks))
+                    if workers else ForgeEnv(config.socket, rank=config.rank, ranks=config.ranks,
+                                             device=config.resolved_rollout_device()))
         self.spec = spec = self.env.spec
         # Env steps count every rank's envs: budgets, schedules and evaluations are the run's, not a rank's.
         self.run_envs = int(self.ranks.sum(torch.tensor(spec.num_envs)))
@@ -731,7 +737,7 @@ class TrainingRun:
         def choose(step):
             acting.clear(step.done)
             # The sim's mask less the actions the evaluation may not take (eval.mask_actions), per layout.
-            mask = step.mask if forbidden is None else np.logical_and(step.mask, ~forbidden[step.layout])
+            mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
             actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting)[0]
             return (actions, acting.goal) if acting.goal is not None else actions
 
@@ -1111,9 +1117,11 @@ class TrainingRun:
         # torch.multinomial as "probability tensor contains either `inf`, `nan` or element < 0" -- an error
         # that names neither the observation nor the seat it came from, several layers away from whichever
         # block wrote it. Caught here it names both, which is the difference between a fix and a hunt.
-        if not np.isfinite(part.obs).all():
-            bad = np.argwhere(~np.isfinite(part.obs))
-            where = ", ".join(f"env {int(e) + rows.start} agent {int(a)} obs[{int(i)}]={part.obs[e, a, i]}"
+        finite = bool(part.obs.isfinite().all()) if hasattr(part.obs, "isfinite") else np.isfinite(part.obs).all()
+        if not finite:
+            obs = host(part.obs)
+            bad = np.argwhere(~np.isfinite(obs))
+            where = ", ".join(f"env {int(e) + rows.start} agent {int(a)} obs[{int(i)}]={obs[e, a, i]}"
                               for e, a, i in bad[:8])
             raise RuntimeError(
                 f"{len(bad)} non-finite observation(s) from the sim at step {self.env_steps}: {where}"
@@ -1204,7 +1212,7 @@ class TrainingRun:
         """Mean legal actions per decision, per layout index, over the rollout's samples."""
         layout = buffer.layout.reshape(-1)
         valid = buffer.valid.reshape(-1)
-        allowed = buffer.mask.reshape(-1, buffer.mask.shape[-1]).sum(-1)
+        allowed = host(buffer.mask.reshape(-1, buffer.mask.shape[-1]).sum(-1))
         out = {}
         for index in np.unique(layout[valid]):
             rows = valid & (layout == index)

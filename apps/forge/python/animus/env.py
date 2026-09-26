@@ -16,10 +16,15 @@ from . import protocol as p
 
 
 class ForgeEnv:
-    def __init__(self, socket_path: str, connect_timeout: float = 600.0, rank: int = 0, ranks: int = 1):
+    def __init__(self, socket_path: str, connect_timeout: float = 600.0, rank: int = 0, ranks: int = 1,
+                 device: str | None = None):
         """`rank` of `ranks` data-parallel learners sharing the sim's pool (animus.parallel): the sim hands each its
-        own share of the envs, and this learner sees only its share."""
+        own share of the envs, and this learner sees only its share. `device` is where this learner's rollouts run:
+        when it is the GPU the sim offers its device buffers on, obs, state and mask are read from them (protocol 15,
+        animus.device) instead of the socket; None always declines them."""
         self.socket_path = socket_path
+        self.rollout_device = device
+        self.device_buffers = None
         self.sock = self._connect(socket_path, connect_timeout)
         hello = p.HELLO.pack(p.PROTOCOL_VERSION, rank, ranks)
         self.sock.sendall(p.encode_header(p.MsgType.HELLO, len(hello)) + hello)
@@ -125,6 +130,9 @@ class ForgeEnv:
         except OSError:
             pass
         self.sock.close()
+        if self.device_buffers is not None:
+            self.device_buffers.close()
+            self.device_buffers = None
 
     def __enter__(self) -> "ForgeEnv":
         return self
@@ -138,15 +146,35 @@ class ForgeEnv:
 
     def _receive_step(self) -> p.Step:
         msg_type, length = self._receive_header()
+        if msg_type == p.MsgType.DEVICE:
+            # Offered once, after SPEC and before the first STEP; the sim waits for the answer.
+            payload = bytearray(length)
+            self._read_into(memoryview(payload))
+            self._answer_device(bytes(payload))
+            msg_type, length = self._receive_header()
         if msg_type != p.MsgType.STEP or length > len(self._step_buffer):
             raise ConnectionError(f"expected STEP of at most {len(self._step_buffer)} bytes, got type {msg_type} of "
                                   f"{length}")
         view = memoryview(self._step_buffer)[:length]
         self._read_into(view)
         try:
-            return p.decode_step(self.spec, view)
+            return p.decode_step(self.spec, view, self.device_buffers)
         except ValueError as error:
             raise ConnectionError(str(error)) from None
+
+    def _answer_device(self, payload: bytes) -> None:
+        """Open the sim's device buffers if this learner can use them, and say whether it did."""
+        from .device import open_buffers
+
+        gpu, envs, obs, state, mask = p.DEVICE.unpack(payload)
+        buffers, why = open_buffers(self.spec, gpu, envs, (obs, state, mask), self.rollout_device)
+        if self.device_buffers is not None:
+            self.device_buffers.close()
+        self.device_buffers = buffers
+        print(f"Obs, state and mask from the sim's device buffers on GPU {gpu}" if buffers is not None
+              else f"The sim offered device buffers; declined ({why}): obs over the socket", flush=True)
+        answer = p.DEVICE_ACK.pack(int(buffers is not None))
+        self.sock.sendall(p.encode_header(p.MsgType.DEVICE_ACK, len(answer)) + answer)
 
     def _receive(self) -> tuple[int, bytes]:
         msg_type, length = self._receive_header()

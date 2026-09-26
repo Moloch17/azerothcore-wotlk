@@ -28,6 +28,7 @@ from typing import Callable
 import numpy as np
 
 from . import protocol as p
+from .device import host
 
 LEVEL_BANDS = ((1, 20), (21, 40), (41, 60), (61, 80))
 
@@ -447,7 +448,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         layout = step.layout
         if not baseline:
             taken[env_rows, agent_rows, np.clip(actions, 0, spec.num_actions - 1)] += 1
-            allowed += step.mask
+            allowed += host(step.mask)
         if tracing:
             for e in tracing:
                 for a in range(agents):
