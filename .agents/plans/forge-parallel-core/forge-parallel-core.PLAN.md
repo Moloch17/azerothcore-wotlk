@@ -1027,6 +1027,15 @@ there, which needs the game state they are built from on the device -- the hot-s
 kernel on its own saves nothing (a baked lookup is ~1 us, and rewards and masks read the CPU probe too), so the probe
 tables move to VRAM as part of the move block's kernel, not before it.
 
+### Where the time is after the transport (2026-09-26, stage8_duel, 192 envs, training, 85f699d66)
+
+50,441 env steps/s; 3.8 ms a decision = world 1.6 (map update), sim 1.2, learner 1.0 (was 6.5 = 2.3 / 1.1 / 3.1 before
+the baked probe and the device transport). Observation is 3.76 ms of thread time (~0.5 ms wall over 8 map threads):
+core 2.29, of which the masks (IsActionAllowed, a Spell built and checked per action) were 2.19 before the early
+refusals of 85f699d66 took ~0.5 off; the per-action features (cooldowns, aura scans) 0.83 -- the whole of what a
+device cooldown/aura table (step 3's first consumer) could save, ~0.1 ms wall. The user chose the CPU masks over it.
+Apply is 2.3 thread-ms, reset 0.72 ms serial on the world thread (2.7 on stage1_move): the sim's serial part.
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,
