@@ -1333,8 +1333,12 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 if (ms > 0.0)
                 {
                     namespace Curriculum = Animus::Curriculum;
-                    _observeBlockMs.emplace_back(slot == Curriculum::SeatEncoder::OBSERVE_VIEW ? std::string("view")
-                        : std::string(Curriculum::BlockName(Curriculum::BlockId(slot))), ms);
+                    std::string const name = slot == Curriculum::SeatEncoder::OBSERVE_VIEW ? std::string("view")
+                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE ? std::string("move.probe")
+                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_MARCH ? std::string("probe.marches")
+                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_RAYS ? std::string("probe.rays")
+                        : std::string(Curriculum::BlockName(Curriculum::BlockId(slot)));
+                    _observeBlockMs.emplace_back(name, ms);
                 }
             }
             std::sort(_observeBlockMs.begin(), _observeBlockMs.end(),

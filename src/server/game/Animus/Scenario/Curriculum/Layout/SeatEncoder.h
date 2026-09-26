@@ -23,6 +23,7 @@
 #include "SeatView.h"
 #include <array>
 #include <atomic>
+#include <chrono>
 
 /*
  * A class/role policy's inputs and outputs in the world: a bot's observation row and action mask, and what each action
@@ -46,7 +47,22 @@ namespace Animus::Curriculum::SeatEncoder
     /// character), and at OBSERVE_VIEW what the seat does before its blocks (StageScenario::ObserveSeat: the
     /// liquid check, target and motion tracking, the memory, SeatView). `forge status` shows where it goes.
     constexpr std::size_t OBSERVE_VIEW = BLOCK_COUNT;
-    inline std::array<std::atomic<uint64>, BLOCK_COUNT + 1> ObserveNs{};
+    /// Parts of the move block's time (inside "move", not beside it): the ground probe's refresh as a whole, its
+    /// height marches, and its navmesh raycasts.
+    constexpr std::size_t OBSERVE_PROBE = BLOCK_COUNT + 1;
+    constexpr std::size_t OBSERVE_PROBE_MARCH = BLOCK_COUNT + 2;
+    constexpr std::size_t OBSERVE_PROBE_RAYS = BLOCK_COUNT + 3;
+    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 4;
+    inline std::array<std::atomic<uint64>, OBSERVE_SLOTS> ObserveNs{};
+
+    /// Adds the time since `mark` to `slot` and moves `mark` to now.
+    inline void ChargeObserve(std::size_t slot, std::chrono::steady_clock::time_point& mark)
+    {
+        auto const now = std::chrono::steady_clock::now();
+        ObserveNs[slot].fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mark).count()),
+            std::memory_order_relaxed);
+        mark = now;
+    }
 
     /// Apply `action` as the client would. Masked or out-of-range actions do nothing.
     void Apply(SeatView& view, int32 action, SeatActionResult& result);

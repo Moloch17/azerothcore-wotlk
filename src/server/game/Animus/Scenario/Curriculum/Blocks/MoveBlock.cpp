@@ -17,6 +17,7 @@
  */
 
 #include "MoveBlock.h"
+#include "SeatEncoder.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include <boost/json/array.hpp>
@@ -430,6 +431,10 @@ namespace
                 return;
         }
 
+        namespace Encoder = Animus::Curriculum::SeatEncoder;
+        auto probeMark = std::chrono::steady_clock::now();
+        auto partMark = probeMark;
+
         // The seat's own polygon, once for all sixteen rays. Extents match the core's own lookup in
         // cs_mmaps; a seat standing somewhere the mesh does not cover simply gets no rays, and the height march
         // still answers.
@@ -450,8 +455,10 @@ namespace
         {
             float const heading = RayHeading(facing, ray);
             float water = 0.0f;
+            partMark = std::chrono::steady_clock::now();
             MarchBearing(bot, map, heading, probe->Reach[ray], probe->Step[ray], water,
                 probe->Burns[ray]);
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
 
             // Three rays, which differ only in what their filter will cross. The dry one walks ground alone,
             // so it stops at a shore, a lava edge or a wall. The wet one may cross water, so it stops at a lava
@@ -474,6 +481,8 @@ namespace
                 NAV_GROUND);
             float const all = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
                 NAV_GROUND | NAV_WATER | NAV_MAGMA | NAV_SLIME);
+
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_RAYS, partMark);
 
             // The nearer of the two senses wins: the march sees drops the mesh calls walkable, the ray sees
             // walls the march is blind to, and a seat wants to know about whichever comes first.
@@ -574,6 +583,7 @@ namespace
         probe->Facing = facing;
         probe->Ms = view.NowMs;
         probe->Valid = true;
+        Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
     }
 
     /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset

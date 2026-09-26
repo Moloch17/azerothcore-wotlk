@@ -952,6 +952,37 @@ learner-driven run reaches its first reset without a "Synchronous query on seale
    inference to the device as well (`rollout_device`), batched over all envs; Phase 6 then feeds it
    device-resident observations so the batch never crosses PCIe.
 
+## Phases 5-8, reordered by measurement (2026-09-25, the user's decision)
+
+The phases below are written in the order of the original design, which front-loads the device terrain, BVH and
+navmesh A* -- work against the object update (~1.7 ms of thread time per decision), which is not the wall. The
+user chose to build them in the order the measurements give, each step working and measured before the next:
+
+1. **The observation's own geometry first.** `forge status` "observe blocks": in training at 192 envs observation is
+   ~8.8 ms of thread time per decision, the move block 5.45 ms of it -- its ground probe (16 bearings: a height march
+   and three filtered navmesh raycasts each, refreshed when the seat moves or turns) -- and the core block 2.32 ms
+   (a per-action loop over cooldowns and ranks). A unit-column mirror would not touch either, so the first device
+   feature is the ground probe: terrain heights, liquid and navmesh tiles on the device (the parts of Phase 6.1 the
+   probe needs, uploaded as tiles load -- the deferred tile loads of the static review are the hook), and a kernel
+   that answers every refreshing seat's probe in one launch, with the CPU probe as its twin (tolerance, not
+   bitwise: the policy sees floats).
+2. **The device runtime skeleton** (Phase 5's Gpu/ directory, HIP 5.7 hipcc in the container, gfx1100): lands with 1.
+3. **The hot-state mirror** (Phase 5) when a unit-column kernel needs it: the core block's per-action loop and
+   Phase 7's cooldown/aura tables are its first consumers.
+4. **Observation encoding as a kernel** (Phase 6.3.7), then **inference on device tensors** (Phase 6.4). Settle
+   first: HIP IPC between the worldserver's HIP 5.7 and torch's ROCm 6.4 (a 20-line probe); if it fails, the learner
+   inside the worldserver process is the alternative, the user's call.
+5. **The rest of Phase 6 and Phase 7** when the measurements put them on the critical path; Phase 7's differential
+   oracle harness early, since every later step needs it.
+6. **Phase 8** only if one replica's CPU exception work shows up as the longest map task.
+
+Measured before building (training-like, 192 envs): move 5.33 ms of thread time per decision = probe 5.27 = height
+marches 3.88 + navmesh rays 0.93 + jump/clearance ~0.46. A march is up to MARCH_CELLS steps per bearing, each a
+Map::GetLiquidData (grid liquid + a vmap location query) and a Map::GetHeight with the vmap check (grid heights + a
+downward ray through the vmap BIH and its models' triangles). So step 1's device data is the grid terrain (heights,
+liquid) and the static vmap trees (BIH, model instances, group triangles, group liquid) -- Phase 6.1's terrain and
+collision -- and its kernel is the march; the navmesh (0.93) follows.
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,
