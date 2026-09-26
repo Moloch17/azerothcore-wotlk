@@ -23,7 +23,9 @@
 #include "MapMgr.h"
 #include "MoveBlock.h"
 #include "ProbeBake.h"
+#include "InstanceBosses.h"
 #include "StageDefinition.h"
+#include "World.h"
 #include <chrono>
 #include <filesystem>
 #include <set>
@@ -127,8 +129,9 @@ namespace
                 "[radius]",
                 "bake the ground probe for the grid holding (x, y), in memory, and compare it with the live "
                 "probe (within radius of (x, y) if given)" });
-            table.AddRow({ "forge probestage <scenario>", "bake the ground probe tables for every grid the "
-                "scenario's spawn points are on, to AnimusForge.Probe.Dir (grids already baked are kept)" });
+            table.AddRow({ "forge probestage <scenario> [rebake]", "bake the ground probe tables the scenario "
+                "needs to AnimusForge.Probe.Dir: its spawn points' grids on a continent, every grid of an instanced "
+                "map (kept if already baked, unless rebake)" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
                 "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
@@ -215,12 +218,12 @@ namespace
                 return true;
             }
 
-            // The grid and its eight neighbours: a march from the grid's edge runs forty yards into the next one.
-            float const gridX = std::floor(x / SIZE_OF_GRIDS) * SIZE_OF_GRIDS + SIZE_OF_GRIDS / 2.0f;
-            float const gridY = std::floor(y / SIZE_OF_GRIDS) * SIZE_OF_GRIDS + SIZE_OF_GRIDS / 2.0f;
+            // The grid and its eight neighbours, terrain and collision only: a march from the grid's edge runs forty
+            // yards into the next one.
             for (int32 dx = -1; dx <= 1; ++dx)
                 for (int32 dy = -1; dy <= 1; ++dy)
-                    map->LoadGrid(gridX + float(dx) * SIZE_OF_GRIDS, gridY + float(dy) * SIZE_OF_GRIDS);
+                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
+                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
 
             Animus::Curriculum::ProbeBake::Settings settings;
             settings.Cell = std::clamp(cell.value_or(settings.Cell), 0.25f, 16.0f);
@@ -251,12 +254,44 @@ namespace
             return true;
         }
 
-        /// `forge probestage <scenario>`: the tables AnimusForge.Probe.Source = baked reads for this scenario --
-        /// the grid under every spawn point, and a neighbour when the point is near enough its edge for a march
-        /// or an objective to cross it. A grid with a file already is left as it is.
+        /// A map's grid as the core names it (GridCoord, the mmtile file name) from a probe table's grid index:
+        /// the core counts grids from +x/+y down, the tables from 0 up.
+        static GridCoord CoreGrid(int32 gridX, int32 gridY)
+        {
+            return GridCoord(uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridX, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)),
+                uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridY, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)));
+        }
+
+        /// Every grid of `mapId` the navmesh covers, as table grid indexes: an instance is small, and where in it a
+        /// seat stands is up to the encounter, so all of it is baked.
+        static std::set<std::pair<int32, int32>> NavmeshGrids(uint32 mapId)
+        {
+            std::set<std::pair<int32, int32>> grids;
+            std::string const prefix = Acore::StringFormat("{:03}", mapId);
+            std::error_code error;
+            for (auto const& file : std::filesystem::directory_iterator(sWorld->GetDataPath() + "mmaps", error))
+            {
+                std::string const name = file.path().filename().string();
+                if (name.size() != 14 || name.compare(0, 3, prefix) != 0 || file.path().extension() != ".mmtile")
+                    continue;
+                int32 const coreX = std::atoi(name.substr(3, 2).c_str());
+                int32 const coreY = std::atoi(name.substr(5, 2).c_str());
+                grids.emplace(int32(CENTER_GRID_ID) - 1 - coreX, int32(CENTER_GRID_ID) - 1 - coreY);
+            }
+            return grids;
+        }
+
+        /// `forge probestage <scenario> [rebake]`: the tables AnimusForge.Probe.Source = baked reads for this
+        /// scenario. On a continent, the grid under every spawn point and a neighbour when the point is near enough
+        /// its edge for a march or an objective to cross it; on an instanced map (a dungeon, a raid, a
+        /// battleground, the stage's own or its instance ladder's), every grid its navmesh covers. A grid with a
+        /// file already is kept unless `rebake` is given.
         ///
-        /// Each grid takes about half a minute of every core, on the world thread: run it with nothing training.
-        static bool HandleProbeStage(ChatHandler* handler, std::string scenario)
+        /// What is baked is the map's static geometry -- terrain, liquid, the collision tree and the navmesh --
+        /// with no creatures or gameobjects loaded, so a map's tables are the same whatever was spawned when they
+        /// were made. Each grid takes about half a minute of every core, on the world thread: run it with nothing
+        /// training.
+        static bool HandleProbeStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
         {
             namespace Bake = Animus::Curriculum::ProbeBake;
             Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
@@ -265,71 +300,82 @@ namespace
                 handler->PSendSysMessage("No such scenario: {}", scenario);
                 return true;
             }
-
-            Map* map = sMapMgr->CreateBaseMap(stage->MapId);
-            if (!map || map->Instanceable())
-            {
-                handler->PSendSysMessage("{} plays on map {}, which is not a continent: its seats measure live",
-                    scenario, stage->MapId);
-                return true;
-            }
+            bool const rebake = mode && *mode == "rebake";
 
             std::vector<Position> points = stage->SpawnPoints;
             points.insert(points.end(), stage->HeldOutSpawnPoints.begin(), stage->HeldOutSpawnPoints.end());
+            std::set<uint32> maps = { stage->MapId };
             for (Animus::Curriculum::ArenaDefinition const& arena : stage->Arenas)
             {
                 points.insert(points.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
                 points.insert(points.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
+                for (Animus::Curriculum::BossRow const& row : Animus::Curriculum::InstanceLadderRows(arena.Instance))
+                    maps.insert(row.MapId);
             }
 
             // An objective is at most forty yards from its spawn and the march looks forty further: a neighbour
             // within eighty of the point is on the stage too.
             constexpr float REACH = 80.0f;
-            std::set<std::pair<int32, int32>> grids;
-            for (Position const& point : points)
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                    {
-                        int32 const gx = Bake::GridIndex(point.GetPositionX() + float(dx) * REACH);
-                        int32 const gy = Bake::GridIndex(point.GetPositionY() + float(dy) * REACH);
-                        grids.emplace(gx, gy);
-                    }
-
-            handler->PSendSysMessage("{}: {} spawn points on {} grids of map {}, into {}", scenario, points.size(),
-                grids.size(), stage->MapId, Bake::Store::Dir());
             uint32 baked = 0;
             uint32 kept = 0;
             uint32 recompressed = 0;
             uint32 failed = 0;
             auto const started = std::chrono::steady_clock::now();
-            for (auto const& [gx, gy] : grids)
+            for (uint32 mapId : maps)
             {
-                std::string const path = Bake::Store::FileFor(stage->MapId, gx, gy);
-                std::error_code error;
-                if (std::filesystem::exists(path, error))
+                Map* map = sMapMgr->CreateBaseMap(mapId);
+                if (!map)
                 {
-                    // A table of the first, uncompressed format is written again compressed: the same readings.
-                    Bake::Table old;
-                    if (Bake::FileVersion(path) == 1 && Bake::Read(path, old) && Bake::Write(old, path))
-                        ++recompressed;
-                    else
-                        ++kept;
+                    handler->PSendSysMessage("  map {}: no such map", mapId);
                     continue;
                 }
 
-                float const centreX = (float(gx) + 0.5f) * SIZE_OF_GRIDS;
-                float const centreY = (float(gy) + 0.5f) * SIZE_OF_GRIDS;
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        map->LoadGrid(centreX + float(dx) * SIZE_OF_GRIDS, centreY + float(dy) * SIZE_OF_GRIDS);
+                std::set<std::pair<int32, int32>> grids;
+                if (map->Instanceable())
+                    grids = NavmeshGrids(mapId);
+                else if (mapId == stage->MapId)
+                    for (Position const& point : points)
+                        for (int32 dx = -1; dx <= 1; ++dx)
+                            for (int32 dy = -1; dy <= 1; ++dy)
+                                grids.emplace(Bake::GridIndex(point.GetPositionX() + float(dx) * REACH),
+                                    Bake::GridIndex(point.GetPositionY() + float(dy) * REACH));
 
-                Bake::Table const table = Bake::Bake(map, centreX, centreY, Bake::StandardSettings());
-                if (Bake::Write(table, path))
-                    ++baked;
-                else
+                handler->PSendSysMessage("{}: map {} ({}), {} grids, into {}", scenario, mapId,
+                    map->Instanceable() ? "instanced: every navmesh grid" : "continent: the spawn points' grids",
+                    grids.size(), Bake::Store::Dir());
+
+                for (auto const& [gx, gy] : grids)
                 {
-                    ++failed;
-                    handler->PSendSysMessage("  could not write {}", path);
+                    std::string const path = Bake::Store::FileFor(mapId, gx, gy);
+                    std::error_code error;
+                    if (!rebake && std::filesystem::exists(path, error))
+                    {
+                        // A table of the first, uncompressed format is written again compressed: the same readings.
+                        Bake::Table old;
+                        if (Bake::FileVersion(path) == 1 && Bake::Read(path, old) && Bake::Write(old, path))
+                            ++recompressed;
+                        else
+                            ++kept;
+                        continue;
+                    }
+
+                    // The grid and its eight neighbours, terrain and collision only: no objects are spawned.
+                    for (int32 dx = -1; dx <= 1; ++dx)
+                        for (int32 dy = -1; dy <= 1; ++dy)
+                            map->EnsureGridCreated(CoreGrid(gx + dx, gy + dy));
+
+                    float const centreX = (float(gx) + 0.5f) * SIZE_OF_GRIDS;
+                    float const centreY = (float(gy) + 0.5f) * SIZE_OF_GRIDS;
+                    Bake::Table const table = Bake::Bake(map, centreX, centreY, Bake::StandardSettings());
+                    if (table.FloorZ.empty())
+                        continue;       // a tile at the edge of the mesh with no floor inside this grid
+                    if (Bake::Write(table, path))
+                        ++baked;
+                    else
+                    {
+                        ++failed;
+                        handler->PSendSysMessage("  could not write {}", path);
+                    }
                 }
             }
 
