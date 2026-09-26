@@ -5257,6 +5257,14 @@ AnimusForge.Probe.Source = "live"
 
 AnimusForge.Probe.Dir = ""
 
+#
+#    AnimusForge.Probe.CacheGrids
+#        Description: Most grid tables held in memory at once (about 5 MB each). Past it the one read
+#                     longest ago is let go, and read from disk again if a seat comes back to it.
+#        Default:     64
+
+AnimusForge.Probe.CacheGrids = 64
+
 ###################################################################################################
 # GROUND PROBE
 #
@@ -5277,11 +5285,20 @@ AnimusForge.Probe.Source = "live"
 
 #
 #    AnimusForge.Probe.Dir
-#        Description: Where the baked tables are, one file a grid (<map>_<gridX>_<gridY>.probe).
+#        Description: Where the baked tables are, one zstd-compressed file a grid (about 1.7 MB,
+#                     <map>_<gridX>_<gridY>.probe).
 #                     Relative paths are relative to this config file's directory.
 #        Default:     "" - (<AnimusForge.OutputDir>/probes)
 
 AnimusForge.Probe.Dir = ""
+
+#
+#    AnimusForge.Probe.CacheGrids
+#        Description: Most grid tables held in memory at once (about 5 MB each). Past it the one read
+#                     longest ago is let go, and read from disk again if a seat comes back to it.
+#        Default:     64
+
+AnimusForge.Probe.CacheGrids = 64
 
 ###################################################################################################
 # LEARNER

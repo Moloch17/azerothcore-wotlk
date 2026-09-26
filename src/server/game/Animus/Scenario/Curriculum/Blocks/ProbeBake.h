@@ -22,6 +22,7 @@
 #include "Block.h"
 #include "GroundSense.h"
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -45,8 +46,30 @@ namespace Animus::Curriculum::ProbeBake
         uint32 Threads = 0;             // 0: every hardware thread
     };
 
+    /// One bearing's reading as a table holds it: a byte a field, Step signed. What a baked seat reads is exactly
+    /// this, turned back into [0, 1] (and [-1, 1] for Step).
+    struct PackedBearing
+    {
+        uint8 Reach = 255;
+        int8 Step = 0;
+        uint8 Shore = 255;
+        uint8 Burns = 0;
+    };
+
+    /// A floor's room: the clearance in a byte, and the way out as 0-254 around the circle, 255 for none.
+    struct PackedRoom
+    {
+        uint8 Clearance = 255;
+        uint8 Away = 255;
+    };
+
+    PackedBearing Pack(GroundSense::Bearing const& bearing);
+    GroundSense::Bearing Unpack(PackedBearing const& bearing);
+    PackedRoom Pack(GroundSense::Room const& room);
+    GroundSense::Room Unpack(PackedRoom const& room);
+
     /// One grid's probes. Cells run in rows of Side from (MinX, MinY); a cell's floors are First[cell] up to
-    /// First[cell + 1], each with Bearings readings and one room.
+    /// First[cell + 1], each with Bearings readings and one room. About 5 MB a grid in memory.
     struct Table
     {
         uint32 MapId = 0;
@@ -56,9 +79,11 @@ namespace Animus::Curriculum::ProbeBake
         uint32 Side = 0;
         std::vector<uint32> First;
         std::vector<float> FloorZ;
-        std::vector<GroundSense::Bearing> Readings;
-        std::vector<GroundSense::Room> Rooms;
+        std::vector<PackedBearing> Readings;
+        std::vector<PackedRoom> Rooms;
         double Seconds = 0.0;
+
+        [[nodiscard]] std::size_t Bytes() const;
     };
 
     /// How a seat's sixteen rays are read off a table baked on compass bearings: the nearest bearing, or the worst
@@ -101,30 +126,36 @@ namespace Animus::Curriculum::ProbeBake
     /// The grid a point is in, as the table files name it.
     int32 GridIndex(float coordinate);
 
-    /// A table as a file: the readings quantised to a byte a field (Step signed), the room to two. A table read
-    /// back holds exactly what the file does, so a baked seat sees the quantised values, the same everywhere.
+    /// A table as a file: the header, then the cells' floor index, the floors' heights, the packed readings and
+    /// rooms, zstd-compressed (about 1.7 MB a grid). Read also takes the uncompressed files of the first format.
     bool Write(Table const& table, std::string const& path);
     bool Read(std::string const& path, Table& table);
+    /// The format a file was written in (1 uncompressed, 2 zstd), or 0 when it is not a table.
+    uint32 FileVersion(std::string const& path);
 
     /// The live stand-in where no table answers: the same dense wedge measurement the bake makes, at the seat.
     Reading SenseLive(Map* map, dtNavMeshQuery const* query, GroundSense::Origin const& at, float facing);
 
     /// The tables of AnimusForge.Probe.Source = baked, one file a grid in AnimusForge.Probe.Dir, loaded the first
-    /// time a seat stands on the grid and kept.
+    /// time a seat stands on the grid. At most AnimusForge.Probe.CacheGrids are held: past that the one read
+    /// longest ago is let go, and read from disk again if a seat comes back to it.
     namespace Store
     {
-        void Configure(bool baked, std::string const& dir);
+        void Configure(bool baked, std::string const& dir, uint32 cacheGrids);
         bool Baked();
         std::string const& Dir();
         std::string FileFor(uint32 mapId, int32 gridX, int32 gridY);
 
-        /// The table for the grid holding (x, y), or nullptr when there is no file for it. Thread safe.
-        Table const* Find(uint32 mapId, float x, float y);
+        /// The table for the grid holding (x, y), or nullptr when there is no file for it. Thread safe; the
+        /// pointer keeps the table alive while it is used even if the cache lets it go meanwhile.
+        std::shared_ptr<Table const> Find(uint32 mapId, float x, float y);
 
         /// Seat probes answered from a table, and answered live because none did.
         inline std::atomic<uint64> Reads{ 0 };
         inline std::atomic<uint64> Fallbacks{ 0 };
+        /// Tables held now, and the memory they take.
         uint32 Loaded();
+        std::size_t Bytes();
     }
 }
 

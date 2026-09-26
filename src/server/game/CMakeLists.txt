@@ -55,12 +55,22 @@ target_compile_definitions(game
   PRIVATE
     FORGE_PYTHON_DIR="${CMAKE_SOURCE_DIR}/apps/forge/python")
 
+# zstd compresses the forge's baked ground-probe tables (ProbeBake). The static archive first, so the worldserver
+# needs no libzstd at run time.
+find_path(ZSTD_INCLUDE_DIR zstd.h REQUIRED)
+find_library(ZSTD_LIBRARY NAMES libzstd.a zstd REQUIRED)
+
 target_link_libraries(game
   PRIVATE
     acore-core-interface
+    ${ZSTD_LIBRARY}
   PUBLIC
     game-interface
     libsidecar)
+
+target_include_directories(game
+  PRIVATE
+    ${ZSTD_INCLUDE_DIR})
 
 set_target_properties(game
   PROPERTIES

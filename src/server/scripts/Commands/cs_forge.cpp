@@ -299,6 +299,7 @@ namespace
                 grids.size(), stage->MapId, Bake::Store::Dir());
             uint32 baked = 0;
             uint32 kept = 0;
+            uint32 recompressed = 0;
             uint32 failed = 0;
             auto const started = std::chrono::steady_clock::now();
             for (auto const& [gx, gy] : grids)
@@ -307,7 +308,12 @@ namespace
                 std::error_code error;
                 if (std::filesystem::exists(path, error))
                 {
-                    ++kept;
+                    // A table of the first, uncompressed format is written again compressed: the same readings.
+                    Bake::Table old;
+                    if (Bake::FileVersion(path) == 1 && Bake::Read(path, old) && Bake::Write(old, path))
+                        ++recompressed;
+                    else
+                        ++kept;
                     continue;
                 }
 
@@ -328,8 +334,8 @@ namespace
             }
 
             double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("{}: {} grids baked, {} already there, {} failed, in {:.0f} s", scenario, baked,
-                kept, failed, seconds);
+            handler->PSendSysMessage("{}: {} grids baked, {} already there, {} recompressed, {} failed, in {:.0f} s",
+                scenario, baked, kept, recompressed, failed, seconds);
             return true;
         }
 

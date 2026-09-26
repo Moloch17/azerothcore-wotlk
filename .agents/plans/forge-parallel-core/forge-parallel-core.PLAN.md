@@ -983,6 +983,24 @@ downward ray through the vmap BIH and its models' triangles). So step 1's device
 liquid) and the static vmap trees (BIH, model instances, group triangles, group liquid) -- Phase 6.1's terrain and
 collision -- and its kernel is the march; the navmesh (0.93) follows.
 
+### Step 1 as built: the probe baked, not a device kernel (2026-09-25/26, b1ff584e6..151b49319 and after)
+
+The user's constraint settled it: end users run the bot on a CPU alone, so whatever the probe is must be computable
+on a CPU. The probe is static geometry, so it is precomputed instead of accelerated: `forge probestage <scenario>`
+bakes per-grid tables (2 yd cells, every navmesh floor, 16 compass bearings, three rays a wedge, a half-yard march,
+clearance), one zstd file a grid (~1.7 MB), ~25-30 s a grid on 32 threads; `AnimusForge.Probe.Source = baked` reads
+them every decision (a lookup ~1 us against ~25-70 us live), with the same dense probe measured live where no table
+is, counted in `forge status`. At most `Probe.CacheGrids` (64, ~5 MB each) are held. Default stays `live`.
+
+A/B, fine-tuning each stage's best.pt for 10M steps, 2 seeds an arm, 2048 fixed evaluation episodes: stage2_indoor
+equal arrival, ~8% faster travel, +16% env steps/s; stage1_move 97.2% vs 96.8% arrived and higher return on every
+seed, no speed gain (learner-bound). Zero-shot equal on both: the old policies read the new probe unharmed. A quadtree
+of the tables was measured and rejected (only ~5% of 4 yd blocks interpolate within 0.05; Step is the least smooth).
+
+So the device runtime skeleton (step 2) no longer has the probe as its first consumer. Still open for the probe:
+tables for the instanced and battleground maps (bake needs a map object with the grids loaded), the table's hash in
+the exported model's metadata, and the user's decision to make baked the default.
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,

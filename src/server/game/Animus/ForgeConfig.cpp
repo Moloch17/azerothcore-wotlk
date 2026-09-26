@@ -239,6 +239,7 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const probeDir = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Dir", "");
     ProbeDir = (probeDir.empty() ? fs::path(OutputDir) / "probes" : Resolve(probeDir, configDir))
         .lexically_normal().string();
+    ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Probe.CacheGrids", 64));
 
     LearnerPython = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Python", "");
     if (LearnerPython.empty())

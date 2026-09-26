@@ -91,6 +91,7 @@ namespace AnimusForge
         /// (`forge probestage`) instead of measuring it; live (the default) measures.
         bool ProbeBaked = false;
         std::string ProbeDir;           // AnimusForge.Probe.Dir, resolved: never empty after Load
+        uint32 ProbeCacheGrids = 64;    // AnimusForge.Probe.CacheGrids: tables held in memory at once
 
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;

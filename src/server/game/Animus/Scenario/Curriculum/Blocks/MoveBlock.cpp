@@ -292,7 +292,7 @@ namespace
             // bake measured best. Where no table answers, the same measurement made live, and counted.
             Bake::Reading reading;
             Bake::Reading room;
-            Bake::Table const* table = Bake::Store::Find(map->GetId(), at.X, at.Y);
+            std::shared_ptr<Bake::Table const> const table = Bake::Store::Find(map->GetId(), at.X, at.Y);
             if (table && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
                 && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room))
             {
