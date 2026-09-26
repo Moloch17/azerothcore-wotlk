@@ -157,7 +157,8 @@ namespace Animus::Curriculum
             /// the action space. A seat that holds a bearing into a cliff should be able to tell that it did.
             OBS_GROUND_FIRST,
             /// **How the ground changes along each ray**, signed, / MAX_STEP and clamped: positive is a step up,
-            /// negative a drop, zero flat.
+            /// negative a drop, zero flat. In flight (OBS_AIRBORNE, not swimming) OBS_GROUND_FIRST is instead the
+            /// level flight reach along the ray, and this is what climbing FLIGHT_CLIMB higher would add to it.
             ///
             /// The reach above collapses a wall, a cliff, a lava lake and the edge of the map into one number,
             /// and this is what tells the first two apart -- which matters because they are opposite things to a
@@ -315,6 +316,10 @@ namespace Animus::Curriculum
         static constexpr uint32 MARCH_CELLS = 5;
         static constexpr float MARCH_RANGES[MARCH_CELLS] = { 6.0f, 12.0f, 20.0f, 30.0f, 40.0f };
         static constexpr float MARCH_MAX = 40.0f;
+        /// In the air the rays are flown, not marched (Observe): looked along every FLIGHT_PITCH yards, and again
+        /// FLIGHT_CLIMB higher for whether climbing opens the way.
+        static constexpr float FLIGHT_PITCH = 0.5f;
+        static constexpr float FLIGHT_CLIMB = 8.0f;
         /// When a march stops describing where the seat is. Forty map queries is too many to repeat every
         /// decision, and it does not have to be repeated: the ground does not move. Redone when the seat has
         /// walked MARCH_REFRESH_YARDS from where it was marched, turned MARCH_REFRESH_RADIANS from the heading

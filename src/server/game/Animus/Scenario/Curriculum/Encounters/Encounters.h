@@ -33,6 +33,8 @@
 #include "SeatView.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
+#include <atomic>
+#include <unordered_map>
 #include <array>
 #include <functional>
 #include <map>
@@ -805,6 +807,36 @@ namespace Animus::Curriculum
         [[nodiscard]] static float Saved(EnvTravel const& travel);
 
         std::vector<EnvTravel> _envs;
+
+    public:
+        /// The shaping route's plans since the start (RefreshWay): count, time, and how many failed or fell short.
+        static inline std::atomic<uint64> WayPlans{ 0 };
+        static inline std::atomic<uint64> WayPlanNs{ 0 };
+        static inline std::atomic<uint64> WayPlansFailed{ 0 };
+        static inline std::atomic<uint64> WayPlansPartial{ 0 };
+
+    private:
+
+        /// Trips found before, per (arena, spawn point, detour band), for training resets to draw from instead of
+        /// searching again (Build): the search plans a route per attempt and was ~1.2 ms of every stage1_move reset.
+        struct PooledTrip
+        {
+            Position Objective;
+            float Walk = 0.0f;
+            float DryDistance = 0.0f;
+            float LedgeDrop = 0.0f;
+            float DiveDepth = 0.0f;
+            int32 Band = -1;
+            bool Shortcut = false;
+            bool DryShortcut = false;
+            bool Crossing = false;
+            bool AirOnly = false;
+            bool Ledge = false;
+            bool Dive = false;
+        };
+        bool _pooling = false;          // AnimusForge.TravelPools
+        std::mutex _poolLock;           // resets run on the map threads
+        std::unordered_map<uint64, std::vector<PooledTrip>> _pools;
     };
 
     /// The side's director: what the team holds to, who it concentrates on, what shape it takes, and whose turn

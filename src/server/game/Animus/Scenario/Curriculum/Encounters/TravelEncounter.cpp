@@ -16,8 +16,11 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Config.h"
+#include <chrono>
 #include "Encounters.h"
 #include "Env.h"
+#include "EnvPool.h"
 #include "EpisodeInfoTable.h"
 #include "Map.h"
 #include "MapDefines.h"
@@ -43,6 +46,11 @@ namespace
     /// still succeeds on the first or second attempt and pays nothing for the higher ceiling; rough ground gets
     /// the tries it needs rather than falling through to the spawn-point retry, which moves the seats.
     constexpr uint32 OBJECTIVE_ATTEMPTS = 48;
+    /// Trips pooled per (arena, spawn point, band) before training resets draw from them, the most kept, and the share
+    /// of training resets that draw rather than search (the rest keep the pools fresh).
+    constexpr std::size_t POOL_MIN = 24;
+    constexpr std::size_t POOL_MAX = 96;
+    constexpr float POOL_SHARE = 0.9f;
     constexpr float MAX_PATH_DETOUR = 1.8f;         // a path at most this many times the straight distance
     // A water arena wants the detour the others refuse: the way round has to be far enough longer than the way
     // through that swimming is a real choice. Swimming is about 4.7 yd/s against 7 running, so the crossing pays
@@ -88,7 +96,8 @@ namespace
 }
 
 Animus::Curriculum::TravelEncounter::TravelEncounter(StageScenario& scenario, uint32 envs)
-    : Encounter(scenario), _envs(envs)
+    : Encounter(scenario), _envs(envs),
+    _pooling(sConfigMgr->GetOption<bool>("AnimusForge.TravelPools", false))
 {
 }
 
@@ -730,12 +739,56 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // a share of it rather than all of it, because arriving with one second to spare is not a trip a seat can be
     // asked to make every time.
     float const budget = float(env.EpisodeLengthMs) / 1000.0f * FEASIBLE_SHARE;
+
+    // A training reset may take a trip found before from the same spot for the same band, instead of searching: the
+    // search draws a point, loads its grid, probes its height and plans a route, attempt after attempt. Seeded builds
+    // (evaluations, and the replays of lost ones) always search, so each is the episode its seed makes whatever was
+    // pooled before it; an arena that scatters its seats searches from where they landed. A share of training resets
+    // search too, which keeps adding to the pools and replacing what is in them.
+    bool const poolable = _pooling && env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED && arena.SpawnScatter <= 0.0f
+        && !flying;
+    uint64 const poolKey = (uint64(data.Arena) << 40) | (uint64(data.Spawn) << 8) | uint64(uint8(rules.Band + 1));
+    bool fromPool = false;
+    if (poolable && frand(0.0f, 1.0f) < POOL_SHARE)
+    {
+        float const affordable = budget * std::max(1.0f, bot->GetSpeed(MOVE_RUN));
+        std::lock_guard<std::mutex> guard(_poolLock);
+        auto const found = _pools.find(poolKey);
+        if (found != _pools.end() && found->second.size() >= POOL_MIN)
+        {
+            PooledTrip const& trip = found->second[urand(0, uint32(found->second.size()) - 1)];
+            if (trip.Walk <= affordable)
+            {
+                travel.Objective = trip.Objective;
+                walk = trip.Walk;
+                travel.DryDistance = trip.DryDistance;
+                travel.DryShortcut = trip.DryShortcut;
+                travel.Shortcut = trip.Shortcut;
+                travel.Crossing = trip.Crossing;
+                travel.AirOnly = trip.AirOnly;
+                travel.Ledge = trip.Ledge;
+                travel.LedgeDrop = trip.LedgeDrop;
+                travel.Dive = trip.Dive;
+                travel.DiveDepth = trip.DiveDepth;
+                travel.Band = trip.Band;
+                fromPool = true;
+            }
+        }
+    }
+    // The search loaded the objective's grid on this map while it looked; a pooled trip has to, or the way to it has
+    // no mesh at its end and the route is planned in vain (RefreshWay).
+    if (fromPool)
+        map->LoadGrid(travel.Objective.GetPositionX(), travel.Objective.GetPositionY());
     // What the arena asked for first -- a crossing, or a place only the air reaches -- and an ordinary trip when
     // this spawn point has none within reach, rather than an env that cannot build an episode and takes the run
     // down with it. `crossing` and `air_only` report what was achieved, not what was asked, so a spawn point
     // with no plateau in range shows up as an air-only arena that offered none, and can be gated on like the
     // water arena's crossing.
-    if (arena.Water
+    if (fromPool)
+    {
+        // Drawn above: what it was when it was found.
+    }
+    else if (arena.Water
         && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, true, &travel.DryDistance,
             false, &travel.Shortcut, rules))
         travel.Crossing = true;
@@ -778,7 +831,7 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // OBS_DETOUR is how a seat learns that the barrier in front of it runs for two hundred yards, and that is
     // as much use on broken ground as it is at a lake. One path at the build, against a reset that already
     // takes several; nothing per decision. Water and magma are excluded, so it is the ground's answer.
-    if (travel.DryDistance <= 0.0f && !flying)
+    if (!fromPool && travel.DryDistance <= 0.0f && !flying)
     {
         PathGenerator dry(bot);
         dry.SetIncludeFlags(NAV_GROUND);
@@ -791,6 +844,29 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
             if (!travel.DryShortcut)
                 travel.DryDistance = dry.getPathLength();
         }
+    }
+
+    if (poolable && !fromPool)
+    {
+        PooledTrip trip;
+        trip.Objective = travel.Objective;
+        trip.Walk = walk > 0.0f ? walk : bot->GetExactDist2d(&travel.Objective);
+        trip.DryDistance = travel.DryDistance;
+        trip.DryShortcut = travel.DryShortcut;
+        trip.Shortcut = travel.Shortcut;
+        trip.Crossing = travel.Crossing;
+        trip.AirOnly = travel.AirOnly;
+        trip.Ledge = travel.Ledge;
+        trip.LedgeDrop = travel.LedgeDrop;
+        trip.Dive = travel.Dive;
+        trip.DiveDepth = travel.DiveDepth;
+        trip.Band = travel.Band;
+        std::lock_guard<std::mutex> guard(_poolLock);
+        std::vector<PooledTrip>& pool = _pools[poolKey];
+        if (pool.size() < POOL_MAX)
+            pool.push_back(trip);
+        else
+            pool[urand(0, uint32(pool.size()) - 1)] = trip;
     }
 
     travel.HasObjective = true;
@@ -825,6 +901,13 @@ bool Animus::Curriculum::TravelEncounter::RefreshWay(EnvTravel& travel, Player* 
     float const y = bot->GetPositionY();
     float const z = bot->GetPositionZ();
 
+    // A way that could not be planned is tried again on the refresh clock, not every decision: a route search that
+    // fails searches everything it can reach first, and repeated each decision it was the most expensive thing in
+    // the sim (a failing objective cost ~100 ms of thread time a decision).
+    if (!travel.Way.Valid && travel.WayFailed && nowMs >= travel.WayMs
+        && float(nowMs - travel.WayMs) / 1000.0f < refreshSeconds)
+        return false;
+
     if (travel.Way.Valid)
     {
         travel.Way.Advance(x, y, z, corner);
@@ -843,7 +926,15 @@ bool Animus::Curriculum::TravelEncounter::RefreshWay(EnvTravel& travel, Player* 
     }
 
     Position const from(x, y, z, bot->GetOrientation());
+    auto const planStarted = std::chrono::steady_clock::now();
     bool const planned = RoutePlanner::Instance().Plan(map, from, travel.Objective, travel.Way);
+    WayPlans.fetch_add(1, std::memory_order_relaxed);
+    WayPlanNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - planStarted).count()), std::memory_order_relaxed);
+    if (!planned)
+        WayPlansFailed.fetch_add(1, std::memory_order_relaxed);
+    else if (!travel.Way.Complete)
+        WayPlansPartial.fetch_add(1, std::memory_order_relaxed);
     travel.WayMs = nowMs;
     travel.WayFailed = !planned;
     return true;

@@ -18,6 +18,7 @@
 
 #include "MoveBlock.h"
 #include "GroundSense.h"
+#include "LayeredField.h"
 #include "ProbeBake.h"
 #include "SeatEncoder.h"
 #include "EncoderSupport.h"
@@ -48,6 +49,7 @@ namespace
     using Animus::Curriculum::TravelBlock;
     using Animus::Curriculum::SeatOptionKind;
     namespace Ground = Animus::Curriculum::GroundSense;
+    namespace LayeredField = Animus::Curriculum::LayeredField;
     using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
@@ -867,9 +869,31 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // is dropped rather than kept, so the first one made after coming ashore is a fresh one -- and the
             // clearance it held goes with it, because the travel encounter's clearance charge reads the probe
             // too, and was charging a swimmer for the bank it stood beside before it got in.
+            // In the air the rays sense what a flyer steers against: how far it can fly level along each bearing
+            // before something solid (a collision ray at the seat's altitude, and the terrain rising above it), in
+            // the reach's slot, and in the step's whether climbing FLIGHT_CLIMB higher opens the way -- positive
+            // where it does, negative where it closes it. OBS_AIRBORNE tells the policy which meaning it is
+            // reading. It is measured live every decision: ~1.3 us a ray, and exact, where the ground probe needed
+            // a table to be affordable. A swimmer's rays stay open, as they were.
+            bool const flying = !bot->IsInWater();
+            Map* map = bot->GetMap();
+            float const z = bot->GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
             for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
             {
-                out[OBS_GROUND_FIRST + ray] = 1.0f;
+                float reach = 1.0f;
+                float climb = 0.0f;
+                if (flying && map)
+                {
+                    float const heading = RayHeading(facing, ray);
+                    float const level = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                        z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                        z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    reach = level / MARCH_MAX;
+                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
+                }
+                out[OBS_GROUND_FIRST + ray] = reach;
+                out[OBS_STEP_FIRST + ray] = climb;
                 out[OBS_SHORE_FIRST + ray] = bot->IsInWater() ? 0.0f : 1.0f;
             }
             out[OBS_CLEARANCE] = 1.0f;

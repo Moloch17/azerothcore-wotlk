@@ -19,6 +19,7 @@
 #include "AnimusForge.h"
 #include "GpuRuntime.h"
 #include "ProbeBake.h"
+#include "Encounters.h"
 #include "SeatEncoder.h"
 #include "WarmCaches.h"
 #include "Forge.h"
@@ -1441,12 +1442,21 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
 
     sim.TicksPerSecond = _ticksPerSecond;
     sim.ObserveBlocks = _observeBlockMs;
+    {
+        using Travel = Animus::Curriculum::TravelEncounter;
+        uint64 const plans = Travel::WayPlans.load(std::memory_order_relaxed);
+        if (plans)
+            sim.ProbeNote += Acore::StringFormat("route plans {} ({:.2f} ms each, {} failed, {} partial); ", plans,
+                double(Travel::WayPlanNs.load(std::memory_order_relaxed)) / double(plans) / 1e6,
+                Travel::WayPlansFailed.load(std::memory_order_relaxed),
+                Travel::WayPlansPartial.load(std::memory_order_relaxed));
+    }
     if (Animus::Curriculum::ProbeBake::Store::Baked())
     {
         namespace Store = Animus::Curriculum::ProbeBake::Store;
         uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
         uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
-        sim.ProbeNote = Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} measured live "
+        sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} measured live "
             "where no table answered ({:.1f}%)", reads, Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0),
             fallbacks, reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
     }
