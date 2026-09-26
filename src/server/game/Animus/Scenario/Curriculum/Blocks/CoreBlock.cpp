@@ -17,6 +17,8 @@
  */
 
 #include "CoreBlock.h"
+#include "SeatEncoder.h"
+#include <chrono>
 #include "EncoderSupport.h"
 #include "Item.h"
 #include "Layout.h"
@@ -310,6 +312,8 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         }
     }
 
+    namespace Encoder = Animus::Curriculum::SeatEncoder;
+    auto mark = std::chrono::steady_clock::now();
     std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
     for (uint32 action = 0; action < actions.size(); ++action)
     {
@@ -335,9 +339,11 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
 
         obs[OBS_GLOBAL_COUNT + action * ACTION_FEATURES + 5] = memory
             ? memory->SincePressed(view.L->Slice(BlockId::Core).ActionFirst + action, view.NowMs) : 1.0f;
+        Encoder::ChargeObserve(Encoder::OBSERVE_CORE_FEATURES, mark);
 
         if (mask && action > 0)
             mask[action] = IsActionAllowed(view, action) ? 1 : 0;
+        Encoder::ChargeObserve(Encoder::OBSERVE_CORE_MASKS, mark);
     }
 
     // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.

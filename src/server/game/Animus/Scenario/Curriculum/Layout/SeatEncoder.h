@@ -52,7 +52,11 @@ namespace Animus::Curriculum::SeatEncoder
     constexpr std::size_t OBSERVE_PROBE = BLOCK_COUNT + 1;
     constexpr std::size_t OBSERVE_PROBE_MARCH = BLOCK_COUNT + 2;
     constexpr std::size_t OBSERVE_PROBE_RAYS = BLOCK_COUNT + 3;
-    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 4;
+    /// Parts of the core block's time: its per-action features (known rank, cooldown, auras on the seat and its
+    /// target) and its per-action masks (IsActionAllowed); the rest of "core" is the character's own stats.
+    constexpr std::size_t OBSERVE_CORE_FEATURES = BLOCK_COUNT + 4;
+    constexpr std::size_t OBSERVE_CORE_MASKS = BLOCK_COUNT + 5;
+    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 6;
     inline std::array<std::atomic<uint64>, OBSERVE_SLOTS> ObserveNs{};
 
     /// Adds the time since `mark` to `slot` and moves `mark` to now.
