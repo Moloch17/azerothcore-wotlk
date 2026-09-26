@@ -1568,8 +1568,17 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             return;
         }
 
+        // Every rank's SPEC, then every rank's device offer, then every answer: a learner answers its offer as soon as
+        // it has its SPEC, but data-parallel learners also wait on each other once they have it, so no rank may be
+        // kept waiting for its SPEC or its offer behind another's answer.
         for (uint32 rank = 0; rank < _ranks; ++rank)
-            if (!SendSpec(rank) || !OfferDevice(rank))
+            if (!SendSpec(rank))
+                return;
+        for (uint32 rank = 0; rank < _ranks; ++rank)
+            if (!OfferDevice(rank))
+                return;
+        for (uint32 rank = 0; rank < _ranks; ++rank)
+            if (!AwaitDeviceAnswer(rank))
                 return;
 
         // A new learner starts from fresh training episodes; whatever ran unobserved is discarded. An evaluation the
@@ -1872,16 +1881,29 @@ bool AnimusForge::Forge::OfferDevice(uint32 rank)
     }
 
     _server.Use(rank);
+    device.Offered = true;
+    device.Bytes = obsBytes + stateBytes + maskBytes;
+    return _server.Send(MsgType::Device, { { &msg, sizeof(msg) } });
+}
+
+bool AnimusForge::Forge::AwaitDeviceAnswer(uint32 rank)
+{
+    if (rank >= _rankDevices.size() || !_rankDevices[rank].Offered)
+        return true;
+    RankDevice& device = _rankDevices[rank];
+    ForgeGpuApi const* gpu = Animus::Gpu::Api();
+
+    _server.Use(rank);
     DeviceAckMsg ack{};
     MsgType type = MsgType::Close;
-    if (!_server.Send(MsgType::Device, { { &msg, sizeof(msg) } }) || !_server.Receive(type, &ack, sizeof(ack))
-        || type != MsgType::DeviceAck)
+    if (!_server.Receive(type, &ack, sizeof(ack)) || type != MsgType::DeviceAck)
         return false;
 
+    device.Offered = false;
     device.On = ack.Accepted != 0;
     LOG_INFO("module.animus", "Rank {}: {}", rank, device.On
         ? Acore::StringFormat("obs, state and mask in device memory on GPU {} ({:.1f} MB)", device.Device,
-            double(obsBytes + stateBytes + maskBytes) / (1024.0 * 1024.0))
+            double(device.Bytes) / (1024.0 * 1024.0))
         : std::string("the learner declined device buffers; obs over the socket"));
     if (!device.On)
     {

@@ -266,9 +266,11 @@ namespace AnimusForge
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
         bool SendSpec(uint32 rank);
-        /// After SPEC: offer rank `rank`'s learner device buffers for obs, state and mask (DEVICE) and wait for its
-        /// answer. True unless the connection failed; the rank uses them only when the learner accepted.
+        /// After SPEC: offer rank `rank`'s learner device buffers for obs, state and mask (DEVICE). True unless the
+        /// connection failed; AwaitDeviceAnswer takes the answer, after every rank has had its offer.
         bool OfferDevice(uint32 rank);
+        /// The learner's answer to its offer; the rank uses the buffers only when it accepted.
+        bool AwaitDeviceAnswer(uint32 rank);
         /// Copy rank `rank`'s share of group rows into its device buffers and wait for the copies: before its STEP.
         bool UploadRows(uint32 rank, uint32 begin, uint32 local, uint32 count);
         /// Host: each connected worker and what it last reported (forge status).
@@ -370,6 +372,8 @@ namespace AnimusForge
             void* State = nullptr;
             void* Mask = nullptr;
             int Device = 0;
+            std::size_t Bytes = 0;
+            bool Offered = false;           // DEVICE sent, its answer not yet read
             bool On = false;
         };
         std::vector<RankDevice> _rankDevices;

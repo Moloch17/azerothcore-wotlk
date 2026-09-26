@@ -25,6 +25,7 @@ class ForgeEnv:
         self.socket_path = socket_path
         self.rollout_device = device
         self.device_buffers = None
+        self._next_header: tuple[int, int] | None = None
         self.sock = self._connect(socket_path, connect_timeout)
         hello = p.HELLO.pack(p.PROTOCOL_VERSION, rank, ranks)
         self.sock.sendall(p.encode_header(p.MsgType.HELLO, len(hello)) + hello)
@@ -41,6 +42,17 @@ class ForgeEnv:
         self.groups = self.spec.env_groups_ranges()
         self._step_buffer = bytearray(max(self.spec.step_payload_size(count) for _, count in self.groups))
         self._pending: p.Step | None = None
+
+        # A sim with device buffers offers them next, and waits for the answer before any rank's first STEP: it is
+        # answered here, before this learner does anything that waits on the other ranks. Anything else is the first
+        # STEP's header, kept for it.
+        msg_type, length = self._receive_header()
+        if msg_type == p.MsgType.DEVICE:
+            payload = bytearray(length)
+            self._read_into(memoryview(payload))
+            self._answer_device(bytes(payload))
+        else:
+            self._next_header = (msg_type, length)
 
     @staticmethod
     def _connect(path: str, timeout: float) -> socket.socket:
@@ -146,12 +158,6 @@ class ForgeEnv:
 
     def _receive_step(self) -> p.Step:
         msg_type, length = self._receive_header()
-        if msg_type == p.MsgType.DEVICE:
-            # Offered once, after SPEC and before the first STEP; the sim waits for the answer.
-            payload = bytearray(length)
-            self._read_into(memoryview(payload))
-            self._answer_device(bytes(payload))
-            msg_type, length = self._receive_header()
         if msg_type != p.MsgType.STEP or length > len(self._step_buffer):
             raise ConnectionError(f"expected STEP of at most {len(self._step_buffer)} bytes, got type {msg_type} of "
                                   f"{length}")
@@ -183,6 +189,9 @@ class ForgeEnv:
         return msg_type, bytes(buffer)
 
     def _receive_header(self) -> tuple[int, int]:
+        if self._next_header is not None:
+            header, self._next_header = self._next_header, None
+            return header
         header = bytearray(p.HEADER.size)
         self._read_into(memoryview(header))
         return p.HEADER.unpack(header)
