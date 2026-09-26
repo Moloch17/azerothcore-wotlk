@@ -50,6 +50,26 @@ float Animus::SpellChecks::AuraFraction(Unit const* unit, uint32 spellId, Object
 bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
     Item* castItem, uint32* reason)
 {
+    // Decided without building anything, where Spell::CheckCast is certain to refuse. Every one of these is a
+    // condition CheckCast fails on wherever in its order it comes (it has no early success), under exactly the
+    // conditions it checks them: the mount rule, the form rule (unless an aura lets this caster ignore forms) and the
+    // combat rule (unless an aura lifts it). They are two fifths of what the masks' checks are asked -- a mounted seat
+    // is asked about every spell it has -- and each of those used to build, check and delete a Spell to say no.
+    // A caller that wants the reason gets CheckCast's own, from the full check.
+    if (!reason)
+    {
+        SpellCastResult early = SPELL_CAST_OK;
+        if (bot->IsMounted() && !info->IsPassive() && !info->HasAttribute(SPELL_ATTR0_ALLOW_WHILE_MOUNTED))
+            early = bot->IsInFlight() ? SPELL_FAILED_NOT_ON_TAXI : SPELL_FAILED_NOT_MOUNTED;
+        else if (bot->GetAuraEffectsByType(SPELL_AURA_MOD_IGNORE_SHAPESHIFT).empty())
+            early = info->CheckShapeshift(bot->GetShapeshiftForm());
+        if (early == SPELL_CAST_OK && bot->IsInCombat() && !info->CanBeUsedInCombat()
+            && bot->GetAuraEffectsByType(SPELL_AURA_ABILITY_IGNORE_AURASTATE).empty())
+            early = SPELL_FAILED_AFFECTING_COMBAT;
+        if (early != SPELL_CAST_OK)
+            return false;
+    }
+
     // Build the spell, validate it, throw it away.
     Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
     spell->m_CastItem = castItem;

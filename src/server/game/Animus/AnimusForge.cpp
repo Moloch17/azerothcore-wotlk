@@ -1374,8 +1374,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                         : slot == Curriculum::SeatEncoder::OBSERVE_PROBE ? std::string("move.probe")
                         : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_MARCH ? std::string("probe.marches")
                         : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_RAYS ? std::string("probe.rays")
-                        : slot == Curriculum::SeatEncoder::OBSERVE_CORE_FEATURES ? std::string("core.features")
-                        : slot == Curriculum::SeatEncoder::OBSERVE_CORE_MASKS ? std::string("core.masks")
                         : std::string(Curriculum::BlockName(Curriculum::BlockId(slot)));
                     _observeBlockMs.emplace_back(name, ms);
                 }
