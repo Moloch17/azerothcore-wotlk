@@ -21,6 +21,7 @@
 
 #include "Env.h"
 #include "Scenario.h"
+#include <mutex>
 #include <atomic>
 #include <string>
 #include <unordered_map>
@@ -186,7 +187,9 @@ namespace Animus
             uint64 ResetScenarioNs = 0;     // ... Scenario::Reset as a whole        // ... the seats' loop as a whole
             uint64 ApplyNs = 0;             // ApplyActions, which is a decision's other half
             uint32 Observes = 0;            // envs observed (one per env per decision)
-            uint32 Resets = 0;              // episodes that ended and were rebuilt
+            uint32 Resets = 0;              // episodes that ended and were rebuilt (on the world thread)
+            uint32 MapResets = 0;           // ... and rebuilt on their map's thread, inside the map update
+            uint64 MapResetNs = 0;          // ... which took this much thread time there
             uint64 Reused = 0;              // characters kept across those resets instead of rebuilt (cumulative)
         };
 
@@ -231,10 +234,14 @@ namespace Animus
         /// One env's decision, less what must run on the world thread: the reward, the step stats, the
         /// terminal check, and the observation (the final one when the episode ended, whose next episode
         /// FinishEnv observes after building it). Runs on the thread updating the env's map.
-        void ObserveEnv(Env& env);
+        /// `onMapThread`: called from ObserveMap, on the thread updating the env's map; an episode that ended there is
+        /// rebuilt there too when the scenario allows it (FinishEnv under ResetDefer).
+        void ObserveEnv(Env& env, bool onMapThread = false);
         /// An ended episode's serial half: its info, its report, the next episode, and that one's first
         /// observation. World thread only -- it builds characters and puts them on a map.
-        void FinishEnv(Env& env);
+        /// The ended episode's info and the next one, timed into `timing`: the env's own row on a map thread, the
+        /// decision's on the world thread.
+        void FinishEnv(Env& env, CollectTiming& timing);
 
         /// _envMapKey of an env that is not in _mapEnvs yet.
         static constexpr uint64 NOT_FILED = UI64LIT(0xFFFFFFFFFFFFFFFF);
@@ -259,6 +266,14 @@ namespace Animus
         Scenario& _scenario;
         ScenarioSpec _spec;
         uint32 _episodeLengthMs;
+        /// ResetsStayOnMap and AnimusForge.ResetOnMapThreads both: resets run on the map threads.
+        bool _resetOnMapThreads = false;
+        /// Per env: reset this decision on its map thread, so FinishCollect has nothing left to do for it.
+        std::vector<uint8> _finishedOnMap;
+        /// The evaluation and replay seed draws, taken by resets on several map threads at once.
+        std::mutex _seedLock;
+        /// The episode report's sums, added to by episodes ending on several map threads at once.
+        std::mutex _reportLock;
         uint32 _reportEpisodes;
 
         std::vector<Env> _envs;

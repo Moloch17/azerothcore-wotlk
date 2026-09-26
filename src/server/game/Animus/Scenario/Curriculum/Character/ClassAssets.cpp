@@ -17,6 +17,7 @@
  */
 
 #include "ClassAssets.h"
+#include <mutex>
 #include "ObjectMgr.h"
 #include "Random.h"
 #include <algorithm>
@@ -38,6 +39,10 @@ Animus::Curriculum::ClassAssets const& Animus::Curriculum::ClassAssets::For(
 {
     static std::map<uint8, SharedClassAssets> classes;
     static std::map<ClassProfile const*, ClassAssets> assets;
+    // Warmed at startup (WarmCaches), so this is a lookup; built here only for a profile the warm-up missed, and
+    // rebuilds run on the map threads. The entries never move once made.
+    static std::mutex lock;
+    std::lock_guard<std::mutex> guard(lock);
 
     if (auto const itr = assets.find(&profile); itr != assets.end())
         return itr->second;

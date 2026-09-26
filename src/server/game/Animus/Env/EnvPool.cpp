@@ -17,6 +17,7 @@
  */
 
 #include "EnvPool.h"
+#include "ResetDefer.h"
 #include "ResetTiming.h"
 #include "RandomSeed.h"
 #include "Common.h"
@@ -41,6 +42,7 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
 {
     uint32 const envs = settings.Envs;
     uint32 const agents = envs * _spec.AgentsPerEnv;
+    _resetOnMapThreads = settings.ResetOnMapThreads && scenario.ResetsStayOnMap();
 
     if (_spec.Layouts.empty())
         _spec.Layouts.push_back(LayoutSpec{ scenario.Name(), _spec.ObsDim, _spec.NumActions });
@@ -187,16 +189,18 @@ void Animus::EnvPool::BeginDecision(uint32 group)
     _collect = CollectTiming();
     _envCollect.resize(_envs.size());
     _observed.resize(_envs.size());
+    _finishedOnMap.resize(_envs.size());
     auto const [begin, count] = GroupRange(group);
     for (uint32 e = begin; e < begin + count; ++e)
     {
         _envCollect[e] = CollectTiming();
         _observed[e] = 0;
+        _finishedOnMap[e] = 0;
     }
     _decisionOpen[group] = true;
 }
 
-void Animus::EnvPool::ObserveEnv(Env& env)
+void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
 {
     uint32 const agentsPerEnv = _spec.AgentsPerEnv;
     uint32 const e = env.Index;
@@ -227,6 +231,15 @@ void Animus::EnvPool::ObserveEnv(Env& env)
         _scenario.Observe(env, &FinalObs[e * agentsPerEnv * _spec.ObsDim], &FinalState[e * _spec.StateDim],
             nullptr);
         timing.FinalObserveNs += Since(mark);
+
+        // The next episode, here on the map's own thread when it stays on this map; what the world thread has to
+        // do for it waits in ResetDefer for FinishCollect.
+        if (onMapThread && _resetOnMapThreads)
+        {
+            ResetDefer::Scope deferred;
+            FinishEnv(env, timing);
+            _finishedOnMap[e] = 1;
+        }
         return;
     }
 
@@ -237,7 +250,7 @@ void Animus::EnvPool::ObserveEnv(Env& env)
     timing.ObserveNs += Since(mark);
 }
 
-void Animus::EnvPool::FinishEnv(Env& env)
+void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
 {
     uint32 const agentsPerEnv = _spec.AgentsPerEnv;
     uint32 const e = env.Index;
@@ -247,30 +260,31 @@ void Animus::EnvPool::FinishEnv(Env& env)
     EpisodeSeed[e] = _envSeed[e];
 
     ++env.EpisodesCompleted;
+    // Before the reset: Present still describes the episode that ended.
     ReportEpisode(e);
-    _collect.FinalObserveNs += Since(mark);
+    timing.FinalObserveNs += Since(mark);
 
     CurrentReset = {};
     ResetEnv(env);
-    ++_collect.Resets;
-    _collect.ResetNs += Since(mark);
-    _collect.ResetCreateNs += CurrentReset.CreateNs;
-    _collect.ResetPlaceNs += CurrentReset.PlaceNs;
-    _collect.ResetConfigureNs += CurrentReset.ConfigureNs;
-    _collect.ResetDestroyNs += CurrentReset.DestroyNs;
-    _collect.ResetEncounterNs += CurrentReset.EncounterNs;
-    _collect.ResetScatterNs += CurrentReset.ScatterNs;
-    _collect.ResetStockNs += CurrentReset.StockNs;
-    _collect.ResetPrepareNs += CurrentReset.PrepareNs;
-    _collect.ResetSeatsNs += CurrentReset.SeatsNs;
-    _collect.ResetDespawnNs += CurrentReset.DespawnNs;
-    _collect.ResetScenarioNs += CurrentReset.ScenarioNs;
+    ++timing.Resets;
+    timing.ResetNs += Since(mark);
+    timing.ResetCreateNs += CurrentReset.CreateNs;
+    timing.ResetPlaceNs += CurrentReset.PlaceNs;
+    timing.ResetConfigureNs += CurrentReset.ConfigureNs;
+    timing.ResetDestroyNs += CurrentReset.DestroyNs;
+    timing.ResetEncounterNs += CurrentReset.EncounterNs;
+    timing.ResetScatterNs += CurrentReset.ScatterNs;
+    timing.ResetStockNs += CurrentReset.StockNs;
+    timing.ResetPrepareNs += CurrentReset.PrepareNs;
+    timing.ResetSeatsNs += CurrentReset.SeatsNs;
+    timing.ResetDespawnNs += CurrentReset.DespawnNs;
+    timing.ResetScenarioNs += CurrentReset.ScenarioNs;
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
         &Mask[e * agentsPerEnv * _spec.NumActions]);
     DescribeAgents(env);
-    ++_collect.Observes;
-    _collect.ObserveNs += Since(mark);
+    ++timing.Observes;
+    timing.ObserveNs += Since(mark);
 }
 
 uint64 Animus::EnvPool::MapKey(Map const& map)
@@ -306,7 +320,7 @@ void Animus::EnvPool::ObserveMap(Map const& map)
         return;
 
     for (uint32 index : envs->second)
-        ObserveEnv(_envs[index]);
+        ObserveEnv(_envs[index], true);
 }
 
 void Animus::EnvPool::FinishCollect()
@@ -322,6 +336,10 @@ void Animus::EnvPool::FinishCollect(uint32 group)
 
     _decisionOpen[group] = false;
     auto const [begin, count] = GroupRange(group);
+
+    // What the map-thread resets left for the world thread (old characters' logouts, the shared managers' entries,
+    // the pool's indexes), now that no map is updating.
+    ResetDefer::Flush();
 
     // An env whose map did not tick was never scored. That is a scheduler bug, not a reason to hand the
     // learner a stale transition, so it is scored here and said once.
@@ -343,6 +361,13 @@ void Animus::EnvPool::FinishCollect(uint32 group)
         ObserveEnv(env);
     }
 
+    // The ended episodes whose resets did not run on their map's thread, here as before.
+    for (uint32 e = begin; e < begin + count; ++e)
+        if (Done[e] && !_finishedOnMap[e])
+            FinishEnv(_envs[e], _collect);
+
+    // A map-thread reset is thread time inside the map update, like the observation around it; a world-thread one
+    // is the world thread's own.
     for (uint32 e = begin; e < begin + count; ++e)
     {
         CollectTiming const& timing = _envCollect[e];
@@ -350,14 +375,24 @@ void Animus::EnvPool::FinishCollect(uint32 group)
         _collect.ObserveNs += timing.ObserveNs;
         _collect.FinalObserveNs += timing.FinalObserveNs;
         _collect.Observes += timing.Observes;
+        _collect.MapResets += timing.Resets;
+        _collect.MapResetNs += timing.ResetNs;
+        _collect.ResetCreateNs += timing.ResetCreateNs;
+        _collect.ResetPlaceNs += timing.ResetPlaceNs;
+        _collect.ResetConfigureNs += timing.ResetConfigureNs;
+        _collect.ResetDestroyNs += timing.ResetDestroyNs;
+        _collect.ResetEncounterNs += timing.ResetEncounterNs;
+        _collect.ResetScatterNs += timing.ResetScatterNs;
+        _collect.ResetStockNs += timing.ResetStockNs;
+        _collect.ResetPrepareNs += timing.ResetPrepareNs;
+        _collect.ResetSeatsNs += timing.ResetSeatsNs;
+        _collect.ResetDespawnNs += timing.ResetDespawnNs;
+        _collect.ResetScenarioNs += timing.ResetScenarioNs;
     }
+    _collect.Reused = _scenario.CharactersReused();
 
     // The maps' share of applying the last decision's actions, whenever in the ticks since they ran it.
     _collect.ApplyNs = _applyNs.exchange(0, std::memory_order_relaxed);
-
-    for (uint32 e = begin; e < begin + count; ++e)
-        if (Done[e])
-            FinishEnv(_envs[e]);
 }
 
 void Animus::EnvPool::DescribeAgents(Env const& env)
@@ -618,6 +653,7 @@ void Animus::EnvPool::ResetEnv(Env& env)
         next = &run.Next;
         end = run.End;
     }
+    std::unique_lock<std::mutex> seedLock(_seedLock);
     if (_evaluating && *next < end)
     {
         uint32 const index = (*next)++;
@@ -635,6 +671,7 @@ void Animus::EnvPool::ResetEnv(Env& env)
         buildSeed = index;
         ++_replayed;
     }
+    seedLock.unlock();
 
     // The scenario builds the episode knowing which seed it is: an evaluation spreads its seeds over the class/roles
     // instead of drawing them, so each is scored on its own equal share (and a replay gets the class/role it had).
@@ -644,8 +681,6 @@ void Animus::EnvPool::ResetEnv(Env& env)
     auto scenarioMark = std::chrono::steady_clock::now();
     _scenario.Reset(env);
     CurrentReset.ScenarioNs += ResetSinceNs(scenarioMark);
-    _collect.Reused = _scenario.CharactersReused();
-
     if (buildSeed != NO_EPISODE_SEED)
         rand_seed(resume);
 
@@ -658,17 +693,21 @@ void Animus::EnvPool::ResetEnv(Env& env)
     }
     env.StepInterruptedTargets.clear();
 
-    // A scenario may rebuild its bots and allies on reset. Safe to update here: resets run on the world
-    // thread while no map is updating, so no damage or heal hook is reading the maps.
-    if (env.Bots != previousBots || env.Allies != previousAllies)
+    // A scenario may rebuild its bots and allies on reset. The indexes are read by every map's damage and heal
+    // hooks, so they change only while no map is updating: at once on the world thread, after the join for a
+    // map-thread reset (ResetDefer). The new bots are hit by nothing before then -- their map has finished its tick.
+    ResetDefer::Run([this, &env, previousBots, previousAllies]
     {
-        for (ObjectGuid const& guid : previousBots)
-            _agents.erase(guid);
-        for (ObjectGuid const& guid : previousAllies)
-            _allies.erase(guid);
-    }
+        if (env.Bots != previousBots || env.Allies != previousAllies)
+        {
+            for (ObjectGuid const& guid : previousBots)
+                _agents.erase(guid);
+            for (ObjectGuid const& guid : previousAllies)
+                _allies.erase(guid);
+        }
 
-    IndexEnv(env);
+        IndexEnv(env);
+    });
 }
 
 void Animus::EnvPool::IndexEnv(Env const& env)
@@ -846,6 +885,7 @@ void Animus::EnvPool::RecordTargetInterrupted(Unit const* caster, Spell* spell, 
 
 void Animus::EnvPool::ReportEpisode(uint32 envIndex)
 {
+    std::lock_guard<std::mutex> guard(_reportLock);
     // Every present agent's episode counts as one; Present still describes the episode that just ended.
     for (uint32 agent = 0; agent < _spec.AgentsPerEnv; ++agent)
     {

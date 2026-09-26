@@ -72,6 +72,10 @@ namespace Animus
         /// Characters kept across an episode boundary instead of rebuilt (StageScenario::ReuseSeat), cumulative:
         /// `forge status` reports the rate beside the episodes rebuilt per decision.
         [[nodiscard]] virtual uint64 CharactersReused() const { return 0; }
+        /// Whether every episode reset keeps its env on the map it is on, with nothing shared built or torn down but
+        /// through ResetDefer: then the pool may reset it on the thread updating that map (EnvPool). False unless a
+        /// scenario has made sure.
+        [[nodiscard]] virtual bool ResetsStayOnMap() const { return false; }
 
         /// Once at startup: create bots and targets and place them. env.MapId/InstanceId, Bots and
         /// Targets must be filled in. Returns false if the env cannot be built.

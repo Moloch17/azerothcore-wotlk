@@ -5234,6 +5234,22 @@ AnimusForge.ReportEpisodes = 256
 AnimusForge.Socket = "/tmp/animus-forge.sock"
 
 ###################################################################################################
+# EPISODE RESETS
+#
+#    AnimusForge.ResetOnMapThreads
+#        Description: Rebuild each ended episode on the thread that updates its map, right after that
+#                     map's tick, instead of on the world thread after every map has finished. Only for
+#                     stages whose episodes stay on their own continent replica and build nothing every
+#                     map shares (no instances, battlegrounds, quests, gathering, towns, owners, parties
+#                     or director); the rest reset on the world thread as before. What a reset must do on
+#                     the world thread (logging old characters out, the character cache, the social and
+#                     instance-bind managers) still does, right after the maps join.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, every reset on the world thread)
+
+AnimusForge.ResetOnMapThreads = 1
+
+###################################################################################################
 # GROUND PROBE
 #
 #    AnimusForge.Probe.Source

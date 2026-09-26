@@ -657,9 +657,15 @@ std::vector<Animus::Curriculum::GearBuilder::Candidate const*> const& Animus::Cu
     // ask walking a whole pool four times as the item level band widens -- per character, per episode, for an
     // answer that depends on nothing that changed since the last character of the same level and spec.
     uint64 const key = WindowKey(pool, level, stats, subclass, needStats, pvp);
+    {
+        std::shared_lock lock(_windowLock);
+        if (auto const cached = _windows.find(key); cached != _windows.end())
+            return cached->second;
+    }
+
+    std::unique_lock lock(_windowLock);
     if (auto const cached = _windows.find(key); cached != _windows.end())
         return cached->second;
-
     std::vector<Candidate const*>& found = _windows[key];
     auto const pools = _pools.find(stats);
     if (pools == _pools.end())

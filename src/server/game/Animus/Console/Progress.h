@@ -95,6 +95,8 @@ namespace AnimusForge
             double ResetSeats = 0.0;        // ... the seats' loop as a whole
             double Apply = 0.0;             // the actions the learner sent
             double ResetsPerTick = 0.0;     // episodes rebuilt per decision
+            double MapReset = 0.0;          // rebuilding them on their maps' threads (AnimusForge.ResetOnMapThreads)
+            double MapResetsPerTick = 0.0;
             double ReusedPerTick = 0.0;     // characters kept across those episodes instead of rebuilt, per decision
         };
 

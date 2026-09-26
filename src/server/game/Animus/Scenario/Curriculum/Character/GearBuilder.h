@@ -22,6 +22,7 @@
 #include "ClassProfile.h"
 #include <array>
 #include <map>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -170,9 +171,10 @@ namespace Animus::Curriculum
         std::map<StatProfile, Pools> _pools;
         /// Window's answers, keyed by WindowKey. Built lazily and never invalidated, because _pools is filled in
         /// the constructor and is const in every other respect; the Candidate pointers held here point into it.
-        /// Written from the decision hook's rebuild, which is the world thread (AnimusForge::Forge::RemoteDecision
-        /// -> EnvPool::Collect), so it is unsynchronised: guard it if rebuilds ever move onto the map threads.
+        /// Rebuilds run on the map threads (ResetDefer), so _windowLock guards it: shared to read an answer, whole to
+        /// add one. An answer, once in, never moves (the map is node-based), so the reference returned outlives it.
         mutable std::unordered_map<uint64, std::vector<Candidate const*>> _windows;
+        mutable std::shared_mutex _windowLock;
         std::vector<std::pair<uint8, uint32>> _arrows;     // (required level, item), sorted
         std::vector<std::pair<uint8, uint32>> _bullets;
         std::map<StatProfile, std::vector<EnchantCandidate>> _enchants;

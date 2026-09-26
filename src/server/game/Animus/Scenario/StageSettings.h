@@ -46,6 +46,9 @@ namespace Animus
 
         /// Episode info means are kept every this many finished episodes (EnvPool::LastEpisodeMeans).
         uint32 ReportEpisodes = 256;
+        /// AnimusForge.ResetOnMapThreads: a scenario whose resets stay on their map (Scenario::ResetsStayOnMap)
+        /// rebuilds each ended episode on the thread updating its map, not afterwards on the world thread.
+        bool ResetOnMapThreads = true;
 
         /// The classes the seats play (warrior, druid, ...); empty = every class. A class brings every role it
         /// can play with it -- there is one model per class, not per class and role.

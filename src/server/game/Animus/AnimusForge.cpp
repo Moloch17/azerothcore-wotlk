@@ -317,6 +317,8 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
             _collect.ApplyNs += collect.ApplyNs;
             _collect.Observes += collect.Observes;
             _collect.Resets += collect.Resets;
+            _collect.MapResets += collect.MapResets;
+            _collect.MapResetNs += collect.MapResetNs;
         }
     }
 
@@ -1362,6 +1364,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _collectMs.Observe = since(_collect.ObserveNs, _rateCollect.ObserveNs) / perTick;
             _collectMs.FinalObserve = since(_collect.FinalObserveNs, _rateCollect.FinalObserveNs) / perTick;
             _collectMs.Reset = since(_collect.ResetNs, _rateCollect.ResetNs) / perTick;
+            _collectMs.MapReset = since(_collect.MapResetNs, _rateCollect.MapResetNs) / perTick;
             _observeBlockMs.clear();
             for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
             {
@@ -1416,6 +1419,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _mapTasks.CpuMask = taskTiming.CpuMask;
             _collectMs.Apply = since(_collect.ApplyNs, _rateCollect.ApplyNs) / perTick;
             _collectMs.ResetsPerTick = since(_collect.Resets, _rateCollect.Resets) / double(ticks);
+            _collectMs.MapResetsPerTick = since(_collect.MapResets, _rateCollect.MapResets) / double(ticks);
             _collectMs.ReusedPerTick = since(_collect.Reused, _rateCollect.Reused) / double(ticks);
         }
     }

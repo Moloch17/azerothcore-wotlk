@@ -215,6 +215,7 @@ void AnimusForge::ForgeConfig::Load()
 
     Policy = sConfigMgr->GetOption<std::string>("AnimusForge.Policy", "remote");
     ReportEpisodes = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.ReportEpisodes", 256));
+    ResetOnMapThreads = sConfigMgr->GetOption<bool>("AnimusForge.ResetOnMapThreads", true);
     // Relative path keys are relative to the directory of the worldserver config file, whatever the server's working
     // directory; empty ones take the defaults below.
     fs::path const configDir = ConfigDir();
@@ -478,6 +479,7 @@ Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenari
     stage.DecisionMs = DecisionMs;
     stage.EpisodeSeconds = EpisodeSeconds;
     stage.ReportEpisodes = ReportEpisodes;
+    stage.ResetOnMapThreads = ResetOnMapThreads;
     stage.Classes = Classes;
     stage.SpawnMapId = SpawnMapId;
     stage.SpawnPosition = SpawnPosition;

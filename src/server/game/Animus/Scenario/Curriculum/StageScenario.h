@@ -29,6 +29,7 @@
 #include "StageDefinition.h"
 #include "StageSettings.h"
 #include "StageState.h"
+#include <atomic>
 #include <memory>
 #include <optional>
 
@@ -230,7 +231,8 @@ namespace Animus::Curriculum
         /// Every class/role layout of the run, by Layout::Index (the index AgentLayouts reports).
         [[nodiscard]] std::vector<Layout> const& Layouts() const { return _layouts; }
         [[nodiscard]] bool Playable() const override { return !_layouts.empty(); }
-        [[nodiscard]] uint64 CharactersReused() const override { return _reused; }
+        [[nodiscard]] uint64 CharactersReused() const override { return _reused.load(std::memory_order_relaxed); }
+        [[nodiscard]] bool ResetsStayOnMap() const override { return _resetsStayOnMap; }
 
         /// How many (class, role) pairs the run can field, which is what an evaluation spreads its seeds over.
         /// The difficulty ladder divides by the same number, so every pair meets every rung.
@@ -355,7 +357,8 @@ namespace Animus::Curriculum
 
         StageDefinition const& _stage;
         CurriculumTuning _tuning;
-        uint64 _reused = 0;                     // characters kept across episodes (CharactersReused)
+        std::atomic<uint64> _reused{ 0 };       // characters kept across episodes (CharactersReused)
+        bool _resetsStayOnMap = false;          // ResetsStayOnMap: worked out once, from the stage's arenas
         uint32 _spawnMapId;
         Position _spawnPoint;
         bool _continent = false;

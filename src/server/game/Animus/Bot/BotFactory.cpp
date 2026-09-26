@@ -17,6 +17,7 @@
  */
 
 #include "BotFactory.h"
+#include "ResetDefer.h"
 #include "CharacterCache.h"
 #include "GameTime.h"
 #include "InstanceSaveMgr.h"
@@ -99,9 +100,16 @@ Player* Animus::BotFactory::Create(BotSpec const& spec, WorldSession* session)
         return nullptr;
     }
 
-    sInstanceSaveMgr->PlayerCreateBoundInstancesMaps(bot->GetGUID());
-    // A null result gives an empty list. LogoutPlayer removes it again.
-    bot->*Access(PlayerSocialTag{}) = sSocialMgr->LoadFromDB(nullptr, bot->GetGUID());
+    // The instance-bind and social managers are shared by every map and lock nothing: on a map-thread reset their
+    // entries are made on the world thread after the maps join (ResetDefer), before this bot is next updated. Nothing
+    // between here and then asks for either -- a continent episode enters no instance, and a social list is read by
+    // client packets, group invites and chat.
+    ResetDefer::Run([bot]
+    {
+        sInstanceSaveMgr->PlayerCreateBoundInstancesMaps(bot->GetGUID());
+        // A null result gives an empty list. LogoutPlayer removes it again.
+        bot->*Access(PlayerSocialTag{}) = sSocialMgr->LoadFromDB(nullptr, bot->GetGUID());
+    });
     session->SetPlayer(bot);
 
     // Never save: 0 disables the autosave countdown in Player::Update.
@@ -125,8 +133,12 @@ Player* Animus::BotFactory::Create(BotSpec const& spec, WorldSession* session)
     bot->UpdateAllStats();
     bot->SetFullHealth();
 
-    sCharacterCache->AddCharacterCacheEntry(bot->GetGUID(), spec.AccountId, spec.Name, spec.Gender, spec.Race,
-        spec.Class, bot->GetLevel());
+    // The character cache locks nothing either.
+    ResetDefer::Run([guid = bot->GetGUID(), accountId = spec.AccountId, name = std::string(spec.Name),
+        gender = spec.Gender, race = spec.Race, playerClass = spec.Class, level = bot->GetLevel()]
+    {
+        sCharacterCache->AddCharacterCacheEntry(guid, accountId, name, gender, race, playerClass, level);
+    });
 
     return bot;
 }
@@ -199,6 +211,13 @@ bool Animus::BotFactory::TeleportWithinMap(Player* bot, Position const& pos)
 
 void Animus::BotFactory::DestroyUnplaced(Player* bot)
 {
+    // On the world thread, after whatever registered it: an unplaced bot is in no map and nothing else holds it.
+    if (ResetDefer::Active())
+    {
+        ResetDefer::Run([bot] { DestroyUnplaced(bot); });
+        return;
+    }
+
     WorldSession* session = bot->GetSession();
 
     // ~Unit asserts that every aura (passives included) is gone; this is what removing it from a map
@@ -218,6 +237,16 @@ void Animus::BotFactory::DestroyUnplaced(Player* bot)
 
 WorldSession* Animus::BotFactory::Destroy(Player* bot, bool keepSession)
 {
+    // A logout touches groups, LFG, the social and instance managers and every script's logout hook: on the world
+    // thread, after the maps join. The bot stays in its map until then, as a character does for the moment between
+    // two episodes, and its session keeps it -- a slot's next build of that session is a whole episode away.
+    if (ResetDefer::Active())
+    {
+        WorldSession* session = bot->GetSession();
+        ResetDefer::Run([bot, keepSession] { Destroy(bot, keepSession); });
+        return keepSession ? session : nullptr;
+    }
+
     WorldSession* session = bot->GetSession();
     ObjectGuid const guid = bot->GetGUID();
     uint32 const mapId = bot->GetMapId();

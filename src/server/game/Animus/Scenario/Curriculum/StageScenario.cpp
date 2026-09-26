@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include "StageScenario.h"
+#include <set>
 #include "ResetTiming.h"
 #include "Baselines.h"
 #include "CharmInfo.h"
@@ -286,6 +287,52 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 {
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
+
+    // A reset stays on its env's own continent replica unless an arena sends the episode elsewhere (an instance, a
+    // battleground, a quest giver's, a node's or an inn's map) or builds what every map shares and nothing locks: a
+    // core group (an owner, a party), the director's orders over the others. Only then is it safe to run on the map
+    // thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
+    _resetsStayOnMap = _continent && !stage.AnyArena([](ArenaDefinition const& arena)
+    {
+        return arena.Owner || arena.PartyGroup || arena.Directed || arena.Against == Opposition::Instance
+            || arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
+            || arena.Against == Opposition::Town || arena.Against == Opposition::Flag;
+    });
+
+    // A map-thread reset cannot load a grid's collision and navmesh: while map tasks run, those wait for the world
+    // thread (MapMgr::MapTasksRunning). An encounter built from a spawn point on a grid no one has stood on would find
+    // no mesh there and fail until the next decision loaded it. So every grid a seat can start in, and the grids an
+    // objective or a march reaches from there, are loaded now, on the world thread, once: terrain and collision only.
+    if (_resetsStayOnMap)
+    {
+        if (Map* base = sMapMgr->CreateBaseMap(_spawnMapId))
+        {
+            constexpr float REACH = 80.0f;
+            std::set<std::pair<uint32, uint32>> grids;
+            auto addAround = [&grids](std::vector<Position> const& points)
+            {
+                for (Position const& point : points)
+                    for (int32 dx = -1; dx <= 1; ++dx)
+                        for (int32 dy = -1; dy <= 1; ++dy)
+                        {
+                            GridCoord const grid = Acore::ComputeGridCoord(point.GetPositionX() + float(dx) * REACH,
+                                point.GetPositionY() + float(dy) * REACH);
+                            grids.emplace(grid.x_coord, grid.y_coord);
+                        }
+            };
+            addAround(stage.SpawnPoints);
+            addAround(stage.HeldOutSpawnPoints);
+            for (ArenaDefinition const& arena : stage.Arenas)
+            {
+                addAround(arena.SpawnPoints);
+                addAround(arena.HeldOutSpawnPoints);
+            }
+            for (auto const& [x, y] : grids)
+                base->EnsureGridCreated(GridCoord(x, y));
+            LOG_INFO("module.animus", "{}: resets on the map threads; {} spawn-area grids of map {} loaded", Name(),
+                grids.size(), _spawnMapId);
+        }
+    }
 
     // How many envs share one continent map. A map has 31 phases to give away and an env needs one of its own,
     // so that is the ceiling however few replicas were asked for; asking for more replicas than that makes the
