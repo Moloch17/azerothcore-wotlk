@@ -757,9 +757,21 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
         plain.AirOnly = false;
         plain.Ledge = false;
         plain.Underwater = false;
+        // A detour band is a wish, not a condition: some spawn points have no hard detour within reach, and the
+        // stage's retries move the seats but keep the band, so four draws of the hard band could all come up empty
+        // and end the env with no episode (stage1_move logged a few a minute). The easiest band then, rather than
+        // nothing; `detour_band` reports the band the episode actually got.
         if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
             arena.Indoors, &travel.Shortcut, plain))
-            return false;
+        {
+            if (plain.Band <= 0)
+                return false;
+            plain.Band = 0;
+            travel.Band = 0;
+            if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
+                arena.Indoors, &travel.Shortcut, plain))
+                return false;
+        }
     }
 
     // What the way round costs on foot, for every arena rather than only the ones built around a crossing:

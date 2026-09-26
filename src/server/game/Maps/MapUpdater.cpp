@@ -142,6 +142,14 @@ void MapUpdater::schedule_map_preload(uint32 mapid)
     Push(task);
 }
 
+void MapUpdater::schedule_work(void (*work)(void*), void* arg)
+{
+    Task task;
+    task.work = work;
+    task.arg = arg;
+    Push(task);
+}
+
 void MapUpdater::RunMapTick(Map& map, uint32 diff, uint32 s_diff)
 {
     // The sim's envs on this map, on this thread: they take the last decision's actions before the tick and are
@@ -169,6 +177,12 @@ void MapUpdater::Run(Task const& task)
     if (task.map)
     {
         RunMapTick(*task.map, task.diff, task.s_diff);
+        return;
+    }
+
+    if (task.work)
+    {
+        task.work(task.arg);
         return;
     }
 

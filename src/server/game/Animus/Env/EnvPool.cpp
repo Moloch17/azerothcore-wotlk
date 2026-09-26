@@ -18,6 +18,7 @@
 
 #include "EnvPool.h"
 #include "ResetDefer.h"
+#include "MapMgr.h"
 #include "ResetTiming.h"
 #include "RandomSeed.h"
 #include "Common.h"
@@ -232,14 +233,9 @@ void Animus::EnvPool::ObserveEnv(Env& env, bool onMapThread)
             nullptr);
         timing.FinalObserveNs += Since(mark);
 
-        // The next episode, here on the map's own thread when it stays on this map; what the world thread has to
-        // do for it waits in ResetDefer for FinishCollect.
+        // The next episode off the world thread when it stays on this map: ObserveMap hands it on (ResetMapEnvs).
         if (onMapThread && _resetOnMapThreads)
-        {
-            ResetDefer::Scope deferred;
-            FinishEnv(env, timing);
             _finishedOnMap[e] = 1;
-        }
         return;
     }
 
@@ -319,8 +315,34 @@ void Animus::EnvPool::ObserveMap(Map const& map)
     if (envs == _mapEnvs.end())
         return;
 
+    std::vector<uint32> ended;
     for (uint32 index : envs->second)
+    {
         ObserveEnv(_envs[index], true);
+        if (_finishedOnMap[index])
+            ended.push_back(index);
+    }
+    if (ended.empty())
+        return;
+
+    // The resets as a task of their own, which the first idle worker takes: run here, on the end of this map's task,
+    // a map with a 2 ms route to plan held up every map's join. The map has finished its tick and does not tick
+    // again before FinishCollect, and only this task touches it meanwhile.
+    auto* resets = new MapResets{ this, std::move(ended) };
+    MapUpdater* updater = sMapMgr->GetMapUpdater();
+    if (updater && updater->activated())
+        updater->schedule_work(&EnvPool::ResetMapEnvs, resets);
+    else
+        ResetMapEnvs(resets);
+}
+
+void Animus::EnvPool::ResetMapEnvs(void* resets)
+{
+    std::unique_ptr<MapResets> const job(static_cast<MapResets*>(resets));
+    EnvPool& pool = *job->Pool;
+    ResetDefer::Scope deferred;
+    for (uint32 index : job->Envs)
+        pool.FinishEnv(pool._envs[index], pool._envCollect[index]);
 }
 
 void Animus::EnvPool::FinishCollect()

@@ -270,6 +270,13 @@ namespace Animus
         bool _resetOnMapThreads = false;
         /// Per env: reset this decision on its map thread, so FinishCollect has nothing left to do for it.
         std::vector<uint8> _finishedOnMap;
+        /// One map's ended episodes, rebuilt as a task of their own (ResetMapEnvs).
+        struct MapResets
+        {
+            EnvPool* Pool = nullptr;
+            std::vector<uint32> Envs;
+        };
+        static void ResetMapEnvs(void* resets);
         /// The evaluation and replay seed draws, taken by resets on several map threads at once.
         std::mutex _seedLock;
         /// The episode report's sums, added to by episodes ending on several map threads at once.

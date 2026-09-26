@@ -69,14 +69,19 @@ public:
     static void RunMapTick(Map& map, uint32 diff, uint32 s_diff);
     /// Create the base map and load all of its grids (PreloadAllNonInstancedMapGrids).
     void schedule_map_preload(uint32 mapid);
+    /// `work(arg)` on whichever thread is free, in this tick: wait() does not return before it has run. For work a
+    /// map task hands on so an idle worker can take it (the sim's resets of the envs whose episodes ended there).
+    void schedule_work(void (*work)(void*), void* arg);
     /// Run tasks on the calling thread until every pushed task, including those pushed meanwhile, is done.
     void wait();
 
 private:
     struct Task
     {
-        Map* map = nullptr;          ///< nullptr: a preload of mapId
+        Map* map = nullptr;          ///< nullptr: a preload of mapId, or `work`
         uint32 mapId = 0;
+        void (*work)(void*) = nullptr;
+        void* arg = nullptr;
         uint32 diff = 0;
         uint32 s_diff = 0;
     };
