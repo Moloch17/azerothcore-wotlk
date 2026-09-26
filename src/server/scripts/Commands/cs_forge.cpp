@@ -22,6 +22,7 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MoveBlock.h"
+#include "ProbeBake.h"
 #include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
@@ -83,6 +84,7 @@ namespace
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
                 { "rays",      HandleRays,      SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
+                { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
                 { "export",    HandleExport,    SEC_ADMINISTRATOR, Console::Yes },
@@ -116,6 +118,10 @@ namespace
             table.AddRow({ "forge run <scenario> <policy> [episodes]", "run a scripted or random policy, no learner" });
             table.AddRow({ "forge rays <map> <x> <y> <z> [facing]", "what the navmesh senses read standing there: "
                 "reach, shore, water width, burning edge and clearance" });
+            table.AddRow({ "forge probebake <map> <x> <y> [cell] [bearings] [wedge] [pitch] [samples] "
+                "[radius]",
+                "bake the ground probe for the grid holding (x, y), in memory, and compare it with the live "
+                "probe (within radius of (x, y) if given)" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
                 "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
@@ -184,6 +190,58 @@ namespace
         static bool HandleRun(ChatHandler* handler, std::string scenario, std::string policy, Optional<uint32> episodes)
         {
             return sAnimusForge->CommandRun(scenario, policy, episodes.value_or(0), Reply(handler));
+        }
+
+        /// `forge probebake <map> <x> <y> [cell] [bearings] [wedge] [pitch] [samples] [radius]`: bake the ground
+        /// probe for one grid in memory and report what it costs and how far its readings are from the live
+        /// probe's.
+        ///
+        /// It takes every core for as long as the bake runs, on the world thread: run it with nothing training.
+        static bool HandleProbeBake(ChatHandler* handler, uint32 mapId, float x, float y, Optional<float> cell,
+            Optional<uint32> bearings, Optional<uint32> wedge, Optional<float> pitch, Optional<uint32> samples,
+            Optional<float> radius)
+        {
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+
+            // The grid and its eight neighbours: a march from the grid's edge runs forty yards into the next one.
+            float const gridX = std::floor(x / SIZE_OF_GRIDS) * SIZE_OF_GRIDS + SIZE_OF_GRIDS / 2.0f;
+            float const gridY = std::floor(y / SIZE_OF_GRIDS) * SIZE_OF_GRIDS + SIZE_OF_GRIDS / 2.0f;
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                    map->LoadGrid(gridX + float(dx) * SIZE_OF_GRIDS, gridY + float(dy) * SIZE_OF_GRIDS);
+
+            Animus::Curriculum::ProbeBake::Settings settings;
+            settings.Cell = std::clamp(cell.value_or(settings.Cell), 0.25f, 16.0f);
+            settings.Bearings = std::clamp<uint32>(bearings.value_or(settings.Bearings), 4, 64);
+            settings.WedgeRays = std::clamp<uint32>(wedge.value_or(settings.WedgeRays), 1, 9);
+            settings.Pitch = std::clamp(pitch.value_or(settings.Pitch), 0.0f, 10.0f);
+
+            Animus::Curriculum::ProbeBake::Table const table = Animus::Curriculum::ProbeBake::Bake(map, x, y, settings);
+            std::string const report =
+                Animus::Curriculum::ProbeBake::Compare(map, table, samples.value_or(2000), 1, x, y,
+                    radius.value_or(0.0f));
+
+            std::string line;
+            for (char c : report)
+            {
+                if (c == '\n')
+                {
+                    handler->SendSysMessage(line);
+                    line.clear();
+                }
+                else
+                    line += c;
+            }
+
+            if (!line.empty())
+                handler->SendSysMessage(line);
+
+            return true;
         }
 
         /// Plan a route between two points, with no seat, policy or run.
