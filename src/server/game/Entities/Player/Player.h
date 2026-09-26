@@ -2541,6 +2541,10 @@ public:
 
     // Set map to player and add reference
     void SetMap(Map* map) override;
+    /// Animus Forge: set while the forge creates a character on a map thread (BotFactory, ResetDefer). Create then
+    /// only records its race's start map and does not link the character into that map's player list, which
+    /// another thread may be iterating in its Map::Update; the forge places it on its own map at once.
+    static inline thread_local bool CreateUnlinked = false;
     void ResetMap() override;
 
     bool CanTeleport() { return m_canTeleport; }

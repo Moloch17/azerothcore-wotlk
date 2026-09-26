@@ -102,6 +102,11 @@ bool Animus::EnvPool::Setup()
 
 void Animus::EnvPool::Teardown()
 {
+    // A decision abandoned mid-way (a cancel, a skip, a learner gone) never reached FinishCollect: what its map-thread
+    // resets left for the world thread -- the new characters' social lists, cache entries and binds, the old ones'
+    // logouts -- has to run before anything is torn down, or a logout meets a character with no social list.
+    ResetDefer::Flush();
+
     _agents.clear();
     _allies.clear();
     _envByInstance.clear();
@@ -153,6 +158,10 @@ bool Animus::EnvPool::GroupsKeepToTheirMaps() const
 
 void Animus::EnvPool::ResetAll()
 {
+    // Whatever an abandoned decision's map-thread resets left for the world thread, before these resets destroy the
+    // characters it is about.
+    ResetDefer::Flush();
+
     for (Env& env : _envs)
     {
         ResetEnv(env);

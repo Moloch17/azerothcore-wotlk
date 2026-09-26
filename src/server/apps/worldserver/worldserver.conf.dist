@@ -5244,14 +5244,10 @@ AnimusForge.Socket = "/tmp/animus-forge.sock"
 #                     or director); the rest reset on the world thread as before. What a reset must do on
 #                     the world thread (logging old characters out, the character cache, the social and
 #                     instance-bind managers) still does, right after the maps join.
-#                     Off by default: with it on the worldserver crashed within minutes on some
-#                     stage1_move runs (a player freed or a map updated while a reset still touched
-#                     it; release backtraces end in Map::Update and in a logout's LFG table), not yet
-#                     found. Measured +22% on stage1_move and +8% on stage8_duel while it ran.
-#        Default:     0 - (Disabled, every reset on the world thread)
-#                     1 - (Enabled)
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, every reset on the world thread)
 
-AnimusForge.ResetOnMapThreads = 0
+AnimusForge.ResetOnMapThreads = 1
 
 #
 #    AnimusForge.TravelPools

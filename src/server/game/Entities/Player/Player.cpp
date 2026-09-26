@@ -515,7 +515,10 @@ bool Player::Create(ObjectGuid::LowType guidlow, CharacterCreateInfo* createInfo
         return false;
     }
 
-    SetMap(sMapMgr->CreateMap(info->mapId, this));
+    if (CreateUnlinked)
+        Unit::SetMap(sMapMgr->CreateMap(info->mapId, this));
+    else
+        SetMap(sMapMgr->CreateMap(info->mapId, this));
 
     uint8 powertype = cEntry->powerType;
 

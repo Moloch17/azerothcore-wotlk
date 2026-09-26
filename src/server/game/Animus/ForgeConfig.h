@@ -82,7 +82,7 @@ namespace AnimusForge
 
         std::string Policy;
         uint32 ReportEpisodes = 256;
-        bool ResetOnMapThreads = false;         // AnimusForge.ResetOnMapThreads
+        bool ResetOnMapThreads = true;          // AnimusForge.ResetOnMapThreads
         std::string SocketPath;
 
         /// AnimusForge.OutputDir, resolved: where runs/ and layouts/ go. Never empty after Load.

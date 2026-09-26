@@ -90,7 +90,13 @@ Player* Animus::BotFactory::Create(BotSpec const& spec, WorldSession* session)
     BotCreateInfo info(spec);
     ObjectGuid::LowType const guidLow = spec.GuidLow
         ? spec.GuidLow : sObjectMgr->GetGenerator<HighGuid::Player>().Generate();
-    if (!bot->Create(guidLow, &info))
+    // Player::Create links a new character into its race's start continent, which on a map-thread reset is a map
+    // another thread may be updating -- its player list changed under Map::Update's loop over it (the crash of the
+    // first map-thread resets). Off the world thread it only records that map; PlaceInMap links the bot to its own.
+    Player::CreateUnlinked = ResetDefer::Active();
+    bool const created = bot->Create(guidLow, &info);
+    Player::CreateUnlinked = false;
+    if (!created)
     {
         LOG_ERROR("module.animus", "Player::Create failed for bot {} (race {}, class {})", spec.Name, spec.Race,
             spec.Class);
@@ -173,8 +179,13 @@ Map* Animus::BotFactory::PlaceOnContinent(Player* bot, uint32 mapId, Position co
 
 bool Animus::BotFactory::PlaceInMap(Player* bot, Map* map, Position const& pos)
 {
-    // Player::Create parked the bot on its race's start continent; move it before entering.
-    bot->ResetMap();
+    // Player::Create parked the bot on its race's start continent; move it before entering. Created off the world
+    // thread it was never linked into that map's player list or index (Player::CreateUnlinked), and Player::ResetMap
+    // would change both while that map may be updating on another thread: only the object's own record goes.
+    if (ResetDefer::Active())
+        bot->Unit::ResetMap();
+    else
+        bot->ResetMap();
     bot->Relocate(pos);
     bot->SetMap(map);
     bot->SetFallInformation(GameTime::GetGameTime().count(), pos.GetPositionZ());

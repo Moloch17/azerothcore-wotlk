@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <shared_mutex>
 #include "ObjectAccessor.h"
 #include "Corpse.h"
 #include "Creature.h"
@@ -108,19 +109,25 @@ namespace PlayerNameMapHolder
 {
     typedef std::unordered_map<std::string, Player*> MapType;
     static MapType PlayerNameMap;
+    // Animus Forge: characters are placed from map threads (episode resets, ResetDefer), several at once, so the
+    // name map is locked like HashMapHolder<Player> is; it was only ever written from the world thread before.
+    static std::shared_mutex PlayerNameMapLock;
 
     void Insert(Player* p)
     {
+        std::unique_lock<std::shared_mutex> lock(PlayerNameMapLock);
         PlayerNameMap[p->GetName()] = p;
     }
 
     void Remove(Player* p)
     {
+        std::unique_lock<std::shared_mutex> lock(PlayerNameMapLock);
         PlayerNameMap.erase(p->GetName());
     }
 
     void RemoveByName(std::string const& name)
     {
+        std::unique_lock<std::shared_mutex> lock(PlayerNameMapLock);
         PlayerNameMap.erase(name);
     }
 
@@ -130,6 +137,7 @@ namespace PlayerNameMapHolder
         if (!normalizePlayerName(charName))
             return nullptr;
 
+        std::shared_lock<std::shared_mutex> lock(PlayerNameMapLock);
         auto itr = PlayerNameMap.find(charName);
         return (itr != PlayerNameMap.end()) ? itr->second : nullptr;
     }
