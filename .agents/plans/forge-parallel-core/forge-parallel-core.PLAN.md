@@ -618,9 +618,12 @@ c3455c156 and 25-32 on 222b375ca -- no crash, no failed build, no map that canno
 Left: ~150 "TeleportTo: invalid map (560) ... Z: -200000" (an Old Hillsbrad instance rung scatters seats where no
 ground height is found; pre-existing, a content fix). Async-path aborts on a sealed pool stay (unreachable so far).
 
-Next for Phase 1: the soak (forge fast 5M stage8_duel with eval.episodes 2048 and the baseline, one forge bench, one
-export) with the seal staged; then Forge.SealStrict 1 and the acceptance test (no DatabaseWorker threads, no 3306
-sockets, `docker compose stop ac-database` mid-run, SOAP still logs in).
+**Phase 1 done** (2026-09-25). The soak -- forge fast 5M stage8_duel with 2048-episode evaluations and the "fight"
+baseline, a forge bench, a forge export -- logged no read on the sealed pools, so Forge.SealStrict defaults to 1.
+Acceptance: the pools report 0 worker threads and 0 connections; no DatabaseWorker thread and no :3306 socket in the
+worldserver; `docker compose stop ac-database` during a fast run -- training finished its budget, `forge status` over
+SOAP logged in from the account snapshot, no read logged. `docker compose up -d --force-recreate ac-worldserver` starts
+the database again (depends_on), so stopping it is per session.
 
 ## Using every core, and the learner's GPU (2026-09-25, 5b66bcb5b)
 

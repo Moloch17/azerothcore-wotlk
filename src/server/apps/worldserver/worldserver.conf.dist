@@ -112,9 +112,9 @@ Forge.Playtest = 0
 #                     read gets no rows. 0 keeps one connection per pool and still serves late reads.
 #                     Either way each distinct late read is logged once with where it came from, for
 #                     finding the reads a new stage adds. Playtest mode never seals.
-#        Default:     0
+#        Default:     1
 
-Forge.SealStrict = 0
+Forge.SealStrict = 1
 
 #
 #    WorldServerPort

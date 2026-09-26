@@ -219,11 +219,12 @@ namespace
     /// what closes that gap; it does not belong in this file.
     /// Forge.SealStrict: whether the seal closes the synchronous connections too. Strict, a late read gets no rows
     /// and is logged once with where it came from; staged (off), it is still served and logged the same way -- for
-    /// finding the reads a new stage adds. Off by default until a soak with real-size evaluations logs no read but
-    /// the console's login lookups, which come from AccountMgr::LoadSnapshot now.
+    /// finding the reads a new stage adds. On by default since a sweep of every stage, a 5M-step soak with 2048-episode
+    /// evaluations and their baseline, a bench and an export logged no read at all (the console's login lookups come
+    /// from AccountMgr::LoadSnapshot).
     bool ForgeSealStrict()
     {
-        return sConfigMgr->GetOption<bool>("Forge.SealStrict", false);
+        return sConfigMgr->GetOption<bool>("Forge.SealStrict", true);
     }
 
     /// After the world and the modules have loaded: memory is the truth, the database is done.
