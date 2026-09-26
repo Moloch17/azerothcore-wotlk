@@ -28,6 +28,11 @@
 
 class Map;
 
+namespace Animus::Curriculum
+{
+    struct StageDefinition;
+}
+
 /// The ground probe, measured ahead of time: every cell of a grid, every floor the navmesh has there, every
 /// compass bearing -- so a seat reads its surroundings from a table instead of casting a hundred and twenty
 /// queries each time it moves three yards.
@@ -132,6 +137,20 @@ namespace Animus::Curriculum::ProbeBake
     bool Read(std::string const& path, Table& table);
     /// The format a file was written in (1 uncompressed, 2 zstd), or 0 when it is not a table.
     uint32 FileVersion(std::string const& path);
+
+    /// A grid a stage needs a table for.
+    struct GridRef
+    {
+        uint32 MapId = 0;
+        int32 X = 0;
+        int32 Y = 0;
+        auto operator<=>(GridRef const&) const = default;
+    };
+
+    /// The grids a stage's seats can stand on: on a continent the grids under its spawn points and the neighbours
+    /// within reach of an objective and a march; on an instanced map -- the stage's own, or its instance ladder's
+    /// dungeons and raids -- every grid the map's navmesh covers.
+    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage);
 
     /// The live stand-in where no table answers: the same dense wedge measurement the bake makes, at the seat.
     Reading SenseLive(Map* map, dtNavMeshQuery const* query, GroundSense::Origin const& at, float facing);

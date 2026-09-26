@@ -418,6 +418,27 @@ void AnimusForge::Forge::HoldWhilePaused()
     }
 }
 
+void AnimusForge::Forge::ReportProbeTables(std::string const& scenario) const
+{
+    // Only counted, never made: the tables ship with the forge, and a grid without one is measured live.
+    namespace Bake = Animus::Curriculum::ProbeBake;
+    Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
+    if (!Bake::Store::Baked() || !stage)
+        return;
+
+    std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage);
+    uint32 shipped = 0;
+    std::error_code error;
+    for (Bake::GridRef const& grid : grids)
+        shipped += std::filesystem::exists(Bake::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
+    if (shipped == grids.size())
+        LOG_INFO("module.animus", "Ground probe for {}: all {} grids have tables", scenario, grids.size());
+    else
+        LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have tables in {}; seats on the others use the "
+            "live probe. Bake them with `forge probestage {}` and ship the files.", scenario, shipped, grids.size(),
+            Bake::Store::Dir(), scenario);
+}
+
 bool AnimusForge::Forge::StartCurrent()
 {
     // A stage none of this run's classes can play (the stealth drill in a run of classes that cannot stealth) is
@@ -437,6 +458,7 @@ bool AnimusForge::Forge::StartCurrent()
         if (scenario->Playable())
         {
             _scenario = std::move(scenario);
+            ReportProbeTables(skipped.Scenario);
             break;
         }
 

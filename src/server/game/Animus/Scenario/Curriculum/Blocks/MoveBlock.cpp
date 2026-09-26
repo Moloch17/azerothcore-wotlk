@@ -286,36 +286,36 @@ namespace
             bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
 
+        // Where there is no table the probe is the old live one, on its own cadence: a grid missing from the shipped
+        // tables costs what it always did, not the dense probe every decision. It is counted, and logged once.
+        bool fromTable = false;
         if (baked)
         {
             // The rays from the nearest cell and the clearance blended over the four around the seat -- what the
-            // bake measured best. Where no table answers, the same measurement made live, and counted.
+            // bake measured best.
             Bake::Reading reading;
             Bake::Reading room;
             std::shared_ptr<Bake::Table const> const table = Bake::Store::Find(map->GetId(), at.X, at.Y);
-            if (table && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
-                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room))
+            fromTable = table
+                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
+                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room);
+            if (fromTable)
             {
-                reading.Room = room.Room;
                 Bake::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+                {
+                    probe->Reach[ray] = reading.Rays[ray].Reach;
+                    probe->Step[ray] = reading.Rays[ray].Step;
+                    probe->Shore[ray] = reading.Rays[ray].Shore;
+                    probe->Burns[ray] = reading.Rays[ray].Burns;
+                }
+                probe->Clearance = room.Room.Clearance;
+                probe->ClearanceSin = room.Room.Directed ? std::sin(room.Room.Away - facing) : 0.0f;
+                probe->ClearanceCos = room.Room.Directed ? std::cos(room.Room.Away - facing) : 0.0f;
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
             }
             else
-            {
-                reading = Bake::SenseLive(map, query, at, facing);
                 Bake::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
-            }
-
-            for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-            {
-                probe->Reach[ray] = reading.Rays[ray].Reach;
-                probe->Step[ray] = reading.Rays[ray].Step;
-                probe->Shore[ray] = reading.Rays[ray].Shore;
-                probe->Burns[ray] = reading.Rays[ray].Burns;
-            }
-            probe->Clearance = reading.Room.Clearance;
-            probe->ClearanceSin = reading.Room.Directed ? std::sin(reading.Room.Away - facing) : 0.0f;
-            probe->ClearanceCos = reading.Room.Directed ? std::cos(reading.Room.Away - facing) : 0.0f;
-            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
 
             if (!stale)
             {
@@ -323,7 +323,7 @@ namespace
                 return;
             }
         }
-        else
+        if (!fromTable)
             RefreshLive(probe, map, query, at, facing, partMark);
 
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while

@@ -20,13 +20,17 @@
 #include "DetourExtended.h"
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
+#include "DBCStores.h"
+#include "InstanceBosses.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapCollisionData.h"
 #include "MapDefines.h"
 #include "MoveBlock.h"
 #include "Object.h"
+#include "StageDefinition.h"
 #include "StringFormat.h"
+#include "World.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -38,6 +42,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <random>
 #include <sstream>
@@ -595,6 +600,56 @@ namespace Animus::Curriculum::ProbeBake
     int32 GridIndex(float coordinate)
     {
         return int32(std::floor(coordinate / SIZE_OF_GRIDS));
+    }
+
+    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage)
+    {
+        std::vector<Position> points = stage.SpawnPoints;
+        points.insert(points.end(), stage.HeldOutSpawnPoints.begin(), stage.HeldOutSpawnPoints.end());
+        std::set<uint32> maps = { stage.MapId };
+        for (Animus::Curriculum::ArenaDefinition const& arena : stage.Arenas)
+        {
+            points.insert(points.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
+            points.insert(points.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
+            for (Animus::Curriculum::BossRow const& row : Animus::Curriculum::InstanceLadderRows(arena.Instance))
+                maps.insert(row.MapId);
+        }
+
+        // An objective is at most forty yards from its spawn and the march looks forty further: a neighbour within
+        // eighty of the point is on the stage too.
+        constexpr float REACH = 80.0f;
+        std::set<GridRef> grids;
+        for (uint32 mapId : maps)
+        {
+            MapEntry const* entry = sMapStore.LookupEntry(mapId);
+            if (!entry)
+                continue;
+            if (!entry->Instanceable())
+            {
+                if (mapId == stage.MapId)
+                    for (Position const& point : points)
+                        for (int32 dx = -1; dx <= 1; ++dx)
+                            for (int32 dy = -1; dy <= 1; ++dy)
+                                grids.insert({ mapId, GridIndex(point.GetPositionX() + float(dx) * REACH),
+                                    GridIndex(point.GetPositionY() + float(dy) * REACH) });
+                continue;
+            }
+
+            // Every mmtile of the map: MMMXXYY.mmtile, XX and YY the core's grid coordinates, which count down from
+            // +x/+y where the tables count up from 0.
+            std::string const prefix = Acore::StringFormat("{:03}", mapId);
+            std::error_code error;
+            for (auto const& file : std::filesystem::directory_iterator(sWorld->GetDataPath() + "mmaps", error))
+            {
+                std::string const name = file.path().filename().string();
+                if (name.size() != 14 || name.compare(0, 3, prefix) != 0 || file.path().extension() != ".mmtile")
+                    continue;
+                int32 const coreX = std::atoi(name.substr(3, 2).c_str());
+                int32 const coreY = std::atoi(name.substr(5, 2).c_str());
+                grids.insert({ mapId, int32(CENTER_GRID_ID) - 1 - coreX, int32(CENTER_GRID_ID) - 1 - coreY });
+            }
+        }
+        return { grids.begin(), grids.end() };
     }
 
     Reading SenseLive(Map* map, dtNavMeshQuery const* query, Ground::Origin const& at, float facing)

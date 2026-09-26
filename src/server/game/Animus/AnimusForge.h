@@ -190,6 +190,8 @@ namespace AnimusForge
         void HoldWhilePaused();
 
         /// Build and start the plan's current scenario. False (logged) when it cannot start.
+        /// At a stage's start with the baked probe: how many of its grids have shipped tables (logged, never baked).
+        void ReportProbeTables(std::string const& scenario) const;
         bool StartCurrent();
 
         /// Tear the running scenario down. With `stopLearner` the learner is disconnected and waited for (it saves
