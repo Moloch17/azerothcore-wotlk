@@ -17,6 +17,7 @@
  */
 
 #include "MoveBlock.h"
+#include "GroundSense.h"
 #include "SeatEncoder.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
@@ -45,9 +46,10 @@ namespace
     namespace Encoding = Animus::Curriculum::Encoding;
     using Animus::Curriculum::TravelBlock;
     using Animus::Curriculum::SeatOptionKind;
+    namespace Ground = Animus::Curriculum::GroundSense;
+    using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
-    constexpr int NAV_RAY_POLYS = 16;           // polygons a single bearing's raycast may cross
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
@@ -123,62 +125,6 @@ namespace
             default:
                 return;                     // keep the heading it has, which is the point of both
         }
-    }
-
-    /// How far the seat could walk along `heading` before it leaves the navmesh, up to `range`.
-    ///
-    /// This is the sense the block did not have. MarchBearing samples the *height* of the ground at five points
-    /// and blocks on a change between two of them, so a vertical wall standing on a flat floor returns the same
-    /// z at six yards and at twelve: the step is zero, nothing blocks, and the ray reports clear ground straight
-    /// through the wall. It detected slopes and drops, never obstacles. Outdoors that passes, because a cliff is
-    /// a height change; indoors every wall, door frame and table is a vertical face on a level floor and the
-    /// seat walked into all of them blind.
-    ///
-    /// A navmesh raycast stops where walkable space stops, which is what an obstacle is to a pair of legs. It is
-    /// also per-polygon, so unlike a height sample it cannot be confused by the storey above.
-    ///
-    /// **The filter is what makes this three senses instead of one.** dtNavMeshQuery::raycast tests
-    /// `filter->passFilter()` on every polygon it steps into, and the mesh carries liquid as its own area flags
-    /// (TerrainBuilder: water and ocean are NAV_WATER, magma NAV_MAGMA, slime NAV_SLIME). So NAV_GROUND alone
-    /// stops at the water's edge and gives the distance to the shore; NAV_GROUND | NAV_WATER crosses the water
-    /// and stops at the far side; and the difference between the two is how wide the water is that way -- which
-    /// is exactly what "is this crossing worth it" needs and what no observation has ever carried. Leaving magma
-    /// and slime out of both is what makes a lava edge a continuous distance rather than a flag sampled at five
-    /// points, which a seat could walk straight between.
-    ///
-    /// Flags are always set explicitly: a default-constructed dtQueryFilterExt includes 0xffff and would happily
-    /// cross slime, and the runtime's own filter never includes NAV_SLIME at all (GetNavTerrain folds slime into
-    /// NAV_MAGMA), so neither default is the one wanted here.
-    /// Returns yards to the first polygon edge the filter refuses to cross, or a negative number when there is
-    /// no answer -- off the mesh, or a failed query. That distinction matters: a failed obstacle ray that read
-    /// as `range` would be a seat told the way is clear to the horizon because the question could not be asked.
-    /// Every caller must decide what silence means for what it is asking, and none of them may treat it as
-    /// clear ground.
-    float NavRay(dtNavMeshQuery const* query, dtPolyRef startRef, float x, float y, float z, float heading,
-        float range, uint16 includeFlags)
-    {
-        if (!query || !startRef)
-            return -1.0f;
-
-        dtQueryFilterExt filter;
-        filter.setIncludeFlags(includeFlags);
-        filter.setExcludeFlags(0);
-
-        // Detour's axes are {y, z, x}, not the world's (x, y, z). Getting this wrong is silent -- the ray simply
-        // goes somewhere else -- so it is written out rather than swizzled in passing.
-        float const from[3] = { y, z, x };
-        float const to[3] = { y + range * std::sin(heading), z, x + range * std::cos(heading) };
-
-        float t = 0.0f;
-        float normal[3] = { 0.0f, 0.0f, 0.0f };
-        dtPolyRef visited[NAV_RAY_POLYS];
-        int count = 0;
-        if (dtStatusFailed(query->raycast(startRef, from, to, &filter, &t, normal, visited, &count,
-            NAV_RAY_POLYS)))
-            return -1.0f;
-
-        // Detour reports t = FLT_MAX when the ray ran the whole way without leaving the mesh.
-        return t >= 1.0f ? range : t * range;
     }
 
     /// How long a jump hangs in the air, and how far it carries.
@@ -293,117 +239,6 @@ namespace
         return aim;
     }
 
-    /// March one bearing outward and say where it stops.
-    ///
-    /// This replaces a single height sample twelve yards out, compared against the seat's own feet. That sample
-    /// answered "is the point twelve yards that way roughly level with me", which is three different questions
-    /// short of the one a pair of legs is asking. It could not see past twelve yards, it read a gentle slope as
-    /// a wall because MAX_STEP was measured over the whole twelve, and a wall, a cliff, a lava lake and the edge
-    /// of the map all came back as the same 0.
-    ///
-    /// What comes back now is the distance to the first thing that stops the ray, which means the same at six
-    /// yards as at forty, plus what stopped it: the signed height change, whether there was water it could swim,
-    /// and whether there was liquid that burns. Each cell is judged against the cell before it, so ground that
-    /// climbs steadily stays walkable and only a real discontinuity blocks.
-    ///
-    /// Still geometry and not a route. Nothing here says which way to go.
-    void MarchBearing(Player* bot, Map* map, float heading, float& reachOut, float& stepOut, float& waterOut,
-        float& burnsOut)
-    {
-        reachOut = 1.0f;
-        stepOut = 0.0f;
-        waterOut = 0.0f;
-        burnsOut = 0.0f;
-
-        uint32 const phase = bot->GetPhaseMask();
-        float const collision = bot->GetCollisionHeight();
-        float const fromX = bot->GetPositionX();
-        float const fromY = bot->GetPositionY();
-        float const dx = std::cos(heading);
-        float const dy = std::sin(heading);
-
-        float previousZ = bot->GetPositionZ();
-        float previousRange = 0.0f;
-        float free = 0.0f;
-        float blockedStep = 0.0f;
-        float worstStep = 0.0f;
-        bool blocked = false;
-
-        for (uint32 cell = 0; cell < MoveBlock::MARCH_CELLS && !blocked; ++cell)
-        {
-            float const range = MoveBlock::MARCH_RANGES[cell];
-            float const gap = range - previousRange;
-            float const allowance = MoveBlock::MAX_STEP + gap * MoveBlock::MARCH_SLOPE;
-            float const x = fromX + range * dx;
-            float const y = fromY + range * dy;
-
-            // Liquid before ground, because the ground test cannot tell a lake from a cliff and would call it
-            // the latter: mmaps drops the terrain under real liquid, so GetHeight comes back INVALID_HEIGHT over
-            // any water worth swimming -- the same answer it gives for the edge of the map. Which liquid it is
-            // decides everything, and LiquidData::Flags is what carries it; Status only says how deep the stuff
-            // is, so a test on Status alone called magma "water" and handed the seat a lava lake to cross.
-            LiquidData const liquid = map->GetLiquidData(phase, x, y, previousZ, collision, {});
-            bool const liquidHere = liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
-                && liquid.Level >= previousZ - allowance;
-
-            if (liquidHere && (liquid.Flags & (MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME)) != 0)
-            {
-                // Somewhere to die, not somewhere to go. The ray stops short of it, and the seat can tell this
-                // apart from a wall because burns says so.
-                burnsOut = 1.0f;
-                blocked = true;
-                break;
-            }
-
-            if (liquidHere && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0)
-            {
-                // Water is somewhere the seat can go, so the ray carries on across it. What it costs to go there
-                // is OBS_SWIM_SPEED's to say.
-                waterOut = 1.0f;
-                previousZ = liquid.Level;
-                previousRange = range;
-                free = range;
-                continue;
-            }
-
-            // Search from just above the last cell, downwards. The origin used to be twenty yards up, which is
-            // harmless in open country and wrong inside a building: Map::GetHeight casts a strictly downward ray
-            // from the z it is given, so starting above the ceiling returns the floor of the storey above and
-            // the seat is told it can walk there. Starting a step's height up finds the ground it could actually
-            // reach and nothing higher.
-            float const z = map->GetHeight(phase, x, y, previousZ + MoveBlock::MAX_STEP, true,
-                MoveBlock::MARCH_SEARCH);
-            if (z <= INVALID_HEIGHT)
-            {
-                // No ground within twenty yards either way: a long drop, or off the map. Reported as a drop,
-                // because that is what it is to something on legs.
-                blockedStep = -1.0f;
-                blocked = true;
-                break;
-            }
-
-            float const step = z - previousZ;
-            if (std::fabs(step) > allowance)
-            {
-                blockedStep = std::clamp(step / allowance, -1.0f, 1.0f);
-                blocked = true;
-                break;
-            }
-
-            if (std::fabs(step) > std::fabs(worstStep))
-                worstStep = step / allowance;
-
-            previousZ = z;
-            previousRange = range;
-            free = range;
-        }
-
-        reachOut = free / MoveBlock::MARCH_MAX;
-        // What stopped the ray if something did, and otherwise the steepest thing it walked over -- so a bearing
-        // that is clear but climbing still reads differently from one that is clear and flat.
-        stepOut = blocked ? blockedStep : std::clamp(worstStep, -1.0f, 1.0f);
-    }
-
     /// Redo the march if it has stopped describing where the seat is standing, and say whether it is usable.
     ///
     /// Eighty height samples and forty-eight rays against the eight queries the old probe made is too much to
@@ -435,142 +270,33 @@ namespace
         auto probeMark = std::chrono::steady_clock::now();
         auto partMark = probeMark;
 
-        // The seat's own polygon, once for all sixteen rays. Extents match the core's own lookup in
-        // cs_mmaps; a seat standing somewhere the mesh does not cover simply gets no rays, and the height march
-        // still answers.
+        // The seat's own polygon, once for all sixteen rays.
+        Ground::Origin const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
+            bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
-        dtPolyRef startRef = 0;
-        if (query)
-        {
-            dtQueryFilterExt filter;
-            filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-            filter.setExcludeFlags(0);
-            float const at[3] = { bot->GetPositionY(), bot->GetPositionZ(), bot->GetPositionX() };
-            float const extents[3] = { 3.0f, 5.0f, 3.0f };
-            if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &startRef, nullptr)))
-                startRef = 0;
-        }
+        dtPolyRef const startRef = Ground::StartPoly(query, at);
 
         for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
         {
             float const heading = RayHeading(facing, ray);
-            float water = 0.0f;
             partMark = std::chrono::steady_clock::now();
-            MarchBearing(bot, map, heading, probe->Reach[ray], probe->Step[ray], water,
-                probe->Burns[ray]);
+            Ground::March const march = Ground::MarchBearing(map, at, heading, 0.0f);
             Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
-
-            // Three rays, which differ only in what their filter will cross. The dry one walks ground alone,
-            // so it stops at a shore, a lava edge or a wall. The wet one may cross water, so it stops at a lava
-            // edge or a wall. The last crosses everything liquid, so it stops only where the mesh itself ends.
-            //
-            // What the pair is good for is `dry` itself: the yards to the water's edge along this bearing,
-            // continuous, where the plane it replaced was a yes or no sampled at five fixed ranges. It does not
-            // give the width of the crossing -- the wet filter crosses ground too, so past a shore it runs on
-            // over the far bank until a wall stops it, and a narrow channel reads the same as a lake.
-            //
-            // wet against all is the pair that does mean exactly one thing, because those two filters differ in
-            // nothing but magma and slime: if the ray that may not cross them stops short of the ray that may,
-            // what stopped it was burning, and it stopped at the burning edge.
-            float const rayX = bot->GetPositionX();
-            float const rayY = bot->GetPositionY();
-            float const rayZ = bot->GetPositionZ();
-            float const wet = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND | NAV_WATER);
-            float const dry = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND);
-            float const all = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND | NAV_WATER | NAV_MAGMA | NAV_SLIME);
-
+            Ground::Rays const rays = Ground::CastRays(query, startRef, at, heading);
             Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_RAYS, partMark);
 
-            // The nearer of the two senses wins: the march sees drops the mesh calls walkable, the ray sees
-            // walls the march is blind to, and a seat wants to know about whichever comes first.
-            if (wet >= 0.0f && dry >= 0.0f)
-            {
-                probe->Reach[ray] = std::min(probe->Reach[ray], wet / MoveBlock::MARCH_MAX);
-                probe->Shore[ray] = std::min(dry / MoveBlock::MARCH_MAX, probe->Reach[ray]);
-            }
-            else
-            {
-                // No mesh here, or no answer from it. Fall back to what the height march saw, and say the dry
-                // reach is the reach -- claiming water of unknown width would be worse than claiming none.
-                probe->Shore[ray] = water > 0.0f ? 0.0f : probe->Reach[ray];
-            }
-
-            // Where the burning starts, graded by how close it is: 1 at the seat's feet, falling to 0 at the
-            // far end of the march, and exactly 0 when there is none.
-            //
-            // This is the ray's answer and not the march's, because the march cannot answer it. It samples
-            // liquid at five fixed ranges, so a lava edge at nine yards falls between the cells at six and at
-            // twelve and reads as no lava at all -- and worse, if the twelve-yard cell lands past the edge it
-            // returns no height, which the march reports as a drop. That is a seat walking into lava believing
-            // it is stepping off a ledge. The mesh is built from the same liquid data, so when it answers it
-            // answers about the same lava, only continuously and at the true edge.
-            if (all >= 0.0f && wet >= 0.0f)
-            {
-                // BURN_EDGE_MARGIN guards float noise between two rays cast from one origin; it is not the
-                // mesh's own 1.8 yd simplification error, which both rays share and which therefore cancels.
-                probe->Burns[ray] = all > wet + MoveBlock::BURN_EDGE_MARGIN
-                    ? 1.0f - std::clamp(wet / MoveBlock::MARCH_MAX, 0.0f, 1.0f)
-                    : 0.0f;
-            }
-            // else: no mesh answer, so the march's own flag stands as written, coarse but not silent.
+            Ground::Bearing const bearing = Ground::Combine(march, rays);
+            probe->Reach[ray] = bearing.Reach;
+            probe->Step[ray] = bearing.Step;
+            probe->Shore[ray] = bearing.Shore;
+            probe->Burns[ray] = bearing.Burns;
         }
 
-        // How much room the seat has, and which way is out. One query, in the same refresh as the rays and from
-        // the same polygon. The filter is the walkable set a seat actually uses, so a lava edge and a shoreline
-        // both count as an edge to keep off -- which is the honest answer for something on legs.
-        probe->Clearance = 1.0f;
-        probe->ClearanceSin = 0.0f;
-        probe->ClearanceCos = 0.0f;
-        if (query && startRef)
-        {
-            dtQueryFilterExt filter;
-            filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-            filter.setExcludeFlags(0);
-            float const at[3] = { bot->GetPositionY(), bot->GetPositionZ(), bot->GetPositionX() };
-            float distance = 0.0f;
-            float hit[3] = { 0.0f, 0.0f, 0.0f };
-            float normal[3] = { 0.0f, 0.0f, 0.0f };
-            if (dtStatusSucceed(query->findDistanceToWall(startRef, at, MoveBlock::CLEARANCE_RANGE, &filter,
-                &distance, hit, normal)))
-            {
-                if (std::isfinite(distance))
-                    probe->Clearance = std::clamp(distance / MoveBlock::CLEARANCE_RANGE, 0.0f, 1.0f);
-
-                // hitNormal is normalize(centre - hit): it already points from the wall back at the seat, which
-                // is the way out. Detour's axes are {y, z, x}, so the world components are [2] and [0].
-                //
-                // And it is not always a direction. Detour builds that vector by subtracting the hit from the
-                // centre and normalising in place, dividing by the vector's own length -- so a seat standing
-                // exactly on an edge, where the hit *is* the centre, normalises a zero vector and gets three
-                // NaNs. atan2 carries them, sin and cos carry them, and two NaN observation planes reach the
-                // networks, which return a NaN logit, which torch.multinomial reports as a probability tensor
-                // containing inf or nan, naming nothing. A seat on an edge is not rare: it is a doorway.
-                //
-                // There is no direction out of a point that is already on the edge, so the honest reading is
-                // the one the probe starts with -- no direction at all -- and the clearance distance beside it
-                // still says the seat is against something.
-                //
-                // And it is only a direction when a wall was found at all. findDistanceToWall writes hitPos
-                // only inside its loop, on a hit, but subtracts and normalises unconditionally at the end --
-                // so with nothing in range it normalises (centre - {0, 0, 0}), which is the bearing from the
-                // world origin to the seat. That is finite, non-zero and completely wrong: it would hand the
-                // policy an absolute compass reading of where in the world it is standing, in open country,
-                // where the held-out arenas exist precisely to prove it is reading terrain and not remembering
-                // places. Nothing further out than the search radius has a way out to point at.
-                float const outX = normal[2];
-                float const outY = normal[0];
-                if (distance < MoveBlock::CLEARANCE_RANGE
-                    && std::isfinite(outX) && std::isfinite(outY) && outX * outX + outY * outY > 1e-6f)
-                {
-                    float const away = std::atan2(outY, outX) - facing;
-                    probe->ClearanceSin = std::sin(away);
-                    probe->ClearanceCos = std::cos(away);
-                }
-            }
-        }
+        // How much room the seat has, and which way is out: one query, from the same polygon as the rays.
+        Ground::Room const room = Ground::MeasureRoom(query, startRef, at);
+        probe->Clearance = room.Clearance;
+        probe->ClearanceSin = room.Directed ? std::sin(room.Away - facing) : 0.0f;
+        probe->ClearanceCos = room.Directed ? std::cos(room.Away - facing) : 0.0f;
 
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
         // the cache still describes where the seat stands, and measures again once it has moved or turned.
