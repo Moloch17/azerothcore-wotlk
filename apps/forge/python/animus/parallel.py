@@ -104,6 +104,24 @@ class Ranks:
                 parameter.grad.copy_(flat[offset:offset + size].view_as(parameter))
             offset += size
 
+    def average_parameters(self, modules) -> None:
+        """Every rank's parameters replaced by their mean over the ranks: one flat all-reduce (mappo.rank_sync =
+        "weights", where the ranks train apart between these and only the result is shared)."""
+        if not self.active:
+            return
+        parameters = [p for module in modules for p in module.parameters()]
+        if not parameters:
+            return
+        with torch.no_grad():
+            flat = torch.cat([p.detach().reshape(-1) for p in parameters])
+            self._reduce(flat)
+            flat /= self.world
+            offset = 0
+            for parameter in parameters:
+                size = parameter.numel()
+                parameter.copy_(flat[offset:offset + size].view_as(parameter))
+                offset += size
+
     def broadcast_module(self, module: torch.nn.Module) -> None:
         """The leader's parameters and buffers, everywhere: the ranks start as one network."""
         if not self.active:

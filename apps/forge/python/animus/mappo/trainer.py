@@ -100,6 +100,13 @@ class MappoConfig:
     # 13.41 at 10M and 20M steps against fp32's 14.20 and 15.36 (standard errors ~0.25), with entropy and approx_kl
     # falling faster. So fp32 it is, unless a stage measures otherwise.
     update_precision: str = "fp32"
+    # How data-parallel learners (animus.parallel) keep one policy. "gradients": every optimizer step's gradients are
+    # averaged over the ranks, so they train as one learner on the pool -- the right thing on one machine, and ~8
+    # Gbit/s a link for stage8_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
+    # with its own optimiser and the ranks' networks are averaged every weight_sync_every updates (local SGD) --
+    # one all-reduce of the parameters, which is what a cluster of learners can carry.
+    rank_sync: str = "gradients"
+    weight_sync_every: int = 1
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
     # between, and its action head is conditioned on it. The chooser then decides on a clock that many times slower
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
@@ -866,10 +873,24 @@ class MappoTrainer:
         precision = self.config.update_precision
         if precision not in ("fp32", "bf16"):
             raise ValueError(f"mappo.update_precision is {precision!r}: fp32 or bf16")
+        if self.config.rank_sync not in ("gradients", "weights"):
+            raise ValueError(f"mappo.rank_sync is {self.config.rank_sync!r}: gradients or weights")
         if precision == "bf16" and self.train_device.type == "cuda":
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                return self._update(buffer, auxiliary, sync)
-        return self._update(buffer, auxiliary, sync)
+                stats = self._update(buffer, auxiliary, sync)
+        else:
+            stats = self._update(buffer, auxiliary, sync)
+
+        if self.config.rank_sync == "weights" and self.ranks.active:
+            self._updates_since_sync = getattr(self, "_updates_since_sync", 0) + 1
+            if self._updates_since_sync >= max(1, self.config.weight_sync_every):
+                self._updates_since_sync = 0
+                self.ranks.average_parameters([self.actor, self.critic])
+                # A serial update copied its weights to the rollout networks already: again, averaged. (An
+                # overlapped one is copied when it is joined, after this.)
+                if sync:
+                    self._sync_rollout()
+        return stats
 
     def _update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         if self.recurrent_size:
@@ -982,7 +1003,8 @@ class MappoTrainer:
 
                 self.actor_opt.zero_grad()
                 actor_loss.backward()
-                self.ranks.average_gradients(self.actor.parameters())
+                if cfg.rank_sync == "gradients":
+                    self.ranks.average_gradients(self.actor.parameters())
                 actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
                 self.actor_opt.step()
 
@@ -994,7 +1016,8 @@ class MappoTrainer:
 
                 self.critic_opt.zero_grad()
                 (cfg.value_coef * value_loss).backward()
-                self.ranks.average_gradients(self.critic.parameters())
+                if cfg.rank_sync == "gradients":
+                    self.ranks.average_gradients(self.critic.parameters())
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
 
@@ -1247,7 +1270,8 @@ class MappoTrainer:
 
                 self.actor_opt.zero_grad()
                 actor_loss.backward()
-                self.ranks.average_gradients(self.actor.parameters())
+                if cfg.rank_sync == "gradients":
+                    self.ranks.average_gradients(self.actor.parameters())
                 actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
                 self.actor_opt.step()
 
@@ -1273,7 +1297,8 @@ class MappoTrainer:
 
                 self.critic_opt.zero_grad()
                 (cfg.value_coef * value_loss).backward()
-                self.ranks.average_gradients(self.critic.parameters())
+                if cfg.rank_sync == "gradients":
+                    self.ranks.average_gradients(self.critic.parameters())
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
 

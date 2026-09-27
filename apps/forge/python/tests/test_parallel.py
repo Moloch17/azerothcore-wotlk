@@ -117,3 +117,27 @@ def test_gradients_average_when_a_head_is_used_on_one_rank_only(tmp_path):
             torch.testing.assert_close(mine, theirs)
     assert all(grad is not None for grad in grads[0][:4])
     assert grads[0][4] is None and grads[0][5] is None
+
+
+def _average_weights(rank: int, port: int, out: str) -> None:
+    from animus.parallel import Ranks
+
+    ranks = Ranks(rank, 2, f"127.0.0.1:{port}")
+    module = torch.nn.Linear(3, 2)
+    with torch.no_grad():
+        for parameter in module.parameters():
+            parameter.fill_(float(rank + 1))
+    ranks.average_parameters([module])
+    torch.save([p.detach().clone() for p in module.parameters()], f"{out}/weights{rank}.pt")
+    ranks.close()
+
+
+def test_weights_average_over_the_ranks(tmp_path):
+    """mappo.rank_sync = "weights": ranks that trained apart end on the mean of their networks, the same on both."""
+    port = _free_port()
+    os.environ.pop("MASTER_ADDR", None)
+    os.environ.pop("MASTER_PORT", None)
+    torch.multiprocessing.spawn(_average_weights, args=(port, str(tmp_path)), nprocs=2, join=True)
+    for rank in range(2):
+        for tensor in torch.load(tmp_path / f"weights{rank}.pt"):
+            torch.testing.assert_close(tensor, torch.full_like(tensor, 1.5))
