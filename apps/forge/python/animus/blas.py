@@ -19,6 +19,22 @@ import os
 from pathlib import Path
 
 
+_tuning = False
+_saves = 0
+
+
+def save() -> None:
+    """Write the tunings found so far: after every update for the first ones, where the new shapes are met, then
+    every 50th. Nothing where prepare did not enable TunableOp."""
+    global _saves
+    if not _tuning:
+        return
+    _saves += 1
+    if _saves <= 20 or _saves % 50 == 0:
+        import torch
+        torch.cuda.tunable.write_file()
+
+
 def prepare(device: str) -> str | None:
     """Set the matrix library up for `device` before anything runs on it; the architecture it did this for, or
     None where the default is the right one (CUDA, the CPU, ROCm cards before gfx12)."""
@@ -40,8 +56,11 @@ def prepare(device: str) -> str | None:
     torch.cuda.tunable.set_filename(str(directory / f"{arch}_.csv"), insert_device_ordinal=True)
     torch.cuda.tunable.enable(True)
     torch.cuda.tunable.tuning_enable(True)
-    # TunableOp writes what it found when the process ends; a learner stopped by its sim ends through atexit too.
+    # TunableOp writes what it found when the process ends, but a learner its sim stops is killed before that;
+    # save() after each update writes it as it grows (atexit catches a clean exit).
     atexit.register(torch.cuda.tunable.write_file)
+    global _tuning
+    _tuning = True
     print(f"Learner: {arch} matmuls on rocBLAS, tuned by TunableOp (hipBLASLt has no fast kernels for it); "
           f"tunings in {directory}", flush=True)
     return arch

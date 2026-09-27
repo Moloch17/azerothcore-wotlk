@@ -1,0 +1,132 @@
+"""animus.async_sync: the vector, the mixing rule, and a leader and a follower trading over a real socket."""
+from __future__ import annotations
+
+import socket
+import time
+
+import numpy as np
+import torch
+
+from animus.async_sync import MAX_ALPHA, Hub, Link, assign, flatten, mix
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class Normaliser(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("mean", torch.zeros(3))
+        self.register_buffer("count", torch.zeros((), dtype=torch.long))   # not floating point: not traded
+
+
+class FakeTrainer:
+    def __init__(self):
+        self.synced = 0
+
+    def sync_rollout(self):
+        self.synced += 1
+
+
+class FakeRun:
+    def __init__(self):
+        self.env_steps = 0
+        self.update = 0
+        self.finished_episodes = []
+        self.finished_layouts = []
+        self.trainer = FakeTrainer()
+        self.controls = []
+
+    def apply_control(self, control):
+        self.controls.append(control)
+
+
+def networks(seed: int):
+    torch.manual_seed(seed)
+    return [torch.nn.Linear(4, 3), torch.nn.Linear(3, 2), Normaliser()]
+
+
+def test_flatten_assign_round_trip_includes_float_buffers_only():
+    modules = networks(0)
+    modules[2].mean.fill_(2.5)
+    vector = flatten(modules)
+    assert vector.size == 4 * 3 + 3 + 3 * 2 + 2 + 3
+    other = networks(1)
+    assign(other, vector)
+    np.testing.assert_array_equal(flatten(other), vector)
+    assert float(other[2].mean[0]) == 2.5
+
+
+def test_mix_weights_by_data_and_caps():
+    center = np.zeros(3, dtype=np.float32)
+    alpha = mix(center, np.ones(3, dtype=np.float32), pushed_steps=100, since_base=300)
+    assert alpha == 0.25
+    np.testing.assert_allclose(center, 0.25)
+    assert mix(np.zeros(1, dtype=np.float32), np.ones(1, dtype=np.float32), 1000, 0) == MAX_ALPHA
+
+
+def wait_for(condition, seconds=10.0):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def test_leader_and_follower_trade():
+    address = f"127.0.0.1:{free_port()}"
+    leader_nets, follower_nets = networks(0), networks(1)
+    hub = Hub(address, leader_nets)
+    leader_run, follower_run = FakeRun(), FakeRun()
+    hub.set(entropy_coef=0.01)
+
+    link = Link(address, 1, follower_nets, every=1, timeout=10.0)
+    control = link.hello()
+    # The follower starts as the leader's networks.
+    np.testing.assert_array_equal(flatten(follower_nets), flatten(leader_nets))
+    assert control["entropy_coef"] == 0.01
+
+    # The follower trains (moves its weights by +1) over 400 steps and pushes at its safe point.
+    start = flatten(follower_nets)
+    assign(follower_nets, start + 1.0)
+    link.steps_since = 400
+    link.observe([np.ones(2)], [0])
+    link.at_safe_point(follower_run)
+    wait_for(lambda: hub.inbox)
+
+    # The leader played 400 steps of its own since the follower's base, then folds the push in: alpha 0.5.
+    leader_run.env_steps = 400
+    before = flatten(leader_nets)
+    hub.at_safe_point(leader_run)
+    np.testing.assert_allclose(flatten(leader_nets), before + 0.5, rtol=0, atol=1e-6)
+    assert leader_run.env_steps == 800
+    assert len(leader_run.finished_episodes) == 1 and leader_run.finished_layouts == [0]
+    assert leader_run.trainer.synced == 1
+
+    # The follower's reply lands (it carries the centre as it was when served); meanwhile it moved +2 more.
+    wait_for(lambda: link.reply is not None)
+    served = link.reply["center"].copy()
+    assign(follower_nets, start + 3.0)
+    link.at_safe_point(follower_run)
+    np.testing.assert_allclose(flatten(follower_nets), served + 2.0, rtol=0, atol=1e-6)
+    assert follower_run.controls and follower_run.trainer.synced == 1
+
+    hub.close()
+    link.close()
+
+
+def test_stop_reaches_the_follower():
+    address = f"127.0.0.1:{free_port()}"
+    hub = Hub(address, networks(0))
+    link = Link(address, 1, networks(1), every=1, timeout=10.0)
+    link.hello()
+    hub.set(stop=True)
+    run = FakeRun()
+    link.at_safe_point(run)             # pushes
+    wait_for(lambda: link.reply is not None)
+    link.at_safe_point(run)             # takes the reply, which says stop
+    assert link.stopped
+    hub.close()
+    link.close()

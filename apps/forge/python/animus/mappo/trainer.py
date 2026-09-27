@@ -104,7 +104,10 @@ class MappoConfig:
     # averaged over the ranks, so they train as one learner on the pool -- the right thing on one machine, and ~8
     # Gbit/s a link for stage8_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
     # with its own optimiser and the ranks' networks are averaged every weight_sync_every updates (local SGD) --
-    # one all-reduce of the parameters, which is what a cluster of learners can carry.
+    # one all-reduce of the parameters, which is what a cluster of learners can carry, but every rank waits for the
+    # slowest at every one. "async" (animus.async_sync): no collective at all -- each rank trains at its own pace and
+    # trades its networks with the leader's in the background every weight_sync_every updates; what a cluster of
+    # unequal machines needs.
     rank_sync: str = "gradients"
     weight_sync_every: int = 1
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
@@ -873,8 +876,8 @@ class MappoTrainer:
         precision = self.config.update_precision
         if precision not in ("fp32", "bf16"):
             raise ValueError(f"mappo.update_precision is {precision!r}: fp32 or bf16")
-        if self.config.rank_sync not in ("gradients", "weights"):
-            raise ValueError(f"mappo.rank_sync is {self.config.rank_sync!r}: gradients or weights")
+        if self.config.rank_sync not in ("gradients", "weights", "async"):
+            raise ValueError(f"mappo.rank_sync is {self.config.rank_sync!r}: gradients, weights or async")
         if precision == "bf16" and self.train_device.type == "cuda":
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 stats = self._update(buffer, auxiliary, sync)

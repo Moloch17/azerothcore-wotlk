@@ -169,10 +169,16 @@ namespace AnimusForge
         bool ClusterLearner = false;
         /// AnimusForge.Cluster.DistPort (host): where every machine's learners meet (torch.distributed's rendezvous).
         uint16 ClusterDistPort = 7702;
+        /// AnimusForge.Cluster.Sync (host): how the machines' learners share what they learn -- "async": each trains
+        /// at its own pace and trades its networks with the host's in the background (mappo.rank_sync = async), or
+        /// "weights": every rank's networks averaged once an update, all of them waiting for the slowest.
+        std::string ClusterSync = "async";
         /// The learners of a cluster, as the host dealt them for the scenario being started (0 = only this machine's):
         /// all of the cluster's, the global rank of this machine's first, where they meet ("address:port") and this
         /// machine's network interface for it (gloo's GLOO_SOCKET_IFNAME).
         uint32 DistWorld = 0;
+        /// The Cluster.Sync the host dealt the learners with (mappo.rank_sync), "" when not a cluster's.
+        std::string DistSync;
         uint32 DistRankBase = 0;
         std::string DistAddress;
         std::string DistIface;

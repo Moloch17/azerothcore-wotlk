@@ -46,6 +46,7 @@ from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
 from .progress import ProgressWriter
 from . import blas, protocol
+from .async_sync import Hub, Link
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
@@ -412,8 +413,18 @@ class TrainingRun:
         use_threads(config.torch_threads)
         # Data-parallel learners (animus.parallel): each rank samples its own actions and shuffles its own
         # minibatches, and rank 0 alone writes the run.
-        self.ranks = Ranks(config.rank, config.ranks, config.dist_address, config.resolved_train_device(),
-                           iface=config.dist_iface, timeout=config.dist_timeout)
+        # Or asynchronous ones (mappo.rank_sync = async, animus.async_sync): no collective at all, so every rank is a
+        # learner of its own to this code -- the leader writes the run, a follower (leader False) writes nothing -- and
+        # the networks are traded with the leader's Hub in the background.
+        self.async_ranks = config.ranks > 1 and config.mappo.rank_sync == "async"
+        if self.async_ranks:
+            self.ranks = Ranks(0, 1, device=config.resolved_train_device())
+            self.ranks.rank, self.ranks.leader = config.rank, config.rank == 0
+        else:
+            self.ranks = Ranks(config.rank, config.ranks, config.dist_address, config.resolved_train_device(),
+                               iface=config.dist_iface, timeout=config.dist_timeout)
+        self.hub: Hub | None = None
+        self.link: Link | None = None
         leader = self.ranks.leader
         seed_everything(config.seed + config.rank)
 
@@ -549,6 +560,21 @@ class TrainingRun:
         for module in (self.trainer.actor, self.trainer.critic, self.trainer.value_norm):
             if module is not None:
                 self.ranks.broadcast_module(module)
+        if self.async_ranks:
+            networks = [self.trainer.actor, self.trainer.critic, self.trainer.value_norm]
+            if leader:
+                self.hub = Hub(config.dist_address, networks)
+                self.hub.center_steps = self.env_steps
+                self.hub.set(env_steps=self.env_steps, update=self.update)
+            else:
+                # A follower evaluates nothing and decides nothing: the leader's run is the run.
+                self.link = Link(config.dist_address, config.rank, networks, config.mappo.weight_sync_every,
+                                 config.dist_timeout)
+                control = self.link.hello()
+                self.update, self.env_steps = int(control.get("update", 0)), int(control.get("env_steps", 0))
+                self.evaluating = False
+        self.layout_weights_version = 0
+        self.replay_version = 0
         self.trainer.sync_rollout()
 
         def new_buffer() -> RolloutBuffer:
@@ -741,7 +767,7 @@ class TrainingRun:
                         self._checkpoint_extra())
 
     def maybe_checkpoint(self) -> None:
-        if self.update % self.config.checkpoint_every == 0:
+        if self.update % self.config.checkpoint_every == 0 and self.ranks.leader:
             self._save(self.run_dir / f"checkpoint_{self.update:06d}.pt")
             self._save(self.run_dir / "latest.pt")
             prune_checkpoints(self.run_dir, self.config.keep_checkpoints)
@@ -889,9 +915,14 @@ class TrainingRun:
             self.send_layout_weights(summary, baseline_summary)
             self.send_replay(result)
 
-    def apply_holds(self) -> None:
-        """Freeze the classes that have converged (animus.stage) and keep them out of the rollout's samples."""
-        converged = set(self.ranks.broadcast(sorted(self.controller.converged_layouts())))
+    def apply_holds(self, converged: list[str] | None = None) -> None:
+        """Freeze the classes that have converged (animus.stage) and keep them out of the rollout's samples. An
+        asynchronous follower is handed the leader's `converged`."""
+        if converged is None:
+            converged = self.ranks.broadcast(sorted(self.controller.converged_layouts()))
+            if self.hub is not None:
+                self.hub.set(converged=sorted(converged))
+        converged = set(converged)
         frozen = [index for index, layout in enumerate(self.spec.layouts) if layout.name in converged]
         if set(frozen) != set(int(index) for index in self.frozen):
             entering = sorted(converged - {self.spec.layouts[i].name for i in self.frozen})
@@ -933,6 +964,9 @@ class TrainingRun:
 
         seeds = result.failed_seeds(sampling.metric)
         self.env.set_replay(self.config.eval.seed, sampling.replay_fraction, seeds)
+        if self.hub is not None:
+            self.replay_version += 1
+            self.hub.set(replay=(self.replay_version, (self.config.eval.seed, sampling.replay_fraction, seeds)))
         print(f"Replaying {len(seeds)} lost evaluation episodes in {sampling.replay_fraction:.0%} of training resets",
               flush=True)
 
@@ -963,6 +997,9 @@ class TrainingRun:
                 vector.append(weight * hold.get(layout.name, 1.0))
 
         self.env.set_layout_weights(vector)
+        if self.hub is not None:
+            self.layout_weights_version += 1
+            self.hub.set(layout_weights=(self.layout_weights_version, vector))
         heaviest = sorted(weights.items(), key=lambda item: -item[1])[:3]
         held = [name for name, factor in hold.items() if factor != 1.0]
         print("Layout weights: " + ", ".join(f"{name} {weight:.2f}" for name, weight in heaviest)
@@ -996,8 +1033,30 @@ class TrainingRun:
 
         pending, self.pending_update = self.pending_update, None
         stats = pending.result()  # an update that raised re-raises here, on the training thread
+        blas.save()
+        self.at_safe_point()
         self.trainer.sync_rollout()
         return stats
+
+    def at_safe_point(self) -> None:
+        """Where no update is running on the networks: an asynchronous rank trades them here (animus.async_sync)."""
+        if self.hub is not None:
+            self.hub.at_safe_point(self)
+        elif self.link is not None:
+            self.link.at_safe_point(self)
+
+    def apply_control(self, control: dict) -> None:
+        """A follower carries out what the leader decided (animus.async_sync's reply)."""
+        self.env_steps = max(self.env_steps, int(control.get("env_steps", 0)))
+        converged = control.get("converged")
+        if converged is not None:
+            self.apply_holds(converged)
+        if (weights := control.get("layout_weights")) and weights[0] != self.layout_weights_version:
+            self.layout_weights_version = weights[0]
+            self.env.set_layout_weights(weights[1])
+        if (replay := control.get("replay")) and replay[0] != self.replay_version:
+            self.replay_version = replay[0]
+            self.env.set_replay(*replay[1])
 
     def drain_update(self) -> None:
         """Finish any overlapped update, so the networks are whole: before an evaluation, a checkpoint or a restart.
@@ -1098,21 +1157,32 @@ class TrainingRun:
         self.rollout_allowed_actions = buffer.mean_allowed_actions()
         self.layout_allowed = self.allowed_actions_by_layout(buffer)
         # The leader's controller decides, for every rank.
-        trainer.entropy_coef = self.ranks.broadcast(self.controller.entropy_coef(self.env_steps))
+        entropy_coef = self.controller.entropy_coef(self.env_steps)
+        lr_scale = self.controller.lr_scale(self.env_steps)
+        if self.link is not None:
+            entropy_coef = self.link.control.get("entropy_coef", entropy_coef)
+            lr_scale = self.link.control.get("lr_scale", lr_scale)
+        elif self.hub is not None:
+            self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale)
+        trainer.entropy_coef = self.ranks.broadcast(entropy_coef)
         # With an overlapped update this applies to the update submitted below: a rollout's worth late, which a
         # schedule over hundreds of millions of steps does not notice. The scale is the controller's: held at full
         # until the score first plateaus, so the KL it reads is the policy's and not the schedule's.
-        self.lr_scale_now = self.ranks.broadcast(self.controller.lr_scale(self.env_steps))
+        self.lr_scale_now = self.ranks.broadcast(lr_scale)
         trainer.set_learning_rate_scale(self.lr_scale_now)
         if self.distiller is not None:
             self.distiller.coef = self.config.distill.coef_at(self.env_steps)
 
         self.update += 1
         self.env_steps += self.config.rollout_length * self.run_envs * agents
+        if self.link is not None:
+            self.link.steps_since += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
 
         if self.updater is None:
             stats = trainer.update(buffer, self.distiller)
+            blas.save()
+            self.at_safe_point()
             return stats, started, rollout_seconds
 
         # Overlapped: the update of the rollout before last has been running while this one was collected. Take its
@@ -1238,6 +1308,8 @@ class TrainingRun:
         keep = slice(None) if present is None else ended[:, present] > 0.0
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
+        if self.link is not None:
+            self.link.observe(ended[keep], ended_layouts[keep])
 
         # A new episode starts with nothing remembered and no goal; the league scores the ended ones.
         if self.cast is not None:
@@ -1436,6 +1508,12 @@ class TrainingRun:
     def train(self) -> Outcome:
         """Train until every class has converged, or the step budget runs out."""
         config, controller = self.config, self.controller
+        if self.link is not None:
+            # A follower trains until the leader stops (or goes): its decisions are the leader's.
+            while not self.link.stopped:
+                stats, started, rollout_seconds = self.rollout()
+                self.log_update(stats, started, rollout_seconds)
+            return None
         while self.env_steps < config.total_env_steps:
             stats, started, rollout_seconds = self.rollout()
             self.log_update(stats, started, rollout_seconds)
@@ -1493,6 +1571,10 @@ class TrainingRun:
         self.progress.write("finished" if outcome else "stopped", self.update, self.env_steps,
                             outcome.reason if outcome else "", advanced=bool(outcome and outcome.action == ADVANCE))
         self.drain_update()
+        if self.hub is not None:
+            self.hub.close()
+        if self.link is not None:
+            self.link.close()
         if self.updater is not None:
             self.updater.shutdown()
         self.logger.close()

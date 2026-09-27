@@ -349,6 +349,12 @@ void AnimusForge::ForgeConfig::Load()
     ClusterDataPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.DataPort", 7701));
     ClusterAdvertise = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Advertise", "");
     ClusterDistPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.DistPort", 7702));
+    ClusterSync = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Sync", "async");
+    if (ClusterSync != "async" && ClusterSync != "weights")
+    {
+        LOG_ERROR("module.animus", "AnimusForge.Cluster.Sync = \"{}\" is not async or weights: async", ClusterSync);
+        ClusterSync = "async";
+    }
     if (Cluster == ClusterRole::Worker && ClusterHost.empty())
     {
         LOG_ERROR("module.animus", "AnimusForge.Cluster.Role = worker needs AnimusForge.Cluster.Host; standalone");

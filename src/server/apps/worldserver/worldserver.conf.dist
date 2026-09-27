@@ -5568,6 +5568,20 @@ AnimusForge.Cluster.Learner = "auto"
 AnimusForge.Cluster.DistPort = 7702
 
 #
+#    AnimusForge.Cluster.Sync
+#        Description: Host: how the machines' learners (AnimusForge.Cluster.Learner) share what they
+#                     learn. async: each trains at its own pace on its own sim and trades its networks
+#                     with the host's learner in the background (animus.async_sync); the host's
+#                     learner evaluates and decides for all of them, and a slow machine costs the others
+#                     nothing. weights: every learner's networks averaged once an update, in lockstep --
+#                     every machine waits for the slowest at every update (measured on stage8_duel:
+#                     7,885 env steps/s for three machines against 42,824 for the host alone).
+#        Default:     "async"
+#                     "weights"
+
+AnimusForge.Cluster.Sync = "async"
+
+#
 #    AnimusForge.Learner.LogFile
 #        Description: File the learner's stdout and stderr are appended to, relative to the directory of
 #                     worldserver.conf or absolute.

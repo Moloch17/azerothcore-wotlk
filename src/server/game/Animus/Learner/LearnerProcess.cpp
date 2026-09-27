@@ -133,7 +133,9 @@ namespace
             set("dist_address=" + config.DistAddress);
             if (!config.DistIface.empty())
                 set("dist_iface=" + config.DistIface);
-            set("mappo.rank_sync=weights");
+            // async: no collective at all, each rank trains at its own pace and trades its networks with the
+            // leader's in the background (animus.async_sync); weights: averaged once an update, in lockstep.
+            set("mappo.rank_sync=" + (config.DistSync.empty() ? std::string("weights") : config.DistSync));
         }
         else if (config.LearnerRanks > 1)
         {

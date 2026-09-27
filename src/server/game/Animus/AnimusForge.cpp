@@ -1037,8 +1037,12 @@ void AnimusForge::Forge::PollCluster()
             if (char const* at = std::strstr(order->c_str(), " rank="))
             {
                 char dist[128] = {};
-                if (std::sscanf(at, " rank=%u world=%u dist=%127s", &rank.Rank, &rank.World, dist) == 3)
+                char sync[16] = {};
+                int const read = std::sscanf(at, " rank=%u world=%u dist=%127s sync=%15s", &rank.Rank, &rank.World,
+                    dist, sync);
+                if (read >= 3)
                     rank.Address = dist;
+                rank.Sync = read == 4 ? sync : "weights";
             }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
             // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
@@ -1081,6 +1085,7 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
     std::vector<ClusterLink::WorkerInfo> learners;
     learnerConfig.ClusterSims.clear();
     learnerConfig.DistWorld = 0;
+    learnerConfig.DistSync.clear();
     for (ClusterLink::WorkerInfo const& worker : _cluster.RegisteredWorkers())
     {
         if (worker.Learner && learnerConfig.LearnerAutoStart && !worker.HostAddress.empty())
@@ -1105,18 +1110,21 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
         learnerConfig.DistRankBase = 0;
         learnerConfig.DistAddress = Acore::StringFormat("{}:{}", address, _config.ClusterDistPort);
         learnerConfig.DistIface = ClusterLink::InterfaceOf(address);
+        learnerConfig.DistSync = _config.ClusterSync;
         for (std::size_t index = 0; index < learners.size(); ++index)
         {
             // A worker ignores a START of the scenario it runs; STOP first makes it start again with its new rank.
             if (restart)
                 _cluster.SendTo(learners[index].Sim, "STOP");
-            _cluster.SendTo(learners[index].Sim, Acore::StringFormat("{} rank={} world={} dist={}", start,
-                local + index, learnerConfig.DistWorld, learnerConfig.DistAddress));
+            _cluster.SendTo(learners[index].Sim, Acore::StringFormat("{} rank={} world={} dist={} sync={}", start,
+                local + index, learnerConfig.DistWorld, learnerConfig.DistAddress, learnerConfig.DistSync));
         }
-        LOG_INFO("module.animus", "Cluster: {} worker learner{} join{} this run ({} learners in all, meeting at {}{})",
-            learners.size(), learners.size() == 1 ? "" : "s", learners.size() == 1 ? "s" : "",
+        LOG_INFO("module.animus", "Cluster: {} worker learner{} join{} this run ({} learners in all, meeting at {}{}; "
+            "{})", learners.size(), learners.size() == 1 ? "" : "s", learners.size() == 1 ? "s" : "",
             learnerConfig.DistWorld, learnerConfig.DistAddress,
-            learnerConfig.DistIface.empty() ? "" : " on " + learnerConfig.DistIface);
+            learnerConfig.DistIface.empty() ? "" : " on " + learnerConfig.DistIface,
+            learnerConfig.DistSync == "async" ? "each at its own pace, networks traded in the background"
+                : "networks averaged once an update");
     }
     if (!learnerConfig.ClusterSims.empty() && !restart)
         LOG_INFO("module.animus", "Cluster: {} worker{} run{} {} for this machine's learner{}",
@@ -1142,6 +1150,7 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
         config.DistRankBase = rank.Rank;
         config.DistAddress = rank.Address;
         config.DistIface = ClusterLink::InterfaceOf(_cluster.LocalAddress());
+        config.DistSync = rank.Sync;
     }
 
     Plan plan;

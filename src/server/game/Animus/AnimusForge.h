@@ -282,6 +282,7 @@ namespace AnimusForge
             uint32 Rank = 0;
             uint32 World = 0;
             std::string Address;
+            std::string Sync;
         };
         /// Host: the registered workers dealt out for `scenario` -- a rank of the run's learners to each that runs
         /// one of its own (their START carries it), this machine's learners the others' sims -- into `learnerConfig`.
