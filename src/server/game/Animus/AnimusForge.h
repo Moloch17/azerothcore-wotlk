@@ -23,6 +23,7 @@
 #include "ClusterLink.h"
 #include "Map.h"
 #include "MapMgr.h"
+#include "MapUpdater.h"
 #include "EnvPool.h"
 #include "ForgeConfig.h"
 #include "SeatEncoder.h"
@@ -33,6 +34,7 @@
 #include "TextTable.h"
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace AnimusForge
@@ -64,6 +66,9 @@ namespace AnimusForge
         /// Both do nothing for a map that holds no env, which is every map in playtest mode.
         void OnMapPrologue(Map& map);
         void OnMapEpilogue(Map& map);
+        /// After every map task has joined (MapMgr::Update): with AnimusForge.ObserveAfterJoin, the maps whose
+        /// observation was held back, observed now as a second round of tasks on `updater`.
+        void OnMapsJoined(MapUpdater& updater);
 
         /// Half-batch (AnimusForge.HalfBatch): whether `map` sits out this world tick because it holds envs of the
         /// half that is not ticking -- the one the learner is deciding. Called from map tasks (MapMgr::ForgeTickDiff,
@@ -421,6 +426,8 @@ namespace AnimusForge
         std::vector<BenchTrial> _benchTrials;       // phase 1 and, once it is over, phase 2
         std::size_t _benchTrial = 0;                // the trial the running plan entry is
         bool _benching = false;
+        std::mutex _heldLock;
+        std::vector<Map*> _heldObserve;     // AnimusForge.ObserveAfterJoin: maps ticked, not yet observed
         bool _benchApply = false;       // `forge bench auto`: apply the winner when done
         bool _autoTuneChecked = false;  // AnimusForge.Bench.AutoTune looked at, once per start
         bool _joinAfterBench = false;   // a worker tuning itself joins its host after

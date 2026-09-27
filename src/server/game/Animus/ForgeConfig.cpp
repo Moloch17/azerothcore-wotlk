@@ -197,6 +197,7 @@ void AnimusForge::ForgeConfig::Load()
     DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.DecisionMs", 250));
     TicksPerDecision = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.TicksPerDecision", 1));
     HalfBatch = sConfigMgr->GetOption<bool>("AnimusForge.HalfBatch", false);
+    ObserveAfterJoin = sConfigMgr->GetOption<bool>("AnimusForge.ObserveAfterJoin", false, false);
     if (TicksPerDecision > DecisionMs)
     {
         LOG_ERROR("module.animus", "AnimusForge.TicksPerDecision = {} is more than AnimusForge.DecisionMs = {} ms, "

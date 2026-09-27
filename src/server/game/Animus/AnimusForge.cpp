@@ -274,8 +274,50 @@ void AnimusForge::Forge::OnMapPrologue(Map& map)
 
 void AnimusForge::Forge::OnMapEpilogue(Map& map)
 {
-    if (_decisionTick && _pool)
-        _pool->ObserveMap(map);
+    if (!_decisionTick || !_pool)
+        return;
+    if (_config.ObserveAfterJoin)
+    {
+        std::lock_guard guard(_heldLock);
+        _heldObserve.push_back(&map);
+        return;
+    }
+    _pool->ObserveMap(map);
+}
+
+void AnimusForge::Forge::OnMapsJoined(MapUpdater& updater)
+{
+    std::vector<Map*> held;
+    {
+        std::lock_guard guard(_heldLock);
+        held.swap(_heldObserve);
+    }
+    if (held.empty() || !_pool)
+        return;
+
+    // One task a map, as the map update's own; a map's resets are handed on from its observation as before.
+    struct Observe
+    {
+        Animus::EnvPool* Pool;
+        Map* Target;
+    };
+    std::vector<Observe> tasks;
+    tasks.reserve(held.size());
+    for (Map* map : held)
+        tasks.push_back({ _pool.get(), map });
+    if (!updater.activated())
+    {
+        for (Observe const& task : tasks)
+            task.Pool->ObserveMap(*task.Target);
+        return;
+    }
+    for (Observe& task : tasks)
+        updater.schedule_work([](void* arg)
+        {
+            Observe const& task = *static_cast<Observe const*>(arg);
+            task.Pool->ObserveMap(*task.Target);
+        }, &task);
+    updater.wait();
 }
 
 void AnimusForge::Forge::OnUpdate(uint32 diff)

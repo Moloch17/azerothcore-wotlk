@@ -381,6 +381,8 @@ void MapMgr::Update(uint32 diff)
     auto const waiting = std::chrono::steady_clock::now();
     if (m_updater.activated())
         m_updater.wait();
+    // The sim's observations held back to after every map's tick (AnimusForge.ObserveAfterJoin): a second round.
+    sAnimusForge->OnMapsJoined(m_updater);
     MapTasksRunning.store(false, std::memory_order_release);
     auto const joined = std::chrono::steady_clock::now();
     LoadDeferredTiles();

@@ -71,6 +71,10 @@ namespace AnimusForge
         /// AnimusForge.HalfBatch: the pool in two halves whose maps tick in turn, so the learner decides one half
         /// while the other's maps tick (see AnimusForge::Forge::IsMapFrozen). Needs TicksPerDecision 1.
         bool HalfBatch = false;
+        /// AnimusForge.ObserveAfterJoin: observe every map's envs in a second round of tasks once every map has
+        /// ticked, instead of at the end of each map's own task -- the point a batched device kernel over all seats
+        /// would need (every position final, no observation written). A measurement switch: what that barrier costs.
+        bool ObserveAfterJoin = false;
         [[nodiscard]] bool HalvesTick() const { return HalfBatch && TicksPerDecision == 1; }
         /// The world tick, and what the module expects OnUpdate's diff to be: TickMs, or half of it in half-batch,
         /// where each half's maps tick every other world tick with the time of both.
