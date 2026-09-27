@@ -8,5 +8,4 @@ eval:
   every_env_steps: 10000000
   # 240 s episodes at 128 envs: 1024 is 1,920 sim-seconds an evaluation.
   episodes: 1024
-  baseline: life
   report: [nodes_gathered, nodes_spawned, skill_ups, skinned, corpses_looted, wasted_presses, died, gather_band]

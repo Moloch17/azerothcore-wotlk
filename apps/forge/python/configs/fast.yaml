@@ -11,10 +11,10 @@
 # budget: with patience 0 a stage trains every step it was given instead of stopping as soon as its score flattens, so a
 # sweep is predictable in length rather than a race of uneven ones.
 #
-# Networks, gamma, entropy, the evaluation baseline and seeding stay each stage's own, so a fast stage seeds from the
+# Networks, gamma, entropy, the evaluation and seeding stay each stage's own, so a fast stage seeds from the
 # fast runs of the stages it builds on, through the same code paths as a real run.
 #
-# Look at eval.csv: the at_start evaluation against the best, and the baseline in eval_baseline.json.
+# Look at eval.csv: the at_start evaluation against the best.
 
 # A sweep advances by itself, and on 64-episode evaluations best.pt often never moves: the convergence margin is
 # dominated by two standard errors of scores that noisy, so a stage can triple its score without clearing it. Seed

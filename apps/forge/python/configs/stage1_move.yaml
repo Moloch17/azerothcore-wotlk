@@ -38,7 +38,6 @@ mappo:
   entropy_final_fraction: 0.3
 
 eval:
-  baseline: fight
   # TEMPORARY, to see the shape of a failure rather than its average: every decision of the first 64 seeded
   # episodes, written to eval_trace.jsonl. Around 6% of scored episodes end by covering seven hundred yards of a
   # hundred-yard trip and finishing forty short, and no column says which motion that is -- orbiting the

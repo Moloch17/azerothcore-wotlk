@@ -134,7 +134,7 @@ mappo:
 
 # Seeded evaluation (animus.evaluation): every every_env_steps the networks play the same 2048 characters and
 # opponents with argmax actions; eval.csv / eval.jsonl hold the score (mean episode return) and per-level-band and
-# per-class/build stats next to the baseline, scored once per run on the same seeds, and eval_episodes.jsonl every
+# per-class/build stats, and eval_episodes.jsonl every
 # episode behind them. The best networks go to best.pt and are the ones the next stage seeds from.
 #
 # 2048 episodes spread over the 18 class/builds leave ~114 each. At 1024 (~57 each) one lost fight moved a
@@ -149,7 +149,6 @@ eval:
   episodes: 2048
   seed: 1000
   deterministic: true
-  baseline: fight
   # A second, sampled evaluation every N evaluations was a third more evaluation for a number only the export stage
   # reads (whether the argmax policy drifts from the sampled one); stage27_crossroads turns it on for itself.
   sampled_every: 0
@@ -186,10 +185,9 @@ entropy_floor:
   rate: 0.05
 
 # Where the data goes: after every evaluation the sim is told how often to build each class/build, so the ones
-# furthest below their baseline, and the ones furthest short of clean kills, get more episodes than the ones already
-# clear of both; a class that has converged is held at convergence.hold_share on top. Without the metric, mage_dps
-# drew no extra data at 0.68 clean kills because it beat the scripted mage's score. Evaluation stays evenly spread
-# whatever the weights are.
+# with the lowest score, and the ones furthest short of clean kills, get more episodes than the rest (there is no
+# scripted baseline to measure a gap to); a class that has converged is held at convergence.hold_share on top.
+# Evaluation stays evenly spread whatever the weights are.
 #
 # replay_fraction: a fifth of training resets rebuild a fight the last evaluation lost -- the same character and
 # opponent, fresh combat rolls -- so training goes over exactly the fights still being lost.

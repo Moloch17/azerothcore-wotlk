@@ -20,17 +20,14 @@ mappo:
   gae_lambda: 0.995
 eval:
   # An episode here is a whole battleground match, not a fight: stage 11's 1024 came to 20,480 scored episodes
-  # (a match scores each of its twenty seats) and 44 minutes a pass, twice over with opponent_baseline -- about
-  # an hour and a half before the first gradient step, and as much again at every evaluation after it. 128
+  # (a match scores each of its twenty seats) and 44 minutes a pass -- about three quarters of an hour before the
+  # first gradient step, and as much again at every evaluation after it. 128
   # matches still score 2,560 episodes, which is more than the 1 v 1 stage got from 1024, because twenty seats
   # play each one.
   episodes: 128
   report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, team_seat, flag_in_reach,
     mounted_fraction, healing_done]
 
-# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
-# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+# The far side of the mirror arena is the live policy: the learner plays itself, in training and in evaluation.
 cast:
-  opponents: league
-  parent: "{runs_dir}/stage12_pvp/best.pt"
-  opponent_share: 0.5
+  opponents: ""

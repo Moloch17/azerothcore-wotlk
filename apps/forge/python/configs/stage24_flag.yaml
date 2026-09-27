@@ -3,8 +3,8 @@
 # and stop the carrier. A carrier cannot ride, the dead stand up at their base after a 15 s wave, and the first to
 # three captures wins. Seeded from stage12_pvp (the fight) and stage6_travel (mounting between bases).
 #
-# As in the arena, a score against itself says little, so evaluation plays the other seat with the fight baseline,
-# which heads for the flags on a mount.
+# As in the arena, the learner plays both seats, in training and in evaluation; the flag columns (captures, returns,
+# carrier kills) say more than the score, which a policy against itself barely moves.
 
 extends: stage12_pvp.yaml
 run_name: stage24_flag
@@ -27,9 +27,6 @@ mappo:
 eval:
   report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, mounted_fraction]
 
-# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
-# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+# The far side of the mirror arena is the live policy: the learner plays itself, in training and in evaluation.
 cast:
-  opponents: league
-  parent: "{runs_dir}/stage12_pvp/best.pt"
-  opponent_share: 0.5
+  opponents: ""

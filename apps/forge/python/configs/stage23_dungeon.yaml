@@ -11,7 +11,6 @@ eval:
   every_env_steps: 10000000
   # 300 s episodes at 128 envs: 512 is 1,200 sim-seconds an evaluation (manual 4, "What an evaluation costs").
   episodes: 512
-  baseline: fight
   report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, owner_deaths, boss_rung, instance_map]
 # The owner: the endurance policy, as in the party line.
 cast:

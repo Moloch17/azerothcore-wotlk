@@ -10,6 +10,5 @@ eval:
   every_env_steps: 20000000
   # 600 s episodes: 256 at 32 envs is 4,800 sim-seconds an evaluation.
   episodes: 256
-  baseline: fight
   report: [pulls_cleared, died, engage_health, engage_mana, low_health_seconds]
 

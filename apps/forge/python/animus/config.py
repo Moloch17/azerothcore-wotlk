@@ -182,11 +182,11 @@ class CastConfig:
 @dataclass
 class LayoutSamplingConfig:
     """Training episodes draw a class/build uniformly, so each layout gets its share of the data whatever it is
-    worth. A stage is gated on its weakest layout, though, so the data is worth most where the score is furthest
-    below the baseline. After every evaluation the learner sends the sim a weight per layout (protocol WEIGHTS) and
-    training episodes draw layouts in proportion; evaluation stays uniform, whatever the weights are.
-
-    Needs eval.every_env_steps and eval.baseline: the weights come from the gap to the baseline's per-layout score.
+    worth. A stage is gated on its weakest layout, though, so the data is worth most where the score is lowest --
+    against eval.baseline's per-layout score when the stage has one, else the layouts' own scores against each
+    other -- and where `metric` falls shortest. After every evaluation the learner sends the sim a weight per layout
+    (protocol WEIGHTS) and training episodes draw layouts in proportion; evaluation stays uniform, whatever the
+    weights are. Needs eval.every_env_steps.
     """
 
     enabled: bool = False

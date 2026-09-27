@@ -27,19 +27,12 @@ eval:
   every_env_steps: 25000000
   # The shipped model samples: every third evaluation also runs sampled, to see the argmax and sampled policies agree.
   sampled_every: 3
-  # The arena_1v1 seat is scored against fight as its opponent.
-  opponent_baseline: true
   report: [dps, died, won, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died, ambushers,
     ambushers_killed, casts_completed, casts_cancelled]
 
-# Every situation holds up on its own, not only on average; the new arenas only need to beat the fight baseline.
-
-# The far side of the mirror arena: the pvp stage's policy first (this stage's own seed parent is a PvE policy with no
-# pvp block), then this run's league, half the episodes; the live policy the other half (animus.cast).
+# The far side of the mirror arena is the live policy: the learner plays itself, in training and in evaluation.
 cast:
-  opponents: league
-  parent: "{runs_dir}/stage12_pvp/best.pt"
-  opponent_share: 0.5
+  opponents: ""
   # The companion, party, ambush and escort arenas' owner: the endurance policy, as in the companion line.
   agents:
     owner: "{runs_dir}/stage11_endurance/best.pt"

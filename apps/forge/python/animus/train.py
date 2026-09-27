@@ -925,7 +925,8 @@ class TrainingRun:
               flush=True)
 
     def send_layout_weights(self, summary: dict, baseline: dict | None) -> None:
-        """Weight the training episodes toward the (class, build) pairs furthest below their baseline (WEIGHTS).
+        """Weight the training episodes toward the (class, build) pairs furthest below their baseline, or with no
+        baseline the ones scoring lowest, and short of `layout_sampling.metric` (WEIGHTS).
 
         The wire vector is one weight per pair, layout-major in the spec's layout order and spec-minor, MAX_SPECS
         wide, so a class with fewer builds than that still has the slots -- never drawn, and left at the even 1.0.
@@ -935,7 +936,7 @@ class TrainingRun:
         """
         sampling = self.config.layout_sampling
         weights = {}
-        if sampling.enabled and baseline is not None and summary.get("castings"):
+        if sampling.enabled and summary.get("castings"):
             weights = casting_weights(summary, baseline, sampling.strength, sampling.max_ratio, sampling.metric)
         hold = self.controller.hold_weights()
         if not weights and all(factor == 1.0 for factor in hold.values()):

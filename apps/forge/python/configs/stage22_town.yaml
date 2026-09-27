@@ -8,6 +8,5 @@ eval:
   every_env_steps: 5000000
   # 120 s episodes at 128 envs: 1024 is 960 sim-seconds an evaluation.
   episodes: 1024
-  baseline: life
   report: [town_won, sold_out, repaired, stocked, upgrades_equipped, upgrades_given, copper_sold, supplies_bought,
            wasted_presses, town_band]
