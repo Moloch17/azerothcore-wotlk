@@ -33,6 +33,9 @@ namespace AnimusForge
     ///
     /// Plain lines over TCP, non-blocking, polled from the world thread:
     ///   worker -> host   REGISTER <data port> <address the host should reach it at, or "-">
+    ///   worker -> host   FINGERPRINT <key=value ...>   what it runs (SetFingerprint); the host registers it only
+    ///                    when its own is the same, and otherwise answers
+    ///   host -> worker   REFUSED <the keys that differ>   and closes; the worker tries again a minute later
     ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1>
     ///   host -> worker   STOP
     ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast
@@ -52,6 +55,12 @@ namespace AnimusForge
         /// Worker: reach the host at `host` ("address:port") and register `dataPort` (and `advertise`, the address
         /// the host should use for it; empty = whatever address the connection comes from).
         void Join(std::string const& host, uint16 dataPort, std::string const& advertise);
+
+        /// What this machine runs, as "key=value ..." with no spaces in a value: a worker sends it when it registers,
+        /// and a host takes only workers whose fingerprint is its own. A cluster is set up by copying the project to
+        /// every machine; a worker with other code, other probe data or other curriculum settings would train the
+        /// same policy on a different game, and nothing downstream could tell.
+        void SetFingerprint(std::string fingerprint) { _fingerprint = std::move(fingerprint); }
 
         /// Accept, register, read and reconnect: cheap, called every tick and while the world thread waits.
         void Poll();
@@ -86,6 +95,9 @@ namespace AnimusForge
             int Fd = -1;
             std::string In;
             std::string Sim;        // host: "tcp://address:port" once registered
+            std::string Pending;    // host: the sim a REGISTER named, until its FINGERPRINT matches
+            std::chrono::steady_clock::time_point PendingAt{};
+            bool Refused = false;   // host: told REFUSED; closed at the end of this poll
             std::string Address;    // host: where the connection came from
             std::string Progress;   // host: the worker's last PROGRESS fields
             std::chrono::steady_clock::time_point ProgressAt{};
@@ -105,6 +117,7 @@ namespace AnimusForge
         uint16 _dataPort = 0;
         std::string _advertise;
         std::vector<std::string> _orders;
+        std::string _fingerprint;
         std::chrono::steady_clock::time_point _nextAttempt{};
     };
 }

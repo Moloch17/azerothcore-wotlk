@@ -31,13 +31,26 @@ build_worldserver()
     "$ROOT/acore.sh" compiler compile
 }
 
+# The CPU a worldserver was built for: it is compiled with -march=native, so a tree copied to another machine (a
+# cluster's machines are set up by copying the project) carries a binary that may use instructions this CPU does not
+# have. The vendor, family, model and instruction set flags name the CPU; a different one here means building again.
+BUILT_FOR="$ROOT/env/dist/.forge-build-cpu"
+cpu_signature()
+{
+    grep -m4 -E "^(vendor_id|cpu family|model|flags)[[:space:]]*:" /proc/cpuinfo | md5sum | cut -d' ' -f1
+}
+
 if [[ ! -x "$BIN/worldserver" ]]; then
     echo "No worldserver in $BIN yet: building it (first start only, this takes a while)..."
     build_worldserver
 elif [[ -f "$BUILD_REQUEST" ]]; then
     echo "./forge.sh --build: configuring and building the worldserver from the current source..."
     build_worldserver
+elif [[ "$(cat "$BUILT_FOR" 2>/dev/null)" != "$(cpu_signature)" ]]; then
+    echo "The worldserver in $BIN was built for another CPU (or before builds were stamped): building it for this one..."
+    build_worldserver
 fi
+cpu_signature > "$BUILT_FOR"
 # Only this start: a later restart runs what was built. (A failed build stops the script above and keeps the request.)
 rm -f "$BUILD_REQUEST"
 

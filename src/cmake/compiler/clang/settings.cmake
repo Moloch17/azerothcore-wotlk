@@ -43,20 +43,28 @@ int main()
 
 # Forge: the sim host is compiled for the machine it runs on. -O3 in every non-Debug configuration
 # (RelWithDebInfo's -O2 is overridden, the option comes later on the command line), the native
-# instruction set with the newest Zen tuning the compiler knows, and no semantic interposition so
+# instruction set of the machine building it, and no semantic interposition so
 # LTO can inline across the shared boundaries. 32-bit and non-x86 hosts keep the stock flags.
 if(PLATFORM EQUAL 64 AND ACORE_SYSTEM_PROCESSOR MATCHES "x86|amd64")
   include(CheckCXXCompilerFlag)
-  check_cxx_compiler_flag("-march=znver5" FORGE_HAVE_ZNVER5)
-  check_cxx_compiler_flag("-mtune=znver4" FORGE_HAVE_ZNVER4_TUNE)
-  if(FORGE_HAVE_ZNVER5)
-    set(FORGE_ARCH_FLAGS -march=znver5)
-  elseif(FORGE_HAVE_ZNVER4_TUNE)
-    # The compiler does not know Zen 5: -march=native still enables every instruction the CPU has
-    # (AVX-512 included), and the Zen 4 model is the closest scheduling description it can use.
-    set(FORGE_ARCH_FLAGS -march=native -mtune=znver4)
-  else()
-    set(FORGE_ARCH_FLAGS -march=native)
+  # The instruction set is the machine's own, found by asking the CPU (-march=native): every cluster machine builds
+  # for itself, a Xeon without AVX2 gets none and a Zen 5 gets AVX-512. It used to be -march=znver5 whenever the
+  # compiler knew Zen 5, which is a test of the compiler, not of the CPU: on an Intel or older AMD machine that
+  # binary dies on its first AVX-512 instruction. Only the scheduling model is added by hand, for a Zen 5 whose
+  # compiler resolves native to a generic model: znver5 when it knows it, else znver4, the closest it does.
+  set(FORGE_ARCH_FLAGS -march=native)
+  if(EXISTS "/proc/cpuinfo")
+    file(STRINGS "/proc/cpuinfo" FORGE_CPU_VENDOR REGEX "^vendor_id" LIMIT_COUNT 1)
+    file(STRINGS "/proc/cpuinfo" FORGE_CPU_FAMILY REGEX "^cpu family" LIMIT_COUNT 1)
+    if(FORGE_CPU_VENDOR MATCHES "AuthenticAMD" AND FORGE_CPU_FAMILY MATCHES ":[ \t]*26$")
+      check_cxx_compiler_flag("-mtune=znver5" FORGE_HAVE_ZNVER5_TUNE)
+      check_cxx_compiler_flag("-mtune=znver4" FORGE_HAVE_ZNVER4_TUNE)
+      if(FORGE_HAVE_ZNVER5_TUNE)
+        list(APPEND FORGE_ARCH_FLAGS -mtune=znver5)
+      elseif(FORGE_HAVE_ZNVER4_TUNE)
+        list(APPEND FORGE_ARCH_FLAGS -mtune=znver4)
+      endif()
+    endif()
   endif()
   target_compile_options(acore-compile-option-interface
     INTERFACE

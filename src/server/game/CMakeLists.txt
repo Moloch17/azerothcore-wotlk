@@ -55,6 +55,23 @@ target_compile_definitions(game
   PRIVATE
     FORGE_PYTHON_DIR="${CMAKE_SOURCE_DIR}/apps/forge/python")
 
+# Forge: the cluster's check that every machine runs the same forge (ClusterLink's FINGERPRINT). A cluster is set up
+# by copying the project, with no git to ask, so the forge's own sources are hashed at configure time -- every build
+# configures first -- into a header only the fingerprint includes: a change rebuilds one file, not the target.
+file(GLOB_RECURSE FORGE_SOURCE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/Animus/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/Animus/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Animus/*.hip")
+list(SORT FORGE_SOURCE_FILES)
+set(FORGE_SOURCE_DIGESTS "")
+foreach(forgeSource ${FORGE_SOURCE_FILES})
+  file(SHA256 "${forgeSource}" forgeDigest)
+  string(APPEND FORGE_SOURCE_DIGESTS "${forgeDigest}")
+endforeach()
+string(SHA256 FORGE_SOURCE_HASH "${FORGE_SOURCE_DIGESTS}")
+string(SUBSTRING "${FORGE_SOURCE_HASH}" 0 16 FORGE_SOURCE_HASH)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ForgeSourceHash.h"
+  CONTENT "#define FORGE_SOURCE_HASH \"@FORGE_SOURCE_HASH@\"\n")
+
 # zstd compresses the forge's baked ground-probe tables (ProbeBake). The static archive first, so the worldserver
 # needs no libzstd at run time.
 find_path(ZSTD_INCLUDE_DIR zstd.h REQUIRED)

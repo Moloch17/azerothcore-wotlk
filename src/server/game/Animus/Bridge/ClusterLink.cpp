@@ -34,6 +34,55 @@
 namespace
 {
     constexpr auto RECONNECT_INTERVAL = std::chrono::seconds(3);
+    /// A worker the host refused tries again after this: long enough not to flood the host's log, short enough that
+    /// fixing the worker's copy and restarting nothing else brings it in.
+    constexpr auto REFUSED_INTERVAL = std::chrono::seconds(60);
+    /// How long a host waits for a registered worker's fingerprint (an older build sends none).
+    constexpr auto FINGERPRINT_WAIT = std::chrono::seconds(15);
+
+    /// "k=v k=v" -> the keys whose values differ between the two, or that only one has.
+    std::string Differences(std::string const& mine, std::string const& theirs)
+    {
+        auto const parse = [](std::string const& text)
+        {
+            std::vector<std::pair<std::string, std::string>> fields;
+            std::size_t start = 0;
+            while (start < text.size())
+            {
+                std::size_t end = text.find(' ', start);
+                if (end == std::string::npos)
+                    end = text.size();
+                std::string const token = text.substr(start, end - start);
+                std::size_t const equals = token.find('=');
+                if (!token.empty())
+                    fields.emplace_back(token.substr(0, equals),
+                        equals == std::string::npos ? "" : token.substr(equals + 1));
+                start = end + 1;
+            }
+            return fields;
+        };
+        auto const a = parse(mine);
+        auto const b = parse(theirs);
+        std::string differ;
+        auto const find = [](auto const& fields, std::string const& key) -> std::string const*
+        {
+            for (auto const& [k, v] : fields)
+                if (k == key)
+                    return &v;
+            return nullptr;
+        };
+        for (auto const& [key, value] : a)
+        {
+            std::string const* other = find(b, key);
+            if (!other || *other != value)
+                differ += (differ.empty() ? "" : " ") + key + "(host " + value + ", worker " + (other ? *other : "none")
+                    + ")";
+        }
+        for (auto const& [key, value] : b)
+            if (!find(a, key))
+                differ += (differ.empty() ? "" : " ") + key + "(host none, worker " + value + ")";
+        return differ;
+    }
 
     void NonBlocking(int fd)
     {
@@ -113,6 +162,7 @@ bool AnimusForge::ClusterLink::Send(Peer& peer, std::string const& line)
 bool AnimusForge::ClusterLink::ReadLines(Peer& peer, std::vector<std::string>& lines)
 {
     char buffer[512];
+    bool open = true;
     for (;;)
     {
         ssize_t const got = ::recv(peer.Fd, buffer, sizeof(buffer), 0);
@@ -122,16 +172,17 @@ bool AnimusForge::ClusterLink::ReadLines(Peer& peer, std::vector<std::string>& l
             continue;
         }
         if (got == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
-            return false;
+            open = false;
         break;
     }
 
+    // Whole lines, even from a peer that has closed: what it said last (a host's REFUSED) is why it closed.
     for (std::size_t end; (end = peer.In.find('\n')) != std::string::npos;)
     {
         lines.push_back(peer.In.substr(0, end));
         peer.In.erase(0, end + 1);
     }
-    return true;
+    return open;
 }
 
 void AnimusForge::ClusterLink::ConnectToHost()
@@ -169,7 +220,8 @@ void AnimusForge::ClusterLink::ConnectToHost()
 
     NonBlocking(fd);
     _host.Fd = fd;
-    if (!Send(_host, Acore::StringFormat("REGISTER {} {}", _dataPort, _advertise.empty() ? "-" : _advertise)))
+    if (!Send(_host, Acore::StringFormat("REGISTER {} {}", _dataPort, _advertise.empty() ? "-" : _advertise))
+        || !Send(_host, "FINGERPRINT " + _fingerprint))
     {
         Close(_host);
         return;
@@ -209,6 +261,13 @@ void AnimusForge::ClusterLink::Poll()
                 it = _workers.erase(it);
                 continue;
             }
+            if (!it->Pending.empty() && std::chrono::steady_clock::now() - it->PendingAt > FINGERPRINT_WAIT)
+            {
+                LOG_ERROR("module.animus", "Cluster: refused the worker at {}: it sent no fingerprint (a build from "
+                    "before fingerprints). Copy the project to it again and rebuild.", it->Pending);
+                Send(*it, "REFUSED no fingerprint");
+                it->Refused = true;
+            }
 
             for (std::string const& line : lines)
             {
@@ -217,15 +276,40 @@ void AnimusForge::ClusterLink::Poll()
                 if (std::sscanf(line.c_str(), "REGISTER %u %255s", &port, advertise) == 2 && port && port < 65536)
                 {
                     std::string const address = std::strcmp(advertise, "-") ? advertise : it->Address;
-                    it->Sim = Acore::StringFormat("tcp://{}:{}", address, port);
-                    _registered.push_back(it->Sim);
-                    LOG_INFO("module.animus", "Cluster: worker registered, its sim at {}", it->Sim);
+                    it->Pending = Acore::StringFormat("tcp://{}:{}", address, port);
+                    it->PendingAt = std::chrono::steady_clock::now();
+                }
+                else if (line.rfind("FINGERPRINT ", 0) == 0 && !it->Pending.empty())
+                {
+                    std::string const theirs = line.substr(12);
+                    if (theirs == _fingerprint)
+                    {
+                        it->Sim = std::exchange(it->Pending, {});
+                        _registered.push_back(it->Sim);
+                        LOG_INFO("module.animus", "Cluster: worker registered, its sim at {}", it->Sim);
+                    }
+                    else
+                    {
+                        std::string const differ = Differences(_fingerprint, theirs);
+                        LOG_ERROR("module.animus", "Cluster: refused the worker at {}: it does not run what this host "
+                            "runs: {}. Copy the project (and the probe data) to it again, match its AnimusForge "
+                            "settings, and rebuild.", it->Pending, differ);
+                        Send(*it, "REFUSED " + differ);
+                        it->Pending.clear();
+                        it->Refused = true;
+                    }
                 }
                 else if (line.rfind("PROGRESS ", 0) == 0)
                 {
                     it->Progress = line.substr(9);
                     it->ProgressAt = std::chrono::steady_clock::now();
                 }
+            }
+            if (it->Refused)
+            {
+                Close(*it);
+                it = _workers.erase(it);
+                continue;
             }
             ++it;
         }
@@ -238,13 +322,31 @@ void AnimusForge::ClusterLink::Poll()
         if (_host.Fd >= 0)
         {
             std::vector<std::string> lines;
-            if (!ReadLines(_host, lines))
+            bool const open = ReadLines(_host, lines);
+            bool refused = false;
+            for (std::string& line : lines)
+            {
+                if (line.rfind("REFUSED", 0) == 0)
+                {
+                    LOG_ERROR("module.animus", "Cluster: the host at {} refused this worker: {}. It differs from the "
+                        "host in these; copy the project (and the probe data) again, match the settings, rebuild. "
+                        "Trying again in a minute.", _hostAddress, line.size() > 8 ? line.substr(8) : "");
+                    refused = true;
+                    break;
+                }
+                _orders.push_back(std::move(line));
+            }
+            if (refused)
+            {
+                Close(_host);
+                _nextAttempt = std::chrono::steady_clock::now() + REFUSED_INTERVAL;
+            }
+            else if (!open)
             {
                 LOG_WARN("module.animus", "Cluster: lost the host at {}; reconnecting", _hostAddress);
                 Close(_host);
                 _nextAttempt = std::chrono::steady_clock::now() + RECONNECT_INTERVAL;
             }
-            _orders.insert(_orders.end(), lines.begin(), lines.end());
         }
     }
 }
