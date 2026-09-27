@@ -43,6 +43,7 @@
 #include "SpellMgr.h"
 #include "ThreatManager.h"
 #include <algorithm>
+#include <chrono>
 #include <limits>
 
 namespace
@@ -722,6 +723,16 @@ namespace Animus::Curriculum::Encoding
 
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing)
     {
+        struct Timed
+        {
+            std::chrono::steady_clock::time_point Started = std::chrono::steady_clock::now();
+            ~Timed()
+            {
+                MoveToCalls.fetch_add(1, std::memory_order_relaxed);
+                MoveToNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - Started).count()), std::memory_order_relaxed);
+            }
+        } timed;
         bot->GetMotionMaster()->Clear();
         if (!facing)
         {

@@ -61,6 +61,13 @@ namespace Animus::Curriculum
             /// buffs and cooldowns, restocked and moved to the new spawn instead. Evaluations always build: their
             /// seeded spread of characters is the yardstick. 0 = build every episode.
             uint32 ReuseEpisodes = 4;
+            /// 1: in training, a seat whose character can still be kept (ReuseEpisodes) keeps its class and build too,
+            /// where a seat is drawn with no party makeup to honour, rather than drawing them and keeping the
+            /// character only when the draw happens to repeat -- which with ten classes and their builds it did for
+            /// 3.5% of stage2_indoor's episodes, whose resets were then nearly all character builds (0.4 ms each, the
+            /// map update's tail). Each env's classes come in runs of up to ReuseEpisodes episodes; the mix across
+            /// envs is the draw's. 0 = draw every episode.
+            uint32 KeepCasting = 1;
         } Characters;
 
         /// Which party seats have a character, and their roles.
@@ -767,6 +774,7 @@ namespace Animus::Curriculum
             f("Characters.TalentNoisePoints", tuning.Characters.TalentNoisePoints);
             f("Characters.PetOutChance", tuning.Characters.PetOutChance);
             f("Characters.ReuseEpisodes", tuning.Characters.ReuseEpisodes);
+            f("Characters.KeepCasting", tuning.Characters.KeepCasting);
 
             f("Party.SizeWeight1", tuning.Party.SizeWeight1);
             f("Party.SizeWeight2", tuning.Party.SizeWeight2);

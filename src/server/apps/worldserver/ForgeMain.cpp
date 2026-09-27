@@ -85,6 +85,7 @@
 #include <boost/asio/signal_set.hpp>
 #include <algorithm>
 #include <csignal>
+#include <execinfo.h>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -313,12 +314,42 @@ namespace
 
 }
 
+namespace
+{
+    /// A fatal signal's stack on stderr, then the signal again with its default action, so the process still dies of
+    /// it and still dumps core. Every ASSERT and abort ends here too: Acore's Crash() writes through a null pointer to
+    /// make the core. Without it a crash said nothing in the log, and finding where took pulling the core (gigabytes)
+    /// and a debugger; now `docker logs` has the frames (names where the build exports them, else module offsets for
+    /// addr2line).
+    void FatalSignalHandler(int sig)
+    {
+        char const header[] = "\n*** Fatal signal, stack:\n";
+        ssize_t const written = write(STDERR_FILENO, header, sizeof(header) - 1);
+        (void)written;
+        void* frames[64];
+        int const count = backtrace(frames, 64);
+        backtrace_symbols_fd(frames, count, STDERR_FILENO);
+        signal(sig, SIG_DFL);
+        raise(sig);
+    }
+
+    void InstallFatalSignalHandlers()
+    {
+        // backtrace() loads libgcc on its first call, which is not safe inside a handler: made once here instead.
+        void* warm[1];
+        backtrace(warm, 1);
+        for (int sig : { SIGSEGV, SIGBUS, SIGFPE, SIGILL })
+            signal(sig, &FatalSignalHandler);
+    }
+}
+
 /// Launch the Forge sim host. Returns the process exit code
 /// (0 normal, 1 error, 2 restart requested).
 int main(int argc, char** argv)
 {
     Acore::Impl::CurrentServerProcessHolder::_type = SERVER_PROCESS_WORLDSERVER;
     signal(SIGABRT, &Acore::AbortHandler);
+    InstallFatalSignalHandlers();
 
     // The config system itself stays: DatabaseLoader gets its connection info from it and
     // SetInitialWorldSettings reads hundreds of values out of it. Only Forge's own knobs

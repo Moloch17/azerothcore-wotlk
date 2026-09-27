@@ -1713,9 +1713,20 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     else
     {
         // Any class with any of its builds: drawn (evenly, or by the learner's weights), or spread over the seeds
-        // in an evaluation.
+        // in an evaluation. In training a seat whose character can still be kept keeps its class and build
+        // (Characters.KeepCasting), so the reuse below keeps the character.
+        bool const keep = _tuning.Characters.KeepCasting && _tuning.Characters.ReuseEpisodes > 0 && !firstBuild
+            && !env.Evaluating && env.EpisodeSeedIndex == NO_EPISODE_SEED;
         for (uint32 seat = 0; seat < _seatCount; ++seat)
         {
+            SeatState const& kept = data.Seats[seat];
+            if (keep && seat < data.ActiveSeats && seat < previousActiveSeats && kept.L && kept.Bot.Active()
+                && kept.EpisodesPlayed < _tuning.Characters.ReuseEpisodes)
+            {
+                data.Seats[seat].Want = AptitudeDemand::Anything();
+                continue;
+            }
+
             // No composition to honour, so the class and the build are drawn together, over every pair the run can
             // field: what keeps a class with two very different builds training both.
             Casting const casting = seat < data.ActiveSeats

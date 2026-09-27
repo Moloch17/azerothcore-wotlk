@@ -20,6 +20,7 @@
 #include "GpuRuntime.h"
 #include "LayeredField.h"
 #include "ProbeBake.h"
+#include "EncoderSupport.h"
 #include "Encounters.h"
 #include "SeatEncoder.h"
 #include "WarmCaches.h"
@@ -1464,6 +1465,10 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Travel::WayPlanNs.load(std::memory_order_relaxed)) / double(plans) / 1e6,
                 Travel::WayPlansFailed.load(std::memory_order_relaxed),
                 Travel::WayPlansPartial.load(std::memory_order_relaxed));
+        uint64 const moves = Animus::Curriculum::Encoding::MoveToCalls.load(std::memory_order_relaxed);
+        if (moves)
+            sim.ProbeNote += Acore::StringFormat("moves {} ({:.3f} ms each); ", moves,
+                double(Animus::Curriculum::Encoding::MoveToNs.load(std::memory_order_relaxed)) / double(moves) / 1e6);
         uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
         if (searches)
             sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths each, "

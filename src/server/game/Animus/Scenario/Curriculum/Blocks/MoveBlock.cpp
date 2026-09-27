@@ -616,6 +616,24 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["jump_speed_z"] = double(JUMP_SPEED_Z);
     block["jump_rise_max"] = double(JUMP_RISE_MAX);
     block["jump_drop_scale"] = double(JUMP_DROP_SCALE);
+
+    // Which ground probe the model was trained on: the observation's reach, step, shore, burns and clearance are
+    // its definition. "baked" (tables) and "geometry" (layered fields) are the same dense probe, taken at 2 yd cells
+    // and 16 compass bearings, or worked out at the seat; "live" is the old five-cell one, a different observation.
+    // A runtime reading the model with another should know it is fine-tuning territory.
+    namespace Bake = Animus::Curriculum::ProbeBake;
+    boost::json::object probe;
+    probe["source"] = Bake::Store::Baked() ? "baked"
+        : Animus::Curriculum::LayeredField::Store::Enabled() ? "geometry" : "live";
+    probe["dense"] = Bake::Store::Baked() || Animus::Curriculum::LayeredField::Store::Enabled();
+    Bake::Settings const standard = Bake::StandardSettings();
+    probe["table_cell"] = double(standard.Cell);
+    probe["table_bearings"] = standard.Bearings;
+    probe["wedge_rays"] = standard.WedgeRays;
+    probe["march_pitch"] = double(standard.Pitch);
+    probe["march_window"] = double(GroundSense::MARCH_WINDOW);
+    probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
+    block["ground_probe"] = std::move(probe);
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
