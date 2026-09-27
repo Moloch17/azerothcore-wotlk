@@ -224,7 +224,8 @@ class RolloutBuffer:
         (default: all)."""
         t = self.cursor
         for name, value in (("obs", obs), ("state", state), ("mask", mask)):
-            self._store(name, t, value)
+            if value is not None:       # None: store_rows wrote it already
+                self._store(name, t, value)
         self.layout[t] = layout
         self.valid[t] = True if present is None else present
         self.chosen[t] = True if chosen is None else chosen
@@ -239,6 +240,19 @@ class RolloutBuffer:
             self.critic_memory[t] = critic_memory
         if self.goals and goals is not None:
             self.goal[t], self.goal_log_probs[t], self.goal_chosen[t] = goals
+
+    def store_rows(self, name: str, t: int, rows: slice, value, stream) -> None:
+        """Envs `rows` of step `t` of obs, state or mask, from a device tensor, copied on `stream` (queued: the caller
+        finishes it). For inputs the sim wrote into device memory it overwrites at its next step, which have to be
+        copied out before the actions go back rather than when the whole decision is recorded."""
+        import torch
+
+        with torch.cuda.stream(stream):
+            target = getattr(self, name)
+            if isinstance(target, np.ndarray):
+                target = torch.from_numpy(target).to(value.device)
+                setattr(self, name, target)
+            target[t, rows] = value
 
     def _store(self, name: str, t: int, value) -> None:
         """Step `t` of obs, state or mask. The first device tensor moves that array to its device for good."""

@@ -464,6 +464,8 @@ class MappoTrainer:
         self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
                                 if self.train_device.type == "cuda" else (None, None))
         self._rollout_graphs: dict[tuple, _RolloutGraph] = {}
+        #: The last act_and_value's obs, mask and state on the device, when a device-fed graph took them (else None).
+        self.device_inputs: dict[str, torch.Tensor] | None = None
         self._shared_adapters: SharedInputDense | None = None   # the rollout graph's actor + critic adapters
         self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
         self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
@@ -621,6 +623,11 @@ class MappoTrainer:
                 stream.wait_stream(other)
         torch.cuda.set_stream(stream)
 
+    @property
+    def rollout_stream(self):
+        """The rollout's own GPU stream (None off the GPU)."""
+        return self._rollout_stream
+
     def _rollout_context(self):
         """The rollout's stream on the GPU: its own and high priority, so its few small kernels per decision do not
         queue behind an overlapped update's thousands."""
@@ -649,8 +656,14 @@ class MappoTrainer:
         with self._rollout_context():
             envs, agents = layout.shape
             graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
+            self.device_inputs = None
             if graph is not None:
-                return graph.run(obs, mask, layout, state_features, state)
+                decided = graph.run(obs, mask, layout, state_features, state)
+                # The decision's device inputs, where the graph copied them: they stay there, on the rollout stream,
+                # until its next replay.
+                if graph.device_fed:
+                    self.device_inputs = graph.large.device
+                return decided
             # Device inputs (protocol 15) are for the captured decision; every other path reads the host's.
             obs, mask, state_features = host(obs), host(mask), host(state_features)
             rows = envs * agents

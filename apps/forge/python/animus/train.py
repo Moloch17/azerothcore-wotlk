@@ -344,8 +344,13 @@ class DecisionRows:
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "critic_memory", "chosen")
 
-    def __init__(self, envs: int, agents: int):
+    #: A field store_inputs wrote into the rollout buffer itself.
+    IN_BUFFER = object()
+
+    def __init__(self, envs: int, agents: int, buffer=None, t: int = 0):
+        """`buffer` and `t`: the rollout buffer and the step this decision is recorded at (store_inputs)."""
         self.envs = envs
+        self.buffer, self.t = buffer, t
         self.arrays: dict[str, np.ndarray | None] = {}
 
     def set(self, rows: slice, **values) -> None:
@@ -362,6 +367,13 @@ class DecisionRows:
                                              else np.empty((self.envs, *value.shape[1:]), dtype=value.dtype))
             array[rows] = value
 
+    def store_inputs(self, rows: slice, obs, state, mask, stream) -> None:
+        """The sim's device inputs of envs `rows`, straight into the rollout buffer at this decision's step, queued on
+        `stream`: recorded() then leaves them out."""
+        for name, value in (("obs", obs), ("state", state), ("mask", mask)):
+            self.buffer.store_rows(name, self.t, rows, value, stream)
+            self.arrays[name] = DecisionRows.IN_BUFFER
+
     def __getattr__(self, name: str):
         if name in DecisionRows.FIELDS:
             return self.__dict__["arrays"].get(name)
@@ -369,7 +381,7 @@ class DecisionRows:
 
     def recorded(self) -> tuple:
         """RolloutBuffer.add_decision's arguments."""
-        a = self.arrays
+        a = {name: (None if value is DecisionRows.IN_BUFFER else value) for name, value in self.arrays.items()}
         goals = (a["goal"], a["goal_log_prob"], a["goal_chosen"]) if a.get("goal") is not None else None
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"))
@@ -1033,7 +1045,7 @@ class TrainingRun:
             buffer.add_decision(*decision.recorded())
             last = buffer.cursor + 1 >= buffer.steps
             outcome = RolloutOutcome(envs, agents, trainer.foresight_outputs)
-            following = None if last else DecisionRows(envs, agents)
+            following = None if last else DecisionRows(envs, agents, buffer, buffer.cursor + 1)
             parts = []
             for begin, count in groups:
                 part = receive(begin, count)
@@ -1054,6 +1066,10 @@ class TrainingRun:
                 break
             decision = following
 
+        # The last decision's inputs were queued into the buffer on the rollout stream with nothing after them there
+        # to wait for them (_act_on_rows): finished before the buffer is valued and handed to the update.
+        if trainer.rollout_stream is not None:
+            trainer.rollout_stream.synchronize()
         rollout_seconds = time.perf_counter() - started
         buffer.finish(trainer.value(self.step.state, self.step.obs, self.step.layout, self.acting.goal,
                                     self.acting.critic_memory),
@@ -1102,7 +1118,7 @@ class TrainingRun:
 
     def _act_on_rows_of(self, step: protocol.Step, groups: list[tuple[int, int]], send) -> DecisionRows:
         """Act on every group of a decision already received whole (the one a rollout starts from)."""
-        decision = DecisionRows(self.spec.num_envs, self.spec.agents_per_env)
+        decision = DecisionRows(self.spec.num_envs, self.spec.agents_per_env, self.buffer, self.buffer.cursor)
         for begin, count in groups:
             rows = slice(begin, begin + count)
             self._act_on_rows(protocol.rows_of(step, begin, count), rows, decision, send)
@@ -1144,10 +1160,29 @@ class TrainingRun:
                 actions = self.cast.act(part, actions, cast_rows)
                 present = present & ~cast_rows
         goal, goal_log_prob, goal_chosen = goals if goals is not None else (None, None, None)
-        decision.set(rows, obs=part.obs, state=part.state, mask=part.mask, layout=part.layout, actions=actions,
-                     log_probs=log_probs, values=values, present=present, foresight=foresight, memory=memory,
-                     goal=goal, goal_log_prob=goal_log_prob, goal_chosen=goal_chosen, critic_memory=critic_memory,
-                     chosen=chosen)
+        # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
+        # with this group's next STEP as soon as it has these actions. Copied from there into the decision on the
+        # current stream, the copies queued behind an overlapped update's kernels (whose first half runs on the
+        # default stream) and ran after the sim had written the next step: the rollout buffer paired every action
+        # with the observation and mask that followed it, approx_kl in the millions from the fourth update of every
+        # fast run. So they go into the rollout buffer on the rollout's own stream: from the captured decision's own
+        # copies of them, which stay put until its next replay on that stream (queued, nothing waits); or, without
+        # one, from the sim's buffers, finished before the actions go. The buffer is not being read meanwhile:
+        # sync_rollout ordered the rollout stream after the update that last read it.
+        stream = trainer.rollout_stream
+        if stream is not None and decision.buffer is not None and isinstance(part.obs, torch.Tensor) \
+                and part.obs.is_cuda:
+            inputs = trainer.device_inputs
+            if inputs is not None:
+                decision.store_inputs(rows, inputs["obs"], inputs["state"], inputs["mask"], stream)
+            else:
+                decision.store_inputs(rows, part.obs, part.state, part.mask, stream)
+                stream.synchronize()
+        else:
+            decision.set(rows, obs=part.obs, state=part.state, mask=part.mask)
+        decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
+                     foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
+                     goal_chosen=goal_chosen, critic_memory=critic_memory, chosen=chosen)
         send(rows.start, rows.stop - rows.start, actions, goals[0] if goals is not None else None)
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
