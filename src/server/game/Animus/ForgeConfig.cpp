@@ -233,10 +233,11 @@ void AnimusForge::ForgeConfig::Load()
     OutputDir = (outputDir.empty() ? workDir : Resolve(outputDir, configDir)).lexically_normal().string();
 
     std::string const probeSource = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Source", "baked");
-    ProbeBaked = probeSource != "live";
+    ProbeGeometry = probeSource == "geometry";
+    ProbeBaked = probeSource != "live" && !ProbeGeometry;
     if (ProbeBaked && probeSource != "baked")
-        LOG_ERROR("server.loading", "AnimusForge.Probe.Source = \"{}\" is neither live nor baked: reading baked",
-            probeSource);
+        LOG_ERROR("server.loading", "AnimusForge.Probe.Source = \"{}\" is not live, baked or geometry: reading "
+            "baked", probeSource);
     fs::path const probeDir = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Dir", "");
     // The tables ship with the forge, beside its models: baked ahead of time (`forge probestage`), never by a
     // running server.

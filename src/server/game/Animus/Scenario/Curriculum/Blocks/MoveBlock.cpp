@@ -264,6 +264,7 @@ namespace
             return;
 
         namespace Bake = Animus::Curriculum::ProbeBake;
+        namespace Field = Animus::Curriculum::LayeredField;
         bool stale = !probe->Valid;
         if (probe->Valid)
         {
@@ -325,7 +326,34 @@ namespace
                 return;
             }
         }
-        if (!fromTable)
+        // Worked out from the layered fields where the seat stands: the dense probe the tables hold, at the seat's
+        // own place and facing, on the live probe's cadence -- it is a computation, not a lookup.
+        bool fromField = false;
+        if (!fromTable && Field::Store::Enabled())
+        {
+            Field::Store::Neighbourhood around;
+            Bake::Reading reading;
+            fromField = Field::Store::Gather(map->GetId(), at.X, at.Y, around)
+                && Field::Sense(around.View, at.X, at.Y, at.Z, facing, reading);
+            if (fromField)
+            {
+                Field::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+                {
+                    probe->Reach[ray] = reading.Rays[ray].Reach;
+                    probe->Step[ray] = reading.Rays[ray].Step;
+                    probe->Shore[ray] = reading.Rays[ray].Shore;
+                    probe->Burns[ray] = reading.Rays[ray].Burns;
+                }
+                probe->Clearance = reading.Room.Clearance;
+                probe->ClearanceSin = reading.Room.Directed ? std::sin(reading.Room.Away - facing) : 0.0f;
+                probe->ClearanceCos = reading.Room.Directed ? std::cos(reading.Room.Away - facing) : 0.0f;
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
+            }
+            else
+                Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!fromTable && !fromField)
             RefreshLive(probe, map, query, at, facing, partMark);
 
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while

@@ -18,6 +18,7 @@
 
 #include "AnimusForge.h"
 #include "GpuRuntime.h"
+#include "LayeredField.h"
 #include "ProbeBake.h"
 #include "Encounters.h"
 #include "SeatEncoder.h"
@@ -100,6 +101,8 @@ void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
+        _config.ProbeCacheGrids);
+    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeGeometry, _config.ProbeDir,
         _config.ProbeCacheGrids);
     // Before anything HIP starts, here or in the learner spawned later, which inherits it.
     Animus::Gpu::PrepareEnvironment();
@@ -1459,6 +1462,16 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} measured live "
             "where no table answered ({:.1f}%)", reads, Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0),
             fallbacks, reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
+    }
+    if (Animus::Curriculum::LayeredField::Store::Enabled())
+    {
+        namespace Store = Animus::Curriculum::LayeredField::Store;
+        uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
+        uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
+        sim.ProbeNote += Acore::StringFormat("geometry: {} probes worked out, {} fields held ({:.0f} MB, {} files "
+            "read), {} measured live where no field answered ({:.1f}%)", reads, Store::Loaded(),
+            double(Store::Bytes()) / (1024.0 * 1024.0), Store::FileReads.load(std::memory_order_relaxed), fallbacks,
+            reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
     }
     sim.EpisodesPerSecond = _episodesPerSecond;
     sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);

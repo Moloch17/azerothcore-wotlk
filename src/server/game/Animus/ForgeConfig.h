@@ -89,8 +89,10 @@ namespace AnimusForge
         std::string OutputDir;
 
         /// AnimusForge.Probe.Source = baked: the move block reads its ground probe from the tables in ProbeDir
-        /// (`forge probestage`) instead of measuring it; live (the default) measures.
+        /// (`forge probestage`) instead of measuring it; geometry: works it out from the layered fields there
+        /// (`forge fieldstage`); live measures.
         bool ProbeBaked = false;
+        bool ProbeGeometry = false;
         std::string ProbeDir;           // AnimusForge.Probe.Dir, resolved: never empty after Load
         uint32 ProbeCacheGrids = 64;    // AnimusForge.Probe.CacheGrids: tables held in memory at once
 
