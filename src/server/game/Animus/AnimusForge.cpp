@@ -103,7 +103,10 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
-    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeGeometry, _config.ProbeDir,
+    // Fields with tables too: where a seat stands on a grid with no table, the field works the same dense probe out
+    // (on the live probe's cadence) instead of the old five-cell live one, which was both slower and another
+    // observation.
+    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeGeometry || _config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
     // Before anything HIP starts, here or in the learner spawned later, which inherits it.
     Animus::Gpu::PrepareEnvironment();
@@ -1483,9 +1486,10 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         namespace Store = Animus::Curriculum::ProbeBake::Store;
         uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
         uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
-        sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} measured live "
-            "where no table answered ({:.1f}%)", reads, Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0),
-            fallbacks, reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
+        sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} where no table "
+            "answered ({:.1f}%: worked out from a field where there is one, else measured live); ", reads,
+            Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0), fallbacks,
+            reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
     }
     if (Animus::Curriculum::LayeredField::Store::Enabled())
     {

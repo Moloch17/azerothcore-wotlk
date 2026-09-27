@@ -5271,8 +5271,10 @@ AnimusForge.TravelPools = 0
 #                     (2 yd cells, every navmesh floor, 16 compass bearings, a half-yard march, three
 #                     rays a bearing). A running server never bakes: the tables are made ahead of time
 #                     with `forge probestage <scenario>` and shipped. Where a grid has no table the
-#                     probe is measured live the same way (slowly), `forge status` counts how often,
-#                     and the grid is logged once so it can be baked and shipped.
+#                     probe is worked out from the grid's layered field when one is shipped (as geometry
+#                     below does, on its cadence), else measured live the old way (slowly); `forge
+#                     status` counts how often, and the grid is logged once so it can be baked and
+#                     shipped.
 #                     geometry works the same dense probe out at the seat's own place and facing from
 #                     the layered fields shipped in AnimusForge.Probe.Dir (per 1 yd cell every floor,
 #                     the room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made
