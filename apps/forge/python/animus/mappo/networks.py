@@ -335,6 +335,11 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     steps, rows = encoded.shape[0], encoded.shape[1]
     if not encoded.is_cuda or steps == 0:
         return _carry_sequence_loop(cell, size, encoded, carried, dones)
+    # In full precision whatever the update runs in (mappo.update_precision): under autocast the fused call below
+    # is not the library's fused GRU but a cell per step, and the memory is what errors would compound through.
+    if torch.is_autocast_enabled():
+        with torch.autocast("cuda", enabled=False):
+            return _carry_sequence(cell, size, encoded.float(), memory.float(), dones)
 
     piece_row, piece_start, piece_length, piece_of, position_of = _pieces(dones)
     device = encoded.device
@@ -449,7 +454,9 @@ class LayoutActor(nn.Module):
         width = self.adapters[0].out_features
         hidden = obs.new_zeros(obs.shape[0], width)
         for index, rows in groups:
-            hidden[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]]))
+            # Cast on the way in: under autocast (mappo.update_precision) the adapters answer in half precision.
+            hidden[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
+                hidden.dtype)
         return self.trunk(hidden)
 
     def carry(self, encoded: torch.Tensor, memory: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
@@ -495,7 +502,7 @@ class LayoutActor(nn.Module):
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
-            logits[rows, : self.action_counts[index]] = self.heads[index](features[rows])
+            logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
         return masked_logits(logits, mask)
 
     def goal_distribution(self, features: torch.Tensor) -> Categorical:
@@ -565,7 +572,8 @@ class LayoutCritic(nn.Module):
         else:
             own = torch.zeros_like(hidden)
             for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
-                own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]]))
+                own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
+                    own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

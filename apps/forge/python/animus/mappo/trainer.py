@@ -93,6 +93,13 @@ class MappoConfig:
     # the actor and critic, their inputs' uploads and their results' downloads replayed as one launch, instead of
     # issued one by one from Python. The same computation; off (or off the GPU, or with a slow layout) it runs eager.
     rollout_graphs: bool = True
+    # The PPO update's arithmetic: "fp32", or "bf16" -- the networks' products under torch.autocast (the weights,
+    # the optimiser and the GRU's memory stay in full precision; the losses are computed in fp32 as autocast does).
+    # On stage8_duel's update (RDNA3) bf16 took the update from 0.58 to 0.47 s and the stage from 39,181 to 44,655
+    # env steps/s -- and learned worse: fine-tuning from best.pt for 12 minutes, its seeded evaluations were 10.35 and
+    # 13.41 at 10M and 20M steps against fp32's 14.20 and 15.36 (standard errors ~0.25), with entropy and approx_kl
+    # falling faster. So fp32 it is, unless a stage measures otherwise.
+    update_precision: str = "fp32"
     # A goal head (0 = off): the actor chooses one of goal_count goals every goal_every_decisions and keeps it in
     # between, and its action head is conditioned on it. The chooser then decides on a clock that many times slower
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
@@ -856,6 +863,15 @@ class MappoTrainer:
     def update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update over the rollout. `auxiliary(data, idx, dist)` may add a loss to each minibatch's actor
         loss: it returns (loss, {stat: value}) or None (see animus.distill)."""
+        precision = self.config.update_precision
+        if precision not in ("fp32", "bf16"):
+            raise ValueError(f"mappo.update_precision is {precision!r}: fp32 or bf16")
+        if precision == "bf16" and self.train_device.type == "cuda":
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                return self._update(buffer, auxiliary, sync)
+        return self._update(buffer, auxiliary, sync)
+
+    def _update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         if self.recurrent_size:
             if auxiliary is not None and not hasattr(auxiliary, "sequence_loss"):
                 raise ValueError("a recurrent actor needs a sequence-aware auxiliary loss (animus.distill.Distiller): "
