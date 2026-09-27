@@ -95,6 +95,7 @@ namespace
                 { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
+                { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
@@ -142,6 +143,9 @@ namespace
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
                 "their neighbours (kept if already baked, unless rebake)" });
+            table.AddRow({ "forge fieldworld <all|map id> [rebake]", "bake the layered fields of every grid of a map's "
+                "navmesh, or of every map, for a realm's companions (mod-animus): into <Probe.Dir>/world, taking the "
+                "stage fields already baked, and never read by the forge itself" });
             table.AddRow({ "forge tasks", "every map's update task since the last `forge tasks`: how many ran, "
                 "their mean and longest time, and the envs on the map, slowest first" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
@@ -371,8 +375,8 @@ namespace
 
         /// `forge fieldstage <scenario> [rebake]`: the layered fields AnimusForge.Probe.Source = geometry reads for
         /// this scenario -- every grid of its maps' navmeshes, continents whole, and their neighbours, since a probe
-        /// near a grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is written too,
-        /// a few bytes, so that a missing file means a grid not baked and never "no floor here".
+        /// near a grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is
+        /// written too, a few bytes, so that a missing file means a grid not baked and never "no floor here".
         /// Static geometry only, as for the tables; a grid takes a fraction of a second.
         static bool HandleFieldStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
         {
@@ -394,7 +398,8 @@ namespace
                         if (std::abs(2 * (grid.X + dx) + 1) < MAX_NUMBER_OF_GRIDS
                             && std::abs(2 * (grid.Y + dy) + 1) < MAX_NUMBER_OF_GRIDS)
                             grids.insert(Bake::GridRef{ grid.MapId, grid.X + dx, grid.Y + dy });
-            handler->PSendSysMessage("{}: {} grids (every grid of its maps' navmeshes and their neighbours), into {}", scenario,
+            handler->PSendSysMessage("{}: {} grids (every grid of its maps' navmeshes and their neighbours), into {}",
+                scenario,
                 grids.size(), Bake::Store::Dir());
             uint32 baked = 0;
             uint32 kept = 0;
@@ -441,6 +446,104 @@ namespace
             handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB, {} of them with no floor), {} already there, "
                 "{} failed, in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), empty, kept, failed,
                 seconds);
+            return true;
+        }
+
+        /// `forge fieldworld <all|map id> [rebake]`: the layered fields a realm's companions read wherever their
+        /// players take them (mod-animus, Animus.Probe.Dir) -- every grid of a map's navmesh and its neighbours, or
+        /// of every map's. Into <Probe.Dir>/world, not beside the stage fields: the forge ships those to every cluster
+        /// machine, and the world's are gigabytes no training reads. A grid already baked for a stage is copied, not
+        /// rebaked.
+        static bool HandleFieldWorld(ChatHandler* handler, std::string which, Optional<std::string> mode)
+        {
+            namespace Bake = Animus::Curriculum::ProbeBake;
+            namespace Field = Animus::Curriculum::LayeredField;
+            bool const rebake = mode && *mode == "rebake";
+            Optional<uint32> onlyMap;
+            if (which != "all")
+            {
+                onlyMap = Acore::StringTo<uint32>(which);
+                if (!onlyMap)
+                {
+                    handler->PSendSysMessage("forge fieldworld <all|map id> [rebake]");
+                    return true;
+                }
+            }
+
+            // Every mmtile, MMMXXYY.mmtile: XX and YY count down from +x/+y where the grid indices count up from 0.
+            std::set<Bake::GridRef> grids;
+            std::error_code error;
+            for (auto const& file : std::filesystem::directory_iterator(sWorld->GetDataPath() + "mmaps", error))
+            {
+                std::string const name = file.path().filename().string();
+                if (name.size() != 14 || file.path().extension() != ".mmtile")
+                    continue;
+                uint32 const mapId = uint32(std::atoi(name.substr(0, 3).c_str()));
+                if (onlyMap && mapId != *onlyMap)
+                    continue;
+                int32 const x = int32(CENTER_GRID_ID) - 1 - std::atoi(name.substr(3, 2).c_str());
+                int32 const y = int32(CENTER_GRID_ID) - 1 - std::atoi(name.substr(5, 2).c_str());
+                for (int32 dx = -1; dx <= 1; ++dx)
+                    for (int32 dy = -1; dy <= 1; ++dy)
+                        if (std::abs(2 * (x + dx) + 1) < MAX_NUMBER_OF_GRIDS
+                            && std::abs(2 * (y + dy) + 1) < MAX_NUMBER_OF_GRIDS)
+                            grids.insert(Bake::GridRef{ mapId, x + dx, y + dy });
+            }
+
+            std::filesystem::path const dir = std::filesystem::path(Bake::Store::Dir()) / "world";
+            std::filesystem::create_directories(dir, error);
+            handler->PSendSysMessage("fieldworld {}: {} grids, into {}", which, grids.size(), dir.string());
+            uint32 baked = 0;
+            uint32 copied = 0;
+            uint32 kept = 0;
+            uint32 failed = 0;
+            uint32 lastMap = UINT32_MAX;
+            Map* map = nullptr;
+            auto const started = std::chrono::steady_clock::now();
+            for (Bake::GridRef const& grid : grids)
+            {
+                std::filesystem::path const staged = Field::Store::FileFor(grid.MapId, grid.X, grid.Y);
+                std::filesystem::path const path = dir / staged.filename();
+                if (!rebake && std::filesystem::exists(path, error))
+                {
+                    ++kept;
+                    continue;
+                }
+                if (!rebake && std::filesystem::exists(staged, error))
+                {
+                    std::filesystem::copy_file(staged, path, std::filesystem::copy_options::overwrite_existing, error);
+                    ++(error ? failed : copied);
+                    continue;
+                }
+
+                if (grid.MapId != lastMap)
+                {
+                    lastMap = grid.MapId;
+                    map = sMapMgr->CreateBaseMap(grid.MapId);
+                }
+                if (!map)
+                {
+                    ++failed;
+                    continue;
+                }
+                // Terrain and collision only: no objects are spawned.
+                for (int32 dx = -1; dx <= 1; ++dx)
+                    for (int32 dy = -1; dy <= 1; ++dy)
+                        map->EnsureGridCreated(CoreGrid(grid.X + dx, grid.Y + dy));
+                float const centreX = (float(grid.X) + 0.5f) * SIZE_OF_GRIDS;
+                float const centreY = (float(grid.Y) + 0.5f) * SIZE_OF_GRIDS;
+                if (Field::Write(Field::Bake(map, centreX, centreY, Field::STANDARD_CELL), path.string()))
+                    ++baked;
+                else
+                {
+                    ++failed;
+                    handler->PSendSysMessage("  could not write {}", path.string());
+                }
+            }
+
+            double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            handler->PSendSysMessage("fieldworld {}: {} grids baked, {} copied from the stage fields, {} already "
+                "there, {} failed, in {:.0f} s", which, baked, copied, kept, failed, seconds);
             return true;
         }
 
