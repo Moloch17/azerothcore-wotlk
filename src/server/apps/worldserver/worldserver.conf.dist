@@ -5427,10 +5427,16 @@ AnimusForge.Learner.Cpus = "auto"
 #                     where hipcc is) on the learner's own HIP runtime, so observations can be written
 #                     straight into GPU memory the learner reads. Without a GPU, a torch with HIP or
 #                     the library, the forge says why once and does everything on the CPU.
-#        Default:     1 - (Enabled)
-#                     0 - (Disabled)
+#                     Off by default: with the learner's updates running whole (it once recorded
+#                     each decision's inputs too late and cut its updates short), the host transport
+#                     measured faster -- 39,181 against 36,657 env steps/s on stage8_duel, 30,489
+#                     against 28,777 on stage1_move -- because the sim's copies into device memory
+#                     cost it more than the learner's upload saved. It becomes the default again
+#                     when the observations are produced on the GPU rather than copied there.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
 
-AnimusForge.Gpu.Observe = 1
+AnimusForge.Gpu.Observe = 0
 
 #
 #    AnimusForge.Gpu.Mode
