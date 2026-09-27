@@ -885,7 +885,10 @@ class MappoTrainer:
             self._updates_since_sync = getattr(self, "_updates_since_sync", 0) + 1
             if self._updates_since_sync >= max(1, self.config.weight_sync_every):
                 self._updates_since_sync = 0
+                sync_started = time.perf_counter()
                 self.ranks.average_parameters([self.actor, self.critic])
+                # Mostly waiting for the slowest rank to arrive: the all-reduce itself is a few tenths of a second.
+                stats["weight_sync_seconds"] = time.perf_counter() - sync_started
                 # A serial update copied its weights to the rollout networks already: again, averaged. (An
                 # overlapped one is copied when it is joined, after this.)
                 if sync:

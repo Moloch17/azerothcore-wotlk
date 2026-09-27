@@ -1334,7 +1334,11 @@ class TrainingRun:
         summary = ", ".join(
             f"{k} {v:.4g}" for k, v in row.items() if k.startswith("episode_") or k in ("entropy", "value_loss")
         )
-        print(f"update {self.update} | steps {self.env_steps} | {row['env_steps_per_sec']:.0f} sps | {summary}",
+        # Each rank's own clock, so a cluster's slow rank and phase show in its learner log.
+        timing = (f"rollout {rollout_seconds:.2f}s compute {float(stats.get('update_compute_seconds', 0.0)):.2f}s"
+                  + (f" sync {float(stats['weight_sync_seconds']):.2f}s" if "weight_sync_seconds" in stats else ""))
+        print(f"update {self.update} | steps {self.env_steps} | {row['env_steps_per_sec']:.0f} sps | {timing} | "
+              f"{summary}",
               flush=True)
         self.finished_episodes.clear()
         self.finished_layouts.clear()
