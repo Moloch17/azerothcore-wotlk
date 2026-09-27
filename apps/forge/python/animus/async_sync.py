@@ -17,9 +17,12 @@ progress it made while the push was in flight and puts it on top of the new cent
 weights pushed). A slow machine therefore costs the others nothing: it trades less often, and each trade carries
 more steps.
 
-The weights travel as one flat float32 vector (every parameter and floating-point buffer of the actor, the critic
-and the value normaliser: the normaliser's running statistics are part of what a network means), length-prefixed
-pickles on a plain TCP connection -- on a trusted LAN, like the rest of the cluster's links.
+The networks travel as one flat float32 vector: every parameter, then every floating-point buffer (the observation
+normalisers' and the value normaliser's running statistics, which are part of what a network means). Only the
+parameters are traded as deltas. The statistics are the leader's, and a follower takes them whole with each centre:
+a running mean, variance and count moved by another rank's delta is no longer one -- a variance pushed below zero
+made a square root of it NaN, and within two updates every weight of every rank was NaN. Length-prefixed pickles on
+a plain TCP connection, on a trusted LAN like the rest of the cluster's links.
 """
 from __future__ import annotations
 
@@ -39,14 +42,15 @@ _HEADER = struct.Struct("!Q")
 # ---------------------------------------------------------------------- the vector
 
 def _tensors(modules) -> list[torch.Tensor]:
-    """What a network is, in a fixed order: every parameter and floating-point buffer of `modules`."""
-    tensors = []
-    for module in modules:
-        if module is None:
-            continue
-        tensors.extend(module.parameters())
-        tensors.extend(buffer for buffer in module.buffers() if buffer.is_floating_point())
-    return tensors
+    """What a network is, in a fixed order: every parameter of `modules`, then every floating-point buffer."""
+    present = [module for module in modules if module is not None]
+    return ([parameter for module in present for parameter in module.parameters()]
+            + [buffer for module in present for buffer in module.buffers() if buffer.is_floating_point()])
+
+
+def parameter_count(modules) -> int:
+    """How much of flatten()'s vector is parameters (traded as deltas); the rest is the leader's statistics."""
+    return sum(parameter.numel() for module in modules if module is not None for parameter in module.parameters())
 
 
 def flatten(modules) -> np.ndarray:
@@ -107,6 +111,7 @@ class Hub:
 
     def __init__(self, address: str, modules):
         self.modules = modules
+        self.parameters = parameter_count(modules)
         self.lock = threading.Lock()
         self.inbox: list[dict] = []
         self.center = flatten(modules)
@@ -165,7 +170,12 @@ class Hub:
             center = flatten(self.modules)
             for push in inbox:
                 steps = int(push["env_steps"])
-                alpha = mix(center, push["delta"], steps, run.env_steps - int(push["base_steps"]))
+                if not np.isfinite(push["delta"]).all():
+                    # One machine gone wrong must not take the run with it.
+                    print(f"Async learners: rank {push['rank']} pushed non-finite weights; its {steps} env steps are "
+                          f"dropped", flush=True)
+                    continue
+                alpha = mix(center[:self.parameters], push["delta"], steps, run.env_steps - int(push["base_steps"]))
                 run.env_steps += steps
                 run.finished_episodes.extend(push["episodes"])
                 run.finished_layouts.extend(push["layouts"])
@@ -199,6 +209,7 @@ class Link:
     def __init__(self, address: str, rank: int, modules, every: int, timeout: float):
         self.rank = rank
         self.modules = modules
+        self.parameters = parameter_count(modules)
         self.every = max(1, every)
         self.stopped = False
         self.control: dict = {}
@@ -269,9 +280,13 @@ class Link:
         with self.ready:
             reply, self.reply = self.reply, None
         if reply is not None:
+            # The progress made while the push was out, on top of the centre's parameters; the leader's statistics.
             now = flatten(self.modules)
             center = reply["center"]
-            assign(self.modules, center + (now - self.pushed))
+            rebased = center.copy()
+            count = self.parameters
+            rebased[:count] += now[:count] - self.pushed[:count]
+            assign(self.modules, rebased)
             run.trainer.sync_rollout()
             self.base = center.copy()
             self.base_steps = int(reply["center_steps"])
@@ -282,7 +297,8 @@ class Link:
                 self.stopped = True
         if self.pushed is None and self.updates >= self.every and not self.stopped:
             self.pushed = flatten(self.modules)
-            message = {"type": "push", "rank": self.rank, "delta": self.pushed - self.base,
+            count = self.parameters
+            message = {"type": "push", "rank": self.rank, "delta": self.pushed[:count] - self.base[:count],
                        "env_steps": self.steps_since, "base_steps": self.base_steps,
                        "episodes": self.episodes, "layouts": self.layouts}
             self.episodes, self.layouts = [], []

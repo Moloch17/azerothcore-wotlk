@@ -96,11 +96,14 @@ def test_leader_and_follower_trade():
     link.at_safe_point(follower_run)
     wait_for(lambda: hub.inbox)
 
-    # The leader played 400 steps of its own since the follower's base, then folds the push in: alpha 0.5.
+    # The leader played 400 steps of its own since the follower's base, then folds the push in: alpha 0.5, on the
+    # parameters only -- the normaliser's statistics (the last 3) are the leader's.
     leader_run.env_steps = 400
     before = flatten(leader_nets)
     hub.at_safe_point(leader_run)
-    np.testing.assert_allclose(flatten(leader_nets), before + 0.5, rtol=0, atol=1e-6)
+    after = flatten(leader_nets)
+    np.testing.assert_allclose(after[:-3], before[:-3] + 0.5, rtol=0, atol=1e-6)
+    np.testing.assert_array_equal(after[-3:], before[-3:])
     assert leader_run.env_steps == 800
     assert len(leader_run.finished_episodes) == 1 and leader_run.finished_layouts == [0]
     assert leader_run.trainer.synced == 1
@@ -110,7 +113,9 @@ def test_leader_and_follower_trade():
     served = link.reply["center"].copy()
     assign(follower_nets, start + 3.0)
     link.at_safe_point(follower_run)
-    np.testing.assert_allclose(flatten(follower_nets), served + 2.0, rtol=0, atol=1e-6)
+    rebased = flatten(follower_nets)
+    np.testing.assert_allclose(rebased[:-3], served[:-3] + 2.0, rtol=0, atol=1e-6)
+    np.testing.assert_array_equal(rebased[-3:], served[-3:])     # the leader's statistics, taken whole
     assert follower_run.controls and follower_run.trainer.synced == 1
 
     hub.close()
@@ -128,5 +133,24 @@ def test_stop_reaches_the_follower():
     wait_for(lambda: link.reply is not None)
     link.at_safe_point(run)             # takes the reply, which says stop
     assert link.stopped
+    hub.close()
+    link.close()
+
+
+def test_statistics_are_never_traded_as_deltas():
+    """A variance moved by another rank's delta can go negative (the stage 8 NaN): statistics come whole."""
+    address = f"127.0.0.1:{free_port()}"
+    leader_nets, follower_nets = networks(0), networks(1)
+    hub = Hub(address, leader_nets)
+    link = Link(address, 1, follower_nets, every=1, timeout=10.0)
+    link.hello()
+    follower_nets[2].mean.fill_(-50.0)          # the follower's own statistics drift far
+    link.steps_since = 100
+    link.at_safe_point(FakeRun())
+    wait_for(lambda: hub.inbox)
+    assert hub.inbox[0]["delta"].size == 4 * 3 + 3 + 3 * 2 + 2   # parameters only
+    run = FakeRun()
+    hub.at_safe_point(run)
+    assert float(leader_nets[2].mean[0]) == 0.0
     hub.close()
     link.close()
