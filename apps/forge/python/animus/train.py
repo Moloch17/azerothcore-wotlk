@@ -45,7 +45,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
 from .progress import ProgressWriter
-from . import protocol
+from . import blas, protocol
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
@@ -1529,6 +1529,7 @@ def main() -> int:
     if args.layouts_dir:
         config.layouts_dir = args.layouts_dir
 
+    blas.prepare(config.resolved_train_device())
     return TrainingRun(config, resume=args.resume).run()
 
 

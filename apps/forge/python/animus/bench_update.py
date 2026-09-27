@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from . import blas
 from .config import TrainConfig
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, per_decision
@@ -94,9 +95,13 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=5, help="updates timed after the first")
     parser.add_argument("--profile", action="store_true", help="print a torch.profiler table of one update")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="config override")
+    parser.add_argument("--default-blas", action="store_true",
+                        help="leave the matrix library as torch sets it (no animus.blas.prepare), to compare")
     args = parser.parse_args()
 
     config = TrainConfig.load(args.config, overrides=args.set)
+    if not args.default_blas:
+        blas.prepare(config.resolved_train_device())
     spec = load_spec(Path(args.spec))
     rng = np.random.default_rng(1)
     torch.manual_seed(1)
