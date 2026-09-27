@@ -273,12 +273,20 @@ namespace
                 std::cos(facing - probe->Facing)));
             stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
                 || view.NowMs - probe->Ms >= MoveBlock::MARCH_REFRESH_MS;
+            if (moved >= MoveBlock::MARCH_REFRESH_YARDS)
+                MoveBlock::StaleMoved.fetch_add(1, std::memory_order_relaxed);
+            else if (turned >= MoveBlock::MARCH_REFRESH_RADIANS)
+                MoveBlock::StaleTurned.fetch_add(1, std::memory_order_relaxed);
+            else if (stale)
+                MoveBlock::StaleClock.fetch_add(1, std::memory_order_relaxed);
         }
 
         // A baked probe is a lookup, so it is read every decision and is never stale; only the jump test below
-        // keeps the refresh cadence. A live one is measured when it has gone stale.
+        // keeps the refresh cadence. A field probe is turned to the facing every decision, and worked out again
+        // only where the seat has walked to (below). A live one is measured when it has gone stale.
         bool const baked = Bake::Store::Baked();
-        if (!baked && !stale)
+        bool const fields = Field::Store::Enabled();
+        if (!baked && !fields && !stale)
             return;
 
         namespace Encoder = Animus::Curriculum::SeatEncoder;
@@ -326,18 +334,45 @@ namespace
                 return;
             }
         }
-        // Worked out from the layered fields where the seat stands: the dense probe the tables hold, at the seat's
-        // own place and facing, on the live probe's cadence -- it is a computation, not a lookup.
+        // Worked out from the layered fields where the seat stands, along the compass: the dense probe the tables
+        // hold, at the seat's own place. Only walking makes it stale -- the ground does not move, and a turn is the
+        // same headings read from another start (RaysFor) -- so a seat turning in place, or standing still, never
+        // works it out again. Counted as worked out only when it is.
         bool fromField = false;
-        if (!fromTable && Field::Store::Enabled())
+        if (!fromTable && fields)
         {
-            Field::Store::Neighbourhood around;
-            Bake::Reading reading;
-            fromField = Field::Store::Gather(map->GetId(), at.X, at.Y, around)
-                && Field::Sense(around.View, at.X, at.Y, at.Z, facing, reading);
-            if (fromField)
+            if (!probe->CompassValid || bot->GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
             {
-                Field::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                Field::Store::Neighbourhood around;
+                Field::Compass compass;
+                if (Field::Store::Gather(map->GetId(), at.X, at.Y, around)
+                    && Field::SenseCompass(around.View, at.X, at.Y, at.Z, compass))
+                {
+                    Field::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                    for (uint32 index = 0; index < 2 * Animus::Curriculum::SENSE_RAYS; ++index)
+                    {
+                        probe->CompassReach[index] = compass.Headings[index].Reach;
+                        probe->CompassStep[index] = compass.Headings[index].Step;
+                        probe->CompassShore[index] = compass.Headings[index].Shore;
+                        probe->CompassBurns[index] = compass.Headings[index].Burns;
+                    }
+                    probe->CompassClearance = compass.Room.Clearance;
+                    probe->CompassDirected = compass.Room.Directed;
+                    probe->CompassAway = compass.Room.Away;
+                    probe->CompassFrom.Relocate(bot);
+                    probe->CompassValid = true;
+                }
+                else
+                    Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (probe->CompassValid)
+            {
+                Animus::Curriculum::GroundSense::Bearing headings[2 * Animus::Curriculum::SENSE_RAYS];
+                for (uint32 index = 0; index < 2 * Animus::Curriculum::SENSE_RAYS; ++index)
+                    headings[index] = { probe->CompassReach[index], probe->CompassStep[index],
+                        probe->CompassShore[index], probe->CompassBurns[index] };
+                Bake::Reading reading;
+                Field::RaysFor(headings, facing, reading);
                 for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
                 {
                     probe->Reach[ray] = reading.Rays[ray].Reach;
@@ -345,17 +380,20 @@ namespace
                     probe->Shore[ray] = reading.Rays[ray].Shore;
                     probe->Burns[ray] = reading.Rays[ray].Burns;
                 }
-                probe->Clearance = reading.Room.Clearance;
-                probe->ClearanceSin = reading.Room.Directed ? std::sin(reading.Room.Away - facing) : 0.0f;
-                probe->ClearanceCos = reading.Room.Directed ? std::cos(reading.Room.Away - facing) : 0.0f;
-                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
+                probe->Clearance = probe->CompassClearance;
+                probe->ClearanceSin = probe->CompassDirected ? std::sin(probe->CompassAway - facing) : 0.0f;
+                probe->ClearanceCos = probe->CompassDirected ? std::cos(probe->CompassAway - facing) : 0.0f;
+                fromField = true;
             }
-            else
-                Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
+
+            // Only the jump test keeps the refresh cadence: it looks along the facing.
+            if (!stale)
+            {
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
+                return;
+            }
         }
-        // With the fields on there is no live stand-in: a seat on a grid with no field keeps the reading it had
-        // (counted as a fallback, and the grid logged once) until it is on one again. Only Probe.Source = live
-        // measures the old probe.
         if (!fromTable && !fromField && !Field::Store::Enabled())
             RefreshLive(probe, map, query, at, facing, partMark);
 
@@ -636,6 +674,8 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     probe["march_pitch"] = double(standard.Pitch);
     probe["march_window"] = double(GroundSense::MARCH_WINDOW);
     probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
+    // The fields are sensed along the compass and turned to the facing to the nearest of these (RaysFor).
+    probe["field_compass_headings"] = 2 * Animus::Curriculum::SENSE_RAYS;
     block["ground_probe"] = std::move(probe);
 }
 

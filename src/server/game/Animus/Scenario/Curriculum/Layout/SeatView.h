@@ -149,6 +149,19 @@ namespace Animus::Curriculum
         float Facing = 0.0f;                    // and which way the seat was looking at the time
         uint32 Ms = 0;
         bool Valid = false;
+        /// With the layered fields the probe is worked out along fixed compass headings, SENSE_RAYS * 2 of them
+        /// (LayeredField::SenseCompass), and turned to the seat's facing every decision (RaysFor): turning costs
+        /// nothing, and only walking MARCH_REFRESH_YARDS from CompassFrom works it out again. The room's way out
+        /// is kept in the world's frame for the same reason.
+        float CompassReach[2 * SENSE_RAYS] = {};
+        float CompassStep[2 * SENSE_RAYS] = {};
+        float CompassShore[2 * SENSE_RAYS] = {};
+        float CompassBurns[2 * SENSE_RAYS] = {};
+        float CompassClearance = 1.0f;
+        bool CompassDirected = false;
+        float CompassAway = 0.0f;
+        Position CompassFrom;
+        bool CompassValid = false;
     };
 
     /// Where the seat has been: its last TRAIL_SAMPLES positions, one every INTERVAL_MS, kept between decisions

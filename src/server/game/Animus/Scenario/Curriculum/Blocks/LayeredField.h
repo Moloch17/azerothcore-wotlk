@@ -128,6 +128,20 @@ namespace Animus::Curriculum::LayeredField
     /// floor there (off the grid).
     bool Sense(View const& view, float x, float y, float z, float facing, ProbeBake::Reading& out);
 
+    /// The same probe along fixed compass headings: heading i is -i * pi / SENSE_RAYS (heading 0 due east, then
+    /// clockwise), SENSE_RAYS * 2 of them, which is every ray and wedge edge of a seat facing any multiple of
+    /// pi / SENSE_RAYS. RaysFor turns it to a facing, to that step (11.25 degrees). A seat turning needs no new
+    /// sense, only one that has walked somewhere else: what makes the field cheap enough to be the only sense.
+    struct Compass
+    {
+        GroundSense::Bearing Headings[2 * SENSE_RAYS];
+        GroundSense::Room Room;
+    };
+    bool SenseCompass(View const& view, float x, float y, float z, Compass& out);
+    /// The rays of a seat facing `facing`, from a compass sense: Sense's worst-of-three wedges over the nearest
+    /// headings. `headings` is Compass::Headings or a copy of it.
+    void RaysFor(GroundSense::Bearing const* headings, float facing, ProbeBake::Reading& out);
+
     /// The cell size of the fields a running sim reads.
     constexpr float STANDARD_CELL = 1.0f;
 

@@ -779,6 +779,41 @@ namespace Animus::Curriculum::LayeredField
         return true;
     }
 
+    bool SenseCompass(View const& view, float x, float y, float z, Compass& out)
+    {
+        if (!SpanAt(view, x, y).OnGrid)
+            return false;
+
+        float const start = StartFloor(view, x, y, z);
+        float const pitch = ProbeBake::StandardSettings().Pitch;
+        for (uint32 index = 0; index < 2 * SENSE_RAYS; ++index)
+            out.Headings[index] = FieldHeading(view, x, y, z, start, -float(index) * SEAT_HALF_WEDGE, pitch);
+        out.Room = start > INVALID_HEIGHT ? FieldRoom(view, x, y, start) : GroundSense::Room{};
+        return true;
+    }
+
+    void RaysFor(GroundSense::Bearing const* headings, float facing, ProbeBake::Reading& out)
+    {
+        // Sense's index i lies along facing - i * SEAT_HALF_WEDGE; the compass's j along -j * SEAT_HALF_WEDGE. They
+        // meet at j = i - facing / SEAT_HALF_WEDGE, rounded to the nearest heading.
+        constexpr int32 HEADINGS = int32(2 * SENSE_RAYS);
+        int32 turn = int32(std::lround(facing / SEAT_HALF_WEDGE)) % HEADINGS;
+        if (turn < 0)
+            turn += HEADINGS;
+        auto const at = [headings, turn](int32 index) -> GroundSense::Bearing const&
+        {
+            return headings[((index - turn) % HEADINGS + HEADINGS) % HEADINGS];
+        };
+        for (uint32 ray = 0; ray < SENSE_RAYS; ++ray)
+        {
+            int32 const own = int32(2 * ray);
+            GroundSense::Bearing worst = at(own + 1);
+            worst = GroundSense::Worst(worst, at(own));
+            worst = GroundSense::Worst(worst, at(own - 1));
+            out.Rays[ray] = worst;
+        }
+    }
+
     namespace
     {
         /// The ground probe from the field against the dense live one (ProbeBake::SenseLive), at places on the

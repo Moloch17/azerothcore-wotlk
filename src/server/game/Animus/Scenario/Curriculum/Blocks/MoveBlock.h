@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_MOVE_BLOCK_H
 
 #include "Block.h"
+#include <atomic>
 
 class Map;
 
@@ -328,6 +329,10 @@ namespace Animus::Curriculum
         static constexpr float MARCH_REFRESH_YARDS = 3.0f;
         static constexpr float MARCH_REFRESH_RADIANS = 0.3926991f;      // half a bearing, 22.5 degrees
         static constexpr uint32 MARCH_REFRESH_MS = 500;
+        /// Which of the three made a probe stale (the first that holds, in that order), counted for `forge status`.
+        static inline std::atomic<uint64> StaleMoved{ 0 };
+        static inline std::atomic<uint64> StaleTurned{ 0 };
+        static inline std::atomic<uint64> StaleClock{ 0 };
         /// How far up or down the ground is looked for at a march cell, and how much of a rise or drop between
         /// two cells is still walkable.
         ///

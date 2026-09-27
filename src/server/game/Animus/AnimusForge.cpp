@@ -19,6 +19,7 @@
 #include "AnimusForge.h"
 #include "GpuRuntime.h"
 #include "LayeredField.h"
+#include "MoveBlock.h"
 #include "ProbeBake.h"
 #include "CurriculumTuning.h"
 #include "EncoderSupport.h"
@@ -1787,6 +1788,10 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         namespace Store = Animus::Curriculum::LayeredField::Store;
         uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
         uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
+        using Move = Animus::Curriculum::MoveBlock;
+        sim.ProbeNote += Acore::StringFormat("refreshed for moving {}, turning {}, the clock {}; ",
+            Move::StaleMoved.load(std::memory_order_relaxed), Move::StaleTurned.load(std::memory_order_relaxed),
+            Move::StaleClock.load(std::memory_order_relaxed));
         sim.ProbeNote += Acore::StringFormat("geometry: {} probes worked out, {} fields held ({:.0f} MB, {} files "
             "read), {} with no field, the last reading held ({:.1f}%)", reads, Store::Loaded(),
             double(Store::Bytes()) / (1024.0 * 1024.0), Store::FileReads.load(std::memory_order_relaxed), fallbacks,
