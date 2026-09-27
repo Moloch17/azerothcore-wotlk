@@ -613,6 +613,19 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // whose episodes ended are map-thread work, and this search was most of their time: twenty tries of a path each,
     // one after another, on the update's critical path). The first try that succeeds, by index, is the place, as it
     // is one at a time. A ledge or air-only search loads grids along its line inside a try, so it stays serial.
+    // Every try's place is drawn first, on this thread, whichever way they then run: a seeded episode (an evaluation,
+    // a replay) draws the same numbers and gets the same place from both, where drawing try by try would stop at a
+    // different count and shift everything drawn after it.
+    std::vector<float> distances(attempts);
+    std::vector<float> angles(attempts);
+    for (uint32 attempt = 0; attempt < attempts; ++attempt)
+        draw(attempt, distances[attempt], angles[attempt]);
+    auto const load = [&](uint32 attempt)
+    {
+        map->LoadGrid(bot->GetPositionX() + distances[attempt] * std::cos(angles[attempt]),
+            bot->GetPositionY() + distances[attempt] * std::sin(angles[attempt]));
+    };
+
     MapUpdater* updater = sMapMgr->GetMapUpdater();
     bool const shared = !rules.Ledge && !rules.AirOnly && updater && updater->activated()
         && MapMgr::MapTasksRunning.load(std::memory_order_acquire);
@@ -620,26 +633,16 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     {
         for (uint32 attempt = 0; attempt < attempts; ++attempt)
         {
-            float distance = 0.0f;
-            float angle = 0.0f;
-            draw(attempt, distance, angle);
-            map->LoadGrid(bot->GetPositionX() + distance * std::cos(angle),
-                bot->GetPositionY() + distance * std::sin(angle));
+            load(attempt);
             Found found;
-            if (tryAt(attempt, distance, angle, found))
+            if (tryAt(attempt, distances[attempt], angles[attempt], found))
                 return accept(found);
         }
         return false;
     }
 
-    std::vector<float> distances(attempts);
-    std::vector<float> angles(attempts);
     for (uint32 attempt = 0; attempt < attempts; ++attempt)
-    {
-        draw(attempt, distances[attempt], angles[attempt]);
-        map->LoadGrid(bot->GetPositionX() + distances[attempt] * std::cos(angles[attempt]),
-            bot->GetPositionY() + distances[attempt] * std::sin(angles[attempt]));
-    }
+        load(attempt);
 
     std::vector<Found> found(attempts);
     std::atomic<uint32> first{ attempts };
