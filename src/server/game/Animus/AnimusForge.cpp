@@ -1575,7 +1575,9 @@ void AnimusForge::Forge::BenchSave() const
     file["configured_envs"] = _config.Envs;
 
     boost::json::array& trials = file["trials"].emplace_array();
-    boost::json::object const* bestEntry = nullptr;
+    // An index, not a pointer: emplace_back reallocates the array, and a pointer to an earlier entry dangled (a
+    // 24-thread worker's longer trial list crashed here copying it).
+    std::optional<std::size_t> bestEntry;
     double best = 0.0;
     bool bestLearner = false;
     for (BenchTrial const& trial : _benchTrials)
@@ -1616,12 +1618,12 @@ void AnimusForge::Forge::BenchSave() const
         {
             best = trial.EnvStepsPerSecond;
             bestLearner = trial.Learner;
-            bestEntry = &entry;
+            bestEntry = trials.size() - 1;
         }
     }
 
     if (bestEntry)
-        file["best"] = *bestEntry;
+        file["best"] = trials[*bestEntry];
 
     std::error_code error;
     fs::create_directories(_config.Bench.OutputDir, error);
