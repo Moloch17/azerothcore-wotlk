@@ -1088,6 +1088,18 @@ namespace Animus::Curriculum::LayeredField
             std::shared_mutex g_lock;
             /// Every grid asked about: its field, or none for a grid without a file (asked once, remembered).
             std::map<std::tuple<uint32, int32, int32>, Entry> g_fields;
+
+            /// Once a grid, like the tables.
+            void WarnMissing(uint32 mapId, int32 gridX, int32 gridY)
+            {
+                static std::mutex logged;
+                static std::set<std::tuple<uint32, int32, int32>> warned;
+                std::lock_guard guard(logged);
+                if (warned.emplace(mapId, gridX, gridY).second)
+                    LOG_WARN("module.animus", "Ground probe: no field for map {} grid ({}, {}) in {}: seats on it or "
+                        "near enough to see into it are measured live, slowly. Bake it with `forge fieldstage` and "
+                        "ship the file.", mapId, gridX, gridY, g_dir);
+            }
         }
 
         void Configure(bool enabled, std::string const& dir, uint32 cacheGrids)
@@ -1129,7 +1141,13 @@ namespace Animus::Curriculum::LayeredField
             std::shared_ptr<Grid const> loaded;
             if (Read(FileFor(mapId, gridX, gridY), *field))
                 loaded = std::move(field);
-            FileReads.fetch_add(1, std::memory_order_relaxed);
+            // Many more reads than the cache holds is the cache letting go of fields its seats still stand on:
+            // every refresh there reads a file. Said once.
+            uint64 const reads = FileReads.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (reads == uint64(g_cacheGrids) * 4)
+                LOG_WARN("module.animus", "Ground probe: {} field files read with AnimusForge.Probe.CacheGrids = {}: "
+                    "the seats stand on more grids than it holds. Raise it (about 4 MB a field).", reads,
+                    g_cacheGrids);
 
             std::unique_lock lock(g_lock);
             auto [entry, inserted] = g_fields.try_emplace(key);
@@ -1165,14 +1183,7 @@ namespace Animus::Curriculum::LayeredField
             out.Held[1][1] = Find(mapId, gridX, gridY);
             if (!out.Held[1][1])
             {
-                // Once a grid, like the tables: the entry remembers it is missing, so this logs on its first miss.
-                static std::mutex logged;
-                static std::set<std::tuple<uint32, int32, int32>> warned;
-                std::lock_guard guard(logged);
-                if (warned.emplace(mapId, gridX, gridY).second)
-                    LOG_WARN("module.animus", "Ground probe: no field for map {} grid ({}, {}) in {}: seats there are "
-                        "measured live, slowly. Bake it with `forge fieldstage` and ship the file.", mapId, gridX,
-                        gridY, g_dir);
+                WarnMissing(mapId, gridX, gridY);
                 return false;
             }
             out.View.CentreX = gridX;
@@ -1191,7 +1202,17 @@ namespace Animus::Curriculum::LayeredField
                 for (int32 dy = -1; dy <= 1; ++dy)
                 {
                     if ((dx || dy) && near[0][dx + 1] && near[1][dy + 1])
+                    {
                         out.Held[dx + 1][dy + 1] = Find(mapId, gridX + dx, gridY + dy);
+                        // A neighbour the probe can read into with no field would read as a cliff at the grid's
+                        // edge: measure live instead, as where the seat's own grid has none. `forge fieldstage`
+                        // writes a grid with no floor too, so a missing file is only ever one not baked.
+                        if (!out.Held[dx + 1][dy + 1])
+                        {
+                            WarnMissing(mapId, gridX + dx, gridY + dy);
+                            return false;
+                        }
+                    }
                     out.View.Grids[dx + 1][dy + 1] = out.Held[dx + 1][dy + 1].get();
                 }
             return true;

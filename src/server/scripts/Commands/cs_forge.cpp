@@ -327,7 +327,8 @@ namespace
 
         /// `forge fieldstage <scenario> [rebake]`: the layered fields AnimusForge.Probe.Source = geometry reads for
         /// this scenario -- the grids `forge probestage` bakes tables for, and their neighbours, since a probe near a
-        /// grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is not written.
+        /// grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is written too,
+        /// a few bytes, so that a missing file means a grid not baked and never "no floor here".
         /// Static geometry only, as for the tables; a grid takes a fraction of a second.
         static bool HandleFieldStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
         {
@@ -379,11 +380,7 @@ namespace
                 float const centreX = (float(grid.X) + 0.5f) * SIZE_OF_GRIDS;
                 float const centreY = (float(grid.Y) + 0.5f) * SIZE_OF_GRIDS;
                 Field::Grid const field = Field::Bake(map, centreX, centreY, Field::STANDARD_CELL);
-                if (field.Intervals.empty())
-                {
-                    ++empty;
-                    continue;
-                }
+                empty += field.Intervals.empty() ? 1 : 0;
                 if (Field::Write(field, path))
                 {
                     ++baked;
@@ -397,8 +394,8 @@ namespace
             }
 
             double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB), {} already there, {} with no floor, {} failed, "
-                "in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), kept, empty, failed, seconds);
+            handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB, {} of them with no floor), {} already there, {} failed, "
+                "in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), empty, kept, failed, seconds);
             return true;
         }
 

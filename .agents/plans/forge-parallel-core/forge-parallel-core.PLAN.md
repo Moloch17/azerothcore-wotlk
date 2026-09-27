@@ -1036,6 +1036,37 @@ refusals of 85f699d66 took ~0.5 off; the per-action features (cooldowns, aura sc
 device cooldown/aura table (step 3's first consumer) could save, ~0.1 ms wall. The user chose the CPU masks over it.
 Apply is 2.3 thread-ms, reset 0.72 ms serial on the world thread (2.7 on stage1_move): the sim's serial part.
 
+### The geometry probe (option D) as built (2026-09-26, e8322b61a)
+
+`LayeredField`: per 1 yd cell every surface a downward scan finds (Map::GetHeight's own query repeated), navmesh
+floors (with their NAV_* flags) and the terrain, merged within 0.5 yd keeping the higher; headroom by an upward
+static ray; liquid within 10 yd below; `OpenAbove` marks floors known to have open air above (navmesh, terrain, top
+surface) -- flight reads only those, the march reads all (the two-sided geometry makes the scan find inner faces).
+8-byte intervals (eighths of a yard). `Sense(View, x, y, z, facing)` replays MarchBearing (dense 0.5), the three
+navmesh rays (one walk, nested filters), Combine, the wedge (32 shared headings for 16 wedges) and a flood-fill
+clearance. View = 3x3 grids; Store::Gather loads only neighbours within 42 yd.
+
+Measured (forge lhfbake, dense live probe as reference; tables' "nearest" row for comparison):
+
+| place | reach field / tables | step field | clearance field | dense vs itself 1 refresh late (reach/step) |
+|---|---|---|---|---|
+| Thunder Bluff | 0.012 / 0.033 | 0.114 | 0.022 | 0.043 / 0.150 |
+| Bloodhoof inn r15 | 0.018 / 0.054 | 0.188 | 0.069 | 0.060 / 0.237 |
+| Brackenwall r15 | 0.021 / 0.026 | 0.285 | 0.060 | 0.091 / 0.379 |
+
+0.5 yd cells halve the gaps again (TB reach 0.006, step 0.068) at 1 MB/grid. Files ~0.37 MB/grid (1 yd), bake
+0.35 s/grid (stage1: 129 grids, 48 MB, 45 s). RAM ~3.7 MB/grid. Compare: 38 us a place; in a training sim ~70 us
+(memory-bound, 64 grids resident).
+
+Throughput with Probe.Source = geometry (192 envs, cadence refresh): stage1 26,074 vs 26,824 baked (-3%), stage8
+49,811 vs 54,230 (-8%; duel seats turn, ~60 refreshes/decision). So `baked` stays the default. And at decision
+time geometry is not more accurate than the tables: it is read up to one refresh stale (the last column, 0.043-0.091
+reach) where a table is fresh every decision (0.026-0.054) -- the two roughly trade. A missing neighbour field makes
+Gather fall back to live (it would read as a cliff); fieldstage writes empty grids so missing means unbaked. Next for D: the
+fields are the natural input for the probe kernel (task #3) -- 0.37 MB/grid fits VRAM, and a kernel would make the
+geometry probe fresh every decision and free on the CPU; on the CPU, a compact cell index (uint8 counts + block
+offsets) would cut the 1.1 MB/grid First array and the cache misses.
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,
