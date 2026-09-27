@@ -97,7 +97,8 @@ RUN mkdir -p \
     /azerothcore/env/dist/logs \
     /azerothcore/env/dist/temp \
     /azerothcore/env/dist/etc \
-    /azerothcore/var/build/obj
+    /azerothcore/var/build/obj \
+    /azerothcore/var/ccache
 
 # Correct permissions for non-root operations
 RUN chown -R $DOCKER_USER:$DOCKER_USER /home/acore /run /opt /azerothcore
