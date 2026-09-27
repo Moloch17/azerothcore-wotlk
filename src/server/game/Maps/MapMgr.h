@@ -180,6 +180,15 @@ public:
         uint32 SlowestInstanceId = 0;
         int32 SlowestCpu = -1;
         uint64 CpuMask = 0;             ///< last tick: CPUs 0-63 on which a task started
+        /// Sums over ticks, from when the tick's first task was scheduled: when its last task started and when its
+        /// last task ended, and the time spent scheduling and loading deferred tiles -- what the wall is made of.
+        uint64 LastStartNs = 0;
+        uint64 LastEndNs = 0;
+        uint64 ScheduleNs = 0;
+        uint64 TilesNs = 0;
+        /// The work tasks map tasks handed on (the sim's resets): their time, and when the tick's last one ended.
+        uint64 WorkNs = 0;
+        uint64 WorkLastEndNs = 0;
     };
 
     [[nodiscard]] TaskTiming const& GetTaskTiming() const { return _taskTiming; }

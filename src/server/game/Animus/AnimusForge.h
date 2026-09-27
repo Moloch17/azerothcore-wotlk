@@ -69,6 +69,8 @@ namespace AnimusForge
         /// half that is not ticking -- the one the learner is deciding. Called from map tasks (MapMgr::ForgeTickDiff,
         /// for the instances a container schedules), while nothing writes the state it reads.
         [[nodiscard]] bool IsMapFrozen(Map const& map) const;
+        /// Envs on `map`, 0 with no pool. World thread.
+        [[nodiscard]] uint32 EnvsOnMap(Map const& map) const;
 
         /// Console commands, run on the world thread. Each writes its reply to `out` and returns false when it
         /// refuses (the reply says why).

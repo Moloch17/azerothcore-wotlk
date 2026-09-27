@@ -61,9 +61,12 @@ namespace
     std::string MapTasksNote(AnimusForge::SimSnapshot::MapTasksMs const& tasks)
     {
         return Acore::StringFormat("{:.1f} tasks, sum {:.2f} ms ({:.1f}x wall), longest {:.2f} ms (last: map {} "
-            "instance {} on cpu {}), cpus {} (per map update)", tasks.Tasks, tasks.Sum,
+            "instance {} on cpu {}), cpus {}; last task started at {:.2f} ms and ended at {:.2f}, scheduling {:.2f}, "
+            "deferred tiles {:.2f}; handed-on work {:.2f} ms, the last ending at {:.2f} (per map update)", tasks.Tasks,
+            tasks.Sum,
             tasks.Wall > 0.0 ? tasks.Sum / tasks.Wall : 0.0, tasks.Longest, tasks.SlowestMapId,
-            tasks.SlowestInstanceId, tasks.SlowestCpu, AnimusForge::Format::Cpus(tasks.CpuMask));
+            tasks.SlowestInstanceId, tasks.SlowestCpu, AnimusForge::Format::Cpus(tasks.CpuMask), tasks.LastStart,
+            tasks.LastEnd, tasks.Schedule, tasks.Tiles, tasks.Work, tasks.WorkLastEnd);
     }
 
     /// Weight of the newest interval in the step rate average.

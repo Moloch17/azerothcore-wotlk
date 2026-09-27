@@ -17,13 +17,14 @@
  */
 
 #include "Config.h"
-#include <chrono>
 #include "Encounters.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "EpisodeInfoTable.h"
 #include "Map.h"
 #include "MapDefines.h"
+#include "MapMgr.h"
+#include "MapUpdater.h"
 #include "MapCollisionData.h"
 #include "DetourNavMeshQuery.h"
 #include "DetourExtended.h"
@@ -34,6 +35,8 @@
 #include "MoveBlock.h"
 #include "TravelBlock.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -46,6 +49,9 @@ namespace
     /// still succeeds on the first or second attempt and pays nothing for the higher ceiling; rough ground gets
     /// the tries it needs rather than falling through to the spawn-point retry, which moves the seats.
     constexpr uint32 OBJECTIVE_ATTEMPTS = 48;
+    /// Map threads an objective search may take to run its tries at once (MapUpdater::ParallelFor): at most the
+    /// pool's workers, and only the ones that are free.
+    constexpr uint32 PLACE_HELPERS = 7;
     /// Trips pooled per (arena, spawn point, band) before training resets draw from them, the most kept, and the share
     /// of training resets that draw rather than search (the rest keep the pools fresh).
     constexpr std::size_t POOL_MIN = 24;
@@ -330,22 +336,49 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     float const speed = std::max(1.0f, bot->GetSpeed(flying ? MOVE_FLIGHT : MOVE_RUN));
     float const affordable = budgetSeconds > 0.0f ? budgetSeconds * speed : std::numeric_limits<float>::max();
 
+    // Counted for the status line: what a search costs, which is most of what an episode's reset costs.
+    struct Tally
+    {
+        std::chrono::steady_clock::time_point Started = std::chrono::steady_clock::now();
+        std::atomic<uint64> Attempts{ 0 };
+        std::atomic<uint64> Paths{ 0 };
+        bool Found = false;
+
+        ~Tally()
+        {
+            PlaceSearches.fetch_add(1, std::memory_order_relaxed);
+            PlaceAttempts.fetch_add(Attempts.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            PlacePaths.fetch_add(Paths.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            PlaceNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - Started).count()), std::memory_order_relaxed);
+            PlaceFailed.fetch_add(Found ? 0 : 1, std::memory_order_relaxed);
+        }
+    } tally;
+
     // A crossing is a much narrower thing to ask for than a trip -- it wants water on the straight line and a dry
     // way round at least MIN_DETOUR_ACROSS longer -- so it gets more tries before it gives up and the arena falls
     // back to an ordinary trip. At 32 it found one in 0.65 of its episodes; the ones it missed were not bad ground
     // but too few throws at it. An air-only place is as narrow: a plateau or an island, not any dry ground.
     uint32 const attempts = across || rules.AirOnly || rules.Ledge || rules.Underwater
         ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
-    for (uint32 attempt = 0; attempt < attempts; ++attempt)
+
+    // One try: a place `distance` away at `angle`, validated. Everything it asks of the world is read-only, so tries
+    // may run at once on different threads -- except the grids, which are loaded before (LoadGrid creates them).
+    struct Found
     {
-        // Later attempts settle for shorter trips rather than failing the episode.
-        float const reach = attempt < attempts / 2 ? furthest : (nearest + furthest) * 0.5f;
-        float const distance = frand(nearest, std::max(nearest, reach));
-        float const angle = frand(0.0f, 2.0f * float(M_PI));
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float Walked = 0.0f;
+        float Dry = 0.0f;
+        float Edge = 0.0f;
+        float Depth = 0.0f;
+    };
+    auto const tryAt = [&](uint32 attempt, float distance, float angle, Found& out) -> bool
+    {
+        tally.Attempts.fetch_add(1, std::memory_order_relaxed);
         float const x = bot->GetPositionX() + distance * std::cos(angle);
         float const y = bot->GetPositionY() + distance * std::sin(angle);
-
-        map->LoadGrid(x, y);
         // Outdoors, look from well above the seat and search a long way down: ground forty yards up is still
         // ground, and the broken arena's ridges span seventy yards of relief. Inside a building the same probe
         // returns the roof, because Map::GetHeight casts a strictly downward ray from the z it is given -- so an
@@ -363,9 +396,9 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             : rules.Ledge ? rules.DropMax + 2.0f * MoveBlock::MAX_STEP : HEIGHT_SEARCH;
         float const z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
         if (z <= INVALID_HEIGHT)
-            continue;
+            return false;
         if (rules.Ledge && (bot->GetPositionZ() - z < rules.DropMin || bot->GetPositionZ() - z > rules.DropMax))
-            continue;
+            return false;
 
         // A place inside has to actually be inside. The probe can still land in a courtyard or on a roof edge
         // through a doorway, and only the WMO data tells them apart: GetAreaInfo returns false where no building
@@ -382,11 +415,11 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             int32 rootId = 0;
             int32 groupId = 0;
             if (!map->GetAreaInfo(bot->GetPhaseMask(), x, y, z, mogpFlags, adtId, rootId, groupId))
-                continue;
+                return false;
             if ((mogpFlags & WMO_GROUP_OUTDOORS) != 0)
-                continue;
+                return false;
             if (!map->CanReachPositionAndGetValidCoords(bot, placeX, placeY, placeZ, true, true))
-                continue;
+                return false;
         }
 
         // The objective itself always stands on dry land -- arriving is standing somewhere, not treading water --
@@ -399,13 +432,13 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 bot->GetCollisionHeight(), {});
             if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT
                 || (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) == 0)
-                continue;
+                return false;
             depth = liquid.Level - placeZ;
             if (depth < rules.DepthMin || depth > rules.DepthMax)
-                continue;
+                return false;
         }
         else if (map->IsInWater(bot->GetPhaseMask(), x, y, z, BODY_HEIGHT))
-            continue;
+            return false;
 
         // On the ground it has to be reachable on foot, by a path not much longer than the straight line.
         float walked = distance;
@@ -435,19 +468,21 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             Route ground;
             Position const from(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0.0f);
             Position const to(placeX, placeY, placeZ, 0.0f);
+            tally.Paths.fetch_add(1, std::memory_order_relaxed);
             if (!RoutePlanner::Instance().Plan(map, from, to, ground) || !ground.Complete
                 || ground.Length < distance * rules.LedgeDetour)
-                continue;
+                return false;
             if (!LedgeOnLine(bot, map, placeX, placeY, placeZ, rules, edgeDrop))
-                continue;
+                return false;
 
             walked = ground.Length;
         }
         else if (!flying)
         {
+            tally.Paths.fetch_add(1, std::memory_order_relaxed);
             PathGenerator path(bot);
             if (!path.CalculatePath(x, y, z) || !(path.GetPathType() & PATHFIND_NORMAL))
-                continue;
+                return false;
 
             // PATHFIND_NORMAL on its own is not a route. A missing tile, a hole in the mesh, or a start too far
             // from it all make PathGenerator fall back to BuildShortcut and answer
@@ -464,7 +499,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             // abandoned for another (StageScenario's SPAWN_ATTEMPTS), so refusing here costs an attempt rather
             // than an episode, and a spawn point that is off the mesh entirely simply stops being used.
             if (path.GetPathType() & PATHFIND_NOT_USING_PATH)
-                continue;
+                return false;
 
             walked = path.getPathLength();
 
@@ -481,13 +516,14 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 // (measured over four bodies of water: the longest way round found was 1.15x the way through,
                 // even where every straight line crossed water). NAV_GROUND alone is the way round on foot.
                 if (!CrossesWater(bot, map, place, x, y))
-                    continue;
+                    return false;
 
+                tally.Paths.fetch_add(1, std::memory_order_relaxed);
                 PathGenerator dry(bot);
                 dry.SetIncludeFlags(NAV_GROUND);
                 if (!dry.CalculatePath(x, y, z) || !(dry.GetPathType() & PATHFIND_NORMAL)
                     || (dry.GetPathType() & PATHFIND_NOT_USING_PATH))
-                    continue;                      // no dry route: getting in is not a choice, it is the only way
+                    return false;                      // no dry route: getting in is not a choice, it is the only way
 
                 dryWalk = dry.getPathLength();
 
@@ -496,12 +532,12 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 // 1.02x where walking plainly wins.
                 // The floor keeps trips of both kinds, which is what makes the crossing a decision.
                 if (dryWalk < distance * MIN_DETOUR_ACROSS)
-                    continue;                      // the way round is barely longer: nothing to decide
+                    return false;                      // the way round is barely longer: nothing to decide
             }
             else
             {
                 if (walked > distance * MAX_PATH_DETOUR)
-                    continue;
+                    return false;
 
                 // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the
                 // attempts and let go after, so an arena whose ground has no long way round still builds. The
@@ -511,7 +547,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                     float const detour = walked / std::max(1.0f, distance);
                     int32 const band = detour < rules.DetourEasy ? 0 : detour < rules.DetourHard ? 1 : 2;
                     if (band != rules.Band)
-                        continue;
+                        return false;
                 }
             }
         }
@@ -532,31 +568,98 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             Route ground;
             Position const from(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0.0f);
             Position const to(placeX, placeY, placeZ, 0.0f);
+            tally.Paths.fetch_add(1, std::memory_order_relaxed);
             if (RoutePlanner::Instance().Plan(map, from, to, ground) && ground.Complete
                 && ground.Length <= distance * rules.AirDetour)
-                continue;                      // walkable: a ride would do, and the wings would teach nothing
+                return false;                      // walkable: a ride would do, and the wings would teach nothing
         }
 
         // Far enough inside the clock to be winnable by a seat that is still learning to steer, rather than only
         // by one that walks the path perfectly. FEASIBLE_SHARE is what "far enough" means, and the trip's actual
         // share of the clock is reported per episode so the margin can be read rather than trusted.
         if (walked > affordable)
-            continue;
+            return false;
 
-        place.Relocate(placeX, placeY, placeZ);
+        out = Found{ placeX, placeY, placeZ, walked, dryWalk, edgeDrop, depth };
+        return true;
+    };
+
+    auto const accept = [&](Found const& found)
+    {
+        place.Relocate(found.X, found.Y, found.Z);
         if (walk)
-            *walk = walked;
+            *walk = found.Walked;
         if (dry)
-            *dry = dryWalk;
+            *dry = found.Dry;
         if (ledgeDrop)
-            *ledgeDrop = edgeDrop;
+            *ledgeDrop = found.Edge;
         if (diveDepth)
-            *diveDepth = depth;
+            *diveDepth = found.Depth;
         if (shortcut)
             *shortcut = false;      // nothing that got here was one; the column stays as the regression alarm
+        tally.Found = true;
         return true;
+    };
+
+    // Later attempts settle for shorter trips rather than failing the episode.
+    auto const draw = [&](uint32 attempt, float& distance, float& angle)
+    {
+        float const reach = attempt < attempts / 2 ? furthest : (nearest + furthest) * 0.5f;
+        distance = frand(nearest, std::max(nearest, reach));
+        angle = frand(0.0f, 2.0f * float(M_PI));
+    };
+
+    // The tries at once, on the map threads that are free, when a map update is running (the resets of the envs
+    // whose episodes ended are map-thread work, and this search was most of their time: twenty tries of a path each,
+    // one after another, on the update's critical path). The first try that succeeds, by index, is the place, as it
+    // is one at a time. A ledge or air-only search loads grids along its line inside a try, so it stays serial.
+    MapUpdater* updater = sMapMgr->GetMapUpdater();
+    bool const shared = !rules.Ledge && !rules.AirOnly && updater && updater->activated()
+        && MapMgr::MapTasksRunning.load(std::memory_order_acquire);
+    if (!shared)
+    {
+        for (uint32 attempt = 0; attempt < attempts; ++attempt)
+        {
+            float distance = 0.0f;
+            float angle = 0.0f;
+            draw(attempt, distance, angle);
+            map->LoadGrid(bot->GetPositionX() + distance * std::cos(angle),
+                bot->GetPositionY() + distance * std::sin(angle));
+            Found found;
+            if (tryAt(attempt, distance, angle, found))
+                return accept(found);
+        }
+        return false;
     }
 
+    std::vector<float> distances(attempts);
+    std::vector<float> angles(attempts);
+    for (uint32 attempt = 0; attempt < attempts; ++attempt)
+    {
+        draw(attempt, distances[attempt], angles[attempt]);
+        map->LoadGrid(bot->GetPositionX() + distances[attempt] * std::cos(angles[attempt]),
+            bot->GetPositionY() + distances[attempt] * std::sin(angles[attempt]));
+    }
+
+    std::vector<Found> found(attempts);
+    std::atomic<uint32> first{ attempts };
+    MMapData& mmap = map->GetMapCollisionData().GetMMapData();
+    updater->ParallelFor(attempts, PLACE_HELPERS, [&](uint32 attempt)
+    {
+        // Past a try that already succeeded, nothing can be the answer.
+        if (attempt > first.load(std::memory_order_acquire))
+            return;
+        MMapData::ThreadQueryScope const ownQuery(mmap);
+        if (!tryAt(attempt, distances[attempt], angles[attempt], found[attempt]))
+            return;
+        uint32 current = first.load(std::memory_order_acquire);
+        while (attempt < current && !first.compare_exchange_weak(current, attempt, std::memory_order_acq_rel))
+        {
+        }
+    });
+    uint32 const winner = first.load(std::memory_order_acquire);
+    if (winner < attempts)
+        return accept(found[winner]);
     return false;
 }
 

@@ -256,9 +256,31 @@ public:
     {
         uint64 Ns = 0;
         int32 Cpu = -1;
+        uint64 StartNs = 0;             ///< steady_clock time the task started, for when in the update it ran
     };
 
-    void SetTaskSample(TaskSample const& sample) { _taskSample = sample; }
+    void SetTaskSample(TaskSample const& sample)
+    {
+        _taskSample = sample;
+        _taskTotals.SumNs += sample.Ns;
+        _taskTotals.MaxNs = std::max(_taskTotals.MaxNs, sample.Ns);
+        ++_taskTotals.Count;
+    }
+
+    /// Every task this map ran since the last take, for `forge tasks`.
+    struct TaskTotals
+    {
+        uint64 SumNs = 0;
+        uint64 MaxNs = 0;
+        uint64 Count = 0;
+    };
+
+    [[nodiscard]] TaskTotals TakeTaskTotals()
+    {
+        TaskTotals const totals = _taskTotals;
+        _taskTotals = {};
+        return totals;
+    }
 
     /// World time this map has been left out of the update for, and handed to it whole when it next ticks: the
     /// forge's half-batch freezes one half's maps every other world tick (MapMgr::ForgeTickDiff).
@@ -804,6 +826,7 @@ private:
 
     UpdateTiming _updateTiming;
     TaskSample _taskSample;
+    TaskTotals _taskTotals;
     uint32 _accruedDiff = 0;
     std::unordered_map<ObjectGuid, Player*> _playersByGuid;
 };

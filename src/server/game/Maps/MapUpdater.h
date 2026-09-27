@@ -23,6 +23,7 @@
 #include "Define.h"
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -74,6 +75,20 @@ public:
     void schedule_work(void (*work)(void*), void* arg);
     /// Run tasks on the calling thread until every pushed task, including those pushed meanwhile, is done.
     void wait();
+
+    /// fn(0) .. fn(count - 1), on the calling thread and on up to `helpers` workers that are free, returning when
+    /// every one has run. For a map task's own work that splits into independent pieces (the sim's objective search
+    /// tries): the caller works through the pieces itself, so nothing waits on a worker that is busy elsewhere, and a
+    /// helper that starts after the pieces are gone does nothing. Only while a map update runs (the tasks must be
+    /// drained by its wait()); otherwise, and with no workers, everything runs on the calling thread. `fn` must be
+    /// safe to run concurrently for different indices.
+    void ParallelFor(uint32 count, uint32 helpers, std::function<void(uint32)> const& fn);
+
+    /// The `work` tasks' time, for the status line: summed, counted, and when the last of this tick's ended
+    /// (steady_clock ns; MapMgr takes and clears it each tick).
+    static inline std::atomic<uint64> WorkNs{ 0 };
+    static inline std::atomic<uint64> WorkCount{ 0 };
+    static inline std::atomic<uint64> WorkLastEndNs{ 0 };
 
 private:
     struct Task

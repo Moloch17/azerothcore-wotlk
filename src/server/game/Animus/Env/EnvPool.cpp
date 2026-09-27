@@ -147,6 +147,12 @@ int32 Animus::EnvPool::GroupOfMap(Map const& map) const
     return envs->second.front() < _split ? 0 : 1;
 }
 
+uint32 Animus::EnvPool::EnvsOnMap(Map const& map) const
+{
+    auto const envs = _mapEnvs.find(MapKey(map));
+    return envs == _mapEnvs.end() ? 0 : uint32(envs->second.size());
+}
+
 bool Animus::EnvPool::GroupsKeepToTheirMaps() const
 {
     for (auto const& [key, envs] : _mapEnvs)

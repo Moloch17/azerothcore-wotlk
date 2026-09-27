@@ -95,6 +95,7 @@ namespace
                 { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
+                { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
                 { "export",    HandleExport,    SEC_ADMINISTRATOR, Console::Yes },
@@ -141,6 +142,8 @@ namespace
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: the probe tables' grids and their "
                 "neighbours (kept if already baked, unless rebake)" });
+            table.AddRow({ "forge tasks", "every map's update task since the last `forge tasks`: how many ran, "
+                "their mean and longest time, and the envs on the map, slowest first" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
                 "it: corners, length against the straight line, and whether it arrives" });
             table.AddRow({ "forge talents <class> [spec] [points] [plan]",
@@ -325,6 +328,44 @@ namespace
             return true;
         }
 
+        /// `forge tasks`: the map update's tasks by map since the last call, slowest mean first -- where the map
+        /// update's wall comes from when one map's task is much longer than the rest.
+        static bool HandleTasks(ChatHandler* handler)
+        {
+            struct Row
+            {
+                uint32 MapId;
+                uint32 InstanceId;
+                uint32 Envs;
+                Map::TaskTotals Totals;
+            };
+            std::vector<Row> rows;
+            sMapMgr->DoForAllMaps([&rows](Map* map)
+            {
+                Map::TaskTotals const totals = map->TakeTaskTotals();
+                if (totals.Count)
+                    rows.push_back({ map->GetId(), map->GetInstanceId(), sAnimusForge->EnvsOnMap(*map), totals });
+            });
+            std::sort(rows.begin(), rows.end(), [](Row const& a, Row const& b)
+            {
+                return a.Totals.SumNs * b.Totals.Count > b.Totals.SumNs * a.Totals.Count;
+            });
+
+            using Align = AnimusForge::TextTable::Align;
+            AnimusForge::TextTable table({ { "Map" }, { "Instance", Align::Right }, { "Envs", Align::Right },
+                { "Tasks", Align::Right }, { "Mean ms", Align::Right }, { "Longest ms", Align::Right },
+                { "Sum ms", Align::Right } });
+            for (Row const& row : rows)
+                table.AddRow({ std::to_string(row.MapId), std::to_string(row.InstanceId), std::to_string(row.Envs),
+                    std::to_string(row.Totals.Count),
+                    Acore::StringFormat("{:.3f}", double(row.Totals.SumNs) / double(row.Totals.Count) / 1e6),
+                    Acore::StringFormat("{:.3f}", double(row.Totals.MaxNs) / 1e6),
+                    Acore::StringFormat("{:.1f}", double(row.Totals.SumNs) / 1e6) });
+            handler->PSendSysMessage("Map update tasks since the last `forge tasks` ({} maps):", rows.size());
+            table.Write(Reply(handler), "  ");
+            return true;
+        }
+
         /// `forge fieldstage <scenario> [rebake]`: the layered fields AnimusForge.Probe.Source = geometry reads for
         /// this scenario -- the grids `forge probestage` bakes tables for, and their neighbours, since a probe near a
         /// grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is written too,
@@ -394,8 +435,9 @@ namespace
             }
 
             double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB, {} of them with no floor), {} already there, {} failed, "
-                "in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), empty, kept, failed, seconds);
+            handler->PSendSysMessage("{}: {} grids baked ({:.1f} MB, {} of them with no floor), {} already there, "
+                "{} failed, in {:.0f} s", scenario, baked, double(bytes) / (1024.0 * 1024.0), empty, kept, failed,
+                seconds);
             return true;
         }
 

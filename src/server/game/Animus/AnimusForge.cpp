@@ -196,6 +196,11 @@ bool AnimusForge::Forge::IsMapFrozen(Map const& map) const
     return group >= 0 && uint32(group) != _turn;
 }
 
+uint32 AnimusForge::Forge::EnvsOnMap(Map const& map) const
+{
+    return _pool ? _pool->EnvsOnMap(map) : 0;
+}
+
 void AnimusForge::Forge::OnMapPrologue(Map& map)
 {
     if (_applyTick && _pool)
@@ -1416,6 +1421,12 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 _mapTasks.Sum = since(taskTiming.SumNs, _rateTaskTiming.SumNs) / perUpdate;
                 _mapTasks.Longest = since(taskTiming.LongestNs, _rateTaskTiming.LongestNs) / perUpdate;
                 _mapTasks.Wall = since(taskTiming.WallNs, _rateTaskTiming.WallNs) / perUpdate;
+                _mapTasks.LastStart = since(taskTiming.LastStartNs, _rateTaskTiming.LastStartNs) / perUpdate;
+                _mapTasks.LastEnd = since(taskTiming.LastEndNs, _rateTaskTiming.LastEndNs) / perUpdate;
+                _mapTasks.Schedule = since(taskTiming.ScheduleNs, _rateTaskTiming.ScheduleNs) / perUpdate;
+                _mapTasks.Tiles = since(taskTiming.TilesNs, _rateTaskTiming.TilesNs) / perUpdate;
+                _mapTasks.Work = since(taskTiming.WorkNs, _rateTaskTiming.WorkNs) / perUpdate;
+                _mapTasks.WorkLastEnd = since(taskTiming.WorkLastEndNs, _rateTaskTiming.WorkLastEndNs) / perUpdate;
             }
             _mapTasks.SlowestMapId = taskTiming.SlowestMapId;
             _mapTasks.SlowestInstanceId = taskTiming.SlowestInstanceId;
@@ -1453,6 +1464,14 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Travel::WayPlanNs.load(std::memory_order_relaxed)) / double(plans) / 1e6,
                 Travel::WayPlansFailed.load(std::memory_order_relaxed),
                 Travel::WayPlansPartial.load(std::memory_order_relaxed));
+        uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
+        if (searches)
+            sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths each, "
+                "{} found nothing); ", searches,
+                double(Travel::PlaceNs.load(std::memory_order_relaxed)) / double(searches) / 1e6,
+                double(Travel::PlaceAttempts.load(std::memory_order_relaxed)) / double(searches),
+                double(Travel::PlacePaths.load(std::memory_order_relaxed)) / double(searches),
+                Travel::PlaceFailed.load(std::memory_order_relaxed));
     }
     if (Animus::Curriculum::ProbeBake::Store::Baked())
     {

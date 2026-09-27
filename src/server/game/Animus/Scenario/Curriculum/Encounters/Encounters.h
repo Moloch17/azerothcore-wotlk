@@ -814,6 +814,13 @@ namespace Animus::Curriculum
         static inline std::atomic<uint64> WayPlanNs{ 0 };
         static inline std::atomic<uint64> WayPlansFailed{ 0 };
         static inline std::atomic<uint64> WayPlansPartial{ 0 };
+        /// Objective searches (FindPlace): how many, their tries, the paths they planned, their time, and how many
+        /// found nothing.
+        static inline std::atomic<uint64> PlaceSearches{ 0 };
+        static inline std::atomic<uint64> PlaceAttempts{ 0 };
+        static inline std::atomic<uint64> PlacePaths{ 0 };
+        static inline std::atomic<uint64> PlaceNs{ 0 };
+        static inline std::atomic<uint64> PlaceFailed{ 0 };
 
     private:
 

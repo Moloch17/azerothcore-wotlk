@@ -174,8 +174,50 @@ bool DynamicVMapCollisionData::GetObjectHitPos(uint32 phasemask, float x1, float
     return result;
 }
 
+namespace
+{
+    /// The MMapData a ThreadQueryScope on this thread is for, and the thread's query, set up on its navmesh.
+    thread_local MMapData* t_scopeData = nullptr;
+    struct ThreadQuery
+    {
+        dtNavMeshQuery* Query = nullptr;
+        ~ThreadQuery() { if (Query) dtFreeNavMeshQuery(Query); }
+    };
+    thread_local ThreadQuery t_scopeQuery;
+}
+
+MMapData::ThreadQueryScope::ThreadQueryScope(MMapData& data) : _previous(t_scopeData)
+{
+    dtNavMesh const* mesh = data.GetNavMesh();
+    if (!mesh)
+    {
+        t_scopeData = nullptr;
+        return;
+    }
+
+    // One query a thread, for its lifetime (the thread pool's): init again on every scope, which only clears its
+    // node pool once it is the size asked for, since the navmesh a scope is for may not be the last one's.
+    if (!t_scopeQuery.Query)
+        t_scopeQuery.Query = dtAllocNavMeshQuery();
+    // The map's own queries' node pool (MMapMgr::CreateNavMeshQuery), so a search gives up where theirs does.
+    if (t_scopeQuery.Query && dtStatusSucceed(t_scopeQuery.Query->init(mesh, 1024)))
+        t_scopeData = &data;
+    else
+        t_scopeData = nullptr;
+}
+
+MMapData::ThreadQueryScope::~ThreadQueryScope()
+{
+    t_scopeData = _previous;
+    if (_previous && t_scopeQuery.Query)
+        t_scopeQuery.Query->init(_previous->GetNavMesh(), 1024);
+}
+
 dtNavMeshQuery const* MMapData::GetNavMeshQuery()
 {
+    if (t_scopeData == this)
+        return t_scopeQuery.Query;
+
     if (_navMesh && !_navMeshQuery)
         _navMeshQuery = MMAP::MMapMgr::CreateNavMeshQuery(_navMesh.get());
 

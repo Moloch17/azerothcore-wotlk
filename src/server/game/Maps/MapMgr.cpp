@@ -378,9 +378,11 @@ void MapMgr::Update(uint32 diff)
             MapUpdater::RunMapTick(*map, tick, tick);
     }
 
+    auto const waiting = std::chrono::steady_clock::now();
     if (m_updater.activated())
         m_updater.wait();
     MapTasksRunning.store(false, std::memory_order_release);
+    auto const joined = std::chrono::steady_clock::now();
     LoadDeferredTiles();
 
     uint64 const wallNs = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -398,6 +400,10 @@ void MapMgr::Update(uint32 diff)
     Map* slowest = nullptr;
     int32 slowestCpu = -1;
     uint64 cpuMask = 0;
+    uint64 const scheduledNs = uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        scheduled.time_since_epoch()).count());
+    uint64 lastStartNs = 0;
+    uint64 lastEndNs = 0;
 
     // With no worker threads a container ticks its instances inline, inside its own task: their samples are part
     // of the container's, and counting them again would double the sum.
@@ -413,6 +419,11 @@ void MapMgr::Update(uint32 diff)
 
         ++tasks;
         sumNs += sample.Ns;
+        if (sample.StartNs >= scheduledNs)
+        {
+            lastStartNs = std::max(lastStartNs, sample.StartNs - scheduledNs);
+            lastEndNs = std::max(lastEndNs, sample.StartNs - scheduledNs + sample.Ns);
+        }
         if (sample.Cpu >= 0 && sample.Cpu < 64)
             cpuMask |= uint64(1) << sample.Cpu;
         if (sample.Ns > longestNs)
@@ -440,6 +451,14 @@ void MapMgr::Update(uint32 diff)
     _taskTiming.SumNs += sumNs;
     _taskTiming.LongestNs += longestNs;
     _taskTiming.WallNs += wallNs;
+    _taskTiming.LastStartNs += lastStartNs;
+    uint64 const workEnd = MapUpdater::WorkLastEndNs.exchange(0, std::memory_order_relaxed);
+    _taskTiming.WorkLastEndNs += workEnd > scheduledNs ? workEnd - scheduledNs : 0;
+    _taskTiming.WorkNs = MapUpdater::WorkNs.load(std::memory_order_relaxed);
+    _taskTiming.LastEndNs += lastEndNs;
+    _taskTiming.ScheduleNs += uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(waiting - scheduled).count());
+    _taskTiming.TilesNs += wallNs - std::min(wallNs, uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        joined - scheduled).count()));
     _taskTiming.CpuMask = cpuMask;
     _taskTiming.SlowestCpu = slowestCpu;
     _taskTiming.SlowestMapId = slowest ? slowest->GetId() : 0;

@@ -67,6 +67,8 @@ namespace Animus
         /// The group whose envs are on `map`, or -1 for a map without envs. Read by map tasks while the maps update,
         /// when nothing moves an env between maps.
         [[nodiscard]] int32 GroupOfMap(Map const& map) const;
+        /// Envs on `map` (for `forge tasks`).
+        [[nodiscard]] uint32 EnvsOnMap(Map const& map) const;
         /// No map holds envs of both groups, which freezing a group's maps needs. Continent replicas are dealt
         /// contiguous blocks, so a split on a replica boundary passes; an instance holds one env.
         [[nodiscard]] bool GroupsKeepToTheirMaps() const;

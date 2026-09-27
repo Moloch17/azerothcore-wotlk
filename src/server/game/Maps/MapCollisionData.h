@@ -60,7 +60,24 @@ class MMapData
 
 public:
     dtNavMesh const* GetNavMesh() const { return _navMesh.get(); }
+    /// The map's query -- or, on a thread inside a ThreadQueryScope for this map, that thread's own.
     dtNavMeshQuery const* GetNavMeshQuery();
+
+    /// While one lives, GetNavMeshQuery on this thread answers with a query of the thread's own on the same navmesh,
+    /// so work that splits one map's pathfinding across threads (the sim's objective search, while the map itself is
+    /// not updating) does not share the map's query, which is not thread safe. The navmesh is read-only meanwhile:
+    /// tile loads are deferred to the world thread while map tasks run.
+    class ThreadQueryScope
+    {
+    public:
+        explicit ThreadQueryScope(MMapData& data);
+        ~ThreadQueryScope();
+        ThreadQueryScope(ThreadQueryScope const&) = delete;
+        ThreadQueryScope& operator=(ThreadQueryScope const&) = delete;
+
+    private:
+        MMapData* _previous;
+    };
 
 protected:
     // _navMesh is a shared_ptr as it will point to a parent maps nav mesh (if exists) to save on memory

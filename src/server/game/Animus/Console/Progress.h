@@ -129,6 +129,12 @@ namespace AnimusForge
             uint32 SlowestInstanceId = 0;
             int32 SlowestCpu = -1;
             uint64 CpuMask = 0;
+            double LastStart = 0.0;     // from the first task scheduled: the last task's start
+            double LastEnd = 0.0;       // and its end
+            double Schedule = 0.0;      // scheduling every task
+            double Tiles = 0.0;         // loading the tiles deferred during the update, after the join
+            double Work = 0.0;          // the work tasks map tasks hand on (the sim's resets), summed
+            double WorkLastEnd = 0.0;   // when the last of them ended, from the first task scheduled
         };
 
         MapTasksMs MapTasks;
