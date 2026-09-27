@@ -24,6 +24,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -221,7 +223,8 @@ void AnimusForge::ClusterLink::ConnectToHost()
     NonBlocking(fd);
     _host.Fd = fd;
     if (!Send(_host, Acore::StringFormat("REGISTER {} {}", _dataPort, _advertise.empty() ? "-" : _advertise))
-        || !Send(_host, "FINGERPRINT " + _fingerprint))
+        || !Send(_host, "FINGERPRINT " + _fingerprint)
+        || !Send(_host, Acore::StringFormat("CAPS learner={}", _learnerCapable ? 1 : 0)))
     {
         Close(_host);
         return;
@@ -247,6 +250,14 @@ void AnimusForge::ClusterLink::Poll()
             Peer worker;
             worker.Fd = fd;
             worker.Address = text;
+            // This machine's end of it: the address the worker reached the host at, which is where the worker's
+            // learner will reach the host's.
+            sockaddr_in local{};
+            socklen_t localLength = sizeof(local);
+            char localText[INET_ADDRSTRLEN] = {};
+            if (::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &localLength) == 0
+                && ::inet_ntop(AF_INET, &local.sin_addr, localText, sizeof(localText)))
+                worker.LocalAddress = localText;
             _workers.push_back(std::move(worker));
         }
 
@@ -299,6 +310,8 @@ void AnimusForge::ClusterLink::Poll()
                         it->Refused = true;
                     }
                 }
+                else if (line.rfind("CAPS ", 0) == 0)
+                    it->Learner = line.find("learner=1") != std::string::npos;
                 else if (line.rfind("PROGRESS ", 0) == 0)
                 {
                     it->Progress = line.substr(9);
@@ -392,6 +405,47 @@ void AnimusForge::ClusterLink::Report(std::string const& fields)
 {
     if (_host.Fd >= 0)
         Send(_host, "PROGRESS " + fields);
+}
+
+std::vector<AnimusForge::ClusterLink::WorkerInfo> AnimusForge::ClusterLink::RegisteredWorkers() const
+{
+    std::vector<WorkerInfo> workers;
+    for (Peer const& peer : _workers)
+        if (!peer.Sim.empty())
+            workers.push_back({ peer.Sim, peer.Learner, peer.LocalAddress });
+    return workers;
+}
+
+std::string AnimusForge::ClusterLink::LocalAddress() const
+{
+    if (_host.Fd < 0)
+        return {};
+    sockaddr_in local{};
+    socklen_t length = sizeof(local);
+    char text[INET_ADDRSTRLEN] = {};
+    if (::getsockname(_host.Fd, reinterpret_cast<sockaddr*>(&local), &length) != 0
+        || !::inet_ntop(AF_INET, &local.sin_addr, text, sizeof(text)))
+        return {};
+    return text;
+}
+
+std::string AnimusForge::ClusterLink::InterfaceOf(std::string const& address)
+{
+    ifaddrs* interfaces = nullptr;
+    if (::getifaddrs(&interfaces) != 0)
+        return {};
+    std::string name;
+    for (ifaddrs* entry = interfaces; entry && name.empty(); entry = entry->ifa_next)
+    {
+        if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET)
+            continue;
+        char text[INET_ADDRSTRLEN] = {};
+        auto const* ipv4 = reinterpret_cast<sockaddr_in const*>(entry->ifa_addr);
+        if (::inet_ntop(AF_INET, &ipv4->sin_addr, text, sizeof(text)) && address == text)
+            name = entry->ifa_name;
+    }
+    ::freeifaddrs(interfaces);
+    return name;
 }
 
 std::vector<AnimusForge::ClusterLink::WorkerStatus> AnimusForge::ClusterLink::Workers() const

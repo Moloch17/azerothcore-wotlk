@@ -271,7 +271,19 @@ namespace AnimusForge
         /// Cluster: take the registrations and orders that have come in; a worker acts on its host's orders.
         void PollCluster();
         /// A worker's plan for the scenario its host ordered: remote policy, no learner of its own, its sim on TCP.
-        [[nodiscard]] Plan WorkerPlan(std::string const& scenario, bool resume, bool fast) const;
+        /// A rank of the cluster's learners the host gave this worker (World 0: none, the host's learner trains here).
+        struct ClusterRank
+        {
+            uint32 Rank = 0;
+            uint32 World = 0;
+            std::string Address;
+        };
+        /// Host: the registered workers dealt out for `scenario` -- a rank of the run's learners to each that runs
+        /// one of its own (their START carries it), this machine's learners the others' sims -- into `learnerConfig`.
+        /// `restart`: only the learners start again (after one failed), the workers' sims carry on.
+        void DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume, bool restart);
+        [[nodiscard]] Plan WorkerPlan(std::string const& scenario, bool resume, bool fast,
+            ClusterRank const& rank) const;
 
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
@@ -353,6 +365,8 @@ namespace AnimusForge
         /// Host: the workers' sims the running scenario's learner trains on, and the order that started them, for
         /// one that drops out and registers again to be sent straight back to it.
         std::vector<std::string> _clusterSims;
+        uint32 _clusterLearners = 0;    // host: workers running a learner rank of the current scenario
+        uint32 _autoResumes = 0;        // host: learner restarts of the current scenario after a rank failed
         /// Worker: when its next PROGRESS goes to the host.
         std::chrono::steady_clock::time_point _nextClusterReport{};
         std::string _clusterStart;

@@ -82,11 +82,16 @@ namespace
     {
         // The run is named after the scenario, so a shared config (AnimusForge.Learner.Config) still gives every
         // scenario its own runs/<scenario>/. The sim decides where runs and layouts go (AnimusForge.OutputDir).
+        // A cluster worker's sim listens on every interface for the host (tcp://0.0.0.0:<DataPort>); its own
+        // learner reaches it on loopback.
+        std::string socket = config.SocketPath;
+        if (std::string const any = "tcp://0.0.0.0:"; socket.rfind(any, 0) == 0)
+            socket = "tcp://127.0.0.1:" + socket.substr(any.size());
         std::vector<std::string> args =
         {
             config.LearnerPython, "-u", "-m", "animus.train",
             "--config", config.LearnerConfigFor(scenario),
-            "--socket", config.SocketPath,
+            "--socket", socket,
             "--run-name", scenario,
             "--runs-dir", config.RunsDir().string(),
             "--layouts-dir", config.LayoutsDir().string(),
@@ -114,8 +119,23 @@ namespace
             set("cluster_sims=[" + sims + "]");
         }
 
-        // Data-parallel learners: which rank this is, and where the ranks meet.
-        if (config.LearnerRanks > 1)
+        // Data-parallel learners: which rank this is, and where the ranks meet. A cluster's learners are all of its
+        // machines': this machine's `rank` is its local index (it shares this sim's envs with this machine's other
+        // learners), its global rank counts from DistRankBase, and they meet at the host's DistAddress. Across
+        // machines only the networks are averaged, once an update (mappo.rank_sync = weights): per-step gradients
+        // would be ~8 Gbit/s a link for stage8_duel's networks.
+        if (config.DistWorld > 1)
+        {
+            set("rank=" + std::to_string(config.DistRankBase + rank));
+            set("ranks=" + std::to_string(config.DistWorld));
+            set("local_rank=" + std::to_string(rank));
+            set("local_ranks=" + std::to_string(std::max<uint32>(1, config.LearnerRanks)));
+            set("dist_address=" + config.DistAddress);
+            if (!config.DistIface.empty())
+                set("dist_iface=" + config.DistIface);
+            set("mappo.rank_sync=weights");
+        }
+        else if (config.LearnerRanks > 1)
         {
             set("rank=" + std::to_string(rank));
             set("ranks=" + std::to_string(config.LearnerRanks));
@@ -195,7 +215,7 @@ bool AnimusForge::LearnerProcess::Start(ForgeConfig const& config, std::string c
     }
     std::vector<std::vector<int>> const slices = Acore::CpuPlacement::Split(cpus, ranks);
 
-    uint16 const port = ranks > 1 ? FreeLoopbackPort() : 0;
+    uint16 const port = ranks > 1 && config.DistWorld <= 1 ? FreeLoopbackPort() : 0;
     for (uint32 rank = 0; rank < ranks; ++rank)
     {
         ChildProcess& process = *_ranks[rank];
@@ -230,7 +250,12 @@ bool AnimusForge::LearnerProcess::Start(ForgeConfig const& config, std::string c
             ranks, process.Pid(), scenario, resume ? ", resuming latest.pt" : "", configPath.string(), logFile);
     }
 
-    if (ranks > 1)
+    if (config.DistWorld > 1)
+        LOG_INFO("module.animus", "Learner: rank{} {}{} of the cluster's {}, meeting at {}{}; weights averaged once an "
+            "update", ranks > 1 ? "s" : "", config.DistRankBase, ranks > 1 ? Acore::StringFormat("-{}",
+            config.DistRankBase + ranks - 1) : "", config.DistWorld, config.DistAddress,
+            config.DistIface.empty() ? "" : " on " + config.DistIface);
+    else if (ranks > 1)
         LOG_INFO("module.animus", "Learner: {} data-parallel ranks, meeting on 127.0.0.1:{}; rank k logs to {}",
             ranks, port, RankLogFile(config.LearnerLogFile, 1));
     return true;

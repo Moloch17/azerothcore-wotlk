@@ -7,7 +7,9 @@
 #
 #   docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/python -m pytest
 #
-# ANIMUS_TORCH_INDEX_URL picks the torch wheel index (empty = PyPI).
+# ANIMUS_TORCH_INDEX_URL picks the torch wheel index (empty = PyPI), and ANIMUS_TORCH_VERSION pins its version
+# (empty = the newest): a cluster's learners average their networks over gloo, so every machine's torch is one version
+# whatever its wheel (a ROCm machine's and a CUDA one's).
 
 set -euo pipefail
 
@@ -26,10 +28,11 @@ fi
 
 if ! "$VENV/bin/python" -c "import torch" 2>/dev/null; then
     echo "Installing torch into $VENV (this takes a while)..."
+    torch="torch${ANIMUS_TORCH_VERSION:+==$ANIMUS_TORCH_VERSION}"
     if [[ -n "${ANIMUS_TORCH_INDEX_URL:-}" ]]; then
-        "$VENV/bin/pip" install torch --index-url "$ANIMUS_TORCH_INDEX_URL"
+        "$VENV/bin/pip" install "$torch" --index-url "$ANIMUS_TORCH_INDEX_URL"
     else
-        "$VENV/bin/pip" install torch
+        "$VENV/bin/pip" install "$torch"
     fi
 fi
 

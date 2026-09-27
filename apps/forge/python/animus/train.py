@@ -412,7 +412,8 @@ class TrainingRun:
         use_threads(config.torch_threads)
         # Data-parallel learners (animus.parallel): each rank samples its own actions and shuffles its own
         # minibatches, and rank 0 alone writes the run.
-        self.ranks = Ranks(config.rank, config.ranks, config.dist_address, config.resolved_train_device())
+        self.ranks = Ranks(config.rank, config.ranks, config.dist_address, config.resolved_train_device(),
+                           iface=config.dist_iface, timeout=config.dist_timeout)
         leader = self.ranks.leader
         seed_everything(config.seed + config.rank)
 
@@ -422,7 +423,10 @@ class TrainingRun:
             try:
                 self.resume_path = resume_checkpoint_path(self.run_dir)
             except FileNotFoundError as error:
-                raise SystemExit(str(error)) from None
+                # A learner on another machine has no run of its own: it starts from the leader's networks, which
+                # every rank takes once they are loaded.
+                if leader:
+                    raise SystemExit(str(error)) from None
         elif leader and (archived := archive_run(self.run_dir)):
             print(f"Archived the earlier {config.run_name} run to {archived}; training from scratch", flush=True)
         self.ranks.barrier()  # the others read the run directory only once the leader has archived it
@@ -432,13 +436,15 @@ class TrainingRun:
         if leader:
             (self.run_dir / "config.yaml").write_text(yaml.safe_dump(config.to_dict(), sort_keys=False))
 
-        # Every rank shares the host's sim (its own share of the pool); a cluster's workers are dealt round.
-        workers = config.cluster_sims[self.ranks.rank::self.ranks.world]
+        # Every learner of this machine shares its sim (its own share of the pool); the workers without a learner of
+        # their own are dealt round this machine's. A cluster's learners on other machines have their own sims.
+        local_rank, local_ranks = config.local()
+        workers = config.cluster_sims[local_rank::local_ranks]
         print(f"Connecting to {config.socket}{f' (rank {config.rank} of {config.ranks})' if config.ranks > 1 else ''}"
               " ...", flush=True)
-        self.env = (ClusterEnv([config.socket, *workers], rank=config.rank, ranks=config.ranks,
+        self.env = (ClusterEnv([config.socket, *workers], rank=local_rank, ranks=local_ranks,
                                timeout=config.cluster_timeout)
-                    if workers else ForgeEnv(config.socket, rank=config.rank, ranks=config.ranks,
+                    if workers else ForgeEnv(config.socket, rank=local_rank, ranks=local_ranks,
                                              device=config.resolved_rollout_device()))
         self.spec = spec = self.env.spec
         # Env steps count every rank's envs: budgets, schedules and evaluations are the run's, not a rank's.
@@ -533,6 +539,9 @@ class TrainingRun:
         self.update = 0
         self.env_steps = 0
         self._load_or_seed()
+        # Every rank carries on from the leader's counters (a learner on another machine resumed nothing), so they
+        # stop, evaluate and schedule together.
+        self.update, self.env_steps = self.ranks.broadcast((self.update, self.env_steps))
         # Every rank starts as the leader's networks: whatever each seeded or resumed from, one network.
         for module in (self.trainer.actor, self.trainer.critic, self.trainer.value_norm):
             if module is not None:

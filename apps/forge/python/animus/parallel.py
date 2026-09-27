@@ -20,7 +20,8 @@ import torch
 
 
 class Ranks:
-    def __init__(self, rank: int = 0, world: int = 1, address: str = "127.0.0.1:29500", device: str = "cpu"):
+    def __init__(self, rank: int = 0, world: int = 1, address: str = "127.0.0.1:29500", device: str = "cpu",
+                 iface: str = "", timeout: float = 300.0):
         self.rank = rank
         self.world = max(1, world)
         self.leader = rank == 0
@@ -36,6 +37,10 @@ class Ranks:
         host, _, port = address.rpartition(":")
         os.environ.setdefault("MASTER_ADDR", host or "127.0.0.1")
         os.environ.setdefault("MASTER_PORT", port or "29500")
+        # Across machines: gloo on the interface that reaches the others (the sim names it), not whichever one the
+        # hostname resolves to.
+        if iface:
+            os.environ.setdefault("GLOO_SOCKET_IFNAME", iface)
         # The GPUs' own collective library when every rank has a GPU of its own (it refuses two ranks on one card);
         # otherwise gloo, which reduces host copies -- slower, but it runs anywhere.
         own_gpus = (device.startswith("cuda") and torch.cuda.is_available()
@@ -44,14 +49,18 @@ class Ranks:
         if own_gpus:
             # NCCL's object collectives (broadcast, gather) stage through the current device: each rank's own.
             torch.cuda.set_device(torch.device(device))
-        dist.init_process_group(self.backend, rank=rank, world_size=self.world)
+        # A rank that is gone (a machine down, a learner killed) stops the others after `timeout` rather than leaving
+        # them in a collective for ever.
+        import datetime
+        dist.init_process_group(self.backend, rank=rank, world_size=self.world,
+                                timeout=datetime.timedelta(seconds=timeout))
         self._dist = dist
         # The update runs on the overlap worker thread while the run's own thread broadcasts and gathers: on one
         # group the two threads' collectives could meet in a different order on each rank and wait on each other
         # for ever. The trainer gets a group of its own, so each thread's collectives are ordered among themselves.
         update = object.__new__(Ranks)
         update.__dict__.update(self.__dict__)
-        update.group = dist.new_group(backend=self.backend)
+        update.group = dist.new_group(backend=self.backend, timeout=datetime.timedelta(seconds=timeout))
         update.update = update
         self.update = update
         print(f"Data-parallel: rank {rank} of {self.world} ({self.backend})", flush=True)

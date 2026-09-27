@@ -5539,6 +5539,29 @@ AnimusForge.Cluster.DataPort = 7701
 AnimusForge.Cluster.Advertise = ""
 
 #
+#    AnimusForge.Cluster.Learner
+#        Description: Worker: run a learner of its own on this machine's GPU, training on this sim as one
+#                     rank of the host's run: the host gives it a rank when it starts a scenario, and every
+#                     learner's networks are averaged once an update (mappo.rank_sync = weights; syncing
+#                     gradients every step is ~8 Gbit/s a link). Observations never cross the network. A
+#                     learner that fails stops the others (after Learner's dist_timeout at the most) and the
+#                     host restarts them all from the latest checkpoint, up to three times a scenario.
+#                     "auto": when the learner's torch sees a GPU here. 0: the host's learner trains on this
+#                     sim over the network instead, as before.
+#        Default:     "auto"
+
+AnimusForge.Cluster.Learner = "auto"
+
+#
+#    AnimusForge.Cluster.DistPort
+#        Description: Host: the TCP port every machine's learners meet on (torch.distributed). Cluster
+#                     machines run on the host's network (docker-compose.cluster.yml), so the learners'
+#                     own connections between machines are reachable too.
+#        Default:     7702
+
+AnimusForge.Cluster.DistPort = 7702
+
+#
 #    AnimusForge.Learner.LogFile
 #        Description: File the learner's stdout and stderr are appended to, relative to the directory of
 #                     worldserver.conf or absolute.

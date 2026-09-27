@@ -1,0 +1,25 @@
+# A cluster machine (AnimusForge.Cluster.Role host or worker): the worldserver on the host's network, so its cluster
+# ports (ControlPort 7700 on the host, DataPort 7701 on a worker, DistPort 7702 where the learners meet) and the
+# learners' own gloo connections are reachable from the other machines at this machine's address, which gloo needs
+# to be its real one. On a bridge network the other machines reach nothing.
+#
+# Use it on every machine of the cluster, beside this machine's own docker-compose.override.yml, in .env:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.cluster.yml
+#
+# then `./forge.sh --build` as usual. Open the cluster ports in the firewall between the machines (TCP 7700-7702, and
+# for gloo the ephemeral ports the learners connect on), and only there: nothing here is meant for a public network.
+
+services:
+  ac-worldserver:
+    network_mode: host
+    networks: !reset null
+    ports: !reset []
+    environment:
+      # The database is published on this machine's loopback (docker-compose.yml, DOCKER_DB_EXTERNAL_PORT).
+      AC_LOGIN_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_auth"
+      AC_WORLD_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_world"
+      AC_CHARACTER_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_characters"
+      # TensorBoard (6006) and the dashboard (8800) stay on this machine's loopback, as they are without host
+      # networking.
+      FORGE_LOCAL_ONLY: "1"

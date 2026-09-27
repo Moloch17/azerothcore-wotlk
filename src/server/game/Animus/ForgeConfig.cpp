@@ -347,6 +347,7 @@ void AnimusForge::ForgeConfig::Load()
     ClusterControlPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.ControlPort", 7700));
     ClusterDataPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.DataPort", 7701));
     ClusterAdvertise = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Advertise", "");
+    ClusterDistPort = uint16(sConfigMgr->GetOption<uint32>("AnimusForge.Cluster.DistPort", 7702));
     if (Cluster == ClusterRole::Worker && ClusterHost.empty())
     {
         LOG_ERROR("module.animus", "AnimusForge.Cluster.Role = worker needs AnimusForge.Cluster.Host; standalone");
@@ -412,7 +413,15 @@ void AnimusForge::ForgeConfig::Load()
 
     // Last: the mode needs the policy, the cluster role and the learner's paths, and adjusts Envs and LearnerArgs.
     GpuObserve = sConfigMgr->GetOption<bool>("AnimusForge.Gpu.Observe", false);
+    std::string learner = sConfigMgr->GetOption<std::string>("AnimusForge.Cluster.Learner", "auto");
+    std::transform(learner.begin(), learner.end(), learner.begin(), [](unsigned char c) { return std::tolower(c); });
+    bool const learnerOff = learner == "0" || learner == "false";
+    bool const learnerOn = learner == "1" || learner == "true";
+    // A worker that may run a learner of its own is counted GPUs like a host.
+    ClusterLearner = Cluster == ClusterRole::Worker && !learnerOff;
     ApplyGpuMode();
+    // After the GPU mode, which counted the GPUs "auto" asks about.
+    ClusterLearner = ClusterLearner && (learnerOn || !Gpus.empty());
 }
 
 uint32 AnimusForge::ForgeConfig::PhysicalCores()
@@ -486,7 +495,7 @@ void AnimusForge::ForgeConfig::ApplyGpuMode()
         16);
 
     // Only a learner of this sim's own needs the GPUs counted: a cluster worker runs none, and a local policy none.
-    bool const learnerHere = IsRemote() && Cluster != ClusterRole::Worker;
+    bool const learnerHere = IsRemote() && (Cluster != ClusterRole::Worker || ClusterLearner);
     Gpus.clear();
     std::string found = "not counted";
     // Counted in every mode: besides auto's choice, it puts the learners on the largest GPUs whatever torch numbers
@@ -516,7 +525,8 @@ void AnimusForge::ForgeConfig::ApplyGpuMode()
             found += Acore::StringFormat(" ({} smaller left out)", gpus.size() - Gpus.size());
     }
 
-    MultiGpu = learnerHere && (GpuModeSetting == GpuMode::Multi
+    // A worker's learner is one rank of the cluster's, on its first GPU.
+    MultiGpu = learnerHere && Cluster != ClusterRole::Worker && (GpuModeSetting == GpuMode::Multi
         || (GpuModeSetting == GpuMode::Auto && Gpus.size() > 1));
     LearnerRanks = MultiGpu ? std::clamp<uint32>(multiLearners ? multiLearners : uint32(Gpus.size()), 1, 16) : 1;
 

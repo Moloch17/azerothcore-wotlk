@@ -160,6 +160,18 @@ namespace AnimusForge
         std::string ClusterAdvertise;
         /// Host: the registered workers' sims, handed to the learner when it starts (not a config key).
         std::vector<std::string> ClusterSims;
+        /// AnimusForge.Cluster.Learner (worker): run a learner of its own on this machine's GPU, training on this sim,
+        /// its weights averaged with the host's (mappo.rank_sync = weights) -- "auto": when the GPU mode counted a GPU.
+        bool ClusterLearner = false;
+        /// AnimusForge.Cluster.DistPort (host): where every machine's learners meet (torch.distributed's rendezvous).
+        uint16 ClusterDistPort = 7702;
+        /// The learners of a cluster, as the host dealt them for the scenario being started (0 = only this machine's):
+        /// all of the cluster's, the global rank of this machine's first, where they meet ("address:port") and this
+        /// machine's network interface for it (gloo's GLOO_SOCKET_IFNAME).
+        uint32 DistWorld = 0;
+        uint32 DistRankBase = 0;
+        std::string DistAddress;
+        std::string DistIface;
         std::vector<std::string> Classes;       // AnimusForge.Classes; empty = every class
 
         /// AnimusForge.SpawnPoint.*: the instanceable map and position every env's bots start at.

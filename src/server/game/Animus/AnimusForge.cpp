@@ -20,6 +20,7 @@
 #include "GpuRuntime.h"
 #include "LayeredField.h"
 #include "ProbeBake.h"
+#include "CurriculumTuning.h"
 #include "EncoderSupport.h"
 #include "Encounters.h"
 #include "SeatEncoder.h"
@@ -74,13 +75,11 @@ namespace
                 ++fields, fieldBytes += size;
         }
 
-        // Every curriculum setting, and what a decision is: sorted key=value pairs, hashed (FNV-1a, stable across
-        // builds).
-        std::vector<std::string> keys = sConfigMgr->GetKeysByString("AnimusForge.Curriculum.");
-        std::sort(keys.begin(), keys.end());
-        std::string settings;
-        for (std::string const& key : keys)
-            settings += key + "=" + sConfigMgr->GetOption<std::string>(key, "", false) + ";";
+        // Every curriculum setting as it is in force -- written or left at its default, so two machines whose
+        // config files list different keys but agree on every value agree here -- and what a decision is, hashed
+        // (FNV-1a, stable across builds).
+        std::string const settings = boost::json::serialize(
+            Animus::Curriculum::CurriculumTuning::Load("AnimusForge.Curriculum.").Json());
         uint64 hash = 1469598103934665603ull;
         for (unsigned char c : settings)
             hash = (hash ^ c) * 1099511628211ull;
@@ -179,6 +178,11 @@ void AnimusForge::Forge::OnStartup()
         std::string const fingerprint = ClusterFingerprint(_config);
         LOG_INFO("module.animus", "Cluster fingerprint: {}", fingerprint);
         _cluster.SetFingerprint(fingerprint);
+        _cluster.SetLearnerCapable(_config.ClusterLearner);
+        if (_config.Cluster == ForgeConfig::ClusterRole::Worker)
+            LOG_INFO("module.animus", "Cluster: this worker {}", _config.ClusterLearner
+                ? "runs a learner of its own (AnimusForge.Cluster.Learner), one rank of the host's run"
+                : "runs its sim for the host's learner");
     }
     if (_config.Cluster == ForgeConfig::ClusterRole::Host)
         _cluster.Listen(_config.ClusterControlPort);
@@ -287,6 +291,7 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
     PollExport();
     PollCluster();
+
 
     // AnimusForge.Bench.AutoTune: a machine with no benchmark of its own CPU (a fresh copy of the project) tunes
     // itself before anything else, once per start.
@@ -616,15 +621,8 @@ bool AnimusForge::Forge::StartCurrent()
         {
             _cluster.Poll();
             _cluster.TakeRegistrations();       // the workers registered by now are in this scenario from the start
-            learnerConfig.ClusterSims = _cluster.WorkerSims();
-            _clusterSims = learnerConfig.ClusterSims;
-            _clusterStart = Acore::StringFormat("START {} 0 {}", entry.Scenario, _plan.Fast ? 1 : 0);
-            _cluster.Broadcast(Acore::StringFormat("START {} {} {}", entry.Scenario, entry.Resume ? 1 : 0,
-                _plan.Fast ? 1 : 0));
-            if (!learnerConfig.ClusterSims.empty())
-                LOG_INFO("module.animus", "Cluster: {} worker{} run{} {} too", learnerConfig.ClusterSims.size(),
-                    learnerConfig.ClusterSims.size() == 1 ? "" : "s", learnerConfig.ClusterSims.size() == 1 ? "s" : "",
-                    entry.Scenario);
+            _autoResumes = 0;
+            DealClusterLearners(learnerConfig, entry.Scenario, entry.Resume, false);
         }
 
         if (config.LearnerAutoStart)
@@ -924,6 +922,28 @@ void AnimusForge::Forge::PollCluster()
             else if (running)
                 LOG_INFO("module.animus", "Cluster: {} joins the next scenario this host starts", sim);
         }
+
+        // A cluster run whose learners span machines stops when any of them fails (a machine down, a learner killed:
+        // the others' collectives fail rather than hang). It starts again from its latest checkpoint with the workers
+        // there now, a few times a scenario -- a failure that repeats is a bug, not a machine, and waits for `forge
+        // resume`. Here rather than in OnUpdate: the world thread waits for the learner in Pump, which polls this.
+        if (_state == State::Training && _clusterLearners && _learnerStarted && !_learner.IsRunning()
+            && !_server.HasClient() && _learner.FailedUnexpectedly())
+        {
+            if (_autoResumes < 3)
+            {
+                ++_autoResumes;
+                LOG_WARN("module.animus", "Cluster: {}'s learners stopped (a rank failed); restarting them from the "
+                    "latest checkpoint ({} of 3)", _current, _autoResumes);
+                CommandResume({}, LogInfo);
+            }
+            else if (_autoResumes == 3)
+            {
+                ++_autoResumes;
+                LOG_ERROR("module.animus", "Cluster: {}'s learners failed three times; `forge resume` restarts them, "
+                    "`forge cancel` stops the plan", _current);
+            }
+        }
         return;
     }
 
@@ -951,15 +971,27 @@ void AnimusForge::Forge::PollCluster()
         unsigned fast = 0;
         if (std::sscanf(order->c_str(), "START %127s %u %u", scenario, &resume, &fast) >= 1)
         {
+            // A rank of the cluster's learners, for a worker that runs one of its own.
+            ClusterRank rank;
+            if (char const* at = std::strstr(order->c_str(), " rank="))
+            {
+                char dist[128] = {};
+                if (std::sscanf(at, " rank=%u world=%u dist=%127s", &rank.Rank, &rank.World, dist) == 3)
+                    rank.Address = dist;
+            }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
-            if (_state != State::Idle && _current == scenario && _plan.Fast == (fast != 0) && !_clusterOrder)
+            // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
+            if (_state != State::Idle && _current == scenario && _plan.Fast == (fast != 0) && !_clusterOrder
+                && _request != Request::Cancel)
             {
                 LOG_INFO("module.animus", "Cluster: the host orders {}, which this worker is running already",
                     scenario);
                 continue;
             }
-            LOG_INFO("module.animus", "Cluster: the host orders {}{}", scenario, fast ? " (fast)" : "");
-            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0);
+            LOG_INFO("module.animus", "Cluster: the host orders {}{}{}", scenario, fast ? " (fast)" : "",
+                rank.World > 1 ? Acore::StringFormat(", with this machine's learner as rank {} of {}", rank.Rank,
+                    rank.World) : "");
+            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank);
             if (_state != State::Idle)
                 _request = Request::Cancel;
         }
@@ -973,7 +1005,62 @@ void AnimusForge::Forge::PollCluster()
     }
 }
 
-AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast) const
+void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume,
+    bool restart)
+{
+    std::string const start = Acore::StringFormat("START {} {} {}", scenario, resume ? 1 : 0, _plan.Fast ? 1 : 0);
+    _clusterStart = Acore::StringFormat("START {} 0 {}", scenario, _plan.Fast ? 1 : 0);
+
+    // A worker with a learner of its own trains on its own sim, as one more rank of this run's learners, their
+    // networks averaged once an update; the others' sims are this machine's learners' to train on.
+    std::vector<ClusterLink::WorkerInfo> learners;
+    learnerConfig.ClusterSims.clear();
+    learnerConfig.DistWorld = 0;
+    for (ClusterLink::WorkerInfo const& worker : _cluster.RegisteredWorkers())
+    {
+        if (worker.Learner && learnerConfig.LearnerAutoStart && !worker.HostAddress.empty())
+            learners.push_back(worker);
+        else
+        {
+            learnerConfig.ClusterSims.push_back(worker.Sim);
+            // A restart only restarts learners: these sims carry on for the new one.
+            if (!restart)
+                _cluster.SendTo(worker.Sim, start);
+        }
+    }
+    _clusterSims = learnerConfig.ClusterSims;
+    _clusterLearners = uint32(learners.size());
+
+    if (!learners.empty())
+    {
+        uint32 const local = std::max<uint32>(1, learnerConfig.LearnerRanks);
+        // This machine as the workers reach it: where the ranks meet, and the interface gloo uses here.
+        std::string const address = learners.front().HostAddress;
+        learnerConfig.DistWorld = local + uint32(learners.size());
+        learnerConfig.DistRankBase = 0;
+        learnerConfig.DistAddress = Acore::StringFormat("{}:{}", address, _config.ClusterDistPort);
+        learnerConfig.DistIface = ClusterLink::InterfaceOf(address);
+        for (std::size_t index = 0; index < learners.size(); ++index)
+        {
+            // A worker ignores a START of the scenario it runs; STOP first makes it start again with its new rank.
+            if (restart)
+                _cluster.SendTo(learners[index].Sim, "STOP");
+            _cluster.SendTo(learners[index].Sim, Acore::StringFormat("{} rank={} world={} dist={}", start,
+                local + index, learnerConfig.DistWorld, learnerConfig.DistAddress));
+        }
+        LOG_INFO("module.animus", "Cluster: {} worker learner{} join{} this run ({} learners in all, meeting at {}{})",
+            learners.size(), learners.size() == 1 ? "" : "s", learners.size() == 1 ? "s" : "",
+            learnerConfig.DistWorld, learnerConfig.DistAddress,
+            learnerConfig.DistIface.empty() ? "" : " on " + learnerConfig.DistIface);
+    }
+    if (!learnerConfig.ClusterSims.empty() && !restart)
+        LOG_INFO("module.animus", "Cluster: {} worker{} run{} {} for this machine's learner{}",
+            learnerConfig.ClusterSims.size(), learnerConfig.ClusterSims.size() == 1 ? "" : "s",
+            learnerConfig.ClusterSims.size() == 1 ? "s" : "", scenario, learnerConfig.LearnerRanks > 1 ? "s" : "");
+}
+
+AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast,
+    ClusterRank const& rank) const
 {
     // A fast run's scenarios are built from the fast profile (its classes, levels, envs): the host's learner refuses a
     // worker whose sim is not the same scenario as its own.
@@ -982,6 +1069,15 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
     config.LearnerAutoStart = false;
     config.SocketPath = Acore::StringFormat("tcp://0.0.0.0:{}", _config.ClusterDataPort);
     config.LearnerRanks = 1;        // a worker's sim is one rank's, whichever of the host's learners that is
+    // Or its own learner's, one rank of the cluster's (AnimusForge.Cluster.Learner), meeting the others at the host.
+    if (rank.World > 1 && _config.ClusterLearner && !rank.Address.empty())
+    {
+        config.LearnerAutoStart = true;
+        config.DistWorld = rank.World;
+        config.DistRankBase = rank.Rank;
+        config.DistAddress = rank.Address;
+        config.DistIface = ClusterLink::InterfaceOf(_cluster.LocalAddress());
+    }
 
     Plan plan;
     plan.Policy = "remote";

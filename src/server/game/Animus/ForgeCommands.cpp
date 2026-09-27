@@ -546,10 +546,13 @@ bool AnimusForge::Forge::CommandResume(std::vector<std::string> scenarios, LineS
         std::error_code error;
         bool const resume = fs::exists(RunConfig().RunsDir() / _current / "latest.pt", error);
         _plan.Entries[_plan.Index].Resume = resume;
-        // As the scenario started it: as many ranks, and a cluster host's workers' sims.
+        // As the scenario started it: as many ranks, and a cluster host's workers' sims -- and the workers' own
+        // learners, dealt again among the workers there now, which restart with their new ranks.
         ForgeConfig learnerConfig = RunConfig();
         learnerConfig.LearnerRanks = PoolRanks(learnerConfig.LearnerRanks);
         learnerConfig.ClusterSims = _clusterSims;
+        if (_config.Cluster == ForgeConfig::ClusterRole::Host)
+            DealClusterLearners(learnerConfig, _current, resume, true);
         _learnerStarted = _learner.Start(learnerConfig, _current, resume);
         if (!_learnerStarted)
         {

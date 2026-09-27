@@ -69,7 +69,14 @@ if [[ -x "$VENV/bin/tensorboard" ]]; then
     # The runs of AnimusForge.OutputDir (set by docker-compose.yml), else the module's python/ directory.
     RUNS="${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs"
     mkdir -p "$RUNS"
-    "$VENV/bin/tensorboard" --logdir "$RUNS" --bind_all --port 6006 > "$LOGS/tensorboard.log" 2>&1 &
+    # Every interface inside the container's own network (published to the host's loopback); on host networking
+    # (docker-compose.cluster.yml) FORGE_LOCAL_ONLY keeps it on loopback rather than the LAN.
+    if [[ -n "${FORGE_LOCAL_ONLY:-}" ]]; then
+        tensorboard_bind=(--host 127.0.0.1)
+    else
+        tensorboard_bind=(--bind_all)
+    fi
+    "$VENV/bin/tensorboard" --logdir "$RUNS" "${tensorboard_bind[@]}" --port 6006 > "$LOGS/tensorboard.log" 2>&1 &
 else
     echo "TensorBoard is not installed in $VENV; skipping it."
 fi
@@ -89,7 +96,9 @@ if [[ -f "$DASHBOARD" ]]; then
     if [[ -r "$DASHBOARD_AUTH" ]]; then
         dashboard_soap=(--soap-auth "$DASHBOARD_AUTH")
     fi
-    python3 "$DASHBOARD" --host 0.0.0.0 --port 8800 \
+    dashboard_host=0.0.0.0
+    [[ -n "${FORGE_LOCAL_ONLY:-}" ]] && dashboard_host=127.0.0.1
+    python3 "$DASHBOARD" --host "$dashboard_host" --port 8800 \
         --runs "${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs" \
         --conf "$CONF/worldserver.conf" \
         ${dashboard_soap[@]+"${dashboard_soap[@]}"} > "$LOGS/dashboard.log" 2>&1 &

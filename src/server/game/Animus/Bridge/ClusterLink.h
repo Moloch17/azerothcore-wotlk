@@ -36,6 +36,9 @@ namespace AnimusForge
     ///   worker -> host   FINGERPRINT <key=value ...>   what it runs (SetFingerprint); the host registers it only
     ///                    when its own is the same, and otherwise answers
     ///   host -> worker   REFUSED <the keys that differ>   and closes; the worker tries again a minute later
+    ///   worker -> host   CAPS learner=<0|1>   whether it runs a learner of its own (AnimusForge.Cluster.Learner)
+    ///   host -> worker   START ... rank=<r> world=<n> dist=<address:port> iface=<name>   to such a worker: its
+    ///                    learner's rank among all of the cluster's, and where they meet (torch.distributed)
     ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1>
     ///   host -> worker   STOP
     ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast
@@ -61,6 +64,24 @@ namespace AnimusForge
         /// every machine; a worker with other code, other probe data or other curriculum settings would train the
         /// same policy on a different game, and nothing downstream could tell.
         void SetFingerprint(std::string fingerprint) { _fingerprint = std::move(fingerprint); }
+        /// Worker: whether it runs a learner of its own, which the host then gives a rank (sent as CAPS).
+        void SetLearnerCapable(bool capable) { _learnerCapable = capable; }
+
+        /// Host: a registered worker, as the host deals out learners: its sim, whether it runs a learner of its own,
+        /// and this machine's address as that worker reaches it (where its learner meets the host's).
+        struct WorkerInfo
+        {
+            std::string Sim;
+            bool Learner = false;
+            std::string HostAddress;
+        };
+        [[nodiscard]] std::vector<WorkerInfo> RegisteredWorkers() const;
+
+        /// Worker: this machine's address as the host sees it (the local end of the connection); empty while away.
+        [[nodiscard]] std::string LocalAddress() const;
+
+        /// The name of the network interface holding `address` (an IPv4 address of this machine), or empty.
+        [[nodiscard]] static std::string InterfaceOf(std::string const& address);
 
         /// Accept, register, read and reconnect: cheap, called every tick and while the world thread waits.
         void Poll();
@@ -98,6 +119,8 @@ namespace AnimusForge
             std::string Pending;    // host: the sim a REGISTER named, until its FINGERPRINT matches
             std::chrono::steady_clock::time_point PendingAt{};
             bool Refused = false;   // host: told REFUSED; closed at the end of this poll
+            bool Learner = false;   // host: the worker runs a learner of its own (its CAPS)
+            std::string LocalAddress;   // host: this machine's end of the connection
             std::string Address;    // host: where the connection came from
             std::string Progress;   // host: the worker's last PROGRESS fields
             std::chrono::steady_clock::time_point ProgressAt{};
@@ -118,6 +141,7 @@ namespace AnimusForge
         std::string _advertise;
         std::vector<std::string> _orders;
         std::string _fingerprint;
+        bool _learnerCapable = false;
         std::chrono::steady_clock::time_point _nextAttempt{};
     };
 }

@@ -136,6 +136,8 @@ services:
       # and would leave the learner on the CPU. Override for another card: PyPI is "", CPU only is
       # https://download.pytorch.org/whl/cpu
       ANIMUS_TORCH_INDEX_URL: ${ANIMUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/rocm6.4}
+      # The torch version (empty = the index's newest). Every machine of a cluster runs the same one.
+      ANIMUS_TORCH_VERSION: ${ANIMUS_TORCH_VERSION:-}
       # Where training writes runs/ and layouts/ (AnimusForge.OutputDir): data, kept out of the source tree.
       AC_ANIMUS_FORGE_OUTPUT_DIR: ${ANIMUS_FORGE_OUTPUT_DIR:-/azerothcore/var/animus-forge}
     ports:

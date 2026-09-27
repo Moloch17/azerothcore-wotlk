@@ -221,6 +221,19 @@ class TrainConfig:
     rank: int = 0
     ranks: int = 1
     dist_address: str = "127.0.0.1:29500"
+    # A cluster's learners span machines (AnimusForge.Cluster.Learner): rank/ranks are the cluster's, local_rank and
+    # local_ranks this machine's, which share its sim's envs (-1 / 0: the same as rank and ranks). dist_iface is the
+    # network interface gloo talks on here (GLOO_SOCKET_IFNAME), dist_timeout how long a collective waits for a rank
+    # that is gone before the run stops rather than hanging.
+    local_rank: int = -1
+    local_ranks: int = 0
+    dist_iface: str = ""
+    dist_timeout: float = 300.0
+
+    def local(self) -> tuple[int, int]:
+        """(this learner's index, how many learners) among the ones sharing its sim."""
+        return (self.rank if self.local_rank < 0 else self.local_rank,
+                self.ranks if self.local_ranks <= 0 else self.local_ranks)
     seed: int = 1
 
     total_env_steps: int = 5_000_000  # decisions x envs x agents
