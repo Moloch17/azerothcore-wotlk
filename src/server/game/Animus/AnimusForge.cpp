@@ -1041,8 +1041,12 @@ void AnimusForge::Forge::PollCluster()
             }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
             // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
+            // Never for a cluster rank: a rank's learner cannot rejoin its learners' group once the host has
+            // started them again -- the host's own learner is a new process and the group is a new one -- so it is
+            // started again with the rank this order deals. Left alone, it waited for a learner that had exited with
+            // the old group, and the host's rank 0 waited for it.
             if (_state != State::Idle && _current == scenario && _plan.Fast == (fast != 0) && !_clusterOrder
-                && _request != Request::Cancel)
+                && _request != Request::Cancel && rank.World <= 1)
             {
                 LOG_INFO("module.animus", "Cluster: the host orders {}, which this worker is running already",
                     scenario);
