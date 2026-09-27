@@ -185,6 +185,17 @@ def share(total: int, world: int, rank: int) -> tuple[int, int]:
     return first, total * (rank + 1) // world - first
 
 
+def weighted_share(total: int, weights: list[int], rank: int) -> tuple[int, int]:
+    """(first, count) of rank `rank`'s share of `total` things in proportion to `weights` (each rank's envs): a
+    cluster's evaluation seeds, so a small machine's sim plays as many as it can in the time the others take."""
+    whole = sum(max(0, weight) for weight in weights)
+    if whole <= 0:
+        return share(total, len(weights), rank)
+    before = sum(max(0, weight) for weight in weights[:rank])
+    first = total * before // whole
+    return first, total * (before + max(0, weights[rank])) // whole - first
+
+
 class Silent:
     """What a follower rank has instead of the run's writers (metrics, progress, evaluation logs): every call is a
     no-op, so the code that logs runs unchanged on every rank and only the leader's run is written."""

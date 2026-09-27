@@ -1331,9 +1331,10 @@ void AnimusForge::Forge::BenchTick()
 void AnimusForge::Forge::BenchPlanEnded()
 {
     // Phase 1 is over: the best few settings run again with the learner, which is what training actually costs.
-    // A cluster worker has no learner of its own (its sim serves the host's), so it is tuned on the sim alone.
+    // A cluster worker with no learner of its own (its sim serves the host's) is tuned on the sim alone; one that runs
+    // a learner (AnimusForge.Cluster.Learner) is timed with it, standalone, as a host is.
     if (!_benchLearnerPhase && _config.Bench.LearnerTop && _config.IsRemote()
-        && _config.Cluster != ForgeConfig::ClusterRole::Worker)
+        && (_config.Cluster != ForgeConfig::ClusterRole::Worker || _config.ClusterLearner))
     {
         std::vector<BenchTrial> best;
         for (BenchTrial const& trial : _benchTrials)

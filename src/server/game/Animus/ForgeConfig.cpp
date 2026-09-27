@@ -398,11 +398,6 @@ void AnimusForge::ForgeConfig::Load()
 
     Bench.OutputDir = (fs::path(OutputDir) / "bench").lexically_normal().string();
 
-    AutoBenchGrids();
-    if (Bench.Threads.empty())
-        Bench.Threads.push_back(std::max<uint32>(1, sConfigMgr->GetOption<uint32>("MapUpdate.Threads", 1)));
-    if (Bench.Envs.empty())
-        Bench.Envs.push_back(Envs);
 
     SpawnMapId = sConfigMgr->GetOption<uint32>("AnimusForge.SpawnPoint.MapId", 560);
     SpawnPosition.Relocate(
@@ -422,6 +417,13 @@ void AnimusForge::ForgeConfig::Load()
     ApplyGpuMode();
     // After the GPU mode, which counted the GPUs "auto" asks about.
     ClusterLearner = ClusterLearner && (learnerOn || !Gpus.empty());
+
+    // The benchmark's grids last: they depend on whether this machine runs a learner (the GPU mode, the cluster).
+    AutoBenchGrids();
+    if (Bench.Threads.empty())
+        Bench.Threads.push_back(std::max<uint32>(1, sConfigMgr->GetOption<uint32>("MapUpdate.Threads", 1)));
+    if (Bench.Envs.empty())
+        Bench.Envs.push_back(Envs);
 }
 
 uint32 AnimusForge::ForgeConfig::PhysicalCores()
@@ -452,12 +454,13 @@ void AnimusForge::ForgeConfig::AutoBenchGrids()
 
     if (Bench.AutoThreads)
     {
-        // Half to all of the physical cores (the world thread is one of the pool's), and on a machine whose learner
-        // runs elsewhere -- a cluster worker -- into the SMT siblings too, since nothing else wants them.
+        // Half to all of the physical cores (the world thread is one of the pool's), and on a machine with no
+        // learner of its own -- a cluster worker whose sim the host's learner trains on -- into the SMT siblings
+        // too, since nothing else wants them.
         std::set<uint32> threads;
         for (uint32 quarters : { 2u, 3u, 4u })
             threads.insert(std::max<uint32>(1, cores * quarters / 4 - 1));
-        if (Cluster == ClusterRole::Worker && logical > cores)
+        if (Cluster == ClusterRole::Worker && !ClusterLearner && logical > cores)
             threads.insert(std::min(logical - 1, cores + cores / 2));
         Bench.Threads.assign(threads.begin(), threads.end());
     }

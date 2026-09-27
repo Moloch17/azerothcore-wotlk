@@ -46,7 +46,7 @@ from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
 from .progress import ProgressWriter
 from . import protocol
-from .parallel import Ranks, Silent, share
+from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
 
@@ -449,6 +449,9 @@ class TrainingRun:
         self.spec = spec = self.env.spec
         # Env steps count every rank's envs: budgets, schedules and evaluations are the run's, not a rank's.
         self.run_envs = int(self.ranks.sum(torch.tensor(spec.num_envs)))
+        # Every rank's envs, on every rank: evaluations share their seeds out in proportion (weighted_share).
+        self.rank_envs = self.ranks.broadcast(self.ranks.gather(spec.num_envs)) if self.ranks.active \
+            else [spec.num_envs]
         if leader:
             (self.run_dir / "spec.json").write_text(json.dumps(asdict(spec), indent=2))
 
@@ -767,7 +770,7 @@ class TrainingRun:
     def _evaluate_share(self, choose_actions, episodes: int, seed: int, **options) -> EvalResult | None:
         """run_evaluation on this rank's run of the seeds; on the leader, every rank's results merged (None on the
         others). Alone, the whole evaluation."""
-        first, count = share(episodes, self.ranks.world, self.ranks.rank)
+        first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None, **options)
         parts = self.ranks.gather(result)

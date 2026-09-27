@@ -141,3 +141,12 @@ def test_weights_average_over_the_ranks(tmp_path):
     for rank in range(2):
         for tensor in torch.load(tmp_path / f"weights{rank}.pt"):
             torch.testing.assert_close(tensor, torch.full_like(tensor, 1.5))
+
+
+def test_weighted_share_splits_in_proportion():
+    from animus.parallel import weighted_share
+
+    parts = [weighted_share(2048, [192, 32, 32], rank) for rank in range(3)]
+    assert parts[0][0] == 0 and sum(count for _, count in parts) == 2048
+    assert [first for first, _ in parts] == [0, parts[0][1], parts[0][1] + parts[1][1]]
+    assert parts[0][1] == 2048 * 192 // 256
