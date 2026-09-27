@@ -1323,6 +1323,27 @@ transport" and geometry-probe sections, and any 50k+ stage8 figure) is inflated.
 The plan's measured order has run to its gates (see "Finishing the plan by its gates"): steps 3-4 and Phases 6-8 are
 left unbuilt because nothing they replace is on the critical path. Open items, most useful first:
 
+**Second round (2026-09-27, 085fab8b9..ae0d19cbc), everything on the list worked:**
+- Learner (the stage8 wall, update ~0.58 s of GPU a 128-decision rollout; the system is bound by it): overlapped vs
+  serial 39,181 vs 25,931 (acting alone ~0.4 ms, so contention is the update itself); TunableOp -6% update time,
+  not worth its tuning; `mappo.update_precision: bf16` -18% update and 44,655 env steps/s but learns worse (12-minute
+  fine-tune A/B: evaluations 10.35/13.41 vs fp32 14.20/15.36 at 10M/20M), so fp32 stays. What is left for it is
+  research: the update is ~50k launches, host and GPU about even (0.4-0.6 s each); a grouped/dense adapter GEMM for
+  the update (the per-layout matmuls get tiny-tile kernels) or a graph-capturable update.
+- Stage1: probe misses (3.2% of reads, grids with no table) fell back to the old live probe, ~1 ms each, the map
+  tasks' spikes and another observation; they now use the grid's layered field (tables + fields both on with
+  Probe.Source baked): 31,476 -> 33,668. Fields baked for every scenario (785 grids).
+- Stage2: Characters.KeepCasting keeps a reusable character's class and build: reset thread 8.3 -> 4.0 ms, map
+  update 4.2 -> 3.3 ms a decision; the learner is its wall now (29,728).
+- 48 replicas instead of 32: +2% (noise); the long map tasks were events, not load. Pathfound moves cost 0.02 ms
+  (stage1) / 0.06 ms (stage2) each, ~2-3 ms of thread time a decision; a straight-line move would change how seats
+  follow the ground, so left.
+- Geometry probe re-measured honestly: -2.5% on stage1 and stage8, so baked stays the default.
+- Loose ends: fatal signals print their stack before the core; the model manifest records its ground probe; the
+  folded module's conf is layered over worldserver.conf (nothing needed); the stage-names test passes.
+- The parked device phases stay parked by measurement: observation is ~0.5 ms of wall, the learner is the wall.
+
+
 1. **The learner is the wall on stage8** (2.5 ms a decision): whole updates contend with the rollout for the GPU.
    First probe, one measure run: end-to-end steps/s with `mappo.overlap_updates` off, to split contention from acting
    latency. Then the plan's old note: MIOpen's per-timestep GRU launches (a persistent RNN kernel is the research
