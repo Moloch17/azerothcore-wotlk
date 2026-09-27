@@ -1067,6 +1067,45 @@ fields are the natural input for the probe kernel (task #3) -- 0.37 MB/grid fits
 geometry probe fresh every decision and free on the CPU; on the CPU, a compact cell index (uint8 counts + block
 offsets) would cut the 1.1 MB/grid First array and the cache misses.
 
+### Finishing the plan by its gates (2026-09-26, 34b0645dc..2a3314b55)
+
+**The map update's wall was the resets' objective search.** Instrumented (`map tasks` now says when the last task
+started and ended and the handed-on work; `forge tasks` lists every map's tasks): on stage1 the replicas' tasks were
+even (6 envs, 0.36-0.59 ms), the last ended at 1.54 ms, but the update's wall was 2.62 -- the resets a map hands on
+after its task, ~1.7 ms an episode, 1.2 of it the objective search (20 tries, 21 navmesh paths, one after another).
+Its tries now run at once on the free map threads (`MapUpdater::ParallelFor`), each on its own thread's navmesh query
+(`MMapData::ThreadQueryScope` -- Phase 8's per-worker dtNavMeshQuery, scoped); a search 1.04 -> 0.32 ms, the map update
+2.62 -> 1.69-1.90 ms.
+
+**A learner bug had been inflating every measurement since protocol 15.** The decision's device inputs (obs, state,
+mask: views of the sim's buffers) were copied into the decision on the default stream, behind the overlapped update,
+after the sim had written the next step: every action was trained against the observation and mask that followed it.
+approx_kl ran in the millions from the fourth update of every fast run, and target_kl cut every update to ~1.1 epochs
+(3.5-3.9 when whole). Fixed in b619d7923 (straight into the rollout buffer on the rollout stream, from the rollout
+graph's own copies). The runs in shared/runs predate protocol 15 and are sane. So "learner 3.1 -> 1.0 ms" and the
+50-54k stage8 figures above were cut-short updates on corrupted data.
+
+**Honest numbers, whole updates** (192 envs, half-batch, 32 replicas):
+
+| stage | device transport (Gpu.Observe 1) | host transport (Gpu.Observe 0) | per decision (host) |
+|---|---|---|---|
+| stage8_duel | 36,657 | 39,181 | 4.9 ms = world 2.1, sim 0.3, learner 2.5 |
+| stage1_move | 28,777 | 30,489 | 6.3 ms = world 3.9, sim 0.4, learner 2.0 |
+
+So Gpu.Observe is off by default now: the sim's copies into device memory cost more than the learner's upload
+saved. It pays only once the observation is produced on the device (step 4 below).
+
+**Gates, re-read against these numbers:**
+- Step 3 (hot-state mirror) and step 4 (observation kernel, inference on device tensors): observe is 3.4-3.9 ms of
+  thread time, ~0.5 ms of wall over 8 map threads -- not the wall on either stage. Not built.
+- Phase 6 (device terrain/BVH/navmesh, movement kernels) and Phase 7 (combat tables): nothing they replace is on the
+  critical path (object update ~1 ms thread, core-block per-action features ~0.8 ms thread). Not built.
+- Phase 8 (grid-block checkerboard): the longest map task is 1.2 ms against a 0.35 ms mean, but it is episodic
+  spikes (a reset, a route plan), not one replica's steady load; the replicas already split the continent. Its one
+  piece that paid -- the per-worker navmesh query -- is built, scoped to the work that needed it.
+- What is on the critical path: the learner (2.0-2.5 ms a decision, now with whole updates contending for the GPU)
+  and, on stage1, the two map updates a decision (~1.9 ms each: the tasks' spikes plus the reset tail).
+
 ## Phase 5: hot-state mirror (CPU) and the device runtime
 
 **Hot state.** `src/server/game/Forge/HotState.{h,cpp}` per `Map`: dense index assigned in `AddToMap`,
