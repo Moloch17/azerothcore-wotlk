@@ -5266,34 +5266,29 @@ AnimusForge.TravelPools = 0
 #
 #    AnimusForge.Probe.Source
 #        Description: Where the move block's ground probe (reach, step, shore and burns along
-#                     sixteen rays, and the clearance around the seat) comes from.
-#                     baked reads it every decision from the tables shipped in AnimusForge.Probe.Dir
-#                     (2 yd cells, every navmesh floor, 16 compass bearings, a half-yard march, three
-#                     rays a bearing). A running server never bakes: the tables are made ahead of time
-#                     with `forge probestage <scenario>` and shipped. Where a grid has no table the
-#                     probe is worked out from the grid's layered field when one is shipped (as geometry
-#                     below does, on its cadence), else measured live the old way (slowly); `forge
-#                     status` counts how often, and the grid is logged once so it can be baked and
-#                     shipped.
-#                     geometry works the same dense probe out at the seat's own place and facing from
-#                     the layered fields shipped in AnimusForge.Probe.Dir (per 1 yd cell every floor,
-#                     the room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made
-#                     with `forge fieldstage <scenario>`), whenever the seat has moved three yards,
-#                     turned 22.5 degrees or half a second has passed. When it is worked out it is
-#                     closer to the live dense probe than a table, at a fifth of the size; but it is
-#                     read up to one refresh stale where a table is read fresh every decision, so at
-#                     decision time the two are about as accurate. It costs about 40-70 us a refresh
-#                     where a table costs 1 us a decision (3-8% of steps/s). Where a grid has no field
-#                     the old probe is measured live, counted and logged as for the tables.
-#                     live measures the old five-cell probe at the seat instead, again whenever the
-#                     seat has moved three yards, turned 22.5 degrees or half a second has passed.
+#                     sixteen rays, and the clearance around the seat) and an airborne seat's flight
+#                     rays come from.
+#                     geometry works the dense probe out at the seat's own place and facing from the
+#                     layered fields shipped in AnimusForge.Probe.Dir (per 1 yd cell every floor, the
+#                     room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made with
+#                     `forge fieldstage <scenario>`, which covers every grid of the stage's maps),
+#                     whenever the seat has moved three yards, turned 22.5 degrees or half a second
+#                     has passed; the flight rays are read from the same fields every decision. There
+#                     is no live stand-in: a seat on a grid with no field keeps its last reading, and
+#                     `forge status` counts how often and the grid is logged once so it can be baked
+#                     and shipped. A running server never bakes.
+#                     baked reads the probe every decision from the tables shipped in
+#                     AnimusForge.Probe.Dir (2 yd cells, 16 compass bearings; `forge probestage`)
+#                     and works it out from the fields where a grid has no table, as geometry does.
+#                     live measures the old five-cell probe and the flight rays against the live
+#                     geometry instead.
 #                     baked and geometry are one observation; live is a different one: a policy
 #                     trained on one should be fine-tuned before it is used with the other.
-#        Default:     "baked"
-#                     "geometry"
+#        Default:     "geometry"
+#                     "baked"
 #                     "live"
 
-AnimusForge.Probe.Source = "baked"
+AnimusForge.Probe.Source = "geometry"
 
 #
 #    AnimusForge.Probe.Dir
@@ -5439,6 +5434,17 @@ AnimusForge.Learner.Cpus = "auto"
 #                     1 - (Enabled)
 
 AnimusForge.Gpu.Observe = 0
+
+#
+#    AnimusForge.ObserveAfterJoin
+#        Description: Hold each map's observation back until every map task of the update has
+#                     joined, then run them as map work again: the barrier a device kernel over every
+#                     seat would need. A measurement switch: on stage8_duel it cost about 0.07 ms a
+#                     map update (43,162 against 42,977 env steps/s).
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+AnimusForge.ObserveAfterJoin = 0
 
 #
 #    AnimusForge.Gpu.Mode

@@ -710,6 +710,27 @@ namespace Animus::Curriculum::LayeredField
         return range;
     }
 
+    bool Open(View const& view, float x, float y, float z)
+    {
+        Span const span = SpanAt(view, x, y);
+        if (!span.OnGrid)
+            return true;        // a grid with no field: nothing known to be solid there
+        for (Interval const* interval = span.Begin; interval != span.End; ++interval)
+            if (interval->OpenAbove() && z >= interval->Floor() && z < interval->Floor() + interval->Headroom())
+                return true;
+        return false;
+    }
+
+    float FlightReach(View const& view, float x, float y, float z, float heading, float range, float pitch)
+    {
+        float const dx = std::cos(heading);
+        float const dy = std::sin(heading);
+        for (float along = pitch; along <= range; along += pitch)
+            if (!Open(view, x + along * dx, y + along * dy, z))
+                return along - pitch;
+        return range;
+    }
+
     float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch)
     {
         float const dx = std::cos(heading);
@@ -1097,7 +1118,7 @@ namespace Animus::Curriculum::LayeredField
                 std::lock_guard guard(logged);
                 if (warned.emplace(mapId, gridX, gridY).second)
                     LOG_WARN("module.animus", "Ground probe: no field for map {} grid ({}, {}) in {}: seats on it or "
-                        "near enough to see into it are measured live, slowly. Bake it with `forge fieldstage` and "
+                        "near enough to see into it keep their last reading. Bake it with `forge fieldstage` and "
                         "ship the file.", mapId, gridX, gridY, g_dir);
             }
         }

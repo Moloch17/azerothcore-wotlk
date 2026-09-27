@@ -115,6 +115,10 @@ namespace Animus::Curriculum::LayeredField
     /// Yards of open air ahead along `heading` from (x, y, z), level, out to `range`, looked at every `pitch`.
     float FlightReach(Grid const& grid, float x, float y, float z, float heading, float range, float pitch);
 
+    /// The same across the grids of a view, as a march crosses into a neighbour: a missing grid is open air.
+    bool Open(View const& view, float x, float y, float z);
+    float FlightReach(View const& view, float x, float y, float z, float heading, float range, float pitch);
+
     /// The same, measured live: the static collision's first hit along the line, or the terrain rising above it.
     float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch);
 

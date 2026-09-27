@@ -568,11 +568,29 @@ void AnimusForge::Forge::HoldWhilePaused()
 
 void AnimusForge::Forge::ReportProbeTables(std::string const& scenario) const
 {
-    // Only counted, never made: the tables ship with the forge, and a grid without one is measured live.
+    // Only counted, never made: the tables and fields ship with the forge.
     namespace Bake = Animus::Curriculum::ProbeBake;
+    namespace Field = Animus::Curriculum::LayeredField;
     Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
-    if (!Bake::Store::Baked() || !stage)
+    if (!stage)
         return;
+    if (!Bake::Store::Baked())
+    {
+        if (!Field::Store::Enabled())
+            return;
+        std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage, true);
+        uint32 shipped = 0;
+        std::error_code error;
+        for (Bake::GridRef const& grid : grids)
+            shipped += std::filesystem::exists(Field::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
+        if (shipped == grids.size())
+            LOG_INFO("module.animus", "Ground probe for {}: all {} grids have layered fields", scenario, grids.size());
+        else
+            LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have layered fields in {}; seats on the "
+                "others keep their last reading. Bake them with `forge fieldstage {}` and ship the files.", scenario,
+                shipped, grids.size(), Bake::Store::Dir(), scenario);
+        return;
+    }
 
     std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage);
     uint32 shipped = 0;
@@ -582,8 +600,8 @@ void AnimusForge::Forge::ReportProbeTables(std::string const& scenario) const
     if (shipped == grids.size())
         LOG_INFO("module.animus", "Ground probe for {}: all {} grids have tables", scenario, grids.size());
     else
-        LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have tables in {}; seats on the others use the "
-            "live probe. Bake them with `forge probestage {}` and ship the files.", scenario, shipped, grids.size(),
+        LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have tables in {}; seats on the others read the "
+            "layered fields. Bake them with `forge probestage {}` and ship the files.", scenario, shipped, grids.size(),
             Bake::Store::Dir(), scenario);
 }
 
@@ -1756,7 +1774,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
         uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
         sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} where no table "
-            "answered ({:.1f}%: worked out from a field where there is one, else measured live); ", reads,
+            "answered ({:.1f}%: worked out from a field where there is one); ", reads,
             Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0), fallbacks,
             reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
     }
@@ -1766,7 +1784,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
         uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
         sim.ProbeNote += Acore::StringFormat("geometry: {} probes worked out, {} fields held ({:.0f} MB, {} files "
-            "read), {} measured live where no field answered ({:.1f}%)", reads, Store::Loaded(),
+            "read), {} with no field, the last reading held ({:.1f}%)", reads, Store::Loaded(),
             double(Store::Bytes()) / (1024.0 * 1024.0), Store::FileReads.load(std::memory_order_relaxed), fallbacks,
             reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
     }

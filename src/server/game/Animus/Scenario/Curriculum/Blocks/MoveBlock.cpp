@@ -353,7 +353,10 @@ namespace
             else
                 Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
         }
-        if (!fromTable && !fromField)
+        // With the fields on there is no live stand-in: a seat on a grid with no field keeps the reading it had
+        // (counted as a fallback, and the grid logged once) until it is on one again. Only Probe.Source = live
+        // measures the old probe.
+        if (!fromTable && !fromField && !Field::Store::Enabled())
             RefreshLive(probe, map, query, at, facing, partMark);
 
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
@@ -919,16 +922,34 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // before something solid (a collision ray at the seat's altitude, and the terrain rising above it), in
             // the reach's slot, and in the step's whether climbing FLIGHT_CLIMB higher opens the way -- positive
             // where it does, negative where it closes it. OBS_AIRBORNE tells the policy which meaning it is
-            // reading. It is measured live every decision: ~1.3 us a ray, and exact, where the ground probe needed
-            // a table to be affordable. A swimmer's rays stay open, as they were.
+            // reading. With the layered fields on it is read from them every decision, as the ground probe is;
+            // with Probe.Source = live it is measured live (~1.3 us a ray). A seat over a grid with no field sees
+            // open air. A swimmer's rays stay open, as they were.
             bool const flying = !bot->IsInWater();
             Map* map = bot->GetMap();
             float const z = bot->GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
+            bool const fields = LayeredField::Store::Enabled();
+            LayeredField::Store::Neighbourhood around;
+            bool const fromField = flying && map && fields
+                && LayeredField::Store::Gather(map->GetId(), bot->GetPositionX(), bot->GetPositionY(), around);
+            if (flying && map && fields)
+                (fromField ? LayeredField::Store::Reads : LayeredField::Store::Fallbacks)
+                    .fetch_add(1, std::memory_order_relaxed);
             for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
             {
                 float reach = 1.0f;
                 float climb = 0.0f;
-                if (flying && map)
+                if (fromField)
+                {
+                    float const heading = RayHeading(facing, ray);
+                    float const level = LayeredField::FlightReach(around.View, bot->GetPositionX(),
+                        bot->GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::FlightReach(around.View, bot->GetPositionX(),
+                        bot->GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    reach = level / MARCH_MAX;
+                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
+                }
+                else if (flying && map && !fields)
                 {
                     float const heading = RayHeading(facing, ray);
                     float const level = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),

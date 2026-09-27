@@ -149,8 +149,9 @@ namespace Animus::Curriculum::ProbeBake
 
     /// The grids a stage's seats can stand on: on a continent the grids under its spawn points and the neighbours
     /// within reach of an objective and a march; on an instanced map -- the stage's own, or its instance ladder's
-    /// dungeons and raids -- every grid the map's navmesh covers.
-    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage);
+    /// dungeons and raids -- every grid the map's navmesh covers. With `wholeMaps` a continent is covered whole too,
+    /// as the layered fields are: a seat can walk anywhere on it, and a field is small enough to ship them all.
+    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage, bool wholeMaps = false);
 
     /// The live stand-in where no table answers: the same dense wedge measurement the bake makes, at the seat.
     Reading SenseLive(Map* map, dtNavMeshQuery const* query, GroundSense::Origin const& at, float facing);

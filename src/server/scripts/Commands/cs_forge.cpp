@@ -140,8 +140,8 @@ namespace
                 "of the grid holding (x, y) in memory; its size, and the ground probe and flight readings worked out "
                 "from it against live ones (ground within radius of (x, y) if given)" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
-                "geometry reads for this scenario to AnimusForge.Probe.Dir: the probe tables' grids and their "
-                "neighbours (kept if already baked, unless rebake)" });
+                "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
+                "their neighbours (kept if already baked, unless rebake)" });
             table.AddRow({ "forge tasks", "every map's update task since the last `forge tasks`: how many ran, "
                 "their mean and longest time, and the envs on the map, slowest first" });
             table.AddRow({ "forge route <map> <x> <y> <z> <x> <y> <z>", "plan a way between two points and print "
@@ -370,8 +370,8 @@ namespace
         }
 
         /// `forge fieldstage <scenario> [rebake]`: the layered fields AnimusForge.Probe.Source = geometry reads for
-        /// this scenario -- the grids `forge probestage` bakes tables for, and their neighbours, since a probe near a
-        /// grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is written too,
+        /// this scenario -- every grid of its maps' navmeshes, continents whole, and their neighbours, since a probe
+        /// near a grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is written too,
         /// a few bytes, so that a missing file means a grid not baked and never "no floor here".
         /// Static geometry only, as for the tables; a grid takes a fraction of a second.
         static bool HandleFieldStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
@@ -387,14 +387,14 @@ namespace
             bool const rebake = mode && *mode == "rebake";
 
             std::set<Bake::GridRef> grids;
-            for (Bake::GridRef const& grid : Bake::StageGrids(*stage))
+            for (Bake::GridRef const& grid : Bake::StageGrids(*stage, true))
                 for (int32 dx = -1; dx <= 1; ++dx)
                     for (int32 dy = -1; dy <= 1; ++dy)
                         // Within the world's 64 x 64 grids: a map at its edge has no neighbour past it.
                         if (std::abs(2 * (grid.X + dx) + 1) < MAX_NUMBER_OF_GRIDS
                             && std::abs(2 * (grid.Y + dy) + 1) < MAX_NUMBER_OF_GRIDS)
                             grids.insert(Bake::GridRef{ grid.MapId, grid.X + dx, grid.Y + dy });
-            handler->PSendSysMessage("{}: {} grids (the probe tables' grids and their neighbours), into {}", scenario,
+            handler->PSendSysMessage("{}: {} grids (every grid of its maps' navmeshes and their neighbours), into {}", scenario,
                 grids.size(), Bake::Store::Dir());
             uint32 baked = 0;
             uint32 kept = 0;

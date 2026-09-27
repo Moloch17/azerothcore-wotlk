@@ -602,7 +602,7 @@ namespace Animus::Curriculum::ProbeBake
         return int32(std::floor(coordinate / SIZE_OF_GRIDS));
     }
 
-    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage)
+    std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage, bool wholeMaps)
     {
         std::vector<Position> points = stage.SpawnPoints;
         points.insert(points.end(), stage.HeldOutSpawnPoints.begin(), stage.HeldOutSpawnPoints.end());
@@ -624,7 +624,7 @@ namespace Animus::Curriculum::ProbeBake
             MapEntry const* entry = sMapStore.LookupEntry(mapId);
             if (!entry)
                 continue;
-            if (!entry->Instanceable())
+            if (!entry->Instanceable() && !wholeMaps)
             {
                 if (mapId == stage.MapId)
                     for (Position const& point : points)
@@ -912,7 +912,7 @@ namespace Animus::Curriculum::ProbeBake
             // Once a grid: it is remembered as missing, so this is the only time it is asked about.
             if (!loaded)
                 LOG_WARN("module.animus", "Ground probe: no table for map {} grid ({}, {}) in {}: seats there are "
-                    "measured live, slowly. Bake it with `forge probestage` and ship the file.", mapId,
+                    "worked out from its field. Bake it with `forge probestage` and ship the file.", mapId,
                     std::get<1>(key), std::get<2>(key), g_dir);
 
             // Over the cap: let the least recently read tables go. A seat still reading one keeps its own pointer.
