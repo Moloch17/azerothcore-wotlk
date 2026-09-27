@@ -1306,32 +1306,33 @@ thousands of bots puts that on the critical path:
 - Note: memory `feedback-no-smoke-until-stages-added` currently forbids `forge run/start`; the user
   decides when the smoke runs begin.
 
-## Resume here (2026-09-25, third session)
+## Resume here (2026-09-26, after the gates)
 
-State: `forge` is pushed to origin (Moloch17/azerothcore-wotlk). The worldserver runs standalone at 192 envs,
-half-batch, 7 map threads, 16 replicas (the user's decision, ninth measurement: 45,460 env steps/s with the
-learner), GPU mode auto (single on this machine), stage8_duel chunk_length 32, rollout graphs on. The user kept
-192 envs (320 would give 52,858). The user's standing priorities: multithreading as fast and
-efficient as possible, as much as possible on the GPU; judge by end-to-end env steps/s with the learner attached.
-Ninth measurement: 45,460 env steps/s at 192 envs with the learner (session start: ~5,480 at 128).
+State: `forge` pushed (HEAD 9baac252d or later). 192 envs, half-batch, 32 continent replicas, 7 map workers + the
+world thread on cpus 0-7, GPU mode auto (single), Gpu.Observe off (host transport), Probe.Source baked,
+ResetOnMapThreads on. Honest whole-update numbers with the learner: stage8_duel 39,181 env steps/s (4.9 ms a decision
+= world 2.1, sim 0.3, learner 2.5), stage1_move ~30,500-31,100 (6.2 ms = world 3.7, sim 0.5, learner 2.0).
 
-Open items, most useful first:
+**Read before trusting any number in this file:** between protocol 15 and b619d7923 the learner trained every action
+against the next step's observation and mask; approx_kl was in the millions and target_kl stopped updates at ~1.1
+epochs. Every steps/s figure measured in that window (the "Step 2 and the transport", "Where the time is after the
+transport" and geometry-probe sections, and any 50k+ stage8 figure) is inflated. In a run's metrics.csv, epochs_run
+~1.1 or approx_kl > 10 marks a run that is not a valid measurement. Seeded evaluation episodes changed at 34b0645dc
+(the objective search draws every try first): evaluation baselines from before it are other episodes.
 
-1. **When the second GPU is fitted**: nothing to set (GPU mode auto). Check the startup log says "GPU mode: multi
-   (auto): 2 learners, 384 envs (2 GPUs found ...)", run `forge fast stage8_duel`, check both learner logs say
-   `(nccl)` and `Updates on cuda:0` / `cuda:1`, then bench single vs multi (`forge bench` uses the mode in force;
-   Gpu.Mode single for the other side).
-2. Done: after the drop/rejoin and data-parallel changes, `forge bench` (7 threads, 8 replicas, half-batch, one
-   rank) gives 22,399 / 30,072 env steps/s with the learner at 128 / 192 envs (sim alone 43,797 / 53,350): the
-   seventh measurement's numbers, no regression.
-3. The update's remaining cost is MIOpen's per-timestep GRU launches; a persistent RNN kernel is the research
-   option (see "Using every core").
-4. Cluster: `forge bench` on the host alone; workers do not report progress to the host's console.
-5. The learner is pinned with sched_setaffinity(pid) right after posix_spawn: that pins the main thread only, and
-   torch's threads inherit it because Python starts them much later. If that ever races, prefix the argv with
-   `taskset -c <list>` instead.
-6. `tests/test_stage_names.py` fails on the 10 `apps/forge/models/*_companion.json` files (pre-existing, not
-   this plan's).
-7. Carried over from the first session: the folded-module config fix depends on an untracked directory
-   (`modules/<module>/conf`); the abort handler segfaults before its backtrace; the live worldserver.conf
-   predates the fold; `AnimusForge.Bench.Policy` is left at "random".
+The plan's measured order has run to its gates (see "Finishing the plan by its gates"): steps 3-4 and Phases 6-8 are
+left unbuilt because nothing they replace is on the critical path. Open items, most useful first:
+
+1. **The learner is the wall on stage8** (2.5 ms a decision): whole updates contend with the rollout for the GPU.
+   First probe, one measure run: end-to-end steps/s with `mappo.overlap_updates` off, to split contention from acting
+   latency. Then the plan's old note: MIOpen's per-timestep GRU launches (a persistent RNN kernel is the research
+   option).
+2. **Stage1's two map updates a decision** (~1.9 ms each): the tasks' spikes (a reset's character build, a route plan
+   in apply) plus the reset tail. `forge tasks` and the map tasks row show where.
+3. Stage2_indoor's resets are character builds (configure + seats, ~0.5 ms an episode, 14 episodes a decision), not
+   the objective search.
+4. Geometry probe (Probe.Source = geometry): its -3%/-8% were measured under the learner bug; re-measure before
+   deciding its default. Fields and tables stay untracked until the user's LFS is set up.
+5. Carried over: second GPU (nothing to set; check the startup log's GPU mode line), the folded-module config's
+   untracked conf directory, the abort handler that segfaults before its backtrace, `tests/test_stage_names.py` on
+   the companion models.
