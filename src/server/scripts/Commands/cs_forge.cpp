@@ -152,6 +152,9 @@ namespace
                 "thread and env count" });
             table.AddRow({ "forge bench apply", "write the fastest settings from the last benchmark into the "
                 "configs" });
+            table.AddRow({ "forge bench auto [scenario]", "benchmark, then write the fastest settings into the configs "
+                "and use them at once (what AnimusForge.Bench.AutoTune runs on a machine with no benchmark of its "
+                "CPU)" });
             table.AddRow({ "forge export [scenario] [best|latest]", "write the scenario's .amdl models to "
                 "AnimusForge.ModelDir" });
             table.AddRow({ "forge clean archive", "delete runs/_archive/" });
@@ -613,11 +616,14 @@ namespace
 
         /// `forge bench [scenario]` times the sim at every thread and env count in AnimusForge.Bench.*, then the
         /// fastest few with the learner. `forge bench apply` writes the winner into the configs.
-        static bool HandleBench(ChatHandler* handler, Optional<std::string> argument)
+        static bool HandleBench(ChatHandler* handler, Optional<std::string> argument, Optional<std::string> scenario)
         {
             std::string const value = argument.value_or("");
             if (value == "apply")
                 return sAnimusForge->CommandBenchApply(Reply(handler));
+            // `forge bench auto [scenario]`: the same, and the winner applied (configs and this sim) when done.
+            if (value == "auto")
+                return sAnimusForge->CommandBench(scenario.value_or(""), Reply(handler), true);
 
             return sAnimusForge->CommandBench(value, Reply(handler));
         }

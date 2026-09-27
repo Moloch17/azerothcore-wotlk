@@ -183,7 +183,14 @@ void AnimusForge::Forge::OnStartup()
     if (_config.Cluster == ForgeConfig::ClusterRole::Host)
         _cluster.Listen(_config.ClusterControlPort);
     else if (_config.Cluster == ForgeConfig::ClusterRole::Worker)
-        _cluster.Join(_config.ClusterHost, _config.ClusterDataPort, _config.ClusterAdvertise);
+    {
+        // A worker that is about to tune itself joins its host after, so it is never ordered onto a scenario while
+        // it benchmarks (and trains at the settings it chose).
+        if (_config.Bench.AutoTune && _config.Enable && !HasBenchForThisCpu())
+            _joinAfterBench = true;
+        else
+            _cluster.Join(_config.ClusterHost, _config.ClusterDataPort, _config.ClusterAdvertise);
+    }
 
     // Every world table the curriculum reads on first use, read now: the database pools are sealed right after
     // this and an episode must never query.
@@ -280,6 +287,23 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
     PollExport();
     PollCluster();
+
+    // AnimusForge.Bench.AutoTune: a machine with no benchmark of its own CPU (a fresh copy of the project) tunes
+    // itself before anything else, once per start.
+    if (!_autoTuneChecked && _state == State::Idle && _request == Request::None && !_benching)
+    {
+        _autoTuneChecked = true;
+        if (_config.Bench.AutoTune && !HasBenchForThisCpu())
+        {
+            LOG_INFO("module.animus", "AnimusForge.Bench.AutoTune: no benchmark of this CPU yet; running `forge bench "
+                "auto` (the winner is applied when it is done)");
+            if (!CommandBench("", LogInfo, true) && _joinAfterBench)
+            {
+                _joinAfterBench = false;
+                _cluster.Join(_config.ClusterHost, _config.ClusterDataPort, _config.ClusterAdvertise);
+            }
+        }
+    }
     ApplyRequest();
 
     // A worker ordered onto another scenario starts it once the one it was running has been torn down above.
@@ -1003,7 +1027,49 @@ void AnimusForge::Forge::ReportStageEnd()
 
 uint32 AnimusForge::Forge::ConfiguredMapThreads()
 {
+    if (_tunedMapThreads)
+        return _tunedMapThreads;
     return uint32(std::max<int32>(0, sConfigMgr->GetOption<int32>("MapUpdate.Threads", 1)));
+}
+
+std::string AnimusForge::Forge::CpuSignature()
+{
+    // The same lines the container's build stamp hashes (apps/docker/forge-worldserver.sh): the first CPU's vendor,
+    // family, model and instruction set flags. FNV-1a, stable across builds.
+    std::ifstream in("/proc/cpuinfo");
+    std::string line, text;
+    uint32 found = 0;
+    while (found < 4 && std::getline(in, line))
+    {
+        std::string const key = line.substr(0, line.find(':'));
+        std::string trimmed = key;
+        while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.back())))
+            trimmed.pop_back();
+        if (trimmed == "vendor_id" || trimmed == "cpu family" || trimmed == "model" || trimmed == "flags")
+        {
+            text += line + "\n";
+            ++found;
+        }
+    }
+    uint64 hash = 1469598103934665603ull;
+    for (unsigned char c : text)
+        hash = (hash ^ c) * 1099511628211ull;
+    return Acore::StringFormat("{:016x}", hash);
+}
+
+bool AnimusForge::Forge::HasBenchForThisCpu() const
+{
+    std::ifstream file(std::filesystem::path(_config.Bench.OutputDir) / "bench.json");
+    if (!file)
+        return false;
+    std::string const text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    boost::system::error_code error;
+    boost::json::value parsed = boost::json::parse(text, error);
+    if (error || !parsed.is_object())
+        return false;
+    boost::json::object const& object = parsed.as_object();
+    auto const cpu = object.if_contains("cpu");
+    return object.contains("best") && cpu && cpu->is_string() && std::string(cpu->as_string()) == CpuSignature();
 }
 
 void AnimusForge::Forge::ApplyMapThreads(uint32 threads)
@@ -1169,7 +1235,9 @@ void AnimusForge::Forge::BenchTick()
 void AnimusForge::Forge::BenchPlanEnded()
 {
     // Phase 1 is over: the best few settings run again with the learner, which is what training actually costs.
-    if (!_benchLearnerPhase && _config.Bench.LearnerTop)
+    // A cluster worker has no learner of its own (its sim serves the host's), so it is tuned on the sim alone.
+    if (!_benchLearnerPhase && _config.Bench.LearnerTop && _config.IsRemote()
+        && _config.Cluster != ForgeConfig::ClusterRole::Worker)
     {
         std::vector<BenchTrial> best;
         for (BenchTrial const& trial : _benchTrials)
@@ -1210,12 +1278,22 @@ void AnimusForge::Forge::BenchPlanEnded()
 
     BenchReport(LogInfo);
     BenchSave();
+    bool const apply = _benchApply;
+    if (apply)
+        ApplyBenchResult(LogInfo, true);
     BenchEnd();
 }
 
 void AnimusForge::Forge::BenchEnd()
 {
     _benching = false;
+    _benchApply = false;
+    // A worker that tuned itself (or whose tuning was cancelled) joins its host now.
+    if (_joinAfterBench)
+    {
+        _joinAfterBench = false;
+        _cluster.Join(_config.ClusterHost, _config.ClusterDataPort, _config.ClusterAdvertise);
+    }
     Map::DetailedObjectTiming.store(false, std::memory_order_relaxed);
     _benchLearnerPhase = false;
     ApplyMapThreads(ConfiguredMapThreads());
@@ -1320,6 +1398,8 @@ void AnimusForge::Forge::BenchSave() const
     file["learner_measure_ticks"] = _config.Bench.LearnerMeasureTicks;
     file["learner_warmup_ticks"] = _config.Bench.LearnerWarmupTicks;
     file["cores"] = uint32(std::thread::hardware_concurrency());
+    file["physical_cores"] = ForgeConfig::PhysicalCores();
+    file["cpu"] = CpuSignature();
     file["configured_threads"] = ConfiguredMapThreads();
     file["configured_envs"] = _config.Envs;
 
@@ -1524,8 +1604,8 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Animus::Curriculum::Encoding::MoveToNs.load(std::memory_order_relaxed)) / double(moves) / 1e6);
         uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
         if (searches)
-            sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths each, "
-                "{} found nothing); ", searches,
+            sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths "
+                "each, {} found nothing); ", searches,
                 double(Travel::PlaceNs.load(std::memory_order_relaxed)) / double(searches) / 1e6,
                 double(Travel::PlaceAttempts.load(std::memory_order_relaxed)) / double(searches),
                 double(Travel::PlacePaths.load(std::memory_order_relaxed)) / double(searches),

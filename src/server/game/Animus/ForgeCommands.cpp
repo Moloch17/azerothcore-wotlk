@@ -844,7 +844,7 @@ bool AnimusForge::Forge::CommandTalents(std::string const& playerClass, std::str
     return true;
 }
 
-bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink const& out)
+bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink const& out, bool apply)
 {
     if (!Enabled(out))
         return false;
@@ -887,6 +887,7 @@ bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink cons
     }
 
     _benching = true;
+    _benchApply = apply;
     Map::DetailedObjectTiming.store(true, std::memory_order_relaxed);
     _benchLearnerPhase = false;
     _benchTrial = 0;
@@ -900,13 +901,28 @@ bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink cons
         "fastest again with the learner. `forge cancel` stops it.", benchScenario, _config.Bench.Policy,
         _benchTrials.size(), perTrial, _config.Bench.LearnerTop));
     out("  Nothing is trained: every trial runs in the bench output directory and real runs are untouched.");
+    if (_config.Bench.AutoThreads || _config.Bench.AutoEnvs)
+        out(Acore::StringFormat("  Chosen for this machine ({} physical cores): map threads {}, envs {}.",
+            ForgeConfig::PhysicalCores(), [&]
+            {
+                std::string text;
+                for (uint32 value : _config.Bench.Threads)
+                    text += (text.empty() ? "" : ", ") + std::to_string(value);
+                return text;
+            }(), [&]
+            {
+                std::string text;
+                for (uint32 value : _config.Bench.Envs)
+                    text += (text.empty() ? "" : ", ") + std::to_string(value);
+                return text;
+            }()));
+    if (apply)
+        out("  The winner is written into the configs and used at once when the benchmark is done.");
     return true;
 }
 
 bool AnimusForge::Forge::CommandBenchApply(LineSink const& out)
 {
-    namespace fs = std::filesystem;
-
     if (!Enabled(out))
         return false;
 
@@ -915,6 +931,13 @@ bool AnimusForge::Forge::CommandBenchApply(LineSink const& out)
         out("The benchmark is still running: `forge cancel` or wait for it to finish.");
         return false;
     }
+
+    return ApplyBenchResult(out, false);
+}
+
+bool AnimusForge::Forge::ApplyBenchResult(LineSink const& out, bool live)
+{
+    namespace fs = std::filesystem;
 
     fs::path const path = fs::path(_config.Bench.OutputDir) / "bench.json";
     std::error_code error;
@@ -932,6 +955,12 @@ bool AnimusForge::Forge::CommandBenchApply(LineSink const& out)
         out(Acore::StringFormat("{} has no winning trial; run `forge bench` again.", path.string()));
         return false;
     }
+
+    // A benchmark of another machine (a bench.json that came along with a copy of the project) is not this one's.
+    auto const cpu = parsed.as_object().if_contains("cpu");
+    if (cpu && cpu->is_string() && std::string(cpu->as_string()) != CpuSignature())
+        out(Acore::StringFormat("Note: {} was measured on another CPU; `forge bench auto` measures this one.",
+            path.string()));
 
     boost::json::object const& best = parsed.as_object().at("best").as_object();
     auto const number = [&best](char const* key) -> uint32
@@ -960,7 +989,19 @@ bool AnimusForge::Forge::CommandBenchApply(LineSink const& out)
 
     out(Acore::StringFormat("Applied: MapUpdate.Threads = {}, AnimusForge.Envs = {}{}.", threads, envs,
         torchThreads ? Acore::StringFormat(", AnimusForge.Learner.TorchThreads = {}", torchThreads) : ""));
-    out("  The thread count takes effect when the worldserver restarts; the env count at the next `forge start`.");
+    if (!live)
+    {
+        out("  The thread count takes effect when the worldserver restarts; the env count at the next `forge start`.");
+        return true;
+    }
+
+    // In use now as well: the map update's pool is switched between decisions (BenchEnd does it after this), the env
+    // count and the learner's threads are read at the next start.
+    _tunedMapThreads = threads;
+    _config.Envs = envs;
+    if (torchThreads)
+        _config.LearnerTorchThreads = torchThreads;
+    out("  In use now: the map update's threads switch with the benchmark's end, the envs at the next `forge start`.");
     return true;
 }
 

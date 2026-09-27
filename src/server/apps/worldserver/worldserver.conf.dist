@@ -5583,24 +5583,30 @@ AnimusForge.Bench.Policy = "fight"
 #                     the env pool, so a trial costs its warm-up and measured decisions plus that build:
 #                     keep the grid to the counts worth telling apart. More threads than the machine has
 #                     cores, once the learner's own threads are counted, only adds trials.
-#        Default:     "4, 8, 12, 16"
+#                     "auto" works them out from the machine: a half, three quarters and all of its
+#                     physical cores (in the process's cpuset), less the world thread, and on a cluster
+#                     worker, whose learner runs elsewhere, into the SMT siblings too. The startup log
+#                     says what it chose.
+#        Default:     "auto"
 
-AnimusForge.Bench.Threads = "4, 8, 12, 16"
+AnimusForge.Bench.Threads = "auto"
 
 #
 #    AnimusForge.Bench.Envs
 #        Description: AnimusForge.Envs values to try, comma-separated. Big env counts cost the most to
 #                     build and to hold, so try the few that could win rather than a wide ladder.
-#        Default:     "64, 128, 192"
+#                     "auto": 6, 9, 12 and 16 envs a physical core, each a whole number of envs per
+#                     continent replica (AnimusForge.ContinentReplicas), up to Bench.MaxEnvs.
+#        Default:     "auto"
 
-AnimusForge.Bench.Envs = "64, 128, 192"
+AnimusForge.Bench.Envs = "auto"
 
 #
 #    AnimusForge.Bench.MaxEnvs
 #        Description: Never try more envs than this, whatever AnimusForge.Bench.Envs says.
-#        Default:     256
+#        Default:     512
 
-AnimusForge.Bench.MaxEnvs = 256
+AnimusForge.Bench.MaxEnvs = 512
 
 #
 #    AnimusForge.Bench.WarmupTicks
@@ -5662,6 +5668,20 @@ AnimusForge.Bench.LearnerMeasureTicks = 768
 #        Default:     "0, 8"
 
 AnimusForge.Bench.LearnerTorchThreads = "0, 8"
+
+#
+#    AnimusForge.Bench.AutoTune
+#        Description: On a machine with no benchmark of its own CPU in the bench output directory (a
+#                     fresh copy of the project, or a copy from another machine), run `forge bench auto`
+#                     when the worldserver starts: the benchmark above, then its winner written into the
+#                     configs and used at once. A cluster worker joins its host only once it is done, so
+#                     it is never ordered onto a scenario while it measures. A cluster worker is tuned on
+#                     its sim alone (its learner is the host's). It takes as long as the grid: tens of
+#                     minutes. Off, `forge bench auto` does the same by hand.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+AnimusForge.Bench.AutoTune = 0
 
 ###################################################################################################
 # FAST TEST RUN
@@ -5804,6 +5824,11 @@ AnimusForge.Curriculum.Characters.PetOutChance = 50
 #   and moved to the new spawn, at a fraction of a build's cost; the level stays what it was. Evaluations always
 #   build. 0 = build every episode. `forge status` counts the characters reused per decision beside the rebuilt.
 AnimusForge.Curriculum.Characters.ReuseEpisodes = 4
+#   1: in training a seat whose character can still be kept (ReuseEpisodes) keeps its class and build too, where
+#   no party makeup is drawn, instead of keeping the character only when the draw happens to repeat. Each env's
+#   classes then come in runs of up to ReuseEpisodes episodes; the mix across envs is the draw's. 0 = draw every
+#   episode.
+AnimusForge.Curriculum.Characters.KeepCasting = 1
 
 #
 #    AnimusForge.Curriculum.Party.*

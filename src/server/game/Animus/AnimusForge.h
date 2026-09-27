@@ -85,7 +85,8 @@ namespace AnimusForge
         bool CommandRun(std::string const& scenario, std::string const& policy, uint32 episodes, LineSink const& out);
         /// `forge bench [scenario]`: time the sim at every AnimusForge.Bench.Threads x Envs pair, then the best few
         /// with the learner, and report what runs fastest. `forge bench apply` writes the winner into the configs.
-        bool CommandBench(std::string const& scenario, LineSink const& out);
+        /// `apply` (`forge bench auto`): write the winner into the configs when it is done and use it at once.
+        bool CommandBench(std::string const& scenario, LineSink const& out, bool apply = false);
 
         /// `forge talents <class> [spec] [points] [plan]`: print a build the curriculum would give a
         /// character of that class, tree by tree. Builds nothing and trains nothing.
@@ -242,6 +243,13 @@ namespace AnimusForge
         void ApplyMapThreads(uint32 threads);
         /// MapUpdate.Threads as configured, which every trial is restored to when the benchmark ends.
         [[nodiscard]] static uint32 ConfiguredMapThreads();
+        /// The benchmark's winner (bench.json's "best"), written into the configs; `live` also switches this sim to
+        /// it now -- the map update's threads, the env count, the learner's torch threads.
+        bool ApplyBenchResult(LineSink const& out, bool live);
+        /// Whether bench.json holds a benchmark of this machine's CPU (its "cpu": CpuSignature()).
+        [[nodiscard]] bool HasBenchForThisCpu() const;
+        /// The CPU, as the benchmark and the container's build stamp name it: vendor, family, model, flags.
+        [[nodiscard]] static std::string CpuSignature();
 
         /// Every trial the benchmark still has to run, as a plan (phase 1: the sim alone).
         [[nodiscard]] Plan BenchPlan(std::string const& scenario, std::vector<BenchTrial> const& trials) const;
@@ -399,6 +407,11 @@ namespace AnimusForge
         std::vector<BenchTrial> _benchTrials;       // phase 1 and, once it is over, phase 2
         std::size_t _benchTrial = 0;                // the trial the running plan entry is
         bool _benching = false;
+        bool _benchApply = false;       // `forge bench auto`: apply the winner when done
+        bool _autoTuneChecked = false;  // AnimusForge.Bench.AutoTune looked at, once per start
+        bool _joinAfterBench = false;   // a worker tuning itself joins its host after
+        /// MapUpdate.Threads as the last applied benchmark set it (0: the config's own).
+        static inline uint32 _tunedMapThreads = 0;
         bool _benchLearnerPhase = false;
         std::string _benchScenario;
         std::chrono::steady_clock::time_point _benchMeasuredFrom;

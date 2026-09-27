@@ -210,6 +210,13 @@ namespace AnimusForge
             uint32 LearnerTop = 2;                  // sim trials re-timed with the learner (0 = none)
             std::vector<uint32> LearnerTorchThreads;    // torch thread counts to try with the learner
             std::string OutputDir;                  // resolved: <OutputDir>/bench, never empty after Load
+            /// Threads / Envs "auto": the grids were worked out from this machine (its physical cores in the
+            /// process's cpuset, the continent replicas) rather than written, so one config serves every machine.
+            bool AutoThreads = false;
+            bool AutoEnvs = false;
+            /// AnimusForge.Bench.AutoTune: on a machine with no benchmark of its own CPU, run `forge bench auto` at
+            /// start (a cluster worker joins its host once it is done), so a copied installation tunes itself.
+            bool AutoTune = false;
         };
 
         BenchSettings Bench;
@@ -241,9 +248,14 @@ namespace AnimusForge
 
         void Load();
 
+        /// The physical cores among the CPUs this process may run on (its cpuset).
+        [[nodiscard]] static uint32 PhysicalCores();
+
     private:
         /// AnimusForge.Gpu.*: resolve the mode (counting the GPUs if it has to) and apply its values. End of Load.
         void ApplyGpuMode();
+        /// Bench.Threads / Envs of "auto", from this machine.
+        void AutoBenchGrids();
     };
 }
 

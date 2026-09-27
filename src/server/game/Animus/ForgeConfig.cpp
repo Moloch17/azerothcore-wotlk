@@ -19,16 +19,20 @@
 #include "ForgeConfig.h"
 #include "BotAccounts.h"
 #include "Config.h"
+#include "CpuPlacement.h"
 #include "DBCEnums.h"
 #include "Log.h"
 #include "StringConvert.h"
+#include "StringFormat.h"
 #include "Tokenize.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <system_error>
 
@@ -86,6 +90,14 @@ namespace
 namespace
 {
     /// A comma-separated config list of positive numbers, in order, without repeats; invalid entries are logged.
+    std::string JoinNumbers(std::vector<uint32> const& numbers)
+    {
+        std::string text;
+        for (uint32 number : numbers)
+            text += (text.empty() ? "" : ", ") + std::to_string(number);
+        return text.empty() ? "none" : text;
+    }
+
     std::vector<uint32> GetNumberList(std::string const& key, std::string const& fallback)
     {
         std::vector<uint32> numbers;
@@ -344,9 +356,22 @@ void AnimusForge::ForgeConfig::Load()
     Bench = BenchSettings();
     Bench.Scenario = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Scenario", "stage8_duel");
     Bench.Policy = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Policy", "fight");
-    Bench.Threads = GetNumberList("AnimusForge.Bench.Threads", "4, 8, 12, 16");
-    Bench.Envs = GetNumberList("AnimusForge.Bench.Envs", "64, 128, 192");
-    Bench.MaxEnvs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Bench.MaxEnvs", 256));
+    auto const isAuto = [](std::string const& key)
+    {
+        std::string value = sConfigMgr->GetOption<std::string>(key, "auto");
+        value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); }),
+            value.end());
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
+        return value == "auto";
+    };
+    Bench.AutoThreads = isAuto("AnimusForge.Bench.Threads");
+    Bench.AutoEnvs = isAuto("AnimusForge.Bench.Envs");
+    Bench.AutoTune = sConfigMgr->GetOption<bool>("AnimusForge.Bench.AutoTune", false);
+    if (!Bench.AutoThreads)
+        Bench.Threads = GetNumberList("AnimusForge.Bench.Threads", "auto");
+    if (!Bench.AutoEnvs)
+        Bench.Envs = GetNumberList("AnimusForge.Bench.Envs", "auto");
+    Bench.MaxEnvs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Bench.MaxEnvs", 512));
     Bench.WarmupTicks = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Bench.WarmupTicks", 128));
     Bench.MeasureTicks = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Bench.MeasureTicks", 384));
     Bench.LearnerWarmupTicks = std::max<uint32>(1,
@@ -372,6 +397,7 @@ void AnimusForge::ForgeConfig::Load()
 
     Bench.OutputDir = (fs::path(OutputDir) / "bench").lexically_normal().string();
 
+    AutoBenchGrids();
     if (Bench.Threads.empty())
         Bench.Threads.push_back(std::max<uint32>(1, sConfigMgr->GetOption<uint32>("MapUpdate.Threads", 1)));
     if (Bench.Envs.empty())
@@ -387,6 +413,65 @@ void AnimusForge::ForgeConfig::Load()
     // Last: the mode needs the policy, the cluster role and the learner's paths, and adjusts Envs and LearnerArgs.
     GpuObserve = sConfigMgr->GetOption<bool>("AnimusForge.Gpu.Observe", false);
     ApplyGpuMode();
+}
+
+uint32 AnimusForge::ForgeConfig::PhysicalCores()
+{
+    // The CPUs this process may run on (its cpuset: a container pinned to one socket counts that socket), as physical
+    // cores: an SMT sibling shares its core's units, and map tasks are core-bound.
+    std::set<std::pair<int, int>> cores;
+    for (int cpu : Acore::CpuPlacement::Order())
+    {
+        auto const read = [cpu](char const* file) -> int
+        {
+            std::ifstream in(Acore::StringFormat("/sys/devices/system/cpu/cpu{}/topology/{}", cpu, file));
+            int value = -1;
+            in >> value;
+            return value;
+        };
+        int const package = read("physical_package_id");
+        int const core = read("core_id");
+        cores.emplace(package, core < 0 ? cpu : core);
+    }
+    return std::max<uint32>(1, uint32(cores.size()));
+}
+
+void AnimusForge::ForgeConfig::AutoBenchGrids()
+{
+    uint32 const logical = std::max<uint32>(1, uint32(Acore::CpuPlacement::Order().size()));
+    uint32 const cores = PhysicalCores();
+
+    if (Bench.AutoThreads)
+    {
+        // Half to all of the physical cores (the world thread is one of the pool's), and on a machine whose learner
+        // runs elsewhere -- a cluster worker -- into the SMT siblings too, since nothing else wants them.
+        std::set<uint32> threads;
+        for (uint32 quarters : { 2u, 3u, 4u })
+            threads.insert(std::max<uint32>(1, cores * quarters / 4 - 1));
+        if (Cluster == ClusterRole::Worker && logical > cores)
+            threads.insert(std::min(logical - 1, cores + cores / 2));
+        Bench.Threads.assign(threads.begin(), threads.end());
+    }
+
+    if (Bench.AutoEnvs)
+    {
+        // 6 to 16 envs a physical core (this project's 16-core machine ran best at 12), each a whole number of
+        // envs per continent replica -- the half-batch splits the replicas in two and a replica holds at most 31.
+        uint32 const step = std::max<uint32>(2, ContinentReplicas);
+        std::set<uint32> envs;
+        for (uint32 perCore : { 6u, 9u, 12u, 16u })
+        {
+            uint32 const wanted = cores * perCore;
+            uint32 const rounded = std::max(step, (wanted + step / 2) / step * step);
+            if (rounded <= Bench.MaxEnvs && rounded <= step * 31)
+                envs.insert(rounded);
+        }
+        Bench.Envs.assign(envs.begin(), envs.end());
+    }
+
+    if (Bench.AutoThreads || Bench.AutoEnvs)
+        LOG_INFO("server.loading", "AnimusForge.Bench: {} physical cores ({} CPUs); trials of {} map threads and {} "
+            "envs", cores, logical, JoinNumbers(Bench.Threads), JoinNumbers(Bench.Envs));
 }
 
 void AnimusForge::ForgeConfig::ApplyGpuMode()
