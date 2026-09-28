@@ -211,9 +211,14 @@ def _seed_shared(new: dict, old: dict) -> None:
             tensor.copy_(old[key])
 
 
-def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None) -> list[str]:
+def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False) -> list[str]:
     """Seed a fresh MappoTrainer for `spec` (whose stage.json is `stage`) from an earlier stage's checkpoint; returns
-    the layouts seeded."""
+    the layouts seeded.
+
+    With `overlay`, only the layouts the checkpoint has are written -- their adapters, normalisers and heads -- over
+    networks already seeded, and the trunk is left as it is: a restricted stage (the stealth drill, two classes of
+    ten) merged forward into the stage after it (Run._load_or_seed). Its trunk saw only those classes, so it is not
+    taken; its layouts were trained against it, so they are a warm start the stage's distillation realigns."""
     old_names = [layout["name"] for layout in checkpoint["spec"].get("layouts", ())]
     old_stage = checkpoint.get("stage")
     old = checkpoint["trainer"]
@@ -221,8 +226,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None) -> 
     actor = {key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()}
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
 
-    _seed_shared(actor, old["actor"])
-    _seed_shared(critic, old["critic"])
+    if not overlay:
+        _seed_shared(actor, old["actor"])
+        _seed_shared(critic, old["critic"])
 
     # Every layout this run has must be in the checkpoint it is seeding from. A missing one is not a thing to work
     # around quietly: the alternative is starting that class from scratch in the middle of a curriculum, which looks
@@ -231,7 +237,7 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None) -> 
     # plays, so the first directed stage in a chain necessarily seeds from one without it.
     missing = [layout.name for layout in spec.layouts
                if layout.name not in old_names and layout.name != DIRECTOR_LAYOUT]
-    if missing:
+    if missing and not overlay:
         raise ValueError(
             f"the checkpoint has no {', '.join(missing)}: it was trained on "
             f"{', '.join(old_names) or 'nothing'}. Seeding would start "

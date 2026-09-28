@@ -61,6 +61,30 @@ def test_a_layout_the_checkpoint_lacks_is_refused_rather_than_started_from_scrat
         seed_trainer(new, checkpoint, spec(new_layouts, 4))
 
 
+def test_a_restricted_stage_is_overlaid_on_the_seed_without_its_trunk():
+    """Merging the stealth drill forward: seed every class from the full stage, then overlay the restricted stage's
+    own layouts (rogue here) and leave the trunk, and every other class, as the full stage left them."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(8,))
+    layouts = [Layout("rogue", 6, 3), Layout("mage", 6, 3)]
+    full = MappoTrainer([(6, 3), (6, 3)], 4, config)
+    drill = MappoTrainer([(6, 3)], 4, config)
+    new = MappoTrainer([(6, 3), (6, 3)], 4, config)
+    seed_trainer(new, {"trainer": full.state_dict(), "spec": checkpoint_spec(layouts)}, spec(layouts, 4))
+    before = {key: tensor.clone() for key, tensor in new.actor.state_dict().items()}
+
+    overlaid = seed_trainer(new, {"trainer": drill.state_dict(), "spec": checkpoint_spec(layouts[:1])},
+                            spec(layouts, 4), overlay=True)
+    assert overlaid == ["rogue"]
+    after = new.actor.state_dict()
+    drilled = drill.actor.state_dict()
+    for key, tensor in after.items():
+        if key.startswith(("adapters.0.", "heads.0.")):
+            torch.testing.assert_close(tensor, drilled[key])      # rogue: the drill's own
+        else:
+            torch.testing.assert_close(tensor, before[key])       # trunk and mage: untouched
+
+
 def test_the_director_is_the_one_layout_allowed_to_be_missing():
     """It is an agent a stage adds, not a class the run plays, so the first directed stage in a chain
     necessarily seeds from one without it."""

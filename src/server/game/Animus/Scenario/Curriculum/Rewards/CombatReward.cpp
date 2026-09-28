@@ -99,6 +99,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::PlaceMatch:            return "place_match";
         case RewardTerm::BrokeContact:          return "broke_contact";
         case RewardTerm::Stalk:                 return "stalk";
+        case RewardTerm::OpenerDamage:          return "opener_damage";
         case RewardTerm::Clearance:             return "clearance";
         case RewardTerm::Repeat:                return "repeat";
         case RewardTerm::Jitter:                return "jitter";

@@ -56,6 +56,9 @@ namespace Animus::Curriculum
         uint32 DeathMs = 0;                     // episode time of the current death
         uint32 StealthOpeners = 0;              // harmful spells from stealth that broke it
         bool StepStealthOpener = false;         // one started since the last reward
+        uint32 OpenerMs = 0;                    // when the opener being scored landed (Stealth.OpenerDamage); 0 = none
+        float OpenerHealth = 0.0f;              // ... and the opponent's health share then
+        float OpenerDamage = 0.0f;              // the share of its health openers took, over the episode
         uint32 StealthUtilityCasts = 0;         // harmful spells from stealth that kept it, paid ones
         uint32 StepStealthUtility = 0;          // paid ones since the last reward
         std::vector<ObjectGuid> StealthUtilityTargets;  // targets already paid for during the current stealth

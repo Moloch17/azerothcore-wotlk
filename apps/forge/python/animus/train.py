@@ -58,7 +58,7 @@ STALL_WINDOW = 10
 STALL_MIN_UPDATES = 20
 from .runs import FINISHED_FILE, archive_run, prune_checkpoints, resume_checkpoint_path, resume_mismatch
 from .stage import ADVANCE, ConvergenceController, Outcome
-from .stages import STAGE_FILE, load_stage
+from .stages import STAGE_FILE, arena_names, load_stage
 from .device import host
 
 
@@ -688,7 +688,10 @@ class TrainingRun:
         if finetune and Path(finetune).is_file():
             candidates = [finetune, *candidates]
         prefer = config.seed_from
-        base_path, base = self.seed_candidate(candidates, prefer, spec, config.init_from == "auto")
+        # Restricted stages the chain stepped over on its way down (the stealth drill), nearest first: their own
+        # layouts are merged in over the seed below, so what those classes learned there is not a dead end.
+        restricted: list[tuple[Path, dict]] = []
+        base_path, base = self.seed_candidate(candidates, prefer, spec, config.init_from == "auto", restricted)
         merge_paths = []
         for candidate in config.resolved_merge_from(self.stage):
             if path := init_from_checkpoint(candidate, prefer):
@@ -704,15 +707,31 @@ class TrainingRun:
                   flush=True)
             for layout, blocks in (seed_merges(self.trainer, merged, spec, self.stage, base) if merged else {}).items():
                 print(f"  {layout}: {', '.join(blocks)} from the merged stages", flush=True)
+            # Farthest first, so the nearest restricted stage's layouts are the ones that stand.
+            for path, checkpoint in reversed(restricted):
+                overlaid = seed_trainer(self.trainer, checkpoint, spec, self.stage, overlay=True)
+                print(f"  {', '.join(overlaid)}: layouts from {path} (a restricted stage), over the seed; the trunk "
+                      f"stays the seed's", flush=True)
         elif not self.resume_path and candidates:
             print(f"None of {', '.join(candidates)} to seed from; starting from scratch", flush=True)
 
         self.distiller = make_distiller(config, spec, self.stage, [p for p in (base, *merged) if p is not None],
                                         self.trainer.train_device)
+        # A restricted stage merged in above teaches its own classes through the stage's first stretch, on every
+        # arena (a teacher only teaches the layouts it has, so the other classes are untouched): its layouts were
+        # trained against another trunk, and this pulls them back to what they did while they settle on this one.
+        # distill.coef and half_life_env_steps set how hard and how long. Where the stage distils already, its own
+        # teachers keep their arenas.
+        if restricted and not self.resume_path and self.distiller is None:
+            nearest_path, nearest = restricted[0]
+            teacher = build_teacher(nearest, spec, self.stage, self.trainer.train_device)
+            self.distiller = Distiller(self.stage, {arena: teacher for arena in arena_names(self.stage)})
+            print(f"{', '.join(spec.layouts[i].name for i in teacher.layouts)} taught by {nearest_path} on every "
+                  f"arena (a restricted stage merged forward)", flush=True)
         # The parents and named teachers, with what decides how each is read: a run's seed_from choice and its
         # stage.json (load_parent's block positions).
         named = [init_from_checkpoint(candidate) for candidate in config.named_teachers().values()]
-        for path in (base_path, *merge_paths, *named):
+        for path in (base_path, *merge_paths, *named, *(p for p, _ in restricted)):
             if path is not None:
                 self.shared_files += [Path(path), Path(path).parent / "seed_from", Path(path).parent / STAGE_FILE]
 
@@ -749,7 +768,8 @@ class TrainingRun:
             self.shared_files += sorted(league.iterdir())
 
     @staticmethod
-    def seed_candidate(candidates: list[str], prefer: str, spec, auto: bool) -> tuple[Path | None, dict | None]:
+    def seed_candidate(candidates: list[str], prefer: str, spec, auto: bool,
+                       restricted: list | None = None) -> tuple[Path | None, dict | None]:
         """The first init_from candidate that exists and, on the automatic seed chain, covers every layout this run
         plays: (path, loaded checkpoint), or (None, None).
 
@@ -769,7 +789,9 @@ class TrainingRun:
                            if layout.name not in names and layout.name != DIRECTOR_LAYOUT]
                 if missing:
                     print(f"Not seeding from {path}: it has no {', '.join(missing)} (a restricted stage's checkpoint); "
-                          f"trying the next stage down the chain", flush=True)
+                          f"trying the next stage down the chain, and merging its layouts in after", flush=True)
+                    if restricted is not None:
+                        restricted.append((path, checkpoint))
                     continue
             return path, checkpoint
         return None, None

@@ -53,7 +53,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OpponentEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt, RewardTerm::BrokeContact,
-        RewardTerm::Stalk };
+        RewardTerm::Stalk, RewardTerm::OpenerDamage };
 }
 
 /// An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it stopped

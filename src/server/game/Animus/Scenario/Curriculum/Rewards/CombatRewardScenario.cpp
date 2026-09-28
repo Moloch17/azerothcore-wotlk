@@ -59,6 +59,24 @@ void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env con
     Casting(bot, step, tally, scenario.Tuning().Casting, ledger);
     Approach(bot, opponent, DesiredRange(seat, tuning), tuning.Approach, tally, ledger);
 
+    // An opener is worth what it does: its landing starts a window, and the share of the opponent's health gone when
+    // the window closes (or when the opponent dies inside it) is paid (Stealth.OpenerDamage).
+    CurriculumTuning::StealthTuning const& stealth = scenario.Tuning().Stealth;
+    float const opponentShare = opponent->IsAlive() ? float(opponent->GetHealth()) / opponentHealth : 0.0f;
+    if (tally.StepStealthOpener && !tally.OpenerMs)
+    {
+        tally.OpenerMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+        tally.OpenerHealth = opponentShare;
+    }
+    else if (tally.OpenerMs
+        && (!opponent->IsAlive() || env.EpisodeElapsedMs >= tally.OpenerMs + stealth.OpenerWindowMs))
+    {
+        float const taken = std::max(0.0f, tally.OpenerHealth - opponentShare);
+        tally.OpenerDamage += taken;
+        ledger.Add(RewardTerm::OpenerDamage, stealth.OpenerDamage * taken);
+        tally.OpenerMs = 0;
+    }
+
     Stealth(tally, tuning.StealthOpener, tuning.StealthUtility, ledger);
 
     if (bot->GetPetGUID() || Encoding::FirstPet(bot))

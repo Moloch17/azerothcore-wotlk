@@ -881,6 +881,11 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(tally(env, index).StealthOpeners);
     });
+    // The share of the opponent's health stealth openers took in their first seconds (Stealth.OpenerDamage).
+    _info.Add("opener_damage", [tally](Env const& env, uint32 index)
+    {
+        return tally(env, index).OpenerDamage;
+    });
     _info.Add("stealth_utility_casts", [tally](Env const& env, uint32 index)
     {
         return float(tally(env, index).StealthUtilityCasts);

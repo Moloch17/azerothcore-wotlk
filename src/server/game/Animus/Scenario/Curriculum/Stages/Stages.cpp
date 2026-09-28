@@ -752,11 +752,12 @@ namespace
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
             .Blocks = { Core, Move, Duel, Pet, Pvp },
-            // Six levels up, as the hide stage: the fight has to be one the opener decides, so that getting
-            // into position is worth the time it costs rather than a flourish before a fight that was winnable
-            // anyway.
+            // From level with the seat to six up (three up, three either way): stronger, so getting into position
+            // is worth the time it costs, but close enough that a good opener decides the fight. At a fixed six up
+            // (four to eight with the spread) the fight after the opener decided it, and the first run's score sat
+            // flat for 30M steps with openers already landing in 80% of fights (2026-09-28).
             .Arenas = { { .Name = "stealth", .Against = Opposition::ScriptedPlayer, .Pvp = true,
-                .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
+                .EpisodeSeconds = 120, .OpponentLevelBonus = 3, .OpponentLevelRange = 3 } },
             // The same cover the other two drills use: an approach needs something to come round.
             .MapId = 560,
             .SpawnPoints = HillsbradGround(),

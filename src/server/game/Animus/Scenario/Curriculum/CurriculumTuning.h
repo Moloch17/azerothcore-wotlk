@@ -326,6 +326,13 @@ namespace Animus::Curriculum
             float Stalk = 0.02f;
             float StalkYards = 10.0f;
             float StalkMax = 1.0f;
+            /// Paid OpenerWindowMs after a stealth opener lands, per share of the opponent's health it had lost
+            /// since (all of it, if the opener's burst killed it). The flat Duel.StealthOpener pays for landing one
+            /// at all, the same for a wasted Ambush as for a Cheap Shot into a kill, so in the first run of the
+            /// stealth drill the openers were already landing in 80% of fights and the score did not move for
+            /// 30M steps (2026-09-28): nothing paid for an approach good enough to decide the fight.
+            float OpenerDamage = 2.0f;
+            uint32 OpenerWindowMs = 6000;
         } Stealth;
 
         /// What the director's own calls mean in yards.
@@ -901,6 +908,8 @@ namespace Animus::Curriculum
             f("Stealth.Stalk", tuning.Stealth.Stalk);
             f("Stealth.StalkYards", tuning.Stealth.StalkYards);
             f("Stealth.StalkMax", tuning.Stealth.StalkMax);
+            f("Stealth.OpenerDamage", tuning.Stealth.OpenerDamage);
+            f("Stealth.OpenerWindowMs", tuning.Stealth.OpenerWindowMs);
 
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);

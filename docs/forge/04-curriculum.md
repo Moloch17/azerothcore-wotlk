@@ -78,6 +78,10 @@ policy.
 > check now lives in `animus.bootstrap`, where the run's actual layouts are known: a layout the checkpoint lacks
 > is refused, loudly, with the classes it was trained on named. So the chain runs through the stage, and a run
 > whose classes cannot all play it is stopped with an error rather than seeded in silence.
+>
+> On the automatic chain the partial checkpoint is stepped over -- the next stage seeds from the stage before it --
+> and then **merged in**: its own classes' adapters and heads are overlaid on the seed and taught from it while they
+> settle on the new trunk (Stage 15, "Merged forward"). An explicit `init_from` is never stepped over.
 
 ## The stages
 
@@ -1761,7 +1765,7 @@ by `HasActiveSpell`, so the race that actually rolled is the one whose racials a
 
 ### Stage 15: `stage15_stealth`
 
-**Drill, and a leaf.** The one stage in the curriculum restricted to a subset of classes, and the reason
+**Drill, merged forward.** The one stage in the curriculum restricted to a subset of classes, and the reason
 the restriction is worth its cost.
 
 Hiding and stealth are different lessons. Stage 17 is *not being found*: every class can do it, with terrain,
@@ -1772,8 +1776,20 @@ move. Only a real stealth aura can, so only the four classes whose own kit carri
 `rogue_dps` (Stealth) and the three druids (Prowl). `StageDefinition::NeedsStealth` asks `ClassKit`, the class
 trainers' list, so the answer is true of every member of the class rather than of one race of it.
 
-The opponent is six levels up, as on the hide stage: the fight has to be one the opener decides, or getting
-into position is a flourish before a fight that was winnable anyway.
+The opponent is from level with the seat to six up (`OpponentLevelBonus` 3, `OpponentLevelRange` 3): stronger, so
+getting into position is worth its time, and close enough that a good opener decides the fight. **An opener is paid
+for what it does** (`Stealth.OpenerDamage`, 2.0): `Stealth.OpenerWindowMs` (6 s) after it lands, the share of the
+opponent's health gone by then, or all of it if the burst killed. The flat `Duel.StealthOpener` paid a wasted Ambush
+the same as a Cheap Shot into a kill, and at a fixed six up (four to eight with the spread) the fight after the opener
+decided the outcome: the first run of this stage landed openers in 80% of fights and its score did not move in 30M
+steps (2026-09-28). Column: `opener_damage` (health share taken, over the episode), `reward_opener_damage`.
+
+**Merged forward.** The stage after this one seeds from the stage before it (the chain steps over a checkpoint that
+lacks classes), then overlays this stage's rogue and druid adapters and heads -- not its trunk, which saw only
+those two classes -- and teaches those two from this stage's checkpoint on every arena while they settle on the new
+trunk (`animus.distill`, `distill.coef` decaying over `distill.half_life_env_steps`; the other eight classes have no
+teacher, since the checkpoint has no layouts for them). Until 2026-09-28 the stage was a dead end for its classes:
+nothing it learned reached the companion stage.
 
 **`RewardTerm::Stalk` is the only reward in the curriculum paid per decision rather than on a transition**, and
 that is deliberate rather than an oversight. What made the order nudge farmable -- 5.01 an episode, 23.7% of

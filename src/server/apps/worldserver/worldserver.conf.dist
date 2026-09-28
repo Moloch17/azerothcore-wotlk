@@ -6433,6 +6433,10 @@ AnimusForge.Curriculum.Stealth.Stalk = 0.02
 AnimusForge.Curriculum.Stealth.StalkYards = 10.0
 #   the most the stalk nudge may pay in one episode, so the opener it sets up stays the larger prize
 AnimusForge.Curriculum.Stealth.StalkMax = 1.0
+#   paid Stealth.OpenerWindowMs after a stealth opener lands, per share of the opponent's health gone by then (all of
+#   it if the opener's burst killed it): an opener is worth what it does, not only that it landed
+AnimusForge.Curriculum.Stealth.OpenerDamage = 2.0
+AnimusForge.Curriculum.Stealth.OpenerWindowMs = 6000
 
 #
 #    AnimusForge.Curriculum.Ambush.*
