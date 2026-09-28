@@ -10,7 +10,7 @@
 
 extends: stage10_gauntlet.yaml
 run_name: stage16_companion
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 # A win is clean_kill: the 450 s lasted with the owner never dead, no wipe, Pulls.OwnerWinPulls (5) pulls cleared and
 # the seat itself never dead (PullsEncounter counts the first three as the kill; died covers the last). The owner fights

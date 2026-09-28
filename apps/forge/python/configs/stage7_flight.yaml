@@ -7,7 +7,7 @@
 extends: stage6_travel.yaml
 run_name: stage7_flight
 
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 # gamma below is a ~100 s horizon, so a 128-decision rollout (12.8 s) would leave nearly every return to the
 # critic's bootstrap. 256 covers 25.6 s of it, as the gauntlet line does.

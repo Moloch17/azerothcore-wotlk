@@ -7,7 +7,7 @@
 # (forge start stage32_raid40); the evaluation's 32 episodes of 480 s at 8 envs are 1,920 sim-seconds.
 extends: stage31_raid25.yaml
 run_name: stage32_raid40
-total_env_steps: 100000000
+total_env_steps: 50000000
 eval:
   every_env_steps: 10000000
   episodes: 32

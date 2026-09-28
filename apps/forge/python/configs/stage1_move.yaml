@@ -27,7 +27,7 @@ run_name: stage1_move
 
 # The root of the tree starts from nothing, but it is a far smaller problem than the duel: few actions are live,
 # there is one objective and the episodes are short.
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 mappo:
   # The policy that is gated and shipped takes the argmax; the one that trained sampled. With the coefficient held

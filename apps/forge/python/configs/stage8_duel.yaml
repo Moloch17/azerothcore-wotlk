@@ -25,7 +25,7 @@ init_from: auto
 # One policy has to cover 80 levels, every race and spec of the class and random builds and gear, so it needs far
 # more experience than a single-character scenario. At 64 envs one update is 128 x 64 = 8192 env steps.
 # ~12 h at ~7k env steps/s: convergence usually ends the stage much sooner; the budget is a ceiling, not a target.
-total_env_steps: 100000000
+total_env_steps: 50000000
 rollout_length: 128
 
 # Updating on a worker thread while the sim collects the next rollout used to buy ~20% more env steps per second,

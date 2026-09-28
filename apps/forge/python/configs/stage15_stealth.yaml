@@ -13,7 +13,7 @@
 
 extends: stage14_hide.yaml
 run_name: stage15_stealth
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 rollout_length: 256
 

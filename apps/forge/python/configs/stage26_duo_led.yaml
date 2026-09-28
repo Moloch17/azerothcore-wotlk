@@ -6,7 +6,7 @@
 # never obeys and a channel that never arrives look identical without it.
 extends: stage12_pvp.yaml
 run_name: stage26_duo_led
-total_env_steps: 100000000
+total_env_steps: 50000000
 rollout_length: 256
 mappo:
   gamma: 0.999

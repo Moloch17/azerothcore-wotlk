@@ -10,7 +10,7 @@
 # handle; per-seat credit for a team objective would make nine seats of every ten look useless.
 extends: stage24_flag.yaml
 run_name: stage25_warsong
-total_env_steps: 100000000
+total_env_steps: 50000000
 # Ten a side is twenty agents an env against the mirror's two, so a rollout covers ten times the experience per
 # decision. The horizon stays stage 11's: a capture is still a minute of riding, fighting and carrying, and a
 # seven-minute match holds several.

@@ -26,7 +26,7 @@ mappo:
   # As stage1_move: the argmax policy is the one that is gated, so the exploration bonus anneals towards it.
   entropy_final_fraction: 0.3
 # A drill, not a stage of the curriculum: it is there to move one behaviour, and the behaviour shows early.
-total_env_steps: 100000000
+total_env_steps: 50000000
 convergence:
   patience: 2
 

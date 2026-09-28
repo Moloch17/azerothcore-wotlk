@@ -9,7 +9,7 @@
 # Trained by name (`forge start stage19_triage`), after stage17_party, which it seeds from. Not in the default queue.
 extends: stage17_party.yaml
 run_name: stage19_triage
-total_env_steps: 100000000
+total_env_steps: 50000000
 convergence:
   patience: 2
 

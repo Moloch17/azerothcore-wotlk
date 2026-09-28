@@ -6,7 +6,7 @@
 # `arenas` group tells the two apart).
 extends: stage19_triage.yaml
 run_name: stage23_dungeon
-total_env_steps: 100000000
+total_env_steps: 50000000
 eval:
   every_env_steps: 10000000
   # 300 s episodes at 128 envs: 512 is 1,200 sim-seconds an evaluation (manual 4, "What an evaluation costs").

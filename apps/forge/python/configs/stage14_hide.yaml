@@ -10,7 +10,7 @@
 
 extends: stage13_evade.yaml
 run_name: stage14_hide
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 rollout_length: 256
 

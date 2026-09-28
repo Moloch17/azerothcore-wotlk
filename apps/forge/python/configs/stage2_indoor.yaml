@@ -38,7 +38,7 @@ extends: stage1_move.yaml
 run_name: stage2_indoor
 
 # Short trips in small rooms: the episodes are quick and the lesson shows early.
-total_env_steps: 100000000
+total_env_steps: 50000000
 
 eval:
   # Until the rooms are known to be rooms, look often and trace what happens.
