@@ -264,7 +264,7 @@ class Hub:
                     continue
                 if kind == "push":
                     with self.lock:
-                        self.inbox.append(message)
+                        self._post(message)
                 elif kind == "hello":
                     print(f"Async learners: rank {rank} joined from {peer[0]}", flush=True)
                 _send(conn, self._reply())
@@ -273,6 +273,21 @@ class Hub:
                 print(f"Async learners: rank {rank} left", flush=True)
         finally:
             conn.close()
+
+    def _post(self, push: dict) -> None:
+        """File a push for the next safe point, one per rank. Until it is folded the leader keeps serving the same
+        centre, so a rank's newer push is measured from the same base and already holds everything the older one
+        did: it replaces it, and only the steps and episodes add up. Queued whole, the pushes piled up for as long
+        as the leader was busy -- through a long evaluation five ranks' full network vectors grew its learner by
+        0.7 GB a minute toward the OOM killer (stage17_party, 2026-09-28). Caller holds the lock."""
+        for index, waiting in enumerate(self.inbox):
+            if waiting["rank"] == push["rank"] and waiting["base_steps"] == push["base_steps"]:
+                push["env_steps"] = int(push["env_steps"]) + int(waiting["env_steps"])
+                push["episodes"] = list(waiting["episodes"]) + list(push["episodes"])
+                push["layouts"] = list(waiting["layouts"]) + list(push["layouts"])
+                self.inbox[index] = push
+                return
+        self.inbox.append(push)
 
     def set(self, **control) -> None:
         with self.lock:

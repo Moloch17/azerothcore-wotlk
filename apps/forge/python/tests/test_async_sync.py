@@ -207,3 +207,22 @@ def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
             "stage12_pvp/league/step_1.pt", "stage12_pvp/league/step_2.pt"]
     finally:
         hub.close()
+
+
+def test_a_ranks_pushes_while_the_leader_is_busy_are_kept_as_one():
+    hub = Hub(f"127.0.0.1:{free_port()}", networks(0))
+    try:
+        size = hub.parameters
+        push = lambda rank, value, steps, base=0: {"type": "push", "rank": rank, "delta": np.full(size, value, np.float32),
+                                                   "env_steps": steps, "base_steps": base, "episodes": [steps],
+                                                   "layouts": [rank]}
+        with hub.lock:
+            hub._post(push(1, 1.0, 100))
+            hub._post(push(2, 5.0, 50))
+            hub._post(push(1, 2.0, 30))      # the same base: supersedes rank 1's first
+            hub._post(push(1, 3.0, 7, base=999))  # a new base: its own entry
+        assert [(p["rank"], p["env_steps"], float(p["delta"][0])) for p in hub.inbox] == [
+            (1, 130, 2.0), (2, 50, 5.0), (1, 7, 3.0)]
+        assert hub.inbox[0]["episodes"] == [100, 30]
+    finally:
+        hub.close()
