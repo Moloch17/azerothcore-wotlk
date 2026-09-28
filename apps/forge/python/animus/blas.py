@@ -23,16 +23,28 @@ _tuning = False
 _saves = 0
 
 
+# Updates that may tune before tuning stops. The update's shapes depend on how many rows each class has in a
+# minibatch, so a learner that tunes for ever meets new ones every update: on the RX 9060 XTs the tuning file reached
+# 114,888 shapes, each timed for seconds and never freed -- a learner grew about 400 MB a minute, spencer's (16 GB)
+# was killed by the OOM killer before every stage ended, and the tuning itself made their updates 5-7 s against the
+# others' 1 (2026-09-28). The shapes that recur are met in the first updates; after these, what was found is used and
+# anything new runs on rocBLAS's default kernel.
+TUNING_UPDATES = 20
+
+
 def save() -> None:
-    """Write the tunings found so far: after every update for the first ones, where the new shapes are met, then
-    every 50th. Nothing where prepare did not enable TunableOp."""
+    """Write the tunings found so far after each of the first TUNING_UPDATES updates, then stop tuning. Nothing
+    where prepare did not enable TunableOp."""
     global _saves
-    if not _tuning:
+    if not _tuning or _saves > TUNING_UPDATES:
         return
     _saves += 1
-    if _saves <= 20 or _saves % 50 == 0:
-        import torch
-        torch.cuda.tunable.write_file()
+    import torch
+    torch.cuda.tunable.write_file()
+    if _saves > TUNING_UPDATES:
+        torch.cuda.tunable.tuning_enable(False)
+        print(f"Learner: TunableOp stops tuning after {TUNING_UPDATES} updates; new shapes use rocBLAS's default",
+              flush=True)
 
 
 def prepare(device: str) -> str | None:
