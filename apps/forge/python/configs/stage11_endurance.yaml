@@ -8,7 +8,7 @@
 extends: stage10_gauntlet.yaml
 run_name: stage11_endurance
 
-total_env_steps: 60000000
+total_env_steps: 100000000
 
 # The run is the same every episode, so an evaluation's spread comes from the characters alone and settles sooner
 # than the gauntlet's.

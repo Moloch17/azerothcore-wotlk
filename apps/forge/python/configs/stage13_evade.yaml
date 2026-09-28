@@ -8,7 +8,7 @@
 
 extends: stage12_pvp.yaml
 run_name: stage13_evade
-total_env_steps: 30000000
+total_env_steps: 100000000
 
 rollout_length: 256
 

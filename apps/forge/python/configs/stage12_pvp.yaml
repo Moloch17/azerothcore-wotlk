@@ -17,7 +17,7 @@ mappo:
   gae_lambda: 0.995
 
 # ~4 h at ~14k env steps/s (two seats).
-total_env_steps: 60000000
+total_env_steps: 100000000
 
 eval:
   report: [won, dps, died, time_to_kill, damage_taken, cast_seconds_wasted]

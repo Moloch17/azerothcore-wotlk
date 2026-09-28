@@ -798,7 +798,8 @@ class TrainingRun:
         others). Alone, the whole evaluation."""
         first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
-                                           any_playing=self.ranks.any if self.ranks.active else None, **options)
+                                           any_playing=self.ranks.any if self.ranks.active else None,
+                                           spec_names=self.spec_names, **options)
         parts = self.ranks.gather(result)
         return EvalResult.merged(parts) if self.ranks.leader else None
 

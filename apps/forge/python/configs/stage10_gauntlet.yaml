@@ -18,7 +18,7 @@ extends: stage9_pack.yaml
 run_name: stage10_gauntlet
 
 # ~16 h at ~7k env steps/s; convergence usually ends the stage much sooner (the headroom is for restarts).
-total_env_steps: 60000000
+total_env_steps: 100000000
 
 # rollout_length 256 (64 s at 250 ms decisions) and gamma 0.999 / lambda 0.995 per 100 ms (a ~100 s horizon, ~17 s
 # of GAE trace) come from stage 2: a pull, its recovery and the next pull's setup fit in a few rollouts, and resting

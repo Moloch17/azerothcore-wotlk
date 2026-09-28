@@ -3,7 +3,7 @@
 # costs. Extends the quest stage, whose world block it keeps.
 extends: stage20_quest.yaml
 run_name: stage21_gather
-total_env_steps: 30000000
+total_env_steps: 100000000
 eval:
   every_env_steps: 10000000
   # 240 s episodes at 128 envs: 1024 is 1,920 sim-seconds an evaluation.

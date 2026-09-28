@@ -9,7 +9,7 @@
 # Trained by name (`forge start stage18_tanking`), after stage17_party, which it seeds from. Not in the default queue.
 extends: stage17_party.yaml
 run_name: stage18_tanking
-total_env_steps: 60000000
+total_env_steps: 100000000
 convergence:
   patience: 2
 

@@ -19,7 +19,7 @@
 extends: stage1_move.yaml
 run_name: stage3_jump
 
-total_env_steps: 16000000
+total_env_steps: 100000000
 
 eval:
   every_env_steps: 2000000

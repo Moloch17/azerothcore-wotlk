@@ -7,7 +7,7 @@ extends: stage16_companion.yaml
 run_name: stage17_party
 
 # ~11 h at ~15k env steps/s (four seats); convergence usually ends the stage much sooner (the headroom is for restarts).
-total_env_steps: 90000000
+total_env_steps: 100000000
 
 eval:
   every_env_steps: 15000000

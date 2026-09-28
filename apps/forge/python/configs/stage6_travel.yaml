@@ -7,7 +7,7 @@ extends: stage1_move.yaml
 run_name: stage6_travel
 
 # Trips take seconds to a minute: shorter than a fight, one policy for every class/build.
-total_env_steps: 20000000
+total_env_steps: 100000000
 
 eval:
   every_env_steps: 2000000

@@ -392,6 +392,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    max_decisions: int | None = None, opponents: str = "",
                    arenas: tuple[str, ...] = (),
                    action_names: dict[str, list[str]] | None = None,
+                   spec_names: dict[str, list[str]] | None = None,
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
@@ -510,6 +511,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         allowed_counts=None if baseline else np.array([row[4] for row in rows], dtype=np.int32).reshape(
             len(rows), spec.num_actions),
         action_names=dict(action_names or {}),
+        # The builds' names: without them the summary had no class x build breakdown at all ("castings" and "specs"
+        # empty), and the layout weights that read it had nothing to weight.
+        spec_names=dict(spec_names or {}),
     )
 
     training_step = env.set_mode(False)
