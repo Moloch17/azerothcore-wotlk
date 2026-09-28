@@ -579,6 +579,7 @@ class TrainingRun:
                 self.evaluating = False
         self.layout_weights_version = 0
         self.replay_version = 0
+        self.shared_version = 0
         self.trainer.sync_rollout()
 
         def new_buffer() -> RolloutBuffer:
@@ -879,8 +880,15 @@ class TrainingRun:
             self.cast.pool.reload()
             if self.ranks.leader:
                 self.cast.pool.write()
+                self.share_league()
                 print(f"League: latest.pt at {self.env_steps} env steps joined ({len(self.cast.pool.active())} "
                       f"members)", flush=True)
+
+    def share_league(self) -> None:
+        """Offer the league's members to the followers (async_sync.Hub.share); nothing without a hub."""
+        league = self.run_dir / LEAGUE
+        if self.hub is not None and league.is_dir():
+            self.hub.share(shared_listing(Path(self.config.runs_dir), sorted(league.iterdir())))
 
     def evaluate(self) -> None:
         """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current.
@@ -922,6 +930,7 @@ class TrainingRun:
                 if self.cast is not None and self.cast.pool is not None and config.cast.opponents == LEAGUE:
                     if league_snapshot(self.run_dir, self.best_path, f"best_{self.env_steps}") is not None:
                         self.cast.pool.reload()
+                        self.share_league()
                         joined = True
             if self.cast is not None and self.cast.pool is not None:
                 self.cast.pool.write()
@@ -1083,6 +1092,15 @@ class TrainingRun:
         if (replay := control.get("replay")) and replay[0] != self.replay_version:
             self.replay_version = replay[0]
             self.env.set_replay(*replay[1])
+        # A new league member on the leader: fetch it, and play it. Without this a follower played the league it
+        # fetched at startup for the whole stage, while the leader's grew every few million steps.
+        if (shared := int(control.get("shared", 0))) != self.shared_version:
+            self.shared_version = shared
+            fetch_shared(self.config.dist_address, self.config.rank, Path(self.config.runs_dir),
+                         self.config.dist_timeout)
+            if self.cast is not None and self.cast.pool is not None and (joined := self.cast.pool.reload()):
+                print(f"League: {joined} member(s) from the leader joined ({len(self.cast.pool.active())} active)",
+                      flush=True)
 
     def drain_update(self) -> None:
         """Finish any overlapped update, so the networks are whole: before an evaluation, a checkpoint or a restart.

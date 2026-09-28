@@ -313,9 +313,10 @@ bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bo
     EnvOpponent& opponent = _envs[env.Index];
     CurriculumTuning::OpponentTuning const& tuning = _scenario.Tuning().Opponent;
 
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    int32 const spread = arena.OpponentLevelRange > 0 ? arena.OpponentLevelRange : tuning.LevelSpread;
     uint8 const level = uint8(std::clamp<int32>(int32(_scenario.Data(env).Seats[0].Level)
-        + _scenario.Arena(env).OpponentLevelBonus + irand(-tuning.LevelSpread, tuning.LevelSpread), 1,
-        DEFAULT_MAX_LEVEL));
+        + arena.OpponentLevelBonus + irand(-spread, spread), 1, DEFAULT_MAX_LEVEL));
 
     uint32 const index = env.Id;
     EnemyPlayers::Naming const naming{

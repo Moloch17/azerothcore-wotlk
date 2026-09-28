@@ -1479,8 +1479,19 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     // An evaluation spreads its seeds over the (class, build) pairs instead of drawing them: seed i plays pair
     // (i + seat) % count. Each pair is then scored on an equal share of the seeds, whatever the env count, so a
     // paladin's healing build is as well measured as its tanking one and two checkpoints meet the same characters.
+    //
+    // Except the far side of a one-on-one, which walks every other pair in turn: seed i's opponent is (i + 1 +
+    // (i / count) % (count - 1)) % count, so each pair meets each of the others equally often over the seeds. Paired
+    // (i + 1) as the rest are, a seat met its own class's other build or the next class in the list and nothing
+    // else -- 68% of stage12_pvp's evaluation fights were one class against itself (2026-09-28).
     if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
-        return castings[(env.EpisodeSeedIndex + seat) % castings.size()];
+    {
+        std::size_t const count = castings.size();
+        std::size_t const index = env.EpisodeSeedIndex;
+        if (seat == 1 && count > 1 && Arena(env).Seats == SeatPlan::Mirror)
+            return castings[(index + 1 + (index / count) % (count - 1)) % count];
+        return castings[(index + seat) % count];
+    }
 
     // Training: the learner's weights (the forge's WEIGHTS message), so the pairs furthest below their baseline
     // get more of the data. Without them, or when none of the pairs carries one, draw evenly.

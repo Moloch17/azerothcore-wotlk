@@ -185,3 +185,25 @@ def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
         assert fetch_shared(address, 1, follower_root, timeout=10.0) == []
     finally:
         hub.close()
+
+
+def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
+    root = tmp_path / "leader"
+    first = root / "stage12_pvp" / "league" / "step_1.pt"
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"first")
+    address = f"127.0.0.1:{free_port()}"
+    hub = Hub(address, networks(0), shared_listing(root, [first]))
+    try:
+        assert hub.control.get("shared", 0) == 0
+        hub.share(shared_listing(root, [first]))            # nothing new: nothing to announce
+        assert hub.control.get("shared", 0) == 0
+        second = first.with_name("step_2.pt")
+        second.write_bytes(b"second")
+        hub.share(shared_listing(root, [first, second]))
+        assert hub.control["shared"] == 1
+        follower = tmp_path / "follower"
+        assert sorted(fetch_shared(address, 1, follower, timeout=10.0)) == [
+            "stage12_pvp/league/step_1.pt", "stage12_pvp/league/step_2.pt"]
+    finally:
+        hub.close()

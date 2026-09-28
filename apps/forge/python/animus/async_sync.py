@@ -233,7 +233,7 @@ class Hub:
     def _listing(self) -> list[tuple[str, int, str]]:
         """(name, size, sha256) of every shared file that still exists; a digest is kept until the file changes."""
         listing = []
-        for relative, path in self.shared.items():
+        for relative, path in list(self.shared.items()):     # share() may add while this runs
             try:
                 stat = path.stat()
             except OSError:
@@ -277,6 +277,17 @@ class Hub:
     def set(self, **control) -> None:
         with self.lock:
             self.control.update(control)
+
+    def share(self, listing: dict[str, Path]) -> None:
+        """Serve more files (a new league member), and tell the followers there is something new to fetch: the
+        control's `shared` count goes up, and a follower that sees it change fetches what it lacks (Run.apply_control).
+        """
+        with self.lock:
+            fresh = {name: path for name, path in listing.items() if name not in self.shared}
+            if not fresh:
+                return
+            self.shared.update(fresh)
+            self.control["shared"] = int(self.control.get("shared", 0)) + 1
 
     def at_safe_point(self, run) -> None:
         """Fold in what the followers pushed, count their steps and episodes into the run, and take the centre that

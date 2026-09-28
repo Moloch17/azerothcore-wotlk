@@ -33,7 +33,7 @@ stage1_move                 open ground, broken ground, water   ── the feet
                      │  └─ stage21_gather     ── the band's herbs and ore, and what lives among them
                      │     └─ stage22_town    ── sell, repair, restock, dress
                      └─ stage12_pvp           ── against people: self-play, the far side learned
-                        └─ stage13_evade      ── a scripted hunter it cannot beat
+                        └─ stage13_evade      ── a scripted hunter, ten below to ten above
                            └─ stage14_hide
                               └─ stage15_stealth   (restricted: only classes that can)
                                  └─ stage16_companion   ── beside others (+ merges stage11_endurance)
@@ -99,8 +99,8 @@ one commanding each side (see 4.12).
 | `stage10_gauntlet` | stage9_pack | Solo | + gauntlet, support | Pull after pull with short breaks: heals, food and drink |
 | `stage11_endurance` | stage10_gauntlet | Solo | same | **Drill.** A known run of eight pulls, won by finishing it: 900 s, ending on an elite pack two levels up |
 | `stage12_pvp` | stage11_endurance | Mirror | + pvp (−pack, −gauntlet) | **Against people.** Self-play one-on-one: two learned seats of any classes. The far side is the live policy or a frozen earlier checkpoint from the learner's cast league, never a script; the scripted `fight` player is only the evaluation yardstick |
-| `stage13_evade` | stage12_pvp | Solo | same | **Drill.** A scripted enemy player ten levels up for 120 s: the fight cannot be won, so the score is being alive at the end. Break away, break line of sight, use the class's escape |
-| `stage14_hide` | stage13_evade | Solo | same | **Drill.** The same fight six levels up, for every class and race: get out of sight and stay there, and hide again after being found. Terrain, distance, Blink, Disengage, Feign Death, Invisibility, Vanish, Prowl, Shadowmeld -- whatever the kit and the race give it |
+| `stage13_evade` | stage12_pvp | Solo | same | **Drill.** A scripted enemy player from ten levels below to ten above, drawn each episode, for 120 s; the score is being alive at the end. Read the level difference, and against a stronger player break away, break line of sight, use the class's escape |
+| `stage14_hide` | stage13_evade | Solo | same | **Drill.** The same fight, ten below to ten above, for every class and race: get out of sight and stay there, and hide again after being found. Terrain, distance, Blink, Disengage, Feign Death, Invisibility, Vanish, Prowl, Shadowmeld -- whatever the kit and the race give it |
 | `stage15_stealth` | stage14_hide | Solo | same | **Drill, restricted.** For the classes whose own kit carries a stealth aura (rogue and druid): close on a stronger enemy unseen, hold inside strike range, and open from it. Shadowmeld does not qualify -- it breaks on movement. In a run whose classes cannot play it the queue skips it; in an all-class run its checkpoint holds two layouts and the next stage seeds from the stage before it |
 | `stage16_companion` | stage15_stealth (+ stage11_endurance) | Solo | + pack, gauntlet, companion, support (−pvp) | The gauntlet beside an owner: follow, assist, guard and heal it. The owner is a seat of its own played by the endurance policy (the learner's cast) in 70% of training episodes, and the script's wandering owner in the rest and in every evaluation |
 | `stage17_party` | stage16_companion | Party | + party | Four learned seats and the owner (cast as in the companion stage) against elite-heavy pulls |
@@ -1663,11 +1663,12 @@ happened tens of seconds before (a stealthy approach, a trinket baited out). Bud
 
 ### Stage 13: `stage13_evade`
 
-**Drill.** A scripted enemy player **ten levels above** the seat
-(`ArenaDefinition::OpponentLevelBonus`), for 120 s. The fight is not winnable straight, and that is the point:
-everything up to here rewards winning the fight in front of it, so a losing fight is a class of situation the
-policy has never been paid to handle and it dies with its cooldowns up. The score is being alive when the clock
-runs out (`survived`).
+**Drill.** A scripted enemy player **from ten levels below to ten above** the seat, drawn each episode
+(`ArenaDefinition::OpponentLevelRange`), for 120 s. Everything up to here rewards winning the fight in front of it,
+so a losing fight is a class of situation the policy has never been paid to handle and it dies with its cooldowns
+up; with the range it also has to tell a losing fight from a winnable one, from the level difference the pvp block
+reports, rather than flee everything (a fixed ten up until 2026-09-28, when the user asked for the range). The score
+is being alive when the clock runs out (`survived`).
 
 **Time spent unseen is counted and never paid.** The optimal policy for paid seconds out of sight is to walk to
 the far corner at t=0 and stand there, which is exactly the farmable shape `animus.rewards` exists to catch.
@@ -1715,7 +1716,8 @@ or 26 yd genuinely escapes.
 
 ### Stage 14: `stage14_hide`
 
-**Drill.** The same losing fight six levels up rather than ten, for **every class and every race**. The lesson
+**Drill.** The same fight, from ten levels below to ten above (a fixed six up until 2026-09-28), for **every class
+and every race**. The lesson
 is becoming unseen and staying unseen, and hiding again once the hunter has found you.
 
 Stealth is one way to do that and the rarest: four of the eighteen classes have a stealth aura in their own

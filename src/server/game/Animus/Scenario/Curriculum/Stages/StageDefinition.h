@@ -199,6 +199,11 @@ namespace Animus::Curriculum
         /// getting away needs a fight the seat cannot win; every other arena wants an even match and leaves
         /// this at 0. Ignored unless the opposition is a scripted player.
         int32 OpponentLevelBonus = 0;
+        /// The scripted enemy player's level drawn each episode from the seat's plus the bonus, plus or minus this,
+        /// in place of Opponent.LevelSpread (0 keeps the spread). The evade and hide drills draw from ten below to
+        /// ten above, so whether to run at all is part of what they teach: against a fixed ten levels up every
+        /// fight was one to leave, and a seat that meets a weaker player in the world should not flee it.
+        int32 OpponentLevelRange = 0;
         /// Yards of validated random offset applied to each seat's start, with a random facing to go with it.
         /// 0 leaves the seat exactly on the spawn point facing due east, which is what every arena did and what
         /// every arena that leaves this alone keeps doing.

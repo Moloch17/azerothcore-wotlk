@@ -684,17 +684,17 @@ namespace
             .Extends = "stage12_pvp",
             .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
-            // Ten levels up. Six was chosen against the open-field arena and stopped being a losing fight once
-            // the spawn had cover: the `fight` baseline, which never tries to hide, went from winning 0.188 of
-            // these to winning 0.447, because terrain blocks the scripted opponent's casting as readily as it
-            // hides the seat. A drill about leaving a fight has to be a fight worth leaving.
+            // From ten levels below to ten above, drawn each episode (2026-09-28, by the user's decision). It was
+            // a fixed ten up -- six was tried against the open-field arena and stopped being a losing fight once
+            // the spawn had cover -- which made every fight one to leave, so fleeing was the only lesson. With
+            // the range the seat reads the level difference (the pvp block) and learns when leaving is right.
             //
             // The win condition is being alive at 120 s, which is what makes running, cover and the escape
             // cooldown the only policy that scores. Nothing pays time spent hidden -- that would be farmed by
             // walking to the far corner at t=0 -- only the transition out of contact (RewardTerm::BrokeContact,
             // once per break with a cooldown).
             .Arenas = { { .Name = "evade", .Against = Opposition::ScriptedPlayer, .Pvp = true,
-                .EpisodeSeconds = 120, .OpponentLevelBonus = 10 } },
+                .EpisodeSeconds = 120, .OpponentLevelRange = 10 } },
             // Cover is the whole point, and the default spawn is open field: the first run of this stage read
             // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
             // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
@@ -717,12 +717,12 @@ namespace
             .Extends = "stage13_evade",
             .Summary = "get out of sight and stay there, and hide again after being found",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
-            // Six levels up rather than the evade drill's ten. The fight is winnable often enough that hiding
-            // is a choice rather than the only move left, which is the difference between this stage and the
-            // one before it: stage 16 is about leaving a fight that is lost, this one is about not being found
-            // once you have.
+            // From ten levels below to ten above, as the evade drill (2026-09-28, by the user's decision; it was
+            // a fixed six up). Hiding is a choice against a stronger player and a mistake against a weaker one,
+            // which is the difference between this stage and the one before it: that one is about leaving a
+            // fight, this one about not being found once you have.
             .Arenas = { { .Name = "hide", .Against = Opposition::ScriptedPlayer, .Pvp = true,
-                .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
+                .EpisodeSeconds = 120, .OpponentLevelRange = 10 } },
             // Cover is the whole point, and the default spawn is open field: the first run of this stage read
             // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
             // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
@@ -1175,8 +1175,11 @@ namespace
             return "travel needs the travel block";
         if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0))
             return "travel is one seat on its own";
-        if (arena.OpponentLevelBonus != 0 && arena.Against != Opposition::ScriptedPlayer)
-            return "only a scripted enemy player takes a level bonus";
+        if ((arena.OpponentLevelBonus != 0 || arena.OpponentLevelRange != 0)
+            && arena.Against != Opposition::ScriptedPlayer)
+            return "only a scripted enemy player takes a level bonus or range";
+        if (arena.OpponentLevelRange < 0)
+            return "a level range is how far either way, not negative";
         if (arena.Flying && !travel)
             return "only a travel arena flies";
         if (arena.Indoors && !travel)
