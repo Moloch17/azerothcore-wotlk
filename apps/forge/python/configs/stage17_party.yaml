@@ -6,11 +6,16 @@
 extends: stage16_companion.yaml
 run_name: stage17_party
 
-# ~11 h at ~15k env steps/s (four seats); convergence usually ends the stage much sooner (the headroom is for restarts).
-total_env_steps: 50000000
+# 150M (2026-09-28, by the user's decision): at 50M the first party run of the second full run did not move -- the owner
+# died in 67% of episodes at 0M, 18M and 35M alike.
+total_env_steps: 150000000
 
 eval:
-  every_env_steps: 15000000
+  # Every 20M with 512 episodes (2026-09-28, by the user's decision): 2,048 five-seat party episodes at 96 envs took
+  # the host ~15 minutes an evaluation while the cluster reached the next 10M in ~6, so the host evaluated back to
+  # back and ran 7 updates of its own in the whole of stage17_party.
+  every_env_steps: 20000000
+  episodes: 512
   report: [dps, died, deaths, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died,
     teammate_healing, threat_on_teammates, casts_completed, casts_cancelled, cancelled_stopped, cancelled_moved,
     cancelled_target, cancelled_other]

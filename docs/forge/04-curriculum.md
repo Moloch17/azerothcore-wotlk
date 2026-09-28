@@ -181,10 +181,10 @@ stage trains its whole budget).
 | `stage11_endurance` | 50M | 10M | 1024 | `stage12_pvp` | 50M | 10M | 2048 |
 | `stage13_evade` | 50M | 10M | 2048 | `stage14_hide` | 50M | 10M | 2048 |
 | `stage15_stealth` | 50M | 10M | 2048 | `stage16_companion` | 50M | 10M | 2048 |
-| `stage17_party` | 50M | 15M | 2048 | `stage18_tanking` | 50M | 15M | 2048 |
-| `stage19_triage` | 50M | 15M | 2048 | `stage20_quest` | 50M | 10M | 1024 |
+| `stage17_party` | 150M | 20M | 512 | `stage18_tanking` | 50M | 20M | 512 |
+| `stage19_triage` | 50M | 20M | 512 | `stage20_quest` | 50M | 10M | 1024 |
 | `stage21_gather` | 50M | 10M | 1024 | `stage22_town` | 50M | 5M | 1024 |
-| `stage23_dungeon` | 50M | 10M | 512 | `stage24_flag` | 50M | 10M | 2048 |
+| `stage23_dungeon` | 50M | 20M | 512 | `stage24_flag` | 50M | 10M | 2048 |
 | `stage25_warsong` | 50M | 10M | 128 | `stage26_duo_led` | 50M | 10M | 512 |
 | `stage27_crossroads` | 50M | 25M | 256 | `stage28_raid_single` | 50M | 20M | 256 |
 | `stage29_raid_gauntlet` | 50M | 20M | 256 | `stage30_raid10` | 50M | 10M | 128 |
@@ -195,7 +195,7 @@ default is 64 -- every number in this chapter is at 128). Stages 1-7 (the moveme
 every class; stages 8-19 are trained per class, each class with all 128 envs; stages 20-27 (the life stages, the
 dungeon, the objective stages and the crossroads) once, after the join; the five raid stages by name. Every stage's ceiling is 50M
 (convergence usually ends one sooner; 100M until 2026-09-28, when the first full run's stages were found to gain
-little past their first tens of millions), so the queue's ceiling is 1,350M (1,600M with the raids), and a ten-class
+little past their first tens of millions), so the queue's ceiling is 1,450M (1,700M with the raids; `stage17_party` has 150M), and a ten-class
 build's is 350M for the root, 600M per class (6,000M for ten) and 400M for the life stages, the dungeon and the
 objective stages: about 6,750M. Two assumptions carry that number. The objective stages "once after the join" assume the **take-one-trunk**
 join below (seed from one class's trunk and let the adapters adapt), the only one of the three options that costs
@@ -1847,8 +1847,9 @@ rest. The party run's measured values (owner dead in 66% of episodes at 100M ste
 
 Adds the party block. One to four learned seats (like a player bringing one to four companions) plus the owner form a
 sim group. Every seat plays the same policy and sees the other three. An empty seat has no character and only the
-no-op, and the learner drops its rows. Pulls are elite-heavy. The arena runs 450 s, as stage 10's. Config: budget 90M,
-evaluation every 15M steps, a party-focused report. What to read: `owner_deaths`, `wipes`, `teammates_died`,
+no-op, and the learner drops its rows. Pulls are elite-heavy. The arena runs 450 s, as stage 10's. Config: budget 150M
+(at 50M the second full run's party stage did not move), evaluation every 20M steps on 512 episodes (2,048 five-seat
+episodes at 96 envs kept the host evaluating back to back), a party-focused report. What to read: `owner_deaths`, `wipes`, `teammates_died`,
 `pulls_cleared` and `low_health_seconds`; the 120M run's best (the owner dead in 66% of episodes against the scripted
 baseline's 92%, 5.96 pulls cleared) is the number to read a new run against.
 

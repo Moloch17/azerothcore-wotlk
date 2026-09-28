@@ -14,7 +14,11 @@ convergence:
   patience: 2
 
 eval:
-  every_env_steps: 15000000
+  # Every 20M with 512 episodes (2026-09-28, by the user's decision): 2,048 five-seat party episodes at 96 envs took
+  # the host ~15 minutes an evaluation while the cluster reached the next 10M in ~6, so the host evaluated back to
+  # back and ran 7 updates of its own in the whole of stage17_party.
+  every_env_steps: 20000000
+  episodes: 512
 
 # The owner is played by a frozen checkpoint (animus.cast): the endurance policy, which clears pulls on its own,
 # in 70% of the training episodes; the script's wandering owner in the rest (Owner.CastScriptedShare) and in every
