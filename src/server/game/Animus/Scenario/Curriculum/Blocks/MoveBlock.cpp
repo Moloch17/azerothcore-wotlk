@@ -520,9 +520,18 @@ namespace
 
     void StepPitch(Animus::Curriculum::SeatView& view)
     {
-        if (view.PitchTurning != 0 && Airborne(view.Bot))
-            view.Pitch = std::clamp(view.Pitch + float(view.PitchTurning) * MoveBlock::PITCH_STEP,
-                -MoveBlock::PITCH_MAX, MoveBlock::PITCH_MAX);
+        if (view.PitchStepped || view.Pitch == view.PitchTarget || !Airborne(view.Bot))
+            return;
+
+        view.PitchStepped = true;
+        view.Pitch += std::clamp(view.PitchTarget - view.Pitch, -MoveBlock::PITCH_RATE, MoveBlock::PITCH_RATE);
+        // There: the float left over is not a tilt still to come.
+        if (std::fabs(view.PitchTarget - view.Pitch) < 1e-4f)
+        {
+            view.Pitch = view.PitchTarget;
+            if (view.Option)
+                view.Option->Stop(SeatOptionKind::MovePitch);
+        }
     }
 
     /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a
@@ -661,7 +670,11 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     for (float angle : TURN_ANGLES)
         turns.push_back(double(angle));
     block["turn_angles"] = std::move(turns);
-    block["pitch_step"] = double(PITCH_STEP);
+    block["pitch_rate"] = double(PITCH_RATE);
+    boost::json::array pitches;
+    for (float angle : PITCH_ANGLES)
+        pitches.push_back(double(angle));
+    block["pitch_angles"] = std::move(pitches);
     block["pitch_max"] = double(PITCH_MAX);
     block["probe_yards"] = double(PROBE_YARDS);
     boost::json::array ranges;
@@ -704,7 +717,8 @@ std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, 
         "halt", "face_target", "face_heading", "face_hold",
         "turn_left_15", "turn_right_15", "turn_left_45", "turn_right_45", "turn_left_90", "turn_right_90",
         "turn_left_135", "turn_right_135", "turn_about",
-        "pitch_up", "pitch_down", "pitch_level", "jump",
+        "pitch_down_60", "pitch_down_45", "pitch_down_30", "pitch_down_15", "pitch_level",
+        "pitch_up_15", "pitch_up_30", "pitch_up_45", "pitch_up_60", "jump",
     };
 
     return local < NAMES.size() ? NAMES[local] : std::string();
@@ -912,6 +926,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         out[OBS_TURNING_RIGHT] = std::clamp(-view.TurnLeft / float(M_PI), 0.0f, 1.0f);
         out[OBS_PITCH_SIN] = std::sin(view.Pitch);
         out[OBS_PITCH_COS] = std::cos(view.Pitch);
+        out[OBS_PITCH_TARGET] = view.PitchTarget / PITCH_MAX;
 
         if (Unit const* target = view.Target)
         {
@@ -1102,12 +1117,13 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     allowed[ACTION_JUMP] = canMove && !airborne && bot
         && view.Probe && view.Probe->CanJump ? 1 : 0;   // canMove already excludes an arc or a fall in the air
 
-    // Pitch only means something off the ground. On foot the ground decides the seat's height, so the three
-    // actions are masked rather than merely useless -- a masked action cannot be explored into.
+    // Pitch only means something off the ground. On foot the ground decides the seat's height, so the pitches are
+    // masked rather than merely useless -- a masked action cannot be explored into. The one already chosen is masked
+    // too: choosing it again is a key already held.
     bool const canPitch = canTurn && airborne;
-    allowed[ACTION_PITCH_UP] = canPitch && view.Pitch < PITCH_MAX ? 1 : 0;
-    allowed[ACTION_PITCH_DOWN] = canPitch && view.Pitch > -PITCH_MAX ? 1 : 0;
-    allowed[ACTION_PITCH_LEVEL] = canPitch && std::fabs(view.Pitch) > 0.01f ? 1 : 0;
+    for (uint32 pitch = 0; pitch < PITCH_COUNT; ++pitch)
+        allowed[ACTION_PITCH_FIRST + pitch] = canPitch
+            && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
 }
 
 void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
@@ -1145,11 +1161,7 @@ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult
         }
     }
 
-    // The held pitch comes up on its own when its clock runs out, and what it tilted to is kept. A turn ends when it
-    // has turned (StepTurn), not on a clock.
-    if (!view.Option->Running(SeatOptionKind::MovePitch, view.NowMs))
-        view.PitchTurning = 0;
-
+    // A turn and a pitch end when they get there (StepTurn, StepPitch), not on a clock.
     // A turn under way swings the seat on by TURN_RATE every decision until it is done. It happens before the feet
     // are re-aimed, so a bearing walked under a turn curves rather than stepping.
     StepTurn(view);
@@ -1243,20 +1255,31 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         return;
     }
 
-    if (local == ACTION_PITCH_UP || local == ACTION_PITCH_DOWN)
+    if (local >= ACTION_PITCH_FIRST && local < ACTION_PITCH_FIRST + PITCH_COUNT)
     {
-        view.PitchTurning = local == ACTION_PITCH_UP ? 1 : -1;
-        view.Option->Start(SeatOptionKind::MovePitch, view.NowMs + view.Options.MovePitchMs);
+        float const target = PITCH_ANGLES[local - ACTION_PITCH_FIRST];
+        if (target == view.Pitch && target == view.PitchTarget)
+            return;
+
+        // Which way this tilts the head from where it is now; a pitch against one chosen moments ago, or still
+        // under way, is a seat bobbing up and down (Actions.Jitter), as a turn back is one twitching side to side.
+        int8 const sign = target > view.Pitch ? 1 : target < view.Pitch ? -1 : 0;
+        if (SteerMemory* steering = view.Steering; steering && sign != 0)
+        {
+            bool const recent = steering->PitchSign != 0
+                && (view.PitchTarget != view.Pitch || view.NowMs < steering->PitchMs + view.Options.JitterWindowMs);
+            if (recent && sign != steering->PitchSign)
+                ++result.PitchReversals;
+            steering->PitchSign = sign;
+            steering->PitchMs = view.NowMs;
+        }
+
+        view.PitchTarget = target;
+        uint32 const steps = uint32(std::ceil(std::fabs(target - view.Pitch) / PITCH_RATE - 1e-3f));
+        view.Option->Start(SeatOptionKind::MovePitch,
+            view.NowMs + uint64(std::max(1u, steps)) * view.Options.MovePitchMs);
         StepPitch(view);
         Steer(view);
-        return;
-    }
-
-    if (local == ACTION_PITCH_LEVEL)
-    {
-        view.Pitch = 0.0f;
-        view.PitchTurning = 0;
-        view.Option->Stop(SeatOptionKind::MovePitch);
         return;
     }
 

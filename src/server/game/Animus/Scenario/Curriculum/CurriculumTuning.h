@@ -394,13 +394,13 @@ namespace Animus::Curriculum
             float Repeat = 0.02f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
-            /// Steering that does not commit: a turn chosen against one chosen within Options.JitterWindowMs, and a
-            /// bearing pressed within it that swings the feet round from the last one, charged per reversal (a
-            /// bearing by the share of a half turn it swings). Nothing in the rewards cared how a seat got where it
-            /// was going, so a wobble that cost nothing was learned as harmless: in the first full run's final
-            /// evaluations 63-70% of the ground stages' turns were undone within three decisions, and in flight the
-            /// feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course is the
-            /// habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
+            /// Steering that does not commit: a turn or a pitch chosen against one chosen within
+            /// Options.JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one,
+            /// charged per reversal (a bearing by the share of a half turn it swings). Nothing in the rewards cared how
+            /// a seat got where it was going, so a wobble that cost nothing was learned as harmless: in the first full
+            /// run's final evaluations 63-70% of the ground stages' turns were undone within three decisions, and in
+            /// flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course
+            /// is the habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
             float Jitter = 0.02f;
             /// How far below where a jump would come down the ground is looked for before the jump is refused.
             /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
@@ -589,12 +589,12 @@ namespace Animus::Curriculum
             /// interval, so the clock the core block reports runs out as the turn does. A turn itself ends when it
             /// has turned, not on this.
             uint32 MoveTurnMs = 250;
-            /// How long a pitch keeps being held: the length of a glance rather than of a journey. The policy
-            /// re-presses to keep tilting, and what it has tilted to is kept when it stops.
-            uint32 MovePitchMs = 750;
-            /// How soon after a turn or a bearing another one that undoes it counts as jitter (Actions.Jitter). About
-            /// three decisions: long enough to catch a head twitching side to side, short enough that a seat that
-            /// walked one way for a moment and then chose another is not charged for having changed its mind.
+            /// The same for each MoveBlock::PITCH_RATE step of a chosen pitch: the decision interval.
+            uint32 MovePitchMs = 250;
+            /// How soon after a turn, a pitch or a bearing another one that undoes it counts as jitter
+            /// (Actions.Jitter). About three decisions: long enough to catch a head twitching side to side, short
+            /// enough that a seat that walked one way for a moment and then chose another is not charged for having
+            /// changed its mind.
             uint32 JitterWindowMs = 750;
             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds

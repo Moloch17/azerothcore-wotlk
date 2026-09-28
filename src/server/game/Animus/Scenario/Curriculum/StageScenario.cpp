@@ -1099,6 +1099,10 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return seat(env, index).BearingFlips;
     });
+    _info.Add("pitch_reversals", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).PitchReversals);
+    });
 
     // Support: healing and protection done (on itself, the owner and teammates) as fractions of the bot's health, the
     // share of healing cast that overhealed, casts that could only be wasted, defensives, how often heals were cast
@@ -2396,7 +2400,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.HeldBearing = seat.HeldBearing;
     view.FacingMode = seat.FacingMode;
     view.TurnLeft = seat.TurnLeft;
-    view.PitchTurning = seat.PitchTurning;
+    view.PitchTarget = seat.PitchTarget;
     view.Pitch = seat.Pitch;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
@@ -2517,7 +2521,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.HeldBearing = view.HeldBearing;
     seat.FacingMode = view.FacingMode;
     seat.TurnLeft = view.TurnLeft;
-    seat.PitchTurning = view.PitchTurning;
+    seat.PitchTarget = view.PitchTarget;
     seat.Pitch = view.Pitch;
     seat.Facing = view.Facing;
     // Water, the way the core keeps it. A breath is spent under water and comes back ten times as fast above it
@@ -2624,7 +2628,8 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.JumpsRefused += result.JumpsRefused;
     seat.TurnReversals += result.TurnReversals;
     seat.BearingFlips += result.BearingFlip;
-    seat.StepJitter += float(result.TurnReversals) + result.BearingFlip;
+    seat.PitchReversals += result.PitchReversals;
+    seat.StepJitter += float(result.TurnReversals + result.PitchReversals) + result.BearingFlip;
     if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
     {
         ++seat.Drops;

@@ -216,7 +216,7 @@ namespace Animus::Curriculum
         /// The last turn and bearing (SteerMemory), for the jitter charge. Mutable like the probe: ViewSeat reads
         /// a const seat and hands the move block a pointer it writes on Apply.
         mutable SteerMemory Steering;
-        int8 PitchTurning = 0;                  // the pitch key held: -1 down, +1 up, 0 none
+        float PitchTarget = 0.0f;               // the pitch chosen (SeatView::PitchTarget), radians
         float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
         /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
@@ -335,6 +335,7 @@ namespace Animus::Curriculum
         float StepJitter = 0.0f;
         uint32 TurnReversals = 0;
         float BearingFlips = 0.0f;
+        uint32 PitchReversals = 0;
 
         CombatTally Combat;
         RewardLedger Rewards;
@@ -377,7 +378,7 @@ namespace Animus::Curriculum
             FacingMode = 0xFF;
             TurnLeft = 0.0f;
             Steering.Clear();
-            PitchTurning = 0;
+            PitchTarget = 0.0f;
             Pitch = 0.0f;
             Facing = 0.0f;
             Probe = GroundProbe();
@@ -445,6 +446,7 @@ namespace Animus::Curriculum
             StepJitter = 0.0f;
             TurnReversals = 0;
             BearingFlips = 0.0f;
+            PitchReversals = 0;
             Combat = CombatTally();
             Rewards.ResetEpisode();
         }

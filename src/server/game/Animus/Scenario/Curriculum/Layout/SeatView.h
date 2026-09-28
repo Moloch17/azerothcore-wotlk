@@ -196,6 +196,8 @@ namespace Animus::Curriculum
         int8 TurnSign = 0;                      // and which way: +1 left, -1 right, 0 none yet
         uint64 BearingMs = 0;                   // the clock the last bearing was pressed at
         uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
+        uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
+        int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
 
         void Clear() { *this = SteerMemory(); }
     };
@@ -333,10 +335,13 @@ namespace Animus::Curriculum
         /// The last turn and bearing, for the jitter charge (SteerMemory). Borrowed like the probe; null for a
         /// view without one, which charges nothing.
         SteerMemory* Steering = nullptr;
-        /// The pitch key being held (-1 down, +1 up, 0 none) and the angle it has reached. Two fields because a
-        /// mouse has two: how it is being moved, and where it has got to. Releasing keeps the angle.
-        int8 PitchTurning = 0;
+        /// The pitch the seat has chosen (MoveBlock::PITCH_ANGLES) and the one it has reached, in radians above (+)
+        /// or below (-) level. Two fields because they are two things: where it was told to look, and where it is
+        /// looking on the way there (MoveBlock::PITCH_RATE a decision).
+        float PitchTarget = 0.0f;
         float Pitch = 0.0f;
+        /// The head already tilted PITCH_RATE this decision, as TurnStepped. Per decision, never carried.
+        bool PitchStepped = false;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
@@ -563,6 +568,7 @@ namespace Animus::Curriculum
         /// share of a half turn it swings (a reversal is 1, a quarter turn 0.5).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
+        uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
     };
 }
 

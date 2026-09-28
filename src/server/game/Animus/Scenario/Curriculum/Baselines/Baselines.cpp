@@ -558,7 +558,8 @@ namespace
 
         uint32 nearest = 0;
         for (uint32 turn = 1; turn < MoveBlock::TURN_COUNT; ++turn)
-            if (std::fabs(MoveBlock::TURN_ANGLES[turn] - heading) < std::fabs(MoveBlock::TURN_ANGLES[nearest] - heading))
+            if (std::fabs(MoveBlock::TURN_ANGLES[turn] - heading)
+                < std::fabs(MoveBlock::TURN_ANGLES[nearest] - heading))
                 nearest = turn;
 
         return row.Allowed(BlockId::Move, MoveBlock::ACTION_TURN_FIRST + nearest);
@@ -617,18 +618,18 @@ namespace
                 row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
                 return turn;
 
-            // In the air, climb to cruising height for the crossing and nose down for the arrival. Pitch is held,
-            // so these mask themselves once the angle is reached, the same way the facing does.
+            // In the air, climb to cruising height for the crossing and nose down for the arrival: a 30 degree
+            // climb or dive, chosen once (the one already chosen is masked), and level between.
             if (flying)
             {
                 if (yards > MOUNT_BEYOND_YARDS * 0.5f && height < CRUISE_HEIGHT_YARDS)
                 {
-                    if (std::optional<int32> up = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_UP))
+                    if (std::optional<int32> up = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL + 2))
                         return up;
                 }
                 else if (yards < MOUNT_BEYOND_YARDS * 0.5f && height > 1.0f)
                 {
-                    if (std::optional<int32> down = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_DOWN))
+                    if (std::optional<int32> down = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL - 2))
                         return down;
                 }
                 else if (std::optional<int32> level = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL))

@@ -6132,9 +6132,9 @@ AnimusForge.Curriculum.Actions.Repeat = 0.02
 AnimusForge.Curriculum.Actions.RepeatWindowMs = 10000
 #   presses of one action within the window that cost nothing
 AnimusForge.Curriculum.Actions.RepeatFree = 3
-#   per turn chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
-#   swings the feet round from the last one: steering that does not commit, which on screen is a head twitching side
-#   to side and feet that zigzag
+#   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed
+#   within it swings the feet round from the last one: steering that does not commit, which on screen is a head
+#   twitching side to side, a flyer bobbing up and down, and feet that zigzag
 AnimusForge.Curriculum.Actions.Jitter = 0.02
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
 #   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
@@ -6304,9 +6304,8 @@ AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
 #                     one stands for many decisions: resting until health and mana are back, holding an interrupt
 #                     for the target's next cast, or walking a bearing. They also end on their own conditions,
 #                     and any other action the policy takes cancels them -- except that only the feet end a held
-#                     bearing, a turn ends when it has turned (or another replaces it), and only its own opposite
-#                     ends a held pitch.
-#        Default:     30000 / 10000 / 3000 / 250 / 750 / 750
+#                     bearing, and a turn or a pitch ends when it gets there (or another replaces it).
+#        Default:     30000 / 10000 / 3000 / 250 / 250 / 750
 #
 AnimusForge.Curriculum.Options.RestMaxMs = 30000
 AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
@@ -6320,10 +6319,10 @@ AnimusForge.Curriculum.Options.MoveBearingMs = 3000
 #   the clock the seat observes runs out as the turn does. A turn is chosen whole (15, 45, 90 or 135 degrees either
 #   way, or about) and ends when it has turned, not on this.
 AnimusForge.Curriculum.Options.MoveTurnMs = 250
-#   ... and how long a pitch keeps being held (ms): the length of a glance rather than of a journey. What it has
-#   tilted to is kept when it stops, the way a mouse leaves the camera where it was left.
-AnimusForge.Curriculum.Options.MovePitchMs = 750
-#   ... and how soon after a turn or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
+#   ... and the same for each 30-degree step of a chosen pitch (ms). A pitch is chosen whole (every 15 degrees from a
+#   60 degree dive to a 60 degree climb) and ends when it gets there.
+AnimusForge.Curriculum.Options.MovePitchMs = 250
+#   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
 AnimusForge.Curriculum.Options.JitterWindowMs = 750
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
