@@ -169,31 +169,30 @@ stage trains its whole budget).
 
 | Stage | Budget | Eval every | Episodes | Stage | Budget | Eval every | Episodes |
 |---|---|---|---|---|---|---|---|
-| `stage1_move` | 30M | 2M | 2048 | `stage2_indoor` | 16M | 2M | 2048 |
-| `stage3_jump` | 16M | 2M | 2048 | `stage4_dive` | 20M | 2M | 2048 |
-| `stage5_dodge` | 30M | 5M | 2048 | `stage6_travel` | 20M | 2M | 2048 |
-| `stage7_flight` | 20M | 2M | 2048 | `stage8_duel` | 100M | 10M | 2048 |
-| `stage9_pack` | 40M | 10M | 2048 | `stage10_gauntlet` | 60M | 10M | 2048 |
-| `stage11_endurance` | 60M | 10M | 1024 | `stage12_pvp` | 60M | 10M | 2048 |
-| `stage13_evade` | 30M | 10M | 2048 | `stage14_hide` | 30M | 10M | 2048 |
-| `stage15_stealth` | 20M | 10M | 2048 | `stage16_companion` | 60M | 10M | 2048 |
-| `stage17_party` | 90M | 15M | 2048 | `stage18_tanking` | 60M | 15M | 2048 |
-| `stage19_triage` | 60M | 15M | 2048 | `stage20_quest` | 60M | 10M | 1024 |
-| `stage21_gather` | 30M | 10M | 1024 | `stage22_town` | 20M | 5M | 1024 |
-| `stage23_dungeon` | 60M | 10M | 512 | `stage24_flag` | 40M | 10M | 2048 |
-| `stage25_warsong` | 40M | 10M | 128 | `stage26_duo_led` | 30M | 10M | 512 |
-| `stage27_crossroads` | 100M | 25M | 256 | `stage28_raid_single` | 40M | 20M | 256 |
-| `stage29_raid_gauntlet` | 40M | 20M | 256 | `stage30_raid10` | 40M | 10M | 128 |
-| `stage31_raid25` | 40M | 10M | 64 | `stage32_raid40` | 40M | 10M | 32 |
+| `stage1_move` | 100M | 2M | 2048 | `stage2_indoor` | 100M | 2M | 2048 |
+| `stage3_jump` | 100M | 2M | 2048 | `stage4_dive` | 100M | 2M | 2048 |
+| `stage5_dodge` | 100M | 5M | 2048 | `stage6_travel` | 100M | 2M | 2048 |
+| `stage7_flight` | 100M | 2M | 2048 | `stage8_duel` | 100M | 10M | 2048 |
+| `stage9_pack` | 100M | 10M | 2048 | `stage10_gauntlet` | 100M | 10M | 2048 |
+| `stage11_endurance` | 100M | 10M | 1024 | `stage12_pvp` | 100M | 10M | 2048 |
+| `stage13_evade` | 100M | 10M | 2048 | `stage14_hide` | 100M | 10M | 2048 |
+| `stage15_stealth` | 100M | 10M | 2048 | `stage16_companion` | 100M | 10M | 2048 |
+| `stage17_party` | 100M | 15M | 2048 | `stage18_tanking` | 100M | 15M | 2048 |
+| `stage19_triage` | 100M | 15M | 2048 | `stage20_quest` | 100M | 10M | 1024 |
+| `stage21_gather` | 100M | 10M | 1024 | `stage22_town` | 100M | 5M | 1024 |
+| `stage23_dungeon` | 100M | 10M | 512 | `stage24_flag` | 100M | 10M | 2048 |
+| `stage25_warsong` | 100M | 10M | 128 | `stage26_duo_led` | 100M | 10M | 512 |
+| `stage27_crossroads` | 100M | 25M | 256 | `stage28_raid_single` | 100M | 20M | 256 |
+| `stage29_raid_gauntlet` | 100M | 20M | 256 | `stage30_raid10` | 100M | 10M | 128 |
+| `stage31_raid25` | 100M | 10M | 64 | `stage32_raid40` | 100M | 10M | 32 |
 
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128). Stages 1-7 (the movement root) are trained once, for
 every class; stages 8-19 are trained per class, each class with all 128 envs; stages 20-27 (the life stages, the
-dungeon, the objective stages and the crossroads) once, after the join; the five raid stages by name. So the queue's
-ceiling is 1,202M (1,402M with the raids), and a ten-class build's is 152M for the root, 670M per class (6,700M for
-ten) and 380M for the life stages, the dungeon and the objective stages: about 7,232M, against the 15,780M the
-earlier per-class plan came
-to. Two assumptions carry that number. The objective stages "once after the join" assume the **take-one-trunk**
+dungeon, the objective stages and the crossroads) once, after the join; the five raid stages by name. Every stage's ceiling is 100M
+(convergence usually ends one sooner), so the queue's ceiling is 2,700M (3,200M with the raids), and a ten-class
+build's is 700M for the root, 1,200M per class (12,000M for ten) and 800M for the life stages, the dungeon and the
+objective stages: about 13,500M. Two assumptions carry that number. The objective stages "once after the join" assume the **take-one-trunk**
 join below (seed from one class's trunk and let the adapters adapt), the only one of the three options that costs
 no training. And every class has a `configs/<class>/stage8_duel.yaml` naming the shared flight checkpoint
 (`{shared_runs}` in a path is the shared root's run directory beside the class's own); the druid's directory also

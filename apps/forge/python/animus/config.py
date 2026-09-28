@@ -240,6 +240,10 @@ class TrainConfig:
     rollout_length: int = 128
     log_every: int = 1  # updates
     checkpoint_every: int = 25  # updates
+    # And at least every this many env steps (0 = off): with asynchronous learners most steps are the workers', so
+    # the leader's updates come several times slower than the run's steps -- a stage7_flight crash at 18.8M env steps
+    # was still before update 100, its first checkpoint, and only best.pt survived.
+    checkpoint_env_steps: int = 5_000_000
     keep_checkpoints: int = 5  # numbered checkpoint_*.pt files kept (latest.pt and best.pt always are); 0 = all
 
     # Run the PPO update on a worker thread, so the sim collects the next rollout instead of waiting for it. The

@@ -767,7 +767,11 @@ class TrainingRun:
                         self._checkpoint_extra())
 
     def maybe_checkpoint(self) -> None:
-        if self.update % self.config.checkpoint_every == 0 and self.ranks.leader:
+        every_steps = self.config.checkpoint_env_steps
+        due = self.update % self.config.checkpoint_every == 0 or (
+            every_steps > 0 and self.env_steps - getattr(self, "checkpointed_env_steps", 0) >= every_steps)
+        if due and self.ranks.leader:
+            self.checkpointed_env_steps = self.env_steps
             self._save(self.run_dir / f"checkpoint_{self.update:06d}.pt")
             self._save(self.run_dir / "latest.pt")
             prune_checkpoints(self.run_dir, self.config.keep_checkpoints)
