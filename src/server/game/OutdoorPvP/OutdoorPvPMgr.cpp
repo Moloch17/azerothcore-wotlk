@@ -16,6 +16,7 @@
  */
 
 #include "OutdoorPvPMgr.h"
+#include "Config.h"
 #include "DisableMgr.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -41,6 +42,17 @@ void OutdoorPvPMgr::Die()
 
 void OutdoorPvPMgr::InitOutdoorPvP()
 {
+    // Animus Forge: a training server runs many copies of a continent at once, each on its own map thread, and an
+    // outdoor PvP zone is one object for all of them -- a bot's summon on one copy registered its creature with it while
+    // another copy did the same, and the worldserver crashed (Creature::AddToWorld -> OutdoorPvP::OnCreatureCreate,
+    // stage7_flight on Outland). No player ever contests a zone here: the forge runs without them.
+    if (sConfigMgr->GetOption<bool>("AnimusForge.Enable", true, false))
+    {
+        LOG_INFO("server.loading", ">> Outdoor PvP not loaded: the Animus Forge runs continents in parallel copies.");
+        LOG_INFO("server.loading", " ");
+        return;
+    }
+
     uint32 oldMSTime = getMSTime();
 
     //                                                 0       1
