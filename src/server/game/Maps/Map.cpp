@@ -805,12 +805,15 @@ void Map::UnindexPlayer(Player* player)
 
 void Map::RemovePlayerFromMap(Player* player, bool remove)
 {
-    UnindexPlayer(player);
     UpdatePlayerZoneStats(player->GetZoneId(), MAP_INVALID_ZONE);
 
     player->GetThreatMgr().RemoveMeFromThreatLists(); // pussywizard: multithreading crashfix
 
+    // Still findable while it leaves the world, as it is through ObjectAccessor on a stock core: the auras it cast on
+    // others find their caster through the map to unregister themselves, and one that cannot never leaves the
+    // caster's single-target list, so Unit::RemoveNotOwnSingleTargetAuras spins on it forever.
     player->RemoveFromWorld();
+    UnindexPlayer(player);
     SendRemoveTransports(player);
 
     if (player->IsInGrid())
