@@ -68,6 +68,7 @@ namespace Animus::Curriculum
         Control,
         SelfHealing,
         GoalMatch,
+        GoalSwitch,         // the goal head changed a seat's goal (Goals.Switch)
         OrderMatch,
         PlaceMatch,
         BrokeContact,
@@ -77,6 +78,9 @@ namespace Animus::Curriculum
         /// so a rule that forbade closeness would forbid doorways.
         Clearance,
         Repeat,
+        /// Steering that does not commit (Actions.Jitter): a turn undone moments after it was chosen, feet swung
+        /// round from a bearing just pressed.
+        Jitter,
         Hazard,
         HealingMana,
         /// An instance boss fight lost with the boss part dead: the share of its health the fight took off it.

@@ -562,8 +562,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // Repeats, self-healing, goals and ground effects are paid in every stage, by the scenario rather than an
     // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
     // invisible in exactly the run where it matters.
-    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
-        RewardTerm::Hazard, RewardTerm::HealingMana })
+    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
+        RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
@@ -1088,6 +1088,16 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("repeated_presses", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).RepeatedPresses);
+    });
+    // Steering that did not commit (Actions.Jitter): turns chosen against one chosen within the window, and the
+    // bearing swings, in half turns, of feet re-aimed within it.
+    _info.Add("turn_reversals", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).TurnReversals);
+    });
+    _info.Add("bearing_flips", [seat](Env const& env, uint32 index)
+    {
+        return seat(env, index).BearingFlips;
     });
 
     // Support: healing and protection done (on itself, the owner and teammates) as fractions of the bot's health, the
@@ -2254,7 +2264,10 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         int32 const goal = goals[seat] >= 0 && goals[seat] < int32(GOAL_COUNT) ? goals[seat] : NO_GOAL;
         SeatState& state = data.Seats[seat];
         if (goal != state.Goal && state.Goal != NO_GOAL && goal != NO_GOAL)
+        {
             ++state.GoalChanges;
+            ++state.StepGoalSwitches;       // charged at the next reward (Goals.Switch)
+        }
 
         // A new goal is a new thing to reach, and is paid for again when it is.
         if (goal != state.Goal)
@@ -2382,12 +2395,13 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // can be walked a second time, and the facing actions have nothing to act on.
     view.HeldBearing = seat.HeldBearing;
     view.FacingMode = seat.FacingMode;
-    view.Turning = seat.Turning;
+    view.TurnLeft = seat.TurnLeft;
     view.PitchTurning = seat.PitchTurning;
     view.Pitch = seat.Pitch;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
+    view.Steering = &seat.Steering;
     // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View
     // replaces the closing rate with the one toward the objective where there is one.
     view.MoveRate = seat.MoveRate;
@@ -2502,7 +2516,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     // continues from.
     seat.HeldBearing = view.HeldBearing;
     seat.FacingMode = view.FacingMode;
-    seat.Turning = view.Turning;
+    seat.TurnLeft = view.TurnLeft;
     seat.PitchTurning = view.PitchTurning;
     seat.Pitch = view.Pitch;
     seat.Facing = view.Facing;
@@ -2608,6 +2622,9 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.BreathingCasts += result.BreathingCasts;
     seat.Jumps += result.Jumps;
     seat.JumpsRefused += result.JumpsRefused;
+    seat.TurnReversals += result.TurnReversals;
+    seat.BearingFlips += result.BearingFlip;
+    seat.StepJitter += float(result.TurnReversals) + result.BearingFlip;
     if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
     {
         ++seat.Drops;
@@ -3197,6 +3214,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.Rewards.Add(RewardTerm::Repeat, -_tuning.Actions.Repeat * float(seat.StepRepeats));
     seat.StepRepeats = 0;
+    seat.Rewards.Add(RewardTerm::Jitter, -_tuning.Actions.Jitter * seat.StepJitter);
+    seat.StepJitter = 0.0f;
 
     // The goal the learner is pursuing, and whether this decision went with it.
     if (seat.Goal != NO_GOAL)
@@ -3217,6 +3236,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
             }
         }
     }
+
+    seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));
+    seat.StepGoalSwitches = 0;
 
     seat.StepPreparationMs = 0;
 

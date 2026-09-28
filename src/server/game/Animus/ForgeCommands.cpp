@@ -274,7 +274,12 @@ void AnimusForge::Forge::ReportWorkers(LineSink const& out) const
         return;
 
     std::vector<ClusterLink::WorkerStatus> const workers = _cluster.Workers();
-    out(Acore::StringFormat("Cluster: {} worker{} connected", workers.size(), workers.size() == 1 ? "" : "s"));
+    // Connected is the sim's link, not its learner: a worker whose learner died is connected and trains nothing, so
+    // it is counted apart (Forge::StateName's learner-failed) rather than hidden in the rows below.
+    std::size_t const failed = std::size_t(std::count_if(workers.begin(), workers.end(),
+        [](ClusterLink::WorkerStatus const& worker) { return worker.Progress.starts_with("state=learner-failed"); }));
+    out(Acore::StringFormat("Cluster: {} worker{} connected{}", workers.size(), workers.size() == 1 ? "" : "s",
+        failed ? Acore::StringFormat(" -- {} of them with a failed learner (see its animus-learner.log)", failed) : ""));
     for (ClusterLink::WorkerStatus const& worker : workers)
         out(worker.Progress.empty() ? Acore::StringFormat("  {}: no report yet", worker.Sim)
             : Acore::StringFormat("  {}: {} ({:.0f} s ago)", worker.Sim, worker.Progress, worker.SecondsAgo));

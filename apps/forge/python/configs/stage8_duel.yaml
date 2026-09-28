@@ -93,6 +93,11 @@ mappo:
   # The critic is goal-conditioned, so the advantage a decision earns is measured against what that goal is worth.
   goal_count: 6
   goal_every_decisions: 16   # 16 decisions is 4 s at 250 ms
+  # The goal head's entropy bonus falls to a fifth of itself over each stage, so the head explores goals early and
+  # commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full bonus
+  # all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28).
+  goal_entropy_scale: 1.0
+  goal_entropy_final_fraction: 0.2
   # Both change the shape of the policy and the exported model format (.amdl 2), so turning them off again retrains
   # the whole curriculum from this stage and rebuilds every shipped model.
   clip: 0.2

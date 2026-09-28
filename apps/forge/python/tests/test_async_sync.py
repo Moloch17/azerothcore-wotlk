@@ -7,7 +7,7 @@ import time
 import numpy as np
 import torch
 
-from animus.async_sync import MAX_ALPHA, Hub, Link, assign, flatten, mix
+from animus.async_sync import MAX_ALPHA, Hub, Link, assign, fetch_shared, flatten, mix, shared_listing
 
 
 def free_port() -> int:
@@ -154,3 +154,34 @@ def test_statistics_are_never_traded_as_deltas():
     assert float(leader_nets[2].mean[0]) == 0.0
     hub.close()
     link.close()
+
+
+def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
+    leader_root, follower_root = tmp_path / "leader", tmp_path / "follower"
+    owner = leader_root / "stage11_endurance" / "best.pt"
+    league = leader_root / "stage12_pvp" / "league" / "step_1.pt"
+    for path, body in ((owner, b"owner" * 1000), (league, b"member")):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(body)
+    outside = tmp_path / "elsewhere.pt"
+    outside.write_bytes(b"not served")
+    # One the follower already has, byte for byte, and one it has a stale copy of.
+    (follower_root / "stage12_pvp" / "league").mkdir(parents=True)
+    (follower_root / "stage12_pvp" / "league" / "step_1.pt").write_bytes(b"member")
+    (follower_root / "stage11_endurance").mkdir(parents=True)
+    (follower_root / "stage11_endurance" / "best.pt").write_bytes(b"old")
+
+    listing = shared_listing(leader_root, [owner, league, outside, leader_root / "missing.pt", None])
+    assert sorted(listing) == ["stage11_endurance/best.pt", "stage12_pvp/league/step_1.pt"]
+
+    address = f"127.0.0.1:{free_port()}"
+    hub = Hub(address, networks(0), listing)
+    try:
+        fetched = fetch_shared(address, 1, follower_root, timeout=10.0)
+        assert fetched == ["stage11_endurance/best.pt"]
+        assert (follower_root / "stage11_endurance" / "best.pt").read_bytes() == owner.read_bytes()
+        assert not any(path.name.endswith(".part") for path in follower_root.rglob("*"))
+        # Nothing left to take the second time.
+        assert fetch_shared(address, 1, follower_root, timeout=10.0) == []
+    finally:
+        hub.close()

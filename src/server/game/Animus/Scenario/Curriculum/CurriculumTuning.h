@@ -254,6 +254,12 @@ namespace Animus::Curriculum
             /// stage's second largest earner. Small on purpose: it is there to keep the goals apart -- without it
             /// nothing stops every goal collapsing into one -- not to pay for play the stage's own terms price.
             float Match = 0.02f;
+            /// Charged each time the goal head changes a seat's goal. Match pays once per goal *held*, so a head that
+            /// switched goals at every choice collected it again each time: churn was paid, and in the first full
+            /// run's combat stages the head kept its goal only 22% of the time against chance's 17% (2026-09-28). A
+            /// switch costs a little more than a match earns, so changing goal has to be worth it on the stage's own
+            /// terms -- which is what committing to a plan means.
+            float Switch = 0.03f;
         } Goals;
 
         /// The director's orders (TeamOrder), in every arena that has one.
@@ -388,6 +394,14 @@ namespace Animus::Curriculum
             float Repeat = 0.02f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
+            /// Steering that does not commit: a turn chosen against one chosen within Options.JitterWindowMs, and a
+            /// bearing pressed within it that swings the feet round from the last one, charged per reversal (a
+            /// bearing by the share of a half turn it swings). Nothing in the rewards cared how a seat got where it
+            /// was going, so a wobble that cost nothing was learned as harmless: in the first full run's final
+            /// evaluations 63-70% of the ground stages' turns were undone within three decisions, and in flight the
+            /// feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course is the
+            /// habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
+            float Jitter = 0.02f;
             /// How far below where a jump would come down the ground is looked for before the jump is refused.
             /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
             /// nothing with Slow Fall, health past fourteen yards, death past about seventy -- is the seat's to
@@ -571,11 +585,17 @@ namespace Animus::Curriculum
             /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
             /// covered it. The policy re-presses to keep going, which is what a held key is.
             uint32 MoveBearingMs = 3000;
-            /// How long a turn or a pitch keeps being held. Shorter again than a bearing: a seat that keeps turning
-            /// for three seconds has spun round twice, so this is the length of a glance rather than of a journey.
-            /// The policy re-presses to keep turning, and what it has turned to is kept when it stops.
-            uint32 MoveTurnMs = 750;
+            /// How long each MoveBlock::TURN_RATE step of a chosen turn stands on the option clock: the decision
+            /// interval, so the clock the core block reports runs out as the turn does. A turn itself ends when it
+            /// has turned, not on this.
+            uint32 MoveTurnMs = 250;
+            /// How long a pitch keeps being held: the length of a glance rather than of a journey. The policy
+            /// re-presses to keep tilting, and what it has tilted to is kept when it stops.
             uint32 MovePitchMs = 750;
+            /// How soon after a turn or a bearing another one that undoes it counts as jitter (Actions.Jitter). About
+            /// three decisions: long enough to catch a head twitching side to side, short enough that a seat that
+            /// walked one way for a moment and then chose another is not charged for having changed its mind.
+            uint32 JitterWindowMs = 750;
             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
@@ -864,9 +884,11 @@ namespace Animus::Curriculum
             f("Actions.Repeat", tuning.Actions.Repeat);
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
+            f("Actions.Jitter", tuning.Actions.Jitter);
             f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
             f("Goals.Match", tuning.Goals.Match);
+            f("Goals.Switch", tuning.Goals.Switch);
 
             f("Order.Focus", tuning.Order.Focus);
             f("Order.PlaceMatch", tuning.Order.PlaceMatch);
@@ -968,6 +990,7 @@ namespace Animus::Curriculum
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
+            f("Options.JitterWindowMs", tuning.Options.JitterWindowMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

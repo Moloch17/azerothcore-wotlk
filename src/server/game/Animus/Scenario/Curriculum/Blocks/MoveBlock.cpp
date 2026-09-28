@@ -489,21 +489,33 @@ namespace
         out[MoveBlock::OBS_TRAIL_DWELL] = float(dwelling) / float(TRAIL_SAMPLES);
     }
 
-    /// One step of a held turn, and one of a held pitch. Exactly once per decision, whoever asks: BeforeApply
-    /// on a decision the key is merely held, Apply on the decision it goes down, so the first press does
+    /// One step of a chosen turn, and one of a held pitch. Exactly once per decision, whoever asks: BeforeApply
+    /// on a decision the turn is merely under way, Apply on the decision it is chosen, so the choice does
     /// something rather than waiting 250 ms for the next decision to notice it.
     void StepTurn(Animus::Curriculum::SeatView& view)
     {
         Player const* bot = view.Bot;
-        if (!bot || view.Turning == 0 || !bot->IsAlive() || bot->HasUnitState(Encoding::IMMOBILE_STATES))
+        if (!bot || view.TurnLeft == 0.0f || view.TurnStepped || !bot->IsAlive()
+            || bot->HasUnitState(Encoding::IMMOBILE_STATES))
             return;
+
+        view.TurnStepped = true;
 
         // Straight onto the seat's own heading. SetFacingTo launches an orientation-only spline, and the move
         // spline Steer issues does MotionMaster::Clear() and replaces it before a single world tick can apply
-        // it -- so a held turn did nothing at all while the seat was walking, which is every decision that
-        // matters. It also left GetOrientation() unchanged for the heading Steer computes, so the turn did not
-        // even steer the decision it was pressed on.
-        view.Facing = Position::NormalizeOrientation(view.Facing + float(view.Turning) * MoveBlock::TURN_STEP);
+        // it -- so a turn made that way did nothing at all while the seat was walking, which is every decision
+        // that matters. It also left GetOrientation() unchanged for the heading Steer computes, so the turn did
+        // not even steer the decision it was chosen on.
+        float const step = std::clamp(view.TurnLeft, -MoveBlock::TURN_RATE, MoveBlock::TURN_RATE);
+        view.Facing = Position::NormalizeOrientation(view.Facing + step);
+        view.TurnLeft -= step;
+        // Done: the float left over from subtracting a clamp from itself is not a turn still to come.
+        if (std::fabs(view.TurnLeft) < 1e-4f)
+        {
+            view.TurnLeft = 0.0f;
+            if (view.Option)
+                view.Option->Stop(SeatOptionKind::MoveTurn);
+        }
     }
 
     void StepPitch(Animus::Curriculum::SeatView& view)
@@ -644,7 +656,11 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["trail_samples"] = uint32(TRAIL_SAMPLES);
     block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
     block["step_yards"] = double(STEP_YARDS);
-    block["turn_step"] = double(TURN_STEP);
+    block["turn_rate"] = double(TURN_RATE);
+    boost::json::array turns;
+    for (float angle : TURN_ANGLES)
+        turns.push_back(double(angle));
+    block["turn_angles"] = std::move(turns);
     block["pitch_step"] = double(PITCH_STEP);
     block["pitch_max"] = double(PITCH_MAX);
     block["probe_yards"] = double(PROBE_YARDS);
@@ -686,7 +702,9 @@ std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, 
         "move_forward", "move_forward_right", "move_right", "move_back_right",
         "move_back", "move_back_left", "move_left", "move_forward_left",
         "halt", "face_target", "face_heading", "face_hold",
-        "turn_left", "turn_right", "pitch_up", "pitch_down", "pitch_level", "jump",
+        "turn_left_15", "turn_right_15", "turn_left_45", "turn_right_45", "turn_left_90", "turn_right_90",
+        "turn_left_135", "turn_right_135", "turn_about",
+        "pitch_up", "pitch_down", "pitch_level", "jump",
     };
 
     return local < NAMES.size() ? NAMES[local] : std::string();
@@ -890,8 +908,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         else
             out[OBS_BEARING_NONE] = 1.0f;
 
-        out[OBS_TURNING_LEFT] = view.Turning > 0 ? 1.0f : 0.0f;
-        out[OBS_TURNING_RIGHT] = view.Turning < 0 ? 1.0f : 0.0f;
+        out[OBS_TURNING_LEFT] = std::clamp(view.TurnLeft / float(M_PI), 0.0f, 1.0f);
+        out[OBS_TURNING_RIGHT] = std::clamp(-view.TurnLeft / float(M_PI), 0.0f, 1.0f);
         out[OBS_PITCH_SIN] = std::sin(view.Pitch);
         out[OBS_PITCH_COS] = std::cos(view.Pitch);
 
@@ -1072,9 +1090,12 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // decision was a compass held for the policy, and the trained policy collapsed onto it -- the episodes that
     // failed pressed seven turns to an arrival's two, and in the worst of them a turn was followed by
     // face_objective 22 times out of 27 -- and learned nothing about the ground.
+    // Every turn stays open while another is under way: choosing again replaces what is left of it, which is how a
+    // seat corrects a turn it misjudged. What that costs when it undoes a recent one is the jitter charge's to say,
+    // not the mask's -- a moving target is a good reason to turn back.
     bool const aimed = view.FacingMode == ACTION_FACE_TARGET;
-    allowed[ACTION_TURN_LEFT] = canTurn && !aimed && view.Turning <= 0 ? 1 : 0;
-    allowed[ACTION_TURN_RIGHT] = canTurn && !aimed && view.Turning >= 0 ? 1 : 0;
+    for (uint32 turn = 0; turn < TURN_COUNT; ++turn)
+        allowed[ACTION_TURN_FIRST + turn] = canTurn && !aimed ? 1 : 0;
 
     // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
     // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
@@ -1124,15 +1145,13 @@ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult
         }
     }
 
-    // The held keys come up on their own when their clocks run out, and what they turned to is kept.
-    if (!view.Option->Running(SeatOptionKind::MoveTurn, view.NowMs))
-        view.Turning = 0;
+    // The held pitch comes up on its own when its clock runs out, and what it tilted to is kept. A turn ends when it
+    // has turned (StepTurn), not on a clock.
     if (!view.Option->Running(SeatOptionKind::MovePitch, view.NowMs))
         view.PitchTurning = 0;
 
-    // A held turn swings the seat a little further every decision it stays down, which is what makes every
-    // heading between two compass points reachable. It happens before the feet are re-aimed, so a bearing walked
-    // under a turn curves rather than stepping.
+    // A turn under way swings the seat on by TURN_RATE every decision until it is done. It happens before the feet
+    // are re-aimed, so a bearing walked under a turn curves rather than stepping.
     StepTurn(view);
     StepPitch(view);
     Steer(view);
@@ -1146,7 +1165,21 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local < ACTION_HALT)
     {
-        view.HeldBearing = uint8(local - ACTION_BEARING_FIRST);
+        uint8 const bearing = uint8(local - ACTION_BEARING_FIRST);
+        // A bearing swung round from one pressed moments ago is feet that zigzag (Actions.Jitter): counted by how
+        // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
+        if (SteerMemory* steering = view.Steering)
+        {
+            if (steering->Bearing < BEARING_COUNT && steering->Bearing != bearing
+                && view.NowMs < steering->BearingMs + view.Options.JitterWindowMs)
+            {
+                uint32 const apart = (uint32(bearing) + BEARING_COUNT - steering->Bearing) % BEARING_COUNT;
+                result.BearingFlip += float(std::min(apart, BEARING_COUNT - apart)) / float(BEARING_COUNT / 2);
+            }
+            steering->Bearing = bearing;
+            steering->BearingMs = view.NowMs;
+        }
+        view.HeldBearing = bearing;
         view.Option->Start(SeatOptionKind::MoveBearing, view.NowMs + view.Options.MoveBearingMs);
         // Steer walks it on the next decision anyway; do it now so the seat is not still for one.
         Steer(view);
@@ -1168,7 +1201,7 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         // are masked from here on, so nothing could stop it.
         if (local == ACTION_FACE_TARGET)
         {
-            view.Turning = 0;
+            view.TurnLeft = 0.0f;
             view.Option->Stop(SeatOptionKind::MoveTurn);
         }
 
@@ -1179,15 +1212,32 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         return;
     }
 
-    if (local == ACTION_TURN_LEFT || local == ACTION_TURN_RIGHT)
+    if (local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT)
     {
         // Left is counter-clockwise, which is the positive way round in WoW's orientation -- the same convention
-        // HeadingOf subtracts for a clockwise bearing. It was the other way round: turn_left turned right. A
-        // policy learns whichever it is, but a scripted baseline and a reader of the traces do not.
-        view.Turning = local == ACTION_TURN_LEFT ? 1 : -1;
-        view.Option->Start(SeatOptionKind::MoveTurn, view.NowMs + view.Options.MoveTurnMs);
-        // Turn now rather than a decision from now, so the first press of a key does something. Only the turn:
-        // re-running the whole of BeforeApply would step the turn a second time in the same 250 ms.
+        // HeadingOf subtracts for a clockwise bearing. A policy learns whichever it is, but a scripted baseline
+        // and a reader of the traces do not.
+        float const angle = TURN_ANGLES[local - ACTION_TURN_FIRST];
+        int8 const sign = angle > 0.0f ? 1 : -1;
+
+        // A turn against one still under way, or against one chosen moments ago, is a head that twitches
+        // (Actions.Jitter). Turning about is not a reversal of anything: it is the one turn with no wrong way.
+        if (SteerMemory* steering = view.Steering)
+        {
+            bool const recent = steering->TurnSign != 0
+                && (view.TurnLeft != 0.0f || view.NowMs < steering->TurnMs + view.Options.JitterWindowMs);
+            if (recent && sign != steering->TurnSign && std::fabs(angle) < float(M_PI) - 0.01f)
+                ++result.TurnReversals;
+            steering->TurnSign = sign;
+            steering->TurnMs = view.NowMs;
+        }
+
+        // Replaces what is left of a turn already under way: the seat turns this far from where it faces now.
+        view.TurnLeft = angle;
+        uint32 const steps = uint32(std::ceil(std::fabs(angle) / TURN_RATE - 1e-3f));
+        view.Option->Start(SeatOptionKind::MoveTurn, view.NowMs + uint64(steps) * view.Options.MoveTurnMs);
+        // Turn now rather than a decision from now, so the choice does something on the decision it is made.
+        // Only the turn: re-running the whole of BeforeApply would step it a second time in the same 250 ms.
         StepTurn(view);
         Steer(view);
         return;

@@ -116,6 +116,13 @@ class MappoConfig:
     # policy's decision: its log probability joins the action's in the PPO ratio on the decisions that chose one.
     goal_count: int = 0
     goal_every_decisions: int = 16
+    # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
+    # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
+    # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
+    # ever settling on a plan. Kept at full, the head of the first full run chose close to uniformly all the way
+    # through (goal entropy 1.59 of ln 6 = 1.79, goal kept 22% of choices against chance's 17%, 2026-09-28).
+    goal_entropy_scale: float = 1.0
+    goal_entropy_final_fraction: float = 1.0
     # A layout whose agents decide on a slower clock than the seats and are credited on that clock: the director
     # (Curriculum::DirectorLayout). Named rather than indexed, because a layout's index moves with the stage.
     #
@@ -461,6 +468,8 @@ class MappoTrainer:
         self.rollout_device = torch.device(rollout_device)
         # Starts at config.entropy_coef; the stage controller raises it after a restart (animus.stage).
         self.entropy_coef = config.entropy_coef
+        # The goal head's factor on it (goal_entropy_scale, annealed by the learner loop every update).
+        self.goal_entropy_factor = config.goal_entropy_scale
 
         hidden = list(config.hidden)
         self.foresight_outputs = (len(config.foresight_horizons_seconds) + 1) if config.foresight_coef > 0.0 else 0
@@ -973,7 +982,7 @@ class MappoTrainer:
                     chosen = data["goal_chosen"][idx].float()
                     log_probs = log_probs + goals.log_prob(goal) * chosen
                     goal_entropy = (goals.entropy() * chosen).sum()
-                    entropy = entropy + goal_entropy / max(1, chosen.numel())
+                    entropy = entropy + self.goal_entropy_factor * goal_entropy / max(1, chosen.numel())
                     goal_entropy = goal_entropy.detach() / chosen.sum().clamp(min=1.0)
                     data_log_probs = data["log_probs"][idx] + data["goal_log_probs"][idx] * chosen
                 else:
@@ -1218,7 +1227,7 @@ class MappoTrainer:
                     # Zero on the rows that held their goal, and averaged below over every row: the goal head's
                     # bonus is worth the share of decisions that actually choose a goal.
                     goal_entropies = (goals.entropy() * chosen).reshape(*lead)
-                    entropies = entropies + goal_entropies
+                    entropies = entropies + self.goal_entropy_factor * goal_entropies
 
                 # The teachers' own memories follow the same replayed decisions as the student's (animus.distill),
                 # so distillation is the one part that stays a loop over the sequence.

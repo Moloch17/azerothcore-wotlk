@@ -668,6 +668,11 @@ each class, whether it converged, and which signals it was missing.
   than for being sat in), reports `goal_<name>_share`, `goal_match_share` and `goal_changes`, and shows a
   party its teammates' goals. Per update the learner logs `goal_<i>_share` and `goal_kept_share`, which is how a
   collapsed head (one share at 1) is spotted. **On from stage8_duel (6 goals, chosen every 16 decisions).**
+- `goal_entropy_scale` and `goal_entropy_final_fraction`: the goal head's share of the entropy bonus, as a factor on
+  what `entropy_coef` gives it, falling linearly to that fraction of itself over `total_env_steps`. The action head's
+  exploration keeps a fight's options open; the goal head's, kept at full, kept it from ever settling on a plan (the
+  first full run's head chose near-uniformly throughout, 2026-09-28). With the sim's `Goals.Switch` charge, a change
+  of goal has to pay for itself. **1.0 falling to 0.2 from stage8_duel.**
 - `foresight_coef`, `foresight_horizons_seconds` and `foresight_time_scale_seconds`: an auxiliary head on the actor's
   trunk (0 = off, the default). It predicts, from the very features the actions are chosen from, the discounted return
   at each horizon and how much of the episode is left as a share of the time scale; its loss (Huber on the returns,

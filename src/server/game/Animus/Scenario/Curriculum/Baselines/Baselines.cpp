@@ -539,10 +539,10 @@ namespace
         return row.Allowed(BlockId::Move, MoveBlock::ACTION_HALT);
     }
 
-    /// Turn towards `heading` (sin, cos in the seat's own frame), as a held key, when it lies more than half a
-    /// bearing off straight ahead: the mouse-look, where FACE_OBJECTIVE used to snap the head in one press. Left
-    /// is counter-clockwise, the positive way round in WoW's orientation. The key is masked while it is held,
-    /// so this falls through to the feet on the decisions in between.
+    /// Turn towards `heading` (sin, cos in the seat's own frame) when it lies more than half a bearing off straight
+    /// ahead: the mouse-look, where FACE_OBJECTIVE used to snap the head in one press. The turn is chosen whole --
+    /// the one of MoveBlock::TURN_ANGLES nearest the heading -- and not again while one is under way, so the feet
+    /// get the decisions in between. Left is counter-clockwise, the positive way round in WoW's orientation.
     std::optional<int32> TurnToward(Row const& row, float headingSin, float headingCos)
     {
         if (!row.Has(BlockId::Move))
@@ -552,8 +552,16 @@ namespace
         if (std::fabs(heading) <= TURN_WITHIN_RADIANS)
             return std::nullopt;
 
-        return row.Allowed(BlockId::Move,
-            heading > 0.0f ? MoveBlock::ACTION_TURN_LEFT : MoveBlock::ACTION_TURN_RIGHT);
+        if (row.Obs(BlockId::Move, MoveBlock::OBS_TURNING_LEFT) > 0.0f
+            || row.Obs(BlockId::Move, MoveBlock::OBS_TURNING_RIGHT) > 0.0f)
+            return std::nullopt;
+
+        uint32 nearest = 0;
+        for (uint32 turn = 1; turn < MoveBlock::TURN_COUNT; ++turn)
+            if (std::fabs(MoveBlock::TURN_ANGLES[turn] - heading) < std::fabs(MoveBlock::TURN_ANGLES[nearest] - heading))
+                nearest = turn;
+
+        return row.Allowed(BlockId::Move, MoveBlock::ACTION_TURN_FIRST + nearest);
     }
 
     std::optional<int32> Fight(Row const& row, Layout const& layout)

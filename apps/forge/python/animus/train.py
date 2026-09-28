@@ -43,10 +43,10 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          format_summary,
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
-from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision
+from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
 from .progress import ProgressWriter
 from . import blas, protocol
-from .async_sync import Hub, Link
+from .async_sync import Hub, Link, fetch_shared, shared_listing
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, reward_mix
@@ -552,6 +552,10 @@ class TrainingRun:
         self.tracker = self.controller.tracker
         self.update = 0
         self.env_steps = 0
+        # A follower first takes whatever the leader read that this machine lacks -- parents, teachers, the cast's
+        # checkpoints, the league -- so it sets up from the same files (async_sync.fetch_shared).
+        if self.async_ranks and not leader:
+            fetch_shared(config.dist_address, config.rank, Path(config.runs_dir), config.dist_timeout)
         self._load_or_seed()
         # Every rank carries on from the leader's counters (a learner on another machine resumed nothing), so they
         # stop, evaluate and schedule together.
@@ -563,7 +567,7 @@ class TrainingRun:
         if self.async_ranks:
             networks = [self.trainer.actor, self.trainer.critic, self.trainer.value_norm]
             if leader:
-                self.hub = Hub(config.dist_address, networks)
+                self.hub = Hub(config.dist_address, networks, shared_listing(Path(config.runs_dir), self.shared_files))
                 self.hub.center_steps = self.env_steps
                 self.hub.set(env_steps=self.env_steps, update=self.update)
             else:
@@ -658,6 +662,8 @@ class TrainingRun:
         config, spec = self.config, self.spec
         self.cast: Cast | None = None
         self.last_snapshot_env_steps = 0
+        # Every checkpoint this setup reads from the runs directory, for the followers (async_sync.Hub).
+        self.shared_files: list[Path] = []
         if self.resume_path:
             checkpoint = torch.load(self.resume_path, map_location="cpu", weights_only=False)
             if mismatch := resume_mismatch(checkpoint.get("spec", {}), asdict(spec)):
@@ -702,6 +708,12 @@ class TrainingRun:
 
         self.distiller = make_distiller(config, spec, self.stage, [p for p in (base, *merged) if p is not None],
                                         self.trainer.train_device)
+        # The parents and named teachers, with what decides how each is read: a run's seed_from choice and its
+        # stage.json (load_parent's block positions).
+        named = [init_from_checkpoint(candidate) for candidate in config.named_teachers().values()]
+        for path in (base_path, *merge_paths, *named):
+            if path is not None:
+                self.shared_files += [Path(path), Path(path).parent / "seed_from", Path(path).parent / STAGE_FILE]
 
         # Frozen checkpoints in the seats a script used to play (animus.cast): the far side of self-play arenas,
         # from the parent the networks seeded from and this run's own league, and any agent the stage declares.
@@ -725,6 +737,15 @@ class TrainingRun:
                       f"(or no parent checkpoint): the live policy plays every seat", flush=True)
             for agent, actor in self.cast.statics.items():
                 print(f"Cast agent {agent} is played by {actor.path}", flush=True)
+        # The cast's checkpoints: its agents, the parent and a named opponent, and the league as it stands. The league's
+        # later snapshots are the leader's; a follower plays the members it fetched at startup.
+        self.shared_files += [Path(path) for path in cast_config.agents.values()]
+        for named_path in (cast_config.parent, cast_config.opponents):
+            if named_path and named_path not in ("auto", LEAGUE):
+                self.shared_files.append(Path(named_path))
+        league = self.run_dir / LEAGUE
+        if league.is_dir():
+            self.shared_files += sorted(league.iterdir())
 
     @staticmethod
     def seed_candidate(candidates: list[str], prefer: str, spec, auto: bool) -> tuple[Path | None, dict | None]:
@@ -1170,6 +1191,10 @@ class TrainingRun:
         elif self.hub is not None:
             self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale)
         trainer.entropy_coef = self.ranks.broadcast(entropy_coef)
+        # The goal head's share of it falls on its own schedule, the same on every rank (it is a function of the
+        # steps alone).
+        trainer.goal_entropy_factor = self.config.mappo.goal_entropy_scale * schedule(
+            self.config.mappo.goal_entropy_final_fraction, self.env_steps, self.config.total_env_steps)
         # With an overlapped update this applies to the update submitted below: a rollout's worth late, which a
         # schedule over hundreds of millions of steps does not notice. The scale is the controller's: held at full
         # until the score first plateaus, so the KL it reads is the policy's and not the schedule's.

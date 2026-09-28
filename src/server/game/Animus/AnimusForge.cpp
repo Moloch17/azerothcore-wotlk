@@ -1851,7 +1851,15 @@ std::string AnimusForge::Forge::StateName() const
         case State::Idle:
             return "idle";
         case State::Training:
-            return _server.HasClient() ? "training" : "waiting for learner";
+            if (_server.HasClient())
+                return "training";
+            // A learner that died is not one that is still coming. On a cluster worker nothing else says so: its sim
+            // sits waiting while the host's status counts it as connected (2026-09-27: all five workers' learners
+            // died on a missing cast checkpoint and the host trained alone for ten minutes). No spaces, because the
+            // worker's report is key=value pairs.
+            if (_learnerStarted && _learner.FailedUnexpectedly())
+                return "learner-failed";
+            return "waiting for learner";
         case State::Running:
             return "running " + _plan.Policy;
         case State::Paused:

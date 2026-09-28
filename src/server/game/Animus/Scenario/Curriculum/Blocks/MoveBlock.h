@@ -80,8 +80,29 @@ namespace Animus::Curriculum
         /// Rays the ground is sensed along: twice the bearings, so ray 2 * b lies along bearing b and the odd rays
         /// fall half way between two. A gully's mouth or a doorway sits between two 45-degree rays as often as on
         /// one, and a seat that cannot see it cannot choose the turn that lines it up. Sensing, not steering: the
-        /// bearings a seat can walk stay eight, and a heading between two of them is reached by the held turn.
+        /// bearings a seat can walk stay eight, and a heading between two of them is reached by a turn.
         static constexpr uint32 RAY_COUNT = SENSE_RAYS;
+
+        /// **The turns a seat can choose**, each a whole turn relative to where it faces now, in radians with left
+        /// (counter-clockwise) positive: a small correction either way, an eighth, a quarter, three eighths, and
+        /// about. Carried out at TURN_RATE a decision (SeatView::TurnLeft).
+        ///
+        /// These replace a held turn key that swung the seat 15 degrees a decision for as long as it was held.
+        /// Reaching a heading that way took a run of correct decisions, each one a chance to overshoot and turn
+        /// back: in the final evaluations of the first full run 63-70% of the ground stages' turns were undone
+        /// within three decisions (2026-09-28), which on screen is a head twitching side to side. Choosing the
+        /// turn whole makes a quarter turn one decision, and a wobble something the policy has to choose rather
+        /// than something it falls into. The smallest is still 15 degrees, so every heading the key reached is
+        /// reached: the lattice is the same, and only the number of decisions it takes has changed.
+        static constexpr uint32 TURN_COUNT = 9;
+        static constexpr float TURN_ANGLES[TURN_COUNT] =
+        {
+            0.2617994f, -0.2617994f,    // 15 degrees
+            0.7853982f, -0.7853982f,    // 45
+            1.5707963f, -1.5707963f,    // 90
+            2.3561945f, -2.3561945f,    // 135
+            3.1415927f,                 // about: always the left way round, so it is one action and not two
+        };
 
         enum Action : uint32
         {
@@ -99,13 +120,13 @@ namespace Animus::Curriculum
             /// hold forward -- pressed it in every episode, and learned nothing about the ground. The objective's
             /// bearing is still observed; turning towards it is the policy's, with the held turn below.
             ACTION_FACE_HOLD,
-            /// Turn on the spot, held like a key, while the feet carry on doing whatever they were told. This is
-            /// the mouse-look, and it is what makes a heading between two compass points reachable at all.
-            ACTION_TURN_LEFT,
-            ACTION_TURN_RIGHT,
-            /// Look further up or down, held the same way, and level off. Only off the ground, where a seat has a
+            /// Turn by one of TURN_ANGLES, while the feet carry on doing whatever they were told: the mouse-look,
+            /// and what makes a heading between two compass points reachable at all. The turn is carried out over
+            /// the decisions that follow (TURN_RATE); choosing another replaces what is left of it.
+            ACTION_TURN_FIRST,
+            /// Look further up or down, held like a key, and level off. Only off the ground, where a seat has a
             /// third dimension to steer in: swimming and flying.
-            ACTION_PITCH_UP,
+            ACTION_PITCH_UP = ACTION_TURN_FIRST + TURN_COUNT,
             ACTION_PITCH_DOWN,
             ACTION_PITCH_LEVEL,
             /// Jump along the heading it is facing. The one move that leaves the navmesh, and therefore the one
@@ -125,7 +146,8 @@ namespace Animus::Curriculum
             /// because an angle wraps and a network asked to learn that 6.28 is 0.01 learns a seam instead.
             OBS_FACING_SIN,
             OBS_FACING_COS,
-            /// Whether a turn is being held, and which way. The policy has to know its own hands are on the mouse.
+            /// How much of a chosen turn is still to come, left and right, each over a half turn. The policy has
+            /// to know its own hands are on the mouse, and how far they have still to move it.
             OBS_TURNING_LEFT,
             OBS_TURNING_RIGHT,
             /// How far up or down it is looking, in the same sin/cos pair and for the same reason.
@@ -280,20 +302,15 @@ namespace Animus::Curriculum
         /// that the path is recomputed against ground the seat can see.
         static constexpr float STEP_YARDS = 8.0f;
 
-        /// How far a held turn swings the seat each decision.
+        /// How far a chosen turn swings the seat each decision until it is done: 45 degrees, which at the 250 ms
+        /// decision is 180 degrees a second -- the game's own keyboard turn rate. A quarter turn takes two
+        /// decisions and turning about four.
         ///
-        /// This was 45 degrees -- exactly the spacing between two bearings -- which meant the turn could not do
-        /// the one thing the block's own documentation claims for it. Facing starts at the seat's spawn
-        /// orientation, a turn adds a multiple of 45, and a bearing subtracts one, so every heading the seat
-        /// could ever walk was `spawn + k * 45`: a lattice. FACE_OBJECTIVE and FACE_TARGET were the only escapes,
-        /// because they snap the facing to an exact world angle -- which is why a trained policy found exactly
-        /// one strategy (face the objective, hold forward) and nothing else worked. FACE_OBJECTIVE is gone for
-        /// that reason; the turn is how the objective's heading is reached now.
-        ///
-        /// 15 degrees a decision matches PITCH_STEP and is 60 degrees a second, well inside what a player does
-        /// with a mouse. Every heading is now reachable, which is what threading a doorway off the objective's
-        /// axis requires.
-        static constexpr float TURN_STEP = 0.2617994f;          // 15 degrees
+        /// The held key this replaced turned 15 degrees a decision. Before that it turned 45 with no smaller turn,
+        /// and every heading the seat could walk was `spawn + k * 45` -- a lattice that FACE_OBJECTIVE and
+        /// FACE_TARGET were the only escapes from, which is why a trained policy found exactly one strategy (face
+        /// the objective, hold forward). The 15 degree turn in TURN_ANGLES keeps the finer lattice.
+        static constexpr float TURN_RATE = 0.7853982f;          // 45 degrees a decision
         /// The same for looking up and down, and how far from level it may get. Finer than the turn because pitch
         /// is a smaller range doing more: the whole useful span is a dive and a climb.
         static constexpr float PITCH_STEP = 0.2617994f;         // 15 degrees
@@ -407,24 +424,21 @@ namespace Animus::Curriculum
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 
-        /// Every bearing and the halt are movement: they take the movement repeat pacing and are never charged for
-        /// repeating (Actions.Repeat is not levied on movement). The facing actions are not -- turning to look at
-        /// something is a press like any other, and a policy that spams it should pay.
-        /// Every bearing and the halt are movement, and so are the held turn and the held pitch: they take the
+        /// Every bearing and the halt are movement, and so are the turns and the held pitch: they take the
         /// movement repeat pacing and are never charged for repeating (Actions.Repeat is not levied on movement).
         /// Charging a held key for being held is exactly the mistake the repeat charge exists to avoid. The three
         /// facing actions are not -- turning to look at something once is a press like any other, and a policy that
         /// spams it should pay.
         [[nodiscard]] bool IsMovement(uint32 local) const override
         {
-            return local <= ACTION_HALT || (local >= ACTION_TURN_LEFT && local <= ACTION_JUMP);
+            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP);
         }
 
-        /// The held turn, the held pitch and levelling off aim the seat without moving its feet: pressing one leaves
+        /// The turns, the held pitch and levelling off aim the seat without moving its feet: pressing one leaves
         /// a held bearing walking (SeatEncoder::Apply), which is what turning while walking is.
         [[nodiscard]] bool IsAiming(uint32 local) const override
         {
-            return local >= ACTION_TURN_LEFT && local <= ACTION_PITCH_LEVEL;
+            return local >= ACTION_TURN_FIRST && local <= ACTION_PITCH_LEVEL;
         }
     };
 }

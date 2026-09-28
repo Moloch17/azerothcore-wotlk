@@ -81,7 +81,7 @@ namespace Animus::Curriculum
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
         MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
-        MoveTurn,           // turning on the spot, as a held key, while the feet do whatever they are doing
+        MoveTurn,           // turning to a chosen heading at the turn rate, while the feet do whatever they are doing
         MovePitch,          // looking further up or down, the same way; only off the ground
         /// Running to just behind the owner (CompanionBlock), re-aimed at where the owner is now every decision
         /// until the seat is there and the owner has stopped, or the feet are told something else. Last on
@@ -184,6 +184,20 @@ namespace Animus::Curriculum
         bool Started = false;
 
         void Clear() { *this = MovementTrail(); }
+    };
+
+    /// The seat's last turn and last bearing: which way and when, kept between decisions so the move block can tell
+    /// a steady course from a wobble (Actions.Jitter). A turn that undoes one chosen moments ago, or a bearing
+    /// swung far round from one just pressed, is the policy failing to commit -- on screen, a head that twitches and
+    /// feet that zigzag.
+    struct SteerMemory
+    {
+        uint64 TurnMs = 0;                      // the clock the last turn was chosen at
+        int8 TurnSign = 0;                      // and which way: +1 left, -1 right, 0 none yet
+        uint64 BearingMs = 0;                   // the clock the last bearing was pressed at
+        uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
+
+        void Clear() { *this = SteerMemory(); }
     };
 
     struct Hazard
@@ -307,11 +321,18 @@ namespace Animus::Curriculum
         GroundProbe* Probe = nullptr;
         /// Where it has been, the same way: sampled in place by the move block once a second.
         MovementTrail* Trail = nullptr;
-        /// Which way it is turning (+1 left, -1 right, 0 not: orientation runs counter-clockwise, so left is the
-        /// positive way round) and how far up or down it is looking, in radians.
-        /// Yaw and pitch are held like a mouse: the seat keeps turning while the key is down and stays where it got
-        /// to when the key comes up, which is what makes a heading between two compass points reachable at all.
-        int8 Turning = 0;
+        /// How much of a chosen turn is still to come, in radians: positive is left (orientation runs
+        /// counter-clockwise, so left is the positive way round), 0 not turning. A turn is chosen whole
+        /// (MoveBlock::ACTION_TURN_FIRST) and carried out at MoveBlock::TURN_RATE a decision, so a quarter turn
+        /// is one decision's choice rather than six held taps each able to overshoot.
+        float TurnLeft = 0.0f;
+        /// The head already moved TURN_RATE this decision (MoveBlock's StepTurn), so a turn chosen on the same
+        /// decision waits for the next: no seat turns 90 degrees in 250 ms by changing its mind. Per decision,
+        /// never carried.
+        bool TurnStepped = false;
+        /// The last turn and bearing, for the jitter charge (SteerMemory). Borrowed like the probe; null for a
+        /// view without one, which charges nothing.
+        SteerMemory* Steering = nullptr;
         /// The pitch key being held (-1 down, +1 up, 0 none) and the angle it has reached. Two fields because a
         /// mouse has two: how it is being moved, and where it has got to. Releasing keeps the angle.
         int8 PitchTurning = 0;
@@ -537,6 +558,11 @@ namespace Animus::Curriculum
         uint32 Falls = 0;
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter): a turn chosen against one chosen within
+        /// JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one -- as the
+        /// share of a half turn it swings (a reversal is 1, a quarter turn 0.5).
+        uint32 TurnReversals = 0;
+        float BearingFlip = 0.0f;
     };
 }
 

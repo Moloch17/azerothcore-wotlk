@@ -212,7 +212,10 @@ namespace Animus::Curriculum
         float MotionMarkRange = -1.0f;
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        int8 Turning = 0;                       // +1 left, -1 right, 0 not turning (counter-clockwise is positive)
+        float TurnLeft = 0.0f;                  // radians of a chosen turn still to come, + left (SeatView::TurnLeft)
+        /// The last turn and bearing (SteerMemory), for the jitter charge. Mutable like the probe: ViewSeat reads
+        /// a const seat and hands the move block a pointer it writes on Apply.
+        mutable SteerMemory Steering;
         int8 PitchTurning = 0;                  // the pitch key held: -1 down, +1 up, 0 none
         float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
@@ -246,6 +249,7 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalMatches{};
         uint32 GoalChanges = 0;
         bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Match, once per goal)
+        uint32 StepGoalSwitches = 0;            // goal changes since the last reward (Goals.Switch)
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
@@ -326,6 +330,11 @@ namespace Animus::Curriculum
         std::vector<std::vector<uint32>> PressTimes;
         uint32 StepRepeats = 0;
         uint32 RepeatedPresses = 0;
+        // Jitter (ActionTuning::Jitter): what is charged at the next reward, and the episode's turn reversals and
+        // bearing swings (in half turns).
+        float StepJitter = 0.0f;
+        uint32 TurnReversals = 0;
+        float BearingFlips = 0.0f;
 
         CombatTally Combat;
         RewardLedger Rewards;
@@ -366,7 +375,8 @@ namespace Animus::Curriculum
             // the seat has been placed (StageScenario::ResetSeats), not here, where there is no bot to ask.
             HeldBearing = 0xFF;
             FacingMode = 0xFF;
-            Turning = 0;
+            TurnLeft = 0.0f;
+            Steering.Clear();
             PitchTurning = 0;
             Pitch = 0.0f;
             Facing = 0.0f;
@@ -390,6 +400,7 @@ namespace Animus::Curriculum
             GoalMatches.fill(0);
             GoalChanges = 0;
             GoalRewarded = false;
+            StepGoalSwitches = 0;
             StepPreparationMs = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;
@@ -431,6 +442,9 @@ namespace Animus::Curriculum
             PressTimes.clear();
             StepRepeats = 0;
             RepeatedPresses = 0;
+            StepJitter = 0.0f;
+            TurnReversals = 0;
+            BearingFlips = 0.0f;
             Combat = CombatTally();
             Rewards.ResetEpisode();
         }

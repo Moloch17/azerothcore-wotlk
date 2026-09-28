@@ -6066,6 +6066,10 @@ AnimusForge.Curriculum.Casting.Cancel = 0.05
 #   spent in one made standing at range the stage's second largest earner. Small on purpose: it keeps the goals apart
 #   so a goal head cannot collapse into one goal, rather than paying for play the stage's own terms already price
 AnimusForge.Curriculum.Goals.Match = 0.02
+#   every stage with a goal head, per change of a seat's goal: Match is paid once per goal held, so without this a
+#   head that switched at every choice was paid for the churn. A little more than a match, so a change of goal has
+#   to be worth it on the stage's own terms
+AnimusForge.Curriculum.Goals.Switch = 0.03
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
 #   channel that correlates with nothing cannot bootstrap into that. stage26_duo_led ran 30M steps with the order
@@ -6128,6 +6132,10 @@ AnimusForge.Curriculum.Actions.Repeat = 0.02
 AnimusForge.Curriculum.Actions.RepeatWindowMs = 10000
 #   presses of one action within the window that cost nothing
 AnimusForge.Curriculum.Actions.RepeatFree = 3
+#   per turn chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
+#   swings the feet round from the last one: steering that does not commit, which on screen is a head twitching side
+#   to side and feet that zigzag
+AnimusForge.Curriculum.Actions.Jitter = 0.02
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
 #   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
 #   or Levitate, health past fourteen yards, death past about seventy -- is the seat's to learn. Only the void is
@@ -6296,8 +6304,9 @@ AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
 #                     one stands for many decisions: resting until health and mana are back, holding an interrupt
 #                     for the target's next cast, or walking a bearing. They also end on their own conditions,
 #                     and any other action the policy takes cancels them -- except that only the feet end a held
-#                     bearing, and only its own opposite ends a held turn or pitch.
-#        Default:     30000 / 10000 / 3000 / 750 / 750
+#                     bearing, a turn ends when it has turned (or another replaces it), and only its own opposite
+#                     ends a held pitch.
+#        Default:     30000 / 10000 / 3000 / 250 / 750 / 750
 #
 AnimusForge.Curriculum.Options.RestMaxMs = 30000
 AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
@@ -6307,11 +6316,15 @@ AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
 #   what a held key is.
 AnimusForge.Curriculum.Options.MoveBearingMs = 3000
 
-#   ... and how long a turn or a pitch keeps being held (ms). Shorter again than a bearing: a seat that keeps turning
-#   for three seconds has spun round twice, so this is the length of a glance rather than of a journey. What it has
-#   turned to is kept when it stops, the way a mouse leaves the camera where it was left.
-AnimusForge.Curriculum.Options.MoveTurnMs = 750
+#   ... and how long each 45-degree step of a chosen turn stands on the option clock (ms): the decision interval, so
+#   the clock the seat observes runs out as the turn does. A turn is chosen whole (15, 45, 90 or 135 degrees either
+#   way, or about) and ends when it has turned, not on this.
+AnimusForge.Curriculum.Options.MoveTurnMs = 250
+#   ... and how long a pitch keeps being held (ms): the length of a glance rather than of a journey. What it has
+#   tilted to is kept when it stops, the way a mouse leaves the camera where it was left.
 AnimusForge.Curriculum.Options.MovePitchMs = 750
+#   ... and how soon after a turn or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
+AnimusForge.Curriculum.Options.JitterWindowMs = 750
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
 #   just behind the owner and keeps re-aiming that run at where the owner is now; it ends on its own when the seat

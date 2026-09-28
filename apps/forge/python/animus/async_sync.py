@@ -23,14 +23,23 @@ parameters are traded as deltas. The statistics are the leader's, and a follower
 a running mean, variance and count moved by another rank's delta is no longer one -- a variance pushed below zero
 made a square root of it NaN, and within two updates every weight of every rank was NaN. Length-prefixed pickles on
 a plain TCP connection, on a trusted LAN like the rest of the cluster's links.
+
+The leader also serves the checkpoints the run read -- the parents it seeded from, the teachers, the cast's agents
+and its league -- and a follower fetches any it lacks before it sets up (fetch_shared), so every rank loads the same
+files. Each machine's runs directory is its own, and the host's is the one those files are written to: until this, a
+follower without them seeded nothing, distilled nothing and, in a stage whose owner is a cast checkpoint, died at
+startup while the host trained alone (2026-09-27).
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import pickle
 import socket
 import struct
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -102,6 +111,84 @@ def _receive(sock: socket.socket) -> dict:
     return pickle.loads(exactly(length))
 
 
+def _connect(address: str, timeout: float) -> socket.socket:
+    """A connection to the leader's hub, retried until `timeout`: the hub starts once the leader has set up."""
+    host, _, port = address.rpartition(":")
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            sock = socket.create_connection((host, int(port)), timeout=10.0)
+            break
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(2.0)
+    sock.settimeout(None)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    return sock
+
+
+# ---------------------------------------------------------------------- shared files
+
+def digest(path: Path) -> str:
+    sha = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 22), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def shared_listing(root: Path, paths) -> dict[str, Path]:
+    """The files under `root` among `paths`, keyed by their path relative to it -- the name every machine shares, since
+    each keeps its runs directory at its own place. Files elsewhere are not served."""
+    root = root.resolve()
+    listing: dict[str, Path] = {}
+    for path in paths:
+        if path is None:
+            continue
+        path = Path(path)
+        if not path.is_file():
+            continue
+        try:
+            relative = path.resolve().relative_to(root)
+        except ValueError:
+            continue
+        listing[relative.as_posix()] = path.resolve()
+    return listing
+
+
+def fetch_shared(address: str, rank: int, root: Path, timeout: float) -> list[str]:
+    """Copy into `root` every file the leader serves that this machine lacks or holds a different copy of: written
+    beside, checked, then renamed over, so a reader never sees half a checkpoint. The names fetched."""
+    sock = _connect(address, timeout)
+    fetched: list[str] = []
+    try:
+        _send(sock, {"type": "files", "rank": rank})
+        listing = _receive(sock).get("files", [])
+        for relative, size, sha in listing:
+            target = (root / relative).resolve()
+            if root.resolve() not in target.parents:
+                continue
+            if target.is_file() and target.stat().st_size == size and digest(target) == sha:
+                continue
+            _send(sock, {"type": "fetch", "rank": rank, "path": relative})
+            data = _receive(sock).get("data")
+            if data is None or hashlib.sha256(data).hexdigest() != sha:
+                print(f"Async learners: the leader could not serve {relative}; this rank goes without it", flush=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + f".rank{rank}.part")
+            partial.write_bytes(data)
+            os.replace(partial, target)
+            fetched.append(relative)
+    finally:
+        sock.close()
+    if fetched:
+        print(f"Async learners: rank {rank} fetched {len(fetched)} of the leader's files: {', '.join(fetched)}",
+              flush=True)
+    return fetched
+
+
 # ---------------------------------------------------------------------- the leader
 
 class Hub:
@@ -109,9 +196,12 @@ class Hub:
     run's own thread calls at_safe_point() while no update is running, which is where pushes are folded in and the
     centre that is served is taken again."""
 
-    def __init__(self, address: str, modules):
+    def __init__(self, address: str, modules, shared: dict[str, Path] | None = None):
         self.modules = modules
         self.parameters = parameter_count(modules)
+        # The files a follower fetches before it sets up (fetch_shared), by their path under the runs directory.
+        self.shared = dict(shared or {})
+        self.digests: dict[str, tuple[float, int, str]] = {}
         self.lock = threading.Lock()
         self.inbox: list[dict] = []
         self.center = flatten(modules)
@@ -140,20 +230,47 @@ class Hub:
         with self.lock:
             return {"center": self.center, "center_steps": self.center_steps, "control": dict(self.control)}
 
+    def _listing(self) -> list[tuple[str, int, str]]:
+        """(name, size, sha256) of every shared file that still exists; a digest is kept until the file changes."""
+        listing = []
+        for relative, path in self.shared.items():
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            cached = self.digests.get(relative)
+            if cached is None or cached[:2] != (stat.st_mtime, stat.st_size):
+                cached = (stat.st_mtime, stat.st_size, digest(path))
+                self.digests[relative] = cached
+            listing.append((relative, stat.st_size, cached[2]))
+        return listing
+
     def _serve(self, conn: socket.socket, peer) -> None:
         rank = "?"
+        joined = False          # a trading connection, not a follower fetching files before it sets up
         try:
             while True:
                 message = _receive(conn)
                 rank = message.get("rank", rank)
-                if message["type"] == "push":
+                kind = message["type"]
+                joined = joined or kind in ("hello", "push")
+                if kind == "files":
+                    _send(conn, {"files": self._listing()})
+                    continue
+                if kind == "fetch":
+                    # Only a file in the listing: the name is looked up, never joined onto a path.
+                    path = self.shared.get(message.get("path", ""))
+                    _send(conn, {"data": path.read_bytes() if path is not None and path.is_file() else None})
+                    continue
+                if kind == "push":
                     with self.lock:
                         self.inbox.append(message)
-                elif message["type"] == "hello":
+                elif kind == "hello":
                     print(f"Async learners: rank {rank} joined from {peer[0]}", flush=True)
                 _send(conn, self._reply())
         except (ConnectionError, OSError, EOFError):
-            print(f"Async learners: rank {rank} left", flush=True)
+            if joined:
+                print(f"Async learners: rank {rank} left", flush=True)
         finally:
             conn.close()
 
@@ -223,18 +340,7 @@ class Link:
         self.episodes: list = []           # the training episodes finished since the last push (observe)
         self.layouts: list[int] = []
         self.ready = threading.Condition()
-        host, _, port = address.rpartition(":")
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                self.sock = socket.create_connection((host, int(port)), timeout=10.0)
-                break
-            except OSError:
-                if time.monotonic() > deadline:
-                    raise
-                time.sleep(2.0)
-        self.sock.settimeout(None)
-        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.sock = _connect(address, timeout)
 
     def hello(self) -> dict:
         """The leader's networks and counters, loaded into this rank's: every rank starts as one network."""

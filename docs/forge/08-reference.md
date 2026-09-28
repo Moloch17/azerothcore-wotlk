@@ -173,6 +173,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.NextPullShrinkMs` | 1000 |
 | | | | `Pulls.NextPullFloorMs` | 4000 |
 | `Goals.Match` | 0.02 | | | |
+| `Goals.Switch` | 0.03 | | | |
 | `Order.Focus` | 0.001 | | | |
 | `Pulls.GauntletDenseScale` | 0.5 | | | |
 | `Support.SelfHealing` | 0.5 | | | |
@@ -191,6 +192,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Actions.Repeat` | 0.02 | | | |
 | `Actions.RepeatWindowMs` | 10000 | | | |
 | `Actions.RepeatFree` | 3 | | | |
+| `Actions.Jitter` | 0.02 | | | |
 | `Actions.JumpDropSearch` | 200 | | | |
 | `Actions.ModeLockMs` | 5000 | | | |
 | `Difficulty.MaxTier` | 6 | | | |
@@ -234,8 +236,9 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Options.RestMaxMs` | 30000 | | | |
 | `Options.HoldInterruptMs` | 10000 | | | |
 | `Options.MoveBearingMs` | 3000 | | | |
-| `Options.MoveTurnMs` | 750 | | | |
+| `Options.MoveTurnMs` | 250 | | | |
 | `Options.MovePitchMs` | 750 | | | |
+| `Options.JitterWindowMs` | 750 | | | |
 | `Options.FollowMs` | 6000 | | | |
 
 | Key | Default | | Key | Default |

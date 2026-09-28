@@ -711,7 +711,8 @@ over. Two actions and the move block's held keys instead stand for a stretch of 
 | `hold_interrupt` | pack | Interrupts the target the moment it starts casting, with the first interrupt the seat has -- its own spell, or its pet's (a felhunter's Spell Lock) when it has none. Offered only to a seat that has one |
 | the eight bearings | move | Walks that compass point, re-aimed from where the seat stands every decision, for `Options.MoveBearingMs` (3 s) or until the feet are told something else |
 | `follow` | companion | Runs to just behind the owner, re-aimed at where the owner is now every decision, for `Options.FollowMs` (6 s), until the seat is there and the owner has stopped, or until the feet are told something else. A press, not the client's right-click follow: the policy re-presses to keep following |
-| `turn_left`, `turn_right`, `pitch_up`, `pitch_down` | move | Turns or pitches 15 degrees a decision for `Options.MoveTurnMs` / `MovePitchMs` (750 ms), or until the opposite key |
+| `turn_left_15` ... `turn_right_135`, `turn_about` | move | Turns by the chosen amount -- 15, 45, 90 or 135 degrees either way, or about -- at 45 degrees a decision (the keyboard's 180 a second) until it has turned; choosing another turn replaces what is left |
+| `pitch_up`, `pitch_down` | move | Pitches 15 degrees a decision for `Options.MovePitchMs` (750 ms), or until the opposite key |
 
 A seat runs **four at a time**: one positioning option (the bearing, or the follow), one standby, a turn and a pitch
 (`SeatOptionSet`), since walking, waiting for the target's cast and looking round are not alternatives. Each runs in
@@ -725,8 +726,22 @@ it depends on what it is:
   spells and swings between steps. Nothing but the feet may end it: the duel block's per-decision hook used to
   clear the slot whenever there was no living target, which in a travel arena is always, and every bearing
   ended one decision after it was pressed (2026-09-21 to 09-23; the three-second hold was a one-decision hold).
-- **aiming** (the held turn and pitch): only its own opposite, or levelling off, takes over. Ending it on any
-  press meant a seat could not turn while it did anything else.
+- **aiming** (the turn and the held pitch): a turn runs until it has turned, or another turn replaces it; the pitch
+  until its own opposite, or levelling off. Ending either on any press meant a seat could not turn while it did
+  anything else.
+
+**Turns are chosen whole** (2026-09-28). The turn used to be a held key that swung the seat 15 degrees a decision for
+as long as it was held, so reaching a heading took a run of correct decisions, each a chance to overshoot and turn
+back: in the first full run's final evaluations 63-70% of the ground stages' turns were undone within three
+decisions, which on screen is a head twitching side to side. A turn is now one choice of how far, carried out by the
+sim at the keyboard's turn rate. The smallest is still 15 degrees, so every heading the key reached is still reached.
+
+**Jitter** (`Actions.Jitter`, every stage). A turn chosen against one chosen within `Options.JitterWindowMs` (750 ms),
+or still under way, costs `Actions.Jitter` (0.02); a bearing pressed within the window costs the same per half turn it
+swings the feet round from the last one (a reversal 1, a quarter turn 0.5, a neighbouring bearing 0.25). Nothing else
+in the rewards cared how a seat got where it was going, so a wobble that cost nothing was learned as harmless; in
+flight the feet changed bearing every quarter second. `turn_reversals` and `bearing_flips` (in half turns) count what
+was charged, and `reward_jitter` what it cost.
 - **standby** (`hold_interrupt`): nothing the seat does takes over from it, because waiting for the target's cast is
   not something it stops fighting to do. Cancelled by any press, a hold lasted 0.6 s against casts of 1.5-2.5 s and
   interrupted next to nothing.
@@ -825,7 +840,7 @@ counts the charged presses.
 | Block | Observation (summary) | Actions |
 |---|---|---|
 | `core` | globals plus five durative-action clocks (see below), then 6 features per catalog action (known, cooldown, aura on target, aura on self, stacks, time since the seat pressed it), then rank / max rank per class talent, then points per tree / 71 | The catalog |
-| `move` | Whether it is moving and how fast; the bearing it is walking (one-hot over the eight, or none); its own facing as sine and cosine, which way it is turning, how far up or down it is looking, and which facing mode it is holding; the bearing and distance to the target, all zero without one; the bearing, distance and width of the nearest ground effect it is not standing in; the objective's bearing and its distance twice, over 500 yd and again over 40 so the last few yards are resolvable; **how far the ground runs along each of sixteen rays** -- the eight bearings and the rays half way between them, each marched at 6, 12, 20, 30 and 40 yd, reporting the distance to the first thing that stops it, what stopped it, and whether it was water or something that burns; water -- in it, under it, how long under it, and how fast it swims; the detour the ground costs, whether its legs are getting anywhere, its clearance and the way out; and **a trail of where it has been** -- its last eight positions, one a second, each as an offset in its own frame, and how many of them it is still standing on | 8 egocentric bearings (forward, forward-right, ... clockwise) and halt; three facings chosen apart from the feet (the target, the way it is going, hold); a held turn either way, which is the mouse-look and the only way to reach a heading between two bearings; a held pitch up, down or level, which is how it swims and flies; and a jump. It is the only way a seat moves: the duel block's target-relative orders were the pathfinder choosing a position on the policy's behalf, and they are gone |
+| `move` | Whether it is moving and how fast; the bearing it is walking (one-hot over the eight, or none); its own facing as sine and cosine, how much of a turn it still has to make either way, how far up or down it is looking, and which facing mode it is holding; the bearing and distance to the target, all zero without one; the bearing, distance and width of the nearest ground effect it is not standing in; the objective's bearing and its distance twice, over 500 yd and again over 40 so the last few yards are resolvable; **how far the ground runs along each of sixteen rays** -- the eight bearings and the rays half way between them, each marched at 6, 12, 20, 30 and 40 yd, reporting the distance to the first thing that stops it, what stopped it, and whether it was water or something that burns; water -- in it, under it, how long under it, and how fast it swims; the detour the ground costs, whether its legs are getting anywhere, its clearance and the way out; and **a trail of where it has been** -- its last eight positions, one a second, each as an offset in its own frame, and how many of them it is still standing on | 8 egocentric bearings (forward, forward-right, ... clockwise) and halt; three facings chosen apart from the feet (the target, the way it is going, hold); a turn of 15, 45, 90 or 135 degrees either way or about, chosen whole and carried out at 45 degrees a decision, which is the mouse-look and the only way to reach a heading between two bearings; a held pitch up, down or level, which is how it swims and flies; and a jump. It is the only way a seat moves: the duel block's target-relative orders were the pathfinder choosing a position on the policy's behalf, and they are gone |
 | `duel` | Distance and bearing to the target, behind it, it faces the bot, its combat, target and casting state; the bot's movement, combat, stealth and auto-attack; damage taken last step; pet out, health, attacking; combat time; current cast progress and time left; a cancellable form; potions, healthstones and bandages carried and their cooldowns; Recently Bandaged; can resurrect itself; a hidden target, time since it was seen, and distance and bearing to where it was last seen; the target in line of sight; what the target is (creature type one-hot, max health against the bot's, damage multiplier, the share of the bot's hits its armor takes off, run speed, level difference, immunity to six magic schools and to fear, stun, root, snare, silence and polymorph); the bot stunned, feared or confused, rooted, silenced, snared; hunters' stable families and pet types | Start attack, pet attack, stop casting, cancel form, healing potion, mana potion, healthstone, bandage self, soulstone self (warlock), resurrect self, 4 call-beast actions (hunter). No movement: where to stand in a fight is a bearing, chosen against the target's bearing and distance reported here |
 | `pet` (hunters, warlocks, death knights, mages; empty for others) | The pet's presence, health, power, distance to the target, attacking it, casting, stance, following or staying; what it is (a ferocity, tenacity or cunning beast, an Imp, Voidwalker, Succubus, Felhunter or Felguard, a ghoul, a Water Elemental); whether it leaves on its own and how soon; its four most useful abilities (interrupts, then crowd control, dispels, threat, help, damage): present, on cooldown and what each does | Cast each ability (at the target, or on itself when helpful) as the pet bar does; passive, defensive, aggressive; follow; stay |
 | `pack` | Living and in-combat enemy counts; 4 enemy slots (present, alive, health, distance, bearing, behind, attacking the bot or its pet, casting, in combat, crowd-controlled, current target, elite, level difference, in line of sight); (the tactical spells are core actions, cast at the selected enemy) | Select target slot 1-4 |
@@ -843,7 +858,7 @@ counts the charged presses.
 | `order` (13) | What the side's director asked of this seat: the posture and rally one-hots, distance and bearing to the rally place, distance, bearing, health and whether the seat is already on the called target, and whether this seat holds the duty. All zero in an arena with no director | none: an order is advice, not a lever |
 
 The core block's globals are five durative-action clocks -- resting, the held interrupt, the held bearing, the
-held turn and the held pitch; the last two run alongside the feet rather than instead of them, so they have slots
+turn (`Options.MoveTurnMs` a 45-degree step, so it runs out as the turn does) and the held pitch; the last two run alongside the feet rather than instead of them, so they have slots
 and clocks of their own -- and these features: level; race one-hot (10); the aptitude vector (Aptitude::COUNT: what the build can taunt,
 mitigate, heal, control, buff, cleanse, protect, revive, summon and swim with, and where its points went);
 health; mana; rage; energy; runic
@@ -1081,7 +1096,11 @@ first decision that matches it. A goal is there to be reached, not to sit in: pa
 approach, casting and health terms together, and ranged seats learned to keep their distance for it. The charge is
 small on purpose: it keeps the goals apart (nothing else stops a goal head collapsing into one goal), and the stage's
 own terms still price the play. `goal_match_share` still counts every matching decision, paid or
-not. A party's teammates see each other's goals in the party block. Columns:
+not. Each change of goal costs `Goals.Switch` (0.03, `reward_goal_switch`), a little more than a match earns: paid
+once per goal held, a head that switched at every choice was paid for the churn, and the first full run's head kept
+its goal 22% of the time against chance's 17% (2026-09-28). The learner also anneals the goal head's entropy bonus
+over each stage (`mappo.goal_entropy_final_fraction`, 0.2 from stage8_duel), so it explores goals early and commits
+late. A party's teammates see each other's goals in the party block. Columns:
 `goal_<name>_share` per goal, `goal_match_share` and `goal_changes`; the learner's own metrics add `goal_<i>_share` and
 `goal_kept_share` per update. The critic is goal-conditioned, so the advantage a decision gets is measured against what
 that goal is worth.
@@ -1365,7 +1384,8 @@ Every stage reports these **core columns** per seat:
   `power_left` (of the primary power), `target_evade_seconds` and `out_of_sight_seconds` (creature duel: the opponent
   evading, and engaged without line of sight to it), `target_unreachable_seconds` and `target_teleports` (creature duel:
   the opponent without a path to its victim, and put beside it for that), `actions_per_minute` (actions other than the
-  no-op), `repeated_presses` (presses charged by `Actions.Repeat`)
+  no-op), `repeated_presses` (presses charged by `Actions.Repeat`), `turn_reversals` and `bearing_flips` (steering
+  charged by `Actions.Jitter`)
 - how the seat fights, to grade a spec's playstyle (they reward nothing):
   - `melee_damage_share`, `shot_damage_share`, `spell_damage_share`: the seat's own damage by the game's damage class
     (`SpellInfo::DmgClass`), as shares of all its damage, so with `pet_damage_share` they add up to 1. Melee is melee
