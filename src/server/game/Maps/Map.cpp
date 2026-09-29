@@ -839,13 +839,17 @@ void Map::RemoveFromMap(T* obj, bool remove)
 
     obj->RemoveFromGrid();
 
+    // Off this map's update lists whether or not it is being deleted. Kept only on delete, an object that left for
+    // another map stayed in this one's pending list (still PendingAdd, so the new map's AddToWorld would not add it
+    // there): this map then took it into its own list and updated it from its thread while it lived on the other,
+    // and a later removal there swapped offsets that belong to this list. The forge's world stages move objects
+    // between maps and phases often enough to hit it: ASSERT in _AddObjectToUpdateList, stage20_quest, 2026-09-28.
+    RemoveObjectFromMapUpdateList(obj);
+
     obj->ResetMap();
 
     if (remove)
-    {
-        RemoveObjectFromMapUpdateList(obj);
         DeleteFromWorld(obj);
-    }
 }
 
 template<>

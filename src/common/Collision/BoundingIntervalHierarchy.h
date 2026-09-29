@@ -86,17 +86,36 @@ public:
             return;
         }
 
+        // A primitive whose bounds are not finite, or inside out, is left out of the tree rather than built into it:
+        // subdivide() throws on the extents it produces, and a throw here takes the whole server down from a map
+        // update (the dynamic tree rebuilds there). One unusable game object model then only fails to collide.
+        // Seen once, as std::terminate from BIH::subdivide in stage22_town, 2026-09-28.
         buildData dat;
         dat.maxPrims = leafSize;
-        dat.numPrims = primitives.size();
-        dat.indices = new uint32[dat.numPrims];
-        dat.primBound = new G3D::AABox[dat.numPrims];
-        GetBounds(primitives[0], bounds);
-        for (uint32 i = 0; i < dat.numPrims; ++i)
+        dat.primBound = new G3D::AABox[primitives.size()];
+        dat.indices = new uint32[primitives.size()];
+        dat.numPrims = 0;
+        for (uint32 i = 0; i < primitives.size(); ++i)
         {
-            dat.indices[i] = i;
             GetBounds(primitives[i], dat.primBound[i]);
-            bounds.merge(dat.primBound[i]);
+            G3D::Vector3 const& low = dat.primBound[i].low();
+            G3D::Vector3 const& high = dat.primBound[i].high();
+            if (!low.isFinite() || !high.isFinite() || low.x > high.x || low.y > high.y || low.z > high.z)
+                continue;
+
+            if (!dat.numPrims)
+                bounds = dat.primBound[i];
+            else
+                bounds.merge(dat.primBound[i]);
+            dat.indices[dat.numPrims++] = i;
+        }
+
+        if (!dat.numPrims)
+        {
+            delete[] dat.primBound;
+            delete[] dat.indices;
+            init_empty();
+            return;
         }
         std::vector<uint32> tempTree;
         BuildStats stats;
