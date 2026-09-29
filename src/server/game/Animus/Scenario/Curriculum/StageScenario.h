@@ -159,6 +159,15 @@ namespace Animus::Curriculum
         /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
         /// seat a side, which is what a Mirror is.
         [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
+        /// A seat questing alone beside two groups sharing a zone (ArenaDefinition::LoneSeats): on no side, so no
+        /// director commands it and no one is its teammate. SideOf still names a side for it, only so that arrays
+        /// kept a side can be indexed; OnSide is what membership asks.
+        [[nodiscard]] bool IsLoneSeat(Env const& env, uint32 seat) const;
+        /// Whether `seat` plays for `side`: SideOf, less the lone seats.
+        [[nodiscard]] bool OnSide(Env const& env, uint32 seat, uint32 side) const
+        {
+            return SideOf(env, seat) == side && !IsLoneSeat(env, seat);
+        }
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
         /// SpawnPoint().

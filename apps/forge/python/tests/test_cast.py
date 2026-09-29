@@ -59,6 +59,10 @@ def test_the_rule_names_the_far_side_of_mirror_and_teams_arenas():
     rows = teams.opponent_rows(state_for([0]), 4)
     assert rows.tolist() == [[False, False, True, True]]
 
+    # Groups sharing a zone (world_shared) are not opponents: no row of theirs is cast.
+    shared = CastRule.from_stage(stage("shared", team_seats=2, seats=6), 6)
+    assert not shared.opponent_rows(state_for([0]), 6).any() and not shared.has_opponents()
+
     assert CastRule.from_stage({"format": 2, "arenas": [{"name": "x"}], "state": {"arena_first": 0, "arena_count": 1}}, 2) is None
     assert CastRule.from_stage(None, 2) is None
 

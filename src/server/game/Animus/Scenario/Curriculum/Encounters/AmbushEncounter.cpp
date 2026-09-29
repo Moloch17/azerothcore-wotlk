@@ -123,7 +123,7 @@ bool Animus::Curriculum::AmbushEncounter::Arrive(Env& env, Map* map)
         };
 
         EnemyPlayers::Spawned const spawned = EnemyPlayers::Create(ambusher.Bot, naming, level, opponents, anchor,
-            map, _scenario.SpawnMapId(), ambusher.Script);
+            map, _scenario.EpisodeMapId(env), ambusher.Script);
         if (!spawned.Bot)
             continue;
 

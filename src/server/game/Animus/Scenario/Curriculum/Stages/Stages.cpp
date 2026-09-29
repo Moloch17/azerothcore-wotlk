@@ -912,18 +912,28 @@ namespace
             .MinLevel = 15,
         });
 
-        // Two groups in one zone (Component F): each on its own chain -- half the time the same quest -- and the
-        // zone's creatures shared between them. The coordinator's claims show in the journal; credit taken in a
-        // place the other group holds is charged (Life.Poach). What it teaches is going where the others are not.
+        // Groups and solos in one zone (Component F): two pairs, each on its own chain under its director, and two
+        // seats questing alone beside them -- every group, the solos included, half the time on the first group's
+        // quest, the hardest sharing there is. The zone's creatures are shared; the coordinator's claims show in the
+        // journal, and credit taken in a place another group holds is charged (Life.Poach). What it teaches is going
+        // where the others are not. A quarter of the episodes add the world's other danger: hostile players who
+        // arrive mid-quest and gank whoever they find (the ambushers of the crossroads, beside a quest).
         stages.push_back({
             .Name = "stage34_world_shared",
             .Suffix = "_world_shared",
             .Extends = "stage33_world_group",
-            .Summary = "two groups questing in one zone, sharing its creatures",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Goal },
-            .Arenas = { { .Name = "world_shared", .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
-                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
-                .TeamSeats = 2 } },
+            .Merges = { "stage12_pvp" },
+            .Summary = "groups and solos questing in one zone, sharing its creatures, and ganked by hostile players",
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Pvp, Hostiles, Support, World, Order,
+                Forecast, Goal },
+            .Arenas = {
+                { .Name = "world_shared", .Weight = 3, .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
+                    .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
+                    .TeamSeats = 2, .LoneSeats = 2 },
+                { .Name = "world_gank", .Weight = 1, .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
+                    .PartyGroup = true, .EpisodeSeconds = 600, .Ambushers = 2, .Directed = true,
+                    .DirectorLearned = true, .TeamSeats = 2, .LoneSeats = 2 },
+            },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
             .MinLevel = 15,
@@ -1215,10 +1225,12 @@ namespace
             return "a director commands a group: its arena needs team, party or raid seats";
         if (arena.Ambushers > MAX_AMBUSHERS)
             return "at most " + std::to_string(MAX_AMBUSHERS) + " ambushers";
-        if (arena.Ambushers > 0 && !(pulls || ambushOnly))
-            return "ambushers join pulls, or are the whole fight (Opposition::Ambush)";
-        if (arena.Ambushers > 0 && (!arena.Owner || !stage.Has(BlockId::Pack)))
-            return "ambushers attack an owner and take enemy slots (the pack block)";
+        // A quest's ambushers are hostile players in the world: they gank whoever is questing, owner or not.
+        bool const quest = arena.Against == Opposition::Quest;
+        if (arena.Ambushers > 0 && !(pulls || ambushOnly || quest))
+            return "ambushers join pulls or a quest, or are the whole fight (Opposition::Ambush)";
+        if (arena.Ambushers > 0 && ((!arena.Owner && !quest) || !stage.Has(BlockId::Pack)))
+            return "ambushers attack an owner (or anyone questing) and take enemy slots (the pack block)";
         if (ambushOnly && arena.Ambushers != 1)
             return "an ambush without pulls has exactly one ambusher (a one-on-one reward)";
         if (player && !stage.Has(BlockId::Pvp))
@@ -1267,9 +1279,13 @@ namespace
             || arena.Against == Opposition::Town;
         if (life && (!stage.Has(BlockId::World) || !stage.Has(BlockId::Travel) || !stage.Has(BlockId::Pack)))
             return "life outside the fight needs the world, travel and pack blocks";
-        if (life && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
-            || arena.Schedule != PullSchedule::None))
-            return "a life arena is one seat on its own, with no pulls";
+        // A quest may be a group's (world_group, world_shared) and may be ganked (ambushers); gathering and a
+        // town are one seat on its own.
+        if (life && ((arena.Seats != SeatPlan::Solo && !worldGroup) || arena.Owner || arena.Pvp
+            || (arena.Ambushers > 0 && arena.Against != Opposition::Quest) || arena.Schedule != PullSchedule::None))
+            return "a life arena is one seat on its own (or a group questing), with no pulls";
+        if (arena.LoneSeats && (!sharedZone || arena.LoneSeats > MAX_LONE_SEATS || arena.SeatCount() > MAX_SEATS))
+            return "seats questing alone go beside two groups sharing a zone, at most MAX_LONE_SEATS of them";
         if (stage.Has(BlockId::World) && !stage.AnyArena([](ArenaDefinition const& other)
             {
                 return other.Against == Opposition::Quest || other.Against == Opposition::Gather
@@ -1345,7 +1361,7 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
         // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid.
         case SeatPlan::Party:  return GROUP_MEMBERS;
         case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
-        case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT;
+        case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT + LoneSeats;
         case SeatPlan::Mirror: return 2;
         case SeatPlan::Solo:   break;
     }

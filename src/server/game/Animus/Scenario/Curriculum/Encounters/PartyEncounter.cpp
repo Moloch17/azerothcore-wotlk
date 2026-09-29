@@ -195,7 +195,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     auto const playing = [&](uint32 seat)
     {
         return seat < seats && seat < MAX_SEATS && !shown[seat] && data.Seats[seat].L && env.FindBot(seat)
-            && (!sides || _scenario.SideOf(env, seat) == side);
+            && (!sides || (_scenario.OnSide(env, seat, side) && !_scenario.IsLoneSeat(env, seatIndex)));
     };
     auto const fill = [&](uint32 slot, uint32 seat)
     {

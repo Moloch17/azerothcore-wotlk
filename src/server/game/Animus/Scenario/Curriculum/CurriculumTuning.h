@@ -218,8 +218,13 @@ namespace Animus::Curriculum
             float QuestTurnIn = 10.0f;          // times the tier scale
             float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
             /// Quest credit a seat takes in a place another group holds (WorldCoordinator), per share of the quest:
-            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair.
-            float Poach = 0.5f;
+            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair. Against the
+            /// credit itself (QuestCredit 3.0 per share, times a tier scale of 1 or more) it takes back a twelfth
+            /// at most, so credit in a held place still pays -- going elsewhere is better when elsewhere will do,
+            /// but staying out of a place with anyone in it, or out of a fight shared with them, is never the
+            /// cheapest policy. A claim lapses ClaimHoldMs after its group stops working the place, so only a
+            /// place someone is actually working is held. It was 0.5 (a sixth) until the plan's review.
+            float Poach = 0.25f;
             /// How long a group holds a place it works (ms), and how near counts as working it (yards).
             uint32 ClaimHoldMs = 30000;
             float ClaimRadius = 25.0f;

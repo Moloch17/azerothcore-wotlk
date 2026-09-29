@@ -89,7 +89,7 @@ void Animus::Curriculum::LifeEncounter::ResetEpisode(Env& env)
 {
     // The spawns go with the rebuild (BeforeRebuild); the rest starts over.
     std::vector<ObjectGuid> spawned = std::move(_envs[env.Index].Spawned);
-    std::array<Group*, TEAM_COUNT> groups = _envs[env.Index].Groups;
+    std::array<Group*, LIFE_GROUPS> groups = _envs[env.Index].Groups;
     _envs[env.Index] = EnvLife();
     _envs[env.Index].Spawned = std::move(spawned);
     _envs[env.Index].Groups = groups;
@@ -138,7 +138,13 @@ void Animus::Curriculum::LifeEncounter::FoundPlaces::Write(WorldView& world, uin
 
 uint32 Animus::Curriculum::LifeEncounter::GroupOf(Env const& env, uint32 seat) const
 {
-    return _scenario.Arena(env).Seats == SeatPlan::Teams ? _scenario.SideOf(env, seat) : 0;
+    if (_scenario.Arena(env).Seats != SeatPlan::Teams)
+        return 0;
+    // A seat questing alone is a group of its own, after the sides.
+    if (_scenario.IsLoneSeat(env, seat))
+        return std::min<uint32>(TEAM_COUNT + seat - std::min(_scenario.Arena(env).TeamSeats, TEAM_SEATS) * TEAM_COUNT,
+            LIFE_GROUPS - 1);
+    return _scenario.SideOf(env, seat);
 }
 
 void Animus::Curriculum::LifeEncounter::FormGroups(Env& env)
@@ -148,6 +154,9 @@ void Animus::Curriculum::LifeEncounter::FormGroups(Env& env)
     if (data.ActiveSeats < 2)
         return;
     Player* lead = _scenario.SeatBot(env, 0);
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        if (Player* bot = _scenario.SeatBot(env, seat); bot && lead && _scenario.IsLoneSeat(env, seat))
+            bot->SetFaction(lead->GetFaction());    // alone, but on the same side as everyone else in the world
     for (uint32 group = 0; group < TEAM_COUNT; ++group)
     {
         if (life.Groups[group])
@@ -225,7 +234,7 @@ Animus::Curriculum::LifeWorld::Side Animus::Curriculum::LifeEncounter::SideOfSea
 
 void Animus::Curriculum::LifeEncounter::SetWaypoint(EnvLife& life, uint8 kind, Position const& where, uint32 group)
 {
-    Waypoint& way = life.Ways[std::min<uint32>(group, TEAM_COUNT - 1)];
+    Waypoint& way = life.Ways[std::min<uint32>(group, LIFE_GROUPS - 1)];
     if (!way.Has || way.Kind != kind)
         for (SeatLife& seat : life.Seats)
             seat.LastDistance = -1.0f;
@@ -236,7 +245,7 @@ void Animus::Curriculum::LifeEncounter::SetWaypoint(EnvLife& life, uint8 kind, P
 
 void Animus::Curriculum::LifeEncounter::ClearWaypoint(EnvLife& life, uint32 group)
 {
-    life.Ways[std::min<uint32>(group, TEAM_COUNT - 1)].Has = false;
+    life.Ways[std::min<uint32>(group, LIFE_GROUPS - 1)].Has = false;
     for (SeatLife& seat : life.Seats)
         seat.LastDistance = -1.0f;
 }
@@ -309,7 +318,9 @@ void Animus::Curriculum::LifeEncounter::UpdateEnemies(Env& env)
         Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, near, check);
         Cell::VisitObjects(seat, searcher, HOSTILE_REACH);
         for (Unit* unit : near)
-            if (!unit->IsPlayer() && unit->IsAlive() && seat->IsValidAttackTarget(unit)
+            // A player among them is a hostile one ganking the seats (a quest's ambushers): the seats are on one
+            // side, so none of them is a valid target of another.
+            if (unit->IsAlive() && seat->IsValidAttackTarget(unit)
                 && std::find(units.begin(), units.end(), unit) == units.end())
                 units.push_back(unit);
     }

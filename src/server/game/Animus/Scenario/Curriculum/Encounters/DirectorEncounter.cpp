@@ -59,7 +59,7 @@ float Animus::Curriculum::DirectorEncounter::ShapingPaid(Env const& env, uint32 
 
 void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
 {
-    if (!bot || !bot->IsAlive() || seat >= MAX_SEATS)
+    if (!bot || !bot->IsAlive() || seat >= MAX_SEATS || _scenario.IsLoneSeat(env, seat))
         return;
 
     EnvDirector& state = _envs[env.Index];
@@ -313,7 +313,7 @@ uint32 Animus::Curriculum::DirectorEncounter::Members(Env const& env, uint32 sid
     out.fill(NO_SEAT);
     uint32 count = 0;
     for (uint32 seat = 0; seat < _scenario.SeatCount() && count < out.size(); ++seat)
-        if (_scenario.SideOf(env, seat) == side && _scenario.Data(env).Seats[seat].L)
+        if (_scenario.OnSide(env, seat, side) && _scenario.Data(env).Seats[seat].L)
             out[count++] = seat;
     return count;
 }
@@ -932,6 +932,10 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
 
 void Animus::Curriculum::DirectorEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
+    // A seat questing alone has no director: it reads no order.
+    if (_scenario.IsLoneSeat(env, seat))
+        return;
+
     EnvDirector const& state = _envs[env.Index];
     SideOrder const& order = state.Sides[_scenario.SideOf(env, seat)];
 

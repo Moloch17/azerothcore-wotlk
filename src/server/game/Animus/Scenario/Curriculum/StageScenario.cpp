@@ -1340,9 +1340,12 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // The seat plan and a team's width, so the learner can tell an arena's opponent seats (IsOpponentSeat) and
         // play them from a frozen checkpoint (its cast league) without a word on the wire.
         entry["plan"] = definition.Seats == SeatPlan::Solo ? "solo" : definition.Seats == SeatPlan::Party ? "party"
-            : definition.Seats == SeatPlan::Mirror ? "mirror" : definition.Seats == SeatPlan::Raid ? "raid" : "teams";
+            : definition.Seats == SeatPlan::Mirror ? "mirror" : definition.Seats == SeatPlan::Raid ? "raid"
+            // Two groups sharing a zone are teams that do not fight each other: nothing for a cast league to play.
+            : definition.Against == Opposition::Quest ? "shared" : "teams";
         entry["team_seats"] = definition.Seats == SeatPlan::Teams ? definition.TeamSeats
             : definition.Seats == SeatPlan::Mirror ? 1u : 0u;
+        entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
         entry["directed"] = definition.Directed;
     }
 
@@ -1668,6 +1671,13 @@ uint32 Animus::Curriculum::StageScenario::SideOf(Env const& env, uint32 seat) co
         return 0;
     uint32 const perSide = plan == SeatPlan::Teams ? Arena(env).TeamSeats : 1;
     return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
+}
+
+bool Animus::Curriculum::StageScenario::IsLoneSeat(Env const& env, uint32 seat) const
+{
+    ArenaDefinition const& arena = Arena(env);
+    return arena.Seats == SeatPlan::Teams && arena.LoneSeats
+        && seat >= std::min(arena.TeamSeats, TEAM_SEATS) * TEAM_COUNT && seat < arena.SeatCount();
 }
 
 bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 agent) const
@@ -2900,7 +2910,7 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
     {
         bool commands = false;
         for (uint32 seat = 0; seat < _seatCount && !commands; ++seat)
-            commands = SideOf(env, seat) == side && data.Seats[seat].L;
+            commands = OnSide(env, seat, side) && data.Seats[seat].L;
         present[_seatCount + side] = directing && commands ? 1 : 0;
     }
 
@@ -2922,7 +2932,7 @@ bool Animus::Curriculum::StageScenario::SideCanSee(Env const& env, uint32 side, 
         return false;
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
-        if (SideOf(env, seat) == side)
+        if (OnSide(env, seat, side))
             if (Player const* bot = SeatBot(env, seat); bot && bot->IsAlive() && Encoding::CanSee(bot, unit))
                 return true;
 
@@ -2936,7 +2946,7 @@ uint32 Animus::Curriculum::StageScenario::SideSeats(Env const& env, uint32 side,
 
     uint32 count = 0;
     for (uint32 seat = 0; seat < _seatCount && count < TEAM_SEATS; ++seat)
-        if (SideOf(env, seat) == side)
+        if (OnSide(env, seat, side))
             out[count++] = seat;
 
     return count;
@@ -3371,7 +3381,7 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         float total = 0.0f;
         uint32 seats = 0;
         for (uint32 seat = 0; seat < _seatCount && DirectorsActive(env); ++seat)
-            if (SideOf(env, seat) == side && Data(env).Seats[seat].L)
+            if (OnSide(env, seat, side) && Data(env).Seats[seat].L)
             {
                 total += reward[seat] - (_director ? _director->ShapingPaid(env, seat) : 0.0f);
                 ++seats;

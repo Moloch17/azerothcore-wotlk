@@ -325,7 +325,7 @@ bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bo
     };
 
     EnemyPlayers::Spawned const spawned = EnemyPlayers::Create(opponent.Bot, naming, level, tuning, bot, map,
-        _scenario.SpawnMapId(), opponent.Script);
+        _scenario.EpisodeMapId(env), opponent.Script);
     if (!spawned.Bot)
         return false;
 

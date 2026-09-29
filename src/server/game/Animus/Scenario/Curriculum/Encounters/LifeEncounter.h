@@ -27,6 +27,7 @@
 #include "WorldCoordinator.h"
 #include "ObjectGuid.h"
 #include "Position.h"
+#include "StageDefinition.h"
 #include <array>
 #include <string>
 #include <vector>
@@ -36,6 +37,9 @@ class Group;
 namespace Animus::Curriculum
 {
     struct WorldView;
+
+    /// Groups a life episode can hold: the two sides sharing a zone, and each seat questing alone beside them.
+    constexpr uint32 LIFE_GROUPS = TEAM_COUNT + MAX_LONE_SEATS;
 
     /// What the three life encounters (quest, gather, town) share: the rung is a level band drawn on the difficulty
     /// ladder, the episode is a place on a continent with the world's own spawns copied into the env's phase, the
@@ -112,9 +116,9 @@ namespace Animus::Curriculum
             bool Done = false;                  // the episode is over for a reason of its own
             uint32 Draws = 0;
             std::array<SeatLife, MAX_SEATS> Seats{};
-            std::array<Waypoint, TEAM_COUNT> Ways{};
+            std::array<Waypoint, LIFE_GROUPS> Ways{};
             /// A group of seats is a real group (a sim Group per side), so kills and loot credit its members.
-            std::array<Group*, TEAM_COUNT> Groups{};
+            std::array<Group*, LIFE_GROUPS> Groups{};
         };
 
         /// The rung's band, drawn: fix the episode's map and spawn for it. False when the band has nothing.
@@ -212,11 +216,11 @@ namespace Animus::Curriculum
             uint32 Poached = 0;                 // credit it took in a place another group holds
         };
 
-        /// A group per side (one for a party, two sharing a zone), what each seat was paid, and the zone's
-        /// coordinator (claims and assignments between the groups).
+        /// A group per side (one for a party, two sharing a zone, and one for each seat questing alone beside
+        /// them), what each seat was paid, and the zone's coordinator (claims and assignments between the groups).
         struct EnvQuests
         {
-            std::array<EnvQuest, TEAM_COUNT> Groups;
+            std::array<EnvQuest, LIFE_GROUPS> Groups;
             std::array<SeatPay, MAX_SEATS> Pay{};
             WorldCoordinator Coordinator;
         };

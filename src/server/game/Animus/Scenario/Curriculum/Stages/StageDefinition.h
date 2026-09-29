@@ -81,6 +81,9 @@ namespace Animus::Curriculum
     /// Most ambushers an arena can have; they take enemy slots the pulls leave free.
     constexpr uint32 MAX_AMBUSHERS = 2;
 
+    /// Most seats that quest alone beside two groups sharing a zone (ArenaDefinition::LoneSeats).
+    constexpr uint32 MAX_LONE_SEATS = 2;
+
     /// One situation an episode of a stage can be: who the seats are, what they fight, and how long it lasts. Every
     /// episode of a stage draws one of its arenas by weight, so one stage (and one policy) can train PvE and PvP
     /// together. A stage with a single arena is a stage of one situation.
@@ -130,6 +133,10 @@ namespace Animus::Curriculum
         /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
         /// every other seat plan.
         uint32 TeamSeats = TEAM_SEATS;
+        /// Two groups sharing a zone (a Teams arena that quests): this many more seats, after the sides', each
+        /// questing alone -- a group of its own with its own quest, no director and no teammates. The solo player a
+        /// group meets in the world, and the commonest claim to share a place with. Ignored by every other arena.
+        uint32 LoneSeats = 0;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.

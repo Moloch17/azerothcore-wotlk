@@ -63,8 +63,8 @@ def model_names(stage: dict | None) -> dict[str, str]:
 
 
 def arena_plans(stage: dict | None) -> list[tuple[str, int]]:
-    """Each arena's (seat plan, team width) -- "solo", "party", "mirror", "raid" or "teams" -- from a stage.json of
-    format 3; [] for an older one."""
+    """Each arena's (seat plan, team width) -- "solo", "party", "mirror", "raid", "teams" or "shared" (groups
+    sharing a zone, not opponents) -- from a stage.json of format 3; [] for an older one."""
     return [(str(arena.get("plan", "solo")), int(arena.get("team_seats", 0) or 0))
             for arena in (stage or {}).get("arenas", ()) if "plan" in arena]
 

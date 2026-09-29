@@ -78,7 +78,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::QuestEncounter::
 
 uint32 Animus::Curriculum::QuestEncounter::GroupCount(Env const& env) const
 {
-    return _scenario.Arena(env).Seats == SeatPlan::Teams ? TEAM_COUNT : 1;
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    return arena.Seats == SeatPlan::Teams ? TEAM_COUNT + std::min(arena.LoneSeats, MAX_LONE_SEATS) : 1;
 }
 
 void Animus::Curriculum::QuestEncounter::AddMoreEpisodeInfo(EpisodeInfoTable& table)
@@ -189,12 +190,13 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
         (*candidates)[LifeWorld::Draw(env, uint32(candidates->size()), SALT_QUEST + life.Draws++)];
     quests.Groups[0].Chain = ChainFrom(first, length(SALT_CHAIN + life.Draws), env.Evaluating, life.Side);
 
-    // A second group in the same zone (world_shared): half the time the same quest -- the same creatures, the
-    // hardest sharing there is -- else another whose giver is near the first's.
-    if (GroupCount(env) > 1)
+    // The other groups in the same zone (world_shared) -- the second side, and each seat questing alone beside
+    // them: half the time the same quest -- the same creatures, the hardest sharing there is -- else another whose
+    // giver is near the first's.
+    for (uint32 g = 1; g < GroupCount(env); ++g)
     {
         LifeWorld::QuestCandidate const* other = first;
-        if (LifeWorld::Draw(env, 2, SALT_CHAIN + 7 + life.Draws))
+        if (LifeWorld::Draw(env, 2, SALT_CHAIN + 7 * g + life.Draws))
         {
             std::vector<LifeWorld::QuestCandidate const*> near;
             for (LifeWorld::QuestCandidate const* candidate : *candidates)
@@ -202,9 +204,10 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
                     && candidate->Giver->Pos.GetExactDist2d(&first->Giver->Pos) <= SHARED_ZONE_YARDS)
                     near.push_back(candidate);
             if (!near.empty())
-                other = near[LifeWorld::Draw(env, uint32(near.size()), SALT_QUEST + 31 + life.Draws)];
+                other = near[LifeWorld::Draw(env, uint32(near.size()), SALT_QUEST + 31 * g + life.Draws)];
         }
-        quests.Groups[1].Chain = ChainFrom(other, length(SALT_CHAIN + 13 + life.Draws), env.Evaluating, life.Side);
+        quests.Groups[g].Chain = ChainFrom(other, length(SALT_CHAIN + 13 * g + life.Draws), env.Evaluating,
+            life.Side);
     }
 
     EnvState& data = _scenario.Data(env);
