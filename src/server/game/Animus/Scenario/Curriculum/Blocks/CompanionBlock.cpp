@@ -285,6 +285,8 @@ void Animus::Curriculum::CompanionBlock::Apply(SeatView& view, uint32 local, Sea
     switch (local)
     {
         case ACTION_FOLLOW:
+            if (view.Option && !view.Option->Running(SeatOptionKind::Follow, view.NowMs))
+                ++result.FollowStarts;
             if (view.Option)
                 view.Option->Start(SeatOptionKind::Follow, view.NowMs + view.Options.FollowMs);
             if (Aim(bot, owner, view.Option, view.NowMs, true))

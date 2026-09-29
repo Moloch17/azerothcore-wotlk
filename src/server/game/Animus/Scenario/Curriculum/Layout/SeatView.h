@@ -655,6 +655,7 @@ namespace Animus::Curriculum
         /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
         /// ran (negative: none ran).
         uint32 FollowAims = 0;
+        uint32 FollowStarts = 0;        // ... of which a follow begun anew (none was running)
         float FollowDistance = -1.0f;
         /// What a spell press was aimed at, for judging it against the seat's goal (StageScenario::JudgePress):
         /// the unit it went to (the enemy for a harmful spell, the friend or the seat for a helpful one), whether

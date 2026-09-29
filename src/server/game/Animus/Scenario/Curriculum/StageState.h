@@ -373,6 +373,7 @@ namespace Animus::Curriculum
         // Following (CompanionBlock): runs started or re-aimed, decisions spent following, and the yards to the owner
         // over them (sum, sum of squares, and how many were within the 3-6 yard band a player keeps).
         uint32 FollowAims = 0;
+        uint32 FollowStarts = 0;                // a follow begun while none was running: the run restarted
         uint32 FollowDecisions = 0;
         float FollowDistanceSum = 0.0f;
         float FollowDistanceSq = 0.0f;
@@ -515,6 +516,7 @@ namespace Animus::Curriculum
             MoveRepeat = false;
             FromBehind = -1;
             FollowAims = 0;
+            FollowStarts = 0;
             FollowDecisions = 0;
             FollowDistanceSum = 0.0f;
             FollowDistanceSq = 0.0f;

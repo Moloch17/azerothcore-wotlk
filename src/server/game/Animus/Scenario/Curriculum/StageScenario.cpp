@@ -1130,13 +1130,21 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).FidgetMs) / 1000.0f;
     });
-    // Following: how often a run was started or re-aimed per minute spent following (the old follow re-aimed about
-    // every decision), and how far behind the owner it stayed.
-    _info.Add("follow_restarts_per_minute", [this, seat](Env const& env, uint32 index)
+    // Following, per minute spent following: how often the run was re-aimed along the owner's path (at most once a
+    // second by design; the old follow re-aimed about every decision), and how often a follow was begun anew after
+    // the last had stopped -- the restarts the intent gate counts, which a player never makes while trailing someone
+    // at a walk -- and how far behind the owner it stayed.
+    _info.Add("follow_aims_per_minute", [this, seat](Env const& env, uint32 index)
     {
         SeatState const& state = seat(env, index);
         float const minutes = float(state.FollowDecisions) * float(_decisionMs) / 60000.0f;
         return minutes > 0.0f ? float(state.FollowAims) / minutes : 0.0f;
+    });
+    _info.Add("follow_restarts_per_minute", [this, seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        float const minutes = float(state.FollowDecisions) * float(_decisionMs) / 60000.0f;
+        return minutes > 0.0f ? float(state.FollowStarts) / minutes : 0.0f;
     });
     _info.Add("follow_distance_mean", [seat](Env const& env, uint32 index)
     {
@@ -2779,6 +2787,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         seat.OptionMs += _decisionMs;
 
     seat.FollowAims += result.FollowAims;
+    seat.FollowStarts += result.FollowStarts;
     if (result.FollowDistance >= 0.0f)
     {
         ++seat.FollowDecisions;
@@ -3221,13 +3230,30 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                         : onFocus || (untargeted && focusNear) ? Verdict::Neutral : Verdict::Aimless;
                     break;
                 case SeatGoal::Position:
-                    verdict = Verdict::Neutral;     // casting at the focus while getting to range
+                    // Casting at the focus while getting to range is fine; once in range the seat is fighting and
+                    // should say so. Neutral for good, Position was a goal under which no cast could ever be
+                    // aimless: the 10M intent trial's rotation drill chose it 99% of the time, and its serving share
+                    // fell to 0.05.
+                    verdict = GoalGap(seat, bot, named) > 0.0f && (onFocus || (untargeted && focusNear))
+                        ? Verdict::Neutral : Verdict::Aimless;
                     break;
                 case SeatGoal::Prepare:
                     verdict = bot->IsInCombat() ? Verdict::Neutral : Verdict::Aimless;  // pulling while preparing
                     break;
-                case SeatGoal::Recover:
                 case SeatGoal::Protect:
+                {
+                    // Protecting someone in a fight is also taking down what is hitting them: the friend the goal
+                    // names, or any friend but the seat when it names none. Without it a damage dealer guarding its
+                    // owner served nothing all fight (the trial's companion stage read a serving share of 0.06).
+                    Unit const* hit = untargeted ? nullptr : Encoding::UnitThrough(*bot, result.CastAt);
+                    Unit const* victim = hit ? hit->GetVictim() : nullptr;
+                    bool const onAttacker = victim && victim != bot && victim->IsAlive()
+                        && (namedFriend.IsEmpty() ? bot->IsFriendlyTo(victim) : victim->GetGUID() == namedFriend);
+                    verdict = onAttacker ? Verdict::Serves
+                        : bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
+                    break;
+                }
+                case SeatGoal::Recover:
                 case SeatGoal::Rest:
                 case SeatGoal::TravelTo:
                 case SeatGoal::Loot:
