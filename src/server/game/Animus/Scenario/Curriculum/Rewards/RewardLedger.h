@@ -82,6 +82,11 @@ namespace Animus::Curriculum
         /// Steering that does not commit (Actions.Jitter): a turn undone moments after it was chosen, feet swung
         /// round from a bearing just pressed.
         Jitter,
+        /// Presses against the seat's own goal (Actions.Aimless), every press but the no-op (Actions.Effort), and
+        /// moving in a fight while already at range (Actions.Fidget).
+        Aimless,
+        Effort,
+        Fidget,
         Hazard,
         HealingMana,
         /// An instance boss fight lost with the boss part dead: the share of its health the fight took off it.

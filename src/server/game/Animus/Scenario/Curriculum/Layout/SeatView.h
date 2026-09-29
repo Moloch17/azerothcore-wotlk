@@ -569,6 +569,14 @@ namespace Animus::Curriculum
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
+        /// What a spell press was aimed at, for judging it against the seat's goal (StageScenario::JudgePress):
+        /// the unit it went to (the enemy for a harmful spell, the friend or the seat for a helpful one), whether
+        /// it was harmful, and whether it came from the tactical list (crowd control, interrupts, taunts).
+        ObjectGuid CastAt;
+        bool CastHarmful = false;
+        bool CastTactical = false;
+        bool CastDispel = false;
+        bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius
     };
 }
 

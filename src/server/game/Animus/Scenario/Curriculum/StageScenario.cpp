@@ -562,7 +562,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // Repeats, self-healing, goals and ground effects are paid in every stage, by the scenario rather than an
     // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
     // invisible in exactly the run where it matters.
-    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
+    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::Aimless, RewardTerm::Effort,
+        RewardTerm::Fidget, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
         RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
@@ -1088,6 +1089,36 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).ActionsPressed) / minutes;
+    });
+    // Intent (StageScenario::JudgePress): the presses judged against the goal and how many served it, the aimless
+    // ones, every press charged effort, how often the feet start, the seconds spent shuffling at range, and the
+    // rate of presses inside a fight (players: roughly 30-70 a minute).
+    _info.Add("serving_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.JudgedPresses ? float(state.ServingPresses) / float(state.JudgedPresses) : 0.0f;
+    });
+    _info.Add("aimless_presses", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).AimlessPresses);
+    });
+    _info.Add("effort_presses", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).EffortPresses);
+    });
+    _info.Add("move_starts_per_minute", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).MoveStarts) / minutes;
+    });
+    _info.Add("fidget_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).FidgetMs) / 1000.0f;
+    });
+    _info.Add("combat_actions_per_minute", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.CombatMs ? float(state.CombatPresses) / (float(state.CombatMs) / 60000.0f) : 0.0f;
     });
     // Presses of an action past the free ones in its window (Tuning().Actions.Repeat).
     _info.Add("repeated_presses", [seat](Env const& env, uint32 index)
@@ -2609,7 +2640,10 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         }
     }
     if (action > 0)
+    {
         Press(env, seat, bot, uint32(action), result.DidSomething());
+        JudgePress(env, seat, bot, target, uint32(action), result);
+    }
 
     // Time under a durative action (wall time, whichever of the slots are running), and each one started (the
     // options are set by the action this decision applied).
@@ -2886,30 +2920,259 @@ void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, P
     CurriculumTuning::ActionTuning const& pacing = _tuning.Actions;
     seat.Memory.Press(layout, action, now, pacing, bot, &seat.KnownRanks);
 
-    // The same action again within the window, past the free presses: charged at the next reward. Movement orders
-    // are always free, and so is a press that did something -- a spell that started casting, an item used, a pet
-    // ability. Pressing the same button again is waste only when the button did nothing: a caster's rotation is one
-    // nuke over and over, and charging that charges the correct play (stage1_duel at 10M: the two classes with the
-    // most repeated presses, warlock_dps at 39.7 an episode and mage_dps at 16.6, were the two lowest scoring).
-    // What the charge was built for is untouched: orders to a pet already obeying, a target selected again, a stance
-    // pressed twice -- none of them do anything, and all of them still count.
-    if (didSomething)
-        return;
-
-    if (GetBlock(*block).IsMovement(action - layout.Slice(*block).ActionFirst))
-        return;
-
+    // The same action again within the window, past the free ones. Whether it is charged is the intent verdict's
+    // call (JudgePress, SettleIntent): a press that served the seat's goal is never a repeat -- a caster's rotation
+    // is one nuke over and over, and charging that charged the correct play (stage1_duel at 10M: warlock_dps at 39.7
+    // repeated presses an episode and mage_dps at 16.6 were the two lowest scoring) -- and one that did not is,
+    // movement included. A press nothing judges (an order to a pet already obeying, a target selected again, a
+    // stance pressed twice) is charged when it did nothing, as before.
+    seat.PendingRepeat = false;
     if (seat.PressTimes.size() != layout.NumActions)
         seat.PressTimes.assign(layout.NumActions, {});
 
     std::vector<uint32>& presses = seat.PressTimes[action];
     std::erase_if(presses, [now, &pacing](uint32 pressed) { return pressed + pacing.RepeatWindowMs <= now; });
     presses.push_back(now);
-    if (presses.size() > pacing.RepeatFree)
+    if (presses.size() <= pacing.RepeatFree)
+        return;
+
+    bool const judged = didSomething || GetBlock(*block).IsMovement(action - layout.Slice(*block).ActionFirst);
+    if (judged)
+        seat.PendingRepeat = true;          // settled by the verdict
+    else
     {
         ++seat.StepRepeats;
         ++seat.RepeatedPresses;
     }
+}
+
+float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* bot, Unit const* target) const
+{
+    if (!bot || !bot->IsAlive() || !target || !target->IsAlive() || !seat.L || seat.Goal == NO_GOAL)
+        return -1.0f;
+
+    SeatGoal const goal = SeatGoal(seat.Goal);
+    if (goal != SeatGoal::Fight && goal != SeatGoal::Position)
+        return -1.0f;
+
+    // Melee wants to be in reach; ranged wants to be out of melee and inside its range, with the slack Position
+    // allows (GoalHeld). Zero inside the band, the yards to its nearer edge outside it.
+    float const wanted = Animus::Curriculum::CombatReward::DesiredRange(seat, _tuning.Duel);
+    if (wanted <= _tuning.Duel.MeleeRange)
+        return bot->IsWithinMeleeRange(target) ? 0.0f : std::max(0.0f, bot->GetExactDist(target) - _tuning.Duel.MeleeRange);
+
+    float const distance = bot->GetExactDist(target);
+    if (distance < _tuning.Duel.MeleeRange)
+        return _tuning.Duel.MeleeRange - distance;
+    return std::max(0.0f, distance - (wanted + GOAL_RANGE_SLACK_YARDS));
+}
+
+void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState& seat, Player* bot, Unit* target,
+    uint32 action, SeatActionResult const& result) const
+{
+    Layout const& layout = *seat.L;
+    std::optional<BlockId> const block = layout.BlockOfAction(action);
+    if (!block || !bot)
+        return;
+
+    // Every press but the no-op costs a little effort: the no-op is what a player does most of the time.
+    ++seat.StepEffort;
+    ++seat.EffortPresses;
+    if (bot->IsInCombat())
+        ++seat.CombatPresses;
+
+    auto const chargeRepeat = [&seat]
+    {
+        ++seat.StepRepeats;
+        ++seat.RepeatedPresses;
+    };
+
+    if (seat.Goal == NO_GOAL)
+    {
+        // Nothing to judge by: a repeat is charged unless it did something, as it was before goals. A step with no
+        // goal is movement, which was free.
+        if (seat.PendingRepeat && !result.DidSomething() && *block != BlockId::Move)
+            chargeRepeat();
+        return;
+    }
+
+    SeatGoal const goal = SeatGoal(seat.Goal);
+    uint32 const local = action - layout.Slice(*block).ActionFirst;
+    enum class Verdict : uint8 { Neutral, Serves, Aimless };
+    Verdict verdict = Verdict::Neutral;
+    bool judged = false;
+
+    if (*block == BlockId::Move)
+    {
+        // A step (a bearing or a jump) is judged at the reward, by the gap it closed or opened (SettleIntent).
+        // Turns, facing and halting are neutral: the jitter charge already prices a head that cannot settle.
+        bool const step = local < MoveBlock::ACTION_HALT || local == MoveBlock::ACTION_JUMP;
+        if (step && !Encoding::StandingInHazards(bot, nullptr))
+            seat.MoveGap = GoalGap(seat, bot, target);
+        // A repeated step waits for its verdict; a repeated halt or facing order served nothing. Turns and pitches
+        // are steering corrections, which come in runs: the jitter charge prices the ones that undo each other.
+        bool const steer = local >= MoveBlock::ACTION_TURN_FIRST && local < MoveBlock::ACTION_JUMP;
+        if (seat.PendingRepeat && seat.MoveGap < 0.0f && !steer)
+            chargeRepeat();
+        seat.MoveRepeat = seat.PendingRepeat && seat.MoveGap >= 0.0f;
+        return;
+    }
+
+    if (result.SpellCasts && !result.Revives)
+    {
+        judged = true;
+        bool const hurt = bot->GetHealthPct() < 50.0f;
+        bool const onSelf = result.CastAt == bot->GetGUID();
+        bool const onFocus = target && result.CastAt == target->GetGUID();
+        bool const untargeted = result.CastAt.IsEmpty();
+        // An area spell has no unit to read: it serves a fight when the focus was inside its radius.
+        bool const focusNear = result.CastReachesFocus;
+
+        if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
+            || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
+            verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
+        else if (result.CastHarmful)
+        {
+            switch (goal)
+            {
+                case SeatGoal::Fight:
+                    verdict = onFocus || (untargeted && focusNear) ? Verdict::Serves : Verdict::Aimless;
+                    break;
+                case SeatGoal::Control:
+                    // Control aimed at an enemy other than the focus, or an area one that lands on the fight.
+                    verdict = result.CastTactical && ((!onFocus && !untargeted) || (untargeted && focusNear))
+                        ? Verdict::Serves
+                        : onFocus || (untargeted && focusNear) ? Verdict::Neutral : Verdict::Aimless;
+                    break;
+                case SeatGoal::Position:
+                    verdict = Verdict::Neutral;     // casting at the focus while getting to range
+                    break;
+                case SeatGoal::Prepare:
+                    verdict = bot->IsInCombat() ? Verdict::Neutral : Verdict::Aimless;  // pulling while preparing
+                    break;
+                case SeatGoal::Recover:
+                case SeatGoal::Protect:
+                    verdict = Verdict::Aimless;
+                    break;
+                case SeatGoal::Count:
+                    break;
+            }
+        }
+        else
+        {
+            switch (goal)
+            {
+                case SeatGoal::Protect:
+                    verdict = !onSelf && !untargeted ? Verdict::Serves : Verdict::Neutral;
+                    break;
+                case SeatGoal::Recover:
+                    verdict = onSelf || untargeted ? Verdict::Serves : Verdict::Neutral;
+                    break;
+                case SeatGoal::Prepare:
+                    verdict = result.PreparationMs ? Verdict::Serves : Verdict::Neutral;
+                    break;
+                case SeatGoal::Fight:
+                case SeatGoal::Control:
+                    // Help on someone else while the seat said it was fighting: it should have said Protect.
+                    verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
+                    break;
+                case SeatGoal::Position:
+                case SeatGoal::Count:
+                    break;
+            }
+        }
+    }
+    else if (result.FoodUsed || result.DrinkUsed)
+    {
+        judged = true;
+        verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare ? Verdict::Serves : Verdict::Neutral;
+    }
+
+    if (seat.PendingRepeat && verdict != Verdict::Serves && (judged || !result.DidSomething()))
+        chargeRepeat();
+
+    if (!judged)
+        return;
+
+    ++seat.JudgedPresses;
+    if (verdict == Verdict::Serves)
+        ++seat.ServingPresses;
+    else if (verdict == Verdict::Aimless)
+    {
+        ++seat.StepAimless;
+        ++seat.AimlessPresses;
+    }
+}
+
+void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target)
+{
+    CurriculumTuning::ActionTuning const& tuning = _tuning.Actions;
+
+    // A step pressed this decision: did it close on where the goal wants the seat, or open the gap?
+    if (seat.MoveGap >= 0.0f)
+    {
+        float const gap = GoalGap(seat, bot, target);
+        if (gap >= 0.0f)
+        {
+            ++seat.JudgedPresses;
+            bool const serves = gap < seat.MoveGap - tuning.IntentSlackYards;
+            if (serves)
+                ++seat.ServingPresses;
+            else if (gap > seat.MoveGap + tuning.IntentSlackYards)
+            {
+                // Away from where the goal wants the seat. A step inside the band is not judged here: getting
+                // behind the focus, kiting and keeping up with a moving one all look like that (Fidget prices the
+                // rest).
+                ++seat.StepAimless;
+                ++seat.AimlessPresses;
+            }
+            if (seat.MoveRepeat && !serves)
+            {
+                ++seat.StepRepeats;
+                ++seat.RepeatedPresses;
+            }
+        }
+        seat.MoveGap = -1.0f;
+    }
+    seat.MoveRepeat = false;
+
+    if (bot && bot->IsAlive())
+    {
+        bool const moving = !bot->movespline->Finalized();
+        bool const combat = bot->IsInCombat();
+        if (combat)
+            seat.CombatMs += _decisionMs;
+
+        // Starting to move again moments after stopping is the stutter a player never shows: priced as a bearing
+        // flip (Actions.Jitter). Every start is counted.
+        if (moving && !seat.WasMoving)
+        {
+            ++seat.MoveStarts;
+            if (seat.StoppedAtMs && env.EpisodeElapsedMs < seat.StoppedAtMs + 1000)
+                seat.StepJitter += 1.0f;
+        }
+        if (!moving && seat.WasMoving)
+            seat.StoppedAtMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+        seat.WasMoving = moving;
+
+        // Moving in a fight while already where the goal wants the seat, with nothing underfoot -- unless the focus
+        // is moving (keeping up, kiting) or a melee seat is still working its way behind it (Backstab, Shred).
+        bool const focusMoving = target && (target->isMoving() || !target->movespline->Finalized());
+        bool const gettingBehind = target && bot->IsWithinMeleeRange(target) && !target->isInBack(bot);
+        if (moving && combat && !focusMoving && !gettingBehind && GoalGap(seat, bot, target) == 0.0f
+            && !Encoding::StandingInHazards(bot, nullptr))
+        {
+            seat.StepFidgetMs += _decisionMs;
+            seat.FidgetMs += _decisionMs;
+        }
+    }
+
+    seat.Rewards.Add(RewardTerm::Aimless, -tuning.Aimless * float(seat.StepAimless));
+    seat.Rewards.Add(RewardTerm::Effort, -tuning.Effort * float(seat.StepEffort));
+    seat.Rewards.Add(RewardTerm::Fidget, -tuning.Fidget * float(seat.StepFidgetMs) / 1000.0f);
+    seat.StepAimless = 0;
+    seat.StepEffort = 0;
+    seat.StepFidgetMs = 0;
 }
 
 void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
@@ -3235,6 +3498,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.Rewards.Add(RewardTerm::Repeat, -_tuning.Actions.Repeat * float(seat.StepRepeats));
     seat.StepRepeats = 0;
+    // Before the jitter charge: a stop-then-start settled here is charged with it.
+    SettleIntent(env, seat, bot, target);
     seat.Rewards.Add(RewardTerm::Jitter, -_tuning.Actions.Jitter * seat.StepJitter);
     seat.StepJitter = 0.0f;
 

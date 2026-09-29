@@ -103,6 +103,9 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Clearance:             return "clearance";
         case RewardTerm::Repeat:                return "repeat";
         case RewardTerm::Jitter:                return "jitter";
+        case RewardTerm::Aimless:               return "aimless";
+        case RewardTerm::Effort:                return "effort";
+        case RewardTerm::Fidget:                return "fidget";
         case RewardTerm::BossProgress:          return "boss_progress";
         case RewardTerm::Wasted:                return "wasted";
         case RewardTerm::QuestAccepted:         return "quest_accepted";

@@ -330,6 +330,17 @@ namespace Animus::Curriculum
         [[nodiscard]] bool Paced(Env const& env, SeatState const& seat, uint32 action) const;
         /// The seat pressed `action`: its memory, and the repeat charge.
         void Press(Env const& env, SeatState& seat, Player* bot, uint32 action, bool didSomething) const;
+        /// Whether a press served the goal the seat holds, was neutral, or worked against it (Actions.Aimless), and
+        /// the effort every press costs (Actions.Effort). A step is judged at the next reward, when it is known
+        /// whether it closed on or opened the gap to where the goal wants the seat (SettleIntent).
+        void JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target, uint32 action,
+            SeatActionResult const& result) const;
+        /// How far the seat is from where its goal wants it, in yards: the gap to its spec's range from the target
+        /// under Fight and Position. Negative when the goal names no place (or there is no goal or target).
+        [[nodiscard]] float GoalGap(SeatState const& seat, Player* bot, Unit const* target) const;
+        /// At the reward: settle a step's verdict, the fidget seconds, stops and starts, and charge the decision's
+        /// aimless presses, effort and fidgeting.
+        void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
         /// and which calls it may make (DirectorLayout).

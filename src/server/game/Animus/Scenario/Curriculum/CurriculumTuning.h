@@ -414,6 +414,23 @@ namespace Animus::Curriculum
             /// flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course
             /// is the habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
             float Jitter = 0.02f;
+            /// **Presses with intent** (StageScenario::JudgePress). Every spell and movement press is judged against
+            /// the goal the seat holds: it serves it (damage on the focus under Fight, a heal on someone else under
+            /// Protect, a step that closes on the wanted range under Position), is neutral (an interrupt, a
+            /// defensive when hurt, anything with no goal to judge by), or is aimless -- a press that works against
+            /// the goal the seat itself chose. Aimless presses cost Aimless. In-game testing of the second run's
+            /// models found ~180 actions a minute with 18-21% of decisions serving the chosen goal (2026-09-28):
+            /// abilities pressed without intent. The goal is the reason for a press; this is what makes it one.
+            float Aimless = 0.02f;
+            /// A small price on every press but the no-op, a tenth of an aimless one: when nothing needs doing,
+            /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press.
+            float Effort = 0.002f;
+            /// In a fight, per second spent moving while already at the range the spec wants, with nothing on the
+            /// ground to step out of: the shuffle that reads as a bot. Moving to reach range, to dodge, or out of a
+            /// fight is untouched.
+            float Fidget = 0.01f;
+            /// How much the gap to the wanted range has to change for a step to count as closing or opening it.
+            float IntentSlackYards = 0.5f;
             /// How far below where a jump would come down the ground is looked for before the jump is refused.
             /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
             /// nothing with Slow Fall, health past fourteen yards, death past about seventy -- is the seat's to
@@ -902,6 +919,10 @@ namespace Animus::Curriculum
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
             f("Actions.Jitter", tuning.Actions.Jitter);
+            f("Actions.Aimless", tuning.Actions.Aimless);
+            f("Actions.Effort", tuning.Actions.Effort);
+            f("Actions.Fidget", tuning.Actions.Fidget);
+            f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
             f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
             f("Goals.Match", tuning.Goals.Match);

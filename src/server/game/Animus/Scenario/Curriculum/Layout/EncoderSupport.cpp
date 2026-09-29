@@ -303,6 +303,30 @@ namespace Animus::Curriculum::Encoding
             return false;
 
         ++result.SpellCasts;
+        result.CastHarmful = !info->IsPositive();
+        result.CastTactical = def.From == ActionCatalog::Group::Tactical;
+        result.CastDispel = def.Dispel;
+        // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
+        // inside its radius, measured from where it lands (the target's spot for a ground spell, else the caster).
+        if (info->IsPositive())
+        {
+            if (friendUnit)
+                result.CastAt = friendUnit->GetGUID();
+        }
+        else if (target && info->NeedsExplicitUnitTarget())
+            result.CastAt = target->GetGUID();
+        else if (target && target->IsAlive())
+        {
+            float radius = 0.0f;
+            for (SpellEffectInfo const& effect : info->GetEffects())
+                if (effect.IsEffect() && effect.HasRadius())
+                    radius = std::max(radius, effect.CalcRadius(bot));
+            bool const onGround = targets.HasDst();
+            Position const centre = onGround ? Position(*target) : Position(*bot);
+            result.CastReachesFocus = radius > 0.0f
+                ? target->GetExactDist(&centre) <= radius + target->GetCombatReach()
+                : bot->IsWithinMeleeRange(target);
+        }
         result.HealsOnFull += onFullHealth ? 1 : 0;
         result.DefensiveCasts += def.Defensive ? 1 : 0;
         result.BreathingCasts += def.WaterBreathing ? 1 : 0;
