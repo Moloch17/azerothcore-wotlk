@@ -260,3 +260,27 @@ def test_a_sim_on_another_machine_is_reached_over_tcp():
     env.close()
     server.join(timeout=5)
     listener.close()
+
+
+def test_a_sim_speaking_another_protocol_is_refused(tmp_path):
+    """Protocol 16 changed what a goal on the wire means (kind * targets + target): a learner and a sim on either
+    side of it must refuse each other at the handshake rather than misread goals."""
+    path = str(tmp_path / "old.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(1)
+
+    def old_sim():
+        conn, _ = listener.accept()
+        with conn:
+            _, length = p.HEADER.unpack(conn.recv(p.HEADER.size))
+            conn.recv(length)
+            spec = p.encode_spec(dataclasses.replace(SPEC, version=p.PROTOCOL_VERSION - 1))
+            conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
+
+    server = threading.Thread(target=old_sim)
+    server.start()
+    with pytest.raises(ConnectionError, match="protocol"):
+        ForgeEnv(path, connect_timeout=5.0)
+    server.join(timeout=5)
+    listener.close()

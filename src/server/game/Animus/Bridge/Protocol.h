@@ -108,7 +108,9 @@ namespace AnimusForge
     // 15: DEVICE and DEVICE_ACK. After SPEC a sim with the device library offers the learner device buffers for obs,
     // state and mask by their IPC handles; a learner that opens them says so, and from then on its STEPs carry
     // neither (the sim writes them into the buffers first). A learner that declines keeps the socket path.
-    constexpr uint32 PROTOCOL_VERSION = 15;
+    // 16: a goal in ACT is a kind and a target, kind * GOAL_TARGETS + target (SPEC's goal count is the joint count),
+    // where it was one of six kinds: an older learner would send kinds the sim reads as targets of the first kind.
+    constexpr uint32 PROTOCOL_VERSION = 16;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

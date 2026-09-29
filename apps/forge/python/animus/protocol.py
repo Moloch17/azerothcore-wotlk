@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 15
+PROTOCOL_VERSION = 16
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
