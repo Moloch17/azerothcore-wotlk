@@ -1554,7 +1554,11 @@ class MappoTrainer:
                         distill_loss, distill_rows = taught
 
                 taken = data["log_probs"][:, chunk]
-                if self.goal_count:
+                # The goal's log probability joins the old one only where it joins the new one: with a slow loop the
+                # goal is trained on its own clock (_update_goals), and adding it here alone made every goal-choosing
+                # row's ratio 1 / p(goal) -- approx_kl 0.2-2 on the first epoch, every update cut to one epoch, and
+                # those rows' action gradients clipped or blown up by the goal's probability.
+                if self.goal_count and not self.slow_goal_size:
                     taken = taken + data["goal_log_probs"][:, chunk] * data["goal_chosen"][:, chunk].to(taken.dtype)
                 ratio = (log_probs - taken).exp()
                 advantage = data["advantages"][:, chunk]

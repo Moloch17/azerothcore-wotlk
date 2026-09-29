@@ -48,11 +48,13 @@ def test_a_span_with_no_honest_bootstrap_is_left_out():
     assert valid[0, 0, 0] and not valid[2, 0, 0] and not valid[4, 0, 0]   # the third is cut by the rollout's end
 
 
-def test_a_rollout_and_update_with_every_part_on():
+def rollout_with_every_part_on(**overrides):
     torch.manual_seed(0)
-    config = MappoConfig(hidden=(8, 8), recurrent_size=6, goal_count=KINDS, goal_targets=TARGETS,
-                         goal_every_decisions=3, slow_goal_size=5, foresight_coef=0.1, foresight_obs_targets=True,
-                         foresight_feedback=True, goal_lookahead=True, epochs=2)
+    settings = dict(hidden=(8, 8), recurrent_size=6, goal_count=KINDS, goal_targets=TARGETS,
+                    goal_every_decisions=3, slow_goal_size=5, foresight_coef=0.1, foresight_obs_targets=True,
+                    foresight_feedback=True, goal_lookahead=True, epochs=2)
+    settings.update(overrides)
+    config = MappoConfig(**settings)
     trainer = MappoTrainer([(OBS, 2)], 4, config)
     trainer.actor.goal_head.set_space(np.ones((KINDS, TARGETS), bool), [OWN])
     trainer._sync_rollout()
@@ -83,6 +85,20 @@ def test_a_rollout_and_update_with_every_part_on():
                   foresight_gammas=(0.9, 0.99), time_scale_decisions=240.0,
                   slow_goal=(config.slow_goal_gamma, config.slow_goal_lambda),
                   obs_targets=trainer.foresight_obs_columns())
+    return trainer, buffer, config, before
+
+
+def test_an_unchanged_policy_has_no_kl_against_its_own_rollout():
+    """The ratio compares like with like. With the two-clock seat the goal is trained on its own clock, and its log
+    probability once joined the old side of the action ratio alone: every goal-choosing row's ratio was 1 / p(goal),
+    and a policy that had not moved read an approx_kl of 0.2 to 2."""
+    trainer, buffer, _, _ = rollout_with_every_part_on(epochs=1, actor_lr=0.0, slow_goal_lr=0.0)
+    stats = trainer.update(buffer)
+    assert stats["approx_kl"] < 1e-4 and stats["clip_frac"] == 0.0
+
+
+def test_a_rollout_and_update_with_every_part_on():
+    trainer, buffer, config, before = rollout_with_every_part_on()
 
     # The observation targets: health 8 decisions on, where the episode runs that far.
     horizons = len(config.foresight_horizons_seconds)
