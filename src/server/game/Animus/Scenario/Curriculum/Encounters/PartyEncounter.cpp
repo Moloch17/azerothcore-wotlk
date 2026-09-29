@@ -34,7 +34,7 @@ Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::RewardTerms() const
 {
     return { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing, RewardTerm::TeammateThreat,
-        RewardTerm::TeammateDeath };
+        RewardTerm::TeammateDeath, RewardTerm::Threat };
 }
 
 void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -298,6 +298,27 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
     Aptitude const& apt = data.Seats[seatIndex].Apt;
+
+    // Taking aggro while a teammate is there to hold it (Party.PulledThreat): the enemies on a damage dealer or a
+    // healer are the tank's to take, and the seat that draws them is the one to charge.
+    if (!HoldsThePull(apt) && bot->IsAlive())
+    {
+        bool tankNearby = false;
+        for (uint32 other = 0; other < _scenario.SeatCount() && !tankNearby; ++other)
+            if (Player* mate = other == seatIndex ? nullptr : env.FindBot(other);
+                mate && mate->IsAlive() && data.Seats[other].L && HoldsThePull(data.Seats[other].Apt))
+                tankNearby = true;
+
+        if (tankNearby)
+        {
+            uint32 onBot = 0;
+            for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
+                if (Unit* enemy = env.FindTargetUnit(enemySlot);
+                    enemy && enemy->IsAlive() && enemy->IsInCombat() && enemy->GetVictim() == bot)
+                    ++onBot;
+            ledger.Add(RewardTerm::Threat, -tuning.PulledThreat * float(onBot) * _scenario.DecisionScale());
+        }
+    }
 
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
     // raider outside the seat's group is still the party's to keep alive.

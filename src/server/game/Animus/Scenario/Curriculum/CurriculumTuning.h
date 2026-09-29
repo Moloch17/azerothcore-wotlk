@@ -85,6 +85,11 @@ namespace Animus::Curriculum
             float TeammateDamageTakenProtector = 1.0f;  // tanks and healers
             float TeammateHealing = 2.0f;               // healers: effective healing, fraction of its health
             float TankLoseTeammate = 0.02f;             // tanks: per enemy on a non-tank teammate, per decision
+            /// Damage dealers and healers beside a living teammate that holds the pull: per enemy on the seat, per
+            /// decision. Only the tank was charged when enemies reached the others, so in a party nobody else was
+            /// ever told not to take aggro, and the teammate-threat charge sat at -33 a seat all through the second
+            /// full run's party stage (2026-09-28). Owner.PulledThreat is the same charge beside a tank owner.
+            float PulledThreat = 0.004f;
             float TeammateDeath = 3.0f;
         } Party;
 
@@ -500,7 +505,8 @@ namespace Animus::Curriculum
             float Stall = 0.08f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
             uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's
-            float Spacing = 0.03f;              // pack: per second a ranged spec is hit in melee reach
+            float Spacing = 0.06f;              // pack: per second a ranged spec is hit in melee reach (0.03 left
+                                                // casters in melee 70-80% of pack fights, 2026-09-28)
             /// A gauntlet alone (no owner) is won by lasting: pull after pull until the episode ends, and a death ends
             /// it with every pull left unfought. Clear 2 + FastPull 2 and HealthKept 2 had each pull worth up to 6
             /// against a death at 5, so a seat could trade its life for a fast pull. As the single pack: the clear
@@ -545,7 +551,7 @@ namespace Animus::Curriculum
             /// health and mana), crowd control that keeps an add out of the fight (per enemy-second, capped per pull),
             /// and a win: lasting to the end with the owner never dead, no wipe and OwnerWinPulls pulls cleared,
             /// counted as the kill so clean_kill is the gauntlet won beside the owner.
-            float OwnerReadiness = 0.5f;
+            float OwnerReadiness = 1.0f;        // was 0.5: parties still pulled ~3 times an episode with someone low
             float OwnerControl = 0.02f;
             float OwnerControlMax = 1.5f;
             uint32 OwnerWinPulls = 5;
@@ -566,10 +572,13 @@ namespace Animus::Curriculum
             float DamageTakenDps = 1.0f;        // damage dealers: the owner's damage taken, fraction of its health
             float DamageTakenProtector = 2.0f;  // tanks and healers exist to prevent it
             float TankOwnerDamageShare = 0.25f; // a tank owner is hit by design: its damage taken counts this much
-            float Healing = 2.0f;               // any role: effective healing and protection on the owner, as a
-                                                // fraction of its health
+            /// Any role: effective healing and protection on the owner, as a fraction of its health. 3, above
+            /// Party.TeammateHealing's 2: the owner is the one whose death costs the most (Death 15 against
+            /// TeammateDeath 3), and at equal pay the party stage's healers tripled their teammate healing while their
+            /// owner healing fell back to its start (2026-09-28).
+            float Healing = 3.0f;
             float TankDamageRefund = 0.5f;      // tanks: soften the pulls' damage taken
-            float TankHold = 0.002f;            // tanks: per enemy on the tank, per decision
+            float TankHold = 0.006f;            // tanks: per enemy on the tank, per decision (was a tenth of TankLose)
             float TankLose = 0.02f;             // tanks: per enemy on the owner, per decision
             float PulledThreat = 0.004f;        // damage dealers and healers beside a TANK owner: per enemy on
                                                 // the bot, per decision; not charged beside any other owner
@@ -814,6 +823,7 @@ namespace Animus::Curriculum
             f("Party.TeammateDamageTakenProtector", tuning.Party.TeammateDamageTakenProtector);
             f("Party.TeammateHealing", tuning.Party.TeammateHealing);
             f("Party.TankLoseTeammate", tuning.Party.TankLoseTeammate);
+            f("Party.PulledThreat", tuning.Party.PulledThreat);
             f("Party.TeammateDeath", tuning.Party.TeammateDeath);
 
             f("Duel.DamageDealt", tuning.Duel.DamageDealt);

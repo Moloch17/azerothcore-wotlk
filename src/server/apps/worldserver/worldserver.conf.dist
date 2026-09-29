@@ -5895,6 +5895,9 @@ AnimusForge.Curriculum.Party.TeammateDamageTakenProtector = 1.0
 AnimusForge.Curriculum.Party.TeammateHealing = 2.0
 #   tanks: per enemy on a non-tank teammate, per decision
 AnimusForge.Curriculum.Party.TankLoseTeammate = 0.02
+#   damage dealers and healers beside a living teammate that holds the pull: per enemy on the seat, per decision --
+#   the enemies are the tank's to take, and the seat that draws them is charged for it
+AnimusForge.Curriculum.Party.PulledThreat = 0.004
 AnimusForge.Curriculum.Party.TeammateDeath = 3.0
 
 #
@@ -6252,7 +6255,7 @@ AnimusForge.Curriculum.Pulls.StallGraceMs = 15000
 #   seat that prepared once used to earn the full refund on every pull after it
 AnimusForge.Curriculum.Pulls.PreparationRefundMaxMs = 15000
 #   pack: per second a ranged spec is hit by a pack member in melee reach
-AnimusForge.Curriculum.Pulls.Spacing = 0.03
+AnimusForge.Curriculum.Pulls.Spacing = 0.06
 #   solo gauntlet (pull after pull, no owner; won by lasting to the end with SoloGauntletWinPulls cleared): each pull
 #   cleared, instead of Clear ...
 AnimusForge.Curriculum.Pulls.SoloGauntletClear = 5.0
@@ -6293,7 +6296,7 @@ AnimusForge.Curriculum.Pulls.OwnerClearScale = 2.0
 #   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
 #   mana), crowd control per enemy-second an add is kept out of the fight (up to OwnerControlMax a pull), and a win --
 #   the episode lasted with the owner never dead, no wipe and OwnerWinPulls pulls cleared -- counted as the kill
-AnimusForge.Curriculum.Pulls.OwnerReadiness = 0.5
+AnimusForge.Curriculum.Pulls.OwnerReadiness = 1.0
 AnimusForge.Curriculum.Pulls.OwnerControl = 0.02
 AnimusForge.Curriculum.Pulls.OwnerControlMax = 1.5
 AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
@@ -6366,11 +6369,11 @@ AnimusForge.Curriculum.Owner.DamageTakenProtector = 2.0
 AnimusForge.Curriculum.Owner.TankOwnerDamageShare = 0.25
 #   any role: effective healing on the owner, plus what the bot's absorbs soaked and its damage reductions
 #   prevented there, as a fraction of the owner's health
-AnimusForge.Curriculum.Owner.Healing = 2.0
+AnimusForge.Curriculum.Owner.Healing = 3.0
 #   tanks: soften the pulls' damage taken
 AnimusForge.Curriculum.Owner.TankDamageRefund = 0.5
 #   tanks: per enemy on the tank, per decision
-AnimusForge.Curriculum.Owner.TankHold = 0.002
+AnimusForge.Curriculum.Owner.TankHold = 0.006
 #   tanks: per enemy on the owner, per decision
 AnimusForge.Curriculum.Owner.TankLose = 0.02
 #   damage dealers and healers, and only beside a tank owner: per enemy on the bot, per decision. Beside an owner

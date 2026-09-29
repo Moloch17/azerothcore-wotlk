@@ -139,7 +139,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Duel.RangedRange` | 25.0 | | `Pulls.HealthKept` | 0.5 |
 | `Casting.TimeWasted` | 0.03 | | `Pulls.GauntletDeath` | 10.0 |
 | `Casting.TimeCompleted` | 0.03 | | `Pulls.OwnerClearScale` | 2.0 |
-| | | | `Pulls.OwnerReadiness` | 0.5 |
+| | | | `Pulls.OwnerReadiness` | 1.0 |
 | | | | `Pulls.OwnerControl` | 0.02 |
 | | | | `Pulls.OwnerControlMax` | 1.5 |
 | | | | `Pulls.OwnerWinPulls` | 5 |
@@ -156,7 +156,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.Stall` | 0.08 |
 | | | | `Pulls.StallGraceMs` | 15000 |
 | | | | `Pulls.PreparationRefundMaxMs` | 15000 |
-| | | | `Pulls.Spacing` | 0.03 |
+| | | | `Pulls.Spacing` | 0.06 |
 | | | | `Pulls.SoloGauntletClear` | 5.0 |
 | | | | `Pulls.SoloGauntletFastPull` | 1.0 |
 | | | | `Pulls.SoloGauntletHealthKept` | 0.5 |
@@ -249,9 +249,9 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Owner.DamageTakenDps` | 1.0 | | `Opponent.TankChance` | 20 |
 | `Owner.DamageTakenProtector` | 2.0 | | `Ambush.MinMs` | 20000 |
 | `Owner.TankOwnerDamageShare` | 0.25 | | `Ambush.MaxMs` | 120000 |
-| `Owner.Healing` | 2.0 | | `Ambush.EngageMaxMs` | 3000 |
+| `Owner.Healing` | 3.0 | | `Ambush.EngageMaxMs` | 3000 |
 | `Owner.TankDamageRefund` | 0.5 | | `Ambush.Kill` | 3.0 |
-| `Owner.TankHold` | 0.002 | | `ScriptedPlayers.SpellMinMs` | 2000 |
+| `Owner.TankHold` | 0.006 | | `ScriptedPlayers.SpellMinMs` | 2000 |
 | `Owner.TankLose` | 0.02 | | `ScriptedPlayers.SpellMaxMs` | 4000 |
 | `Owner.PulledThreat` | 0.004 | | `ScriptedPlayers.HealMinMs` | 1500 |
 | `Owner.SoloFight` | 0.01 | | `ScriptedPlayers.HealMaxMs` | 2500 |
