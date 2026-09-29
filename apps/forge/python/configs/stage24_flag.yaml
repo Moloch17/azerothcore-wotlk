@@ -29,4 +29,9 @@ eval:
 
 # The far side of the mirror arena is the live policy: the learner plays itself, in training and in evaluation.
 cast:
-  opponents: ""
+  # Half the fights against a league of frozen checkpoints, as stage12_pvp (2026-09-28): against the live policy
+  # alone the second full run's flag stage learned defence and lost offence -- carrier kills doubled, captures fell
+  # from 0.09 to 0.01 an episode, no match won.
+  opponents: league
+  # The seed chain's parent is a PvE stage (triage): the league starts from the last PvP stage instead.
+  parent: "{runs_dir}/stage12_pvp/best.pt"

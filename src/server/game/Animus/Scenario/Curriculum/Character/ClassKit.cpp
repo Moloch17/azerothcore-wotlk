@@ -56,7 +56,7 @@ namespace
         uint8 ReqLevel;
     };
 
-    constexpr std::array<ClassReagent, 12> CLASS_REAGENTS =
+    constexpr std::array<ClassReagent, 11> CLASS_REAGENTS =
     {{
         { CLASS_SHAMAN,         5175,   1,  1 },    // Earth Totem
         { CLASS_SHAMAN,         5176,   1,  1 },    // Fire Totem
@@ -72,7 +72,8 @@ namespace
         // fit after them. A pack fight's summons and Soul Fires need a few; Drain Soul makes more into free slots.
         { CLASS_WARLOCK,        6265,   5,  1 },    // Soul Shard
         { CLASS_DEATH_KNIGHT,   37201,  20, 55 },   // Corpse Dust (Raise Dead without a corpse)
-        { CLASS_ROGUE,          5140,   20, 22 },   // Flash Powder (Vanish)
+        // No Flash Powder: Vanish and Blind take no reagent in this Spell.dbc (checked 2026-09-28), and 20 of it only
+        // took a bag slot.
         // Slow Fall and Levitate consume one each. Without a stack the cast fails its reagent check until the glyph
         // that waives it is slotted, and that is the mage's second minor glyph (level 50) and the priest's third
         // (level 70): every seat below those levels had no feather-fall button at all.

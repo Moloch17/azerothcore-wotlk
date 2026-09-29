@@ -177,7 +177,7 @@ stage trains its whole budget).
 | `stage3_jump` | 50M | 2M | 2048 | `stage4_dive` | 50M | 2M | 2048 |
 | `stage5_dodge` | 50M | 5M | 2048 | `stage6_travel` | 50M | 2M | 2048 |
 | `stage7_flight` | 50M | 2M | 2048 | `stage8_duel` | 50M | 10M | 2048 |
-| `stage9_pack` | 50M | 10M | 2048 | `stage10_gauntlet` | 50M | 10M | 2048 |
+| `stage9_pack` | 50M | 10M | 2048 | `stage10_gauntlet` | 100M | 10M | 2048 |
 | `stage11_endurance` | 50M | 10M | 1024 | `stage12_pvp` | 50M | 10M | 2048 |
 | `stage13_evade` | 50M | 10M | 2048 | `stage14_hide` | 50M | 10M | 2048 |
 | `stage15_stealth` | 50M | 10M | 2048 | `stage16_companion` | 50M | 10M | 2048 |
@@ -195,7 +195,7 @@ default is 64 -- every number in this chapter is at 128). Stages 1-7 (the moveme
 every class; stages 8-19 are trained per class, each class with all 128 envs; stages 20-27 (the life stages, the
 dungeon, the objective stages and the crossroads) once, after the join; the five raid stages by name. Every stage's ceiling is 50M
 (convergence usually ends one sooner; 100M until 2026-09-28, when the first full run's stages were found to gain
-little past their first tens of millions), so the queue's ceiling is 1,450M (1,700M with the raids; `stage17_party` has 150M), and a ten-class
+little past their first tens of millions), so the queue's ceiling is 1,500M (1,750M with the raids; `stage10_gauntlet` has 100M and `stage17_party` 150M), and a ten-class
 build's is 350M for the root, 600M per class (6,000M for ten) and 400M for the life stages, the dungeon and the
 objective stages: about 6,750M. Two assumptions carry that number. The objective stages "once after the join" assume the **take-one-trunk**
 join below (seed from one class's trunk and let the adapters adapt), the only one of the three options that costs

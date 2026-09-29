@@ -32,7 +32,11 @@ eval:
 
 # The far side of the mirror arena is the live policy: the learner plays itself, in training and in evaluation.
 cast:
-  opponents: ""
+  # Half the fights against a league of frozen checkpoints, as stage12_pvp (2026-09-28): against the live policy
+  # alone the second full run's flag stage learned defence and lost offence -- carrier kills doubled, captures fell
+  # from 0.09 to 0.01 an episode, no match won.
+  opponents: league
+  parent: "{runs_dir}/stage12_pvp/best.pt"
   # The companion, party, ambush and escort arenas' owner: the endurance policy, as in the companion line.
   agents:
     owner: "{runs_dir}/stage11_endurance/best.pt"
