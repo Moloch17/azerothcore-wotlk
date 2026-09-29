@@ -1442,16 +1442,21 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // goal block's columns (the last block of every layout: kinds, then targets, then "ended") and the table of
     // which targets each kind accepts.
     {
-        boost::json::object& goals = stageFile["goals"].emplace_object();
-        boost::json::array& kinds = goals["kinds"].emplace_array();
-        boost::json::array& accepts = goals["accepts"].emplace_array();
+        // Built apart and moved in: a reference into an object's value is invalidated by the next key inserted
+        // into that object, so two arrays filled side by side cannot both be references into `goals`.
+        boost::json::array kinds;
+        boost::json::array accepts;
         for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
         {
             kinds.emplace_back(std::string(GoalName(SeatGoal(kind))));
-            boost::json::array& row = accepts.emplace_back(boost::json::array()).as_array();
+            boost::json::array row;
             for (uint32 target = 0; target < GOAL_TARGETS; ++target)
                 row.emplace_back(GoalAccepts(SeatGoal(kind), target) ? 1 : 0);
+            accepts.emplace_back(std::move(row));
         }
+        boost::json::object& goals = stageFile["goals"].emplace_object();
+        goals["kinds"] = std::move(kinds);
+        goals["accepts"] = std::move(accepts);
         goals["targets"] = GOAL_TARGETS;
         goals["block"] = "goal";
     }
