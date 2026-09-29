@@ -331,12 +331,16 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
     EnvState const& data = _scenario.Data(env);
     CurriculumTuning::LifeTuning const& tuning = _scenario.Tuning().Life;
     quests.Coordinator.Expire(env.EpisodeElapsedMs);
+    // An episode that failed to build ends at the next decision: its quests were drawn but their givers and enders
+    // may never have been placed, and the second fast pass's life stage crashed reading one that was not there.
+    if (data.BuildFailed)
+        return;
 
     for (uint32 g = 0; g < GroupCount(env); ++g)
     {
         EnvQuest& quest = quests.Groups[g];
         LifeWorld::QuestCandidate const* current = quest.Quest();
-        if (!current)
+        if (!current || quest.Current >= quest.Givers.size() || quest.Current >= quest.Enders.size())
             continue;
 
         // Only seats standing on the env's map: a seat between maps (a resurrection, a teleport) is not in the world,
@@ -408,6 +412,8 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
                 quest.Progress = 0.0f;
                 quest.Places.clear();
                 current = quest.Quest();
+                if (!current || quest.Current >= quest.Givers.size() || quest.Current >= quest.Enders.size())
+                    continue;
             }
             else
             {
@@ -481,7 +487,7 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
         {
             std::vector<Position> undone;
             bool creatureWanted = false;
-            for (uint32 i = 0; i < current->Places.size(); ++i)
+            for (uint32 i = 0; i < current->Places.size() && i < current->Plan->Objectives.size(); ++i)
                 if (QuestPlanner::Progress(lead, *current->Plan, i) < 1.0f)
                 {
                     creatureWanted = creatureWanted || IsCreatureKind(current->Plan->Objectives[i].Kind);
