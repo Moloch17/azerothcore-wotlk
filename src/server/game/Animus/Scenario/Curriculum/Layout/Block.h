@@ -57,6 +57,7 @@ namespace Animus::Curriculum
         Support,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
         Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
         World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
+        Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
         Count
     };
 

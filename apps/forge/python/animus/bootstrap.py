@@ -59,8 +59,10 @@ def _seed_head(new: dict, old: dict, prefix: str) -> None:
 
 # The core block's observation layout (CoreBlock.h): OBS_GLOBAL_COUNT global features, ACTION_FEATURES per catalog
 # action in action order, then the talents and trees. When a catalog loses or gains spells (a spell rule changed), the
-# core block is seeded action by action by name (stage.json action_names).
-CORE_GLOBAL_FEATURES = 67
+# core block is seeded action by action by name (stage.json action_names). Must equal CoreBlock::OBS_GLOBAL_COUNT
+# (tests/test_bootstrap.py reads the header): it was 67 long after the globals had grown to 94, which seeded every
+# changed catalog's action features 27 columns off.
+CORE_GLOBAL_FEATURES = 94
 CORE_ACTION_FEATURES = 6
 
 

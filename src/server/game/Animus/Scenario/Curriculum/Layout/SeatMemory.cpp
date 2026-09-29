@@ -93,9 +93,43 @@ void Animus::Curriculum::SeatMemory::Observe(Player* bot, Unit* target, uint64 n
             _targetAverage += (other - _targetAverage) * weight;
     }
 
+    // Rates for the forecasts: how fast the target's health is falling and the seat's mana is being spent, share
+    // of a bar a second. A new target starts its rate over; a rise (a heal, regeneration) counts as no fall.
+    float const mana = bot && bot->getPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA)
+        ? float(bot->GetPower(POWER_MANA)) / float(bot->GetMaxPower(POWER_MANA)) : -1.0f;
+    float const seconds = float(nowMs > _observedMs ? nowMs - _observedMs : 0) / 1000.0f;
+    if (seconds > 0.0f && _observedMs)
+    {
+        float const weight = 1.0f - std::exp(-seconds * 1000.0f / RATE_MS);
+        if (_lastTarget >= 0.0f && targetGuid == _averagedTarget)
+            _targetDropRate += (std::max(0.0f, _lastTarget - other) / seconds - _targetDropRate) * weight;
+        else
+            _targetDropRate = 0.0f;
+        if (_lastMana >= 0.0f && mana >= 0.0f)
+            _manaSpendRate += (std::max(0.0f, _lastMana - mana) / seconds - _manaSpendRate) * weight;
+    }
+    _lastTarget = target && target->IsAlive() ? other : -1.0f;
+    _lastMana = mana;
+    _target = other;
+    _mana = mana;
+
     _observedMs = nowMs;
     _selfTrend = std::clamp(self - _selfAverage, -1.0f, 1.0f);
     _targetTrend = std::clamp(other - _targetAverage, -1.0f, 1.0f);
+}
+
+float Animus::Curriculum::SeatMemory::TargetSecondsLeft() const
+{
+    if (_lastTarget < 0.0f || _targetDropRate <= 1e-4f)
+        return 1.0f;
+    return std::min(1.0f, _target / _targetDropRate / 60.0f);
+}
+
+float Animus::Curriculum::SeatMemory::ManaSecondsLeft() const
+{
+    if (_mana < 0.0f || _manaSpendRate <= 1e-4f)
+        return 1.0f;
+    return std::min(1.0f, _mana / _manaSpendRate / 60.0f);
 }
 
 bool Animus::Curriculum::SeatMemory::Paced(Layout const& layout, uint32 action, uint64 nowMs,

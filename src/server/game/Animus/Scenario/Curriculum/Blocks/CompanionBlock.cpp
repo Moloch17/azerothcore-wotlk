@@ -120,8 +120,10 @@ namespace
         if (bot->GetExactDist2d(&spot) < 0.5f)
             return false;
 
-        Encoding::FollowTo(bot, spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ(), Pace(bot, owner),
-            owner->IsWalking());
+        // Walking only at a walking pace: the walk animation at a catching-up run is a slide.
+        float const pace = Pace(bot, owner);
+        Encoding::FollowTo(bot, spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ(), pace,
+            owner->IsWalking() && pace <= bot->GetSpeed(MOVE_WALK) + 0.01f);
         if (option)
             option->AimedMs = nowMs;
         return true;

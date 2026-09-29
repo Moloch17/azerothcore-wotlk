@@ -6139,6 +6139,17 @@ AnimusForge.Curriculum.Actions.RepeatFree = 3
 #   within it swings the feet round from the last one: steering that does not commit, which on screen is a head
 #   twitching side to side, a flyer bobbing up and down, and feet that zigzag
 AnimusForge.Curriculum.Actions.Jitter = 0.02
+#   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
+#   it (damage off the focus under Fight, a nuke while Recovering, a step that opens the gap to the wanted range) is
+#   charged this. Serving presses are free
+AnimusForge.Curriculum.Actions.Aimless = 0.02
+#   every press but the no-op costs this, a tenth of an aimless one: when nothing needs doing, doing nothing wins
+AnimusForge.Curriculum.Actions.Effort = 0.002
+#   per second spent moving in a fight while already at the range the spec wants, with nothing underfoot, the focus
+#   standing still and no from-behind spell to get into position for: the shuffle that reads as a bot
+AnimusForge.Curriculum.Actions.Fidget = 0.01
+#   how much a step must close or open the gap to the wanted range to count as serving or aimless (yards)
+AnimusForge.Curriculum.Actions.IntentSlackYards = 0.5
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
 #   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
 #   or Levitate, health past fourteen yards, death past about seventy -- is the seat's to learn. Only the void is
@@ -6328,10 +6339,10 @@ AnimusForge.Curriculum.Options.MovePitchMs = 250
 #   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
 AnimusForge.Curriculum.Options.JitterWindowMs = 750
 
-#   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
-#   just behind the owner and keeps re-aiming that run at where the owner is now; it ends on its own when the seat
-#   is there and the owner has stopped, and like a bearing it ends when the feet are told something else. Longer
-#   than a bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
+#   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
+#   3.5 yd back along its own path at its pace, re-aimed at most once a second; it ends on its own when the seat is
+#   close and the owner has stopped, and like a bearing it ends when the feet are told something else. Longer than a
+#   bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
 AnimusForge.Curriculum.Options.FollowMs = 6000
 
 #   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison

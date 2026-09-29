@@ -43,6 +43,7 @@ namespace Animus::Curriculum
     {
     public:
         static constexpr float HEALTH_TREND_MS = 3000.0f;   // the time constant of the health averages
+        static constexpr float RATE_MS = 5000.0f;           // ... and of the drop and spend rates
 
         /// Forget everything (a new episode, a new character). `actions`: the layout's action count.
         void Reset(uint32 actions);
@@ -70,6 +71,11 @@ namespace Animus::Curriculum
         [[nodiscard]] float SinceModeChange(uint64 nowMs) const;                // / 10 s; 1 = never
         [[nodiscard]] float SelfHealthTrend() const { return _selfTrend; }      // health now - its average
         [[nodiscard]] float TargetHealthTrend() const { return _targetTrend; }
+        /// Forecasts (Component P): seconds until the target dies at the rate its health has been falling, and until
+        /// the seat's mana runs out at the rate it has been spending it -- each / 60 s, 1 for a minute or more or when
+        /// nothing is falling.
+        [[nodiscard]] float TargetSecondsLeft() const;
+        [[nodiscard]] float ManaSecondsLeft() const;
 
     private:
         std::vector<uint64> _readyMs;               // per action: when it may be pressed again
@@ -87,6 +93,13 @@ namespace Animus::Curriculum
         ObjectGuid _averagedTarget;
         float _selfTrend = 0.0f;
         float _targetTrend = 0.0f;
+        // Smoothed rates, share of a bar a second (RATE_MS time constant), and what they were measured from.
+        float _targetDropRate = 0.0f;
+        float _manaSpendRate = 0.0f;
+        float _target = 0.0f;
+        float _mana = 0.0f;
+        float _lastTarget = -1.0f;
+        float _lastMana = -1.0f;
     };
 }
 

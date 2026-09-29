@@ -279,3 +279,26 @@ def test_a_block_the_parent_lacked_is_not_normalised_on_the_parents_confidence()
     norm.update(rows)
     assert float(norm.mean[7:].min()) > 4.0      # moved most of the way from 0 towards 40
     torch.testing.assert_close(norm.mean[:7], old.actor.norms[0].mean)
+
+
+def test_core_global_features_match_the_core_block_header():
+    import pathlib
+    import re
+
+    from animus.bootstrap import CORE_ACTION_FEATURES, CORE_GLOBAL_FEATURES
+
+    header = (pathlib.Path(__file__).resolve().parents[4]
+              / "src/server/game/Animus/Scenario/Curriculum/Blocks/CoreBlock.h").read_text()
+    assert int(re.search(r"OBS_GLOBAL_COUNT\s*=\s*(\d+)", header).group(1)) == CORE_GLOBAL_FEATURES
+    assert int(re.search(r"ACTION_FEATURES\s*=\s*(\d+)", header).group(1)) == CORE_ACTION_FEATURES
+
+
+def test_a_new_block_starts_from_nothing_and_core_carries_over():
+    """The forecast block (BlockId::Forecast) is new in every layout: seeding a checkpoint without it keeps core."""
+    from animus.bootstrap import _common_blocks
+
+    old = {"core": ((0, 400), (0, 60)), "move": ((400, 80), (60, 30))}
+    new = {"core": ((0, 400), (0, 60)), "move": ((400, 80), (60, 30)), "forecast": ((480, 13), (90, 0))}
+    common = _common_blocks(old, new, "warrior")
+    assert ((0, 400), (0, 60)) in [spans[0] for spans in common]
+    assert all(spans[1][0][0] != 480 for spans in common)
