@@ -55,10 +55,10 @@ def test_the_goal_is_part_of_the_decision_and_is_learned():
     buffer.finish(np.zeros((2, 1), np.float32), 0.99, 0.95)
 
     assert buffer.flat()["goal_chosen"].any()
-    before = trainer.actor.goal_head.weight.detach().clone()
+    before = trainer.actor.goal_head.kind.weight.detach().clone()
     stats = trainer.update(buffer)
     assert stats["policy_loss"] is not None
-    assert not torch.allclose(before, trainer.actor.goal_head.weight)  # the chooser learns from the same returns
+    assert not torch.allclose(before, trainer.actor.goal_head.kind.weight)  # the chooser learns from the same returns
 
 
 def test_goals_and_memory_together():

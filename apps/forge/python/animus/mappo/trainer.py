@@ -115,6 +115,9 @@ class MappoConfig:
     # than the actions, so the horizon it has to reason over is that many times shorter. The goal is part of the
     # policy's decision: its log probability joins the action's in the PPO ratio on the decisions that chose one.
     goal_count: int = 0
+    # The target space of a goal (GoalHead; the sim's GOAL_TARGETS): 1 for goals that name nothing. With more, a goal
+    # is kind * goal_targets + target and goal_count counts the kinds.
+    goal_targets: int = 1
     goal_every_decisions: int = 16
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
@@ -243,6 +246,7 @@ class _Decided:
         self.trainer, self.state, self.layout = trainer, state, layout
         self.goal_t = None
         self.goal_chosen = None
+        self.goal_chosen_at = None
         self.chosen = None
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.actions_at = self.log_probs_at = None
@@ -251,7 +255,10 @@ class _Decided:
         goals = None
         if self.goal_at is not None:
             goal = fetched[self.goal_at]
-            goals = (goal, fetched[self.goal_log_prob_at], self.goal_chosen)
+            # The clock's choices and the ones an ended goal forced (GoalBlock::OBS_ENDED): both start the count again.
+            chosen = fetched[self.goal_chosen_at].astype(bool)
+            self.state.age = np.where(chosen, 1, self.state.age + 1)
+            goals = (goal, fetched[self.goal_log_prob_at], chosen)
             self.state.goal = goal
         if self.memory_at is not None:
             self.state.memory = fetched[self.memory_at]
@@ -367,11 +374,14 @@ class _RolloutGraph:
         # The draws as Categorical makes them, in a few kernels each (sample_logits): they were two thirds of the
         # decision's kernels.
         if trainer.goal_count:
-            goal_logits = actor.goal_head(features)
+            # Masked by the goal block (what is there now), and chosen again at once where it says the goal ended.
+            goal_logits = actor.goal_logits(features, obs_t, layout_t)
             sampled, _ = sample_logits(goal_logits, self.deterministic)
-            goal_t = torch.where(inputs["chosen"].reshape(rows), sampled, inputs["goal"].reshape(rows))
+            chosen_t = inputs["chosen"].reshape(rows) | actor.goal_ended(obs_t, layout_t)
+            goal_t = torch.where(chosen_t, sampled, inputs["goal"].reshape(rows))
             out["goal"] = goal_t.reshape(envs, agents)
             out["goal_log_prob"] = log_prob_of(goal_logits, goal_t).reshape(envs, agents)
+            out["goal_chosen"] = chosen_t.reshape(envs, agents)
 
         critic_memory = inputs["critic_memory"].reshape(rows, -1) if "critic_memory" in inputs else None
         values, carried = critic.step_encoded(critic.encode_goal(critic_hidden, critic_own, goal_t), (rows,),
@@ -423,7 +433,6 @@ class _RolloutGraph:
             chosen = (state.age % max(1, trainer.config.goal_every_decisions)) == 0
             np.copyto(host["goal"].numpy(), state.goal, casting="unsafe")
             np.copyto(host["chosen"].numpy(), chosen)
-            state.age = np.where(chosen, 1, state.age + 1)
 
         self.graph.replay()
         trainer._rollout_stream.synchronize()
@@ -432,6 +441,9 @@ class _RolloutGraph:
 
         goals = None
         if trainer.goal_count:
+            # The clock's choices and the ones an ended goal forced: both start the count again.
+            chosen = fetched["goal_chosen"].astype(bool)
+            state.age = np.where(chosen, 1, state.age + 1)
             state.goal = fetched["goal"]
             goals = (fetched["goal"], fetched["goal_log_prob"], chosen)
         if trainer.recurrent_size:
@@ -474,11 +486,15 @@ class MappoTrainer:
         hidden = list(config.hidden)
         self.foresight_outputs = (len(config.foresight_horizons_seconds) + 1) if config.foresight_coef > 0.0 else 0
         self.recurrent_size = config.recurrent_size
-        self.goal_count = config.goal_count
+        # config.goal_count is the goal kinds and config.goal_targets the target space (GoalHead); goal_count here is
+        # the joint count, which the buffers, the wire and the stats count.
+        self.goal_kinds = config.goal_count
+        self.goal_targets = max(1, config.goal_targets)
+        self.goal_count = self.goal_kinds * self.goal_targets if self.goal_kinds else 0
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
-                                 self.goal_count).to(self.train_device)
-        self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_count,
-                                   self.recurrent_size).to(self.train_device)
+                                 self.goal_kinds, self.goal_targets).to(self.train_device)
+        self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
+                                   self.recurrent_size, self.goal_targets).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -573,8 +589,10 @@ class MappoTrainer:
     def shrink_perturb(self, shrink: float, perturb: float) -> None:
         """weights = shrink x weights + perturb x freshly initialised weights (Ash & Adams, 2020)."""
         hidden = list(self.config.hidden)
-        fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_count),
-                 LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_count, self.recurrent_size))
+        fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
+                             self.goal_targets),
+                 LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
+                              self.goal_targets))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)
@@ -588,12 +606,32 @@ class MappoTrainer:
         self._sync_rollout()
 
     @torch.no_grad()
+    def set_goal_space(self, stage: dict | None, layout_names: list[str]) -> None:
+        """The goal space the sim wrote (stage.json "goals" and each layout's blocks): which targets each kind
+        accepts, and where each layout's goal block starts, so the goal head is masked by what is there. A run
+        whose stage has no goal space keeps an unmasked head."""
+        if not self.goal_count or self.goal_targets <= 1 or not stage or "goals" not in stage:
+            return
+        goals = stage["goals"]
+        if len(goals["kinds"]) != self.goal_kinds or int(goals["targets"]) != self.goal_targets:
+            raise ValueError(f"the sim's goal space is {len(goals['kinds'])} kinds x {goals['targets']} targets, "
+                             f"the learner's {self.goal_kinds} x {self.goal_targets} (mappo.goal_count, goal_targets)")
+        block_at = []
+        for layout in layout_names:
+            blocks = ((stage.get("layouts") or {}).get(layout) or {}).get("blocks") or []
+            at = next((int(b["obs"][0]) for b in blocks if b.get("name") == goals.get("block", "goal")), -1)
+            block_at.append(at)
+        for actor in (self.actor, self._rollout_actor):
+            if actor is not None and actor.goal_head is not None:
+                actor.goal_head.set_space(goals["accepts"], block_at)
+
     def _sync_rollout(self) -> None:
         # Copy tensor by tensor into the networks that are already there. Building a state dict and loading it
         # allocates a host copy of every parameter and buffer of both networks after every update, which with a
         # GPU is the whole model over the bus; the rollout copies only ever need the values.
-        for source, destination in self._rollout_pairs:
-            destination.copy_(source)
+        with torch.no_grad():
+            for source, destination in self._rollout_pairs:
+                destination.copy_(source)
         # The rollout copies act on 128-row batches, where each normaliser's five elementwise passes cost more than
         # the adapter after it: folded into the adapters, on the copies only.
         self._rollout_actor.fold_normalisation()
@@ -747,15 +785,15 @@ class MappoTrainer:
         if self.goal_count and state is not None:
             # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
             chosen = (state.age % max(1, self.config.goal_every_decisions)) == 0
-            distribution = self._rollout_actor.goal_distribution(features)
+            distribution = self._rollout_actor.goal_distribution(features, obs_t, layout_t)
             sampled = distribution.logits.argmax(dim=-1) if deterministic else distribution.sample()
             kept = self._tensor(state.goal, torch.long).reshape(rows)
-            chosen_t = self._tensor(chosen).reshape(rows)
+            # A goal the sim says has ended is chosen again now rather than at the clock.
+            chosen_t = self._tensor(chosen).reshape(rows).bool() | self._rollout_actor.goal_ended(obs_t, layout_t)
             decided.goal_t = torch.where(chosen_t, sampled, kept)
             decided.goal_log_prob_at = downloads.add(distribution.log_prob(decided.goal_t).reshape(envs, agents))
             decided.goal_at = downloads.add(decided.goal_t.reshape(envs, agents))
-            decided.goal_chosen = chosen
-            state.age = np.where(chosen, 1, state.age + 1)
+            decided.goal_chosen_at = downloads.add(chosen_t.reshape(envs, agents))
 
         dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
@@ -862,9 +900,13 @@ class MappoTrainer:
             return {}
 
         goals = data["goal"]
-        counts = torch.bincount(goals.reshape(-1), minlength=self.goal_count).float()
+        # Per kind (a goal is kind * targets + target), and how many name a target.
+        kinds = torch.div(goals.reshape(-1), self.goal_targets, rounding_mode="floor")
+        counts = torch.bincount(kinds, minlength=self.goal_kinds).float()
         total = counts.sum().clamp(min=1.0)
-        stats = {f"goal_{index}_share": float(counts[index] / total) for index in range(self.goal_count)}
+        stats = {f"goal_{index}_share": float(counts[index] / total) for index in range(self.goal_kinds)}
+        if self.goal_targets > 1:
+            stats["goal_targeted_share"] = float(((goals.reshape(-1) % self.goal_targets) != 0).float().mean())
 
         # A goal choice that kept the goal the decision before was pursuing: the head is holding, not switching.
         # Only the sequences have a decision before -- flat rows are shuffled together from every env and step, so
@@ -978,7 +1020,7 @@ class MappoTrainer:
                     # and its entropy is kept up on those decisions too. The goal term is averaged over every row,
                     # not only the rows that chose a goal, so a head consulted once in goal_every_decisions is worth
                     # that share of the bonus rather than as much as the action head on every decision.
-                    goals = self.actor.goal_distribution(features)
+                    goals = self.actor.goal_distribution(features, obs, layout)
                     chosen = data["goal_chosen"][idx].float()
                     log_probs = log_probs + goals.log_prob(goal) * chosen
                     goal_entropy = (goals.entropy() * chosen).sum()
@@ -1221,7 +1263,7 @@ class MappoTrainer:
                                if foresight else None)
                 goal_entropies = None
                 if self.goal_count:
-                    goals = self.actor.goal_distribution(features)
+                    goals = self.actor.goal_distribution(features, obs_all, layout_all)
                     chosen = data["goal_chosen"][:, chunk].reshape(-1).to(features.dtype)
                     log_probs = log_probs + (goals.log_prob(goal_all) * chosen).reshape(*lead)
                     # Zero on the rows that held their goal, and averaged below over every row: the goal head's

@@ -6064,11 +6064,11 @@ AnimusForge.Curriculum.Casting.TimeCompleted = 0.03
 AnimusForge.Curriculum.Casting.Cancel = 0.05
 #   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
 #   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
-#   paid once for each goal the seat holds, on the first decision its actions match the goal the learner is pursuing
-#   (fight, control, recover, protect, position, prepare) -- a goal is there to be reached, and paying per decision
-#   spent in one made standing at range the stage's second largest earner. Small on purpose: it keeps the goals apart
-#   so a goal head cannot collapse into one goal, rather than paying for play the stage's own terms already price
-AnimusForge.Curriculum.Goals.Match = 0.02
+#   paid once when the goal the seat holds is reached (a goal is a kind and a target: fight, control, recover,
+#   protect, position, prepare, travel_to, loot, gather, interact, rest -- the enemy it named is dead, the friend is
+#   healthy, the place is reached, the objective done), not for holding it: paying per decision spent in a goal made
+#   standing at range the stage's second largest earner. Replaced Goals.Match, which paid on first holding one
+AnimusForge.Curriculum.Goals.Reached = 0.05
 #   every stage with a goal head, per change of a seat's goal: Match is paid once per goal held, so without this a
 #   head that switched at every choice was paid for the churn. A little more than a match, so a change of goal has
 #   to be worth it on the stage's own terms
@@ -6077,7 +6077,7 @@ AnimusForge.Curriculum.Goals.Switch = 0.03
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
 #   channel that correlates with nothing cannot bootstrap into that. stage26_duo_led ran 30M steps with the order
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
-#   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
+#   world and it never left exploration. The same job Goals.Reached does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
 #   reward, or it would learn to call whoever its seats were already fighting.
 #   Small because a per-decision term adds up over a fight: at 0.01 it earned 5.01 an episode, 23.7% of gross and

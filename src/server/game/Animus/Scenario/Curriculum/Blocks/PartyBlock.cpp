@@ -143,8 +143,8 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
         other.Apt.WriteBrief(features + MEMBER_APTITUDE_FIRST);
         WriteOneHot(PLAYABLE_CLASSES, other.Class, features + MEMBER_CLASS_FIRST);
 
-        if (other.Goal >= 0 && other.Goal < int32(GOAL_COUNT))
-            features[MEMBER_GOAL_FIRST + other.Goal] = 1.0f;
+        if (int32 const kind = GoalKindOf(other.Goal); kind >= 0 && kind < int32(GOAL_COUNT))
+            features[MEMBER_GOAL_FIRST + kind] = 1.0f;
 
         int32 const target = Encoding::SlotOf(view, teammate->GetVictim());
         if (target >= 0)

@@ -77,7 +77,8 @@ namespace
     }
 
     /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
-    /// not offered. Under Recover and Prepare the harmful spells close -- a seat eating or buffing up does not start
+    /// not offered. Under Recover, Prepare, Rest and the life goals (TravelTo, Loot, Gather, Interact) the harmful
+    /// spells close -- a seat eating or buffing up does not start
     /// a fight -- and under Fight, Control and Position the long buffs close in combat. The escape reopens the harmful
     /// spells whenever the seat, its owner or a teammate is attacked, the seat is below 35% health, or it is
     /// stealthed (the opener ends a Prepare), so it can always answer what happens to it and to them; the goal
@@ -88,10 +89,15 @@ namespace
             return false;
 
         Player* bot = view.Bot;
-        switch (SeatGoal(view.Goal))
+        switch (SeatGoal(GoalKindOf(view.Goal)))
         {
             case SeatGoal::Recover:
             case SeatGoal::Prepare:
+            case SeatGoal::Rest:
+            case SeatGoal::TravelTo:
+            case SeatGoal::Loot:
+            case SeatGoal::Gather:
+            case SeatGoal::Interact:
             {
                 if (bot->GetHealthPct() < GOAL_ESCAPE_HEALTH_PCT || !bot->getAttackers().empty()
                     || bot->HasStealthAura())

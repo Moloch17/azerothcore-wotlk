@@ -58,6 +58,7 @@ namespace Animus::Curriculum
         Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
         World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
+        Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };
 
@@ -191,6 +192,12 @@ namespace Animus::Curriculum
         Protect,        // keep the owner or a teammate alive
         Position,       // get to where its spec fights from
         Prepare,        // buffs, summons and stealth before the fight
+        // Life outside the fight (long-horizon plan, Component C): each with a target the journal names.
+        TravelTo,       // get to a place: an objective's, the giver, the turn-in, a place found, the assigned area
+        Loot,           // loot what lies dead nearby
+        Gather,         // gather the nodes around, or at a place found
+        Interact,       // talk to the giver or the turn-in, use an objective's object, item or vendor
+        Rest,           // eat and drink out of a fight until ready
         Count
     };
 
@@ -198,6 +205,39 @@ namespace Animus::Curriculum
     constexpr int32 NO_GOAL = -1;
 
     [[nodiscard]] std::string_view GoalName(SeatGoal goal);
+
+    /// **What a goal is about** (Component C): a goal is a kind and a target, sent as one number, kind *
+    /// GOAL_TARGETS + target. The targets are one space for every kind -- nothing, an enemy slot, a friend slot, a
+    /// journal objective, the giver, the turn-in, a found place, the assigned area -- and GoalAccepts says which a
+    /// kind can take. The sim tells the learner which kinds and targets are there each decision (GoalBlock), so a
+    /// goal can only be chosen about something that exists.
+    enum GoalTarget : uint32
+    {
+        GOAL_TARGET_NONE        = 0,
+        GOAL_TARGET_ENEMY_FIRST = 1,
+        GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS,
+        GOAL_TARGET_OBJECTIVE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
+        GOAL_TARGET_GIVER       = GOAL_TARGET_OBJECTIVE_FIRST + 4,
+        GOAL_TARGET_ENDER,
+        GOAL_TARGET_PLACE_FIRST,
+        GOAL_TARGET_ASSIGNMENT  = GOAL_TARGET_PLACE_FIRST + 8,
+        GOAL_TARGETS
+    };
+
+    constexpr uint32 GOAL_JOINT_COUNT = GOAL_COUNT * GOAL_TARGETS;
+
+    [[nodiscard]] constexpr int32 MakeGoal(SeatGoal kind, uint32 target)
+    {
+        return int32(uint32(kind) * GOAL_TARGETS + target);
+    }
+    /// The kind of a goal (NO_GOAL stays NO_GOAL as -1 compares), and its target.
+    [[nodiscard]] constexpr int32 GoalKindOf(int32 goal) { return goal < 0 ? NO_GOAL : goal / int32(GOAL_TARGETS); }
+    [[nodiscard]] constexpr uint32 GoalTargetOf(int32 goal) { return goal < 0 ? 0 : uint32(goal) % GOAL_TARGETS; }
+    /// Whether a kind can be about a target: Fight, Control and Position about an enemy (Fight and Position about
+    /// no one in particular too), Protect about a friend, TravelTo about any journal place, Gather about the nodes
+    /// around or a found place, Interact about the giver, the turn-in or an objective; Recover, Prepare, Loot and
+    /// Rest about nothing.
+    [[nodiscard]] bool GoalAccepts(SeatGoal kind, uint32 target);
     [[nodiscard]] std::string_view PostureName(TeamPosture posture);
     [[nodiscard]] std::string_view RallyName(TeamRally rally);
     [[nodiscard]] std::string_view AnchorName(PlaceAnchor anchor);

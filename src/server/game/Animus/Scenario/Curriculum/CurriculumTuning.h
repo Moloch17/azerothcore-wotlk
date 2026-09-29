@@ -254,12 +254,14 @@ namespace Animus::Curriculum
         /// The learner's goals (SeatGoal), in every stage that its policy chooses them for.
         struct GoalTuning
         {
-            /// Paid once for each goal the seat holds, on the first decision it holds it (StageScenario::GoalHeld),
-            /// not per decision: a goal is there to be reached, and paying to sit in one made standing at range the
-            /// stage's second largest earner. Small on purpose: it is there to keep the goals apart -- without it
-            /// nothing stops every goal collapsing into one -- not to pay for play the stage's own terms price.
-            float Match = 0.02f;
-            /// Charged each time the goal head changes a seat's goal. Match pays once per goal *held*, so a head that
+            /// Paid once when the goal the seat holds is reached (GoalBlock::Status: the enemy it named is dead, the
+            /// friend is healthy, the place is reached, the objective is done), not for holding it: a goal is there
+            /// to be reached, and paying to sit in one made standing at range the stage's second largest earner.
+            /// It replaced Goals.Match, which paid on the first decision a goal was merely held. Small on purpose:
+            /// it keeps the goals apart and makes reaching one the point, and does not pay for play the stage's own
+            /// terms price.
+            float Reached = 0.05f;
+            /// Charged each time the goal head changes a seat's goal kind. Reaching pays once per goal, so a head that
             /// switched goals at every choice collected it again each time: churn was paid, and in the first full
             /// run's combat stages the head kept its goal only 22% of the time against chance's 17% (2026-09-28). A
             /// switch costs a little more than a match earns, so changing goal has to be worth it on the stage's own
@@ -925,7 +927,7 @@ namespace Animus::Curriculum
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
             f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
-            f("Goals.Match", tuning.Goals.Match);
+            f("Goals.Reached", tuning.Goals.Reached);
             f("Goals.Switch", tuning.Goals.Switch);
 
             f("Order.Focus", tuning.Order.Focus);

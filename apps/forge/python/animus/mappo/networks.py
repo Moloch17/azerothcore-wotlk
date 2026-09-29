@@ -365,9 +365,94 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     return padded[to_device(piece_of, device), to_device(position_of, device)]
 
 
+class GoalHead(nn.Module):
+    """**Goals as a kind and a target** (long-horizon plan, Component C): a goal is kind * targets + target, one
+    number on the wire and in the buffers. Its logits are the kind's, plus the target's, plus a learned table of the
+    pair, over every (kind, target) -- a joint categorical parametrised in parts, so the target's score is shared
+    across the kinds that can take it. Masked by the sim's goal block (GoalBlock: which kinds and targets are there
+    now, the last block of each layout) and by which targets each kind accepts (stage.json "goals"). With one target
+    it is exactly the old goal head over `kinds` goals."""
+
+    def __init__(self, width: int, kinds: int, targets: int, layout_count: int):
+        super().__init__()
+        self.kinds, self.targets = kinds, max(1, targets)
+        self.kind = _linear(width, kinds, 0.01)
+        self.target = _linear(width, self.targets, 0.01) if self.targets > 1 else None
+        self.pair = nn.Parameter(torch.zeros(kinds, self.targets))
+        self.register_buffer("accepts", torch.ones(kinds, self.targets, dtype=torch.bool))
+        # Per layout, where its goal block starts in the observation; -1 for a layout without one (the director).
+        self.register_buffer("block_at", torch.full((max(1, layout_count),), -1, dtype=torch.long))
+
+    @property
+    def count(self) -> int:
+        return self.kinds * self.targets
+
+    @property
+    def block_width(self) -> int:
+        return self.kinds + self.targets + 1
+
+    def set_space(self, accepts, block_at) -> None:
+        """The goal space the sim wrote (stage.json "goals"): accepts [kinds][targets], and per layout the goal
+        block's first observation column (-1 without one)."""
+        self.accepts.copy_(torch.as_tensor(accepts, dtype=torch.bool, device=self.accepts.device))
+        self.block_at.copy_(torch.as_tensor(block_at, dtype=torch.long, device=self.block_at.device))
+
+    def _block(self, obs: torch.Tensor, layout: torch.Tensor):
+        """The goal block's columns of flat rows, and which rows have one."""
+        at = self.block_at[layout.long()]
+        has = at >= 0
+        columns = at.clamp(min=0)[:, None] + torch.arange(self.block_width, device=obs.device)[None, :]
+        columns = columns.clamp(max=obs.shape[-1] - 1)
+        return obs.gather(1, columns) > 0.5, has
+
+    def logits(self, features: torch.Tensor, obs: torch.Tensor | None = None,
+               layout: torch.Tensor | None = None) -> torch.Tensor:
+        """Masked joint logits [rows, kinds * targets]."""
+        joint = self.kind(features)[:, :, None] + self.pair[None].to(features.dtype)
+        if self.target is not None:
+            joint = joint + self.target(features)[:, None, :]
+        allowed = self.accepts[None].expand(features.shape[0], -1, -1)
+        if obs is not None and layout is not None and self.targets > 1:
+            block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
+            present = block[:, : self.kinds, None] & block[:, self.kinds : self.kinds + self.targets][:, None, :]
+            allowed = torch.where(has[:, None, None], allowed & present, allowed)
+        allowed = allowed.reshape(features.shape[0], -1).clone()
+        # Always something to choose: the first goal (Fight about no one in particular) is never masked out.
+        allowed[:, 0] = True
+        return masked_logits(joint.reshape(features.shape[0], -1), allowed)
+
+    def ended(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """Rows whose goal the sim says has just ended (GoalBlock::OBS_ENDED): they choose again now."""
+        if self.targets <= 1:
+            return torch.zeros(obs.reshape(-1, obs.shape[-1]).shape[0], dtype=torch.bool, device=obs.device)
+        block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
+        return block[:, -1] & has
+
+
+class GoalEmbedding(nn.Module):
+    """A goal as the features it adds: its kind's embedding plus its target's (zero at the start, so a new goal head
+    changes nothing until it is trained)."""
+
+    def __init__(self, kinds: int, targets: int, width: int):
+        super().__init__()
+        self.targets = max(1, targets)
+        self.kind = nn.Embedding(kinds, width)
+        self.target = nn.Embedding(self.targets, width) if self.targets > 1 else None
+        nn.init.zeros_(self.kind.weight)
+        if self.target is not None:
+            nn.init.zeros_(self.target.weight)
+
+    def forward(self, goal: torch.Tensor) -> torch.Tensor:
+        goal = goal.reshape(-1).long()
+        embedded = self.kind(torch.div(goal, self.targets, rounding_mode="floor"))
+        if self.target is not None:
+            embedded = embedded + self.target(goal % self.targets)
+        return embedded
+
+
 class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
-                 recurrent_size: int = 0, goal_count: int = 0):
+                 recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -401,11 +486,12 @@ class LayoutActor(nn.Module):
         # The goal head (mappo.goal_count): a goal chosen every mappo.goal_every_decisions and kept in between, which
         # the action head is conditioned on. The goal chooser decides on a clock many times slower than the actions,
         # so its own horizon is that many times shorter -- which is where a plan can be learned at all.
-        self.goal_count = goal_count
-        self.goal_head = _linear(head_width, goal_count, 0.01) if goal_count else None
-        self.goal_embedding = nn.Embedding(goal_count, head_width) if goal_count else None
-        if self.goal_embedding is not None:
-            nn.init.zeros_(self.goal_embedding.weight)
+        #
+        # `goal_count` is the goal *kinds* and `goal_targets` the target space (GoalHead); self.goal_count is the
+        # joint count, which is what the buffers, the wire and the stats count.
+        self.goal_head = GoalHead(head_width, goal_count, goal_targets, len(layouts)) if goal_count else None
+        self.goal_count = self.goal_head.count if self.goal_head is not None else 0
+        self.goal_embedding = GoalEmbedding(goal_count, goal_targets, head_width) if goal_count else None
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None) -> Categorical:
@@ -505,9 +591,18 @@ class LayoutActor(nn.Module):
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
         return masked_logits(logits, mask)
 
-    def goal_distribution(self, features: torch.Tensor) -> Categorical:
-        """Which goal to pursue next, from the same features."""
-        return Categorical(logits=self.goal_head(features))
+    def goal_distribution(self, features: torch.Tensor, obs: torch.Tensor | None = None,
+                          layout: torch.Tensor | None = None) -> Categorical:
+        """Which goal to pursue next, from the same features, masked by what the goal block says is there."""
+        return Categorical(logits=self.goal_head.logits(features, obs, layout))
+
+    def goal_logits(self, features: torch.Tensor, obs: torch.Tensor | None = None,
+                    layout: torch.Tensor | None = None) -> torch.Tensor:
+        return self.goal_head.logits(features, obs, layout)
+
+    def goal_ended(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """Rows whose goal just ended (GoalBlock::OBS_ENDED): chosen again at once."""
+        return self.goal_head.ended(obs, layout)
 
     def _forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                  memory: torch.Tensor | None = None,
@@ -534,15 +629,15 @@ class LayoutCritic(nn.Module):
     """
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
-                 goal_count: int = 0, recurrent_size: int = 0):
+                 goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1):
         super().__init__()
         if not hidden:
             raise ValueError("the critic needs at least one hidden layer")
         # The goal the actor is pursuing (mappo.goal_count) is part of what the value depends on: the same situation
         # is worth different things while resting and while fighting. Without it the critic averages over goals and
         # the advantage says nothing about which goal was the right one, which is what lets goals collapse into one.
-        self.goal_count = goal_count
-        self.goal_embedding = nn.Embedding(goal_count, hidden[0]) if goal_count else None
+        self.goal_count = goal_count * max(1, goal_targets)
+        self.goal_embedding = GoalEmbedding(goal_count, goal_targets, hidden[0]) if goal_count else None
         self.obs_dims = [obs for obs, _ in layouts]
         self.state_norm = RunningNorm(state_dim)
         self.state_encoder = _linear(state_dim, hidden[0], math.sqrt(2))

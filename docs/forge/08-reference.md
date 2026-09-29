@@ -172,7 +172,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.ArriveFloorMs` | 10000 |
 | | | | `Pulls.NextPullShrinkMs` | 1000 |
 | | | | `Pulls.NextPullFloorMs` | 4000 |
-| `Goals.Match` | 0.02 | | | |
+| `Goals.Reached` | 0.05 | | | |
 | `Goals.Switch` | 0.03 | | | |
 | `Order.Focus` | 0.001 | | | |
 | `Pulls.GauntletDenseScale` | 0.5 | | | |

@@ -186,7 +186,7 @@ class CastActor:
                 goals = flat_goal[picked].copy()
                 choose = ages % self.goal_every == 0
                 if choose.any():
-                    drawn = self.teacher.actor.goal_distribution(features)
+                    drawn = self.teacher.actor.goal_distribution(features, t_obs, t_layout)
                     chosen = (drawn.probs.argmax(-1) if self.deterministic else drawn.sample()).cpu().numpy()
                     goals[choose] = chosen[choose]
                 flat_goal[picked] = goals

@@ -25,17 +25,28 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         f32  weight_hh[3 * recurrent_size * recurrent_size]
         f32  bias_ih[3 * recurrent_size]
         f32  bias_hh[3 * recurrent_size]
-    u32      goal_count                     0 = the policy has no goals
+    u32      goal_kinds                     0 = the policy has no goals
+    u32      goal_targets                   1 = goals name no target (the kind alone)
     u32      goal_every_decisions
-    if goal_count:
-        f32  goal_weight[goal_count * feature_width]     the goal head, on the same features
-        f32  goal_bias[goal_count]
-        f32  goal_embedding[goal_count * feature_width]  added to the features the action head reads
+    if goal_kinds:
+        f32  kind_weight[goal_kinds * feature_width]     the goal head (GoalHead), on the same features
+        f32  kind_bias[goal_kinds]
+        if goal_targets > 1:
+            f32  target_weight[goal_targets * feature_width]
+            f32  target_bias[goal_targets]
+        f32  pair[goal_kinds * goal_targets]
+        u8   accepts[goal_kinds * goal_targets]           which targets each kind can take
+        i32  goal_block_at                  the goal block's first observation column (-1: none)
+        f32  kind_embedding[goal_kinds * feature_width]  added to the features the action head reads
+        if goal_targets > 1:
+            f32  target_embedding[goal_targets * feature_width]
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
 when an episode ends. With goals, one is chosen from the goal head every goal_every_decisions decisions (the argmax)
-and kept in between, and its embedding is added to the features the action head reads. The policy is the argmax of the
+or at once when the goal block's "ended" column is set, and kept in between: a goal is kind * goal_targets + target,
+its logit the kind's plus the target's plus the pair's, masked by the goal block's columns (kinds there, targets there)
+and the accepts table. The kind's and target's embeddings are added to the features the action head reads. The policy is the argmax of the
 final logits over allowed actions.
 
 The learner's actor is layout-aware (mappo.networks.LayoutActor): one input adapter and action head per layout
@@ -60,7 +71,7 @@ import torch
 from .stages import STAGE_FILE, model_names
 
 AMDL_MAGIC = b"AMDL"
-AMDL_VERSION = 2
+AMDL_VERSION = 3
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -155,10 +166,16 @@ def write_amdl(
             for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh"):
                 out.write(np.ascontiguousarray(memory[name], dtype="<f4").tobytes())
 
-        count = 0 if goals is None else int(goals["weight"].shape[0])
-        out.write(struct.pack("<II", count, goal_every if count else 0))
+        kinds = 0 if goals is None else int(goals["kind_weight"].shape[0])
+        targets = 1 if goals is None else int(goals["pair"].shape[1])
+        out.write(struct.pack("<III", kinds, targets, goal_every if kinds else 0))
         if goals is not None:
-            for name in ("weight", "bias", "embedding"):
+            names = ["kind_weight", "kind_bias"] + (["target_weight", "target_bias"] if targets > 1 else []) + ["pair"]
+            for name in names:
+                out.write(np.ascontiguousarray(goals[name], dtype="<f4").tobytes())
+            out.write(np.ascontiguousarray(goals["accepts"], dtype="u1").tobytes())
+            out.write(struct.pack("<i", int(goals["block_at"])))
+            for name in ["kind_embedding"] + (["target_embedding"] if targets > 1 else []):
                 out.write(np.ascontiguousarray(goals[name], dtype="<f4").tobytes())
 
 
@@ -170,15 +187,27 @@ def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray
             for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh")}
 
 
-def goal_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
-    """The goal head and its embedding, or None when the actor has no goals."""
-    if "goal_head.weight" not in actor_state:
+def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[str, np.ndarray] | None:
+    """The goal head (GoalHead) and its embedding for one layout, or None when the actor has no goals."""
+    if "goal_head.kind.weight" not in actor_state:
         return None
-    return {
-        "weight": actor_state["goal_head.weight"].detach().cpu().numpy().astype("<f4"),
-        "bias": actor_state["goal_head.bias"].detach().cpu().numpy().astype("<f4"),
-        "embedding": actor_state["goal_embedding.weight"].detach().cpu().numpy().astype("<f4"),
+
+    def array(key: str, dtype: str = "<f4") -> np.ndarray:
+        return actor_state[key].detach().cpu().numpy().astype(dtype)
+
+    goals = {
+        "kind_weight": array("goal_head.kind.weight"),
+        "kind_bias": array("goal_head.kind.bias"),
+        "pair": array("goal_head.pair"),
+        "accepts": array("goal_head.accepts", "u1"),
+        "block_at": int(actor_state["goal_head.block_at"][layout]) if "goal_head.block_at" in actor_state else -1,
+        "kind_embedding": array("goal_embedding.kind.weight"),
     }
+    if "goal_head.target.weight" in actor_state:
+        goals["target_weight"] = array("goal_head.target.weight")
+        goals["target_bias"] = array("goal_head.target.bias")
+        goals["target_embedding"] = array("goal_embedding.target.weight")
+    return goals
 
 
 def export_layouts(
@@ -201,7 +230,7 @@ def export_layouts(
         name = model_name(spec["scenario"], layout["name"], len(layouts), models)
         layers = with_agent_column(layout_layers(actor_state, index))
         memory = memory_weights(actor_state)
-        goals = goal_weights(actor_state)
+        goals = goal_weights(actor_state, index)
         target = out_dir / f"{name}.amdl"
         partial = out_dir / f".{target.name}.partial"
         try:
@@ -264,16 +293,23 @@ def read_amdl(path: str | Path) -> dict:
             "bias_hh": floats(3 * recurrent, 3 * recurrent),
         }
 
-    goal_count, goal_every = struct.unpack_from("<II", data, offset)
-    offset += 8
+    kinds, targets, goal_every = struct.unpack_from("<III", data, offset)
+    offset += 12
     goals = None
-    if goal_count:
+    if kinds:
         width = layers[-1][0].shape[1]
-        goals = {
-            "weight": floats(goal_count * width, goal_count, width),
-            "bias": floats(goal_count, goal_count),
-            "embedding": floats(goal_count * width, goal_count, width),
-        }
+        goals = {"kind_weight": floats(kinds * width, kinds, width), "kind_bias": floats(kinds, kinds)}
+        if targets > 1:
+            goals["target_weight"] = floats(targets * width, targets, width)
+            goals["target_bias"] = floats(targets, targets)
+        goals["pair"] = floats(kinds * targets, kinds, targets)
+        goals["accepts"] = np.frombuffer(data, dtype="u1", count=kinds * targets, offset=offset).reshape(kinds, targets)
+        offset += kinds * targets
+        (goals["block_at"],) = struct.unpack_from("<i", data, offset)
+        offset += 4
+        goals["kind_embedding"] = floats(kinds * width, kinds, width)
+        if targets > 1:
+            goals["target_embedding"] = floats(targets * width, targets, width)
 
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
@@ -320,11 +356,27 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
         every = max(1, model.get("goal_every", 1))
         age = 0 if state is None else state.get("age", 0)
         goal = 0 if state is None else state.get("goal", 0)
-        if age % every == 0:
-            goal = int((goals["weight"] @ x + goals["bias"]).argmax())
+        kinds, targets = goals["pair"].shape
+        allowed = goals["accepts"].astype(bool).copy()
+        ended = False
+        at = int(goals["block_at"])
+        if at >= 0 and targets > 1:
+            block = obs[at : at + kinds + targets + 1] > 0.5
+            allowed &= block[:kinds, None] & block[kinds : kinds + targets][None, :]
+            ended = bool(block[-1])
+        allowed = allowed.reshape(-1)
+        allowed[0] = True
+        choose = age % every == 0 or ended
+        if choose:
+            joint = (goals["kind_weight"] @ x + goals["kind_bias"])[:, None] + goals["pair"]
+            if targets > 1:
+                joint = joint + (goals["target_weight"] @ x + goals["target_bias"])[None, :]
+            goal = int(np.where(allowed, joint.reshape(-1), -np.inf).argmax())
         if state is not None:
-            state["goal"], state["age"] = goal, 1 if age % every == 0 else age + 1
-        x = x + goals["embedding"][goal]
+            state["goal"], state["age"] = goal, 1 if choose else age + 1
+        x = x + goals["kind_embedding"][goal // targets]
+        if targets > 1:
+            x = x + goals["target_embedding"][goal % targets]
 
     weight, bias = layers[-1]
     x = weight @ x + bias

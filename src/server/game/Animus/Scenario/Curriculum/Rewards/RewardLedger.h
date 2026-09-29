@@ -67,7 +67,7 @@ namespace Animus::Curriculum
         Readiness,
         Control,
         SelfHealing,
-        GoalMatch,
+        GoalReached,        // the goal held was reached (Goals.Reached)
         GoalSwitch,         // the goal head changed a seat's goal (Goals.Switch)
         OrderMatch,
         PlaceMatch,

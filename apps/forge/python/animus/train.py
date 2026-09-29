@@ -557,6 +557,9 @@ class TrainingRun:
         if self.async_ranks and not leader:
             fetch_shared(config.dist_address, config.rank, Path(config.runs_dir), config.dist_timeout)
         self._load_or_seed()
+        # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
+        # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
+        self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
         # Every rank carries on from the leader's counters (a learner on another machine resumed nothing), so they
         # stop, evaluate and schedule together.
         self.update, self.env_steps = self.ranks.broadcast((self.update, self.env_steps))
@@ -612,7 +615,8 @@ class TrainingRun:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and
             # the share of decisions spent under each goal.
             columns += ["goal_entropy", "goal_kept_share",
-                        *(f"goal_{index}_share" for index in range(self.trainer.goal_count))]
+                        *(f"goal_{index}_share" for index in range(self.trainer.goal_kinds)),
+                        *(("goal_targeted_share",) if self.trainer.goal_targets > 1 else ())]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         self.report = tuple(config.eval.report)
         self.eval_log = EvalLog(self.run_dir, self.logger.tb) if leader else Silent()

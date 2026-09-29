@@ -34,6 +34,7 @@
 #include "MoveBlock.h"
 #include "World.h"
 #include "EncoderSupport.h"
+#include "GoalBlock.h"
 #include "Encounters.h"
 #include "SpellMgr.h"
 #include "Env.h"
@@ -563,7 +564,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
     // invisible in exactly the run where it matters.
     for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::Aimless, RewardTerm::Effort,
-        RewardTerm::Fidget, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
+        RewardTerm::Fidget, RewardTerm::SelfHealing, RewardTerm::GoalReached,
         RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
@@ -571,7 +572,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         });
 
     _spec.EpisodeInfoDim = _info.Size();
-    _spec.GoalCount = GOAL_COUNT;
+    _spec.GoalCount = GOAL_JOINT_COUNT;
 
     if (!settings.LayoutsDir.empty())
         WriteStageFiles(settings);
@@ -1274,6 +1275,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         SeatState const& state = seat(env, index);
         return float(std::accumulate(state.GoalDecisions.begin(), state.GoalDecisions.end(), uint32(0)));
     };
+    _info.Add("goals_reached", [seat](Env const& env, uint32 index) { return float(seat(env, index).GoalsReached); });
+    _info.Add("goals_lost", [seat](Env const& env, uint32 index) { return float(seat(env, index).GoalsLost); });
+    _info.Add("goal_targeted_share", [seat, goalDecisions](Env const& env, uint32 index)
+    {
+        float const total = goalDecisions(env, index);
+        return total ? float(seat(env, index).GoalTargetedDecisions) / total : 0.0f;
+    });
     for (uint32 goal = 0; goal < GOAL_COUNT; ++goal)
         _info.Add("goal_" + std::string(GoalName(SeatGoal(goal))) + "_share",
             [seat, goalDecisions, goal](Env const& env, uint32 index)
@@ -1412,6 +1420,23 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     for (std::string const& name : _info.Names())
         episodeInfo.push_back(boost::json::string(name));
 
+    // The goal space (Component C): a goal is kind * targets + target. The learner masks its goal head with the
+    // goal block's columns (the last block of every layout: kinds, then targets, then "ended") and the table of
+    // which targets each kind accepts.
+    {
+        boost::json::object& goals = stageFile["goals"].emplace_object();
+        boost::json::array& kinds = goals["kinds"].emplace_array();
+        boost::json::array& accepts = goals["accepts"].emplace_array();
+        for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+        {
+            kinds.emplace_back(std::string(GoalName(SeatGoal(kind))));
+            boost::json::array& row = accepts.emplace_back(boost::json::array()).as_array();
+            for (uint32 target = 0; target < GOAL_TARGETS; ++target)
+                row.emplace_back(GoalAccepts(SeatGoal(kind), target) ? 1 : 0);
+        }
+        goals["targets"] = GOAL_TARGETS;
+        goals["block"] = "goal";
+    }
     stageFile["tuning"] = _tuning.Json();
 
     if (!WriteIfChanged(directory / "stage.json", boost::json::serialize(stageFile)))
@@ -2338,17 +2363,23 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
     EnvState& data = Data(env);
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
-        int32 const goal = goals[seat] >= 0 && goals[seat] < int32(GOAL_COUNT) ? goals[seat] : NO_GOAL;
+        int32 const goal = goals[seat] >= 0 && goals[seat] < int32(GOAL_JOINT_COUNT) ? goals[seat] : NO_GOAL;
         SeatState& state = data.Seats[seat];
+        // A change of kind is a change of plan, charged (Goals.Switch); a new target for the same kind -- the next
+        // enemy, the next objective -- is the plan going on, and a goal that ended is chosen again for free.
         if (goal != state.Goal && state.Goal != NO_GOAL && goal != NO_GOAL)
         {
             ++state.GoalChanges;
-            ++state.StepGoalSwitches;       // charged at the next reward (Goals.Switch)
+            if (GoalKindOf(goal) != GoalKindOf(state.Goal) && !state.GoalEnded)
+                ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
         }
 
         // A new goal is a new thing to reach, and is paid for again when it is.
         if (goal != state.Goal)
+        {
             state.GoalRewarded = false;
+            state.GoalEnded = false;
+        }
 
         state.Goal = goal;
     }
@@ -2362,7 +2393,7 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
     if (!bot || !bot->IsAlive() || seat.Goal == NO_GOAL)
         return false;
 
-    switch (SeatGoal(seat.Goal))
+    switch (SeatGoal(GoalKindOf(seat.Goal)))
     {
         case SeatGoal::Fight:
             return step.Damage > 0;
@@ -2404,6 +2435,17 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
         }
         case SeatGoal::Prepare:
             return !bot->IsInCombat() && (seat.StepPreparationMs > 0 || bot->HasStealthAura());
+        case SeatGoal::Rest:
+            return step.SelfHealing > 0 || bot->HasAuraType(SPELL_AURA_MOD_REGEN)
+                || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+        case SeatGoal::TravelTo:
+        case SeatGoal::Gather:
+        case SeatGoal::Interact:
+            // On the way, or there and doing it (a cast, a loot window).
+            return (seat.HasGoalPlace && bot->GetExactDist2d(&seat.GoalPlace) <= GoalBlock::PLACE_REACH)
+                || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false) || !bot->GetLootGUID().IsEmpty();
+        case SeatGoal::Loot:
+            return !bot->GetLootGUID().IsEmpty() || !bot->movespline->Finalized();
         case SeatGoal::Count:
             break;
     }
@@ -2469,6 +2511,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Spec = seat.Spec;
     view.Apt = seat.Apt;
     view.Goal = seat.Goal;
+    view.GoalEnded = seat.GoalEnded;
     // How it is steering, carried over from the last decision: without this a held bearing is forgotten before it
     // can be walked a second time, and the facing actions have nothing to act on.
     view.HeldBearing = seat.HeldBearing;
@@ -2928,6 +2971,31 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
     view.Option = &seat.Option;
+
+    // The goal held, read off the world as it now is: reached (paid at the next reward) or no longer possible --
+    // either way it has ended, and the goal head chooses again at this decision rather than at its clock.
+    if (seat.Goal != NO_GOAL && !seat.GoalEnded)
+    {
+        bool reached = false;
+        bool possible = false;
+        GoalBlock::Status(view, seat.Goal, reached, possible);
+        if (reached && !seat.GoalRewarded)
+        {
+            seat.GoalRewarded = true;
+            seat.GoalReachedPending = true;
+            ++seat.GoalsReached;
+        }
+        else if (!possible)
+            ++seat.GoalsLost;
+        seat.GoalEnded = reached || !possible;
+    }
+    view.GoalEnded = seat.GoalEnded;
+    seat.HasGoalPlace = seat.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(seat.Goal), seat.GoalPlace);
+    seat.GoalFriend.Clear();
+    if (uint32 const goalTarget = GoalTargetOf(seat.Goal); seat.Goal != NO_GOAL
+        && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_OBJECTIVE_FIRST)
+        if (Unit* friendUnit = Encoding::FriendUnit(view, goalTarget - GOAL_TARGET_FRIEND_FIRST))
+            seat.GoalFriend = friendUnit->GetGUID();
     SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
     SeatEncoder::Observe(view, obs, mask);
@@ -2984,11 +3052,14 @@ void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, P
 
 float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* bot, Unit const* target) const
 {
-    if (!bot || !bot->IsAlive() || !target || !target->IsAlive() || !seat.L || seat.Goal == NO_GOAL)
+    if (!bot || !bot->IsAlive() || !seat.L || seat.Goal == NO_GOAL)
         return -1.0f;
 
-    SeatGoal const goal = SeatGoal(seat.Goal);
-    if (goal != SeatGoal::Fight && goal != SeatGoal::Position)
+    SeatGoal const goal = SeatGoal(GoalKindOf(seat.Goal));
+    // A goal about a place: the yards still to go to it.
+    if ((goal == SeatGoal::TravelTo || goal == SeatGoal::Gather || goal == SeatGoal::Interact) && seat.HasGoalPlace)
+        return std::max(0.0f, bot->GetExactDist2d(&seat.GoalPlace) - GoalBlock::PLACE_REACH);
+    if ((goal != SeatGoal::Fight && goal != SeatGoal::Position) || !target || !target->IsAlive())
         return -1.0f;
 
     // Melee wants to be in reach; ranged wants to be out of melee and inside its range, with the slack Position
@@ -3003,7 +3074,7 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* 
     return std::max(0.0f, distance - (wanted + GOAL_RANGE_SLACK_YARDS));
 }
 
-void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState& seat, Player* bot, Unit* target,
+void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target,
     uint32 action, SeatActionResult const& result) const
 {
     Layout const& layout = *seat.L;
@@ -3032,7 +3103,8 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
         return;
     }
 
-    SeatGoal const goal = SeatGoal(seat.Goal);
+    SeatGoal const goal = SeatGoal(GoalKindOf(seat.Goal));
+    uint32 const goalTarget = GoalTargetOf(seat.Goal);
     uint32 const local = action - layout.Slice(*block).ActionFirst;
     enum class Verdict : uint8 { Neutral, Serves, Aimless };
     Verdict verdict = Verdict::Neutral;
@@ -3059,7 +3131,13 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
         judged = true;
         bool const hurt = bot->GetHealthPct() < 50.0f;
         bool const onSelf = result.CastAt == bot->GetGUID();
-        bool const onFocus = target && result.CastAt == target->GetGUID();
+        // The enemy the goal names, else the focus; the friend it names, if any.
+        Unit* named = target;
+        if (goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST)
+            if (Unit* slotted = env.FindTargetUnit(goalTarget - GOAL_TARGET_ENEMY_FIRST))
+                named = slotted;
+        bool const onFocus = named && result.CastAt == named->GetGUID();
+        ObjectGuid const namedFriend = seat.GoalFriend;     // resolved at the observation
         bool const untargeted = result.CastAt.IsEmpty();
         // An area spell has no unit to read: it serves a fight when the focus was inside its radius.
         bool const focusNear = result.CastReachesFocus;
@@ -3088,7 +3166,14 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
                     break;
                 case SeatGoal::Recover:
                 case SeatGoal::Protect:
-                    verdict = Verdict::Aimless;
+                case SeatGoal::Rest:
+                case SeatGoal::TravelTo:
+                case SeatGoal::Loot:
+                case SeatGoal::Gather:
+                case SeatGoal::Interact:
+                    // Starting a fight while resting, travelling or looting: unless something started it first
+                    // (the mask's escape already let it through), it served nothing the seat said it wanted.
+                    verdict = bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
                     break;
                 case SeatGoal::Count:
                     break;
@@ -3099,9 +3184,12 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
             switch (goal)
             {
                 case SeatGoal::Protect:
-                    verdict = !onSelf && !untargeted ? Verdict::Serves : Verdict::Neutral;
+                    // The friend the goal names, or any friend when it names none.
+                    verdict = !onSelf && !untargeted && (namedFriend.IsEmpty() || result.CastAt == namedFriend)
+                        ? Verdict::Serves : Verdict::Neutral;
                     break;
                 case SeatGoal::Recover:
+                case SeatGoal::Rest:
                     verdict = onSelf || untargeted ? Verdict::Serves : Verdict::Neutral;
                     break;
                 case SeatGoal::Prepare:
@@ -3113,6 +3201,10 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
                     verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
                     break;
                 case SeatGoal::Position:
+                case SeatGoal::TravelTo:
+                case SeatGoal::Loot:
+                case SeatGoal::Gather:
+                case SeatGoal::Interact:
                 case SeatGoal::Count:
                     break;
             }
@@ -3121,7 +3213,18 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& /*env*/, SeatState
     else if (result.FoodUsed || result.DrinkUsed)
     {
         judged = true;
-        verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare ? Verdict::Serves : Verdict::Neutral;
+        verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare || goal == SeatGoal::Rest ? Verdict::Serves
+            : Verdict::Neutral;
+    }
+    else if (*block == BlockId::World && (result.Interactions || result.CorpsesLooted || result.NodesLooted
+        || result.GatherCasts || result.ItemsLooted))
+    {
+        // The world's presses serve the life goals that ask for them; under any other goal they are neutral.
+        judged = true;
+        bool const loot = result.CorpsesLooted || result.ItemsLooted || result.NodesLooted;
+        bool const gather = result.GatherCasts || result.NodesLooted;
+        verdict = (goal == SeatGoal::Loot && loot) || (goal == SeatGoal::Gather && gather)
+            || (goal == SeatGoal::Interact && result.Interactions && !result.Wasted) ? Verdict::Serves : Verdict::Neutral;
     }
 
     if (seat.PendingRepeat && verdict != Verdict::Serves && (judged || !result.DidSomething()))
@@ -3554,21 +3657,21 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // The goal the learner is pursuing, and whether this decision went with it.
     if (seat.Goal != NO_GOAL)
     {
-        ++seat.GoalDecisions[std::size_t(seat.Goal)];
+        std::size_t const kind = std::size_t(GoalKindOf(seat.Goal));
+        ++seat.GoalDecisions[kind];
+        if (GoalTargetOf(seat.Goal) != GOAL_TARGET_NONE)
+            ++seat.GoalTargetedDecisions;
         if (GoalHeld(env, seatIndex, bot, target))
-        {
-            ++seat.GoalMatches[std::size_t(seat.Goal)];
+            ++seat.GoalMatches[kind];
+    }
 
-            // Paid for reaching the goal, once per goal held, not for sitting in it: a ranged seat holds
-            // SeatGoal::Position by standing at its range, and paying that every decision made keeping away from
-            // the fight the second largest earner in the stage (measured 2026-09-17: +0.93 an episode, more than
-            // the approach, casting and health terms together). goal_match_share still reports every decision.
-            if (!seat.GoalRewarded)
-            {
-                seat.GoalRewarded = true;
-                seat.Rewards.Add(RewardTerm::GoalMatch, _tuning.Goals.Match);
-            }
-        }
+    // Paid for reaching the goal, once (GoalBlock::Status, seen at the observation), not for sitting in it: a
+    // ranged seat held SeatGoal::Position by standing at its range, and paying that every decision made keeping
+    // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode).
+    if (seat.GoalReachedPending)
+    {
+        seat.GoalReachedPending = false;
+        seat.Rewards.Add(RewardTerm::GoalReached, _tuning.Goals.Reached);
     }
 
     seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));

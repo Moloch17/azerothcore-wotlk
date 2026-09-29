@@ -251,8 +251,16 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalDecisions{};
         std::array<uint32, GOAL_COUNT> GoalMatches{};
         uint32 GoalChanges = 0;
-        bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Match, once per goal)
+        bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Reached, once per goal)
         uint32 StepGoalSwitches = 0;            // goal changes since the last reward (Goals.Switch)
+        bool GoalEnded = false;                 // the goal held was reached or became impossible (GoalBlock::Status)
+        bool GoalReachedPending = false;        // ... reached: Goals.Reached is paid at the next reward
+        uint32 GoalsReached = 0;
+        uint32 GoalsLost = 0;
+        uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
+        bool HasGoalPlace = false;              // the goal names a place (TravelTo, Gather, Interact): where it is
+        Position GoalPlace;
+        ObjectGuid GoalFriend;                  // the goal names a friend (Protect): who
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
@@ -432,6 +440,12 @@ namespace Animus::Curriculum
             GoalChanges = 0;
             GoalRewarded = false;
             StepGoalSwitches = 0;
+            GoalEnded = false;
+            GoalReachedPending = false;
+            GoalsReached = 0;
+            GoalsLost = 0;
+            GoalTargetedDecisions = 0;
+            HasGoalPlace = false;
             StepPreparationMs = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;

@@ -376,7 +376,7 @@ void Animus::Curriculum::QuestEncounter::Sensed(Env const& env, EnvLife const& /
         if (objective.HasPlace)
             objective.Place = current->Places[i].Where;
     }
-    world.HasGiver = true;
+    world.HasGiver = !quest.Accepted;          // the giver leaves the journal once the quest is taken
     world.GiverAt = current->Giver->Pos;
     world.HasEnder = true;
     world.EnderAt = current->Ender->Pos;

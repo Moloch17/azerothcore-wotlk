@@ -93,7 +93,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Readiness:             return "readiness";
         case RewardTerm::Control:               return "control";
         case RewardTerm::SelfHealing:           return "self_healing";
-        case RewardTerm::GoalMatch:             return "goal_match";
+        case RewardTerm::GoalReached:           return "goal_reached";
         case RewardTerm::GoalSwitch:            return "goal_switch";
         case RewardTerm::OrderMatch:            return "order_match";
         case RewardTerm::PlaceMatch:            return "place_match";

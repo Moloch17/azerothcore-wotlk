@@ -201,7 +201,7 @@ namespace
             .Suffix = "_move",
             .Extends = "",
             .Summary = "a place 40-160 yd away on foot: hold a bearing, read the ground, and cross it",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             // Mounting is masked here, not merely unpaid. What is left is everything a player does before it can
             // ride -- Sprint, Dash, Travel Form, Aspect of the Cheetah, and simply not stopping -- and those are
             // worth learning on their own, because a mount is barred in combat, indoors and at low level, which is
@@ -324,7 +324,7 @@ namespace
             .Suffix = "_indoor",
             .Extends = "stage1_move",
             .Summary = "a place 8-40 yd away inside a building: read the walls, keep off them, and find the door",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             .Arenas = {
                 // Short trips and a short clock: an inn is twenty to thirty yards across, so an outdoor arena's
                 // first step would already be through an outside wall.
@@ -401,7 +401,7 @@ namespace
             .Suffix = "_jump",
             .Extends = "stage1_move",
             .Summary = "a place 20-120 yd away below a ledge: drop off it with a jump, or take the long way round",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             .Arenas = {
                 { .Name = "ledges", .Against = Opposition::Travel, .EpisodeSeconds = 120,
                     .OnFoot = true, .Ledges = true },
@@ -458,7 +458,7 @@ namespace
             .Extends = "stage1_move",
             .Summary = "a place 20-120 yd away on a lakebed under 6-40 yd of water, or a chain of them longer than "
                 "a breath: swim down to it, and come up for air",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             .Arenas = {
                 { .Name = "depths", .Weight = 2, .Against = Opposition::Travel, .EpisodeSeconds = 150,
                     .OnFoot = true, .Underwater = true },
@@ -484,7 +484,7 @@ namespace
             // whose actions are masked for a whole stage is exploration the stage cannot afford. Travel stays,
             // though, because dropping it would throw away the objective-bearing columns stage 1 just trained --
             // block-wise seeding starts a re-added block from scratch.
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             // Nothing is spawned to fight. Fire lands under each seat every few seconds and lingers, so standing
             // still is the only thing that hurts and moving is the only way to spend less. With a pack in the
             // arena the hazard was one charge among many and its numbers could not be read on their own; with the
@@ -505,7 +505,7 @@ namespace
             .Suffix = "_travel",
             .Extends = "stage5_dodge",
             .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             // The lesson is the trip -- whether to mount, when a ride pays for its cast -- on top of the steering
             // stage 1 taught. It used to offer ACTION_FOLLOW_ROUTE here, a pathfound leg at a time, on the
             // argument that steering the same eight yards three hundred times teaches nothing new; but a route
@@ -525,7 +525,7 @@ namespace
             .Suffix = "_flight",
             .Extends = "stage6_travel",
             .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
-            .Blocks = { Core, Move, Travel, Duel, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Forecast, Goal },
             // Two arenas. `flight` places its objective anywhere the height probe finds dry ground, which in
             // Nagrand is nearly always walkable, and 700 yards at run speed is 100 s of a 180 s clock: a ground
             // ride arrives often enough that flying stays optional, and nine of ten class heads never found the
@@ -583,7 +583,7 @@ namespace
             // The main line runs through the whole movement block rather than beside it, so the combat root starts
             // with legs that already work. Travel stays for the same reason it did in Part I; the pet block is new
             // here, because this is the first stage with anything to send a pet at.
-            .Blocks = { Core, Move, Travel, Duel, Pet, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Forecast, Goal },
             // 90 s: running out of time is a lost fight (Duel.Timeout), and a healer or tank against a creature with
             // twice the usual health needs half a minute to kill it after a few seconds of closing in.
             .Arenas = {
@@ -622,7 +622,7 @@ namespace
             .Suffix = "_pack",
             .Extends = "stage8_duel",
             .Summary = "a pack of 2-4, casters included, usually linked: targets, interrupts, crowd control",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Forecast, Goal },
             // 150 s: running out of time is a lost fight (Pulls.Timeout), and a pack is up to four of the duel's
             // creatures. stage1_duel's policy took 17 s a kill and its baseline 23 s, so four take 70-90 s before the
             // approach; the duel's 90 s (or the host's 60) would lose packs to the clock that play could win.
@@ -635,7 +635,7 @@ namespace
             .Suffix = "_gauntlet",
             .Extends = "stage9_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast, Goal },
             // 450 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
             // three of them, with nothing to recover for. Pulls come to the seat when it waits too long and come
             // sooner as it clears them, so seven and a half minutes hold eight or more, and the solo gauntlet is won
@@ -654,7 +654,7 @@ namespace
             .Suffix = "_endurance",
             .Extends = "stage10_gauntlet",
             .Summary = "a known run of eight pulls, won by finishing it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast, Goal },
             .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
                 .EpisodeSeconds = 900 } },
         });
@@ -669,7 +669,7 @@ namespace
             .Suffix = "_pvp",
             .Extends = "stage11_endurance",
             .Summary = "self-play one-on-one: two learned seats of any classes",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
                 .Pvp = true } },
         });
@@ -683,7 +683,7 @@ namespace
             .Suffix = "_evade",
             .Extends = "stage12_pvp",
             .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             // From ten levels below to ten above, drawn each episode (2026-09-28, by the user's decision). It was
             // a fixed ten up -- six was tried against the open-field arena and stopped being a losing fight once
             // the spawn had cover -- which made every fight one to leave, so fleeing was the only lesson. With
@@ -716,7 +716,7 @@ namespace
             .Suffix = "_hide",
             .Extends = "stage13_evade",
             .Summary = "get out of sight and stay there, and hide again after being found",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             // From ten levels below to ten above, as the evade drill (2026-09-28, by the user's decision; it was
             // a fixed six up). Hiding is a choice against a stronger player and a mistake against a weaker one,
             // which is the difference between this stage and the one before it: that one is about leaving a
@@ -751,7 +751,7 @@ namespace
             .Extends = "stage14_hide",
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             // From level with the seat to six up (three up, three either way): stronger, so getting into position
             // is worth the time it costs, but close enough that a good opener decides the fight. At a fixed six up
             // (four to eight with the spread) the fight after the opener decided it, and the first run's score sat
@@ -774,7 +774,7 @@ namespace
             // does not have.
             .Merges = { "stage11_endurance" },
             .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support, Forecast, Goal },
             // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
             // with nothing to recover for and no win to reach (Pulls.OwnerWinPulls).
             .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
@@ -786,7 +786,7 @@ namespace
             .Suffix = "_party",
             .Extends = "stage16_companion",
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
         });
@@ -804,7 +804,7 @@ namespace
             .Suffix = "_tanking",
             .Extends = "stage17_party",
             .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
                 .SeatAptitudes = { AptitudeDemand::HoldsThePull() } } },
@@ -823,7 +823,7 @@ namespace
             .Suffix = "_triage",
             .Extends = "stage18_tanking",
             .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
                 .SeatAptitudes = { AptitudeDemand::KeepsThemUp() } } },
@@ -847,7 +847,7 @@ namespace
             .Extends = "stage11_endurance",
             .Merges = { "stage6_travel" },
             .Summary = "a quest of the level band: take it, do it, hand it in",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Goal },
             .Arenas = { { .Name = "quest", .Against = Opposition::Quest, .EpisodeSeconds = 600 } },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -863,7 +863,7 @@ namespace
             .Suffix = "_gather",
             .Extends = "stage20_quest",
             .Summary = "herbs and ore of the band's zones, with what lives among them",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Goal },
             .Arenas = { { .Name = "gather", .Against = Opposition::Gather, .EpisodeSeconds = 240 } },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -878,7 +878,7 @@ namespace
             .Suffix = "_town",
             .Extends = "stage21_gather",
             .Summary = "a town: sell the junk, repair, restock, put the better item on",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Goal },
             .Arenas = { { .Name = "town", .Against = Opposition::Town, .EpisodeSeconds = 120 } },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -897,7 +897,7 @@ namespace
             .Suffix = "_dungeon",
             .Extends = "stage19_triage",
             .Summary = "a party and its owner against real dungeon bosses, in their instances",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = {
                 { .Name = "dungeon", .Weight = 9, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
@@ -917,7 +917,7 @@ namespace
             // anything else.
             .Merges = { "stage6_travel", "stage12_pvp" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Forecast, Goal },
             .Arenas = { { .Name = "flag", .Seats = SeatPlan::Mirror, .Against = Opposition::Flag, .Pvp = true,
                 .EpisodeSeconds = 300 } },
             .MapId = MAP_KALIMDOR,
@@ -934,7 +934,7 @@ namespace
             // does not carry it.
             .Merges = { "stage19_triage" },
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Forecast, Goal },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
                 .EpisodeSeconds = 420 } },
             .MapId = MAP_WARSONG_GULCH,
@@ -962,7 +962,7 @@ namespace
             .Suffix = "_raid",
             .Extends = "stage19_triage",
             .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
             .InDefaultQueue = false,
@@ -975,7 +975,7 @@ namespace
             .Suffix = "_raidrun",
             .Extends = "stage28_raid_single",
             .Summary = "a raid clearing pull after pull, recovering between them",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
             .InDefaultQueue = false,
@@ -993,7 +993,7 @@ namespace
             // The pack and support blocks, trained at stages 6-8; the flag line it extends dropped both.
             .Merges = { "stage11_endurance" },
             .Summary = "two against two, told who to kill and whose turn it is: follow the call",
-            .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order, Forecast },
+            .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
                 .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .DirectorLearned = true,
                 .Places = true, .TeamSeats = 2 } },
@@ -1017,7 +1017,7 @@ namespace
             },
             .Summary = "PvE, PvP and life in one policy: every earlier situation, an ambush mid-gauntlet, a ganked owner",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles,
-                Support, World, Forecast },
+                Support, World, Forecast, Goal },
             .Arenas = {
                 { .Name = "companion", .Weight = 20, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .Owner = true, .OwnerCast = true, .EpisodeSeconds = 300 },
@@ -1053,7 +1053,7 @@ namespace
             .Suffix = "_raid10",
             .Extends = "stage23_dungeon",
             .Summary = "ten seats against Karazhan's and Naxxramas's bosses, in their raids",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Raid10, .RaidSeats = 10, .EpisodeSeconds = 360 },
@@ -1068,7 +1068,7 @@ namespace
             .Suffix = "_raid25",
             .Extends = "stage30_raid10",
             .Summary = "twenty-five seats against Naxxramas's bosses",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Raid25, .RaidSeats = 25, .EpisodeSeconds = 420 },
@@ -1083,7 +1083,7 @@ namespace
             .Suffix = "_raid40",
             .Extends = "stage31_raid25",
             .Summary = "forty seats against the classic raids' bosses: Molten Core, Blackwing Lair, Ahn'Qiraj",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Raid40, .RaidSeats = 40, .EpisodeSeconds = 480 },
