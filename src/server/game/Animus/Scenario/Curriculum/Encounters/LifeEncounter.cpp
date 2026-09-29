@@ -305,7 +305,7 @@ void Animus::Curriculum::LifeEncounter::UpdateEnemies(Env& env)
     env.Targets.clear();
     std::vector<Player*> seats;
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
-        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive())
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld())
             seats.push_back(bot);
     if (seats.empty())
         return;

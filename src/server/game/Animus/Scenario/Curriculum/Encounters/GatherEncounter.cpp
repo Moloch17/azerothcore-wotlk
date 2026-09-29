@@ -135,7 +135,9 @@ void Animus::Curriculum::GatherEncounter::Update(Env& env)
     EnvLife& life = _envs[env.Index];
     EnvGather& gather = _gathers[env.Index];
     Player* bot = _scenario.SeatBot(env, 0);
-    if (!bot || !bot->IsAlive())
+    Map* map = env.FindMap();
+    // Not while the seat is between maps: nothing can be read through a bot that is not in the world.
+    if (!bot || !bot->IsAlive() || !map || !bot->IsInWorld() || bot->GetMap() != map)
         return;
 
     uint32 const skill = GatherSkillOf(bot);
@@ -150,7 +152,7 @@ void Animus::Curriculum::GatherEncounter::Update(Env& env)
     {
         if (!guid.IsGameObject())
             continue;
-        GameObject* node = bot->GetMap()->GetGameObject(guid);
+        GameObject* node = map->GetGameObject(guid);
         if (node && !node->isSpawned())
             gather.Found.Forget(*node);
         if (!node || !node->isSpawned() || !WorldActions::CanGather(bot, node))

@@ -318,7 +318,7 @@ bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level
             }
         }
 
-        if (Creature* giver = ObjectAccessor::GetCreature(*leader, quest.Givers.front()))
+        if (Creature* giver = map->GetCreature(quest.Givers.front()))
             SetWaypoint(life, WAY_GIVER, giver->GetPosition(), g);
     }
     return true;
@@ -339,9 +339,13 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
         if (!current)
             continue;
 
+        // Only seats standing on the env's map: a seat between maps (a resurrection, a teleport) is not in the world,
+        // and reading anything through it crashed the first fast pass's life stage on a map thread.
+        Map* map = env.FindMap();
         std::vector<Player*> seats;
-        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-            if (Player* bot = _scenario.SeatBot(env, seat); bot && GroupOf(env, seat) == g)
+        for (uint32 seat = 0; seat < data.ActiveSeats && map; ++seat)
+            if (Player* bot = _scenario.SeatBot(env, seat); bot && bot->IsInWorld() && bot->GetMap() == map
+                && GroupOf(env, seat) == g)
                 seats.push_back(bot);
         if (seats.empty())
             continue;
@@ -416,12 +420,10 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
         if (env.EpisodeElapsedMs >= quest.ScannedMs + FOUND_SCAN_MS)
         {
             quest.ScannedMs = env.EpisodeElapsedMs;
-            Player* anchor = seats.front();
             for (ObjectGuid const& guid : life.Spawned)
             {
-                WorldObject* thing = guid.IsGameObject()
-                    ? static_cast<WorldObject*>(anchor->GetMap()->GetGameObject(guid))
-                    : static_cast<WorldObject*>(ObjectAccessor::GetCreature(*anchor, guid));
+                WorldObject* thing = guid.IsGameObject() ? static_cast<WorldObject*>(map->GetGameObject(guid))
+                    : static_cast<WorldObject*>(map->GetCreature(guid));
                 if (!thing)
                     continue;
                 if (Creature* creature = thing->ToCreature(); creature && !creature->IsAlive())
@@ -472,7 +474,7 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
         Player* lead = seats.front();
         if (!quest.Accepted)
         {
-            if (Creature* giver = ObjectAccessor::GetCreature(*lead, quest.Givers[quest.Current]))
+            if (Creature* giver = map->GetCreature(quest.Givers[quest.Current]))
                 SetWaypoint(life, WAY_GIVER, giver->GetPosition(), g);
         }
         else if (!quest.Complete)
@@ -496,7 +498,7 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
             else if (Position const* assigned = quests.Coordinator.Assign(g, undone, env.EpisodeElapsedMs))
                 SetWaypoint(life, WAY_OBJECTIVE, *assigned, g);
         }
-        else if (Creature* ender = ObjectAccessor::GetCreature(*lead, quest.Enders[quest.Current]))
+        else if (Creature* ender = map->GetCreature(quest.Enders[quest.Current]))
             SetWaypoint(life, WAY_ENDER, ender->GetPosition(), g);
     }
 }

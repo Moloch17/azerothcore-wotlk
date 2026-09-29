@@ -219,7 +219,7 @@ bool Animus::Curriculum::TownEncounter::Build(Env& env, Map* map, uint8 level)
     bool repairer = false;
     bool supplier = false;
     for (ObjectGuid const& guid : life.Spawned)
-        if (Creature* npc = guid.IsCreature() ? ObjectAccessor::GetCreature(*bot, guid) : nullptr)
+        if (Creature* npc = guid.IsCreature() ? map->GetCreature(guid) : nullptr)
         {
             repairer = repairer || npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR);
             supplier = supplier || WorldActions::SellsSupplies(bot, npc);
