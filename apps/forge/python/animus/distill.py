@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 import torch
 
+from .bootstrap import DIRECTOR_LAYOUT
+
 from .mappo.networks import MASKED_LOGIT, LayoutActor
 from .stages import Span, arena_names, arena_state_span, block_spans
 
@@ -82,15 +84,21 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     horizons = mappo.get("foresight_horizons_seconds", ())
     foresight_outputs = ((len(horizons) + 1 + (3 if obs_targets else 0))
                          if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0)
+    # A directed stage's actor has the director's set encoder (stage.json "director"): rebuilt from the teacher's own
+    # stage, or its weights would not load -- the first fast pass stopped at stage14_duel_pvp, whose league was seeded
+    # with the raid stage's directed checkpoint.
+    t_names = [entry["name"] for entry in t_spec["layouts"]]
+    t_stage = checkpoint.get("stage")
+    director = ((t_names.index(DIRECTOR_LAYOUT), t_stage["director"])
+                if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
-                        bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)))
+                        bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
+                        director=director)
     actor.load_state_dict(checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():
         param.requires_grad_(False)
 
-    t_names = [entry["name"] for entry in t_spec["layouts"]]
-    t_stage = checkpoint.get("stage")
     layouts = {}
     for index, layout in enumerate(spec.layouts):
         if layout.name not in t_names:
