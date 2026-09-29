@@ -865,6 +865,9 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // -- it is how stage2_indoor came to be scored on two of its three rooms without anything saying so.
     _info.Add("spawn_point", [this](Env const& env, uint32) { return float(Data(env).Spawn); });
     _info.Add("spawn_drawn", [this](Env const& env, uint32) { return float(Data(env).SpawnDrawn); });
+    // An episode that could not be built ends at once and is rebuilt: 1 on that episode's row. How often a stage's
+    // resets fail -- a quest the bot refuses, a spot with no objective -- is what it trains on less than it seems.
+    _info.Add("build_failed", [this](Env const& env, uint32) { return Data(env).BuildFailed ? 1.0f : 0.0f; });
     // The other side of a self-play episode: an evaluation against a scripted opponent leaves its row out.
     _info.Add("opponent_seat", [this](Env const& env, uint32 index)
     {

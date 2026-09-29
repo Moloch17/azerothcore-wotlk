@@ -29,6 +29,8 @@
 #include "Position.h"
 #include "StageDefinition.h"
 #include <array>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -226,8 +228,15 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] uint32 GroupCount(Env const& env) const;
+        /// Quests a bot refused at build (Player::CanTakeQuest: a giver's conditions, a chain the table does not
+        /// show) are drawn again only until they have been refused REFUSALS_TO_RETIRE times; then never. Shared by
+        /// every env, which build on the map threads.
+        [[nodiscard]] bool Retired(uint32 questId) const;
+        void Refused(uint32 questId);
 
         std::vector<EnvQuests> _quests;
+        mutable std::mutex _refusedLock;
+        std::unordered_map<uint32, uint32> _refusals;
     };
 
     /// A field of the band's herb and ore nodes, with the zone's own creatures around them; the seat has the

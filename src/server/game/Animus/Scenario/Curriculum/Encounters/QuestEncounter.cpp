@@ -161,6 +161,45 @@ namespace
     /// How far another group's quest giver may be from the first's in a shared zone: close enough that their work
     /// overlaps.
     constexpr float SHARED_ZONE_YARDS = 400.0f;
+
+    /// Refusals after which a quest is never drawn again, and draws tried before settling for a retired one.
+    constexpr uint32 REFUSALS_TO_RETIRE = 2;
+    constexpr uint32 DRAW_ATTEMPTS = 8;
+
+    /// Which of Player::CanTakeQuest's checks refused `quest`, for the log.
+    char const* RefusalReason(Player* bot, Quest const* quest)
+    {
+        if (!bot->SatisfyQuestStatus(quest, false)) return "status";
+        if (!bot->SatisfyQuestExclusiveGroup(quest, false)) return "exclusive group";
+        if (!bot->SatisfyQuestClass(quest, false)) return "class";
+        if (!bot->SatisfyQuestRace(quest, false)) return "race";
+        if (!bot->SatisfyQuestLevel(quest, false)) return "level";
+        if (!bot->SatisfyQuestSkill(quest, false)) return "skill";
+        if (!bot->SatisfyQuestReputation(quest, false)) return "reputation";
+        if (!bot->SatisfyQuestPreviousQuest(quest, false)) return "previous quest";
+        if (!bot->SatisfyQuestTimed(quest, false)) return "timed";
+        if (!bot->SatisfyQuestNextChain(quest, false)) return "next chain";
+        if (!bot->SatisfyQuestPrevChain(quest, false)) return "previous chain";
+        if (!bot->SatisfyQuestBreadcrumb(quest, false)) return "breadcrumb";
+        if (!bot->SatisfyQuestConditions(quest, false)) return "conditions";
+        if (!bot->CanAddQuest(quest, false)) return "cannot add (log, start item)";
+        return "disabled or periodic";
+    }
+}
+
+bool Animus::Curriculum::QuestEncounter::Retired(uint32 questId) const
+{
+    std::lock_guard<std::mutex> guard(_refusedLock);
+    auto const found = _refusals.find(questId);
+    return found != _refusals.end() && found->second >= REFUSALS_TO_RETIRE;
+}
+
+void Animus::Curriculum::QuestEncounter::Refused(uint32 questId)
+{
+    std::lock_guard<std::mutex> guard(_refusedLock);
+    if (++_refusals[questId] == REFUSALS_TO_RETIRE)
+        LOG_INFO("module.animus", "{}: quest {} retired from the draw after {} refusals", _scenario.Name(), questId,
+            REFUSALS_TO_RETIRE);
 }
 
 bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
@@ -186,8 +225,9 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
         uint32 const roll = LifeWorld::Draw(env, weights, salt);
         return roll < CHAIN_WEIGHTS[0] ? 1u : roll < CHAIN_WEIGHTS[0] + CHAIN_WEIGHTS[1] ? 2u : 3u;
     };
-    LifeWorld::QuestCandidate const* first =
-        (*candidates)[LifeWorld::Draw(env, uint32(candidates->size()), SALT_QUEST + life.Draws++)];
+    LifeWorld::QuestCandidate const* first = nullptr;
+    for (uint32 attempt = 0; attempt < DRAW_ATTEMPTS && (!first || Retired(first->Id)); ++attempt)
+        first = (*candidates)[LifeWorld::Draw(env, uint32(candidates->size()), SALT_QUEST + life.Draws++)];
     quests.Groups[0].Chain = ChainFrom(first, length(SALT_CHAIN + life.Draws), env.Evaluating, life.Side);
 
     // The other groups in the same zone (world_shared) -- the second side, and each seat questing alone beside
@@ -200,7 +240,7 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
         {
             std::vector<LifeWorld::QuestCandidate const*> near;
             for (LifeWorld::QuestCandidate const* candidate : *candidates)
-                if (candidate != first && candidate->Giver->Map == first->Giver->Map
+                if (candidate != first && candidate->Giver->Map == first->Giver->Map && !Retired(candidate->Id)
                     && candidate->Giver->Pos.GetExactDist2d(&first->Giver->Pos) <= SHARED_ZONE_YARDS)
                     near.push_back(candidate);
             if (!near.empty())
@@ -283,8 +323,9 @@ bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level
         Quest const* info = sObjectMgr->GetQuestTemplate(quest.Chain.front()->Id);
         if (!leader || !info || !leader->CanTakeQuest(info, false) || !leader->CanAddQuest(info, false))
         {
-            LOG_INFO("module.animus", "{}: env {} cannot take quest {}; another next time", _scenario.Name(),
-                env.Index, quest.Chain.front()->Id);
+            LOG_INFO("module.animus", "{}: env {} cannot take quest {} ({}); another next time", _scenario.Name(),
+                env.Index, quest.Chain.front()->Id, leader && info ? RefusalReason(leader, info) : "no seat or quest");
+            Refused(quest.Chain.front()->Id);
             return false;
         }
 
