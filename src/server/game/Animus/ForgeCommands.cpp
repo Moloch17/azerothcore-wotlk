@@ -27,6 +27,7 @@
 #include "CpuPlacement.h"
 #include "Log.h"
 #include "MapMgr.h"
+#include "StageDefinition.h"
 #include "StringFormat.h"
 #include <algorithm>
 #include <cctype>
@@ -258,6 +259,17 @@ bool AnimusForge::Forge::Enabled(LineSink const& out) const
     return false;
 }
 
+bool AnimusForge::Forge::CurriculumSound(LineSink const& out) const
+{
+    std::vector<std::string> const& problems = Animus::Curriculum::CurriculumProblems();
+    for (std::string const& problem : problems)
+        out("Curriculum stage left out -- " + problem);
+    if (!problems.empty())
+        out("Refusing to train until every stage is valid: a queue with a stage missing seeds the stages after it "
+            "from the wrong checkpoint.");
+    return problems.empty();
+}
+
 bool AnimusForge::Forge::ValidScenario(std::string const& scenario, LineSink const& out) const
 {
     std::vector<std::string> const names = Animus::ScenarioNames();
@@ -402,7 +414,7 @@ void AnimusForge::Forge::CommandScenarios(LineSink const& out)
 
 bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSink const& out)
 {
-    if (!Enabled(out))
+    if (!Enabled(out) || !CurriculumSound(out))
         return false;
 
     if (_state != State::Idle || _request == Request::Start)
@@ -459,7 +471,7 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
 
 bool AnimusForge::Forge::CommandFast(std::vector<std::string> scenarios, LineSink const& out)
 {
-    if (!Enabled(out))
+    if (!Enabled(out) || !CurriculumSound(out))
         return false;
 
     if (_state != State::Idle || _request == Request::Start)
@@ -521,7 +533,7 @@ bool AnimusForge::Forge::CommandFast(std::vector<std::string> scenarios, LineSin
 
 bool AnimusForge::Forge::CommandResume(std::vector<std::string> scenarios, LineSink const& out)
 {
-    if (!Enabled(out))
+    if (!Enabled(out) || !CurriculumSound(out))
         return false;
 
     if (_state == State::Paused)

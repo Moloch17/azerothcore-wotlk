@@ -1164,6 +1164,15 @@ uint32 Animus::Curriculum::StageDefinition::SeatCount() const
     return seats;
 }
 
+namespace
+{
+    std::vector<std::string>& LeftOut()
+    {
+        static std::vector<std::string> problems;
+        return problems;
+    }
+}
+
 std::vector<Animus::Curriculum::StageDefinition> const& Animus::Curriculum::CurriculumStages()
 {
     static std::vector<StageDefinition> const stages = []()
@@ -1174,6 +1183,7 @@ std::vector<Animus::Curriculum::StageDefinition> const& Animus::Curriculum::Curr
             if (std::string const problem = Problem(stage, valid); !problem.empty())
             {
                 LOG_ERROR("module.animus", "Stage {} is left out: {}", stage.Name, problem);
+                LeftOut().push_back(stage.Name + ": " + problem);
                 continue;
             }
 
@@ -1184,6 +1194,12 @@ std::vector<Animus::Curriculum::StageDefinition> const& Animus::Curriculum::Curr
     }();
 
     return stages;
+}
+
+std::vector<std::string> const& Animus::Curriculum::CurriculumProblems()
+{
+    CurriculumStages();
+    return LeftOut();
 }
 
 Animus::Curriculum::StageDefinition const* Animus::Curriculum::FindStage(std::string_view name)

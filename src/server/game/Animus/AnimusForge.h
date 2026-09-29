@@ -335,6 +335,8 @@ namespace AnimusForge
         /// The fast profile in a few words: envs, level and classes.
         [[nodiscard]] std::string FastSummary() const;
         [[nodiscard]] bool Enabled(LineSink const& out) const;
+        /// Whether every curriculum stage is valid (Curriculum::CurriculumProblems); names each one that is not.
+        [[nodiscard]] bool CurriculumSound(LineSink const& out) const;
         [[nodiscard]] bool ValidScenario(std::string const& scenario, LineSink const& out) const;
 
         ForgeConfig _config;

@@ -334,6 +334,11 @@ namespace Animus::Curriculum
     [[nodiscard]] std::vector<StageDefinition> const& CurriculumStages();
 
     [[nodiscard]] StageDefinition const* FindStage(std::string_view name);
+
+    /// Why each stage CurriculumStages left out was left out ("<name>: <problem>"); empty when every definition is
+    /// valid. The forge refuses to start training while it is not empty: a stage left out with only a log line is how
+    /// two open-world stages once went missing from a queue unnoticed.
+    [[nodiscard]] std::vector<std::string> const& CurriculumProblems();
 }
 
 #endif
