@@ -1115,6 +1115,32 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).FidgetMs) / 1000.0f;
     });
+    // Following: how often a run was started or re-aimed per minute spent following (the old follow re-aimed about
+    // every decision), and how far behind the owner it stayed.
+    _info.Add("follow_restarts_per_minute", [this, seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        float const minutes = float(state.FollowDecisions) * float(_decisionMs) / 60000.0f;
+        return minutes > 0.0f ? float(state.FollowAims) / minutes : 0.0f;
+    });
+    _info.Add("follow_distance_mean", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.FollowDecisions ? state.FollowDistanceSum / float(state.FollowDecisions) : 0.0f;
+    });
+    _info.Add("follow_distance_sd", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        if (!state.FollowDecisions)
+            return 0.0f;
+        float const mean = state.FollowDistanceSum / float(state.FollowDecisions);
+        return std::sqrt(std::max(0.0f, state.FollowDistanceSq / float(state.FollowDecisions) - mean * mean));
+    });
+    _info.Add("follow_in_band_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.FollowDecisions ? float(state.FollowInBand) / float(state.FollowDecisions) : 0.0f;
+    });
     _info.Add("combat_actions_per_minute", [seat](Env const& env, uint32 index)
     {
         SeatState const& state = seat(env, index);
@@ -2662,6 +2688,15 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
 
     if (running)
         seat.OptionMs += _decisionMs;
+
+    seat.FollowAims += result.FollowAims;
+    if (result.FollowDistance >= 0.0f)
+    {
+        ++seat.FollowDecisions;
+        seat.FollowDistanceSum += result.FollowDistance;
+        seat.FollowDistanceSq += result.FollowDistance * result.FollowDistance;
+        seat.FollowInBand += result.FollowDistance >= 3.0f && result.FollowDistance <= 6.5f ? 1 : 0;
+    }
 
     seat.TargetSlot = view.TargetSlot;
     seat.StepPreparationMs += result.PreparationMs;

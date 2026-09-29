@@ -215,6 +215,7 @@ namespace Animus::Curriculum
     {
         SeatOptionKind Kind = SeatOptionKind::None;
         uint64 UntilMs = 0;                         // the clock (SeatView::NowMs) it runs out at
+        uint64 AimedMs = 0;                         // a follow: the clock its run was last re-aimed at
 
         [[nodiscard]] bool Running(SeatOptionKind kind, uint64 nowMs) const
         {
@@ -252,10 +253,31 @@ namespace Animus::Curriculum
         return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
     }
 
+    /// Where the owner has been, one sample a decision: the path a follow trails along (CompanionBlock), so a
+    /// companion goes through the door its owner went through rather than cutting the corner at the wall.
+    struct OwnerTrail
+    {
+        static constexpr uint32 SAMPLES = 12;       // three seconds at a decision a quarter second
+        std::array<Position, SAMPLES> At{};
+        uint32 Count = 0;
+        uint32 Next = 0;
+
+        void Add(Position const& where)
+        {
+            At[Next] = where;
+            Next = (Next + 1) % SAMPLES;
+            Count = std::min(Count + 1, SAMPLES);
+        }
+        /// The i-th newest sample (0 = the newest).
+        [[nodiscard]] Position const& Back(uint32 i) const { return At[(Next + SAMPLES - 1 - i) % SAMPLES]; }
+        void Clear() { Count = 0; Next = 0; }
+    };
+
     /// The durative actions a seat is running, one per slot.
     struct SeatOptionSet
     {
         std::array<SeatOption, std::size_t(SeatOptionSlot::Count)> Slots{};
+        OwnerTrail Trail;
 
         [[nodiscard]] SeatOption& Of(SeatOptionKind kind) { return Slots[std::size_t(SlotOf(kind))]; }
         [[nodiscard]] SeatOption const& Of(SeatOptionKind kind) const { return Slots[std::size_t(SlotOf(kind))]; }
@@ -271,7 +293,11 @@ namespace Animus::Curriculum
 
         void Start(SeatOptionKind kind, uint64 untilMs) { Of(kind) = SeatOption{ kind, untilMs }; }
         void Stop(SeatOptionKind kind) { if (Of(kind).Kind == kind) Of(kind) = SeatOption(); }
-        void Clear() { Slots = {}; }
+        void Clear()
+        {
+            Slots = {};
+            Trail.Clear();
+        }
     };
 
     struct SeatView
@@ -572,6 +598,10 @@ namespace Animus::Curriculum
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
+        /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
+        /// ran (negative: none ran).
+        uint32 FollowAims = 0;
+        float FollowDistance = -1.0f;
         /// What a spell press was aimed at, for judging it against the seat's goal (StageScenario::JudgePress):
         /// the unit it went to (the enemy for a harmful spell, the friend or the seat for a helpful one), whether
         /// it was harmful, and whether it came from the tactical list (crowd control, interrupts, taunts).

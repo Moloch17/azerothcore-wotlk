@@ -53,6 +53,10 @@ namespace
     using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
+    /// How far a running step may have drifted from the held heading, and the facing from the one wanted, and still
+    /// be left to run (Steer): about 20 degrees, a path bent round a rock; and under 6 degrees of facing.
+    constexpr float RUN_HEADING_SLACK = 0.35f;
+    constexpr float RUN_FACING_SLACK = 0.1f;
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
@@ -571,6 +575,24 @@ namespace
         // key went down would walk it into the first wall the ground put in the way; recomputing lets the path bend.
         float const heading = HeadingOf(view.Facing, view.HeldBearing);
         bool const airborne = Airborne(bot);
+
+        // On the ground, a run still under way along this heading and facing this way is left to run until it is
+        // half spent. Re-issuing it every decision restarted the spline four times a second, and a client draws each
+        // restart as a hitch in the stride (in-game testing, 2026-09-28): the seat walked in a stutter. Half a step
+        // is still under two decisions of ground at a run, so the path is recomputed about as often as the seat
+        // covers new ground.
+        if (!airborne && !bot->movespline->Finalized())
+        {
+            G3D::Vector3 const end = bot->movespline->FinalDestination();
+            float const remaining = bot->GetExactDist2d(end.x, end.y);
+            float const toward = bot->GetAbsoluteAngle(end.x, end.y);
+            if (remaining >= MoveBlock::STEP_YARDS * 0.5f
+                && std::fabs(Position::NormalizeOrientation(toward - heading + float(M_PI)) - float(M_PI)) < RUN_HEADING_SLACK
+                && std::fabs(Position::NormalizeOrientation(bot->GetOrientation() - view.Facing + float(M_PI))
+                    - float(M_PI)) < RUN_FACING_SLACK)
+                return;
+        }
+
         float const pitch = airborne ? view.Pitch : 0.0f;
         float const reach = MoveBlock::STEP_YARDS * std::cos(pitch);
 

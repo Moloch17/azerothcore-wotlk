@@ -79,8 +79,9 @@ namespace
     /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
     /// not offered. Under Recover and Prepare the harmful spells close -- a seat eating or buffing up does not start
     /// a fight -- and under Fight, Control and Position the long buffs close in combat. The escape reopens the harmful
-    /// spells whenever the seat is attacked or below 35% health, or is stealthed (the opener ends a Prepare), so it
-    /// can always answer what happens to it; the goal then catches up on its own clock.
+    /// spells whenever the seat, its owner or a teammate is attacked, the seat is below 35% health, or it is
+    /// stealthed (the opener ends a Prepare), so it can always answer what happens to it and to them; the goal
+    /// then catches up on its own clock.
     bool GoalCloses(SeatView const& view, ActionCatalog::Action const& def)
     {
         if (view.Goal < 0 || def.Type != ActionCatalog::Kind::Spell)
@@ -95,6 +96,13 @@ namespace
                 if (bot->GetHealthPct() < GOAL_ESCAPE_HEALTH_PCT || !bot->getAttackers().empty()
                     || bot->HasStealthAura())
                     return false;
+
+                if (view.Owner && view.Owner->IsInMap(bot) && !view.Owner->getAttackers().empty())
+                    return false;
+
+                for (SeatView::Teammate const& teammate : view.Teammates)
+                    if (teammate.Bot && teammate.Bot->IsInMap(bot) && !teammate.Bot->getAttackers().empty())
+                        return false;
 
                 SpellInfo const* info = Encoding::KnownRank(view, def);
                 return info && !info->IsPositive();

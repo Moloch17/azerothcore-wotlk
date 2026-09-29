@@ -798,6 +798,18 @@ namespace Animus::Curriculum::Encoding
         init.Launch();
     }
 
+    void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk)
+    {
+        // A pathfound run at a given pace, walking when the owner walks, so the animation matches the stride. A
+        // raw spline like MoveTo's, which is what lets it carry a velocity: MovePoint always runs at full speed.
+        bot->GetMotionMaster()->Clear();
+        Movement::MoveSplineInit init(bot);
+        init.MoveTo(x, y, z, true);
+        init.SetWalk(walk);
+        init.SetVelocity(speed);
+        init.Launch();
+    }
+
     void SwimTo(Player* bot, float x, float y, float z, float const* facing)
     {
         // Straight there, no pathfinding: the walkable mesh stops at the waterline -- mmaps drops the terrain
