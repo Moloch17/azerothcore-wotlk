@@ -23,6 +23,7 @@
 #include "Block.h"
 #include "ClassProfile.h"
 #include <array>
+#include <boost/json/object.hpp>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,12 @@
  */
 namespace Animus::Curriculum::DirectorLayout
 {
+    /// **Any group, any size** (long-horizon plan, Component E): the director commands every seat of its side up to a
+    /// raid's forty, in groups of five. Seat and enemy slots are sets -- the learner reads them with one shared
+    /// encoder and pooling (and scores the per-slot actions from each slot's own encoding), so the same network
+    /// directs a pair, a party and a raid, and does not care which slot a member landed in.
+    constexpr uint32 DIRECTOR_SEATS = MAX_SEATS;
+
     /// Features a seat of the commanded side contributes.
     enum SeatFeature : uint32
     {
@@ -48,105 +55,126 @@ namespace Animus::Curriculum::DirectorLayout
         SEAT_POWER          = 3,
         /// What this seat's build can do, as the six-number brief of its Aptitude. This is how the director
         /// chooses who to give an order to: not "the tank" but "the one whose build can hold this", which is a
-        /// question a label could not answer for a character nobody planned. It was a three-way role one-hot,
-        /// under which every damage seat of every class looked identical.
+        /// question a label could not answer for a character nobody planned.
         SEAT_APTITUDE_FIRST = 4,
         SEAT_IN_COMBAT      = 10,
         SEAT_CASTING        = 11,
         SEAT_SPREAD         = 12,    // its distance from the side's centre / DISTANCE_SCALE
-        /// And which way, as a sine and cosine about the side's own axis (the centre towards the enemy, or
-        /// towards the objective when it knows of no enemy). Distances alone told the director how far apart
-        /// its side was and nothing about its shape, so it could not have learned to call a place: "left of
-        /// the flag room" is unusable by something that cannot tell left from right.
+        /// And which way, about the side's own axis (the centre towards the enemy).
         SEAT_BEARING_SIN    = 13,
         SEAT_BEARING_COS    = 14,
-        SEAT_TO_FOCUS       = 15,   // its distance to the called target / DISTANCE_SCALE
-        SEAT_ON_FOCUS       = 16,   // it is already fighting the called target
-        SEAT_IS_DUTY        = 17,
-        SEAT_AT_PLACE       = 18,   // it is standing where the side was told to be
-        SEAT_FEATURES       = 19
+        SEAT_TO_FOCUS       = 15,   // its distance to the side's focus / DISTANCE_SCALE
+        SEAT_ON_FOCUS       = 16,   // it is already fighting the side's focus
+        SEAT_AT_PLACE       = 17,   // it is standing where the side was told to be
+        SEAT_GROUP          = 18,   // its group / RAID_GROUPS
+        SEAT_ADDRESSED      = 19,   // the next order goes to it (addressed by name or by group)
+        SEAT_ATTACKED       = 20,   // enemies attacking it / PACK_SLOTS
+        SEAT_ORDER_FIRST    = 21,   // one-hot over OrderKind: the order it holds
+        SEAT_ORDER_AGE      = SEAT_ORDER_FIRST + ORDER_KIND_COUNT,     // decisions since / CALL_AGE_SCALE
+        SEAT_FEATURES
     };
 
-    /// Features an enemy slot contributes. The same slots the side's seats select between, so a called focus and a
+    /// Features an enemy slot contributes. The same slots the side's seats select between, so a called enemy and a
     /// seat's own choice mean the same index.
     enum EnemyFeature : uint32
     {
-        /// The side has seen this one at some point. Not "it exists": a director is told how many it faces by
-        /// the scoreboard, but an enemy nobody has laid eyes on is not something it can call a focus on.
+        /// The side has seen this one at some point.
         ENEMY_PRESENT       = 0,
         ENEMY_ALIVE         = 1,
         ENEMY_HEALTH        = 2,
-        ENEMY_APTITUDE_FIRST = 3,   // what it can do, the same six-number brief a seat is described by
+        ENEMY_APTITUDE_FIRST = 3,
         ENEMY_IN_COMBAT     = 9,
         ENEMY_CASTING       = 10,
-        ENEMY_SPREAD        = 11,    // its distance from the commanded side's centre / DISTANCE_SCALE
+        ENEMY_SPREAD        = 11,
         ENEMY_IS_FOCUS      = 12,
-        /// A seat of the side can see it right now. When it cannot, health, role and position are what the
-        /// side last saw and ENEMY_UNSEEN_TIME says how old that is; combat and casting read zero rather than
-        /// their remembered values, because those are instantaneous facts and a stale one is a lie.
+        /// A seat of the side can see it right now; when not, the rest is what it last saw.
         ENEMY_SEEN          = 13,
-        ENEMY_UNSEEN_TIME   = 14,   // time since the side last saw it / MAX_UNSEEN_TIME_MS, clamped
-        ENEMY_BEARING_SIN   = 15,   // which way it lies, about the same axis as SEAT_BEARING_*
+        ENEMY_UNSEEN_TIME   = 14,
+        ENEMY_BEARING_SIN   = 15,
         ENEMY_BEARING_COS   = 16,
-        ENEMY_FEATURES      = 17
+        ENEMY_ON_SEAT       = 17,   // it is attacking one of the side's seats
+        ENEMY_ORDERED       = 18,   // seats holding an order about it / GROUP_SEATS, clamped
+        ENEMY_FEATURES
     };
 
     enum Observation : uint32
     {
         OBS_ACTIVE              = 0,
-        OBS_EPISODE_TIME        = 1,    // / EPISODE_TIME_SCALE_MS, clamped
-        OBS_OWN_STANDING        = 2,    // living seats of the side / its seats
-        OBS_ENEMY_STANDING      = 3,
-        OBS_OWN_HEALTH          = 4,    // mean health left of its living seats
-        OBS_ENEMY_HEALTH        = 5,
-        OBS_OWN_SCORE           = 6,    // the objective, where the arena keeps one
-        OBS_ENEMY_SCORE         = 7,
-        OBS_HAS_OBJECTIVE       = 8,
-        OBS_SINCE_CALL          = 9,    // decisions since the order last changed / CALL_AGE_SCALE, clamped
-        OBS_HAS_FOCUS           = 10,
-        OBS_HAS_DUTY            = 11,
-        OBS_POSTURE_FIRST       = 12,   // one-hot: the posture standing now
+        /// **The director may speak now** (MAY_CALL_COLUMN): it is given a turn on its clock and on events -- a
+        /// member down or badly hurt, a new enemy in the fight, the focus dead -- and keeps it for up to its
+        /// budget of calls, or until it holds. Its actions at any other decision change nothing; the learner
+        /// chooses only here and credits the choice over the span to the next.
+        OBS_MAY_CALL            = 1,
+        OBS_CALLS_LEFT          = 2,    // / RAID_CALLS
+        OBS_BY_EVENT            = 3,    // this turn was opened by an event, not the clock
+        OBS_RAID                = 4,    // the side is a raid (groups beyond one): its budget is RAID_CALLS
+        OBS_EPISODE_TIME        = 5,
+        OBS_OWN_STANDING        = 6,
+        OBS_ENEMY_STANDING      = 7,
+        OBS_OWN_HEALTH          = 8,
+        OBS_ENEMY_HEALTH        = 9,
+        OBS_OWN_SCORE           = 10,
+        OBS_ENEMY_SCORE         = 11,
+        OBS_HAS_OBJECTIVE       = 12,
+        OBS_SINCE_CALL          = 13,
+        OBS_HAS_FOCUS           = 14,
+        OBS_ADDRESS_FIRST       = 15,   // one-hot over OrderSource: who the next order goes to
+        OBS_ADDRESS_GROUP       = OBS_ADDRESS_FIRST + ORDER_SOURCE_COUNT,   // the group addressed / RAID_GROUPS
+        OBS_OBJECTIVE_FIRST,            // per journal objective: there is one to send members to
+        OBS_POSTURE_FIRST       = OBS_OBJECTIVE_FIRST + 4,
         OBS_RALLY_FIRST         = OBS_POSTURE_FIRST + TEAM_POSTURE_COUNT,
-        // The place as it stands: which anchor, which way off it, how far, whether it resolved to somewhere
-        // the side can actually stand, and how far the side is from it.
         OBS_ANCHOR_FIRST        = OBS_RALLY_FIRST + TEAM_RALLY_COUNT,
         OBS_OFFSET_FIRST        = OBS_ANCHOR_FIRST + PLACE_ANCHOR_COUNT,
         OBS_RING_FIRST          = OBS_OFFSET_FIRST + PLACE_OFFSET_COUNT,
         OBS_PLACE_VALID         = OBS_RING_FIRST + PLACE_RING_COUNT,
-        OBS_PLACE_DISTANCE,             // the side's centre to the place / DISTANCE_SCALE
-        OBS_SEAT_FIRST,
-        OBS_ENEMY_FIRST         = OBS_SEAT_FIRST + TEAM_SEATS * SEAT_FEATURES,
+        OBS_PLACE_DISTANCE,
+        OBS_GLOBAL_COUNT,
+        OBS_SEAT_FIRST          = OBS_GLOBAL_COUNT,
+        OBS_ENEMY_FIRST         = OBS_SEAT_FIRST + DIRECTOR_SEATS * SEAT_FEATURES,
         OBS_COUNT               = OBS_ENEMY_FIRST + PACK_SLOTS * ENEMY_FEATURES
     };
 
-    /// One call per decision, each naming the single field of the standing order it changes.
+    /// The learner reads OBS_MAY_CALL to know when the director chooses (mappo.slow_choose_column).
+    constexpr uint32 MAY_CALL_COLUMN = OBS_MAY_CALL;
+    /// How many calls a turn allows: a group's director four, a raid's eight.
+    constexpr uint32 GROUP_CALLS = 4;
+    constexpr uint32 RAID_CALLS = 8;
+
+    /// One call per turn decision. Posture, rally and place are the side's; an address says who the orders after
+    /// it go to (the side, a group, a member), and each order kind names its target.
     enum Action : uint32
     {
-        ACTION_HOLD             = 0,    // let the order stand
+        ACTION_HOLD             = 0,    // nothing more this turn
         ACTION_POSTURE_FIRST    = 1,
         ACTION_RALLY_FIRST      = ACTION_POSTURE_FIRST + TEAM_POSTURE_COUNT,
-        // A place is named a field at a time like everything else here, so it costs three small groups
-        // rather than one action per reachable spot.
         ACTION_ANCHOR_FIRST     = ACTION_RALLY_FIRST + TEAM_RALLY_COUNT,
         ACTION_OFFSET_FIRST     = ACTION_ANCHOR_FIRST + PLACE_ANCHOR_COUNT,
         ACTION_RING_FIRST       = ACTION_OFFSET_FIRST + PLACE_OFFSET_COUNT,
-        ACTION_FOCUS_FIRST      = ACTION_RING_FIRST + PLACE_RING_COUNT,
-        ACTION_DUTY_FIRST       = ACTION_FOCUS_FIRST + PACK_SLOTS,
-        ACTION_COUNT            = ACTION_DUTY_FIRST + TEAM_SEATS
+        ACTION_ADDRESS_SIDE     = ACTION_RING_FIRST + PLACE_RING_COUNT,
+        ACTION_ADDRESS_GROUP_FIRST,
+        ACTION_ADDRESS_MEMBER_FIRST = ACTION_ADDRESS_GROUP_FIRST + RAID_GROUPS,
+        ACTION_FOCUS_FIRST      = ACTION_ADDRESS_MEMBER_FIRST + DIRECTOR_SEATS,    // + enemy slot
+        ACTION_TANK_FIRST       = ACTION_FOCUS_FIRST + PACK_SLOTS,
+        ACTION_INTERRUPT_FIRST  = ACTION_TANK_FIRST + PACK_SLOTS,
+        ACTION_CONTROL_FIRST    = ACTION_INTERRUPT_FIRST + PACK_SLOTS,
+        ACTION_HEAL_FIRST       = ACTION_CONTROL_FIRST + PACK_SLOTS,                // + member
+        ACTION_GO_TO            = ACTION_HEAL_FIRST + DIRECTOR_SEATS,
+        ACTION_OBJECTIVE_FIRST,                                                     // + journal objective
+        ACTION_COUNT            = ACTION_OBJECTIVE_FIRST + 4
     };
 
-    /// Distances are a director's only geometry: it names places, never coordinates, so the same network reads a
-    /// 2 v 2 arena and a battleground.
     constexpr float DISTANCE_SCALE = 100.0f;
     constexpr float CALL_AGE_SCALE = 40.0f;     // decisions
-    /// How stale a sighting can get before ENEMY_UNSEEN_TIME saturates. The same twenty seconds a seat's own
-    /// memory of a hidden target uses (StageScenario's MAX_UNSEEN_TIME_MS), so both cite one number.
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
 
     /// What one side's director is looking at. Built by DirectorEncounter; nothing here knows a class or a spell.
     struct DirectorView
     {
         bool Active = false;
+        bool MayCall = false;
+        uint32 CallsLeft = 0;
+        bool ByEvent = false;
+        bool Raid = false;
         float EpisodeTime = 0.0f;
 
         struct SeatSlot
@@ -163,8 +191,12 @@ namespace Animus::Curriculum::DirectorLayout
             float BearingCos = 0.0f;
             float ToFocus = 0.0f;
             bool OnFocus = false;
-            bool IsDuty = false;
             bool AtPlace = false;
+            uint32 Group = 0;
+            bool Addressed = false;
+            float Attacked = 0.0f;
+            OrderKind Order = OrderKind::None;
+            float OrderAge = 0.0f;
         };
 
         struct EnemySlot
@@ -177,24 +209,24 @@ namespace Animus::Curriculum::DirectorLayout
             bool Casting = false;
             float Spread = 0.0f;
             bool IsFocus = false;
-            bool Seen = false;          // visible to the side right now
+            bool Seen = false;
             float UnseenTime = 0.0f;
             float BearingSin = 0.0f;
             float BearingCos = 0.0f;
+            bool OnSeat = false;
+            float Ordered = 0.0f;
         };
 
-        /// Where the side was told to be, and whether it resolved to ground it can stand on.
         PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
         PlaceOffset Offset = PlaceOffset::Toward;
         PlaceRing Ring = PlaceRing::Near;
         bool PlaceValid = false;
         float PlaceDistance = 0.0f;
-        /// Whether this arena offers places at all (ArenaDefinition::Places): the group is masked out where
-        /// it does not, so a stage that has no use for them pays nothing to explore them.
         bool PlacesAllowed = false;
 
-        std::array<SeatSlot, TEAM_SEATS> Seats{};
+        std::array<SeatSlot, DIRECTOR_SEATS> Seats{};
         uint32 SeatCount = 0;
+        uint32 Groups = 1;
         std::array<EnemySlot, PACK_SLOTS> Enemies{};
         uint32 EnemyCount = 0;
 
@@ -202,8 +234,11 @@ namespace Animus::Curriculum::DirectorLayout
         TeamPosture Posture = TeamPosture::Attack;
         TeamRally Rally = TeamRally::None;
         bool HasFocus = false;
-        bool HasDuty = false;
         float SinceCall = 0.0f;
+        OrderSource Address = OrderSource::Side;
+        uint32 AddressGroup = 0;
+        /// The journal objectives the side could be sent to (Encounter::ViewDirector fills them).
+        std::array<bool, 4> Objectives{};
 
         bool HasObjective = false;
         float OwnScore = 0.0f;
@@ -221,6 +256,11 @@ namespace Animus::Curriculum::DirectorLayout
 
     /// Every action's name, by index, for the manifest and the stage viewer.
     [[nodiscard]] std::vector<std::string> ActionNames();
+
+    /// Where the seat and enemy sets lie in the observation (first column, slots, per-slot width, the column that
+    /// says a slot is present) and which actions are scored per slot of which set: stage.json's "director", for
+    /// the learner's set encoder and pointer heads.
+    [[nodiscard]] boost::json::object SetDescriptor();
 
     /// The layout's name, which is the same in every stage that has a director.
     [[nodiscard]] char const* Name();

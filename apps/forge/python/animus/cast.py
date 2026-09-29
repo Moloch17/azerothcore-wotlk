@@ -205,7 +205,7 @@ class CastActor:
                 flat_goal[picked] = goals
                 flat_age[picked] = np.where(choose, 1, ages + 1)
                 goal = torch.as_tensor(goals, dtype=torch.long, device=self.device)
-            dist = self.teacher.actor.action_distribution(features, t_layout, t_mask, goal)
+            dist = self.teacher.actor.action_distribution(features, t_layout, t_mask, goal, obs=t_obs)
             teacher_actions = (dist.probs.argmax(-1) if self.deterministic else dist.sample()).cpu().numpy()
             if self.recurrent:
                 flat_memory[picked] = features.cpu().numpy()

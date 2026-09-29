@@ -47,7 +47,19 @@ namespace Animus::Curriculum
             OBS_FOCUS_SIN,
             OBS_FOCUS_COS,
             OBS_FOCUS_HEALTH,                   // what is left of it
-            OBS_IS_DUTY,                        // this seat owes the next interrupt or control
+            OBS_IS_DUTY,                        // this seat owes an interrupt or a control
+            /// The order to this seat alone: its kind (one-hot over OrderKind), its target -- present, distance,
+            /// bearing, health -- the journal objective it names (one-hot), who it came from (one-hot over
+            /// OrderSource), and its age.
+            OBS_ORDER_KIND_FIRST,
+            OBS_ORDER_TARGET            = OBS_ORDER_KIND_FIRST + ORDER_KIND_COUNT,
+            OBS_ORDER_TARGET_DISTANCE,
+            OBS_ORDER_TARGET_SIN,
+            OBS_ORDER_TARGET_COS,
+            OBS_ORDER_TARGET_HEALTH,
+            OBS_ORDER_OBJECTIVE_FIRST,
+            OBS_ORDER_SOURCE_FIRST      = OBS_ORDER_OBJECTIVE_FIRST + 4,
+            OBS_ORDER_AGE               = OBS_ORDER_SOURCE_FIRST + ORDER_SOURCE_COUNT,
             OBS_COUNT
         };
 

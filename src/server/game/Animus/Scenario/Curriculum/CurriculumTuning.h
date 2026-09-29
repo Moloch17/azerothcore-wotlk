@@ -350,6 +350,11 @@ namespace Animus::Curriculum
             /// continent: the thirteen place actions mean the same thing at any scale.
             float PlaceNearYards = 20.0f;
             float PlaceFarYards = 60.0f;
+            /// How often the director's clock gives it a turn (decisions; 10 is 2.5 s). Events give it one at once:
+            /// a member down or newly below a quarter of its health, a new enemy in the fight, the focus dead.
+            uint32 ClockDecisions = 10;
+            /// Below this share of its health a member counts as badly hurt, for the event.
+            float LowHealth = 0.25f;
         } Director;
 
         /// Looking after itself and its friends, in every stage.
@@ -946,6 +951,8 @@ namespace Animus::Curriculum
 
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
+            f("Director.ClockDecisions", tuning.Director.ClockDecisions);
+            f("Director.LowHealth", tuning.Director.LowHealth);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);

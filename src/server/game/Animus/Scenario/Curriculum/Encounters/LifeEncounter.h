@@ -136,6 +136,8 @@ namespace Animus::Curriculum
         void Account(Env& env, EnvLife& life, SeatActionResult const& result) override;
         [[nodiscard]] bool Finished(Env const& env, EnvLife const& life) const override;
         void AddMoreEpisodeInfo(EpisodeInfoTable& table) override;
+        /// The quest's undone objectives, as places a director can send members to.
+        void ViewDirector(Env const& env, uint32 side, DirectorLayout::DirectorView& view) const override;
 
     private:
         struct EnvQuest

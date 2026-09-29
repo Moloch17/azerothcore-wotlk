@@ -109,6 +109,12 @@ mappo:
   foresight_feedback: true
   goal_lookahead: true
   lookahead_coef: 0.5
+  # The director (every party, raid and battleground arena): it speaks on its turns -- its clock and events, as the
+  # sim decides them (the "may call" column) -- and each call is credited over the span to the next, per call on a
+  # horizon of minutes. A stage with no director has no layout of that name, and nothing here applies.
+  slow_layout: director
+  slow_gamma: 0.996
+  slow_gae_lambda: 0.98
   # The goal head's entropy bonus falls to a fifth of itself over each stage, so the head explores goals early and
   # commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full bonus
   # all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28).

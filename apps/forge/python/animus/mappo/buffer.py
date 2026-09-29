@@ -53,82 +53,6 @@ def compute_gae(
     return advantages, advantages + values
 
 
-def compute_slow_gae(
-    rewards: np.ndarray,
-    values: np.ndarray,
-    dones: np.ndarray,
-    terminated: np.ndarray,
-    final_values: np.ndarray,
-    last_values: np.ndarray,
-    chosen: np.ndarray,
-    slow: np.ndarray,
-    gamma: float,
-    gae_lambda: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """GAE for agents whose decisions are spaced out, over their own decisions rather than every step.
-
-    One transition runs from the decision an agent actually took to the next one it takes -- or to the end of its
-    episode, or the end of the rollout -- and carries every reward in between. Discounting is then per decision
-    taken, so `gamma` and `gae_lambda` mean what they say on the agent's own clock: at ten decisions a span and
-    250 ms a decision, gamma 0.996 is a ten minute horizon where the seats' 0.9975 is a hundred seconds.
-
-    Shapes as compute_gae, plus `chosen` and `slow` [T, E, A]. Rewards inside a span are summed and not
-    discounted: a span is seconds and the horizon is minutes, so the difference is far below the noise.
-
-    Only the chosen steps of slow agents get an advantage; everything else is left untouched for the caller's
-    own per-decision GAE to fill.
-    """
-    steps, envs, agents = rewards.shape
-    advantages = np.zeros_like(rewards, dtype=np.float32)
-    returns = np.zeros_like(rewards, dtype=np.float32)
-
-    for env in range(envs):
-        for agent in range(agents):
-            if not slow[:, env, agent].any():
-                continue
-
-            # Walk the rollout once, cutting it into the transitions this agent actually made.
-            spans = []      # (step, summed reward, bootstrap value, whether credit flows past it)
-            step = 0
-            while step < steps:
-                if not (chosen[step, env, agent] and slow[step, env, agent]):
-                    step += 1
-                    continue
-
-                reward = 0.0
-                end = step
-                while True:
-                    reward += float(rewards[end, env, agent])
-                    if dones[end, env] or end + 1 >= steps or chosen[end + 1, env, agent]:
-                        break
-                    end += 1
-
-                if dones[end, env]:
-                    # The episode ended inside the span: nothing follows a termination, and a truncation is
-                    # worth the value of the state it was cut off in.
-                    bootstrap = 0.0 if terminated[end, env] else float(final_values[end, env, agent])
-                    flows = False
-                elif end + 1 < steps:
-                    bootstrap = float(values[end + 1, env, agent])
-                    flows = True
-                else:
-                    # The rollout ended first; the value of what came next is all there is to go on.
-                    bootstrap = float(last_values[env, agent])
-                    flows = True
-
-                spans.append((step, reward, bootstrap, flows))
-                step = end + 1
-
-            gae = 0.0
-            for start, reward, bootstrap, flows in reversed(spans):
-                delta = reward + gamma * bootstrap - float(values[start, env, agent])
-                gae = delta + (gamma * gae_lambda * gae if flows else 0.0)
-                advantages[start, env, agent] = gae
-                returns[start, env, agent] = gae + float(values[start, env, agent])
-
-    return advantages, returns
-
-
 def compute_foresight(
     rewards: np.ndarray,
     predictions: np.ndarray,
@@ -158,48 +82,58 @@ def compute_foresight(
 
 
 def compute_span_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray, terminated: np.ndarray,
-                     chosen: np.ndarray, gamma: float, gae_lambda: float) -> tuple[np.ndarray, np.ndarray]:
-    """compute_slow_gae for every agent at once, vectorised over [E, A]: GAE over the decisions where `chosen`,
-    each a transition carrying every reward until the next chosen decision or its episode's end. `values` holds
-    the value at each chosen decision; a truncated episode, and the rollout's end, bootstrap from the value of the
-    last chosen decision before them (the state the span began in -- all there is of that clock). The two-clock
-    seat's goals (MappoConfig.slow_goal_size); a whole run's seats, where the director's loop was one agent's."""
+                     chosen: np.ndarray, gamma: float, gae_lambda: float, final_values: np.ndarray | None = None,
+                     last_values: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """GAE over the decisions where `chosen`, for every agent at once (vectorised over [E, A]): one transition runs
+    from a decision the agent took to the next it takes, or to its episode's end, and carries every reward in
+    between; discounting is per decision taken, so gamma is a horizon on the agent's own clock. The one slow-clock
+    GAE: the director's turns and the two-clock seat's goals both use it.
+
+    A span cut short -- by the rollout's end, or by a truncated episode -- is bootstrapped on the value of the state
+    it was cut in: `last_values` [E, A] and `final_values` [T, E, A], when the caller has them (the director's
+    critic values every state). When it does not (the slow goal value exists only where a goal was chosen), such a
+    span has no honest bootstrap, and it is left out: the third result says which chosen decisions have a target
+    (bootstrapping it on the value it began at instead would pull its advantage to nothing)."""
     steps = rewards.shape[0]
+    shape = values.shape[1:]
     advantages = np.zeros_like(rewards, dtype=np.float32)
     returns = np.zeros_like(rewards, dtype=np.float32)
+    valid = np.zeros(rewards.shape, dtype=bool)
+    known_final = final_values is not None
+    known_last = last_values is not None
 
-    # The latest chosen decision's value at every step, reset at each episode's start: the truncation bootstrap.
-    latest = np.zeros_like(values, dtype=np.float32)
-    carried = np.zeros(values.shape[1:], dtype=np.float32)
-    for t in range(steps):
-        carried = np.where(chosen[t], values[t], carried)
-        latest[t] = carried
-        carried = np.where(dones[t][:, None], 0.0, carried)
-
-    tail = np.zeros(values.shape[1:], dtype=np.float32)
-    boot = latest[-1].copy()
-    flows = np.ones(values.shape[1:], dtype=bool)
-    following = np.zeros(values.shape[1:], dtype=np.float32)
+    tail = np.zeros(shape, dtype=np.float32)
+    boot = last_values.astype(np.float32).copy() if known_last else np.zeros(shape, dtype=np.float32)
+    flows = np.ones(shape, dtype=bool)
+    target = np.full(shape, known_last)          # the open span has an honest bootstrap
+    following = np.zeros(shape, dtype=np.float32)
+    following_valid = np.zeros(shape, dtype=bool)
     for t in reversed(range(steps)):
-        done = dones[t][:, None]
+        done = np.broadcast_to(dones[t][:, None], shape)
         if t + 1 < steps:
             # A span ending here: the next chosen decision bootstraps it and the credit flows on from it.
             cut = chosen[t + 1] & ~done
             tail = np.where(cut, 0.0, tail)
             boot = np.where(cut, values[t + 1], boot)
             following = np.where(cut, advantages[t + 1], following)
+            following_valid = np.where(cut, valid[t + 1], following_valid)
             flows = np.where(cut, True, flows)
-        ended = np.broadcast_to(done, tail.shape)
-        final = np.where(np.broadcast_to(terminated[t][:, None], tail.shape), 0.0, latest[t])
-        tail = np.where(ended, rewards[t], rewards[t] + tail)
-        boot = np.where(ended, final, boot)
-        flows = np.where(ended, False, flows)
-        following = np.where(ended, 0.0, following)
+            target = np.where(cut, True, target)
+        ends = np.broadcast_to(terminated[t][:, None], shape)
+        final = np.where(ends, 0.0, final_values[t] if known_final else 0.0)
+        tail = np.where(done, rewards[t], rewards[t] + tail)
+        boot = np.where(done, final, boot)
+        flows = np.where(done, False, flows)
+        following = np.where(done, 0.0, following)
+        following_valid = np.where(done, True, following_valid)
+        target = np.where(done, ends | known_final, target)
         delta = tail + gamma * boot - values[t]
-        gae = delta + np.where(flows, gamma * gae_lambda * following, 0.0)
+        # The trace only through a following span that has a target of its own.
+        gae = delta + np.where(flows & following_valid, gamma * gae_lambda * following, 0.0)
         advantages[t] = np.where(chosen[t], gae, 0.0)
         returns[t] = np.where(chosen[t], gae + values[t], 0.0)
-    return advantages, returns
+        valid[t] = chosen[t] & target
+    return advantages, returns, valid
 
 
 def decisions_left(dones: np.ndarray) -> np.ndarray:
@@ -228,6 +162,7 @@ class RolloutBuffer:
         self.slow_values = np.zeros(shape, dtype=np.float32)
         self.slow_advantages = np.zeros(shape, dtype=np.float32)
         self.slow_returns = np.zeros(shape, dtype=np.float32)
+        self.slow_valid = np.zeros(shape, dtype=bool)          # the chosen decisions whose span has a target
         # The goal each decision pursued, what choosing it was worth, and whether this decision chose it: only those
         # decisions carry the goal chooser's own gradient.
         self.goal = np.zeros(shape, dtype=np.int64)
@@ -357,18 +292,11 @@ class RolloutBuffer:
         if slow_layout >= 0:
             slow = self.layout == slow_layout
             if slow.any():
-                advantages, returns = compute_slow_gae(
-                    self.rewards,
-                    self.values,
-                    self.dones,
-                    self.terminated,
-                    self.final_values,
-                    last_values,
-                    self.chosen,
-                    slow,
-                    slow_gamma,
-                    slow_gae_lambda,
-                )
+                # The one slow-clock GAE (compute_span_gae), as the two-clock seat's goals use: over the decisions
+                # the agent actually took -- its turns, where the sim decides them.
+                advantages, returns, _ = compute_span_gae(
+                    self.rewards, self.values, self.dones, self.terminated, self.chosen & slow, slow_gamma,
+                    slow_gae_lambda, self.final_values, last_values)
                 self.advantages = np.where(slow, advantages, self.advantages)
                 self.returns = np.where(slow, returns, self.returns)
 
@@ -378,7 +306,7 @@ class RolloutBuffer:
             chosen = self.goal_chosen & self.valid
             if slow_layout >= 0:
                 chosen = chosen & (self.layout != slow_layout)
-            self.slow_advantages, self.slow_returns = compute_span_gae(
+            self.slow_advantages, self.slow_returns, self.slow_valid = compute_span_gae(
                 self.rewards, self.slow_values, self.dones, self.terminated, chosen, slow_goal[0], slow_goal[1])
             self.goal_chosen = chosen
         if not self.foresight or last_foresight is None:

@@ -431,6 +431,19 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, Pla
     }
 }
 
+void Animus::Curriculum::QuestEncounter::ViewDirector(Env const& env, uint32 side,
+    DirectorLayout::DirectorView& view) const
+{
+    EnvQuest const& quest = _quests[env.Index];
+    LifeWorld::QuestCandidate const* current = quest.Quest();
+    Player* bot = _scenario.SeatBot(env, 0);
+    if (side != 0 || !current || !bot || !quest.Accepted)
+        return;
+    view.HasObjective = true;
+    for (uint32 i = 0; i < current->Plan->Objectives.size() && i < view.Objectives.size(); ++i)
+        view.Objectives[i] = QuestPlanner::Progress(bot, *current->Plan, i) < 1.0f;
+}
+
 bool Animus::Curriculum::QuestEncounter::Finished(Env const& env, EnvLife const& /*life*/) const
 {
     EnvQuest const& quest = _quests[env.Index];

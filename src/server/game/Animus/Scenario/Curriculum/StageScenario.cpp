@@ -1350,8 +1350,12 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // casts a director's row.
     boost::json::array& directorAgents = stageFile["director_agents"].emplace_array();
     if (HasDirectors())
+    {
         for (uint32 side = 0; side < TEAM_COUNT; ++side)
             directorAgents.push_back(_seatCount + side);
+        // The director's sets and per-slot actions, for the learner's set encoder (DirectorLayout::SetDescriptor).
+        stageFile["director"] = DirectorLayout::SetDescriptor();
+    }
     // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it.
     boost::json::array& cast = stageFile["cast"].emplace_array();
     if (_castOwner)
@@ -1658,7 +1662,11 @@ bool Animus::Curriculum::StageScenario::IsTerminal(Env const& env) const
 
 uint32 Animus::Curriculum::StageScenario::SideOf(Env const& env, uint32 seat) const
 {
-    uint32 const perSide = Arena(env).Seats == SeatPlan::Teams ? Arena(env).TeamSeats : 1;
+    // A party and a raid are one side, whatever their size: the director commands all of it.
+    SeatPlan const plan = Arena(env).Seats;
+    if (plan == SeatPlan::Party || plan == SeatPlan::Raid)
+        return 0;
+    uint32 const perSide = plan == SeatPlan::Teams ? Arena(env).TeamSeats : 1;
     return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
 }
 
@@ -2592,6 +2600,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
             view.Order.FocusUnseen = true;
             view.Order.Focus = nullptr;
         }
+        // And the seat's own order's enemy, the same way (a friend it is told to heal is not an enemy to hide).
+        if (view.Order.Kind != OrderKind::Heal && hidden(view.Order.Target))
+            view.Order.Target = nullptr;
     }
 
     return view;
@@ -2851,7 +2862,11 @@ void Animus::Curriculum::StageScenario::ObserveDirector(Env& env, uint32 side, f
 
     DirectorLayout::DirectorView view;
     if (_director && DirectorsActive(env))
+    {
+        // Whether this decision is the director's turn to speak, before it sees that it is.
+        _director->PrepareTurn(env, side);
         _director->ViewSide(env, side, view);
+    }
 
     DirectorLayout::Observe(view, obs, mask);
 }
@@ -2877,9 +2892,15 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
 
     // A director is an agent only in the episodes that have one; elsewhere it has nothing to say and earns
     // nothing, so the learner should not train on its row.
+    // And only for a side it has seats to command: against creatures the far side has none.
     bool const directing = DirectorsActive(env);
     for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-        present[_seatCount + side] = directing ? 1 : 0;
+    {
+        bool commands = false;
+        for (uint32 seat = 0; seat < _seatCount && !commands; ++seat)
+            commands = SideOf(env, seat) == side && data.Seats[seat].L;
+        present[_seatCount + side] = directing && commands ? 1 : 0;
+    }
 
     // The owner is an agent only in the episodes that play it through its row: an evaluation's owner and a
     // scripted-share owner are the script's, and the learner neither runs the cast actor nor trains on the row.

@@ -4,7 +4,9 @@ and a rollout-and-update cycle with every part switched on."""
 import numpy as np
 import torch
 
-from animus.mappo.buffer import RolloutBuffer, compute_slow_gae, compute_span_gae
+from animus.mappo.buffer import RolloutBuffer, compute_span_gae
+
+from slow_gae_reference import compute_slow_gae
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 
 KINDS, TARGETS = 3, 4
@@ -17,23 +19,33 @@ def test_the_vectorised_span_gae_matches_the_reference():
     steps, envs, agents = 30, 3, 2
     rewards = rng.normal(size=(steps, envs, agents)).astype(np.float32)
     values = rng.normal(size=(steps, envs, agents)).astype(np.float32)
+    final = rng.normal(size=(steps, envs, agents)).astype(np.float32)
+    last = rng.normal(size=(envs, agents)).astype(np.float32)
     dones = rng.random((steps, envs)) < 0.08
     terminated = dones & (rng.random((steps, envs)) < 0.5)
     chosen = rng.random((steps, envs, agents)) < 0.3
     chosen[0] = True
-    # The reference bootstraps truncations and the rollout's end from these; the vectorised version uses the value of
-    # the last chosen decision before them, so give the reference the same.
-    latest = np.zeros_like(values)
-    carried = np.zeros((envs, agents), np.float32)
-    for t in range(steps):
-        carried = np.where(chosen[t], values[t], carried)
-        latest[t] = carried
-        carried = np.where(dones[t][:, None], 0.0, carried)
-    expected_adv, expected_ret = compute_slow_gae(rewards, values, dones, terminated, latest, latest[-1], chosen,
+    expected_adv, expected_ret = compute_slow_gae(rewards, values, dones, terminated, final, last, chosen,
                                                   np.ones_like(chosen), 0.97, 0.9)
-    adv, ret = compute_span_gae(rewards, values, dones, terminated, chosen, 0.97, 0.9)
+    adv, ret, valid = compute_span_gae(rewards, values, dones, terminated, chosen, 0.97, 0.9, final, last)
     assert np.allclose(adv[chosen], expected_adv[chosen], atol=1e-5)
     assert np.allclose(ret[chosen], expected_ret[chosen], atol=1e-5)
+    assert (valid == chosen).all()
+
+
+def test_a_span_with_no_honest_bootstrap_is_left_out():
+    """Without the values of the states a span was cut in (the slow goal value exists only at choices), a span cut
+    by the rollout's end or by a truncation has no target -- rather than one bootstrapped on its own start."""
+    rewards = np.ones((6, 1, 1), np.float32)
+    values = np.full((6, 1, 1), 2.0, np.float32)
+    chosen = np.zeros((6, 1, 1), bool)
+    chosen[[0, 2, 4], 0, 0] = True
+    dones = np.zeros((6, 1), bool)
+    dones[1, 0] = True                  # the first span ends in a termination: it has a target (nothing follows)
+    terminated = dones.copy()
+    dones[3, 0] = True                  # the second in a truncation: none
+    _, _, valid = compute_span_gae(rewards, values, dones, terminated, chosen, 0.9, 0.9)
+    assert valid[0, 0, 0] and not valid[2, 0, 0] and not valid[4, 0, 0]   # the third is cut by the rollout's end
 
 
 def test_a_rollout_and_update_with_every_part_on():
@@ -76,7 +88,7 @@ def test_a_rollout_and_update_with_every_part_on():
     horizons = len(config.foresight_horizons_seconds)
     assert buffer.foresight_valid[0, 1, 0, horizons + 1]
     assert np.isclose(buffer.foresight_targets[0, 1, 0, horizons + 1], buffer.obs[8, 1, 0, 37])
-    assert buffer.slow_advantages[buffer.goal_chosen].std() > 0
+    assert buffer.slow_advantages[buffer.slow_valid].std() > 0 and not buffer.slow_valid[-1].any()
 
     stats = trainer.update(buffer)
     for key in ("slow_policy_loss", "slow_value_loss", "goal_entropy", "lookahead_loss", "foresight_loss"):

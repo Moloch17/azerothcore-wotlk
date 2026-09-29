@@ -467,6 +467,96 @@ class _Factored(nn.Module):
         return joint.reshape(features.shape[0], -1)
 
 
+class DirectorSets(nn.Module):
+    """**The director's members and enemies as sets** (long-horizon plan, Component E). Each slot of a set goes through
+    one shared encoder; the encodings of the slots present are pooled (mean and max), so the director reads a pair, a
+    party and a raid with the same weights and does not care which slot a member landed in. The raw slot columns are
+    kept out of the layout's own adapter (column_mask), so nothing learns a slot's position. The actions that name a
+    slot -- address this member, heal this member, focus this enemy -- are scored from that slot's encoding against a
+    query from the features (pointer logits), so they move with the member rather than with the slot.
+
+    `descriptor` is stage.json's "director" (DirectorLayout::SetDescriptor)."""
+
+    def __init__(self, descriptor: dict, obs_dim: int, width: int, head_width: int = 0, embed: int = 64):
+        super().__init__()
+        self.sets = {}
+        columns = torch.zeros(obs_dim, dtype=torch.bool)
+        for name in ("seats", "enemies"):
+            spec = descriptor[name]
+            first, slots, per = int(spec["first"]), int(spec["slots"]), int(spec["width"])
+            self.sets[name] = (first, slots, per, int(spec.get("present", 0)))
+            columns[first : first + slots * per] = True
+            setattr(self, f"{name}_encoder", nn.Sequential(_linear(per, embed, math.sqrt(2)), nn.Tanh(),
+                                                           _linear(embed, embed, math.sqrt(2)), nn.Tanh()))
+        self.register_buffer("column_mask", columns)
+        self.pool = _linear(4 * embed, width, 1.0)
+        self.pointers = [(int(p["first"]), p["over"]) for p in descriptor.get("pointers", ())] if head_width else []
+        self.queries = nn.ModuleList(_linear(head_width, embed, 0.01) for _ in self.pointers)
+
+    def encode_set(self, obs: torch.Tensor, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        """[rows, slots, embed] encodings and [rows, slots] which are present."""
+        first, slots, per, present = self.sets[name]
+        raw = obs[:, first : first + slots * per].reshape(obs.shape[0], slots, per)
+        return getattr(self, f"{name}_encoder")(raw), raw[..., present] > 0.5
+
+    def pooled(self, obs: torch.Tensor) -> torch.Tensor:
+        """What the sets add to the adapter's output: [rows, width]."""
+        parts = []
+        for name in ("seats", "enemies"):
+            encoded, present = self.encode_set(obs, name)
+            weight = present.to(encoded.dtype)[..., None]
+            count = weight.sum(dim=1).clamp(min=1.0)
+            parts.append((encoded * weight).sum(dim=1) / count)
+            parts.append(torch.where(present[..., None], encoded, torch.full_like(encoded, -1.0)).amax(dim=1))
+        return self.pool(torch.cat(parts, dim=-1))
+
+    def pointer_logits(self, features: torch.Tensor, obs: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
+        """Per pointer action group: (its first action, [rows, slots] logits) from each slot's encoding."""
+        encoded = {name: self.encode_set(obs, name)[0] for name in self.sets}
+        return [(first, torch.einsum("rse,re->rs", encoded[over], query(features)))
+                for (first, over), query in zip(self.pointers, self.queries)]
+
+
+def _director_extra(sets: "DirectorSets | None", index: int, obs: torch.Tensor, layout: torch.Tensor):
+    """What the director rows' sets add to the adapter's output [rows, width] (None without director rows)."""
+    if sets is None:
+        return None
+    rows = layout.reshape(-1) == index
+    if not bool(rows.any()):
+        return None
+    extra = obs.new_zeros(obs.shape[0], sets.pool.out_features)
+    extra[rows] = sets.pooled(obs[rows, : sets.column_mask.shape[0]]).to(extra.dtype)
+    return extra
+
+
+def _attach_director(network: nn.Module, director, head_width: int = 0) -> None:
+    """Give an actor or critic the director's set encoder (DirectorSets), and keep the director layout's own adapter
+    blind to the slot columns: their weights start at zero and their gradient is masked, so they stay zero through
+    every update and through the rollout copies' folded normalisation."""
+    network.director_index = -1
+    network.director_sets = None
+    if director is None:
+        return
+    index, descriptor = director
+    network.director_index = int(index)
+    network.director_sets = DirectorSets(descriptor, network.obs_dims[index], network.adapters[index].out_features,
+                                         head_width)
+    keep = (~network.director_sets.column_mask).to(torch.float32)[None, :]
+    network.register_buffer("director_keep", keep)
+    weight = network.adapters[index].weight
+    with torch.no_grad():
+        weight.mul_(keep)
+    weight.register_hook(lambda grad: grad * network.director_keep)
+
+
+def clear_director_columns(network: nn.Module) -> None:
+    """Zero the director adapter's slot columns again (after a seed or a load brought weights from elsewhere)."""
+    if getattr(network, "director_sets", None) is None:
+        return
+    with torch.no_grad():
+        network.adapters[network.director_index].weight.mul_(network.director_keep)
+
+
 class GoalEmbedding(nn.Module):
     """A goal as the features it adds: its kind's embedding plus its target's (zero at the start, so a new goal head
     changes nothing until it is trained)."""
@@ -491,7 +581,7 @@ class GoalEmbedding(nn.Module):
 class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
-                 foresight_feedback: bool = False, lookahead: bool = False):
+                 foresight_feedback: bool = False, lookahead: bool = False, director=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -545,6 +635,9 @@ class LayoutActor(nn.Module):
         # features the action head and the slow loop read, so the policy acts on what it expects to happen.
         self.foresight_feedback = bool(foresight_feedback and foresight_outputs)
         self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
+        # The director's members and enemies as sets, with pointer heads (DirectorSets): `director` is (its layout
+        # index, stage.json's "director").
+        _attach_director(self, director, head_width)
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None) -> Categorical:
@@ -587,8 +680,10 @@ class LayoutActor(nn.Module):
         """Adapters and trunk for flat rows: everything that depends only on this decision's observation, before the
         GRU. A replayed sequence encodes every step in one pass and then carries the memory through them (carry),
         which is the difference between one large matmul per layer and one per step."""
+        extra = _director_extra(self.director_sets, self.director_index, obs, layout)
         if self.dense_adapters is not None:
-            return self.trunk(self.dense_adapters(obs, layout))
+            hidden = self.dense_adapters(obs, layout)
+            return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         width = self.adapters[0].out_features
         hidden = obs.new_zeros(obs.shape[0], width)
@@ -596,6 +691,8 @@ class LayoutActor(nn.Module):
             # Cast on the way in: under autocast (mappo.update_precision) the adapters answer in half precision.
             hidden[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
                 hidden.dtype)
+        if extra is not None:
+            hidden = hidden + extra.to(hidden.dtype)
         return self.trunk(hidden)
 
     def carry(self, encoded: torch.Tensor, memory: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
@@ -621,9 +718,11 @@ class LayoutActor(nn.Module):
         return hidden
 
     def action_distribution(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
-                            goal: torch.Tensor | None = None, groups=None) -> Categorical:
-        """The actions of flat rows whose features are `features`, under `goal` where the actor has goals."""
-        return Categorical(logits=self.action_logits(features, layout, mask, goal, groups))
+                            goal: torch.Tensor | None = None, groups=None,
+                            obs: torch.Tensor | None = None) -> Categorical:
+        """The actions of flat rows whose features are `features`, under `goal` where the actor has goals. `obs`
+        lets the director's pointer heads score its per-slot actions (DirectorSets)."""
+        return Categorical(logits=self.action_logits(features, layout, mask, goal, groups, obs))
 
     def with_foresight(self, features: torch.Tensor) -> torch.Tensor:
         """The features with the foresight head's predictions fed back (Component P, layer 2), or as they are."""
@@ -637,7 +736,7 @@ class LayoutActor(nn.Module):
         return self.slow_memory(self.with_foresight(features).detach(), slow)
 
     def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
-                      goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
+                      goal: torch.Tensor | None = None, groups=None, obs: torch.Tensor | None = None) -> torch.Tensor:
         """action_distribution's masked logits, unnormalised (for sample_logits)."""
         features = self.with_foresight(features)
         if self.goal_embedding is not None and goal is not None:
@@ -648,13 +747,30 @@ class LayoutActor(nn.Module):
             own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
             logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
                 own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
-            return masked_logits(logits, mask)
+            return masked_logits(self._with_pointers(logits, features, layout, obs), mask)
 
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
-        return masked_logits(logits, mask)
+        return masked_logits(self._with_pointers(logits, features, layout, obs), mask)
+
+    def _with_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
+                       obs: torch.Tensor | None) -> torch.Tensor:
+        """The director rows' per-slot actions, scored by their slots' encodings (DirectorSets.pointer_logits)."""
+        if self.director_sets is None or obs is None:
+            return logits
+        rows = layout.reshape(-1) == self.director_index
+        if not bool(rows.any()):
+            return logits
+        logits = logits.clone()
+        picked = torch.nonzero(rows).reshape(-1)
+        director_obs = obs.reshape(-1, obs.shape[-1])[picked, : self.director_sets.column_mask.shape[0]]
+        # The per-slot actions are scored by their slots alone: the layout head's own logits there would give each
+        # slot a score for its position, which is what a set must not have.
+        for first, scores in self.director_sets.pointer_logits(features[picked], director_obs):
+            logits[picked, first : first + scores.shape[1]] = scores.to(logits.dtype)
+        return logits
 
     def goal_distribution(self, features: torch.Tensor, obs: torch.Tensor | None = None,
                           layout: torch.Tensor | None = None) -> Categorical:
@@ -677,7 +793,7 @@ class LayoutActor(nn.Module):
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
 
         hidden = self.features(obs, layout, memory, groups)
-        dist = self.action_distribution(hidden, layout, mask, goal, groups)
+        dist = self.action_distribution(hidden, layout, mask, goal, groups, obs)
         if len(lead) != 1:
             dist = Categorical(logits=dist.logits.reshape(*lead, -1))
         return dist, hidden, lead
@@ -694,7 +810,7 @@ class LayoutCritic(nn.Module):
     """
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
-                 goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1):
+                 goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1, director=None):
         super().__init__()
         if not hidden:
             raise ValueError("the critic needs at least one hidden layer")
@@ -713,6 +829,7 @@ class LayoutCritic(nn.Module):
         self.memory = nn.GRUCell(hidden[-1], recurrent_size) if recurrent_size else None
         self.head = _linear(recurrent_size if recurrent_size else hidden[-1], 1, 1.0)
         self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
+        _attach_director(self, director)
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
@@ -734,6 +851,9 @@ class LayoutCritic(nn.Module):
             for index, rows in groups if groups is not None else _per_layout(layout, len(self.adapters)):
                 own[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
                     own.dtype)
+        extra = _director_extra(self.director_sets, self.director_index, obs, layout)
+        if extra is not None:
+            own = own + extra.to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

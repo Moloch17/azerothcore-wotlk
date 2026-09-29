@@ -439,7 +439,7 @@ class _RolloutGraph:
         if critic_memory is not None:
             out["critic_memory"] = carried.reshape(envs, agents, trainer.recurrent_size)
 
-        logits = actor.action_logits(features, layout_t, mask_t, goal_t, None)
+        logits = actor.action_logits(features, layout_t, mask_t, goal_t, None, obs_t)
         actions, log_probs = sample_logits(logits, self.deterministic)
         out["actions"] = actions.reshape(envs, agents)
         out["log_probs"] = log_probs.reshape(envs, agents)
@@ -518,14 +518,20 @@ class MappoTrainer:
         rollout_device: str = "cpu",
         slow_layout: int = -1,
         ranks=None,
+        director=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `slow_layout` is the
         index of config.slow_layout among them, resolved by the caller (layouts carry no names here); -1 when the
-        run has none."""
+        run has none. `director` is (the director layout's index, stage.json's "director"): its members and
+        enemies are read as sets, and its turns are the sim's (the "may_call" column)."""
         skip_distribution_checks()
         self.config = config
         self.layouts = list(layouts)
         self.slow_layout = slow_layout if config.slow_layout else -1
+        self.director = director
+        # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
+        self.slow_choose_column = (int(director[1].get("may_call", -1))
+                                   if director is not None and director[0] == self.slow_layout else -1)
         # Data-parallel learners (animus.parallel.Ranks): gradients and statistics reduced across them; alone, none.
         self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
@@ -549,9 +555,9 @@ class MappoTrainer:
         self.slow_goal_size = config.slow_goal_size if self.goal_count else 0
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
-                                 config.goal_lookahead).to(self.train_device)
+                                 config.goal_lookahead, director).to(self.train_device)
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
-                                   self.recurrent_size, self.goal_targets).to(self.train_device)
+                                   self.recurrent_size, self.goal_targets, director).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -660,9 +666,9 @@ class MappoTrainer:
         hidden = list(self.config.hidden)
         fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
                              self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                             self.config.goal_lookahead),
+                             self.config.goal_lookahead, self.director),
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
-                              self.goal_targets))
+                              self.goal_targets, self.director))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)
@@ -694,6 +700,22 @@ class MappoTrainer:
         for actor in (self.actor, self._rollout_actor):
             if actor is not None and actor.goal_head is not None:
                 actor.goal_head.set_space(goals["accepts"], block_at)
+
+    def director_columns_clear(self) -> bool:
+        """Whether both networks' director adapters still read nothing from the slot columns."""
+        for network in (self.actor, self.critic):
+            if getattr(network, "director_sets", None) is not None:
+                weight = network.adapters[network.director_index].weight
+                if bool((weight[:, network.director_sets.column_mask] != 0).any()):
+                    return False
+        return True
+
+    def clear_director_columns(self) -> None:
+        """Zero the director adapters' slot columns in both networks, and in the rollout copies."""
+        from .networks import clear_director_columns
+        for network in (self.actor, self.critic):
+            clear_director_columns(network)
+        self._sync_rollout()
 
     def _sync_rollout(self) -> None:
         # Copy tensor by tensor into the networks that are already there. Building a state dict and loading it
@@ -730,7 +752,7 @@ class MappoTrainer:
         GPU, turned off (mappo.rollout_graphs), without an acting state, or with a slow layout (its held decisions
         branch on the host)."""
         if (self._rollout_stream is None or not self.config.rollout_graphs or state is None
-                or self.slow_layout >= 0):
+                or self.slow_layout >= 0 or self.director is not None):
             return None
         envs, agents = layout.shape
         device_fed = isinstance(obs, torch.Tensor)
@@ -875,7 +897,7 @@ class MappoTrainer:
             decided.goal_at = downloads.add(decided.goal_t.reshape(envs, agents))
             decided.goal_chosen_at = downloads.add(chosen_t.reshape(envs, agents))
 
-        dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups)
+        dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups, obs_t)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
         log_probs = dist.log_prob(actions)
 
@@ -885,7 +907,11 @@ class MappoTrainer:
         if self.slow_layout >= 0 and state is not None and state.slow_age is not None:
             every = max(1, self.config.slow_every_decisions)
             slow = layout == self.slow_layout
-            choosing = slow & (state.slow_age % every == 0)
+            # The sim's turns where it decides them (the director's "may call"), else the learner's own clock.
+            if self.slow_choose_column >= 0:
+                choosing = slow & (host(obs)[..., self.slow_choose_column] > 0.5)
+            else:
+                choosing = slow & (state.slow_age % every == 0)
             holding = slow & ~choosing
             if holding.any():
                 actions = torch.where(self._tensor(holding).reshape(rows).bool(),
@@ -1084,6 +1110,9 @@ class MappoTrainer:
         memory = rows(buffer.memory).float().reshape(length * columns, -1) if self.recurrent_size else None
         first = torch.as_tensor(buffer.slow_memory[safe[0], env_of[0], agent_of[0]], device=device)
         valid = torch.as_tensor(present.reshape(-1), device=device)
+        # Only the choices whose span has a target (compute_span_gae): one cut by the rollout's end or a truncation
+        # is still replayed, for the memory the next choices carry, but not learned from.
+        targeted = rows(buffer.slow_valid).bool().reshape(-1) & valid
         reached = np.zeros((length, columns), dtype=np.float32)
         if length > 1:
             next_rows = (safe[1:], env_of[1:], agent_of[1:])
@@ -1102,8 +1131,8 @@ class MappoTrainer:
             features = self.actor.features(obs, layout, memory)
             inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
 
-        counted = valid.float()
-        normalised = advantages[valid]
+        counted = targeted.float()
+        normalised = advantages[targeted]
         advantages = (advantages - normalised.mean()) / (normalised.std() + 1e-8) if normalised.numel() > 1 else advantages
         totals = {"slow_policy_loss": 0.0, "slow_value_loss": 0.0, "goal_entropy": 0.0, "slow_approx_kl": 0.0,
                   "lookahead_loss": 0.0}
@@ -1244,7 +1273,7 @@ class MappoTrainer:
 
                 features = self.actor.features(obs, layout)
                 goal = data["goal"][idx] if self.goal_count else None
-                dist = self.actor.action_distribution(features, layout, data["mask"][idx], goal)
+                dist = self.actor.action_distribution(features, layout, data["mask"][idx], goal, obs=obs)
                 predictions = (self.actor.foresight(features) if foresight else None)
                 log_probs = dist.log_prob(data["actions"][idx])
                 action_entropy = dist.entropy().mean()
@@ -1489,7 +1518,7 @@ class MappoTrainer:
                 carried = self.actor.carry(encoded, memory, dones_host)
                 features = carried.reshape(-1, carried.shape[-1])
 
-                dist = self.actor.action_distribution(features, layout_all, mask_all, goal_all, groups)
+                dist = self.actor.action_distribution(features, layout_all, mask_all, goal_all, groups, obs_all)
                 log_probs = dist.log_prob(data["actions"][:, chunk].reshape(-1)).reshape(*lead)
                 action_entropies = dist.entropy().reshape(*lead)
                 entropies = action_entropies

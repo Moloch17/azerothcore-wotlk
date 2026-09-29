@@ -499,6 +499,9 @@ class TrainingRun:
             print(f"No layout named {config.mappo.slow_layout!r} in this stage: nothing decides on a slow clock",
                   flush=True)
 
+        # The director's members and enemies are sets (stage.json "director"): its layout index and descriptor.
+        director = ((names.index(DIRECTOR_LAYOUT), self.stage["director"])
+                    if self.stage and "director" in self.stage and DIRECTOR_LAYOUT in names else None)
         self.trainer = MappoTrainer(
             [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
             spec.state_dim,
@@ -507,6 +510,7 @@ class TrainingRun:
             rollout_device=config.resolved_rollout_device(),
             slow_layout=self.slow_layout,
             ranks=self.ranks.update,
+            director=director,
         )
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
@@ -561,6 +565,13 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
+        # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
+        # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
+        if self.resume_path:
+            if not self.trainer.director_columns_clear():
+                raise SystemExit(f"{self.resume_path}: the director adapter learned its slot columns; not resuming")
+        else:
+            self.trainer.clear_director_columns()
         # Every rank carries on from the leader's counters (a learner on another machine resumed nothing), so they
         # stop, evaluate and schedule together.
         self.update, self.env_steps = self.ranks.broadcast((self.update, self.env_steps))

@@ -130,6 +130,23 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
     return "unknown";
 }
 
+std::string_view Animus::Curriculum::OrderKindName(OrderKind kind)
+{
+    switch (kind)
+    {
+        case OrderKind::None:      return "none";
+        case OrderKind::Focus:     return "focus";
+        case OrderKind::Tank:      return "tank";
+        case OrderKind::Interrupt: return "interrupt";
+        case OrderKind::Control:   return "control";
+        case OrderKind::Heal:      return "heal";
+        case OrderKind::GoTo:      return "go_to";
+        case OrderKind::Objective: return "objective";
+        case OrderKind::Count:     break;
+    }
+    return "unknown";
+}
+
 bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
 {
     bool const none = target == GOAL_TARGET_NONE;

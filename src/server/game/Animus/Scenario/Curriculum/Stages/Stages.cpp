@@ -786,9 +786,10 @@ namespace
             .Suffix = "_party",
             .Extends = "stage16_companion",
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450,
+                    .Directed = true, .DirectorLearned = true } },
         });
 
         // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
@@ -804,10 +805,11 @@ namespace
             .Suffix = "_tanking",
             .Extends = "stage17_party",
             .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatAptitudes = { AptitudeDemand::HoldsThePull() } } },
+                .SeatAptitudes = { AptitudeDemand::HoldsThePull() },
+                    .Directed = true, .DirectorLearned = true } },
         });
 
         // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
@@ -823,10 +825,11 @@ namespace
             .Suffix = "_triage",
             .Extends = "stage18_tanking",
             .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatAptitudes = { AptitudeDemand::KeepsThemUp() } } },
+                .SeatAptitudes = { AptitudeDemand::KeepsThemUp() },
+                    .Directed = true, .DirectorLearned = true } },
         });
 
         // Warsong Gulch's rules between two learned seats (self-play): take the other side's flag home, return one's
@@ -897,14 +900,16 @@ namespace
             .Suffix = "_dungeon",
             .Extends = "stage19_triage",
             .Summary = "a party and its owner against real dungeon bosses, in their instances",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "dungeon", .Weight = 9, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
-                    .EpisodeSeconds = 300 },
+                    .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "dungeon_control", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
-                    .EpisodeSeconds = 300 },
+                    .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
             },
         });
 
@@ -934,9 +939,10 @@ namespace
             // does not carry it.
             .Merges = { "stage19_triage" },
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
-            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Order, Forecast, Goal },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
-                .EpisodeSeconds = 420 } },
+                .EpisodeSeconds = 420,
+                    .Directed = true, .DirectorLearned = true } },
             .MapId = MAP_WARSONG_GULCH,
             // Silverwing Hold and the Warsong Lumber Mill, as game_graveyard 769 and 770 put them: the real
             // battleground's own arrival points, which are also where its flags stand.
@@ -962,9 +968,10 @@ namespace
             .Suffix = "_raid",
             .Extends = "stage19_triage",
             .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
+                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true } },
             .InDefaultQueue = false,
         });
 
@@ -975,9 +982,10 @@ namespace
             .Suffix = "_raidrun",
             .Extends = "stage28_raid_single",
             .Summary = "a raid clearing pull after pull, recovering between them",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
+                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600,
+                    .Directed = true, .DirectorLearned = true } },
             .InDefaultQueue = false,
         });
 
@@ -1017,12 +1025,13 @@ namespace
             },
             .Summary = "PvE, PvP and life in one policy: every earlier situation, an ambush mid-gauntlet, a ganked owner",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles,
-                Support, World, Forecast, Goal },
+                Support, World, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "companion", .Weight = 20, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .Owner = true, .OwnerCast = true, .EpisodeSeconds = 300 },
                 { .Name = "party", .Weight = 20, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300 },
+                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "arena_1v1", .Weight = 25, .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
                     .Pvp = true, .EpisodeSeconds = 60 },
                 { .Name = "gauntlet", .Weight = 10, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
@@ -1035,7 +1044,8 @@ namespace
                 // The shipped model has met a scripted boss: the dungeon ladder, in its instances.
                 { .Name = "dungeon", .Weight = 10, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
-                    .EpisodeSeconds = 300 },
+                    .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
                 // ... and lived a little: a quest, a field of nodes, a town, so the life it learned ships too.
                 { .Name = "quest", .Weight = 5, .Against = Opposition::Quest, .EpisodeSeconds = 600 },
                 { .Name = "gather", .Weight = 3, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
@@ -1053,12 +1063,14 @@ namespace
             .Suffix = "_raid10",
             .Extends = "stage23_dungeon",
             .Summary = "ten seats against Karazhan's and Naxxramas's bosses, in their raids",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Raid10, .RaidSeats = 10, .EpisodeSeconds = 360 },
+                    .PartyGroup = true, .Instance = InstanceLadder::Raid10, .RaidSeats = 10, .EpisodeSeconds = 360,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "raid_control", .Weight = 1, .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 10, .EpisodeSeconds = 300 },
+                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 10, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
             },
             .InDefaultQueue = false,
         });
@@ -1068,12 +1080,14 @@ namespace
             .Suffix = "_raid25",
             .Extends = "stage30_raid10",
             .Summary = "twenty-five seats against Naxxramas's bosses",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Raid25, .RaidSeats = 25, .EpisodeSeconds = 420 },
+                    .PartyGroup = true, .Instance = InstanceLadder::Raid25, .RaidSeats = 25, .EpisodeSeconds = 420,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "raid_control", .Weight = 1, .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 25, .EpisodeSeconds = 300 },
+                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 25, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
             },
             .InDefaultQueue = false,
         });
@@ -1083,12 +1097,14 @@ namespace
             .Suffix = "_raid40",
             .Extends = "stage31_raid25",
             .Summary = "forty seats against the classic raids' bosses: Molten Core, Blackwing Lair, Ahn'Qiraj",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Forecast, Goal },
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "raid", .Weight = 9, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Raid40, .RaidSeats = 40, .EpisodeSeconds = 480 },
+                    .PartyGroup = true, .Instance = InstanceLadder::Raid40, .RaidSeats = 40, .EpisodeSeconds = 480,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "raid_control", .Weight = 1, .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 40, .EpisodeSeconds = 300 },
+                    .Schedule = PullSchedule::SinglePack, .RaidSeats = 40, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
             },
             .InDefaultQueue = false,
         });
@@ -1155,8 +1171,9 @@ namespace
             return "only a director names a place: the arena has to be directed";
         if (arena.DirectorLearned && !arena.Directed)
             return "a learned director is still a director: the arena has to be directed";
-        if (arena.Directed && arena.Seats != SeatPlan::Teams)
-            return "a director commands a side, so its arena needs team seats";
+        if (arena.Directed && arena.Seats != SeatPlan::Teams && arena.Seats != SeatPlan::Party
+            && arena.Seats != SeatPlan::Raid)
+            return "a director commands a group: its arena needs team, party or raid seats";
         if (arena.Ambushers > MAX_AMBUSHERS)
             return "at most " + std::to_string(MAX_AMBUSHERS) + " ambushers";
         if (arena.Ambushers > 0 && !(pulls || ambushOnly))

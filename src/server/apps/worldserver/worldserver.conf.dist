@@ -6097,6 +6097,12 @@ AnimusForge.Curriculum.Order.PlaceCooldownMs = 10000
 #   an arena and a continent: the director's thirteen place actions mean the same thing at any scale
 AnimusForge.Curriculum.Director.PlaceNearYards = 20
 AnimusForge.Curriculum.Director.PlaceFarYards = 60
+#   how often the director's clock gives it a turn to speak (decisions; 10 is 2.5 s). Events give it one at once: a
+#   member down or newly badly hurt, a new enemy in the fight, the focus dead. A turn allows four calls for a group
+#   and eight for a raid, until the director holds
+AnimusForge.Curriculum.Director.ClockDecisions = 10
+#   below this share of its health a member counts as badly hurt, for the director's event
+AnimusForge.Curriculum.Director.LowHealth = 0.25
 AnimusForge.Curriculum.Support.SelfHealing = 0.5
 #   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
 #   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank

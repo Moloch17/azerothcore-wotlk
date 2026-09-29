@@ -551,7 +551,15 @@ namespace Animus::Curriculum
             /// see" are the same all-zero observation, and a seat told to kill someone it has lost would read
             /// it as having been told nothing.
             bool FocusUnseen = false;
-            bool IsDuty = false;                    // this seat owes the next interrupt or control
+            bool IsDuty = false;                    // this seat owes an interrupt or a control (its own order)
+            /// The order to this seat alone (Component E): its kind, what it is about -- an enemy or a friend
+            /// (Target), a journal objective (Objective) or the called place (GoTo, RallyPlace) -- who it came
+            /// from, and how old it is. None when the seat holds only the side's order.
+            OrderKind Kind = OrderKind::None;
+            Unit* Target = nullptr;
+            uint32 Objective = 0;
+            OrderSource Source = OrderSource::Side;
+            float Age = 0.0f;                       // decisions since it was given / 40, clamped
         } Order;
 
         // PvP: the enemy player.

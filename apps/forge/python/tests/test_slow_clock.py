@@ -9,7 +9,7 @@ actually governed rather than the 250 ms that happened to follow it.
 import numpy as np
 import torch
 
-from animus.mappo.buffer import RolloutBuffer, compute_slow_gae
+from animus.mappo.buffer import RolloutBuffer, compute_span_gae
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 
 
@@ -76,12 +76,13 @@ def test_a_transition_carries_the_rewards_of_the_span_it_governed():
     chosen = np.array([[[True]], [[False]], [[True]], [[False]]])
     slow = np.ones((4, 1, 1), bool)
 
-    advantages, returns = compute_slow_gae(
-        rewards, values, dones, dones, np.zeros_like(rewards), np.array([[5.0]], np.float32),
-        chosen, slow, gamma=0.5, gae_lambda=1.0)
+    advantages, returns, valid = compute_span_gae(rewards, values, dones, dones, chosen & slow, gamma=0.5,
+                                                  gae_lambda=1.0, final_values=np.zeros_like(rewards),
+                                                  last_values=np.array([[5.0]], np.float32))
 
     # Second span: rewards 3 + 4, bootstrapped on the value after the rollout.
     second = (3.0 + 4.0) + 0.5 * 5.0 - 20.0
+    assert valid[0, 0, 0] and valid[2, 0, 0]
     # First span: rewards 1 + 2, bootstrapped on the value at the next decision it took, plus the trace.
     first = (1.0 + 2.0) + 0.5 * 20.0 - 10.0 + 0.5 * second
     assert np.isclose(advantages[2, 0, 0], second)
@@ -100,9 +101,9 @@ def test_credit_does_not_cross_the_end_of_an_episode():
     chosen = np.array([[[True]], [[False]], [[True]], [[False]]])
     slow = np.ones((4, 1, 1), bool)
 
-    advantages, _ = compute_slow_gae(
-        rewards, values, dones, terminated, np.zeros_like(rewards), np.array([[5.0]], np.float32),
-        chosen, slow, gamma=0.5, gae_lambda=1.0)
+    advantages, _, _ = compute_span_gae(rewards, values, dones, terminated, chosen & slow, gamma=0.5, gae_lambda=1.0,
+                                        final_values=np.zeros_like(rewards),
+                                        last_values=np.array([[5.0]], np.float32))
 
     # 1 + 2, nothing after a termination, and no trace from the episode that follows.
     assert np.isclose(advantages[0, 0, 0], 3.0 - 10.0)

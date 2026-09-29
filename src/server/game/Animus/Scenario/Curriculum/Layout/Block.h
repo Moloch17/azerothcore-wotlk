@@ -92,6 +92,30 @@ namespace Animus::Curriculum
     };
 
     constexpr uint32 TEAM_POSTURE_COUNT = uint32(TeamPosture::Count);
+
+    /// **An order to one member or group** (long-horizon plan, Component E): what a director asks of the members it
+    /// addresses, beyond the side's posture and shape. Each names a target -- an enemy slot for Focus, Tank,
+    /// Interrupt and Control, a member for Heal, the called place for GoTo, a journal objective for Objective.
+    enum class OrderKind : uint8
+    {
+        None,
+        Focus,          // fight this one
+        Tank,           // hold this one's attention
+        Interrupt,      // stop this one's casts
+        Control,        // keep this one out of the fight
+        Heal,           // keep this member up
+        GoTo,           // go to the called place
+        Objective,      // do this journal objective
+        Count
+    };
+
+    constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);
+    [[nodiscard]] std::string_view OrderKindName(OrderKind kind);
+
+    /// Who an order came to: the whole side, the member's group, or the member by name. A raid director's order to
+    /// one member outranks its order to the member's group, which outranks the side's.
+    enum class OrderSource : uint8 { Side, Group, Member, Count };
+    constexpr uint32 ORDER_SOURCE_COUNT = uint32(OrderSource::Count);
     constexpr uint32 TEAM_RALLY_COUNT = uint32(TeamRally::Count);
 
     /// How a director names a spot without an action space the size of the world.

@@ -80,4 +80,24 @@ void Animus::Curriculum::OrderBlock::Observe(SeatView const& view, float* obs, u
     }
 
     obs[OBS_IS_DUTY] = order.IsDuty ? 1.0f : 0.0f;
+
+    // The seat's own order.
+    obs[OBS_ORDER_KIND_FIRST + uint32(order.Kind)] = 1.0f;
+    if (order.Kind == OrderKind::None)
+        return;
+    if (Unit const* target = order.Target; target && target->IsAlive())
+    {
+        obs[OBS_ORDER_TARGET] = 1.0f;
+        WritePlace(bot, *target, &obs[OBS_ORDER_TARGET_DISTANCE]);
+        obs[OBS_ORDER_TARGET_HEALTH] = CombatReward::HealthLeft(target);
+    }
+    else if (order.Kind == OrderKind::GoTo && order.HasRallyPlace)
+    {
+        obs[OBS_ORDER_TARGET] = 1.0f;
+        WritePlace(bot, order.RallyPlace, &obs[OBS_ORDER_TARGET_DISTANCE]);
+    }
+    if (order.Kind == OrderKind::Objective && order.Objective < 4)
+        obs[OBS_ORDER_OBJECTIVE_FIRST + order.Objective] = 1.0f;
+    obs[OBS_ORDER_SOURCE_FIRST + uint32(order.Source)] = 1.0f;
+    obs[OBS_ORDER_AGE] = order.Age;
 }

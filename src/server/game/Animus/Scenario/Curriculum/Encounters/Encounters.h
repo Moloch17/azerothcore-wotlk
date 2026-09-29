@@ -879,8 +879,14 @@ namespace Animus::Curriculum
 
         /// One call from the learned director of `side`: the action names the single field of the standing order
         /// it changes, and everything else keeps what it was. An action out of range, or one naming a slot that
-        /// is not there, changes nothing -- a masked action may still arrive.
+        /// is not there, changes nothing -- a masked action may still arrive -- and so does any action off the
+        /// director's turn (PrepareTurn).
         void Call(Env& env, uint32 side, int32 action);
+
+        /// Before the director's observation: whether it gets a turn now -- on its clock (Director.ClockDecisions)
+        /// or on an event (a member down or newly below a quarter of its health, a new enemy, the focus dead) --
+        /// with a budget of calls (four for a group, eight for a raid) it keeps until it holds or spends them.
+        void PrepareTurn(Env& env, uint32 side);
 
     private:
         struct SideOrder
@@ -901,8 +907,33 @@ namespace Animus::Curriculum
             PlaceOffset Offset = PlaceOffset::Toward;
             PlaceRing Ring = PlaceRing::Near;
             ObjectGuid Focus;
-            uint32 Duty = NO_SEAT;              // the seat that owes the next interrupt or control
             uint32 Changes = 0;                 // how often the call moved, for the episode info
+            /// Who the next order goes to: the side, a group (AddressGroup) or a member (AddressMember, a seat).
+            OrderSource Address = OrderSource::Side;
+            uint32 AddressGroup = 0;
+            uint32 AddressMember = NO_SEAT;
+            /// The orders to members alone, by seat: what, about whom, from which address, since when.
+            struct MemberOrder
+            {
+                OrderKind Kind = OrderKind::None;
+                ObjectGuid Target;
+                uint32 Objective = 0;
+                OrderSource Source = OrderSource::Side;
+                uint32 IssuedStep = 0;
+            };
+            std::array<MemberOrder, MAX_SEATS> Members{};
+            /// The director's turn: calls left in it, whether an event opened it, when the clock next gives one,
+            /// and what the events are measured against (who was alive, who was low, how many enemies).
+            uint32 CallsLeft = 0;
+            bool ByEvent = false;
+            uint32 NextClock = 0;
+            std::array<uint8, MAX_SEATS> WasAlive{};
+            std::array<uint8, MAX_SEATS> WasLow{};
+            uint32 EnemiesAlive = 0;
+            bool FocusAlive_ = false;
+            uint32 Turns = 0;                   // for the episode info
+            uint32 Calls = 0;
+            uint32 MemberOrders = 0;
             uint32 CalledStep = 0;              // the decision the order last changed on
             /// Whether the call is worth following, which is upstream of whether it is followed: decisions with
             /// a living enemy to call, those whose call was one, those whose call was the most hurt of them,
@@ -966,6 +997,14 @@ namespace Animus::Curriculum
         /// One side's orders, from what its seats and the enemy's are doing. The scripted director; a learned one
         /// is told what to say instead (Call).
         void Command(Env& env, uint32 side);
+        /// The enemies of `side` in slot order: the other side's seats in a match, the env's target slots (the
+        /// pack, the boss) against creatures. Slots the side's seats select between, so a call means the same
+        /// enemy as a seat's own choice.
+        uint32 Enemies(Env const& env, uint32 side, std::array<Unit*, PACK_SLOTS>& out) const;
+        /// The seats of `side` a director commands, in seat order: up to a raid.
+        uint32 Members(Env const& env, uint32 side, std::array<uint32, DirectorLayout::DIRECTOR_SEATS>& out) const;
+        /// Give an order to whoever the side has addressed.
+        void Order(Env& env, uint32 side, OrderKind kind, ObjectGuid target, uint32 objective);
         /// Whether the env's arena has the director learn rather than follow the script.
         [[nodiscard]] bool Learned(Env const& env) const;
         /// Refresh what the side can see and what it remembers, once per decision before anything reads it.

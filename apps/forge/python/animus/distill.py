@@ -309,7 +309,7 @@ class Distiller:
                         carried.append(memory)
                         memory = memory * (~dones[step]).to(memory.dtype).unsqueeze(1)
                     features = torch.stack(carried).reshape(steps * rows, -1)
-                    t_logits = teacher.actor.action_distribution(features, t_layout, t_mask).logits
+                    t_logits = teacher.actor.action_distribution(features, t_layout, t_mask, obs=t_obs).logits
                 else:
                     t_logits = teacher.actor(t_obs, t_layout, t_mask).logits
 
