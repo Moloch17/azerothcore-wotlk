@@ -63,6 +63,48 @@ namespace Animus::Curriculum
         bool VendorRepairs = false;
         uint8 QuestState = QUEST_NONE;              // the episode's quest
         float QuestProgress = 0.0f;
+        /// What the seat's own quests want nearby (QuestPlanner, WorldActions::Sense): an object to use or open,
+        /// a creature to use a quest item on (and the item), a vendor selling a quest item (and the item).
+        GameObject* QuestObject = nullptr;
+        Unit* ItemTarget = nullptr;
+        uint32 UseItem = 0;
+        Creature* QuestVendor = nullptr;
+        uint32 BuyItem = 0;
+
+        /// **The journal** (long-horizon plan, Component B): what a player keeps in the quest log and on the map
+        /// -- the current quest's objectives with what is left of each and where it is done, the giver and the
+        /// turn-in, the places found where something wanted was seen (and how long ago, and whether another group
+        /// has claimed them), where it is in a chain of quests, and the area the world coordinator assigned. The
+        /// sim's life encounters and the module's life service both fill it; nothing here is remembered by the
+        /// network, which is the point: minutes of plan held as facts, not as a 128-unit memory.
+        static constexpr uint32 JOURNAL_OBJECTIVES = 4;
+        static constexpr uint32 JOURNAL_PLACES = 8;
+        struct JournalObjective
+        {
+            bool Present = false;
+            uint8 Kind = 0;                         // ObjectiveKind
+            float Left = 0.0f;                      // share still to do, 0 = done
+            bool HasPlace = false;
+            Position Place;
+        };
+        struct JournalPlace
+        {
+            bool Present = false;
+            Position Where;
+            float AgeSeconds = 0.0f;                // since it was last seen
+            bool Claimed = false;                   // another group holds it (the coordinator's claims)
+            uint8 Objective = 0;                    // which objective's sources were seen there
+        };
+        std::array<JournalObjective, JOURNAL_OBJECTIVES> Objectives{};
+        bool HasGiver = false;
+        Position GiverAt;
+        bool HasEnder = false;
+        Position EnderAt;
+        std::array<JournalPlace, JOURNAL_PLACES> Places{};
+        uint8 ChainIndex = 0;                       // quests of the chain turned in
+        uint8 ChainLength = 0;
+        bool HasAssignment = false;                 // the area the coordinator gave the seat's group
+        Position Assignment;
     };
 
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills

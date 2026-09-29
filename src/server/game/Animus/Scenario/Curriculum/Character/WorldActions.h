@@ -126,6 +126,11 @@ namespace Animus::Curriculum::WorldActions
     /// What is around the bot within `radius`, for the WorldBlock: the nearest corpse it may loot (or skin), the
     /// nearest quest giver it has business with, the nearest gathering node, the nearest vendor. The quest fields
     /// are the caller's (the encounter knows the episode's quest; the live module reads the log). Sets Active.
+    /// The quest actions INTERACT runs on what Sense found for the seat's quests: use or open a quest object, use
+    /// a quest item on a creature, buy a quest item. Each returns whether it did something.
+    bool UseQuestObject(Player* bot, GameObject* object);
+    bool UseItemOn(Player* bot, uint32 item, Unit* target);
+    bool BuyQuestItem(Player* bot, Creature* vendor, uint32 item);
     void Sense(Player* bot, float radius, WorldView& world);
 }
 

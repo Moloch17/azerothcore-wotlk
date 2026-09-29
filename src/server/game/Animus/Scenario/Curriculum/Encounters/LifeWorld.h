@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include "ObjectGuid.h"
+#include "QuestPlanner.h"
 #include "Position.h"
 #include "SharedDefines.h"
 #include <map>
@@ -84,8 +85,9 @@ namespace Animus::Curriculum::LifeWorld
         /// Spawns within `radius` of (x, y) on `map`, nearest first.
         void CreaturesNear(uint32 map, float x, float y, float radius, std::vector<Spawn const*>& out) const;
         void ObjectsNear(uint32 map, float x, float y, float radius, std::vector<Spawn const*>& out) const;
-        /// The continent spawns of creature `entry`.
+        /// The continent spawns of creature `entry`, and of gameobject `entry`.
         [[nodiscard]] std::vector<Spawn const*> const& CreaturesOfEntry(uint32 entry) const;
+        [[nodiscard]] std::vector<Spawn const*> const& ObjectsOfEntry(uint32 entry) const;
 
     private:
         SpawnIndex();
@@ -99,10 +101,20 @@ namespace Animus::Curriculum::LifeWorld
         Cells _creatureCells;
         Cells _objectCells;
         std::unordered_map<uint32, std::vector<Spawn const*>> _byEntry;
+        std::unordered_map<uint32, std::vector<Spawn const*>> _objectsByEntry;
     };
 
-    /// A quest an episode can be: kill or collect, its giver and its turn-in both spawned on a continent within
-    /// reach of each other, its objectives' places (the quest POI table) within reach of the giver.
+    /// Where one of a quest's objectives is done in the sim: a real spawn point of what it needs (the creatures
+    /// to kill or loot, the objects to use or open, the vendor, the ender), or the trigger's place for Explore.
+    struct ObjectivePlace
+    {
+        Position Where;
+        std::vector<Spawn const*> Spawns;       // what to put there: the sources' spawns around the place
+        float Radius = 0.0f;                    // Explore: how near counts as there
+    };
+
+    /// A quest an episode can be (QuestPlanner's typed objectives): its giver and its turn-in both spawned on a
+    /// continent within reach of each other, each objective's place within reach of the giver.
     struct QuestCandidate
     {
         uint32 Id = 0;
@@ -111,8 +123,11 @@ namespace Animus::Curriculum::LifeWorld
         Side For = Side::Any;
         Spawn const* Giver = nullptr;
         Spawn const* Ender = nullptr;
-        bool Collect = false;                   // needs items looted (else kills alone)
-        std::vector<Position> Objectives;       // one place per objective, on the giver's map
+        QuestPlan const* Plan = nullptr;
+        std::vector<ObjectivePlace> Places;     // one per plan objective, on the giver's map
+        bool HeldOut = false;                   // drawn only in evaluation (IsHeldOutQuest)
+        QuestCandidate const* Next = nullptr;   // the chain's next quest, when it is a candidate too
+        bool Collect = false;                   // needs items (for the columns)
     };
 
     /// The quests of the world database that pass the life stage's filter, by band and side. Built once.
@@ -121,8 +136,9 @@ namespace Animus::Curriculum::LifeWorld
     public:
         static QuestSet const& Instance();
 
-        /// Candidates a seat of `side` in `band` could be given (its own side's and the ones for both).
-        [[nodiscard]] std::vector<QuestCandidate const*> const& For(uint32 band, Side side) const;
+        /// Candidates a seat of `side` in `band` could be given (its own side's and the ones for both): without
+        /// the held-out tenth in training, every one in evaluation.
+        [[nodiscard]] std::vector<QuestCandidate const*> const& For(uint32 band, Side side, bool evaluating = false) const;
         [[nodiscard]] std::size_t Size() const { return _quests.size(); }
 
     private:
@@ -130,6 +146,7 @@ namespace Animus::Curriculum::LifeWorld
 
         std::vector<QuestCandidate> _quests;
         std::map<std::pair<uint32, Side>, std::vector<QuestCandidate const*>> _byBandAndSide;
+        std::map<std::pair<uint32, Side>, std::vector<QuestCandidate const*>> _trainingByBandAndSide;
     };
 
     /// Where the gather stage stands a seat: the middle of a field of nodes of the band's zones (the densest

@@ -140,16 +140,29 @@ namespace Animus::Curriculum
     private:
         struct EnvQuest
         {
-            LifeWorld::QuestCandidate const* Quest = nullptr;
-            ObjectGuid Giver;
-            ObjectGuid Ender;
-            bool Accepted = false;
+            /// The episode's quests: one, or a chain of up to three (QuestCandidate::Next), done in order.
+            std::vector<LifeWorld::QuestCandidate const*> Chain;
+            uint32 Current = 0;                 // the one being done
+            std::vector<ObjectGuid> Givers;     // per chain quest
+            std::vector<ObjectGuid> Enders;
+            bool Accepted = false;              // the current quest
             bool Complete = false;
             bool TurnedIn = false;
             bool AcceptPaid = false;
-            float Progress = 0.0f;              // objectives done, 0 to 1
+            float Progress = 0.0f;              // the current quest's objectives done, 0 to 1
             float ProgressPaid = 0.0f;
+            uint32 TurnedInCount = 0;
+            uint32 TurnInsPaid = 0;
             uint32 Kills = 0;
+            /// Places where something the current quest wants was seen (the journal's), and when.
+            struct Found { Position Where; uint32 SeenMs = 0; uint8 Objective = 0; };
+            std::vector<Found> Places;
+            uint32 ScannedMs = 0;
+
+            [[nodiscard]] LifeWorld::QuestCandidate const* Quest() const
+            {
+                return Current < Chain.size() ? Chain[Current] : nullptr;
+            }
         };
 
         std::vector<EnvQuest> _quests;

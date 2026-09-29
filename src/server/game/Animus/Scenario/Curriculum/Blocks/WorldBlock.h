@@ -20,6 +20,8 @@
 #define ANIMUS_LIB_CURRICULUM_WORLD_BLOCK_H
 
 #include "Block.h"
+#include "QuestPlanner.h"
+#include "SeatView.h"
 
 namespace Animus::Curriculum
 {
@@ -82,8 +84,25 @@ namespace Animus::Curriculum
             OBS_DRINK                   = 38,
             OBS_LOOT_OPEN               = 39,   // a loot window is open (a node just gathered, a corpse opened)
             OBS_CASTING                 = 40,   // a gathering or skinning cast is running
-            OBS_COUNT                   = 41
+            /// The journal (WorldView): per objective JOURNAL_OBJECTIVE_FEATURES (present, kind one-hot over the
+            /// ObjectiveKinds, share left, place known, its distance / RANGE, bearing sin and cos, in reach), the
+            /// giver and the turn-in (present, distance, sin, cos), per place found JOURNAL_PLACE_FEATURES (present,
+            /// distance, sin, cos, age / 120 s, claimed), the chain (turned in / 3, length / 3), and the assigned
+            /// area (present, distance, sin, cos).
+            OBS_JOURNAL_FIRST           = 41,
         };
+
+        static constexpr uint32 JOURNAL_OBJECTIVE_FEATURES = 1 + OBJECTIVE_KIND_COUNT + 6;
+        static constexpr uint32 JOURNAL_PLACE_FEATURES = 6;
+        static constexpr uint32 OBS_JOURNAL_GIVER = OBS_JOURNAL_FIRST
+            + WorldView::JOURNAL_OBJECTIVES * JOURNAL_OBJECTIVE_FEATURES;
+        static constexpr uint32 OBS_JOURNAL_ENDER = OBS_JOURNAL_GIVER + 4;
+        static constexpr uint32 OBS_JOURNAL_PLACES = OBS_JOURNAL_ENDER + 4;
+        static constexpr uint32 OBS_JOURNAL_CHAIN = OBS_JOURNAL_PLACES + WorldView::JOURNAL_PLACES * JOURNAL_PLACE_FEATURES;
+        static constexpr uint32 OBS_JOURNAL_ASSIGNMENT = OBS_JOURNAL_CHAIN + 2;
+        static constexpr uint32 OBS_COUNT = OBS_JOURNAL_ASSIGNMENT + 4;
+        /// Within this of an objective's place counts as there.
+        static constexpr float JOURNAL_REACH = 20.0f;
 
         enum Action : uint32
         {

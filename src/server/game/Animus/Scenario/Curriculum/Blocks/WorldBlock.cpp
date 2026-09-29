@@ -52,6 +52,24 @@ namespace
         return thing && bot->IsWithinDistInMap(thing, WorldActions::INTERACT_YARDS);
     }
 
+    /// A quest item is used from a little further off than a right-click reaches.
+    bool InItemReach(Player const* bot, WorldObject const* thing)
+    {
+        return thing && bot->IsWithinDistInMap(thing, WorldActions::INTERACT_YARDS * 3.0f);
+    }
+
+    /// (present, distance, bearing) of a place, as Place writes a thing.
+    void PlaceAt(SeatView const& view, Position const& where, float* obs)
+    {
+        Player const* bot = view.Bot;
+        obs[0] = 1.0f;
+        obs[1] = std::min(1.0f, bot->GetExactDist2d(&where) / WorldBlock::RANGE);
+        float const relative = bot->GetAngle(where.GetPositionX(), where.GetPositionY()) - view.Facing;
+        float const bearing = std::atan2(std::sin(relative), std::cos(relative));
+        obs[2] = std::sin(bearing);
+        obs[3] = std::cos(bearing);
+    }
+
     StatProfile StatsOf(SeatView const& view)
     {
         return view.L && view.L->Profile ? view.L->Profile->Specs[view.Spec].Stats : StatProfile::StrengthMelee;
@@ -71,6 +89,8 @@ namespace
                 if (casting)
                     return false;
                 return (world.Giver && (world.GiverOffers || world.GiverTurnIn) && InReach(bot, world.Giver))
+                    || InReach(bot, world.QuestObject) || InItemReach(bot, world.ItemTarget)
+                    || InReach(bot, world.QuestVendor)
                     || (world.Node && world.NodeOpenable && InReach(bot, world.Node))
                     || (world.Corpse && InReach(bot, world.Corpse));
             case WorldBlock::ACTION_LOOT_ALL:
@@ -165,6 +185,43 @@ void Animus::Curriculum::WorldBlock::Observe(SeatView const& view, float* obs, u
     obs[OBS_LOOT_OPEN] = bot->GetLootGUID().IsEmpty() ? 0.0f : 1.0f;
     obs[OBS_CASTING] = bot->IsNonMeleeSpellCast(false) ? 1.0f : 0.0f;
 
+    // The journal.
+    for (uint32 i = 0; i < WorldView::JOURNAL_OBJECTIVES; ++i)
+    {
+        WorldView::JournalObjective const& objective = world.Objectives[i];
+        if (!objective.Present)
+            continue;
+        float* out = obs + OBS_JOURNAL_FIRST + i * JOURNAL_OBJECTIVE_FEATURES;
+        out[0] = 1.0f;
+        if (objective.Kind < OBJECTIVE_KIND_COUNT)
+            out[1 + objective.Kind] = 1.0f;
+        float* rest = out + 1 + OBJECTIVE_KIND_COUNT;
+        rest[0] = objective.Left;
+        if (objective.HasPlace)
+        {
+            PlaceAt(view, objective.Place, rest + 1);
+            rest[5] = bot->GetExactDist2d(&objective.Place) <= JOURNAL_REACH ? 1.0f : 0.0f;
+        }
+    }
+    if (world.HasGiver)
+        PlaceAt(view, world.GiverAt, obs + OBS_JOURNAL_GIVER);
+    if (world.HasEnder)
+        PlaceAt(view, world.EnderAt, obs + OBS_JOURNAL_ENDER);
+    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES; ++i)
+    {
+        WorldView::JournalPlace const& place = world.Places[i];
+        if (!place.Present)
+            continue;
+        float* out = obs + OBS_JOURNAL_PLACES + i * JOURNAL_PLACE_FEATURES;
+        PlaceAt(view, place.Where, out);
+        out[4] = std::min(1.0f, place.AgeSeconds / 120.0f);
+        out[5] = place.Claimed ? 1.0f : 0.0f;
+    }
+    obs[OBS_JOURNAL_CHAIN] = std::min(1.0f, float(world.ChainIndex) / 3.0f);
+    obs[OBS_JOURNAL_CHAIN + 1] = std::min(1.0f, float(world.ChainLength) / 3.0f);
+    if (world.HasAssignment)
+        PlaceAt(view, world.Assignment, obs + OBS_JOURNAL_ASSIGNMENT);
+
     for (uint32 action = 0; mask && action < ACTION_COUNT; ++action)
         mask[action] = IsAllowed(view, action) ? 1 : 0;
 }
@@ -197,6 +254,10 @@ void Animus::Curriculum::WorldBlock::Apply(SeatView& view, uint32 local, SeatAct
             };
             if (world.Giver && (world.GiverOffers || world.GiverTurnIn))
                 consider(world.Giver);
+            consider(world.QuestObject);
+            consider(world.QuestVendor);
+            if (world.ItemTarget && InItemReach(bot, world.ItemTarget) && !best.Thing)
+                best = { world.ItemTarget, bot->GetExactDist2d(world.ItemTarget) };
             if (world.Node && world.NodeOpenable)
                 consider(world.Node);
             if (world.Corpse)
@@ -212,6 +273,21 @@ void Animus::Curriculum::WorldBlock::Apply(SeatView& view, uint32 local, SeatAct
                 else if (world.GiverOffers && WorldActions::TakeQuest(bot, world.Giver))
                     result.QuestAccepted = true;
                 else
+                    ++result.Wasted;
+            }
+            else if (best.Thing == world.QuestObject)
+            {
+                if (!WorldActions::UseQuestObject(bot, world.QuestObject))
+                    ++result.Wasted;
+            }
+            else if (best.Thing == world.QuestVendor)
+            {
+                if (!WorldActions::BuyQuestItem(bot, world.QuestVendor, world.BuyItem))
+                    ++result.Wasted;
+            }
+            else if (best.Thing == world.ItemTarget)
+            {
+                if (!WorldActions::UseItemOn(bot, world.UseItem, world.ItemTarget))
                     ++result.Wasted;
             }
             else if (best.Thing == world.Node)

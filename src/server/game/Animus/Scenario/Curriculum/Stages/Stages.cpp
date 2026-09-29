@@ -848,7 +848,7 @@ namespace
             .Merges = { "stage6_travel" },
             .Summary = "a quest of the level band: take it, do it, hand it in",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast },
-            .Arenas = { { .Name = "quest", .Against = Opposition::Quest, .EpisodeSeconds = 300 } },
+            .Arenas = { { .Name = "quest", .Against = Opposition::Quest, .EpisodeSeconds = 600 } },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
             .MinLevel = 15,
@@ -1037,7 +1037,7 @@ namespace
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
                     .EpisodeSeconds = 300 },
                 // ... and lived a little: a quest, a field of nodes, a town, so the life it learned ships too.
-                { .Name = "quest", .Weight = 5, .Against = Opposition::Quest, .EpisodeSeconds = 300 },
+                { .Name = "quest", .Weight = 5, .Against = Opposition::Quest, .EpisodeSeconds = 600 },
                 { .Name = "gather", .Weight = 3, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
                 { .Name = "town", .Weight = 2, .Against = Opposition::Town, .EpisodeSeconds = 120 },
             },

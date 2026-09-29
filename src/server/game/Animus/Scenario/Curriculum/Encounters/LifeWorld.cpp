@@ -146,8 +146,11 @@ Animus::Curriculum::LifeWorld::SpawnIndex::SpawnIndex()
         _byEntry[spawn.Entry].push_back(&spawn);
     }
     for (Spawn const& spawn : _objects)
+    {
         _objectCells[CellKey(spawn.Map, CellOf(spawn.Pos.GetPositionX()), CellOf(spawn.Pos.GetPositionY()))]
             .push_back(&spawn);
+        _objectsByEntry[spawn.Entry].push_back(&spawn);
+    }
 
     LOG_INFO("module.animus", "Life world: {} creature and {} gameobject spawns on the continents indexed",
         _creatures.size(), _objects.size());
@@ -205,9 +208,18 @@ Animus::Curriculum::LifeWorld::QuestSet const& Animus::Curriculum::LifeWorld::Qu
     return set;
 }
 
+std::vector<Animus::Curriculum::LifeWorld::Spawn const*> const&
+Animus::Curriculum::LifeWorld::SpawnIndex::ObjectsOfEntry(uint32 entry) const
+{
+    static std::vector<Spawn const*> const none;
+    auto const found = _objectsByEntry.find(entry);
+    return found == _objectsByEntry.end() ? none : found->second;
+}
+
 Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
 {
     SpawnIndex const& spawns = SpawnIndex::Instance();
+    QuestPlanner const& planner = QuestPlanner::Instance();
 
     // Quest -> the creatures that start and end it, from the relation tables (which run creature -> quest).
     std::unordered_map<uint32, std::vector<uint32>> starters;
@@ -218,11 +230,11 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
         enders[quest].push_back(creature);
 
     auto const nearestSpawn = [&spawns](std::vector<uint32> const& entries, Position const* near, uint32 map,
-        float reach) -> Spawn const*
+        float reach, bool objects) -> Spawn const*
     {
         Spawn const* best = nullptr;
         for (uint32 entry : entries)
-            for (Spawn const* spawn : spawns.CreaturesOfEntry(entry))
+            for (Spawn const* spawn : objects ? spawns.ObjectsOfEntry(entry) : spawns.CreaturesOfEntry(entry))
             {
                 if (near && (spawn->Map != map || spawn->Pos.GetExactDist2d(near) > reach))
                     continue;
@@ -232,35 +244,14 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
         return best;
     };
 
-    // Item -> the creatures whose loot carries it for a quest: the objective of a collect quest is where they
-    // live. The loot table is keyed by loot id, which the creature template maps to its entries.
-    std::unordered_map<uint32, std::vector<uint32>> lootCreatures;
-    for (auto const& [entry, creature] : *sObjectMgr->GetCreatureTemplates())
-        if (creature.lootid)
-            lootCreatures[creature.lootid].push_back(entry);
-    std::unordered_map<uint32, std::vector<uint32>> droppers;
-    if (QueryResult result = WorldDatabase.Query(
-        "SELECT Entry, Item FROM creature_loot_template WHERE QuestRequired = 1"))
-    {
-        do
-        {
-            Field* fields = result->Fetch();
-            auto const found = lootCreatures.find(fields[0].Get<uint32>());
-            if (found == lootCreatures.end())
-                continue;
-            std::vector<uint32>& entries = droppers[fields[1].Get<uint32>()];
-            entries.insert(entries.end(), found->second.begin(), found->second.end());
-        } while (result->NextRow());
-    }
-
-    // An objective's place: the spawn of its creatures, within reach of the giver, with the most of them around
-    // it (the nearest to the giver among equals). A real spawn point, so something is always there.
-    auto const placeOf = [&spawns](std::vector<uint32> const& entries, Spawn const& giver, float reach,
-        Position& place)
+    // An objective's place: the spawn of its sources, within reach of the giver, with the most of them around it
+    // (the nearest to the giver among equals), and those spawns. A real spawn point, so something is always there.
+    auto const placeOf = [&spawns](std::vector<uint32> const& entries, bool objects, Spawn const& giver, float reach,
+        ObjectivePlace& place)
     {
         std::vector<Spawn const*> near;
         for (uint32 entry : entries)
-            for (Spawn const* spawn : spawns.CreaturesOfEntry(entry))
+            for (Spawn const* spawn : objects ? spawns.ObjectsOfEntry(entry) : spawns.CreaturesOfEntry(entry))
                 if (spawn->Map == giver.Map && spawn->Pos.GetExactDist2d(&giver.Pos) <= reach)
                     near.push_back(spawn);
         if (near.empty())
@@ -280,7 +271,10 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
                 bestAround = around;
             }
         }
-        place.Relocate(best->Pos);
+        place.Where.Relocate(best->Pos);
+        for (Spawn const* spawn : near)
+            if (spawn->Pos.GetExactDist2d(&best->Pos) <= OBJECTIVE_CLUSTER_YARDS)
+                place.Spawns.push_back(spawn);
         return true;
     };
 
@@ -289,30 +283,18 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
     std::array<uint32, BAND_COUNT> objectiveFar = {};
     for (auto const& [id, quest] : sObjectMgr->GetQuestTemplates())
     {
-        // Kill or collect, and nothing that needs an event, a spell, a repeat, a day, a flag or a prerequisite.
-        bool kills = false;
-        bool objects = false;
-        for (uint32 i = 0; i < QUEST_OBJECTIVES_COUNT; ++i)
-        {
-            if (quest->RequiredNpcOrGo[i] > 0 && quest->RequiredNpcOrGoCount[i] > 0)
-                kills = true;
-            if (quest->RequiredNpcOrGo[i] < 0)
-                objects = true;
-        }
-        bool collect = false;
-        for (uint32 i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
-            if (quest->RequiredItemId[i] && quest->RequiredItemCount[i])
-                collect = true;
-        if ((!kills && !collect) || objects)
+        // What the planner could make objectives of, and nothing that needs a repeat, a day, a flag, a skill, a
+        // class or a reputation. A prerequisite is fine: the episode grants it (QuestPlanner::GrantPrerequisites).
+        QuestPlan const* plan = planner.Plan(id);
+        if (!plan || !plan->Supported)
             continue;
         if (quest->HasFlag(QUEST_FLAGS_DAILY | QUEST_FLAGS_WEEKLY | QUEST_FLAGS_TRACKING | QUEST_FLAGS_UNAVAILABLE
             | QUEST_FLAGS_FLAGS_PVP | QUEST_FLAGS_RAID))
             continue;
-        if (quest->HasSpecialFlag(QUEST_SPECIAL_FLAGS_REPEATABLE | QUEST_SPECIAL_FLAGS_EXPLORATION_OR_EVENT
-            | QUEST_SPECIAL_FLAGS_CAST | QUEST_SPECIAL_FLAGS_MONTHLY | QUEST_SPECIAL_FLAGS_DF_QUEST))
+        if (quest->HasSpecialFlag(QUEST_SPECIAL_FLAGS_REPEATABLE | QUEST_SPECIAL_FLAGS_MONTHLY
+            | QUEST_SPECIAL_FLAGS_DF_QUEST))
             continue;
-        if (quest->GetPrevQuestId() || quest->GetRequiredSkill() || quest->GetRequiredClasses()
-            || quest->GetRequiredMinRepFaction() || quest->GetSrcSpell() || quest->GetTimeAllowed()
+        if (quest->GetRequiredSkill() || quest->GetRequiredClasses() || quest->GetRequiredMinRepFaction()
             || quest->IsSeasonal() || quest->GetQuestLevel() <= 0)
             continue;
 
@@ -343,42 +325,65 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
         if (starter == starters.end() || ender == enders.end())
             continue;
         float const reach = QUEST_REACH[band];
-        Spawn const* giver = nearestSpawn(starter->second, nullptr, 0, reach);
+        Spawn const* giver = nearestSpawn(starter->second, nullptr, 0, reach, false);
         if (!giver)
             continue;
         ++reached[band];
-        Spawn const* turnIn = nearestSpawn(ender->second, &giver->Pos, giver->Map, reach);
+        Spawn const* turnIn = nearestSpawn(ender->second, &giver->Pos, giver->Map, reach, false);
         if (!turnIn)
         {
             ++enderFar[band];
             continue;
         }
 
-        // The objectives' places: the creatures to kill, and the creatures that drop what is to be collected.
+        // Each objective's place, by kind.
         QuestCandidate candidate;
         bool reachable = true;
-        for (uint32 i = 0; i < QUEST_OBJECTIVES_COUNT && reachable; ++i)
+        for (PlannedObjective const& objective : plan->Objectives)
         {
-            if (quest->RequiredNpcOrGo[i] <= 0 || quest->RequiredNpcOrGoCount[i] == 0)
-                continue;
-            Position place;
-            if (placeOf({ uint32(quest->RequiredNpcOrGo[i]) }, *giver, reach, place))
-                candidate.Objectives.push_back(place);
-            else
-                reachable = false;
+            ObjectivePlace place;
+            switch (objective.Kind)
+            {
+                case ObjectiveKind::Kill:
+                case ObjectiveKind::CollectFromCreature:
+                case ObjectiveKind::UseItemOn:
+                case ObjectiveKind::CollectFromObject:
+                case ObjectiveKind::UseObject:
+                    reachable = placeOf(objective.Sources, objective.SourcesAreObjects, *giver, reach, place);
+                    break;
+                case ObjectiveKind::Buy:
+                    if (Spawn const* vendor = nearestSpawn(objective.Sources, &giver->Pos, giver->Map, reach, false))
+                    {
+                        place.Where.Relocate(vendor->Pos);
+                        place.Spawns = { vendor };
+                    }
+                    else
+                        reachable = false;
+                    break;
+                case ObjectiveKind::Deliver:
+                    place.Where.Relocate(turnIn->Pos);
+                    break;
+                case ObjectiveKind::Explore:
+                    reachable = !objective.Places.empty() && objective.PoiMap == giver->Map
+                        && objective.Places.front().GetExactDist2d(&giver->Pos) <= reach;
+                    if (reachable)
+                    {
+                        place.Where.Relocate(objective.Places.front());
+                        place.Radius = objective.Radius;
+                    }
+                    break;
+                case ObjectiveKind::Count:
+                    reachable = false;
+                    break;
+            }
+            if (!reachable)
+                break;
+            candidate.Places.push_back(std::move(place));
+            if (objective.Kind == ObjectiveKind::CollectFromCreature || objective.Kind == ObjectiveKind::CollectFromObject
+                || objective.Kind == ObjectiveKind::Buy)
+                candidate.Collect = true;
         }
-        for (uint32 i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT && reachable; ++i)
-        {
-            if (!quest->RequiredItemId[i] || !quest->RequiredItemCount[i])
-                continue;
-            auto const source = droppers.find(quest->RequiredItemId[i]);
-            Position place;
-            if (source != droppers.end() && placeOf(source->second, *giver, reach, place))
-                candidate.Objectives.push_back(place);
-            else
-                reachable = false;
-        }
-        if (!reachable || candidate.Objectives.empty())
+        if (!reachable || candidate.Places.empty())
         {
             ++objectiveFar[band];
             continue;
@@ -390,7 +395,8 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
         candidate.For = side;
         candidate.Giver = giver;
         candidate.Ender = turnIn;
-        candidate.Collect = collect;
+        candidate.Plan = plan;
+        candidate.HeldOut = IsHeldOutQuest(id);
         _quests.push_back(std::move(candidate));
     }
 
@@ -398,29 +404,51 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
     {
         return a.Id < b.Id;
     });
+
+    // Chains: a quest's next is linked when it is a candidate too, on the same map (both are drawn together).
+    std::unordered_map<uint32, QuestCandidate*> byId;
+    for (QuestCandidate& quest : _quests)
+        byId[quest.Id] = &quest;
+    uint32 chained = 0;
+    for (QuestCandidate& quest : _quests)
+        if (auto const next = byId.find(quest.Plan->Next); next != byId.end() && next->second != &quest
+            && next->second->Giver->Map == quest.Giver->Map && next->second->Band == quest.Band)
+        {
+            quest.Next = next->second;
+            ++chained;
+        }
+
     for (QuestCandidate const& quest : _quests)
     {
-        _byBandAndSide[{ quest.Band, quest.For }].push_back(&quest);
+        auto const add = [this, &quest](Side side)
+        {
+            _byBandAndSide[{ quest.Band, side }].push_back(&quest);
+            if (!quest.HeldOut)
+                _trainingByBandAndSide[{ quest.Band, side }].push_back(&quest);
+        };
+        add(quest.For);
         if (quest.For == Side::Any)
         {
-            _byBandAndSide[{ quest.Band, Side::Alliance }].push_back(&quest);
-            _byBandAndSide[{ quest.Band, Side::Horde }].push_back(&quest);
+            add(Side::Alliance);
+            add(Side::Horde);
         }
     }
 
     for (uint32 band = 0; band < BAND_COUNT; ++band)
         LOG_INFO("module.animus", "Life world: band {}-{} has {} alliance and {} horde quests of {} eligible "
             "({} turn-ins and {} objectives beyond {:.0f} yards)", BANDS[band].Min, BANDS[band].Max,
-            For(band, Side::Alliance).size(), For(band, Side::Horde).size(), reached[band], enderFar[band],
-            objectiveFar[band], QUEST_REACH[band]);
+            For(band, Side::Alliance, true).size(), For(band, Side::Horde, true).size(), reached[band],
+            enderFar[band], objectiveFar[band], QUEST_REACH[band]);
+    LOG_INFO("module.animus", "Life world: {} quests, {} with a next quest in the set", _quests.size(), chained);
 }
 
 std::vector<Animus::Curriculum::LifeWorld::QuestCandidate const*> const&
-Animus::Curriculum::LifeWorld::QuestSet::For(uint32 band, Side side) const
+Animus::Curriculum::LifeWorld::QuestSet::For(uint32 band, Side side, bool evaluating) const
 {
     static std::vector<QuestCandidate const*> const none;
-    auto const found = _byBandAndSide.find({ band, side });
-    return found == _byBandAndSide.end() ? none : found->second;
+    auto const& map = evaluating ? _byBandAndSide : _trainingByBandAndSide;
+    auto const found = map.find({ band, side });
+    return found == map.end() ? none : found->second;
 }
 
 // Grounds and towns --------------------------------------------------------------------------------------------------

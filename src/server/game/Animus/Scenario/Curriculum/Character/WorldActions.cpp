@@ -32,6 +32,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "QuestDef.h"
+#include "QuestPlanner.h"
 #include "SeatView.h"
 #include "Spell.h"
 #include "SpellInfo.h"
@@ -698,6 +699,43 @@ void Animus::Curriculum::WorldActions::DropSupplies(Player* bot, uint32 keep)
         bot->DestroyItemCount(item, count, true);
 }
 
+bool Animus::Curriculum::WorldActions::UseQuestObject(Player* bot, GameObject* object)
+{
+    if (!object || !object->isSpawned() || !bot->IsWithinDistInMap(object, INTERACT_YARDS) || !object->ActivateToQuest(bot))
+        return false;
+    // A right-click: a chest opens its loot, a quest object runs its use (and the credit it gives).
+    object->Use(bot);
+    return true;
+}
+
+bool Animus::Curriculum::WorldActions::UseItemOn(Player* bot, uint32 item, Unit* target)
+{
+    Item* carried = item ? bot->GetItemByEntry(item) : nullptr;
+    if (!carried || !target || !bot->IsWithinDistInMap(target, INTERACT_YARDS * 3.0f))
+        return false;
+    SpellCastTargets targets;
+    targets.SetUnitTarget(target);
+    bot->CastItemUseSpell(carried, targets, 1, 0);
+    return true;
+}
+
+bool Animus::Curriculum::WorldActions::BuyQuestItem(Player* bot, Creature* vendor, uint32 item)
+{
+    if (!vendor || !item || !bot->GetNPCIfCanInteractWith(vendor->GetGUID(), UNIT_NPC_FLAG_VENDOR))
+        return false;
+    VendorItemData const* items = vendor->GetVendorItems();
+    if (!items)
+        return false;
+    for (uint32 slot = 0; slot < items->GetItemCount(); ++slot)
+        if (VendorItem const* sold = items->GetItem(slot); sold && sold->item == item)
+        {
+            uint32 const before = bot->GetItemCount(item);
+            bot->BuyItemFromVendorSlot(vendor->GetGUID(), slot, item, 1, NULL_BAG, NULL_SLOT);
+            return bot->GetItemCount(item) > before;
+        }
+    return false;
+}
+
 void Animus::Curriculum::WorldActions::Sense(Player* bot, float radius, WorldView& world)
 {
     world = WorldView();
@@ -775,12 +813,87 @@ void Animus::Curriculum::WorldActions::Sense(Player* bot, float radius, WorldVie
         }
     }
 
+    // What the seat's quests still want (QuestPlanner): objects to use or open, creatures to use an item on,
+    // items to buy -- from its own quest log, so a companion reads its owner's quests the same way.
+    struct Wanted { std::vector<uint32> Objects; std::vector<std::pair<uint32, uint32>> ItemOn; std::vector<uint32> Buy; };
+    Wanted wanted;
+    for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+    {
+        uint32 const questId = bot->GetQuestSlotQuestId(slot);
+        if (!questId || bot->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
+            continue;
+        QuestPlan const* plan = QuestPlanner::Instance().Plan(questId);
+        if (!plan || !plan->Supported)
+            continue;
+        for (uint32 i = 0; i < plan->Objectives.size(); ++i)
+        {
+            if (QuestPlanner::Progress(bot, *plan, i) >= 1.0f)
+                continue;
+            PlannedObjective const& objective = plan->Objectives[i];
+            switch (objective.Kind)
+            {
+                case ObjectiveKind::UseObject:
+                case ObjectiveKind::CollectFromObject:
+                    wanted.Objects.insert(wanted.Objects.end(), objective.Sources.begin(), objective.Sources.end());
+                    break;
+                case ObjectiveKind::UseItemOn:
+                    if (bot->HasItemCount(objective.UseItem, 1))
+                        wanted.ItemOn.emplace_back(objective.Entry, objective.UseItem);
+                    break;
+                case ObjectiveKind::Buy:
+                    wanted.Buy.push_back(objective.Entry);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    float targetDistance = 0.0f, questVendorDistance = 0.0f;
+    for (Creature* creature : creatures)
+    {
+        float const distance = bot->GetExactDist2d(creature);
+        if (creature->IsAlive())
+            for (auto const& [entry, item] : wanted.ItemOn)
+                if (creature->GetEntry() == entry && (!world.ItemTarget || distance < targetDistance))
+                {
+                    world.ItemTarget = creature;
+                    world.UseItem = item;
+                    targetDistance = distance;
+                }
+        if (!wanted.Buy.empty() && creature->IsAlive() && creature->HasNpcFlag(UNIT_NPC_FLAG_VENDOR)
+            && (!world.QuestVendor || distance < questVendorDistance))
+            if (VendorItemData const* items = creature->GetVendorItems())
+                for (uint32 item : wanted.Buy)
+                    if (items->FindItemCostPair(item, 0))
+                    {
+                        world.QuestVendor = creature;
+                        world.BuyItem = item;
+                        questVendorDistance = distance;
+                        break;
+                    }
+    }
+
     std::list<GameObject*> objects;
     Acore::GameObjectListSearcher<Acore::AllWorldObjectsInRange> objectSearcher(bot, objects, check);
     Cell::VisitObjects(bot, objectSearcher, radius);
     float nodeDistance = 0.0f;
+    float questObjectDistance = 0.0f;
     for (GameObject* object : objects)
     {
+        if (!wanted.Objects.empty() && object->isSpawned()
+            && std::find(wanted.Objects.begin(), wanted.Objects.end(), object->GetEntry()) != wanted.Objects.end()
+            && object->ActivateToQuest(bot))
+        {
+            float const distance = bot->GetExactDist2d(object);
+            if (!world.QuestObject || distance < questObjectDistance)
+            {
+                world.QuestObject = object;
+                questObjectDistance = distance;
+            }
+            continue;
+        }
+
         NodeKind const kind = NodeOf(object);
         if (kind == NodeKind::None || !object->isSpawned())
             continue;
