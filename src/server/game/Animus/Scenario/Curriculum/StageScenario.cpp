@@ -1798,11 +1798,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (auto const& encounter : _encounters)
         encounter->ResetEpisode(env);
 
-    std::vector<Creature*> oldTargets;
-    for (uint32 target = 0; target < env.Targets.size(); ++target)
-        if (Creature* creature = env.FindTarget(target))
-            oldTargets.push_back(creature);
-
     // What the last episode's arena had and this one does not (an owner, a group, an enemy player) goes first.
     for (Encounter* encounter : previousEncounters)
         if (!Uses(env, *encounter))
@@ -1810,6 +1805,16 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->BeforeRebuild(env);
+
+    // The creatures still in the enemy slots, despawned once the new seats are in: read after the encounters have
+    // cleared their own. Read before them, a life encounter's creatures (its spawns fill the slots) were despawned
+    // there and then again here -- a summon queued for removal twice, and map threads tripping over it later
+    // (Map.cpp:682's PendingAdd assert, a freed TempSummon in Creature::Update): the life stage crashed twice in
+    // ten minutes once it ran 96 envs.
+    std::vector<Creature*> oldTargets;
+    for (uint32 target = 0; target < env.Targets.size(); ++target)
+        if (Creature* creature = env.FindTarget(target))
+            oldTargets.push_back(creature);
 
     bool const firstBuild = !SeatBot(env, 0);
     for (uint32 seat = 0; seat < _seatCount; ++seat)

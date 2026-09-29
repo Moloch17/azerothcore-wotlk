@@ -98,13 +98,24 @@ void Animus::Curriculum::LifeEncounter::ResetEpisode(Env& env)
 void Animus::Curriculum::LifeEncounter::BeforeRebuild(Env& env)
 {
     Disband(env);
-    LifeWorld::Despawn(env.FindMap(), _envs[env.Index].Spawned);
+    ForgetSpawns(env);
 }
 
 void Animus::Curriculum::LifeEncounter::Teardown(Env& env)
 {
     Disband(env);
-    LifeWorld::Despawn(env.FindMap(), _envs[env.Index].Spawned);
+    ForgetSpawns(env);
+}
+
+void Animus::Curriculum::LifeEncounter::ForgetSpawns(Env& env)
+{
+    // Out of the enemy slots first: whoever despawns what is left in them must not despawn these a second time.
+    std::vector<ObjectGuid>& spawned = _envs[env.Index].Spawned;
+    std::erase_if(env.Targets, [&spawned](ObjectGuid const& guid)
+    {
+        return std::find(spawned.begin(), spawned.end(), guid) != spawned.end();
+    });
+    LifeWorld::Despawn(env.FindMap(), spawned);
 }
 
 void Animus::Curriculum::LifeEncounter::FoundPlaces::Seen(Position const& where, uint32 nowMs, float merge)

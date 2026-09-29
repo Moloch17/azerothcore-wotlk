@@ -144,6 +144,8 @@ namespace Animus::Curriculum
         /// Every seat of an arena of more than one seat into a real group per side (kill and loot credit is shared);
         /// and back out.
         void FormGroups(Env& env);
+        /// Despawn what the episode spawned, and take it out of the enemy slots so nothing despawns it twice.
+        void ForgetSpawns(Env& env);
         void Disband(Env& env);
         /// Summon `spawn` into the env's phase and remember it. Null when the summon failed.
         Creature* Summon(Env& env, EnvLife& life, Map* map, LifeWorld::Spawn const& spawn);
