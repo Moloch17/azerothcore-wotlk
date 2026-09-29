@@ -2442,6 +2442,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Race = seat.Race;
     view.Spec = seat.Spec;
     view.Apt = seat.Apt;
+    view.Goal = seat.Goal;
     // How it is steering, carried over from the last decision: without this a held bearing is forgotten before it
     // can be walked a second time, and the facing actions have nothing to act on.
     view.HeldBearing = seat.HeldBearing;
@@ -3158,7 +3159,19 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
         // Moving in a fight while already where the goal wants the seat, with nothing underfoot -- unless the focus
         // is moving (keeping up, kiting) or a melee seat is still working its way behind it (Backstab, Shred).
         bool const focusMoving = target && (target->isMoving() || !target->movespline->Finalized());
-        bool const gettingBehind = target && bot->IsWithinMeleeRange(target) && !target->isInBack(bot);
+        if (seat.FromBehind < 0)
+        {
+            // Whether the kit has a spell that must be cast from behind (Backstab, Ambush, Garrote, Shred, Ravage):
+            // only those seats have a reason to walk round a target they are already in reach of. A tank faces its
+            // target, and every other melee spec's shuffling is the fidget this charges.
+            seat.FromBehind = 0;
+            for (ActionCatalog::Action const& def : seat.L->Catalog().Actions())
+                if (SpellInfo const* info = def.FirstRank ? sSpellMgr->GetSpellInfo(def.FirstRank) : nullptr;
+                    info && info->HasAttribute(SPELL_ATTR0_CU_REQ_CASTER_BEHIND_TARGET))
+                    seat.FromBehind = 1;
+        }
+        bool const gettingBehind = seat.FromBehind > 0 && target && bot->IsWithinMeleeRange(target)
+            && !target->isInBack(bot);
         if (moving && combat && !focusMoving && !gettingBehind && GoalGap(seat, bot, target) == 0.0f
             && !Encoding::StandingInHazards(bot, nullptr))
         {

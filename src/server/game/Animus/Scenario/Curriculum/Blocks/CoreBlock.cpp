@@ -47,6 +47,7 @@ namespace
     constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Follow) - 1;
     constexpr float OPTION_SCALE_MS = 30000.0f;
     constexpr float TALENT_POINTS_AT_MAX_LEVEL = 71.0f;
+    constexpr float GOAL_ESCAPE_HEALTH_PCT = 35.0f;
 
     bool IsActionAllowed(SeatView const& view, uint32 action)
     {
@@ -73,6 +74,38 @@ namespace
         }
 
         return Encoding::IsSpellActionAllowed(view, view.Target, def);
+    }
+
+    /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
+    /// not offered. Under Recover and Prepare the harmful spells close -- a seat eating or buffing up does not start
+    /// a fight -- and under Fight, Control and Position the long buffs close in combat. The escape reopens the harmful
+    /// spells whenever the seat is attacked or below 35% health, or is stealthed (the opener ends a Prepare), so it
+    /// can always answer what happens to it; the goal then catches up on its own clock.
+    bool GoalCloses(SeatView const& view, ActionCatalog::Action const& def)
+    {
+        if (view.Goal < 0 || def.Type != ActionCatalog::Kind::Spell)
+            return false;
+
+        Player* bot = view.Bot;
+        switch (SeatGoal(view.Goal))
+        {
+            case SeatGoal::Recover:
+            case SeatGoal::Prepare:
+            {
+                if (bot->GetHealthPct() < GOAL_ESCAPE_HEALTH_PCT || !bot->getAttackers().empty()
+                    || bot->HasStealthAura())
+                    return false;
+
+                SpellInfo const* info = Encoding::KnownRank(view, def);
+                return info && !info->IsPositive();
+            }
+            case SeatGoal::Fight:
+            case SeatGoal::Control:
+            case SeatGoal::Position:
+                return def.LongBuff && bot->IsInCombat();
+            default:
+                return false;
+        }
     }
 }
 
@@ -337,7 +370,7 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
             ? memory->SincePressed(view.L->Slice(BlockId::Core).ActionFirst + action, view.NowMs) : 1.0f;
 
         if (mask && action > 0)
-            mask[action] = IsActionAllowed(view, action) ? 1 : 0;
+            mask[action] = IsActionAllowed(view, action) && !GoalCloses(view, actions[action]) ? 1 : 0;
     }
 
     // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.

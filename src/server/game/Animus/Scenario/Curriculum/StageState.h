@@ -355,6 +355,7 @@ namespace Animus::Curriculum
         float MoveGap = -1.0f;
         bool PendingRepeat = false;             // this press was past the free ones; the verdict decides the charge
         bool MoveRepeat = false;                // ... and it was a step, settled with the step's verdict
+        int8 FromBehind = -1;                   // the kit has a from-behind spell (1), not (0), not looked yet (-1)
         uint32 MoveStarts = 0;
         bool WasMoving = false;
         uint32 StoppedAtMs = 0;
@@ -482,6 +483,7 @@ namespace Animus::Curriculum
             MoveGap = -1.0f;
             PendingRepeat = false;
             MoveRepeat = false;
+            FromBehind = -1;
             MoveStarts = 0;
             WasMoving = false;
             StoppedAtMs = 0;

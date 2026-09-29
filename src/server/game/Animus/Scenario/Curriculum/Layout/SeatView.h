@@ -278,6 +278,9 @@ namespace Animus::Curriculum
     {
         Layout const* L = nullptr;
         Player* Bot = nullptr;
+        /// The goal the seat holds (SeatGoal), as its policy last sent it, or NO_GOAL. It shapes what the core block
+        /// offers (CoreBlock::GoalCloses): the forge and the module both set it, so the masks agree.
+        int32 Goal = -1;
         /// The seat's durative action, to read, start and stop. Null for a view without one.
         /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
         /// avoiding one possible rather than only leaving one.
