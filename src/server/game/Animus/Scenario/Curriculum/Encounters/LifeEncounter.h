@@ -228,9 +228,9 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] uint32 GroupCount(Env const& env) const;
-        /// Quests a bot refused at build (Player::CanTakeQuest: a giver's conditions, a chain the table does not
-        /// show) are drawn again only until they have been refused REFUSALS_TO_RETIRE times; then never. Shared by
-        /// every env, which build on the map threads.
+        /// Quests refused at build for a reason every bot would meet (a chain or breadcrumb the table does not show,
+        /// an exclusive group; not a class, race, level, skill or reputation) are drawn again only until refused
+        /// REFUSALS_TO_RETIRE times; then never. Shared by every env, which build on the map threads.
         [[nodiscard]] bool Retired(uint32 questId) const;
         void Refused(uint32 questId);
 

@@ -166,22 +166,25 @@ namespace
     constexpr uint32 REFUSALS_TO_RETIRE = 2;
     constexpr uint32 DRAW_ATTEMPTS = 8;
 
-    /// Which of Player::CanTakeQuest's checks refused `quest`, for the log.
-    char const* RefusalReason(Player* bot, Quest const* quest)
+    /// Which of Player::CanTakeQuest's checks refused `quest`, for the log, and whether that check would refuse
+    /// every bot alike (`general`) or only this one -- its class, race, level, skill, reputation or its own conditions.
+    char const* RefusalReason(Player* bot, Quest const* quest, bool& general)
     {
+        general = false;
         if (!bot->SatisfyQuestStatus(quest, false)) return "status";
-        if (!bot->SatisfyQuestExclusiveGroup(quest, false)) return "exclusive group";
         if (!bot->SatisfyQuestClass(quest, false)) return "class";
         if (!bot->SatisfyQuestRace(quest, false)) return "race";
         if (!bot->SatisfyQuestLevel(quest, false)) return "level";
         if (!bot->SatisfyQuestSkill(quest, false)) return "skill";
         if (!bot->SatisfyQuestReputation(quest, false)) return "reputation";
+        if (!bot->SatisfyQuestConditions(quest, false)) return "conditions";
+        general = true;
+        if (!bot->SatisfyQuestExclusiveGroup(quest, false)) return "exclusive group";
         if (!bot->SatisfyQuestPreviousQuest(quest, false)) return "previous quest";
         if (!bot->SatisfyQuestTimed(quest, false)) return "timed";
         if (!bot->SatisfyQuestNextChain(quest, false)) return "next chain";
         if (!bot->SatisfyQuestPrevChain(quest, false)) return "previous chain";
         if (!bot->SatisfyQuestBreadcrumb(quest, false)) return "breadcrumb";
-        if (!bot->SatisfyQuestConditions(quest, false)) return "conditions";
         if (!bot->CanAddQuest(quest, false)) return "cannot add (log, start item)";
         return "disabled or periodic";
     }
@@ -323,9 +326,14 @@ bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level
         Quest const* info = sObjectMgr->GetQuestTemplate(quest.Chain.front()->Id);
         if (!leader || !info || !leader->CanTakeQuest(info, false) || !leader->CanAddQuest(info, false))
         {
+            // Only a refusal every bot would meet retires the quest: one of this bot's class or race says nothing
+            // about the next, and retiring it would drain class and race quests out of training.
+            bool general = false;
+            char const* const reason = leader && info ? RefusalReason(leader, info, general) : "no seat or quest";
             LOG_INFO("module.animus", "{}: env {} cannot take quest {} ({}); another next time", _scenario.Name(),
-                env.Index, quest.Chain.front()->Id, leader && info ? RefusalReason(leader, info) : "no seat or quest");
-            Refused(quest.Chain.front()->Id);
+                env.Index, quest.Chain.front()->Id, reason);
+            if (general)
+                Refused(quest.Chain.front()->Id);
             return false;
         }
 
