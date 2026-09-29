@@ -89,9 +89,12 @@ namespace Animus::Curriculum::Opponents
         std::array<std::vector<uint32>, 81> _hazardSpellsByLevel;   // what those casters put on the ground
     };
 
-    /// A random spot 40-50 yd from the bot, in line of sight on roughly level ground the bot can walk to (so a
+    /// A random spot out of aggro range of the bot (SPAWN_DISTANCE_MIN-MAX), in line of sight on roughly level ground the bot can walk to (so a
     /// creature there has a path to it), with a random facing.
     [[nodiscard]] Position FindSpawnPoint(Player* bot, Map* map);
+    /// The same search, `minDistance` to `maxDistance` yards from the bot (the rotation drill's dummies stand close:
+    /// the drill is the kit, not the approach).
+    [[nodiscard]] Position FindSpawnPoint(Player* bot, Map* map, float minDistance, float maxDistance);
     /// The same, in the water: a spot at the surface of a lake at least BODY_HEIGHT deep, in line of sight, so the
     /// fight is a swimming one for whoever goes in after the other (a creature arena with ArenaDefinition::Water).
     /// The dry spot FindSpawnPoint would give when no water is in reach.

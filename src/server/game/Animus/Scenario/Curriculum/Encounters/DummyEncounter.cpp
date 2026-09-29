@@ -19,6 +19,7 @@
 #include "Encounters.h"
 #include "CombatReward.h"
 #include "Creature.h"
+#include "CreatureAI.h"
 #include "Env.h"
 #include "EpisodeInfoTable.h"
 #include "MotionMaster.h"
@@ -42,6 +43,12 @@ namespace
 {
     /// How far the moving drill's dummies wander from where they stand (yards).
     constexpr float WANDER_YARDS = 12.0f;
+
+    /// Where a dummy stands from the seat (yards): close, in reach of a caster at once and a few steps for melee.
+    /// The duel's out-of-aggro-range spawn left the first fast pass's seats dealing nothing in the still and hitting
+    /// drills -- a policy that has not learned to close in never reached the dummy, and the drill is not the approach.
+    constexpr float DUMMY_MIN_YARDS = 5.0f;
+    constexpr float DUMMY_MAX_YARDS = 12.0f;
 
     /// How often the bleeding drill's damage lands (ms).
     constexpr uint32 BLEED_TICK_MS = 1000;
@@ -83,7 +90,8 @@ Creature* Animus::Curriculum::DummyEncounter::Spawn(Env& env, Map* map, Player* 
     if (!entry)
         return nullptr;
 
-    Creature* dummy = Opponents::SummonOpponent(bot, map, entry, Opponents::FindSpawnPoint(bot, map), dummies.Level);
+    Creature* dummy = Opponents::SummonOpponent(bot, map, entry,
+        Opponents::FindSpawnPoint(bot, map, DUMMY_MIN_YARDS, DUMMY_MAX_YARDS), dummies.Level);
     if (!dummy)
         return nullptr;
 
@@ -98,7 +106,13 @@ Creature* Animus::Curriculum::DummyEncounter::Spawn(Env& env, Map* map, Player* 
     dummy->UpdateMaxHealth();
     dummy->SetFullHealth();
 
-    if (!hits)
+    if (hits)
+    {
+        // It comes for the seat at once: a tank's drill is being hit, not finding something to be hit by.
+        if (dummy->AI())
+            dummy->AI()->AttackStart(bot);
+    }
+    else
     {
         // Does not fight back: the drill is the seat's output, not a fight.
         dummy->SetReactState(REACT_PASSIVE);

@@ -281,6 +281,11 @@ uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardSpell(uint8 leve
 
 Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map)
 {
+    return FindSpawnPoint(bot, map, SPAWN_DISTANCE_MIN, SPAWN_DISTANCE_MAX);
+}
+
+Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map, float minDistance, float maxDistance)
+{
     // A random bearing and distance; retry bearings for a spot in line of sight on roughly level ground that the bot
     // can walk to, so the opponent is reachable. Without one, a walkable spot out of sight; the last try otherwise.
     Position pos;
@@ -289,7 +294,7 @@ Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map)
     for (uint32 attempt = 0; attempt < SPAWN_ATTEMPTS && !found; ++attempt)
     {
         float const bearing = frand(0.0f, 2.0f * float(M_PI));
-        float const distance = frand(SPAWN_DISTANCE_MIN, SPAWN_DISTANCE_MAX);
+        float const distance = frand(minDistance, maxDistance);
 
         pos.m_positionX = bot->GetPositionX() + distance * std::cos(bearing);
         pos.m_positionY = bot->GetPositionY() + distance * std::sin(bearing);
