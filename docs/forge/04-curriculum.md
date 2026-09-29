@@ -113,6 +113,8 @@ one commanding each side (see 4.12).
 | `stage20_quest` | stage11_endurance (+ stage6_travel) | Solo | + travel, world | **Life begins.** A quest of the level band (15-20, 35-40, 58-60; the rung is the band) in the world's own zone: the giver, the creatures around the objectives and the turn-in copied into the env's phase. Take it, do it, hand it in |
 | `stage21_gather` | stage20_quest | Solo | same | A field of the band's herb and ore nodes with the zone's creatures among them, the professions at the band's skill: find, open, take, skin, do not die |
 | `stage22_town` | stage21_gather | Solo | same | A town of the seat's side around its inn: sell the junk, repair, restock food and drink, put the better item on |
+| `stage33_world_group` | stage22_town (+ stage17_party) | Party | + party, order | **A group in the world**: two to four seats and a director on a quest chain, the journal shared, kill and loot credit the group's |
+| `stage34_world_shared` | stage33_world_group | Teams (2) | same | Two groups questing in one zone, sharing its creatures: the coordinator's claims in the journal, poaching charged |
 | `stage24_flag` | stage19_triage (+ stage6_travel, stage12_pvp) | Mirror | + pvp, travel, flag | Capture the flag one-on-one: bases 100-180 yd apart, first to three captures. Level 20+ |
 | `stage25_warsong` | stage24_flag (+ stage19_triage) | Teams (10) | + party | Ten against ten for the flag on a real Warsong Gulch instance: escort the carrier, hold the base, stop theirs |
 | `stage26_duo_led` | stage25_warsong (+ stage11_endurance) | Teams (2) | + context, hostiles, order | Two against two under a **director**: told who to kill, whose turn it is, and where to go (4.12) |
@@ -184,6 +186,7 @@ stage trains its whole budget).
 | `stage17_party` | 150M | 20M | 512 | `stage18_tanking` | 50M | 20M | 512 |
 | `stage19_triage` | 50M | 20M | 512 | `stage20_quest` | 50M | 10M | 1024 |
 | `stage21_gather` | 50M | 10M | 1024 | `stage22_town` | 50M | 5M | 1024 |
+| `stage33_world_group` | 50M | 10M | 128 | `stage34_world_shared` | 50M | 10M | 128 |
 | `stage23_dungeon` | 50M | 20M | 512 | `stage24_flag` | 50M | 10M | 2048 |
 | `stage25_warsong` | 50M | 10M | 128 | `stage26_duo_led` | 50M | 10M | 512 |
 | `stage27_crossroads` | 50M | 25M | 256 | `stage28_raid_single` | 50M | 20M | 256 |
@@ -195,7 +198,7 @@ default is 64 -- every number in this chapter is at 128). Stages 1-7 (the moveme
 every class; stages 8-19 are trained per class, each class with all 128 envs; stages 20-27 (the life stages, the
 dungeon, the objective stages and the crossroads) once, after the join; the five raid stages by name. Every stage's ceiling is 50M
 (convergence usually ends one sooner; 100M until 2026-09-28, when the first full run's stages were found to gain
-little past their first tens of millions), so the queue's ceiling is 1,500M (1,750M with the raids; `stage10_gauntlet` has 100M and `stage17_party` 150M), and a ten-class
+little past their first tens of millions), so the queue's ceiling is 1,600M (1,850M with the raids; `stage10_gauntlet` has 100M and `stage17_party` 150M), and a ten-class
 build's is 350M for the root, 600M per class (6,000M for ten) and 400M for the life stages, the dungeon and the
 objective stages: about 6,750M. Two assumptions carry that number. The objective stages "once after the join" assume the **take-one-trunk**
 join below (seed from one class's trunk and let the adapters adapt), the only one of the three options that costs

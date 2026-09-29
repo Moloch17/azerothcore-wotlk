@@ -178,6 +178,14 @@ bool Animus::Curriculum::IsHeldOutQuest(uint32 quest)
     return h % 10 == 0;
 }
 
+bool Animus::Curriculum::IsHeldOutZone(uint32 zone)
+{
+    // Another residue of another hash than the quests', so the two tenths are not the same draws.
+    uint32 h = (zone + 0x9E3779B9u) * 0x85EBCA6Bu;
+    h ^= h >> 13;
+    return zone && h % 10 == 3;
+}
+
 Animus::Curriculum::QuestPlanner const& Animus::Curriculum::QuestPlanner::Instance()
 {
     static QuestPlanner const planner;
@@ -200,6 +208,17 @@ Animus::Curriculum::QuestPlanner::QuestPlanner()
     Multimap enders;
     for (auto const& [creature, quest] : *sObjectMgr->GetCreatureQuestInvolvedRelationMap())
         Add(enders, quest, creature);
+
+    // Escorts: quests whose acceptance starts someone walking a path (SmartAI: on quest accepted, start waypoints).
+    // An escort is won by keeping an NPC alive along a script, not by any objective a plan could name. (The core's
+    // own C++ escorts complete by event, and are refused below as events with no place.)
+    std::unordered_set<uint32> escorts;
+    if (QueryResult result = WorldDatabase.Query(
+        "SELECT DISTINCT event_param1 FROM smart_scripts WHERE event_type = 19 AND action_type = 53"))
+        do
+        {
+            escorts.insert(result->Fetch()[0].Get<uint32>());
+        } while (result->NextRow());
 
     std::unordered_map<std::string_view, uint32> refused;
     for (auto const& [id, quest] : sObjectMgr->GetQuestTemplates())
@@ -227,6 +246,8 @@ Animus::Curriculum::QuestPlanner::QuestPlanner()
         bool ok = true;
         if (quest->GetTimeAllowed())
             refuse("timed"), ok = false;
+        else if (escorts.count(id))
+            refuse("escort"), ok = false;
         else if (quest->GetPlayersSlain())
             refuse("player kills"), ok = false;
         else if (std::any_of(quest->prevQuests.begin(), quest->prevQuests.end(), [](int32 q) { return q < 0; }))

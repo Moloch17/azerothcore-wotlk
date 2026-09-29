@@ -25,6 +25,8 @@
 #include "GameObject.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
+#include "Group.h"
+#include "GroupMgr.h"
 #include "Log.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
@@ -68,13 +70,18 @@ void Animus::Curriculum::LifeEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     table.Add(_what + "_band", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     table.Add(_what + "_side", [this](Env const& env, uint32) { return float(uint8(_envs[env.Index].Side)); });
     table.Add(_what + "_won", [this](Env const& env, uint32) { return _envs[env.Index].Won ? 1.0f : 0.0f; });
-    table.Add("interactions", [this](Env const& env, uint32) { return float(_envs[env.Index].Interactions); });
-    table.Add("wasted_presses", [this](Env const& env, uint32) { return float(_envs[env.Index].Wasted); });
-    table.Add("corpses_looted", [this](Env const& env, uint32) { return float(_envs[env.Index].CorpsesLooted); });
-    table.Add("items_looted", [this](Env const& env, uint32) { return float(_envs[env.Index].ItemsLooted); });
-    table.Add("copper_looted", [this](Env const& env, uint32) { return float(_envs[env.Index].CopperLooted); });
+    // Per seat: what it pressed and what it took.
+    auto const seat = [this](Env const& env, uint32 index) -> SeatLife const&
+    {
+        return _envs[env.Index].Seats[std::min<uint32>(index, MAX_SEATS - 1)];
+    };
+    table.Add("interactions", [seat](Env const& env, uint32 i) { return float(seat(env, i).Interactions); });
+    table.Add("wasted_presses", [seat](Env const& env, uint32 i) { return float(seat(env, i).Wasted); });
+    table.Add("corpses_looted", [seat](Env const& env, uint32 i) { return float(seat(env, i).CorpsesLooted); });
+    table.Add("items_looted", [seat](Env const& env, uint32 i) { return float(seat(env, i).ItemsLooted); });
+    table.Add("copper_looted", [seat](Env const& env, uint32 i) { return float(seat(env, i).CopperLooted); });
     table.Add("spawned", [this](Env const& env, uint32) { return float(_envs[env.Index].Spawned.size()); });
-    table.Add("progressed", [this](Env const& env, uint32) { return _envs[env.Index].Progressed; });
+    table.Add("progressed", [seat](Env const& env, uint32 i) { return seat(env, i).Progressed; });
     AddMoreEpisodeInfo(table);
 }
 
@@ -82,18 +89,104 @@ void Animus::Curriculum::LifeEncounter::ResetEpisode(Env& env)
 {
     // The spawns go with the rebuild (BeforeRebuild); the rest starts over.
     std::vector<ObjectGuid> spawned = std::move(_envs[env.Index].Spawned);
+    std::array<Group*, TEAM_COUNT> groups = _envs[env.Index].Groups;
     _envs[env.Index] = EnvLife();
     _envs[env.Index].Spawned = std::move(spawned);
+    _envs[env.Index].Groups = groups;
 }
 
 void Animus::Curriculum::LifeEncounter::BeforeRebuild(Env& env)
 {
+    Disband(env);
     LifeWorld::Despawn(env.FindMap(), _envs[env.Index].Spawned);
 }
 
 void Animus::Curriculum::LifeEncounter::Teardown(Env& env)
 {
+    Disband(env);
     LifeWorld::Despawn(env.FindMap(), _envs[env.Index].Spawned);
+}
+
+void Animus::Curriculum::LifeEncounter::FoundPlaces::Seen(Position const& where, uint32 nowMs, float merge)
+{
+    for (Found& found : Places)
+        if (found.Where.GetExactDist2d(&where) <= merge)
+        {
+            found.SeenMs = nowMs;
+            return;
+        }
+    if (Places.size() >= WorldView::JOURNAL_PLACES)
+        Places.erase(std::min_element(Places.begin(), Places.end(),
+            [](Found const& a, Found const& b) { return a.SeenMs < b.SeenMs; }));
+    Places.push_back({ where, nowMs });
+}
+
+void Animus::Curriculum::LifeEncounter::FoundPlaces::Forget(Position const& where, float within)
+{
+    std::erase_if(Places, [&](Found const& found) { return found.Where.GetExactDist2d(&where) <= within; });
+}
+
+void Animus::Curriculum::LifeEncounter::FoundPlaces::Write(WorldView& world, uint32 nowMs) const
+{
+    for (uint32 i = 0; i < Places.size() && i < WorldView::JOURNAL_PLACES; ++i)
+    {
+        world.Places[i].Present = true;
+        world.Places[i].Where = Places[i].Where;
+        world.Places[i].AgeSeconds = float(nowMs - std::min(nowMs, Places[i].SeenMs)) / 1000.0f;
+    }
+}
+
+uint32 Animus::Curriculum::LifeEncounter::GroupOf(Env const& env, uint32 seat) const
+{
+    return _scenario.Arena(env).Seats == SeatPlan::Teams ? _scenario.SideOf(env, seat) : 0;
+}
+
+void Animus::Curriculum::LifeEncounter::FormGroups(Env& env)
+{
+    EnvLife& life = _envs[env.Index];
+    EnvState const& data = _scenario.Data(env);
+    if (data.ActiveSeats < 2)
+        return;
+    Player* lead = _scenario.SeatBot(env, 0);
+    for (uint32 group = 0; group < TEAM_COUNT; ++group)
+    {
+        if (life.Groups[group])
+            continue;
+        Player* leader = nullptr;
+        for (uint32 seat = 0; seat < data.ActiveSeats && !leader; ++seat)
+            if (GroupOf(env, seat) == group)
+                leader = _scenario.SeatBot(env, seat);
+        if (!leader || leader->GetGroup())
+            continue;       // already grouped (a party's PartyEncounter did it)
+        Group* made = new Group();
+        made->SetSimGroup(true);
+        if (!made->Create(leader))
+        {
+            delete made;
+            continue;
+        }
+        sGroupMgr->AddGroup(made);
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+            if (Player* bot = _scenario.SeatBot(env, seat); bot && bot != leader && GroupOf(env, seat) == group
+                && !bot->GetGroup())
+            {
+                // Everyone in the world is on the leader's side (friends, not the flag match's two teams).
+                if (lead)
+                    bot->SetFaction(lead->GetFaction());
+                made->AddMember(bot);
+            }
+        life.Groups[group] = made;
+    }
+}
+
+void Animus::Curriculum::LifeEncounter::Disband(Env& env)
+{
+    for (Group*& group : _envs[env.Index].Groups)
+    {
+        if (group)
+            group->Disband(true);   // removes it from the group manager and deletes it
+        group = nullptr;
+    }
 }
 
 void Animus::Curriculum::LifeEncounter::BeforeLevel(Env& env)
@@ -130,19 +223,22 @@ Animus::Curriculum::LifeWorld::Side Animus::Curriculum::LifeEncounter::SideOfSea
     return bot ? LifeWorld::SideOf(bot->GetTeamId()) : _envs[env.Index].Side;
 }
 
-void Animus::Curriculum::LifeEncounter::SetWaypoint(EnvLife& life, uint8 kind, Position const& where)
+void Animus::Curriculum::LifeEncounter::SetWaypoint(EnvLife& life, uint8 kind, Position const& where, uint32 group)
 {
-    if (!life.HasWaypoint || life.WaypointKind != kind)
-        life.LastDistance = -1.0f;
-    life.HasWaypoint = true;
-    life.WaypointKind = kind;
-    life.Waypoint = where;
+    Waypoint& way = life.Ways[std::min<uint32>(group, TEAM_COUNT - 1)];
+    if (!way.Has || way.Kind != kind)
+        for (SeatLife& seat : life.Seats)
+            seat.LastDistance = -1.0f;
+    way.Has = true;
+    way.Kind = kind;
+    way.Where = where;
 }
 
-void Animus::Curriculum::LifeEncounter::ClearWaypoint(EnvLife& life)
+void Animus::Curriculum::LifeEncounter::ClearWaypoint(EnvLife& life, uint32 group)
 {
-    life.HasWaypoint = false;
-    life.LastDistance = -1.0f;
+    life.Ways[std::min<uint32>(group, TEAM_COUNT - 1)].Has = false;
+    for (SeatLife& seat : life.Seats)
+        seat.LastDistance = -1.0f;
 }
 
 Creature* Animus::Curriculum::LifeEncounter::Summon(Env& env, EnvLife& life, Map* map,
@@ -194,25 +290,43 @@ bool Animus::Curriculum::LifeEncounter::TimeIsUp(Env const& env) const
 
 void Animus::Curriculum::LifeEncounter::UpdateEnemies(Env& env)
 {
-    // Whatever is fighting the seat, nearest first, then the nearest hostile within reach that is not yet: the
-    // pack block's slots, so a fight can be opened and finished with the combat blocks as they were trained.
-    Player* seat = _scenario.SeatBot(env, 0);
+    // Whatever is fighting the seats, nearest first, then the nearest hostile within reach that is not yet: the
+    // pack block's slots, so a fight can be opened and finished with the combat blocks as they were trained. With
+    // several seats, around any of them, and nearest to the nearest of them.
     env.Targets.clear();
-    if (!seat || !seat->IsAlive())
+    std::vector<Player*> seats;
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive())
+            seats.push_back(bot);
+    if (seats.empty())
         return;
 
     std::list<Unit*> units;
-    Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, HOSTILE_REACH);
-    Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
-    Cell::VisitObjects(seat, searcher, HOSTILE_REACH);
-    units.remove_if([seat](Unit* unit) { return unit->IsPlayer() || !unit->IsAlive() || !seat->IsValidAttackTarget(unit); });
-    units.sort([seat](Unit* a, Unit* b)
+    for (Player* seat : seats)
+    {
+        std::list<Unit*> near;
+        Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, HOSTILE_REACH);
+        Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, near, check);
+        Cell::VisitObjects(seat, searcher, HOSTILE_REACH);
+        for (Unit* unit : near)
+            if (!unit->IsPlayer() && unit->IsAlive() && seat->IsValidAttackTarget(unit)
+                && std::find(units.begin(), units.end(), unit) == units.end())
+                units.push_back(unit);
+    }
+    auto const nearest = [&seats](Unit const* unit)
+    {
+        float best = 1e9f;
+        for (Player const* seat : seats)
+            best = std::min(best, seat->GetDistance(unit));
+        return best;
+    };
+    units.sort([&nearest](Unit* a, Unit* b)
     {
         bool const fightingA = a->IsInCombat();
         bool const fightingB = b->IsInCombat();
         if (fightingA != fightingB)
             return fightingA;
-        return seat->GetDistance(a) < seat->GetDistance(b);
+        return nearest(a) < nearest(b);
     });
     for (Unit* unit : units)
     {
@@ -225,77 +339,82 @@ void Animus::Curriculum::LifeEncounter::UpdateEnemies(Env& env)
 void Animus::Curriculum::LifeEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     EnvLife const& life = _envs[env.Index];
-    if (seat != 0 || !view.Bot)
+    if (!view.Bot)
         return;
 
     WorldActions::Sense(view.Bot, _scenario.Tuning().Life.SenseRange, view.World);
-    Sensed(env, life, view);
-    // The waypoint is the travel block's objective: the same features the trips were learned on.
-    if (life.HasWaypoint)
+    Sensed(env, life, seat, view);
+    // The group's waypoint is the travel block's objective: the same features the trips were learned on.
+    if (Waypoint const& way = life.Ways[GroupOf(env, seat)]; way.Has)
     {
         view.HasObjective = true;
-        view.Objective = life.Waypoint;
+        view.Objective = way.Where;
     }
 }
 
 void Animus::Curriculum::LifeEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
 {
-    if (seat != 0)
+    if (seat >= MAX_SEATS)
         return;
     EnvLife& life = _envs[env.Index];
-    life.Interactions += result.Interactions;
-    life.Wasted += result.Wasted;
-    life.CorpsesLooted += result.CorpsesLooted;
-    life.ItemsLooted += result.ItemsLooted;
-    life.CopperLooted += result.CopperLooted;
-    life.GatherCasts += result.GatherCasts;
-    Account(env, life, result);
+    SeatLife& mine = life.Seats[seat];
+    mine.Interactions += result.Interactions;
+    mine.Wasted += result.Wasted;
+    mine.CorpsesLooted += result.CorpsesLooted;
+    mine.ItemsLooted += result.ItemsLooted;
+    mine.CopperLooted += result.CopperLooted;
+    mine.GatherCasts += result.GatherCasts;
+    Account(env, life, seat, result);
 }
 
 void Animus::Curriculum::LifeEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
     CurriculumTuning::LifeTuning const& tuning = _scenario.Tuning().Life;
     EnvLife& life = _envs[env.Index];
-    if (seatIndex != 0)
+    if (seatIndex >= MAX_SEATS)
         return;
+    SeatLife& mine = life.Seats[seatIndex];
 
     ledger.Add(RewardTerm::StepCost, -tuning.StepCost * _scenario.DecisionScale());
 
-    if (bot && !bot->IsAlive() && !life.Died)
-        life.Died = true;
-    if (life.Died && !life.DeathPaid)
+    if (bot && !bot->IsAlive() && !mine.Died)
+        mine.Died = true;
+    if (mine.Died && !mine.DeathPaid)
     {
-        life.DeathPaid = true;
+        mine.DeathPaid = true;
         ledger.Add(RewardTerm::Death, -tuning.Death / TierScale(env));
     }
 
-    // Potential-based shaping on the straight distance to the waypoint: what is closed pays, what is given back
-    // costs. Spread over the trip's length (at least 100 yd) so a whole approach pays Life.Progress once, and
-    // never paid across a change of waypoint (SetWaypoint resets the potential).
-    if (bot && bot->IsAlive() && life.HasWaypoint)
+    // Potential-based shaping on the straight distance to the group's waypoint: what is closed pays, what is
+    // given back costs. Spread over the trip's length (at least 100 yd) so a whole approach pays Life.Progress
+    // once, and never paid across a change of waypoint (SetWaypoint resets the potential).
+    if (Waypoint const& way = life.Ways[GroupOf(env, seatIndex)]; bot && bot->IsAlive() && way.Has)
     {
-        float const distance = bot->GetExactDist2d(&life.Waypoint);
-        if (life.LastDistance >= 0.0f)
+        float const distance = bot->GetExactDist2d(&way.Where);
+        if (mine.LastDistance >= 0.0f)
         {
-            float const trip = std::max(100.0f, life.LastDistance);
-            float const closed = life.LastDistance - distance;
+            float const trip = std::max(100.0f, mine.LastDistance);
+            float const closed = mine.LastDistance - distance;
             ledger.Add(RewardTerm::Progress, tuning.Progress * closed / trip);
-            life.Progressed += closed;
+            mine.Progressed += closed;
         }
-        life.LastDistance = distance;
+        mine.LastDistance = distance;
     }
 
     // Each wasted press (an interact with nothing to interact with, a buy that bought nothing), once.
-    if (life.Wasted > life.WastedPaid)
+    if (mine.Wasted > mine.WastedPaid)
     {
-        ledger.Add(RewardTerm::Wasted, -tuning.Wasted * float(life.Wasted - life.WastedPaid));
-        life.WastedPaid = life.Wasted;
+        ledger.Add(RewardTerm::Wasted, -tuning.Wasted * float(mine.Wasted - mine.WastedPaid));
+        mine.WastedPaid = mine.Wasted;
     }
 
-    RewardMore(env, life, bot, ledger);
+    RewardMore(env, life, seatIndex, bot, ledger);
 
+    // The episode's outcome, once, on the last seat's reward of the decision it ends in.
+    if (seatIndex + 1 < _scenario.Data(env).ActiveSeats)
+        return;
     bool const finished = Finished(env, life);
-    bool const over = finished || life.Died || TimeIsUp(env);
+    bool const over = finished || AllDead(env) || TimeIsUp(env);
     if (!over || life.OutcomePaid)
         return;
     life.OutcomePaid = true;
@@ -316,5 +435,15 @@ void Animus::Curriculum::LifeEncounter::WriteState(Env const& env, float* state)
 bool Animus::Curriculum::LifeEncounter::IsTerminal(Env const& env) const
 {
     EnvLife const& life = _envs[env.Index];
-    return life.Died || life.Done || Finished(env, life) || TimeIsUp(env);
+    return AllDead(env) || life.Done || Finished(env, life) || TimeIsUp(env);
+}
+
+bool Animus::Curriculum::LifeEncounter::AllDead(Env const& env) const
+{
+    EnvLife const& life = _envs[env.Index];
+    uint32 const seats = std::max<uint32>(1, _scenario.Data(env).ActiveSeats);
+    for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
+        if (!life.Seats[seat].Died)
+            return false;
+    return true;
 }

@@ -97,8 +97,8 @@ def test_the_queue_total_is_what_the_manual_says():
     # an env cannot run at the usual env count): they are trained by name.
     outside = {"stage28_raid_single", "stage29_raid_gauntlet", "stage30_raid10", "stage31_raid25", "stage32_raid40"}
     queue = sum(v["total_env_steps"] for k, v in rows.items() if k not in outside)
-    assert queue == 1_500_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,500M"
-    assert sum(v["total_env_steps"] for v in rows.values()) == 1_750_000_000
+    assert queue == 1_600_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,600M"
+    assert sum(v["total_env_steps"] for v in rows.values()) == 1_850_000_000
 
 
 # --------------------------------------------------------------------------- 8.2 tuning defaults

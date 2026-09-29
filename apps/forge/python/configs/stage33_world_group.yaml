@@ -1,0 +1,12 @@
+# Stage 33: a group of two to four seats on a quest chain in the world, under a director (long-horizon plan,
+# Component F). The journal is the group's: where one member saw what the quest wants, all of them know, and the
+# director sends members to the objectives. Kill and loot credit is the group's.
+extends: stage22_town.yaml
+run_name: stage33_world_group
+total_env_steps: 50000000
+eval:
+  every_env_steps: 10000000
+  # 600 s episodes: 128 of them is 600 sim-seconds an evaluation at 128 envs.
+  episodes: 128
+  report: [quests_turned_in, quest_turned_in, quest_progress, quest_held_out, quest_places_found, order_changes,
+           director_member_orders, goals_reached, serving_share, quest_band]

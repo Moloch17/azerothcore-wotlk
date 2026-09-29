@@ -217,6 +217,12 @@ namespace Animus::Curriculum
             float QuestCredit = 3.0f;           // spread over the objectives' counts, times the tier scale
             float QuestTurnIn = 10.0f;          // times the tier scale
             float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
+            /// Quest credit a seat takes in a place another group holds (WorldCoordinator), per share of the quest:
+            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair.
+            float Poach = 0.5f;
+            /// How long a group holds a place it works (ms), and how near counts as working it (yards).
+            uint32 ClaimHoldMs = 30000;
+            float ClaimRadius = 25.0f;
             float GatherNode = 2.0f;            // per node gathered, times the tier scale
             float GatherSkillUp = 0.5f;         // per skill point gained
             float TownSold = 2.0f;              // for the starting junk's whole vendor value, pro rata
@@ -898,6 +904,9 @@ namespace Animus::Curriculum
             f("Life.QuestCredit", tuning.Life.QuestCredit);
             f("Life.QuestTurnIn", tuning.Life.QuestTurnIn);
             f("Life.QuestTimeout", tuning.Life.QuestTimeout);
+            f("Life.Poach", tuning.Life.Poach);
+            f("Life.ClaimHoldMs", tuning.Life.ClaimHoldMs);
+            f("Life.ClaimRadius", tuning.Life.ClaimRadius);
             f("Life.GatherNode", tuning.Life.GatherNode);
             f("Life.GatherSkillUp", tuning.Life.GatherSkillUp);
             f("Life.TownSold", tuning.Life.TownSold);

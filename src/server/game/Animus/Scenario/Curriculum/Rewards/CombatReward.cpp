@@ -111,6 +111,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::QuestAccepted:         return "quest_accepted";
         case RewardTerm::QuestCredit:           return "quest_credit";
         case RewardTerm::QuestTurnIn:           return "quest_turn_in";
+        case RewardTerm::Poach:                 return "poach";
         case RewardTerm::GatherNode:            return "gather_node";
         case RewardTerm::GatherSkillUp:         return "gather_skill_up";
         case RewardTerm::TownSold:              return "town_sold";

@@ -125,7 +125,8 @@ namespace Animus::Curriculum::LifeWorld
         Spawn const* Ender = nullptr;
         QuestPlan const* Plan = nullptr;
         std::vector<ObjectivePlace> Places;     // one per plan objective, on the giver's map
-        bool HeldOut = false;                   // drawn only in evaluation (IsHeldOutQuest)
+        bool HeldOut = false;                   // drawn only in evaluation (IsHeldOutQuest, IsHeldOutZone)
+        uint32 Zone = 0;                        // the giver's zone
         QuestCandidate const* Next = nullptr;   // the chain's next quest, when it is a candidate too
         bool Collect = false;                   // needs items (for the columns)
     };

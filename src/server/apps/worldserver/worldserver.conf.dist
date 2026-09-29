@@ -6028,6 +6028,12 @@ AnimusForge.Curriculum.Life.QuestAccepted = 1.0
 AnimusForge.Curriculum.Life.QuestCredit = 3.0
 AnimusForge.Curriculum.Life.QuestTurnIn = 10.0
 AnimusForge.Curriculum.Life.QuestTimeout = 3.0
+#   quest credit a seat takes in a place another group holds (the world coordinator's claims), per share of the
+#   quest: the price of poaching in a zone shared with other groups
+AnimusForge.Curriculum.Life.Poach = 0.5
+#   how long a group holds a place it works (ms), and how near counts as working it (yards)
+AnimusForge.Curriculum.Life.ClaimHoldMs = 30000
+AnimusForge.Curriculum.Life.ClaimRadius = 25
 #   gathering: per node looted (times the tier scale), per skill point gained
 AnimusForge.Curriculum.Life.GatherNode = 2.0
 AnimusForge.Curriculum.Life.GatherSkillUp = 0.5

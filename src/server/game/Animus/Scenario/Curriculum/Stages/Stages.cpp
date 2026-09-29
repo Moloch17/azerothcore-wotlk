@@ -895,6 +895,40 @@ namespace
         // to the boss along the server's own path; the trash they never pulled is cleared, the boss's own adds stay.
         // The party gauntlet on the host map is kept as a control arena at a tenth of the episodes: the same
         // policy is graded on real bosses and on the pool encounter it has always been graded on.
+        // A group questing in the world (long-horizon plan, Component F): two to four seats with a director, a chain of
+        // quests in a real zone, the journal shared -- where one member saw what the quest wants, all of them know.
+        // Kill and loot credit is the group's (a real group), and the director sends members to the objectives.
+        stages.push_back({
+            .Name = "stage33_world_group",
+            .Suffix = "_world_group",
+            .Extends = "stage22_town",
+            .Merges = { "stage17_party" },
+            .Summary = "a group on a quest chain in the world, under a director",
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Goal },
+            .Arenas = { { .Name = "world_group", .Seats = SeatPlan::Party, .Against = Opposition::Quest,
+                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .MinLevel = 15,
+        });
+
+        // Two groups in one zone (Component F): each on its own chain -- half the time the same quest -- and the
+        // zone's creatures shared between them. The coordinator's claims show in the journal; credit taken in a
+        // place the other group holds is charged (Life.Poach). What it teaches is going where the others are not.
+        stages.push_back({
+            .Name = "stage34_world_shared",
+            .Suffix = "_world_shared",
+            .Extends = "stage33_world_group",
+            .Summary = "two groups questing in one zone, sharing its creatures",
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Goal },
+            .Arenas = { { .Name = "world_shared", .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
+                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
+                .TeamSeats = 2 } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .MinLevel = 15,
+        });
+
         stages.push_back({
             .Name = "stage23_dungeon",
             .Suffix = "_dungeon",
@@ -1144,19 +1178,24 @@ namespace
         bool const raidGroup = instance && arena.Seats == SeatPlan::Raid;
         if (arena.PartyGroup && !stage.Has(BlockId::Party))
             return "a party group needs the party block";
-        if (arena.PartyGroup && !raidGroup && (!arena.Owner || arena.Seats != SeatPlan::Party))
-            return "a party group needs an owner and party seats, unless it is a raid in an instance";
+        // A group questing in the world (world_group, world_shared) is a party of its own, with no owner.
+        bool const worldGroup = arena.Against == Opposition::Quest
+            && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
+        if (arena.PartyGroup && !raidGroup && !worldGroup && (!arena.Owner || arena.Seats != SeatPlan::Party))
+            return "a party group needs an owner and party seats, unless it is a raid in an instance or a quest";
         if (arena.OwnerCast && !arena.Owner)
             return "a cast owner is still an owner: the arena has to have one";
         if (arena.OwnerCast && stage.SeatCount() + TEAM_COUNT + 1 > MAX_SEATS)
             return "a cast owner needs a seat slot past the seats and the directors, and a raid has none to spare";
         // Self-play: one seat a side in a Mirror, TEAM_SEATS of them in a Teams arena, and a team match is a
         // flag match -- there is nothing else for two learned sides of ten to be playing.
-        bool const selfPlay = arena.Seats == SeatPlan::Mirror || arena.Seats == SeatPlan::Teams;
+        // Two groups sharing a zone (world_shared) are teams that do not fight each other.
+        bool const sharedZone = arena.Seats == SeatPlan::Teams && arena.Against == Opposition::Quest;
+        bool const selfPlay = (arena.Seats == SeatPlan::Mirror || arena.Seats == SeatPlan::Teams) && !sharedZone;
         if (selfPlay != (arena.Against == Opposition::MirrorSeat || flag))
             return "self-play seats go with fighting the mirror seat or a flag match, and only with them";
-        if (arena.Seats == SeatPlan::Teams && !flag && arena.Against != Opposition::MirrorSeat)
-            return "team seats fight the other team, at a flag or in an arena";
+        if (arena.Seats == SeatPlan::Teams && !flag && arena.Against != Opposition::MirrorSeat && !sharedZone)
+            return "team seats fight the other team, at a flag or in an arena, or share a zone questing";
         if (arena.Seats == SeatPlan::Teams && (arena.TeamSeats < 1 || arena.TeamSeats > TEAM_SEATS))
             return "a side is between one seat and TEAM_SEATS";
         if (arena.Directed && !stage.Has(BlockId::Order))

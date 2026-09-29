@@ -310,6 +310,8 @@ void Animus::Curriculum::TownEncounter::Update(Env& env)
         WorldView sense;
         WorldActions::Sense(bot, _scenario.Tuning().Life.SenseRange, sense);
         if (sense.Vendor)
+            town.Found.Seen(sense.Vendor->GetPosition(), env.EpisodeElapsedMs, 5.0f);
+        if (sense.Vendor)
             SetWaypoint(life, 1, sense.Vendor->GetPosition());
         else
             ClearWaypoint(life);
@@ -318,11 +320,14 @@ void Animus::Curriculum::TownEncounter::Update(Env& env)
         ClearWaypoint(life);
 }
 
-void Animus::Curriculum::TownEncounter::Sensed(Env const& /*env*/, EnvLife const& /*life*/, SeatView& /*view*/) const
+void Animus::Curriculum::TownEncounter::Sensed(Env const& env, EnvLife const& /*life*/, uint32 /*seat*/,
+    SeatView& view) const
 {
+    // The journal: the traders seen.
+    _towns[env.Index].Found.Write(view.World, env.EpisodeElapsedMs);
 }
 
-void Animus::Curriculum::TownEncounter::Account(Env& env, EnvLife& /*life*/, SeatActionResult const& result)
+void Animus::Curriculum::TownEncounter::Account(Env& env, EnvLife& /*life*/, uint32 /*seat*/, SeatActionResult const& result)
 {
     EnvTown& town = _towns[env.Index];
     town.CopperSold += result.CopperSold;
@@ -332,7 +337,7 @@ void Animus::Curriculum::TownEncounter::Account(Env& env, EnvLife& /*life*/, Sea
     town.Equipped += result.Equipped;
 }
 
-void Animus::Curriculum::TownEncounter::RewardMore(Env& env, EnvLife& life, Player* /*bot*/, RewardLedger& ledger)
+void Animus::Curriculum::TownEncounter::RewardMore(Env& env, EnvLife& life, uint32 /*seat*/, Player* /*bot*/, RewardLedger& ledger)
 {
     CurriculumTuning::LifeTuning const& tuning = _scenario.Tuning().Life;
     EnvTown& town = _towns[env.Index];

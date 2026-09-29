@@ -19,13 +19,19 @@
 #ifndef ANIMUS_LIB_CURRICULUM_LIFE_ENCOUNTER_H
 #define ANIMUS_LIB_CURRICULUM_LIFE_ENCOUNTER_H
 
+#include "Block.h"
 #include "DifficultyLadder.h"
+#include "DirectorLayout.h"
 #include "Encounter.h"
 #include "LifeWorld.h"
+#include "WorldCoordinator.h"
 #include "ObjectGuid.h"
 #include "Position.h"
+#include <array>
 #include <string>
 #include <vector>
+
+class Group;
 
 namespace Animus::Curriculum
 {
@@ -57,6 +63,41 @@ namespace Animus::Curriculum
         void Teardown(Env& env) override;
 
     protected:
+        /// What one seat did and earned (a life arena of a group has several).
+        struct SeatLife
+        {
+            bool Died = false;
+            bool DeathPaid = false;
+            uint32 Interactions = 0;
+            uint32 Wasted = 0;
+            uint32 WastedPaid = 0;
+            uint32 CorpsesLooted = 0;
+            uint32 ItemsLooted = 0;
+            uint32 CopperLooted = 0;
+            uint32 GatherCasts = 0;
+            float LastDistance = -1.0f;         // to its group's waypoint, for the potential
+            float Progressed = 0.0f;            // yards of potential paid, for the episode info
+        };
+
+        /// Places the journal keeps of things seen (nodes in a field, traders in a town): the newest JOURNAL_PLACES,
+        /// merged when close, with when each was last seen.
+        struct FoundPlaces
+        {
+            struct Found { Position Where; uint32 SeenMs = 0; };
+            std::vector<Found> Places;
+            void Seen(Position const& where, uint32 nowMs, float merge = 25.0f);
+            void Write(WorldView& world, uint32 nowMs) const;
+            void Forget(Position const& where, float within = 5.0f);
+        };
+
+        /// Where the episode wants a group next, and the potential on the way there.
+        struct Waypoint
+        {
+            bool Has = false;
+            uint8 Kind = 0;                     // the subclass's own tags; a change resets the potential
+            Position Where;
+        };
+
         struct EnvLife
         {
             uint32 Tier = 0;                    // the band
@@ -66,43 +107,38 @@ namespace Animus::Curriculum
             uint8 Spec = 0;
             LifeWorld::Side Side = LifeWorld::Side::Any;
             std::vector<ObjectGuid> Spawned;    // what the episode put into the phase
-            bool Died = false;
-            bool DeathPaid = false;
             bool OutcomePaid = false;
             bool Won = false;                   // the episode's goal was reached (the subclass says when)
             bool Done = false;                  // the episode is over for a reason of its own
             uint32 Draws = 0;
-            uint32 Interactions = 0;
-            uint32 Wasted = 0;
-            uint32 WastedPaid = 0;
-            uint32 CorpsesLooted = 0;
-            uint32 ItemsLooted = 0;
-            uint32 CopperLooted = 0;
-            uint32 GatherCasts = 0;
-            // The waypoint: where the episode wants the seat next, and the potential on the way there.
-            bool HasWaypoint = false;
-            uint8 WaypointKind = 0;             // the subclass's own tags; a change resets the potential
-            Position Waypoint;
-            float LastDistance = -1.0f;
-            float Progressed = 0.0f;            // yards of potential paid, for the episode info
+            std::array<SeatLife, MAX_SEATS> Seats{};
+            std::array<Waypoint, TEAM_COUNT> Ways{};
+            /// A group of seats is a real group (a sim Group per side), so kills and loot credit its members.
+            std::array<Group*, TEAM_COUNT> Groups{};
         };
 
         /// The rung's band, drawn: fix the episode's map and spawn for it. False when the band has nothing.
         virtual bool Place(Env& env, EnvLife& life) = 0;
-        /// The subclass's part of the seat's view: the quest fields, and the waypoint the travel block shows.
-        virtual void Sensed(Env const& env, EnvLife const& life, SeatView& view) const = 0;
-        /// The subclass's terms for a decision, after the shared ones.
-        virtual void RewardMore(Env& env, EnvLife& life, Player* bot, RewardLedger& ledger) = 0;
-        /// The subclass's accounting of what a press did (the shared counters are kept here).
-        virtual void Account(Env& /*env*/, EnvLife& /*life*/, SeatActionResult const& /*result*/) { }
+        /// The subclass's part of a seat's view: the quest fields, and the waypoint the travel block shows.
+        virtual void Sensed(Env const& env, EnvLife const& life, uint32 seat, SeatView& view) const = 0;
+        /// The subclass's terms for a seat's decision, after the shared ones.
+        virtual void RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot, RewardLedger& ledger) = 0;
+        /// The subclass's accounting of what a seat's press did (the shared counters are kept here).
+        virtual void Account(Env& /*env*/, EnvLife& /*life*/, uint32 /*seat*/, SeatActionResult const& /*result*/) { }
         /// Whether the episode's goal is reached and the episode over.
         [[nodiscard]] virtual bool Finished(Env const& env, EnvLife const& life) const = 0;
         /// The subclass's columns.
         virtual void AddMoreEpisodeInfo(EpisodeInfoTable& /*table*/) { }
 
-        /// Point the waypoint somewhere (the potential restarts when its kind changes).
-        static void SetWaypoint(EnvLife& life, uint8 kind, Position const& where);
-        static void ClearWaypoint(EnvLife& life);
+        /// Point a group's waypoint somewhere (the potential restarts when its kind changes).
+        static void SetWaypoint(EnvLife& life, uint8 kind, Position const& where, uint32 group = 0);
+        static void ClearWaypoint(EnvLife& life, uint32 group = 0);
+        /// The group a seat plays in: its side (one for a party, two for two groups sharing a zone).
+        [[nodiscard]] uint32 GroupOf(Env const& env, uint32 seat) const;
+        /// Every seat of an arena of more than one seat into a real group per side (kill and loot credit is shared);
+        /// and back out.
+        void FormGroups(Env& env);
+        void Disband(Env& env);
         /// Summon `spawn` into the env's phase and remember it. Null when the summon failed.
         Creature* Summon(Env& env, EnvLife& life, Map* map, LifeWorld::Spawn const& spawn);
         GameObject* SummonObject(Env& env, EnvLife& life, Map* map, LifeWorld::Spawn const& spawn);
@@ -111,6 +147,8 @@ namespace Animus::Curriculum
             bool npcs);
         [[nodiscard]] float TierScale(Env const& env) const;
         [[nodiscard]] bool TimeIsUp(Env const& env) const;
+        /// Every seat of the episode has died (with one seat, that it has).
+        [[nodiscard]] bool AllDead(Env const& env) const;
         [[nodiscard]] LifeWorld::Side SideOfSeat(Env const& env) const;
 
         std::vector<EnvLife> _envs;
@@ -131,9 +169,8 @@ namespace Animus::Curriculum
 
     protected:
         bool Place(Env& env, EnvLife& life) override;
-        void Sensed(Env const& env, EnvLife const& life, SeatView& view) const override;
-        void RewardMore(Env& env, EnvLife& life, Player* bot, RewardLedger& ledger) override;
-        void Account(Env& env, EnvLife& life, SeatActionResult const& result) override;
+        void Sensed(Env const& env, EnvLife const& life, uint32 seat, SeatView& view) const override;
+        void RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot, RewardLedger& ledger) override;
         [[nodiscard]] bool Finished(Env const& env, EnvLife const& life) const override;
         void AddMoreEpisodeInfo(EpisodeInfoTable& table) override;
         /// The quest's undone objectives, as places a director can send members to.
@@ -142,19 +179,16 @@ namespace Animus::Curriculum
     private:
         struct EnvQuest
         {
-            /// The episode's quests: one, or a chain of up to three (QuestCandidate::Next), done in order.
+            /// The group's quests: one, or a chain of up to three (QuestCandidate::Next), done in order.
             std::vector<LifeWorld::QuestCandidate const*> Chain;
             uint32 Current = 0;                 // the one being done
             std::vector<ObjectGuid> Givers;     // per chain quest
             std::vector<ObjectGuid> Enders;
-            bool Accepted = false;              // the current quest
-            bool Complete = false;
-            bool TurnedIn = false;
-            bool AcceptPaid = false;
-            float Progress = 0.0f;              // the current quest's objectives done, 0 to 1
-            float ProgressPaid = 0.0f;
+            bool Accepted = false;              // the current quest, by any seat of the group
+            bool Complete = false;              // ... by every living seat
+            bool TurnedIn = false;              // ... handed in by every living seat
+            float Progress = 0.0f;              // the current quest's objectives done, 0 to 1 (the group's mean)
             uint32 TurnedInCount = 0;
-            uint32 TurnInsPaid = 0;
             uint32 Kills = 0;
             /// Places where something the current quest wants was seen (the journal's), and when.
             struct Found { Position Where; uint32 SeenMs = 0; uint8 Objective = 0; };
@@ -167,7 +201,29 @@ namespace Animus::Curriculum
             }
         };
 
-        std::vector<EnvQuest> _quests;
+        /// What each seat has been paid of its group's quest, so every member is paid its group's progress once.
+        struct SeatPay
+        {
+            uint32 AcceptPaid = 0;              // quests of the chain whose acceptance it was paid for
+            float ProgressPaid = 0.0f;          // of the current quest
+            uint32 ProgressQuest = 0;           // ... which one that was
+            uint32 TurnInsPaid = 0;
+            bool TimeoutPaid = false;
+            uint32 Poached = 0;                 // credit it took in a place another group holds
+        };
+
+        /// A group per side (one for a party, two sharing a zone), what each seat was paid, and the zone's
+        /// coordinator (claims and assignments between the groups).
+        struct EnvQuests
+        {
+            std::array<EnvQuest, TEAM_COUNT> Groups;
+            std::array<SeatPay, MAX_SEATS> Pay{};
+            WorldCoordinator Coordinator;
+        };
+
+        [[nodiscard]] uint32 GroupCount(Env const& env) const;
+
+        std::vector<EnvQuests> _quests;
     };
 
     /// A field of the band's herb and ore nodes, with the zone's own creatures around them; the seat has the
@@ -183,9 +239,9 @@ namespace Animus::Curriculum
 
     protected:
         bool Place(Env& env, EnvLife& life) override;
-        void Sensed(Env const& env, EnvLife const& life, SeatView& view) const override;
-        void RewardMore(Env& env, EnvLife& life, Player* bot, RewardLedger& ledger) override;
-        void Account(Env& env, EnvLife& life, SeatActionResult const& result) override;
+        void Sensed(Env const& env, EnvLife const& life, uint32 seat, SeatView& view) const override;
+        void RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        void Account(Env& env, EnvLife& life, uint32 seat, SeatActionResult const& result) override;
         [[nodiscard]] bool Finished(Env const& env, EnvLife const& life) const override;
         void AddMoreEpisodeInfo(EpisodeInfoTable& table) override;
 
@@ -200,6 +256,7 @@ namespace Animus::Curriculum
             uint32 SkillUps = 0;
             uint32 SkillUpsPaid = 0;
             uint32 Skinned = 0;
+            FoundPlaces Found;                  // the nodes seen, for the journal
         };
 
         std::vector<EnvGather> _gathers;
@@ -219,9 +276,9 @@ namespace Animus::Curriculum
 
     protected:
         bool Place(Env& env, EnvLife& life) override;
-        void Sensed(Env const& env, EnvLife const& life, SeatView& view) const override;
-        void RewardMore(Env& env, EnvLife& life, Player* bot, RewardLedger& ledger) override;
-        void Account(Env& env, EnvLife& life, SeatActionResult const& result) override;
+        void Sensed(Env const& env, EnvLife const& life, uint32 seat, SeatView& view) const override;
+        void RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        void Account(Env& env, EnvLife& life, uint32 seat, SeatActionResult const& result) override;
         [[nodiscard]] bool Finished(Env const& env, EnvLife const& life) const override;
         void AddMoreEpisodeInfo(EpisodeInfoTable& table) override;
 
@@ -242,6 +299,7 @@ namespace Animus::Curriculum
             uint32 Upgrades = 0;                // put in the bags at the start
             uint32 Equipped = 0;
             uint32 EquippedPaid = 0;
+            FoundPlaces Found;                  // the traders seen, for the journal
             bool SoldOut = false;               // no junk left
             bool Repaired = false;              // durability back to 1
         };

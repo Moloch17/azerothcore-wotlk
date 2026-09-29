@@ -96,6 +96,7 @@ namespace Animus::Curriculum
         QuestAccepted,
         QuestCredit,        // objective counts as they land
         QuestTurnIn,
+        Poach,              // quest credit taken in a place another group holds (Life.Poach)
         GatherNode,
         GatherSkillUp,
         TownSold,

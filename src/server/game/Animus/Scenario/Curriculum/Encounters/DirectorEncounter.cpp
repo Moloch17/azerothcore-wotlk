@@ -289,7 +289,9 @@ uint32 Animus::Curriculum::DirectorEncounter::Enemies(Env const& env, uint32 sid
 {
     out.fill(nullptr);
     SeatPlan const plan = _scenario.Arena(env).Seats;
-    if (plan == SeatPlan::Teams || plan == SeatPlan::Mirror)
+    // Groups sharing a zone are not each other's enemies: theirs are the zone's creatures.
+    bool const sharedZone = _scenario.Arena(env).Against == Opposition::Quest;
+    if ((plan == SeatPlan::Teams || plan == SeatPlan::Mirror) && !sharedZone)
     {
         std::array<uint32, TEAM_SEATS> theirs{};
         uint32 const count = std::min(_scenario.SideSeats(env, side ? 0 : 1, theirs), PACK_SLOTS);

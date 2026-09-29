@@ -118,6 +118,9 @@ namespace Animus::Curriculum
     /// Whether a quest is held out of training (a tenth of them, by id): drawn only in evaluation, so the eval
     /// reads how well quests the policy never saw are done.
     [[nodiscard]] bool IsHeldOutQuest(uint32 quest);
+    /// Whether a zone is held out of training (a tenth of them, by id): every quest given there is evaluation only,
+    /// so the eval also reads how quests go in places the policy never trained in.
+    [[nodiscard]] bool IsHeldOutZone(uint32 zone);
 }
 
 #endif

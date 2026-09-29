@@ -142,15 +142,21 @@ void Animus::Curriculum::GatherEncounter::Update(Env& env)
     if (skill > gather.SkillAtStart + gather.SkillUps)
         gather.SkillUps = skill - gather.SkillAtStart;
 
-    // The nearest node the seat can open is where it should be going.
+    // The nearest node the seat can open is where it should be going; every one seen goes in the journal, and one
+    // gathered (despawned) comes out of it.
     GameObject* nearest = nullptr;
+    float const sight = _scenario.Tuning().Life.SenseRange;
     for (ObjectGuid const& guid : life.Spawned)
     {
         if (!guid.IsGameObject())
             continue;
         GameObject* node = bot->GetMap()->GetGameObject(guid);
+        if (node && !node->isSpawned())
+            gather.Found.Forget(*node);
         if (!node || !node->isSpawned() || !WorldActions::CanGather(bot, node))
             continue;
+        if (bot->GetExactDist2d(node) <= sight)
+            gather.Found.Seen(node->GetPosition(), env.EpisodeElapsedMs);
         if (!nearest || bot->GetExactDist2d(node) < bot->GetExactDist2d(nearest))
             nearest = node;
     }
@@ -160,17 +166,20 @@ void Animus::Curriculum::GatherEncounter::Update(Env& env)
         ClearWaypoint(life);
 }
 
-void Animus::Curriculum::GatherEncounter::Sensed(Env const& /*env*/, EnvLife const& /*life*/, SeatView& /*view*/) const
+void Animus::Curriculum::GatherEncounter::Sensed(Env const& env, EnvLife const& /*life*/, uint32 /*seat*/,
+    SeatView& view) const
 {
+    // The journal: the nodes seen and not yet gathered.
+    _gathers[env.Index].Found.Write(view.World, env.EpisodeElapsedMs);
 }
 
-void Animus::Curriculum::GatherEncounter::Account(Env& env, EnvLife& /*life*/, SeatActionResult const& result)
+void Animus::Curriculum::GatherEncounter::Account(Env& env, EnvLife& /*life*/, uint32 /*seat*/, SeatActionResult const& result)
 {
     EnvGather& gather = _gathers[env.Index];
     gather.NodesGathered += result.NodesLooted;
 }
 
-void Animus::Curriculum::GatherEncounter::RewardMore(Env& env, EnvLife& /*life*/, Player* /*bot*/,
+void Animus::Curriculum::GatherEncounter::RewardMore(Env& env, EnvLife& /*life*/, uint32 /*seat*/, Player* /*bot*/,
     RewardLedger& ledger)
 {
     CurriculumTuning::LifeTuning const& tuning = _scenario.Tuning().Life;

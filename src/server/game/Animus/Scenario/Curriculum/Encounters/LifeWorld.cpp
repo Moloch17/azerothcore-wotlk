@@ -17,6 +17,8 @@
  */
 
 #include "LifeWorld.h"
+#include "MapMgr.h"
+#include <set>
 #include "Creature.h"
 #include "DatabaseEnv.h"
 #include "Env.h"
@@ -396,7 +398,9 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
         candidate.Giver = giver;
         candidate.Ender = turnIn;
         candidate.Plan = plan;
-        candidate.HeldOut = IsHeldOutQuest(id);
+        candidate.Zone = sMapMgr->GetZoneId(PHASEMASK_NORMAL, giver->Map, giver->Pos.GetPositionX(),
+            giver->Pos.GetPositionY(), giver->Pos.GetPositionZ());
+        candidate.HeldOut = IsHeldOutQuest(id) || IsHeldOutZone(candidate.Zone);
         _quests.push_back(std::move(candidate));
     }
 
@@ -404,6 +408,44 @@ Animus::Curriculum::LifeWorld::QuestSet::QuestSet()
     {
         return a.Id < b.Id;
     });
+
+    // Held-out zones must not empty a band for a side: a zone whose hold-out would leave a (band, side) with fewer
+    // than MIN_TRAINING quests in training stays in training. The zones held out are logged once, so an evaluation's
+    // held-out numbers can be read against them.
+    {
+        constexpr uint32 MIN_TRAINING = 30;
+        auto const trainingCount = [this](uint32 band, Side side)
+        {
+            return std::count_if(_quests.begin(), _quests.end(), [&](QuestCandidate const& q)
+            {
+                return q.Band == band && (q.For == side || q.For == Side::Any) && !q.HeldOut;
+            });
+        };
+        std::set<uint32> heldZones;
+        for (QuestCandidate const& q : _quests)
+            if (IsHeldOutZone(q.Zone))
+                heldZones.insert(q.Zone);
+        std::set<uint32> kept;
+        for (uint32 zone : heldZones)
+            for (uint32 band = 0; band < BAND_COUNT && !kept.count(zone); ++band)
+                for (Side side : { Side::Alliance, Side::Horde })
+                    if (trainingCount(band, side) < MIN_TRAINING
+                        && std::any_of(_quests.begin(), _quests.end(), [&](QuestCandidate const& q)
+                            { return q.Zone == zone && q.Band == band && (q.For == side || q.For == Side::Any); }))
+                    {
+                        kept.insert(zone);
+                        break;
+                    }
+        for (QuestCandidate& q : _quests)
+            if (kept.count(q.Zone))
+                q.HeldOut = IsHeldOutQuest(q.Id);
+        std::string held;
+        for (uint32 zone : heldZones)
+            if (!kept.count(zone))
+                held += Acore::StringFormat("{}{}", held.empty() ? "" : ", ", zone);
+        LOG_INFO("module.animus", "Life world: zones held out of training: {} ({} kept to fill a band)",
+            held.empty() ? "none" : held, kept.size());
+    }
 
     // Chains: a quest's next is linked when it is a candidate too, on the same map (both are drawn together).
     std::unordered_map<uint32, QuestCandidate*> byId;

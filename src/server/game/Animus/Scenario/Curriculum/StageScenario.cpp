@@ -1678,7 +1678,9 @@ bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 ag
         return agent == _seatCount + 1;
 
     // Self-play: the far side of the match is the opponent. One seat a side in a Mirror, TEAM_SEATS of them in
-    // a Teams arena.
+    // a Teams arena. Two groups sharing a zone are not opponents.
+    if (Arena(env).Against == Opposition::Quest)
+        return false;
     switch (Arena(env).Seats)
     {
         case SeatPlan::Mirror: return agent == 1;
