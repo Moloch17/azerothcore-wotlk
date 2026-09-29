@@ -1,0 +1,21 @@
+# Stage 3, the first of the classes phase: the kit against dummies (DummyEncounter). A dummy standing still, dummies
+# wandering with more arriving to switch to, one that hits back and can be killed, and a still one while damage lands
+# on the seat. Paid for output against the dummy's own health (a kill's worth of damage is worth Dummy.Damage), for
+# mana kept at the end, and in the hitting and bleeding drills for health kept.
+#
+# This is where Component H's intent judgement is the whole lesson: nothing fights, so an aimless press is plainly
+# aimless, and every class learns to press its buttons for a reason before it has to survive a fight.
+
+extends: stage4_duel.yaml
+run_name: stage3_rotation
+
+total_env_steps: 50000000
+
+eval:
+  every_env_steps: 5000000
+  report: [dummy_output, dummy_adds, dummy_killed, mana_kept, dps, died, aimless_presses, effort_presses,
+           serving_share, casts_completed, casts_cancelled]
+
+layout_sampling:
+  metric: dummy_output
+  replay_fraction: 0.0

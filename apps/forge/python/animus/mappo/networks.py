@@ -328,7 +328,7 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     On the GPU, one fused RNN call per sequence instead of stepping the cell: the rows are cut at episode ends into
     pieces that each start from their own memory (the carried one for a row's first piece, zero after an end), run
     packed through the library's GRU with the cell's own weights, and put back in [T, N] order. Stepping the cell
-    was ~210,000 kernel launches per stage8_duel update; this took the update from 1.67 s to 1.29 s. (A hand-written
+    was ~210,000 kernel launches per stage4_duel update; this took the update from 1.67 s to 1.29 s. (A hand-written
     persistent kernel was tried and lost to it: at 16 rows a minibatch is one workgroup walking 128 dependent steps.)
     """
     carried = memory.reshape(-1, size)

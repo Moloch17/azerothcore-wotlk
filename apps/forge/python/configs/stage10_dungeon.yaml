@@ -1,0 +1,19 @@
+# Stage 10: the first real instance. A party and its cast owner against a dungeon's own scripted bosses, in the
+# dungeon: Ragefire Chasm at 15, the Deadmines at 20, the Scarlet Monastery at 35-40, Stratholme at 60 and heroic
+# Utgarde Keep at 80 (InstanceBosses.cpp), under the director. A tenth of the episodes are the party gauntlet on the
+# host map (dungeon_control). The gate the plan sets: boss kills above the second run's 34%.
+
+extends: stage9_party.yaml
+run_name: stage10_dungeon
+
+total_env_steps: 50000000
+
+eval:
+  every_env_steps: 10000000
+  episodes: 512
+  report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, owner_deaths, director_member_orders,
+           boss_rung, instance_map]
+
+cast:
+  agents:
+    owner: "{runs_dir}/stage6_gauntlet/best.pt"

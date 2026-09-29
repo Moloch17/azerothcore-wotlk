@@ -1,0 +1,16 @@
+# Stage 18: Warsong Gulch's rules between two learned seats, bases 100-180 yd apart in the Barrens: take the other
+# side's flag home while one's own is there, return one's own when it is dropped, stop the carrier. A carrier cannot
+# ride, the dead stand up at their base after a 15 s wave, and the first to three captures wins. The flag columns
+# say more than the score, which a policy against itself barely moves.
+
+extends: stage14_duel_pvp.yaml
+run_name: stage18_flag
+
+total_env_steps: 50000000
+
+eval:
+  report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, mounted_fraction]
+
+cast:
+  opponents: league
+  parent: "{runs_dir}/stage14_duel_pvp/best.pt"

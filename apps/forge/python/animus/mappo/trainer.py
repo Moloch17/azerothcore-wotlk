@@ -66,7 +66,7 @@ class MappoConfig:
     # the rollouts, travel in the checkpoint, and are folded into the adapter when a model is exported.
     normalise_observations: bool = True
     # Where the learning rates end, as a fraction of actor_lr and critic_lr, falling linearly over total_env_steps:
-    # a constant rate kept the update growing all run (stage8_duel: approx KL 0.014 -> 0.028, ~20% of samples
+    # a constant rate kept the update growing all run (stage4_duel: approx KL 0.014 -> 0.028, ~20% of samples
     # clipped) when late progress needs small steps. 1 = constant.
     lr_final_fraction: float = 1.0
     # Auxiliary foresight heads on the actor's trunk (0 = off). They predict, from the same features the actions are
@@ -96,14 +96,14 @@ class MappoConfig:
     rollout_graphs: bool = True
     # The PPO update's arithmetic: "fp32", or "bf16" -- the networks' products under torch.autocast (the weights,
     # the optimiser and the GRU's memory stay in full precision; the losses are computed in fp32 as autocast does).
-    # On stage8_duel's update (RDNA3) bf16 took the update from 0.58 to 0.47 s and the stage from 39,181 to 44,655
+    # On stage4_duel's update (RDNA3) bf16 took the update from 0.58 to 0.47 s and the stage from 39,181 to 44,655
     # env steps/s -- and learned worse: fine-tuning from best.pt for 12 minutes, its seeded evaluations were 10.35 and
     # 13.41 at 10M and 20M steps against fp32's 14.20 and 15.36 (standard errors ~0.25), with entropy and approx_kl
     # falling faster. So fp32 it is, unless a stage measures otherwise.
     update_precision: str = "fp32"
     # How data-parallel learners (animus.parallel) keep one policy. "gradients": every optimizer step's gradients are
     # averaged over the ranks, so they train as one learner on the pool -- the right thing on one machine, and ~8
-    # Gbit/s a link for stage8_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
+    # Gbit/s a link for stage4_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
     # with its own optimiser and the ranks' networks are averaged every weight_sync_every updates (local SGD) --
     # one all-reduce of the parameters, which is what a cluster of learners can carry, but every rank waits for the
     # slowest at every one. "async" (animus.async_sync): no collective at all -- each rank trains at its own pace and
@@ -1542,7 +1542,7 @@ class MappoTrainer:
                 if teach is not None:
                     # The whole chunk in one call. A recurrent teacher still sees the decisions in order, but only
                     # its GRU cell runs per step: replaying every teacher's adapters and trunk decision by decision
-                    # cost stage27_crossroads a 306 s update against a 6 s rollout, with six teachers.
+                    # cost stage21_ship a 306 s update against a 6 s rollout, with six teachers.
                     state_all = (data["state"][:, chunk][:, :, None, :]
                                  .expand(steps, envs_here, agents, data["state"].shape[-1])
                                  .reshape(steps, rows_here, -1))

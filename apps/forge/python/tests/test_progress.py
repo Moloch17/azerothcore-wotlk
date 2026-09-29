@@ -20,7 +20,7 @@ def test_progress_is_flat_and_nonfinite_values_are_nulled(tmp_path):
 
 def test_writer_keeps_metrics_and_evaluation_between_writes(tmp_path):
     config = _config()
-    spec = SimpleNamespace(scenario="stage8_duel")
+    spec = SimpleNamespace(scenario="stage4_duel")
     tracker = ConvergenceTracker(patience=3)
     writer = ProgressWriter(tmp_path, config, spec, resumed_update=4, resumed_env_steps=400)
 
@@ -42,7 +42,7 @@ def test_writer_keeps_metrics_and_evaluation_between_writes(tmp_path):
 
 
 def _config() -> TrainConfig:
-    config = TrainConfig(run_name="stage8_duel", total_env_steps=1000)
+    config = TrainConfig(run_name="stage4_duel", total_env_steps=1000)
     config.eval.every_env_steps = 100
     config.eval.baseline = "fight"
     config.convergence.patience = 3
@@ -54,7 +54,7 @@ def test_restore_evaluation_after_resume(tmp_path):
     tracker = ConvergenceTracker(patience=2)
     tracker.observe(3.0, 100)
     tracker.observe(2.0, 200)
-    writer = ProgressWriter(tmp_path, _config(), SimpleNamespace(scenario="stage8_duel"))
+    writer = ProgressWriter(tmp_path, _config(), SimpleNamespace(scenario="stage4_duel"))
 
     writer.restore_evaluation(tracker, 1.5)
     row = json.loads(writer.write("training", 2, 200).read_text())
@@ -70,7 +70,7 @@ def test_convergence_per_class_is_reported(tmp_path):
     controller = SimpleNamespace(
         converged_layouts=lambda: ["warrior_dps"], active_layouts=lambda: ["mage_dps"],
         weakest=lambda: ("mage_dps", ["score", "kl"]), layouts={"mage_dps": SimpleNamespace(reentries=1)})
-    writer = ProgressWriter(tmp_path, config, SimpleNamespace(scenario="stage8_duel"))
+    writer = ProgressWriter(tmp_path, config, SimpleNamespace(scenario="stage4_duel"))
 
     writer.evaluated(100, 3.0, 1.5, tracker, controller)
     row = json.loads(writer.write("finished", 2, 200, "budget", advanced=True).read_text())

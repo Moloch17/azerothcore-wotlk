@@ -8,9 +8,9 @@ here; the rest inherit.
 **What a class's own config holds.** Two things, neither of them a gate -- stages have none, every stage ends on the
 same convergence rule (animus.stage):
 
-- **Where its combat line seeds from.** The movement stages (1-7) are trained once for every class in the shared
-  run, and a class's `stage8_duel` names that checkpoint outright, because `init_from: auto` only looks under the
-  run's own `runs` directory: `init_from: [{shared_runs}/stage7_flight/best.pt]`. Seeding across works because the
+- **Where its combat line seeds from.** The movement phase (stages 1-2) is trained once for every class in the shared
+  run, and a class's `stage3_rotation` names that checkpoint outright, because `init_from: auto` only looks under the
+  run's own `runs` directory: `init_from: [{shared_runs}/stage2_travel/best.pt]`. Seeding across works because the
   layout check is one-directional: every layout the run has must be in the checkpoint, and a druid-only run takes
   the druid's adapter and head out of an all-class checkpoint and leaves the other nine behind.
 - **What to report.** `eval.report` columns that are the druid's to read: `form_at_end` on the duel and the stealth

@@ -1,0 +1,16 @@
+# Stage 20, the end of the PvP phase: the world with other people in it (Component F). Two directed pairs and two solos
+# questing in one zone, every group half the time on the first group's quest, the zone's creatures shared. The
+# coordinator's claims show in each journal, and credit taken in a place another group holds is charged (Life.Poach):
+# what is learned is going where the others are not. A quarter of the episodes (world_gank) add hostile players who
+# arrive mid-quest and attack whoever they find.
+
+extends: stage11_world_group.yaml
+run_name: stage20_world_shared
+
+total_env_steps: 50000000
+
+eval:
+  every_env_steps: 10000000
+  episodes: 128
+  report: [quests_turned_in, quest_turned_in, quest_poached, world_claims, ambushers, ambushers_killed,
+           quest_progress, quest_places_found, director_member_orders, goals_reached, died, quest_band]

@@ -1,6 +1,6 @@
 """Time the learner's whole loop -- rollouts, updates, the exchange -- against a stand-in for the sim.
 
-    python -m animus.bench_learner --config configs/stage8_duel.yaml --spec <run>/spec.json \\
+    python -m animus.bench_learner --config configs/stage4_duel.yaml --spec <run>/spec.json \\
         --layouts <sim's layouts dir> [--sim-ms 5] [--updates 6] [--set KEY=VALUE ...]
 
 A fake sim in its own process speaks the real protocol with a real run's SPEC: random observations, episodes as

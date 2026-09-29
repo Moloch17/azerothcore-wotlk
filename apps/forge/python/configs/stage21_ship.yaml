@@ -1,0 +1,42 @@
+# Stage 21, the ship stage: every phase in one policy, and the checkpoint that ships. Sixteen arenas, each phase's
+# representatives (Stages.cpp says which and why): the trip, the flight and the water crossing; the duel, the gauntlet,
+# the quest and the town; the companion, the directed party, the dungeon and a ten-seat raid; one-on-one, arena teams,
+# the escape drill and the shared world with its ganks; and an owner ganked mid-gauntlet.
+#
+# Seeding: the trunk from stage20_world_shared; the blocks it lacks from the last stage of each earlier phase
+# (stage2_travel, stage7_life, stage13_raids) and stage17_arena (the context block). Distillation: each arena is
+# taught by the first parent that has it; the rest learn from the reward alone.
+#
+# The evaluation reports per phase (eval.phases): the gate is each phase within noise of its own stage's last
+# evaluation, so a phase this stage lets slip is named rather than averaged away.
+
+extends: stage9_party.yaml
+run_name: stage21_ship
+
+total_env_steps: 100000000
+
+mappo:
+  gamma: 0.999
+
+distill:
+  teachers: auto
+  coef: 1.0
+  half_life_env_steps: 50000000
+
+eval:
+  episodes: 256
+  every_env_steps: 20000000
+  sampled_every: 3
+  phases:
+    movement: [travel, flight, water]
+    classes: [duel, gauntlet, quest, town]
+    parties: [companion, party, dungeon, raid10]
+    pvp: [arena_1v1, arena_2v2, escape, world_shared, ambush]
+  report: [dps, died, won, kills, pulls_cleared, wipes, owner_deaths, arrived, quest_turned_in, boss_killed,
+    ambushers_killed, serving_share, goals_reached]
+
+cast:
+  opponents: league
+  parent: "{runs_dir}/stage14_duel_pvp/best.pt"
+  agents:
+    owner: "{runs_dir}/stage6_gauntlet/best.pt"

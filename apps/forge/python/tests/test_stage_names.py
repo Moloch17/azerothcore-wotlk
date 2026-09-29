@@ -49,8 +49,17 @@ def scanned_files() -> list[Path]:
     return sorted(files)
 
 
+def trained_model(path: Path) -> bool:
+    """An exported model's manifest: its `stage` records the stage that trained it -- a citation of that run, like a
+    dated line -- and stays until the models are replaced by a run of the current curriculum."""
+    return path.suffix == ".json" and "models" in path.parts and path.read_text(errors="replace").startswith(
+        '{"format"')
+
+
 def strays(path: Path, names: set[str]) -> list[str]:
     out = []
+    if trained_model(path):
+        return out
     for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
         if DATED.search(line):
             continue

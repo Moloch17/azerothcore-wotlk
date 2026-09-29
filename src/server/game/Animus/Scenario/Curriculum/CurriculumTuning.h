@@ -672,6 +672,21 @@ namespace Animus::Curriculum
             float Max = 3.0f;
         } Hazards;
 
+        /// The rotation drill (Opposition::Dummy, DummyEncounter): output against targets that do not fight back.
+        struct DummyTuning
+        {
+            float HealthScale = 20.0f;          // a dummy's health, times its level's own: it outlives the episode
+            float HittingHealthScale = 4.0f;    // the one that hits back: a long fight, but one that can be won
+            float Damage = 1.0f;                // per the dummy's own (unscaled) health dealt: a kill's worth of output
+            float Kill = 2.0f;                  // the hitting dummy killed
+            float Death = 3.0f;
+            float Bleed = 0.012f;               // the bleeding drill: share of the seat's health lost a second, average
+            float Hurt = 0.3f;                  // ... per second, per share of the seat's health missing
+            float Resource = 0.5f;              // at the end, per share of the mana bar kept
+            uint32 AddEveryMs = 15000;          // the moving drill: another dummy about this often
+            uint32 MaxAdds = 2;
+        } Dummy;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1050,6 +1065,16 @@ namespace Animus::Curriculum
             f("Hazards.Damage", tuning.Hazards.Damage);
             f("Hazards.Standing", tuning.Hazards.Standing);
             f("Hazards.Max", tuning.Hazards.Max);
+            f("Dummy.HealthScale", tuning.Dummy.HealthScale);
+            f("Dummy.HittingHealthScale", tuning.Dummy.HittingHealthScale);
+            f("Dummy.Damage", tuning.Dummy.Damage);
+            f("Dummy.Kill", tuning.Dummy.Kill);
+            f("Dummy.Death", tuning.Dummy.Death);
+            f("Dummy.Bleed", tuning.Dummy.Bleed);
+            f("Dummy.Hurt", tuning.Dummy.Hurt);
+            f("Dummy.Resource", tuning.Dummy.Resource);
+            f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
+            f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);

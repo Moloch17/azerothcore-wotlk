@@ -1,0 +1,13 @@
+# Stage 15: not fighting. A scripted enemy player from ten levels below to ten above that searches: break away and be
+# alive at 120 s (evade), or get out of sight and stay there, hiding again when found (hide). Every class plays both,
+# graded on the outcome rather than the button. Durnholde Keep and the Southshore farms, for cover.
+
+extends: stage14_duel_pvp.yaml
+run_name: stage15_escape
+
+total_env_steps: 50000000
+
+eval:
+  report: [survived, escaped, contact_breaks, line_of_sight_breaks, unseen_seconds, unseen_longest_seconds, re_hides,
+           re_stealths, died]
+

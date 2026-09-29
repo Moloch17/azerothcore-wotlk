@@ -1,0 +1,23 @@
+# Stage 14, the first of the PvP phase: self-play one-on-one. Two learned seats of random classes and builds; the far
+# side is the live policy in half the training fights and a league of frozen earlier checkpoints in the rest
+# (animus.cast), so the opponent is always something that learned to fight.
+#
+# A fight turns on what happened tens of seconds before (a stealthy approach, a trinket baited out), so the horizon
+# is long: gamma 0.999 and lambda 0.995 per decision. The score says little about progress when both sides improve
+# together; the per-class won/died columns are the ones to read.
+
+extends: stage4_duel.yaml
+run_name: stage14_duel_pvp
+
+total_env_steps: 50000000
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  report: [won, dps, died, time_to_kill, damage_taken, cast_seconds_wasted]
+
+cast:
+  opponents: league

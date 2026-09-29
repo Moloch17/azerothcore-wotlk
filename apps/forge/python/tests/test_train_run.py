@@ -157,7 +157,7 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     server.start()
 
     steps_per_update = 4 * SPEC.num_envs * SPEC.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
         "rollout_length=4", f"total_env_steps={2 * steps_per_update}", "checkpoint_every=1", "init_from=''",
         "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
@@ -192,7 +192,7 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     assert [int(row["env_steps"]) for row in evals] == [0, steps_per_update, 2 * steps_per_update, 2 * steps_per_update]
     assert [row["policy"] for row in evals] == ["learner", "learner", "learner", "learner_sampled"]
     assert modes.count((True, 2, "")) == 4
-    # After each training evaluation the lost seeds go to the sim (stage8_duel replays clean_kill losses). The fake
+    # After each training evaluation the lost seeds go to the sim (stage4_duel replays clean_kill losses). The fake
     # episodes have no killed or died columns, so none can be told lost: an empty replay each time.
     assert len(replays) == 3 and all(len(seeds) == 0 for _, _, seeds in replays)
 
@@ -211,7 +211,7 @@ def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
     server.start()
 
     steps_per_update = 4 * SPEC.num_envs * SPEC.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
         "rollout_length=4", f"total_env_steps={3 * steps_per_update}", "checkpoint_every=1000", "init_from=''",
         "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
@@ -253,7 +253,7 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     server.start()
 
     steps_per_update = 4 * spec.num_envs * spec.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
         "rollout_length=4", f"total_env_steps={3 * steps_per_update}", "checkpoint_every=1", "init_from=''",
         "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
@@ -311,7 +311,7 @@ def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path)
 
     envs = host_spec.num_envs + SPEC.num_envs
     steps_per_update = 4 * envs * SPEC.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={tmp_path / 'host.sock'}", f"cluster_sims=['{tmp_path / 'worker.sock'}']",
         f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
         "rollout_length=4", f"total_env_steps={2 * steps_per_update}", "checkpoint_every=1", "init_from=''",
@@ -367,7 +367,7 @@ def test_a_worker_that_drops_out_does_not_stop_training_and_rejoins(tmp_path, mo
 
     envs = 2 * SPEC.num_envs
     steps_per_update = 4 * envs * SPEC.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={host_path}", f"cluster_sims=['{worker_path}']", f"runs_dir={tmp_path / 'runs'}",
         f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake", "rollout_length=4",
         f"total_env_steps={5 * steps_per_update}", "checkpoint_every=100", "init_from=''", "train_device=cpu",

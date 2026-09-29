@@ -227,9 +227,9 @@ are cleaned up by the core at startup (group members without a character).
 
 ### Life outside the fight
 
-A companion whose model carries the **world block** -- exported from `stage20_quest` or later, the crossroads
-included -- lives a little on its own. The block is the one the forge's life stages trained (manual 4, stages
-20-22): the nearest corpse it may loot, quest giver it has business with, gathering node and vendor, its own
+A companion whose model carries the **world block** -- exported from `stage7_life` or a later stage that keeps it, the
+ship stage included -- lives a little on its own. The block is the one the forge's life stage trained (manual 4,
+stage 7): the nearest corpse it may loot, quest giver it has business with, gathering node and vendor, its own
 bags, gold, durability, food, drink and whether something in the bags rates higher than what it wears; and the
 six presses -- INTERACT, LOOT_ALL, EQUIP_UPGRADE, SELL_JUNK, REPAIR, BUY_SUPPLIES. `LifeService::Sense` fills
 those features from the real world (no phasing, everybody's NPCs; the quest reported is the one in its log

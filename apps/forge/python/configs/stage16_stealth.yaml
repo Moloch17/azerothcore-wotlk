@@ -1,0 +1,12 @@
+# Stage 16: stealth, which is not hiding -- crossing the ground to someone who is looking for you and arriving inside
+# strike range with the opener in hand. Played only by the classes whose kit can stealth (NeedsStealth); the learner
+# steps over this stage for the rest and merges its layouts forward (animus.train, a restricted stage).
+
+extends: stage15_escape.yaml
+run_name: stage16_stealth
+
+total_env_steps: 50000000
+
+eval:
+  report: [stalk_seconds, stalk_longest_seconds, stalked_into_range, closest_stealthed, stalk_approaches,
+           stealth_openers, re_stealths, survived, won, died]

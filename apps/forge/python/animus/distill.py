@@ -243,7 +243,7 @@ class Distiller:
 
         Every argument carries a leading [steps, rows] (logits [steps, rows, actions]). A recurrent teacher still has
         to see the decisions in order, but only its GRU cell does: its adapters and trunk run once over every step,
-        which is the difference between a matmul per step per teacher and one per teacher. stage27_crossroads has six
+        which is the difference between a matmul per step per teacher and one per teacher. stage21_ship has six
         teachers and measured a 306 s update against a 6 s rollout before this.
 
         Returns (loss, rows) with rows 0 when nothing was taught.

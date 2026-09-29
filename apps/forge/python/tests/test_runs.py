@@ -44,7 +44,7 @@ def test_nothing_to_archive(tmp_path):
 
 
 def test_resume_needs_a_latest_checkpoint(tmp_path):
-    run_dir = tmp_path / "stage8_duel"
+    run_dir = tmp_path / "stage4_duel"
     run_dir.mkdir()
 
     with pytest.raises(FileNotFoundError, match="latest.pt"):
@@ -57,7 +57,7 @@ def test_resume_needs_a_latest_checkpoint(tmp_path):
 def spec_dict(**changes) -> dict:
     spec = {
         "version": 5, "num_envs": 64, "agents_per_env": 1, "obs_dim": 10, "state_dim": 6, "num_actions": 4,
-        "episode_info_dim": 3, "tick_ms": 50, "decision_ticks": 2, "episode_seconds": 60, "scenario": "stage8_duel",
+        "episode_info_dim": 3, "tick_ms": 50, "decision_ticks": 2, "episode_seconds": 60, "scenario": "stage4_duel",
         "layouts": ({"name": "warrior_dps", "obs_dim": 10, "num_actions": 4},),
         "episode_info_names": ("damage", "dps", "level"),
     }

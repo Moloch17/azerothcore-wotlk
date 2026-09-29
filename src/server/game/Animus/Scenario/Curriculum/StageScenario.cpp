@@ -293,9 +293,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // battleground, a quest giver's, a node's or an inn's map) or builds what every map shares and nothing locks: a
     // core group (an owner, a party), the director's orders over the others. Only then is it safe to run on the map
     // thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
-    _resetsStayOnMap = _continent && !stage.AnyArena([](ArenaDefinition const& arena)
+    _resetsStayOnMap = _continent && !stage.AnyArena([this](ArenaDefinition const& arena)
     {
         return arena.Owner || arena.PartyGroup || arena.Directed || arena.Against == Opposition::Instance
+            || (arena.MapId && arena.MapId != _spawnMapId)
             || arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
             || arena.Against == Opposition::Town || arena.Against == Opposition::Flag;
     });
@@ -427,6 +428,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasQuest = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Quest; };
     auto const hasGather = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Gather; };
     auto const hasTown = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Town; };
+    auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -455,6 +457,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         pulls = add(std::make_unique<PullsEncounter>(*this, envs));
     if (_stage.AnyArena(hasCreature))
         creature = add(std::make_unique<CreatureEncounter>(*this, envs));
+    Encounter* dummy = nullptr;
+    if (_stage.AnyArena(hasDummy))
+        dummy = add(std::make_unique<DummyEncounter>(*this, envs));
     // Nothing to fight and nothing to order: it only puts fire on the ground, so it can go anywhere in the order.
     Encounter* hazards = nullptr;
     if (_stage.AnyArena(hasHazards))
@@ -479,8 +484,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
-    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, pulls, instance, quest, gather, town,
-        hazards, _owner, _party, opponent, ambush, travel, flag, director })
+    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
+        town, hazards, _owner, _party, opponent, ambush, travel, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -497,7 +502,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == hazards && hasHazards(arena))
                 || (encounter == instance && hasInstance(arena))
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
-                || (encounter == town && hasTown(arena))
+                || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -536,7 +541,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // Load it at startup rather than on the first episode. A hazard stage fights nothing but still draws its
     // ground from the pool (OpponentPool::RandomHazardSpell), and without this the first episode of every env
     // paid for the load.
-    if (_stage.AnyArena(hasCreature) || _stage.AnyArena(hasPulls) || _stage.AnyArena(hasHazards))
+    if (_stage.AnyArena(hasCreature) || _stage.AnyArena(hasPulls) || _stage.AnyArena(hasHazards)
+        || _stage.AnyArena(hasDummy))
         Opponents::OpponentPool::Instance();
     ConsumablePool::Instance();
 
@@ -588,14 +594,15 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 std::vector<Position> const& Animus::Curriculum::StageScenario::SpawnGroundFor(Env const& env) const
 {
     static std::vector<Position> const none;
-    if (!_stage.MapId)
+    uint32 const arena = Data(env).Arena;
+    uint32 const arenaMap = arena < _stage.Arenas.size() ? _stage.Arenas[arena].MapId : 0;
+    if (!_stage.MapId && !arenaMap)
         return none;
 
     // An arena that needs its own ground stands where it says, not where the env does; and a scored episode
     // stands on the control ground, which training never touches, so what the gates measure is whether the seat
     // can read terrain at all rather than whether it has seen this terrain before. An arena or a stage with no
     // control of its own falls back to the ground it trains on, and says so by being unable to tell the two apart.
-    uint32 const arena = Data(env).Arena;
     if (arena < _stage.Arenas.size() && !_stage.Arenas[arena].SpawnPoints.empty())
     {
         ArenaDefinition const& definition = _stage.Arenas[arena];
@@ -604,6 +611,10 @@ std::vector<Position> const& Animus::Curriculum::StageScenario::SpawnGroundFor(E
 
         return definition.SpawnPoints;
     }
+
+    // An arena on a map of its own has no use for the stage's ground (the check refuses one without its own).
+    if (!_stage.MapId || (arenaMap && arenaMap != _stage.MapId))
+        return none;
 
     if (env.Evaluating && !_stage.HeldOutSpawnPoints.empty())
         return _stage.HeldOutSpawnPoints;
@@ -1740,8 +1751,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
     data.Arena = DrawArena();
-    data.EpisodeMapId = 0;
-    data.HasEpisodeMap = false;
+    // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
+    // own map (an instance rung, a quest giver's) still decides later, in BeforeLevel.
+    data.EpisodeMapId = _stage.Arenas[data.Arena].MapId;
+    data.HasEpisodeMap = data.EpisodeMapId != 0;
     data.EpisodeLevel = 0;
     data.EpisodeTeam = 0;
     data.DungeonDifficulty = 0;
@@ -1880,7 +1893,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         if (data.Seats[seat].L)
             minLevel = std::max(minLevel, data.Seats[seat].L->Assets->Kit->MinLevel());
 
-    minLevel = std::max(minLevel, _stage.MinLevel);
+    minLevel = std::max({ minLevel, _stage.MinLevel, arena.MinLevel });
 
     // Characters.ReuseEpisodes: a seat whose draw gave it the class and build it already has keeps its character
     // for a few episodes rather than building a new one (the build was a quarter of a decision's cost). The env then
@@ -2013,7 +2026,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     Player* lead = SeatBot(env, 0);
     // A continent's own creatures are in another phase than the env's, and belong to every env.
-    if (firstBuild && !_continent)
+    if (firstBuild && map->Instanceable())
         SpawnArea::Clear(lead);
 
     env.MapId = map->GetId();

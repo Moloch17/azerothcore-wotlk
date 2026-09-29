@@ -291,6 +291,18 @@ def test_arena_summary_needs_several_arenas():
     assert single.summary(())["arenas"] == {}
 
 
+def test_the_summary_has_a_row_per_phase():
+    """eval.phases (the ship stage): a phase's rows are its arenas' episodes, and an arena named by no phase is in
+    none of them."""
+    infos = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [0.0, 2.0]], np.float32)
+    result = EvalResult("learner", np.array([1.0, 3.0, 5.0, 7.0]), infos, ("level", "arena"),
+                        arenas=("travel", "duel", "arena_1v1"))
+    summary = result.summary((), {"movement": ("travel",), "pvp": ("arena_1v1", "not_here")})
+    assert summary["phases"]["movement"]["episodes"] == 1 and summary["phases"]["movement"]["score"] == 1.0
+    assert summary["phases"]["pvp"]["episodes"] == 2 and summary["phases"]["pvp"]["score"] == 6.0
+    assert "classes" not in summary["phases"]
+
+
 def test_stderr_in_summary():
     result = EvalResult("learner", np.array([1.0, 3.0, 5.0, 7.0]), np.zeros((4, 0), np.float32), ())
     assert result.stderr == pytest.approx(np.std([1, 3, 5, 7], ddof=1) / 2)
@@ -498,7 +510,7 @@ def test_casting_weights_favour_the_layouts_below_baseline():
 
 
 def test_casting_weights_follow_the_metric_short_of_the_gate_too():
-    """stage8_duel's mage beat the scripted mage's score while killing 68% of the time: the baseline gap alone gave
+    """stage4_duel's mage beat the scripted mage's score while killing 68% of the time: the baseline gap alone gave
     it less data than a class and build already killing every time."""
     summary = {"castings": {
         "mage_dps": {"score": 7.0, "clean_kill": 0.68},
@@ -526,7 +538,7 @@ def test_casting_weights_are_even_without_a_spread_or_a_baseline():
 
 
 def test_livelocked_counts_episodes_not_cancels():
-    """A start-cast / stop-cast loop is a tail, not a shift: stage8_duel's warlock had a median of 4 cancels an
+    """A start-cast / stop-cast loop is a tail, not a shift: stage4_duel's warlock had a median of 4 cancels an
     episode and a maximum of 299, so a mean of casts_cancelled hides it. Counted per episode, per layout."""
     cancels = np.array([0.0, 2.0, float(LIVELOCK_CANCELS), 299.0], dtype=np.float32)
     result = EvalResult(

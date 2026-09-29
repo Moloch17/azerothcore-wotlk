@@ -1,7 +1,7 @@
 """The manual's tables against the files they describe.
 
-Every stage budget in the manual was between 1x and 7x the configured value before this existed -- stage17_party
-was documented at 600M against a configured 120M, stage27_crossroads at 1B against 150M. Numbers copied by hand
+Every stage budget in the manual was between 1x and 7x the configured value before this existed -- the party stage
+was documented at 600M against a configured 120M, the crossroads at 1B against 150M. Numbers copied by hand
 into prose drift silently and nobody notices until someone plans a run from them, so the table is checked instead
 of trusted.
 """
@@ -17,7 +17,7 @@ CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 REPO = Path(__file__).resolve().parents[4]
 MANUAL = REPO / "docs" / "forge" / "04-curriculum.md"
 
-# `| `stage8_duel` | 100M | 10M | 2048 |` -- the table pairs two stages per row, so each line yields two.
+# `| `stage4_duel` | 50M | 10M | 2048 |` -- the table pairs two stages per row, so each line yields two.
 ROW = re.compile(
     r"\|\s*`(?P<name>\w+)`\s*\|\s*(?P<budget>[\d.]+)M\s*\|\s*(?P<every>[\d.]+)M\s*\|"
     r"\s*(?P<episodes>\d+)\s*(?=\|)")
@@ -60,10 +60,11 @@ STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curricu
 # length (AnimusForge.EpisodeSeconds) for an arena that sets none.
 ENVS = 128
 DEFAULT_EPISODE_SECONDS = 60
-# The party line's 2048 x 450 s / 128 = 7,200 sim-seconds is the most any stage spends on one evaluation today.
+# The gauntlet's 1024 x 900 s / 128 = 7,200 sim-seconds (its endurance arena) is the most any stage spends on one
+# evaluation today.
 MAX_EVAL_SIM_SECONDS = 7_200
 # The raid stages run at their own env count (AnimusForge.Stage.<name>.Envs in the conf template).
-STAGE_ENVS = {"stage30_raid10": 32, "stage31_raid25": 16, "stage32_raid40": 8}
+STAGE_ENVS = {"stage12_raid_pulls": 8, "stage13_raids": 16}
 
 
 def longest_episode_seconds() -> dict[str, int]:
@@ -93,12 +94,10 @@ def test_an_evaluation_stays_affordable(name):
 def test_the_queue_total_is_what_the_manual_says():
     """The manual states the whole queue in one number, which is the one a person plans a run from."""
     rows = documented()
-    # The raid stages are not in the default queue (StageDefinition::InDefaultQueue is false for them: forty seats
-    # an env cannot run at the usual env count): they are trained by name.
-    outside = {"stage28_raid_single", "stage29_raid_gauntlet", "stage30_raid10", "stage31_raid25", "stage32_raid40"}
-    queue = sum(v["total_env_steps"] for k, v in rows.items() if k not in outside)
-    assert queue == 1_600_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,600M"
-    assert sum(v["total_env_steps"] for v in rows.values()) == 1_850_000_000
+    # Every stage is in the default queue, the raids included (they run at their own env count).
+    queue = sum(v["total_env_steps"] for v in rows.values())
+    assert queue == 1_400_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,400M"
+    assert len(rows) == 21
 
 
 # --------------------------------------------------------------------------- 8.2 tuning defaults

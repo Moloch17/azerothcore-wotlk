@@ -107,8 +107,8 @@ def test_shipped_configs_load(path):
 
 
 def test_layout_sampling_metric_must_exist():
-    config = TrainConfig.load(CONFIGS / "stage8_duel.yaml")
-    assert config.layout_sampling.metric in (*DERIVED_METRICS, *sim_stage_columns()["stage8_duel"])
+    config = TrainConfig.load(CONFIGS / "stage4_duel.yaml")
+    assert config.layout_sampling.metric in (*DERIVED_METRICS, *sim_stage_columns()["stage4_duel"])
 
 
 def stage_definitions() -> dict[str, dict]:

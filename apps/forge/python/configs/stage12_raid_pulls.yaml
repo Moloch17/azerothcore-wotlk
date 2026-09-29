@@ -1,0 +1,15 @@
+# Stage 12: the raid before the real raids. Forty learned seats as eight groups of five, each with its own tank and
+# healer, one director over all of them addressing groups and members: one elite and its adds, and a run of raid
+# pulls with recovery between. Forty seats an env: AnimusForge.Stage.stage12_raid_pulls.Envs keeps the bots in the
+# world near where the pool stages have them, and the evaluation is small to match.
+
+extends: stage11_world_group.yaml
+run_name: stage12_raid_pulls
+
+total_env_steps: 50000000
+
+eval:
+  every_env_steps: 10000000
+  episodes: 64
+  report: [pulls_cleared, died, wipes, teammates_died, engage_health, engage_mana, low_health_seconds, threat_share,
+           director_member_orders]

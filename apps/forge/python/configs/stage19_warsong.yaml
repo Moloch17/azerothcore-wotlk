@@ -1,0 +1,13 @@
+# Stage 19: Warsong Gulch at its proper size, ten a side on the battleground's own map, each side under its director.
+# A capture needs an escort, a base needs somebody left on it, and an enemy carrier can be chased by ten. A capture,
+# pickup, return or carrier kill pays every seat of the side; a death charges only the seat that died.
+
+extends: stage18_flag.yaml
+run_name: stage19_warsong
+
+total_env_steps: 50000000
+
+eval:
+  episodes: 128
+  report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, team_seat, flag_in_reach,
+    mounted_fraction, healing_done, director_member_orders]

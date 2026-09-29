@@ -128,6 +128,45 @@ namespace Animus::Curriculum
         std::vector<EnvHazards> _envs;
     };
 
+    /// The rotation drill (Opposition::Dummy, ArenaDefinition::Drill): the kit against the duel pool's creatures with
+    /// their health scaled to outlive the episode, standing still or wandering with more to switch to, hitting back,
+    /// or with the seat bleeding. Paid for output against the dummy's own health, and for mana kept.
+    class DummyEncounter final : public Encounter
+    {
+    public:
+        DummyEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+    private:
+        struct EnvDummies
+        {
+            DummyDrill Drill = DummyDrill::Still;
+            uint8 Level = 1;
+            uint32 BaseHealth = 1;          // the main dummy's health before scaling: output is measured in it
+            uint32 Adds = 0;
+            uint32 NextAddMs = 0;
+            uint32 NextBleedMs = 0;
+            float Output = 0.0f;            // damage dealt, in kills' worth of BaseHealth
+            float ManaKept = 0.0f;
+            bool KillPaid = false;
+            bool DeathPaid = false;
+            bool EndPaid = false;
+        };
+
+        /// One dummy near the seat, into env.Targets; the first of an episode (`main`) sets the base health.
+        Creature* Spawn(Env& env, Map* map, Player* bot, bool main);
+        [[nodiscard]] static bool TimeIsUp(Env const& env);
+
+        std::vector<EnvDummies> _envs;
+    };
+
     class CreatureEncounter final : public Encounter
     {
     public:

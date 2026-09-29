@@ -1,0 +1,17 @@
+# The deathknight's rotation drill: the root of its fighting line (the classes phase). Starts at 55: every episode is a
+# high-level fight, and the rune system is its own kind of resource.
+#
+# One file per class, each saying the same thing: where the class's line seeds from. The movement phase (stages 1-2) is
+# trained once for every class in the shared run, so this stage seeds from that run's travel checkpoint rather than from
+# a deathknight-only stage2_travel, which does not exist. `init_from: auto` cannot find it (the seed chain looks under
+# this run's own runs directory); `{shared_runs}` is the shared root's runs directory beside this class's own
+# (animus.config). Seeding across is allowed because the layout check is one-directional: a deathknight-only run takes
+# the deathknight out of an all-class checkpoint and leaves the other nine behind (animus.bootstrap).
+#
+# Everything else -- the budget, the evaluation, the convergence rule -- is the shared stage3_rotation's.
+
+extends: ../stage3_rotation.yaml
+run_name: stage3_rotation
+
+init_from:
+  - "{shared_runs}/stage2_travel/best.pt"

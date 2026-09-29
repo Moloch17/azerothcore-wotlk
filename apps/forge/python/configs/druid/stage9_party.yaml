@@ -1,0 +1,14 @@
+# The bear's and the restoration druid's drills, which are arenas of the party stage now (tanking and triage).
+#
+# Tanking pins its first seat to a build that can hold the pull (ArenaDefinition::SeatAptitudes, a threshold on
+# measured mitigation rather than a role), which in a druid-only run means a bear; threat_share and
+# threat_on_teammates are outcomes, what the pull did, not what the seat pressed. Triage pins a build that can keep
+# the hurt one up, which is restoration: its healing is mostly over time rather than on demand, and it has to shift
+# out of a form to cast at all, so overhealing and healing per mana read differently for it than for a paladin.
+
+extends: ../stage9_party.yaml
+run_name: stage9_party
+
+eval:
+  report: [threat_share, threat_on_teammates, teammate_damage_taken, low_health_seconds, overheal_share,
+           healing_per_mana, hot_healing_share, pulls_cleared, wipes, owner_deaths]

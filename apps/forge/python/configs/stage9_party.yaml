@@ -1,0 +1,23 @@
+# Stage 9: up to four learned seats and the cast owner as the fifth player, against elite-heavy pulls, under a
+# learned director that calls focus, duties and places down to single members. A third of the episodes fix a tank
+# seat (tanking) and a third a healer seat (triage); those were stages of their own whose best checkpoints were their
+# seeds, so the next stage overwrote them.
+#
+# 150M (2026-09-28, by the user's decision): at 50M the party did not move -- the owner died in 67% of episodes at 0M,
+# 18M and 35M alike.
+
+extends: stage8_companion.yaml
+run_name: stage9_party
+
+total_env_steps: 150000000
+
+eval:
+  every_env_steps: 20000000
+  episodes: 512
+  report: [dps, died, deaths, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died,
+    teammate_healing, threat_on_teammates, director_member_orders, order_changes, goals_reached, serving_share,
+    casts_completed, casts_cancelled]
+
+cast:
+  agents:
+    owner: "{runs_dir}/stage6_gauntlet/best.pt"

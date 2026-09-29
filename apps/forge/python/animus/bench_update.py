@@ -1,6 +1,6 @@
 """Time one PPO update on the real networks, without a sim.
 
-    python -m animus.bench_update --config configs/stage8_duel.yaml --spec <run>/spec.json [--repeat 5] [--profile]
+    python -m animus.bench_update --config configs/stage4_duel.yaml --spec <run>/spec.json [--repeat 5] [--profile]
 
 Builds the stage's MappoTrainer from a run's spec.json, fills one rollout with random observations acted on by the
 rollout networks (so log_probs, values and memories are the policy's own), and runs `trainer.update` on it `repeat`

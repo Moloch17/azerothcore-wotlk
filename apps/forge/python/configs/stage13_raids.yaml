@@ -1,0 +1,15 @@
+# Stage 13, the end of the parties phase: the real raids as arenas -- ten seats in Karazhan and Naxxramas,
+# twenty-five in Naxxramas, forty in Molten Core, Blackwing Lair and the Temple of Ahn'Qiraj -- weighted against their
+# cost (4:2:1), with a ten-seat single pack as the control. No owner: seat 0 leads the raid. The env count is set for
+# the forty (AnimusForge.Stage.stage13_raids.Envs).
+
+extends: stage12_raid_pulls.yaml
+run_name: stage13_raids
+
+total_env_steps: 100000000
+
+eval:
+  every_env_steps: 10000000
+  episodes: 128
+  report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, teammates_died, director_member_orders,
+           boss_rung, instance_map]

@@ -1,6 +1,6 @@
 """Train a MAPPO policy against a running Animus Forge sim.
 
-    python -m animus.train --config configs/stage8_duel.yaml --run-name stage8_duel
+    python -m animus.train --config configs/stage4_duel.yaml --run-name stage4_duel
 
 The worldserver starts this when told to (`forge start`, `forge resume`, `forge run`) and
 AnimusForge.Learner.AutoStart = 1, and passes where runs and layouts go (AnimusForge.OutputDir). Run by hand, the client
@@ -478,6 +478,14 @@ class TrainingRun:
             flush=True,
         )
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
+        # eval.phases: a curriculum phase's arenas, for a row per phase in the evaluation summary. A name the stage
+        # has no arena of is a config written for another stage: refused rather than reported as an empty phase.
+        self.phases = {str(phase): tuple(str(name) for name in names)
+                       for phase, names in config.eval.phases.items()}
+        unknown = sorted({name for names in self.phases.values() for name in names} - set(self.arena_names))
+        if self.phases and unknown:
+            raise ValueError(f"eval.phases names arenas {self.stage and self.stage.get('scenario')} does not have: "
+                             f"{unknown} (its arenas: {list(self.arena_names)})")
         # Each layout's action names, so the evaluations' per-episode logs say which actions were taken.
         self.action_names = {name: layout.get("action_names", [])
                              for name, layout in (self.stage or {}).get("layouts", {}).items()}
@@ -894,7 +902,7 @@ class TrainingRun:
                                           opponents=self.opponents, arenas=self.arena_names,
                                           action_names=self.action_names)
             if self.ranks.leader:
-                summary = result.summary(self.report)
+                summary = result.summary(self.report, self.phases)
                 baseline_path.write_text(json.dumps({"key": key, "summary": summary}, indent=2))
                 self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
                 print(f"Baseline {config.eval.baseline}: score {result.score:.4g} over {result.episodes} seeded "
@@ -948,7 +956,7 @@ class TrainingRun:
 
         summary, sampled, joined = None, False, False
         if leader:
-            summary = result.summary(self.report)
+            summary = result.summary(self.report, self.phases)
             if self.cast is not None:
                 controller.observe_league(self.cast.league_stats([layout.name for layout in self.spec.layouts]))
             improved = controller.observe(summary, self.env_steps)
@@ -1019,7 +1027,7 @@ class TrainingRun:
         if not self.ranks.leader:
             return
         result.policy = "learner_sampled"
-        summary = result.summary(self.report)
+        summary = result.summary(self.report, self.phases)
         fields = [name for name in ("score", "clean_kill", "killed", "died", "timed_out", "arrived")
                   if name in summary]
         # The gap, sampled minus argmax, kept with the sampled row of eval.jsonl: a wide one says the gated policy is
@@ -1513,7 +1521,7 @@ class TrainingRun:
         Roughly half the stages measured end their run barely changing: approx_kl falls eight to eleven fold
         between the first eighth of a run and the last (the party stage 11.2x, duo_led 10.5x, companion 9.2x,
         stage4 8.3x) with clip_frac down to ~0.01, so the final third costs wall clock and buys very little.
-        The other half do not -- stage8_duel's KL *rises* over 683 updates, travel and flight stay flat -- so
+        The other half do not -- stage4_duel's KL *rises* over 683 updates, travel and flight stay flat -- so
         this is reported and never acted on. Stopping a stalled run automatically would have cut stage4
         short, and it went on to 916 updates.
         """

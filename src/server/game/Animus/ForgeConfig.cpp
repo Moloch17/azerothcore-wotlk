@@ -362,7 +362,7 @@ void AnimusForge::ForgeConfig::Load()
     }
 
     Bench = BenchSettings();
-    Bench.Scenario = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Scenario", "stage8_duel");
+    Bench.Scenario = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Scenario", "stage4_duel");
     Bench.Policy = sConfigMgr->GetOption<std::string>("AnimusForge.Bench.Policy", "fight");
     auto const isAuto = [](std::string const& key)
     {

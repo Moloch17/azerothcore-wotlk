@@ -1,0 +1,19 @@
+# Stage 5: a pack of 2-4 (casters included, usually linked): targets, interrupts, crowd control. A third of the
+# pulls have a hazard caster in them (ArenaDefinition::Hazards), so stepping out of fire is learned under a pack,
+# where it is a trade against the fight -- the dodge field it came from stayed flat with nothing to fight.
+#
+# gamma 0.999 and lambda 0.995 per decision: a pull and the setup that made it winnable take 30-60 s.
+
+extends: stage4_duel.yaml
+run_name: stage5_pack
+
+total_env_steps: 50000000
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  report: [clean_kill, won, died, kills, dps, interrupts, control_seconds, hazard_seconds, hazard_damage,
+           damage_taken]

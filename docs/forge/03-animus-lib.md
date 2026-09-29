@@ -347,7 +347,7 @@ actions]...`. The learner pads every row to the largest layout of the run and ta
 that change whenever a block does:
 
 ```json
-{"format":3,"model":"warrior_tank_duel","stage":"stage8_duel","class_role":"warrior_tank","class":1,"role":"tank",
+{"format":3,"model":"warrior_tank_duel","stage":"stage4_duel","class_role":"warrior_tank","class":1,"role":"tank",
  "obs_dim":...,"num_actions":...,"specs":[2],
  "blocks":[{"name":"core","obs":[0,...],"actions":[0,...],"action_features":5,
             "catalog":[{"kind":"noop"},{"kind":"cancel_queued"},{"kind":"spell","first_rank":71,"next_swing":false},...],

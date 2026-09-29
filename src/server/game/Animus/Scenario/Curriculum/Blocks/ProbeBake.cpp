@@ -604,13 +604,19 @@ namespace Animus::Curriculum::ProbeBake
 
     std::vector<GridRef> StageGrids(Animus::Curriculum::StageDefinition const& stage, bool wholeMaps)
     {
-        std::vector<Position> points = stage.SpawnPoints;
-        points.insert(points.end(), stage.HeldOutSpawnPoints.begin(), stage.HeldOutSpawnPoints.end());
+        // Each map's points: the stage's on its own map, an arena's on the arena's map (ArenaDefinition::MapId).
+        std::map<uint32, std::vector<Position>> points;
+        std::vector<Position>& stagePoints = points[stage.MapId];
+        stagePoints = stage.SpawnPoints;
+        stagePoints.insert(stagePoints.end(), stage.HeldOutSpawnPoints.begin(), stage.HeldOutSpawnPoints.end());
         std::set<uint32> maps = { stage.MapId };
         for (Animus::Curriculum::ArenaDefinition const& arena : stage.Arenas)
         {
-            points.insert(points.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
-            points.insert(points.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
+            uint32 const arenaMap = arena.MapId ? arena.MapId : stage.MapId;
+            maps.insert(arenaMap);
+            std::vector<Position>& arenaPoints = points[arenaMap];
+            arenaPoints.insert(arenaPoints.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
+            arenaPoints.insert(arenaPoints.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
             for (Animus::Curriculum::BossRow const& row : Animus::Curriculum::InstanceLadderRows(arena.Instance))
                 maps.insert(row.MapId);
         }
@@ -626,8 +632,8 @@ namespace Animus::Curriculum::ProbeBake
                 continue;
             if (!entry->Instanceable() && !wholeMaps)
             {
-                if (mapId == stage.MapId)
-                    for (Position const& point : points)
+                if (auto const found = points.find(mapId); found != points.end())
+                    for (Position const& point : found->second)
                         for (int32 dx = -1; dx <= 1; ++dx)
                             for (int32 dy = -1; dy <= 1; ++dy)
                                 grids.insert({ mapId, GridIndex(point.GetPositionX() + float(dx) * REACH),

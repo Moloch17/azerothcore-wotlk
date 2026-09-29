@@ -24,7 +24,7 @@ def _free_port() -> int:
 
 def _rank(rank: int, tmp: str, port: int) -> None:
     steps_per_update = 4 * 2 * SPEC.num_envs * SPEC.agents_per_env
-    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage8_duel.yaml", [
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
         f"socket={tmp}/sim.sock", f"runs_dir={tmp}/runs", f"layouts_dir={tmp}/layouts", "run_name=fake",
         "rollout_length=4", f"total_env_steps={2 * steps_per_update}", "checkpoint_every=1", "init_from=''",
         "train_device=cpu", "rollout_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",

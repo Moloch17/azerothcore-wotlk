@@ -1,0 +1,225 @@
+# Learner config for stage4_duel, the first fight with something that fights back, and the file every other stage's
+# config inherits its hyperparameters from: one policy for every class of AnimusForge.Classes (all ten by default).
+# Each class is a layout -- its own input adapter and action head around a shared trunk -- and covers every build it
+# has. The run trains in <runs_dir>/stage4_duel/; export writes one model per class (warrior_duel.amdl, ...).
+#
+# It is stage 4 of the classes phase's line: the movement phase taught a seat to place its feet, and the rotation
+# drill (stage3_rotation) its buttons, so this stage can spend itself on the fight.
+#
+# Every episode is a new character: race, gender, level 1-80, spec, talents and gear are all random, and the policy
+# sees them in its observation. It faces a same-level creature that fights back, spawned out of aggro range: the bot
+# has to move to it, pick its pet, open from stealth where it can, and kill it fast while losing little health.
+# Episodes end on the kill or the bot's death.
+#
+# The sim decides the env count, decision interval and episode length (worldserver.conf, the AnimusForge.* keys), where runs go and what
+# a stage seeds from (its stage.json); everything here is learner-side. Other stages list only what they change.
+
+run_name: stage4_duel
+socket: /tmp/animus-forge.sock
+seed: 1
+
+# Seed from the closest earlier stage that has been trained (the stage's seed chain in stage.json).
+init_from: auto
+
+# One policy has to cover 80 levels, every race and spec of the class and random builds and gear, so it needs far
+# more experience than a single-character scenario. At 64 envs one update is 128 x 64 = 8192 env steps.
+# ~12 h at ~7k env steps/s: convergence usually ends the stage much sooner; the budget is a ceiling, not a target.
+total_env_steps: 50000000
+rollout_length: 128
+
+# Updating on a worker thread while the sim collects the next rollout used to buy ~20% more env steps per second,
+# when an update cost 21 s against a 1.6 s rollout. A later measurement here (5,365 against 5,323 env steps/s) said it
+# bought nothing, but it measured a bug: every overlapped update was joined where it was submitted, so nothing
+# overlapped (fixed 2026-09-25). Fixed, `python -m animus.bench_learner` puts this stage at 11,594 env steps/s
+# overlapped against 6,896 serial (update 1.2 s on the GPU, rollout ~1.2 s). The price is one update of staleness:
+# the rollout acts on the weights of the update before last. On since 2026-09-25, by the user's decision; the whole
+# curriculum extends this file.
+overlap_updates: true
+# The rollout's forward pass and the update share the CPU: 8 threads answered a decision in 2.6 ms with an update
+# running where torch's default 16 took 3.6 ms (1.5 against 1.7 ms idle). 4 since 2026-09-25: with half-batch the
+# rollout acts on half the envs at a time while the overlapped update runs beside it, and 4 leaves it room
+# (animus.bench_learner --half-batch: 21,505 env steps/s against 18,622 at 8; 1 and 2 are slower).
+torch_threads: 4
+log_every: 1
+checkpoint_every: 100
+keep_checkpoints: 5
+
+# Updates on the GPU when torch sees one (CUDA or ROCm), else the CPU. Rollouts too since 2026-09-25: the rollout
+# copies run every layout's adapter and head as one product there (DenseLayouts) on a stream of their own, with one
+# wait per decision, which beat the CPU's per-layout products (1.2 against 1.7 ms a half-batch half; bench_learner
+# --half-batch 22,645 against 21,316 env steps/s) and leaves the CPU to the overlapped update. "auto" = the CPU
+# when there is no GPU.
+train_device: auto
+rollout_device: auto
+
+mappo:
+  # Wide enough to condition a rotation on level, spec, talents, gear stats and a large action space.
+  # The first width is the per-class/build adapter, the rest are the shared trunk (_Trunk pairs the widths), so
+  # [512, 512] gave 18 adapters of 512 and one shared layer: 94% of the parameters were private to a layout,
+  # each trained on its own share of a rollout. [256, 512, 512] halves the adapters and gives the trunk two
+  # layers, so the capacity sits where every class/build trains it. Every stage must use the same widths, or
+  # seeding cannot copy the trunk.
+  hidden: [256, 512, 512]
+  # gamma and gae_lambda are per 100 ms of game time (reference_decision_ms), compounded to AnimusForge.DecisionMs, so
+  # horizons stay the same in seconds at any decision interval; the learner prints them at start.
+  # Kills take tens of seconds including the approach: a ~33 s horizon. The GAE trace (gamma x lambda) carries credit
+  # without the critic for ~5.5 s (0.95 gave ~2 s), long enough to tie a stealthy approach or a pet pull to the
+  # opener that pays for it.
+  gamma: 0.997
+  gae_lambda: 0.985
+  reference_decision_ms: 100
+  # Auxiliary foresight: a head on the actor's trunk predicts the discounted return 5 s and 30 s out and how much of
+  # the episode is left, and its loss is added to the actor's. The features the actions are chosen from then have to
+  # carry what comes next, which is what a plan is made of. Nothing reads it while acting, and exported models leave
+  # it out, so it costs a little training time and nothing in game.
+  foresight_coef: 0.25
+  foresight_horizons_seconds: [5.0, 30.0]
+  foresight_time_scale_seconds: 60.0
+  # The policy's own memory: a GRU between the trunk and the heads, carried from decision to decision and cleared
+  # when an episode ends. Without it every decision is taken from what the bot can see right now, and a plan that
+  # spans more than one decision has nowhere to live: what it meant to do (pull with crowd control, save a cooldown,
+  # rest first) is gone by the next decision. It carries across rollouts too, so what it can remember is bounded by
+  # the episode rather than by rollout_length; only the gradient is truncated at the rollout.
+  recurrent_size: 128
+  # The update replays the rollout as 32-decision chunks (8 s of game time, beyond GAE's ~5.6 s of credit), each from
+  # the memory the rollout stored at its start, rather than one 128-decision chain: 2026-09-25, by the user's
+  # decision. The replay is launch-bound, so 4x fewer sequential steps took the update from 0.72 to 0.44 s at 192
+  # envs, below a rollout's time, so the learner no longer waits on it. The gradient now spans 32 decisions.
+  chunk_length: 32
+  # Goals (SeatGoal in the sim): a kind -- fight, control, recover, protect, position, prepare, travel_to, loot,
+  # gather, interact, rest -- and a target from one space of goal_targets (an enemy slot, a friend, a journal
+  # objective, the giver, the turn-in, a found place, the assigned area; GoalTarget). The policy picks one every
+  # goal_every_decisions, or at once when the sim says the one it held ended (reached or no longer possible), masked
+  # by what the goal block says is there, and sends it with its actions. The sim pays Goals.Reached when one is
+  # reached, reports how each kind was used, and shows a party its teammates' goals. The critic is goal-conditioned.
+  goal_count: 11
+  goal_targets: 29
+  goal_every_decisions: 16   # 16 decisions is 4 s at 250 ms
+  # The two-clock seat (Component D): goals chosen by a slow loop of their own -- a 128-unit GRU that steps only
+  # when a goal is chosen -- credited per goal on a ~10 minute horizon and trained by its own PPO step.
+  slow_goal_size: 128
+  slow_goal_gamma: 0.993
+  slow_goal_lambda: 0.95
+  slow_goal_lr: 0.0003
+  # Predictions the policy acts on (Component P): the foresight head also predicts its own health 2 s and 5 s on and
+  # whether its goal is reached within 4 s, and feeds its outputs back into what the heads read; the goal choice
+  # reads each candidate's predicted chance of being reached and how long it would take.
+  foresight_obs_targets: true
+  foresight_feedback: true
+  goal_lookahead: true
+  lookahead_coef: 0.5
+  # The director (every party, raid and battleground arena): it speaks on its turns -- its clock and events, as the
+  # sim decides them (the "may call" column) -- and each call is credited over the span to the next, per call on a
+  # horizon of minutes. A stage with no director has no layout of that name, and nothing here applies.
+  slow_layout: director
+  slow_gamma: 0.996
+  slow_gae_lambda: 0.98
+  # The goal head's entropy bonus falls to a fifth of itself over each stage, so the head explores goals early and
+  # commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full bonus
+  # all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28).
+  goal_entropy_scale: 1.0
+  goal_entropy_final_fraction: 0.2
+  # Both change the shape of the policy and the exported model format (.amdl 2), so turning them off again retrains
+  # the whole curriculum from this stage and rebuilds every shipped model.
+  clip: 0.2
+  value_clip: 0.2
+  # Large action spaces with delayed payoffs need steady exploration.
+  entropy_coef: 0.01
+  value_coef: 1.0
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  # Both rates fall linearly to a tenth by total_env_steps. At a constant rate the last run's update kept growing
+  # (approx KL 0.014 -> 0.028, ~20% of samples clipped) while the score crept up 0.1-0.2 per 10M steps.
+  lr_final_fraction: 0.1
+  # entropy_coef stays put (1.0) unless eval.sampled_every shows the argmax policy drifting from the sampled one.
+  entropy_final_fraction: 1.0
+  epochs: 4
+  # 4 since 2026-09-25 (was 8), by the user's decision: the recurrent update is sequential GRU replays, one per
+  # minibatch per epoch, and launch-bound, so its time goes with the count, not the size (1.19 -> 0.69 s on this stage),
+  # which lets an overlapped update fit inside a half-batch rollout. Fewer, larger PPO steps per rollout.
+  # Per rank: with data-parallel learners (AnimusForge.Gpu.Mode multi) each rank cuts its own rollout into this many
+  # and their gradients are averaged, so a step's batch is ranks x as large and the steps per update stay the same.
+  # AnimusForge.Gpu.Multi.Minibatches sets it for multi mode (scaling it with the ranks keeps one rank's batch per
+  # step, at the cost of that many more sequential steps per update).
+  minibatches: 4
+  max_grad_norm: 0.5
+  use_value_norm: true
+  # The value normaliser follows the returns, which drift upwards as the policy learns to kill: stats that
+  # averaged the whole run would leave the critic fitting a scale it had outgrown, and value_loss (reported in
+  # normalised space) would shrink whether or not the fit improved. Watch explained_variance instead.
+  value_norm_beta: 0.99
+  # Each class/build's advantages are centred and scaled on its own rows. They share a trunk, and their returns
+  # are not on one scale -- a healer keeping an owner alive and a rogue killing a creature are different numbers
+  # -- so one global scale would let the widest-spread class/build speak for weights all of them use.
+  per_layout_advantages: true
+  min_layout_rows: 32
+  # Stop an update once its epochs have moved the policy about this far in KL. Clipping bounds one step, not
+  # four epochs of them over one rollout. At 0.04 it never triggered while approx_kl climbed to ~0.028; 0.02 bounds
+  # the late updates. 0 turns it off.
+  target_kl: 0.02
+
+# Seeded evaluation (animus.evaluation): every every_env_steps the networks play the same 2048 characters and
+# opponents with argmax actions; eval.csv / eval.jsonl hold the score (mean episode return) and per-level-band and
+# per-class/build stats, and eval_episodes.jsonl every
+# episode behind them. The best networks go to best.pt and are the ones the next stage seeds from.
+#
+# 2048 episodes spread over the 18 class/builds leave ~114 each. At 1024 (~57 each) one lost fight moved a
+# class/build's win rate by 1.75 points, too coarse for its convergence signals, its training weight and the fights
+# it replays. The whole evaluation is ~80 s against ~20 min of training between two of them.
+#
+# sampled_every: every third evaluation also plays sampled actions on the same seeds (policy learner_sampled), to
+# see whether the argmax policy that is exported plays like the one that trained.
+eval:
+  every_env_steps: 10000000
+  at_start: true
+  episodes: 2048
+  seed: 1000
+  deterministic: true
+  # A second, sampled evaluation every N evaluations was a third more evaluation for a number only the export stage
+  # reads (whether the argmax policy drifts from the sampled one); stage21_ship turns it on for itself.
+  sampled_every: 0
+
+# Done: the one rule every stage ends on (animus.stage). A class has converged when, over the last `window`
+# evaluations, its score has stopped improving by the margin (2% of the best, 0.01 absolute, or 2 standard errors of
+# the two scores, whichever is largest -- so a lucky evaluation does not count), its approx_kl per update against the
+# learning rate in force has stayed under `kl`, its entropy over ln(allowed actions) has stopped sliding (and sits
+# above the floor below), and its ladder rung has settled. The stage advances when every class has; a converged
+# class keeps `hold_share` of its training draw and its adapter and head are frozen, so the budget goes to the
+# classes still learning. total_env_steps is a ceiling: reached first, the stage advances anyway and the report
+# names which classes were not done and what each was missing.
+#
+# patience 3 is the overall score's plateau, which is when the learning rates start to anneal
+# (lr_hold_until_plateau): the first run of this stage had its best at 80M env steps and scored within 0.5% of it
+# at 40M. There are no pass gates: what the stage taught is read from the evaluation reports, never judged.
+convergence:
+  patience: 3
+  window: 4
+  z: 2.0
+  min_improvement: 0.02
+  min_improvement_abs: 0.01
+  kl: 0.003
+  entropy_slope: 0.01
+  hold_share: 0.02
+  lr_hold_until_plateau: true
+
+# Exploration has a floor, measured against what the mask allowed: below 30% of ln(legal actions) the entropy
+# coefficient climbs (up to 4x) and falls straight back once entropy recovers. It is also the collapse guard of the
+# convergence rule's entropy signal.
+entropy_floor:
+  fraction: 0.3
+  max_boost: 4.0
+  rate: 0.05
+
+# Where the data goes: after every evaluation the sim is told how often to build each class/build, so the ones
+# with the lowest score, and the ones furthest short of clean kills, get more episodes than the rest (there is no
+# scripted baseline to measure a gap to); a class that has converged is held at convergence.hold_share on top.
+# Evaluation stays evenly spread whatever the weights are.
+#
+# replay_fraction: a fifth of training resets rebuild a fight the last evaluation lost -- the same character and
+# opponent, fresh combat rolls -- so training goes over exactly the fights still being lost.
+layout_sampling:
+  enabled: true
+  strength: 1.0
+  max_ratio: 4.0
+  metric: clean_kill
+  replay_fraction: 0.2

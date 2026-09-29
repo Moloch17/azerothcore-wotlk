@@ -1,0 +1,7 @@
+# The druid's duel: whether it fought in the form its build is for.
+
+extends: ../stage4_duel.yaml
+run_name: stage4_duel
+
+eval:
+  report: [clean_kill, killed, died, time_to_kill, health_left, livelocked, form_at_end]

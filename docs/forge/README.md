@@ -35,18 +35,18 @@ move ─ indoor ─ jump ─ dive ─ dodge ─ travel ─ flight   the feet: gr
      ─ flag ─ warsong ─ duo_led ─ crossroads             an objective, a director, and everything at once
 ```
 
-Thirty-two stages, numbered in the order they are trained (`stage1_move` to `stage32_raid40`); twenty-seven are
-the queue and the five raid stages are trained by name. No stage has a pass gate: each ends when its convergence signals say so, and the queue
-moves on.
+Twenty-one stages in four phases -- movement, classes, parties and raids, PvP -- numbered in the order they are
+trained (`stage1_move` to `stage21_ship`), all of them the default queue. The last, `stage21_ship`, replays every
+phase and is the stage that ships. No stage has a pass gate: each ends when its convergence signals say so, and the
+queue moves on.
 
-**It starts with the feet.** The first seven stages have nothing to kill in them: a seat steers itself now, and
+**It starts with the feet.** The first two stages have nothing to kill in them: a seat steers itself now, and
 where it puts its feet is not something only some stages are about — so everything after them inherits legs that
 already work, rather than learning to fight and to walk at the same time.
 
-Then a duel against a creature grows into packs, a gauntlet of pulls, an owner to protect (played by an earlier
-policy) and a real party;
-a PvP run goes from self-play through evading, hiding and stealth against a scripted hunter; and the last stages
-add an objective and a director. It is one line rather than a tree because a branch ends in several checkpoints and
+Then the kit against dummies, a duel, packs, a gauntlet of pulls and a life of quests; an owner to protect (played by
+an earlier policy), a directed party, dungeons, a group questing and the raids; and a PvP phase from self-play
+through escaping and stealth to arena teams, the flag, Warsong and a shared, contested world. It is one line rather than a tree because a branch ends in several checkpoints and
 everything a leaf teaches is discarded unless the stage exported from is downstream of it. See
 [chapter 4](docs/manual/04-curriculum.md).
 
@@ -67,7 +67,7 @@ Then, on the worldserver console:
 
 | Command | What it does |
 |---|---|
-| `forge run stage8_duel fight 256` | Play the scripted baseline with no learner, to check that characters and fights build |
+| `forge run stage4_duel fight 256` | Play the scripted baseline with no learner, to check that characters and fights build |
 | `forge fast` | The whole pipeline on an easy profile, minutes per stage, into `<OutputDir>/fast/` |
 | `forge start` | Train the curriculum stage by stage; each ends when every class has converged or at its budget, and the queue moves on |
 | `forge status` | Rates, ETAs, evaluation scores against the baseline, warnings |

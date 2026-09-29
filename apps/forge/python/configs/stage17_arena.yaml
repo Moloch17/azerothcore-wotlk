@@ -1,0 +1,19 @@
+# Stage 17: arena teams of two, three and five a side, each side under a learned director that calls the focus, the
+# next duty and places to go. The far side is played by the live policy or the league. order_focus_kept -- the share of
+# a side's seats on the called target -- is the measure that matters: a seat that never obeys and a channel that never
+# arrives look identical without it.
+
+extends: stage14_duel_pvp.yaml
+run_name: stage17_arena
+
+total_env_steps: 50000000
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.99
+
+eval:
+  episodes: 512
+  report: [won, killed, died, damage, order_focus_kept, order_focus_lowest, order_has_focus, order_changes,
+           order_place_called, order_place_reached, director_member_orders, reward_place_match]

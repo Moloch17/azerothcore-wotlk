@@ -87,6 +87,10 @@ class EvalConfig:
     # follow_route and face_objective forbidden says how much of its arrival rate was the pathfinder's. A name no
     # layout has is refused at startup. Training and the scripted baseline are untouched.
     mask_actions: tuple[str, ...] = ()
+    # Curriculum phases by arena (a phase's name -> the stage's arenas in it): the summary adds a row per phase. The
+    # ship stage sets it, since its gate is each phase within noise of its own stage. An arena the stage does not have
+    # is refused at startup.
+    phases: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -165,7 +169,7 @@ class CastConfig:
     # (the flag stage extends triage) names the last PvP stage's best.pt here, with {runs_dir} filled in.
     parent: str = ""
     opponent_share: float = 0.5  # share of self-play episodes whose far side is cast, drawn per env at episode start
-    # stage.json `cast` entries by name -> checkpoint path, e.g. {owner: "{runs_dir}/stage11_endurance/best.pt"}.
+    # stage.json `cast` entries by name -> checkpoint path, e.g. {owner: "{runs_dir}/stage6_gauntlet/best.pt"}.
     agents: dict = field(default_factory=dict)
     deterministic: bool = False  # training samples: an argmax opponent is one the policy learns to exploit
     league_size: int = 8
@@ -260,7 +264,7 @@ class TrainConfig:
     overlap_updates: bool = False
 
     train_device: str = AUTO  # "auto": cuda when torch sees a GPU (ROCm included), else cpu
-    rollout_device: str = "cpu"  # per-layout products on the CPU; stage8_duel's "auto" takes the GPU's dense path
+    rollout_device: str = "cpu"  # per-layout products on the CPU; stage4_duel's "auto" takes the GPU's dense path
     # CPU threads torch may use; 0 = torch's own default (a thread per core). The learner shares the machine with the
     # sim's map update threads, so fewer can be faster overall (the sim's `forge bench` sweeps both).
     torch_threads: int = 0
@@ -276,7 +280,7 @@ class TrainConfig:
     # learned. best.pt is only rewritten by an evaluation that clears the convergence margin -- the larger of 1%
     # absolute, 2% of the best, and two standard errors of the two scores -- and that last term is the one that
     # bites: with 64-episode evaluations the error bars are wide, so the bar is high, and best.pt can go a whole
-    # stage without moving. Measured on the sweep this default was changed for: stage9_pack reached 8.2M steps
+    # stage without moving. Measured on the sweep this default was changed for: stage5_pack reached 8.2M steps
     # with its evaluations up from 2.6 to 6.8 and best.pt still the checkpoint it was seeded with, because the
     # 4.16 improvement fell short of a 4.46 margin. Seeding from best there would have handed stage 3 a network
     # that had learned nothing of stage 2.
@@ -311,8 +315,8 @@ class TrainConfig:
         """The shared movement root's run directory, a sibling of this run's output directory ({shared_runs}).
 
         A class's runs live in <output>/<class>/runs and the root's in <output>/shared/runs (manual 4, "Training one
-        class at a time"), so a class's stage8_duel names the shared flight checkpoint as
-        `{shared_runs}/stage7_flight/best.pt` without knowing where the output directory is.
+        class at a time"), so a class's stage3_rotation names the shared travel checkpoint as
+        `{shared_runs}/stage2_travel/best.pt` without knowing where the output directory is.
         """
         return str(Path(self.runs_dir).resolve().parent.parent / "shared" / "runs")
 

@@ -1,0 +1,24 @@
+# Stage 2: getting somewhere far, with a mount and wings. A ground trip of 60-320 yd in the Barrens (level 20 and up
+# rides), and flights of 350-700 yd in Outland (level 60 and up): `flight` anywhere dry, `flight_air` only where the
+# ground route does not reach, with the ground mount masked. What is learned is when a mount pays for its cast, when
+# the wings do, and to arrive on foot, ready to fight.
+#
+# A flight is a minute or more of riding before arriving pays, so the horizon is the long one: gamma 0.999 and
+# lambda 0.995 per decision, and a 256-decision rollout.
+
+extends: stage1_move.yaml
+run_name: stage2_travel
+
+total_env_steps: 50000000
+rollout_length: 256
+
+mappo:
+  gamma: 0.999
+  gae_lambda: 0.995
+
+eval:
+  every_env_steps: 5000000
+  trace_episodes: 16
+  report: [arrived, spl, lost, wedged, stall_seconds, travel_seconds, mounted_fraction, flying_fraction,
+           flying_mount_fraction, knows_flying_mount, could_mount_flying, flew, air_only, saved_if_flew,
+           saved_if_ground, flight_height, dry_detour, saved, died]

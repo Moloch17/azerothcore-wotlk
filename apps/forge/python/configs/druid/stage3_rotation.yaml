@@ -1,0 +1,28 @@
+# The druid's rotation drill: the root of the fighting half, and the stage that first carries its whole action catalog.
+#
+# The four builds are scored apart, here and in every later stage. Under a role, `feral_cat` and `balance` were both
+# "damage" and were graded as one number, so a strong cat could carry a weak boomkin through the gate and nothing would
+# ask for more boomkin episodes. They are separate now, and the floors say so.
+#
+# The four are not equally easy and the floors are not equal:
+#   balance     a ranged caster with a full kit: the highest floor
+#   feral_cat   melee burst, and it can open from Prowl where the level allows
+#   feral_bear  holds up well and kills slowly, so its risk is the clock rather than dying
+#   restoration the weakest solo by some way, and it still has to be able to kill a same-level creature
+
+extends: ../stage3_rotation.yaml
+run_name: stage3_rotation
+
+# Where the class curriculum branches off the shared root. The movement phase (stages 1-2) is trained once for all ten
+# classes, in their own output directory, because there is no druid-specific way to cross a field. So this stage seeds
+# from that shared run rather than from a druid-only stage2_travel, which does not exist. `init_from: auto` cannot find
+# it: the seed chain looks under this run's own runs directory, and the shared root is a sibling of it.
+#
+# Seeding across is allowed because the check is one-directional -- every layout this run has must be in the checkpoint,
+# not the other way round -- so a druid-only run takes the druid out of an all-class checkpoint and leaves the other
+# nine behind (animus.bootstrap).
+init_from:
+  - "{shared_runs}/stage2_travel/best.pt"
+
+eval:
+  report: [dummy_output, dummy_killed, mana_kept, dps, died, aimless_presses, serving_share, form_at_end]

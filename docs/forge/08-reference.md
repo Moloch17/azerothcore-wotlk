@@ -31,7 +31,7 @@ Every key can also be set from the environment: `AC_` plus the key in upper snak
 | `AnimusForge.Learner.Args` | `""` | Extra arguments for every learner (`--set key=value ...`) |
 | `AnimusForge.Learner.TorchThreads` | `0` | CPU threads for the learner's torch (`--set torch_threads`); 0 = torch's default |
 | `AnimusForge.Learner.LogFile` | `""` = `<LogsDir>/animus-learner.log` | Learner output |
-| `AnimusForge.Bench.Scenario` | `"stage8_duel"` | What `forge bench` times without a name |
+| `AnimusForge.Bench.Scenario` | `"stage4_duel"` | What `forge bench` times without a name |
 | `AnimusForge.Bench.Policy` | `"fight"` | Local policy the sim-only trials play |
 | `AnimusForge.Bench.Threads` | `"4, 8, 12, 16"` | `MapUpdate.Threads` values tried |
 | `AnimusForge.Bench.Envs` | `"64, 128, 192"` | `AnimusForge.Envs` values tried |
@@ -69,7 +69,7 @@ The forge core also relies on these `worldserver.conf` keys: `MapUpdate.Threads`
 |---|---|---|
 | `Animus.Enable` | `1` | `0`: no summons or stages, existing ones removed, no models loaded |
 | `Animus.ModelDir` | `"animus"` | Model directory, relative to `DataDir` |
-| `Animus.Curriculum.Stage` | `"stage17_party"` | The stage whose models companions play |
+| `Animus.Curriculum.Stage` | `"stage8_companion"` | The stage whose models companions play |
 | `Animus.Curriculum.DecisionMs` | `250` | Companion decision interval |
 | `Animus.Stage.Policy` | `"model"` | Default stage viewer policy |
 | `Animus.Stage.DecisionMs` | `250` | Stage viewer decision interval |
@@ -405,15 +405,15 @@ Written to `<OutputDir>/layouts/<stage>/stage.json` and copied into each run:
 
 ```json
 {
-  "format": 3, "stage": "stage16_companion", "suffix": "_companion", "extends": "stage15_stealth",
+  "format": 3, "stage": "stage8_companion", "suffix": "_companion", "extends": "stage7_life",
   "summary": "...", "seats": 1,
   "blocks": ["core", "duel", "pet", "pack", "gauntlet", "companion"],
   "arenas": [{"name": "companion", "weight": 1, "seats": 1, "episode_seconds": 60, "pvp": false, "ambushers": 0,
               "checkpoints": false, "plan": "solo", "team_seats": 0, "directed": false}],
-  "seed_chain": ["stage15_stealth", "stage14_hide", "..."],
-  "merges": ["stage11_endurance"],
+  "seed_chain": ["stage7_life", "stage6_gauntlet", "..."],
+  "merges": [],
   "director_agents": [], "cast": [],
-  "state": {"arena_first": 14, "arena_count": 12},
+  "state": {"arena_first": 14, "arena_count": 16},
   "models": {"warrior_tank": "warrior_tank_companion", "...": "..."},
   "layouts": {"warrior_tank": {"obs_dim": "...", "num_actions": "...",
               "blocks": [{"name": "core", "obs": [0, "..."], "actions": [0, "..."]}, "..."]}},

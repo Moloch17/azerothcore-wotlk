@@ -1,0 +1,17 @@
+# Stage 11: a group of two to four questing in the world under a director (Component F): a chain of 1-3 quests in a
+# real zone, the journal shared -- where one member saw what the quest wants, all of them know -- and kill and loot
+# credit the group's. The world and travel blocks come from stage7_life (a merge).
+
+extends: stage10_dungeon.yaml
+run_name: stage11_world_group
+
+total_env_steps: 50000000
+
+eval:
+  every_env_steps: 10000000
+  episodes: 128
+  report: [quests_turned_in, quest_turned_in, quest_progress, quest_held_out, quest_places_found, order_changes,
+           director_member_orders, goals_reached, serving_share, died, quest_band]
+
+cast:
+  agents: {}

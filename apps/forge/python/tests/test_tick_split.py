@@ -14,7 +14,7 @@ from animus.protocol import Spec
 def spec(tick_ms: int, decision_ticks: int) -> Spec:
     return Spec(version=8, num_envs=4, agents_per_env=2, obs_dim=3, state_dim=4, num_actions=5,
                 episode_info_dim=3, goal_count=0, tick_ms=tick_ms, decision_ticks=decision_ticks,
-                episode_seconds=60, scenario="stage8_duel")
+                episode_seconds=60, scenario="stage4_duel")
 
 
 def test_a_decision_is_the_same_game_time_however_it_is_cut():

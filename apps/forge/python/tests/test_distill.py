@@ -182,7 +182,7 @@ def test_coefficient_decays_to_its_floor():
 
 def test_a_chunk_at_once_matches_replaying_it_decision_by_decision():
     """sequence_loss is the batched form of the per-decision path: same teachers, same memories, same KL. The loop it
-    replaces cost stage27_crossroads a 306 s update with six teachers."""
+    replaces cost stage21_ship a 306 s update with six teachers."""
     torch.manual_seed(0)
     config = MappoConfig(hidden=(16, 16), recurrent_size=4)
     parent_stage = stage_with({"mage_dps": [("core", 4, 3), ("pvp", 2, 0)]}, arenas=("pvp",))
