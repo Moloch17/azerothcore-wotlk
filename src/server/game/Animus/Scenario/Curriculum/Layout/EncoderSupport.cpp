@@ -17,6 +17,7 @@
  */
 
 #include "EncoderSupport.h"
+#include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
 #include "CellImpl.h"
@@ -981,4 +982,20 @@ namespace Animus::Curriculum::Encoding
         if (SpellInfo const* callPet = sSpellMgr->GetSpellInfo(SPELL_CALL_PET))
             bot->GetGlobalCooldownMgr().AddGlobalCooldown(callPet, CALL_BEAST_GCD_MS);
     }
+}
+
+Unit* Animus::Curriculum::Encoding::UnitThrough(WorldObject const& from, ObjectGuid guid)
+{
+    return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetUnit(from, guid) : nullptr;
+}
+
+Creature* Animus::Curriculum::Encoding::CreatureThrough(WorldObject const& from, ObjectGuid guid)
+{
+    return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetCreature(from, guid) : nullptr;
+}
+
+GameObject* Animus::Curriculum::Encoding::GameObjectThrough(WorldObject const& from, ObjectGuid guid)
+{
+    return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetGameObject(from, guid)
+        : nullptr;
 }

@@ -42,6 +42,13 @@ namespace Animus::Curriculum::Encoding
     constexpr uint32 STUN_STATES = UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING;
     constexpr uint32 CROWD_CONTROL_STATES = STUN_STATES | UNIT_STATE_ROOT;
 
+    /// ObjectAccessor::GetUnit/GetCreature/GetGameObject through `from`, or null when `from` has no map: a bot between
+    /// maps (a resurrection, a teleport, a transfer into an instance) is still its seat's bot, and the accessors read
+    /// `from.GetMap()`, which asserts on it -- two map-thread crashes of the first fast pass came through there.
+    [[nodiscard]] Unit* UnitThrough(WorldObject const& from, ObjectGuid guid);
+    [[nodiscard]] Creature* CreatureThrough(WorldObject const& from, ObjectGuid guid);
+    [[nodiscard]] GameObject* GameObjectThrough(WorldObject const& from, ObjectGuid guid);
+
     /// A position relative to `origin` (the spawn point) for the critic state: / 40 yd, clamped to [-2, 2].
     [[nodiscard]] float RelativePosition(float coordinate, float origin);
 

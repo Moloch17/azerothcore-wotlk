@@ -18,6 +18,7 @@
 
 #include "FlagBlock.h"
 #include "GameObject.h"
+#include "EncoderSupport.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "SeatView.h"
@@ -85,7 +86,7 @@ void Animus::Curriculum::FlagBlock::Apply(SeatView& view, uint32 local, SeatActi
         return;
 
     Player* bot = view.Bot;
-    GameObject* flag = bot ? ObjectAccessor::GetGameObject(*bot, view.Flags.Usable) : nullptr;
+    GameObject* flag = bot ? Encoding::GameObjectThrough(*bot, view.Flags.Usable) : nullptr;
     if (!flag)
         return;
 

@@ -2522,7 +2522,7 @@ Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat)
     if (seat < data.Seats.size())
         if (ObjectGuid const guid = data.Seats[seat].CurrentTargetGuid)
             if (Player* bot = env.FindBot(seat))
-                return ObjectAccessor::GetUnit(*bot, guid);
+                return Encoding::UnitThrough(*bot, guid);
 
     return env.FindTargetUnit(0);
 }

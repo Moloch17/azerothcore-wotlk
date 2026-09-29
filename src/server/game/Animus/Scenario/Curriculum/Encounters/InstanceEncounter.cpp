@@ -32,6 +32,7 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
+#include "EncoderSupport.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "PathGenerator.h"
@@ -436,7 +437,7 @@ void Animus::Curriculum::InstanceEncounter::UpdateEnemies(Env& env)
     if (!seat || fight.Boss.IsEmpty())
         return;
 
-    Creature* boss = ObjectAccessor::GetCreature(*seat, fight.Boss);
+    Creature* boss = Encoding::CreatureThrough(*seat, fight.Boss);
     env.Targets.assign(1, fight.Boss);
     if (!boss)
         return;
@@ -459,7 +460,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
     Player* seat = _scenario.SeatBot(env, 0);
-    Creature* boss = seat && !fight.Boss.IsEmpty() ? ObjectAccessor::GetCreature(*seat, fight.Boss) : nullptr;
+    Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     if (!boss)
         return;
 

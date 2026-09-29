@@ -22,6 +22,7 @@
 #include "GameObject.h"
 #include "Layout.h"
 #include "Map.h"
+#include "EncoderSupport.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "SeatView.h"
@@ -329,7 +330,7 @@ void Animus::Curriculum::WorldBlock::Apply(SeatView& view, uint32 local, SeatAct
             }
             else if (!open.IsEmpty())
             {
-                if (WorldActions::LootAll(bot, ObjectAccessor::GetUnit(*bot, open), items, copper))
+                if (WorldActions::LootAll(bot, Encoding::UnitThrough(*bot, open), items, copper))
                 {
                     done = true;
                     ++result.CorpsesLooted;

@@ -40,7 +40,7 @@ namespace
             if (caster == bot->GetGUID())
                 return true;
 
-            if (Unit const* unit = ObjectAccessor::GetUnit(*bot, caster); unit
+            if (Unit const* unit = Animus::Curriculum::Encoding::UnitThrough(*bot, caster); unit
                 && unit->GetCharmerOrOwnerGUID() == bot->GetGUID())
                 return true;
         }

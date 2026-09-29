@@ -76,7 +76,7 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     bool complied = false;
     if (own.Kind != OrderKind::None && own.Kind != OrderKind::GoTo && own.Kind != OrderKind::Objective)
     {
-        Unit const* ordered = own.Target ? ObjectAccessor::GetUnit(*bot, own.Target) : nullptr;
+        Unit const* ordered = own.Target ? Encoding::UnitThrough(*bot, own.Target) : nullptr;
         if (!ordered || !ordered->IsAlive())
             return;
         switch (own.Kind)
@@ -100,7 +100,7 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     }
     else if (order.Focus)
     {
-        Unit const* focus = ObjectAccessor::GetUnit(*bot, order.Focus);
+        Unit const* focus = Encoding::UnitThrough(*bot, order.Focus);
         complied = focus && focus->IsAlive() && target && target->GetGUID() == order.Focus;
     }
 
@@ -500,7 +500,7 @@ void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
         bool keep = bot && bot->IsAlive();
         if (keep && member.Kind == OrderKind::Heal)
         {
-            Unit const* friendUnit = member.Target ? ObjectAccessor::GetUnit(*bot, member.Target) : nullptr;
+            Unit const* friendUnit = member.Target ? Encoding::UnitThrough(*bot, member.Target) : nullptr;
             keep = friendUnit && friendUnit->IsAlive();
         }
         else if (keep && member.Kind != OrderKind::GoTo && member.Kind != OrderKind::Objective)
@@ -944,14 +944,14 @@ void Animus::Curriculum::DirectorEncounter::View(Env const& env, uint32 seat, Se
     view.Order.Rally = order.Rally;
     view.Order.HasRallyPlace = order.HasPlace;
     view.Order.RallyPlace = order.Place;
-    view.Order.Focus = order.Focus ? ObjectAccessor::GetUnit(*view.Bot, order.Focus) : nullptr;
+    view.Order.Focus = order.Focus ? Encoding::UnitThrough(*view.Bot, order.Focus) : nullptr;
     uint32 const slot = SlotOf(env, seat);
     if (slot >= order.Members.size())
         return;
 
     DirectorOrders::MemberOrder const& member = order.Members[slot];
     view.Order.Kind = member.Kind;
-    view.Order.Target = member.Target ? ObjectAccessor::GetUnit(*view.Bot, member.Target) : nullptr;
+    view.Order.Target = member.Target ? Encoding::UnitThrough(*view.Bot, member.Target) : nullptr;
     view.Order.Objective = member.Objective;
     view.Order.Source = member.Source;
     view.Order.Age = std::min(1.0f,
