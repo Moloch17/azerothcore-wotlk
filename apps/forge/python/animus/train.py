@@ -638,6 +638,17 @@ class TrainingRun:
             columns += ["goal_entropy", "goal_kept_share",
                         *(f"goal_{index}_share" for index in range(self.trainer.goal_kinds)),
                         *(("goal_targeted_share",) if self.trainer.goal_targets > 1 else ())]
+        if self.trainer.slow_goal_size:
+            # The slow goal loop (Component D) and its goal-level predictions (Component P layer 3): its own
+            # losses, and how well it foresees a goal being reached -- the Brier score against always predicting the
+            # rollout's rate (lookahead_brier_base) -- and how long it takes.
+            columns += ["slow_policy_loss", "slow_value_loss", "slow_approx_kl", "goal_reached_share",
+                        "lookahead_loss", "lookahead_brier", "lookahead_brier_base", "lookahead_duration_error"]
+        if self.trainer.foresight_outputs:
+            # The foresight (Component P layer 2): its loss, and its observation forecasts' quality -- health 2 s
+            # and 5 s on (mean absolute error, as a share of full health), and the goal reached within 4 s (Brier).
+            columns += ["foresight_loss", "forecast_health_8_error", "forecast_health_20_error",
+                        "forecast_goal_reached_16_brier"]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         self.report = tuple(config.eval.report)
         self.eval_log = EvalLog(self.run_dir, self.logger.tb) if leader else Silent()

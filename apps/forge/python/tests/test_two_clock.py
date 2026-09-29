@@ -107,6 +107,9 @@ def test_a_rollout_and_update_with_every_part_on():
     assert buffer.slow_advantages[buffer.slow_valid].std() > 0 and not buffer.slow_valid[-1].any()
 
     stats = trainer.update(buffer)
-    for key in ("slow_policy_loss", "slow_value_loss", "goal_entropy", "lookahead_loss", "foresight_loss"):
-        assert key in stats and np.isfinite(stats[key])
+    for key in ("slow_policy_loss", "slow_value_loss", "goal_entropy", "lookahead_loss", "foresight_loss",
+                "lookahead_brier", "lookahead_brier_base", "lookahead_duration_error", "forecast_health_8_error",
+                "forecast_health_20_error", "forecast_goal_reached_16_brier"):
+        assert key in stats and np.isfinite(stats[key]), key
+    assert 0.0 <= stats["lookahead_brier"] <= 1.0 and not any(k.endswith("_n") for k in stats)
     assert not torch.allclose(before, trainer.actor.slow_memory.weight_hh)

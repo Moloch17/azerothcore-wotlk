@@ -1161,6 +1161,15 @@ class MappoTrainer:
                 lookahead_loss = ((nn.functional.binary_cross_entropy_with_logits(success, reached_t, reduction="none")
                                    + (expected - duration_t) ** 2) * mask).sum() / mask.sum().clamp(min=1.0)
                 loss = loss + cfg.lookahead_coef * lookahead_loss
+                with torch.no_grad():
+                    # How good the goal-level predictions are, on the goals actually chosen: the Brier score of
+                    # "reached" against always predicting the rollout's own rate, and the duration's mean error.
+                    known_n = mask.sum().clamp(min=1.0)
+                    probability = torch.sigmoid(success)
+                    base_rate = (reached_t * mask).sum() / known_n
+                    totals["lookahead_brier"] = float((((probability - reached_t) ** 2) * mask).sum() / known_n)
+                    totals["lookahead_brier_base"] = float((((base_rate - reached_t) ** 2) * mask).sum() / known_n)
+                    totals["lookahead_duration_error"] = float(((expected - duration_t).abs() * mask).sum() / known_n)
             self.slow_opt.zero_grad(set_to_none=True)
             loss.backward()
             if cfg.rank_sync == "gradients":
@@ -1175,6 +1184,28 @@ class MappoTrainer:
                 totals["lookahead_loss"] += float(lookahead_loss) / cfg.epochs
         totals["goal_reached_share"] = float(reached_t[known_t].mean()) if bool(known_t.any()) else 0.0
         return totals
+
+    def _foresight_quality(self, predicted, targets, known, horizons: int, out: dict) -> None:
+        """Accumulate how good the observation forecasts are (FORESIGHT_OBS_TARGETS), in `out` as sums with a count
+        (the update divides): the health forecasts' mean absolute error, as a share of full health, and the Brier
+        score of "the goal is reached within 16 decisions"."""
+        if not self.config.foresight_obs_targets or predicted.shape[-1] < horizons + len(FORESIGHT_OBS_TARGETS):
+            return
+        with torch.no_grad():
+            for offset, (name, decisions, binary) in enumerate(FORESIGHT_OBS_TARGETS):
+                column = horizons + 1 + offset
+                if column >= predicted.shape[-1]:
+                    continue
+                weight = known[..., column]
+                count = float(weight.sum())
+                if count <= 0.0:
+                    continue
+                # Trained by squared error on the value itself (not a logit): a probability is the value, clamped.
+                guess = predicted[..., column].clamp(0.0, 1.0) if binary else predicted[..., column]
+                error = (guess - targets[..., column]) ** 2 if binary else (guess - targets[..., column]).abs()
+                key = f"forecast_{name}_{decisions}_{'brier' if binary else 'error'}"
+                out[key] = out.get(key, 0.0) + float((error * weight).sum())
+                out[key + "_n"] = out.get(key + "_n", 0.0) + count
 
     # ------------------------------------------------------------------ update
 
@@ -1581,6 +1612,7 @@ class MappoTrainer:
                     foresight_loss = (errors * known).sum() / known.sum().clamp(min=1.0)
                     actor_loss = actor_loss + cfg.foresight_coef * foresight_loss
                     totals["foresight_loss"] += foresight_loss.detach()
+                    self._foresight_quality(stacked.detach(), targets, known, horizons, auxiliary_stats)
 
                 if distill_rows:
                     # Already a mean over the sequence's taught decisions (Distiller.sequence_loss divides by
@@ -1660,6 +1692,10 @@ class MappoTrainer:
         stats["explained_variance"] = float(explained)
         stats["epochs_run"] = float(epochs_run)
         stats.update(self._goal_stats(data))
+        # The forecasts' quality: sums over every minibatch with their counts (_foresight_quality).
+        for name in [n for n in auxiliary_stats if n.startswith("forecast_") and not n.endswith("_n")]:
+            count = auxiliary_stats.pop(name + "_n", 0.0)
+            stats[name] = auxiliary_stats.pop(name) / max(count, 1.0)
         stats.update({name: value / auxiliary_updates for name, value in auxiliary_stats.items()})
         # What the update itself cost, as the flat path reports it.
         # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are
