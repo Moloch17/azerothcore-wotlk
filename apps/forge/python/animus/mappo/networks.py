@@ -391,10 +391,16 @@ class GoalHead(nn.Module):
         self.register_buffer("accepts", torch.ones(kinds, self.targets, dtype=torch.bool))
         # Per layout, where its goal block starts in the observation; -1 for a layout without one (the director).
         self.register_buffer("block_at", torch.full((max(1, layout_count),), -1, dtype=torch.long))
+        self.has_space = False
 
     @property
     def count(self) -> int:
         return self.kinds * self.targets
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+        # A loaded goal space (a checkpoint's block positions) says itself whether there is one.
+        self.has_space = bool((self.block_at >= 0).any())
 
     @property
     def block_width(self) -> int:
@@ -406,6 +412,8 @@ class GoalHead(nn.Module):
         block's first observation column (-1 without one)."""
         self.accepts.copy_(torch.as_tensor(accepts, dtype=torch.bool, device=self.accepts.device))
         self.block_at.copy_(torch.as_tensor(block_at, dtype=torch.long, device=self.block_at.device))
+        # Kept on the host: a rollout graph cannot read the device while it is captured.
+        self.has_space = bool(np.any(np.asarray(block_at) >= 0))
 
     def _block(self, obs: torch.Tensor, layout: torch.Tensor):
         """The goal block's columns of flat rows, and which rows have one."""
@@ -435,7 +443,9 @@ class GoalHead(nn.Module):
         if obs is not None and layout is not None and self.targets > 1:
             block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
             present = block[:, : self.kinds, None] & block[:, self.kinds : self.kinds + self.targets][:, None, :]
-            allowed = torch.where(has[:, None, None], allowed & present, allowed)
+            # A layout with no goal block (the director) has no goals to choose: only the first, which means none.
+            nothing = torch.zeros_like(allowed)
+            allowed = torch.where(has[:, None, None], allowed & present, nothing if self.has_space else allowed)
         allowed = allowed.reshape(features.shape[0], -1).clone()
         # Always something to choose: the first goal (Fight about no one in particular) is never masked out.
         allowed[:, 0] = True

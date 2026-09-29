@@ -53,6 +53,14 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
             success and duration, each: kind_weight[K * goal_width], kind_bias[K], (target_weight[T * goal_width],
             target_bias[T] if T > 1), pair[K * T]; then f32 lookahead_weight[2]
     (goal_width: slow_size when there is one, else feature_width)
+    u8       director_sets                  the director's members and enemies as sets (DirectorSets), else 0
+    if director_sets:
+        u32  embed
+        per set (members, then enemies): u32 first, slots, width, present;
+            f32 w1[embed * width], b1[embed], w2[embed * embed], b2[embed]     encoder: tanh after each
+        f32  pool_weight[adapter_out * 4 * embed], pool_bias[adapter_out]  added to the first layer before its tanh
+        u32  pointer_count; per pointer: u32 first_action, u32 set (0 members, 1 enemies),
+            f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
@@ -84,7 +92,7 @@ import torch
 from .stages import STAGE_FILE, model_names
 
 AMDL_MAGIC = b"AMDL"
-AMDL_VERSION = 4
+AMDL_VERSION = 5
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -156,6 +164,7 @@ def write_amdl(
     goal_every: int = 0,
     feedback: dict[str, np.ndarray] | None = None,
     slow: dict[str, np.ndarray] | None = None,
+    sets: dict | None = None,
 ) -> None:
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
@@ -212,6 +221,22 @@ def write_amdl(
                         out.write(np.ascontiguousarray(lookahead[part][name], dtype="<f4").tobytes())
                 out.write(np.ascontiguousarray(lookahead["weight"], dtype="<f4").tobytes())
 
+        out.write(struct.pack("<B", 1 if sets else 0))
+        if sets:
+            out.write(struct.pack("<I", int(sets["embed"])))
+            for part in ("seats", "enemies"):
+                spec = sets[part]
+                out.write(struct.pack("<IIII", spec["first"], spec["slots"], spec["width"], spec["present"]))
+                for name in ("w1", "b1", "w2", "b2"):
+                    out.write(np.ascontiguousarray(spec[name], dtype="<f4").tobytes())
+            out.write(np.ascontiguousarray(sets["pool_weight"], dtype="<f4").tobytes())
+            out.write(np.ascontiguousarray(sets["pool_bias"], dtype="<f4").tobytes())
+            out.write(struct.pack("<I", len(sets["pointers"])))
+            for pointer in sets["pointers"]:
+                out.write(struct.pack("<II", pointer["first"], 0 if pointer["over"] == "seats" else 1))
+                out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
+                out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
+
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
     """The GRU's weights, or None when the actor has no memory."""
@@ -254,6 +279,28 @@ def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[
     return goals
 
 
+def director_sets(actor_state: dict[str, torch.Tensor], descriptor: dict | None) -> dict | None:
+    """The director's set encoder, pooling and pointer heads (DirectorSets), or None without them."""
+    if descriptor is None or "director_sets.pool.weight" not in actor_state:
+        return None
+
+    def array(key: str) -> np.ndarray:
+        return actor_state[f"director_sets.{key}"].detach().cpu().numpy().astype("<f4")
+
+    sets = {"embed": int(actor_state["director_sets.seats_encoder.0.weight"].shape[0]),
+            "pool_weight": array("pool.weight"), "pool_bias": array("pool.bias"), "pointers": []}
+    for part in ("seats", "enemies"):
+        spec = descriptor[part]
+        sets[part] = {"first": int(spec["first"]), "slots": int(spec["slots"]), "width": int(spec["width"]),
+                      "present": int(spec.get("present", 0)),
+                      "w1": array(f"{part}_encoder.0.weight"), "b1": array(f"{part}_encoder.0.bias"),
+                      "w2": array(f"{part}_encoder.2.weight"), "b2": array(f"{part}_encoder.2.bias")}
+    for index, pointer in enumerate(descriptor.get("pointers", ())):
+        sets["pointers"].append({"first": int(pointer["first"]), "over": pointer["over"],
+                                 "weight": array(f"queries.{index}.weight"), "bias": array(f"queries.{index}.bias")})
+    return sets
+
+
 def feedback_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
     """The foresight head and the projection that feeds its predictions back, or None when they are not fed back."""
     if "foresight_proj.weight" not in actor_state:
@@ -284,7 +331,8 @@ def export_layouts(
     out_dir = Path(out_dir)
     manifests = Path(manifest_dir) if manifest_dir is not None else Path("layouts") / spec["scenario"]
     stage_path = manifests / STAGE_FILE
-    models = model_names(json.loads(stage_path.read_text())) if stage_path.is_file() else {}
+    stage = json.loads(stage_path.read_text()) if stage_path.is_file() else {}
+    models = model_names(stage) if stage else {}
     layouts = spec["layouts"]
     written = []
     for index, layout in enumerate(layouts):
@@ -295,8 +343,14 @@ def export_layouts(
         target = out_dir / f"{name}.amdl"
         partial = out_dir / f".{target.name}.partial"
         try:
+            # The director's sets travel with its model only; a director without them would read nothing of its
+            # members (its adapter is blind to their columns), so refuse it rather than write it.
+            sets = director_sets(actor_state, stage.get("director")) if layout["name"] == "director" else None
+            if layout["name"] == "director" and sets is None:
+                raise ValueError(f"{name}: a director needs its set encoder, and this checkpoint or its stage.json "
+                                 f"has none")
             write_amdl(partial, name, layout["obs_dim"], 1, layout["num_actions"], layers, memory, goals,
-                       goal_every, feedback_weights(actor_state), slow_weights(actor_state))
+                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), sets)
             os.replace(partial, target)
         except OSError:
             partial.unlink(missing_ok=True)
@@ -401,6 +455,30 @@ def read_amdl(path: str | Path) -> dict:
                 return values
             goals["lookahead"] = {"success": part(), "duration": part(), "weight": floats(2, 2)}
 
+    (has_sets,) = struct.unpack_from("<B", data, offset)
+    offset += 1
+    sets = None
+    if has_sets:
+        (embed,) = struct.unpack_from("<I", data, offset)
+        offset += 4
+        sets = {"embed": embed, "pointers": []}
+        for part in ("seats", "enemies"):
+            first, slots, per, present = struct.unpack_from("<IIII", data, offset)
+            offset += 16
+            sets[part] = {"first": first, "slots": slots, "width": per, "present": present,
+                          "w1": floats(embed * per, embed, per), "b1": floats(embed, embed),
+                          "w2": floats(embed * embed, embed, embed), "b2": floats(embed, embed)}
+        adapter_out = layers[0][0].shape[0]
+        sets["pool_weight"] = floats(adapter_out * 4 * embed, adapter_out, 4 * embed)
+        sets["pool_bias"] = floats(adapter_out, adapter_out)
+        (count,) = struct.unpack_from("<I", data, offset)
+        offset += 4
+        for _ in range(count):
+            first, over = struct.unpack_from("<II", data, offset)
+            offset += 8
+            sets["pointers"].append({"first": first, "over": "seats" if over == 0 else "enemies",
+                                     "weight": floats(embed * width, embed, width), "bias": floats(embed, embed)})
+
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
     return {
@@ -414,6 +492,7 @@ def read_amdl(path: str | Path) -> dict:
         "goal_every": goal_every,
         "feedback": feedback,
         "slow": slow,
+        "sets": sets,
     }
 
 
@@ -426,8 +505,23 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     """
     x = np.concatenate([obs.astype(np.float32), np.eye(model["num_agents"], dtype=np.float32)[agent]])
     layers = model["layers"]
+    sets = model.get("sets")
+    encoded = {}
+    if sets is not None:
+        # The director's members and enemies, each slot through the shared encoder, pooled onto the first layer.
+        pooled = []
+        for part in ("seats", "enemies"):
+            spec = sets[part]
+            raw = obs[spec["first"] : spec["first"] + spec["slots"] * spec["width"]].reshape(spec["slots"], spec["width"])
+            hidden = np.tanh(np.tanh(raw @ spec["w1"].T + spec["b1"]) @ spec["w2"].T + spec["b2"])
+            present = raw[:, spec["present"]] > 0.5
+            encoded[part] = hidden
+            count = max(1.0, float(present.sum()))
+            pooled.append((hidden * present[:, None]).sum(axis=0) / count)
+            pooled.append(np.where(present[:, None], hidden, -1.0).max(axis=0))
+        extra = sets["pool_weight"] @ np.concatenate(pooled) + sets["pool_bias"]
     for index, (weight, bias) in enumerate(layers[:-1]):
-        x = np.tanh(weight @ x + bias)
+        x = np.tanh(weight @ x + bias + (extra if sets is not None and index == 0 else 0.0))
 
     memory = model.get("memory")
     if memory is not None:
@@ -459,6 +553,8 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
         allowed = goals["accepts"].astype(bool).copy()
         ended = False
         at = int(goals["block_at"])
+        if at < 0 and targets > 1:
+            allowed[:] = False              # no goal block (the director): only the first goal, which means none
         if at >= 0 and targets > 1:
             block = obs[at : at + kinds + targets + 2] > 0.5
             allowed &= block[:kinds, None] & block[kinds : kinds + targets][None, :]
@@ -497,7 +593,12 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
             x = x + goals["target_embedding"][goal % targets]
 
     weight, bias = layers[-1]
+    features = x
     x = weight @ x + bias
+    # The director's per-slot actions: each slot's encoding against a query from the features.
+    for pointer in (sets["pointers"] if sets is not None else ()):
+        scores = encoded[pointer["over"]] @ (pointer["weight"] @ features + pointer["bias"])
+        x[pointer["first"] : pointer["first"] + len(scores)] = scores
 
     allowed = mask.astype(bool)
     if not allowed.any():

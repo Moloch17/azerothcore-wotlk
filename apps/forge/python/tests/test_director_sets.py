@@ -87,3 +87,39 @@ def test_the_director_adapter_never_learns_the_slot_columns():
     loss = actor.adapters[1](torch.ones(1, OBS)).sum()
     loss.backward()
     assert (weight.grad[:, blind] == 0).all() and (weight.grad[:, ~blind] != 0).any()
+
+
+def test_the_exported_director_matches_the_learner(tmp_path):
+    """The set encoder, the pooling and the pointer heads reach the .amdl, and the reference forward pass scores
+    every action as the learner does."""
+    import json
+
+    from animus.export import export_layouts, read_amdl, reference_decide
+
+    actor, _ = networks()
+    spec = {"scenario": "stage", "layouts": [{"name": "warrior_dps", "obs_dim": 7, "num_actions": 3},
+                                             {"name": "director", "obs_dim": OBS, "num_actions": ACTIONS}]}
+    (tmp_path / "stage.json").write_text(json.dumps({"director": DESCRIPTOR}))
+    export_layouts(actor.state_dict(), spec, tmp_path, tmp_path)
+    model = read_amdl(tmp_path / "stage_director.amdl")
+    assert model["sets"] is not None and len(model["sets"]["pointers"]) == 2
+
+    rng = np.random.default_rng(5)
+    members = [np.concatenate([[1.0], rng.random(SEAT_W - 1)]) for _ in range(4)]
+    enemies = [np.concatenate([[1.0], rng.random(ENEMY_W - 1)]) for _ in range(2)]
+    obs = director_obs(rng.random(GLOBALS), members, enemies)
+    _, logits = reference_decide(model, obs, np.ones(ACTIONS, bool))
+    expected, _ = evaluate(actor, LayoutCritic(4, [(7, 3), (OBS, ACTIONS)], [16, 16], director=(1, DESCRIPTOR)), obs)
+    np.testing.assert_allclose(logits - logits[0], expected - expected[0], atol=1e-4)
+
+
+def test_a_director_without_its_sets_is_not_exported(tmp_path):
+    import pytest
+
+    from animus.export import export_layouts
+
+    actor, _ = networks()
+    spec = {"scenario": "stage", "layouts": [{"name": "warrior_dps", "obs_dim": 7, "num_actions": 3},
+                                             {"name": "director", "obs_dim": OBS, "num_actions": ACTIONS}]}
+    with pytest.raises(ValueError, match="set encoder"):
+        export_layouts(actor.state_dict(), spec, tmp_path, tmp_path)

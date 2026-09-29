@@ -25,6 +25,7 @@
 #include "LifeEncounter.h"
 #include "Encounter.h"
 #include "DirectorLayout.h"
+#include "DirectorOrders.h"
 #include "Env.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
@@ -889,52 +890,15 @@ namespace Animus::Curriculum
         void PrepareTurn(Env& env, uint32 side);
 
     private:
-        struct SideOrder
+        /// The standing order and the director's turn (DirectorOrders, shared with the module), and what this
+        /// encounter keeps besides: the place it resolved and the measurements.
+        struct SideOrder : DirectorOrders
         {
-            TeamPosture Posture = TeamPosture::Attack;
-            TeamRally Rally = TeamRally::None;
-            /// Where the side was sent, rebuilt every decision from the three fields below so a place hung
-            /// on the focus or on the side's own centre follows them as they move. HasPlace is derived, never
-            /// set on its own: two independent ways to say "there is a place" is how they drift apart.
+            /// Where the side was sent, rebuilt every decision from the anchor, offset and ring so a place hung on
+            /// the focus or on the side's own centre follows them as they move. HasPlace is derived, never set on
+            /// its own.
             Position Place;
             bool HasPlace = false;
-            PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
-            /// Toward, not At. At the side's own centre a place is just where the side already is, which
-            /// makes Rally::Point a synonym for Rally::Stack and gives the director two actions that say the
-            /// same thing -- measured on the first run with places: the side averaged 7.9 yards from the
-            /// called place against a radius of 8. Toward the enemy at the near ring is a push, which nothing
-            /// else in the vocabulary says.
-            PlaceOffset Offset = PlaceOffset::Toward;
-            PlaceRing Ring = PlaceRing::Near;
-            ObjectGuid Focus;
-            uint32 Changes = 0;                 // how often the call moved, for the episode info
-            /// Who the next order goes to: the side, a group (AddressGroup) or a member (AddressMember, a seat).
-            OrderSource Address = OrderSource::Side;
-            uint32 AddressGroup = 0;
-            uint32 AddressMember = NO_SEAT;
-            /// The orders to members alone, by seat: what, about whom, from which address, since when.
-            struct MemberOrder
-            {
-                OrderKind Kind = OrderKind::None;
-                ObjectGuid Target;
-                uint32 Objective = 0;
-                OrderSource Source = OrderSource::Side;
-                uint32 IssuedStep = 0;
-            };
-            std::array<MemberOrder, MAX_SEATS> Members{};
-            /// The director's turn: calls left in it, whether an event opened it, when the clock next gives one,
-            /// and what the events are measured against (who was alive, who was low, how many enemies).
-            uint32 CallsLeft = 0;
-            bool ByEvent = false;
-            uint32 NextClock = 0;
-            std::array<uint8, MAX_SEATS> WasAlive{};
-            std::array<uint8, MAX_SEATS> WasLow{};
-            uint32 EnemiesAlive = 0;
-            bool FocusAlive_ = false;
-            uint32 Turns = 0;                   // for the episode info
-            uint32 Calls = 0;
-            uint32 MemberOrders = 0;
-            uint32 CalledStep = 0;              // the decision the order last changed on
             /// Whether the call is worth following, which is upstream of whether it is followed: decisions with
             /// a living enemy to call, those whose call was one, those whose call was the most hurt of them,
             /// and what picking at random among the living would have scored.
@@ -1003,8 +967,8 @@ namespace Animus::Curriculum
         uint32 Enemies(Env const& env, uint32 side, std::array<Unit*, PACK_SLOTS>& out) const;
         /// The seats of `side` a director commands, in seat order: up to a raid.
         uint32 Members(Env const& env, uint32 side, std::array<uint32, DirectorLayout::DIRECTOR_SEATS>& out) const;
-        /// Give an order to whoever the side has addressed.
-        void Order(Env& env, uint32 side, OrderKind kind, ObjectGuid target, uint32 objective);
+        /// The member slot of `seat` on its side (the director's own slot order), or DIRECTOR_SEATS when none.
+        [[nodiscard]] uint32 SlotOf(Env const& env, uint32 seat) const;
         /// Whether the env's arena has the director learn rather than follow the script.
         [[nodiscard]] bool Learned(Env const& env) const;
         /// Refresh what the side can see and what it remembers, once per decision before anything reads it.
@@ -1018,8 +982,6 @@ namespace Animus::Curriculum
         void Forget(Env& env, uint32 side);
         /// Tally what the side's standing call is worth this decision, scripted or learned.
         void Measure(Env& env, uint32 side);
-        /// Note that the order changed, for order_changes and the director's own "how long has this stood".
-        void Changed(SideOrder& order, uint32 steps) const;
 
         std::vector<EnvDirector> _envs;
     };
