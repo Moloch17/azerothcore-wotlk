@@ -2417,6 +2417,8 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         {
             state.GoalRewarded = false;
             state.GoalEnded = false;
+            state.GoalFresh = true;
+            state.GoalSatisfiedAtChoice = false;
         }
 
         state.Goal = goal;
@@ -3030,6 +3032,10 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         bool reached = false;
         bool possible = false;
         GoalBlock::Status(view, seat.Goal, reached, possible);
+        // True already when chosen: nothing was done to reach it, so it is held unpaid (ending on its clock) until
+        // it stops being true. Without this a goal that is true on choice -- Fight about no one where there is
+        // nothing to fight -- was paid at every choice: the first fast pass of stage1_move earned ~14 an episode.
+        reached = GoalBlock::Earned(reached, seat.GoalFresh, seat.GoalSatisfiedAtChoice);
         if (reached && !seat.GoalRewarded)
         {
             seat.GoalRewarded = true;

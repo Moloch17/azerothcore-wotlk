@@ -225,6 +225,22 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
     }
 }
 
+bool Animus::Curriculum::GoalBlock::Earned(bool reached, bool& fresh, bool& satisfiedAtChoice)
+{
+    if (fresh)
+    {
+        fresh = false;
+        satisfiedAtChoice = reached;
+    }
+    if (satisfiedAtChoice)
+    {
+        if (!reached)
+            satisfiedAtChoice = false;
+        return false;
+    }
+    return reached;
+}
+
 void Animus::Curriculum::GoalBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
     std::array<bool, GOAL_COUNT> kinds;

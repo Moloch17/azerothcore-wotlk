@@ -256,6 +256,11 @@ namespace Animus::Curriculum
         bool GoalEnded = false;                 // the goal held was reached or became impossible (GoalBlock::Status)
         bool GoalReachedPending = false;        // ... reached: Goals.Reached is paid at the next reward
         bool GoalWasReached = false;            // the goal ended by being reached (not lost)
+        /// A goal is paid for reaching it, not for choosing it: one already true when chosen -- Fight about no one
+        /// with nothing to fight, Recover at full health -- is held unpaid until the clock, and pays only if it
+        /// stops being true and is then reached again. GoalFresh asks the next observation to check.
+        bool GoalFresh = false;
+        bool GoalSatisfiedAtChoice = false;
         uint32 GoalsReached = 0;
         uint32 GoalsLost = 0;
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
@@ -444,6 +449,8 @@ namespace Animus::Curriculum
             GoalEnded = false;
             GoalReachedPending = false;
             GoalWasReached = false;
+            GoalFresh = false;
+            GoalSatisfiedAtChoice = false;
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;

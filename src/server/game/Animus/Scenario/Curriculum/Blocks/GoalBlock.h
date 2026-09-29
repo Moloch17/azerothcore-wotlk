@@ -58,6 +58,13 @@ namespace Animus::Curriculum
         /// forge and the module both end a goal on these, so the learner re-chooses at the same moments in both.
         static void Status(SeatView const& view, int32 goal, bool& reached, bool& possible);
 
+        /// Whether a goal Status calls reached was *reached* -- made true -- rather than true already when it was
+        /// chosen (Fight about no one with nothing to fight, Recover at full health). One true on choice is held,
+        /// neither paid nor ended, until it stops being true; reached after that, it counts. `fresh` is set by the
+        /// caller when a new goal is chosen and cleared here; `satisfiedAtChoice` is the caller's to keep per goal.
+        /// The forge pays Goals.Reached and ends goals on this, and the module ends them on it, so both agree.
+        static bool Earned(bool reached, bool& fresh, bool& satisfiedAtChoice);
+
         /// Where a place target is (a journal objective's, the giver, the turn-in, a found place, the assigned
         /// area); false for a target that is not a place, or not there.
         static bool PlaceOf(SeatView const& view, uint32 target, Position& where);
