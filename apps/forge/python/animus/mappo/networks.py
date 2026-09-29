@@ -373,12 +373,21 @@ class GoalHead(nn.Module):
     now, the last block of each layout) and by which targets each kind accepts (stage.json "goals"). With one target
     it is exactly the old goal head over `kinds` goals."""
 
-    def __init__(self, width: int, kinds: int, targets: int, layout_count: int):
+    def __init__(self, width: int, kinds: int, targets: int, layout_count: int, lookahead: bool = False):
         super().__init__()
         self.kinds, self.targets = kinds, max(1, targets)
         self.kind = _linear(width, kinds, 0.01)
         self.target = _linear(width, self.targets, 0.01) if self.targets > 1 else None
         self.pair = nn.Parameter(torch.zeros(kinds, self.targets))
+        # **Goal-level lookahead** (Component P, layer 3): for every candidate goal, the chance it is reached before
+        # it ends and how long it would take (a share of a minute), predicted from the same features and trained on
+        # what the chosen goals actually did. The choice reads them: the logits add each prediction times a learned
+        # weight, so the policy chooses from what it expects of each goal rather than from a bare score.
+        self.lookahead = lookahead
+        if lookahead:
+            self.success = _Factored(width, kinds, self.targets)
+            self.duration = _Factored(width, kinds, self.targets)
+            self.lookahead_weight = nn.Parameter(torch.tensor([1.0, -0.5]))
         self.register_buffer("accepts", torch.ones(kinds, self.targets, dtype=torch.bool))
         # Per layout, where its goal block starts in the observation; -1 for a layout without one (the director).
         self.register_buffer("block_at", torch.full((max(1, layout_count),), -1, dtype=torch.long))
@@ -389,7 +398,8 @@ class GoalHead(nn.Module):
 
     @property
     def block_width(self) -> int:
-        return self.kinds + self.targets + 1
+        """kinds there, targets there, ended, reached (GoalBlock)."""
+        return self.kinds + self.targets + 2
 
     def set_space(self, accepts, block_at) -> None:
         """The goal space the sim wrote (stage.json "goals"): accepts [kinds][targets], and per layout the goal
@@ -405,12 +415,22 @@ class GoalHead(nn.Module):
         columns = columns.clamp(max=obs.shape[-1] - 1)
         return obs.gather(1, columns) > 0.5, has
 
+    def predictions(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The lookahead: per candidate goal [rows, kinds * targets], the logit of reaching it and the share of a
+        minute it would take."""
+        return self.success(features), torch.sigmoid(self.duration(features))
+
     def logits(self, features: torch.Tensor, obs: torch.Tensor | None = None,
                layout: torch.Tensor | None = None) -> torch.Tensor:
         """Masked joint logits [rows, kinds * targets]."""
         joint = self.kind(features)[:, :, None] + self.pair[None].to(features.dtype)
         if self.target is not None:
             joint = joint + self.target(features)[:, None, :]
+        if self.lookahead:
+            # What each goal is expected to do, as the policy weighs it; the predictions learn from outcomes only.
+            success, duration = self.predictions(features.detach())
+            weight = self.lookahead_weight.to(features.dtype)
+            joint = joint + (weight[0] * success.detach() + weight[1] * duration.detach()).reshape(joint.shape)
         allowed = self.accepts[None].expand(features.shape[0], -1, -1)
         if obs is not None and layout is not None and self.targets > 1:
             block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
@@ -426,7 +446,25 @@ class GoalHead(nn.Module):
         if self.targets <= 1:
             return torch.zeros(obs.reshape(-1, obs.shape[-1]).shape[0], dtype=torch.bool, device=obs.device)
         block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
-        return block[:, -1] & has
+        return block[:, self.kinds + self.targets] & has
+
+
+class _Factored(nn.Module):
+    """A score per (kind, target) pair: the kind's plus the target's plus a table of the pair, as GoalHead's logits
+    are built. [rows, kinds * targets]."""
+
+    def __init__(self, width: int, kinds: int, targets: int):
+        super().__init__()
+        self.kinds, self.targets = kinds, targets
+        self.kind = _linear(width, kinds, 0.01)
+        self.target = _linear(width, targets, 0.01) if targets > 1 else None
+        self.pair = nn.Parameter(torch.zeros(kinds, targets))
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        joint = self.kind(features)[:, :, None] + self.pair[None].to(features.dtype)
+        if self.target is not None:
+            joint = joint + self.target(features)[:, None, :]
+        return joint.reshape(features.shape[0], -1)
 
 
 class GoalEmbedding(nn.Module):
@@ -452,7 +490,8 @@ class GoalEmbedding(nn.Module):
 
 class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
-                 recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1):
+                 recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
+                 foresight_feedback: bool = False, lookahead: bool = False):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -489,9 +528,23 @@ class LayoutActor(nn.Module):
         #
         # `goal_count` is the goal *kinds* and `goal_targets` the target space (GoalHead); self.goal_count is the
         # joint count, which is what the buffers, the wire and the stats count.
-        self.goal_head = GoalHead(head_width, goal_count, goal_targets, len(layouts)) if goal_count else None
+        #
+        # **The two-clock seat** (Component D, `slow_size`): the goal is chosen by a slow loop of its own -- a GRU that
+        # steps only when a goal is chosen, over the fast loop's features at that moment, so what it remembers spans
+        # minutes of goals rather than seconds of decisions -- with its own value head, credited on its own clock
+        # (MappoTrainer's slow goal update). Without it the goal head reads the fast features as before.
+        self.slow_size = slow_size if goal_count else 0
+        self.slow_memory = nn.GRUCell(head_width, self.slow_size) if self.slow_size else None
+        self.slow_value = _linear(self.slow_size, 1, 1.0) if self.slow_size else None
+        goal_width = self.slow_size or head_width
+        self.goal_head = (GoalHead(goal_width, goal_count, goal_targets, len(layouts), lookahead) if goal_count
+                          else None)
         self.goal_count = self.goal_head.count if self.goal_head is not None else 0
         self.goal_embedding = GoalEmbedding(goal_count, goal_targets, head_width) if goal_count else None
+        # **Predictions fed back** (Component P, layer 2): the foresight head's outputs, detached, projected onto the
+        # features the action head and the slow loop read, so the policy acts on what it expects to happen.
+        self.foresight_feedback = bool(foresight_feedback and foresight_outputs)
+        self.foresight_proj = _linear(foresight_outputs, head_width, 0.01) if self.foresight_feedback else None
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None) -> Categorical:
@@ -572,9 +625,21 @@ class LayoutActor(nn.Module):
         """The actions of flat rows whose features are `features`, under `goal` where the actor has goals."""
         return Categorical(logits=self.action_logits(features, layout, mask, goal, groups))
 
+    def with_foresight(self, features: torch.Tensor) -> torch.Tensor:
+        """The features with the foresight head's predictions fed back (Component P, layer 2), or as they are."""
+        if self.foresight_proj is None:
+            return features
+        return features + self.foresight_proj(self.foresight(features).detach().to(features.dtype))
+
+    def slow_step(self, features: torch.Tensor, slow: torch.Tensor) -> torch.Tensor:
+        """One step of the slow loop over flat rows: the slow memory after this decision's features (detached: the
+        slow loop learns on top of the fast one without pulling on it)."""
+        return self.slow_memory(self.with_foresight(features).detach(), slow)
+
     def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
                       goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
         """action_distribution's masked logits, unnormalised (for sample_logits)."""
+        features = self.with_foresight(features)
         if self.goal_embedding is not None and goal is not None:
             features = features + self.goal_embedding(goal.reshape(-1))
 

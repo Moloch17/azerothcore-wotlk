@@ -77,9 +77,13 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     recurrent_size = int(mappo.get("recurrent_size", 0) or 0)
     goal_count = int(mappo.get("goal_count", 0) or 0)
     goal_targets = int(mappo.get("goal_targets", 1) or 1)
+    slow_size = int(mappo.get("slow_goal_size", 0) or 0)
+    obs_targets = bool(mappo.get("foresight_obs_targets", False))
     horizons = mappo.get("foresight_horizons_seconds", ())
-    foresight_outputs = (len(horizons) + 1) if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0
-    actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets)
+    foresight_outputs = ((len(horizons) + 1 + (3 if obs_targets else 0))
+                         if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0)
+    actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
+                        bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)))
     actor.load_state_dict(checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

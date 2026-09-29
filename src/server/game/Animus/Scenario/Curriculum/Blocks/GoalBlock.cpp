@@ -235,4 +235,5 @@ void Animus::Curriculum::GoalBlock::Observe(SeatView const& view, float* obs, ui
     for (uint32 target = 0; target < GOAL_TARGETS; ++target)
         obs[OBS_TARGET_FIRST + target] = targets[target] ? 1.0f : 0.0f;
     obs[OBS_ENDED] = view.GoalEnded ? 1.0f : 0.0f;
+    obs[OBS_REACHED] = view.GoalReached ? 1.0f : 0.0f;
 }

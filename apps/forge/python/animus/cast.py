@@ -125,6 +125,9 @@ class CastActor:
         self.memory: np.ndarray | None = None
         self.goal: np.ndarray | None = None
         self.age: np.ndarray | None = None
+        # A two-clock teacher's slow memory (MappoConfig.slow_goal_size), stepped when it chooses a goal.
+        self.slow_size = self.teacher.actor.slow_size
+        self.slow: np.ndarray | None = None
         self.fallback_rows = 0
 
     def ensure(self, envs: int, agents: int) -> None:
@@ -132,12 +135,14 @@ class CastActor:
             self.memory = np.zeros((envs, agents, self.recurrent), dtype=np.float32)
             self.goal = np.zeros((envs, agents), dtype=np.int64)
             self.age = np.zeros((envs, agents), dtype=np.int64)
+            self.slow = np.zeros((envs, agents, self.slow_size), dtype=np.float32)
 
     def clear(self, done: np.ndarray) -> None:
         if self.memory is not None:
             self.memory[done] = 0.0
             self.goal[done] = 0
             self.age[done] = 0
+            self.slow[done] = 0.0
 
     def reset_all(self) -> None:
         self.memory = None
@@ -160,6 +165,7 @@ class CastActor:
         flat_memory = self.memory.reshape(envs * agents, -1)
         flat_goal = self.goal.reshape(-1)
         flat_age = self.age.reshape(-1)
+        flat_slow = self.slow.reshape(envs * agents, -1)
         flat_actions = actions.reshape(-1)
 
         for index in np.unique(flat_layout[flat]):
@@ -184,13 +190,20 @@ class CastActor:
             if self.goal_count:
                 ages = flat_age[picked]
                 goals = flat_goal[picked].copy()
-                choose = ages % self.goal_every == 0
+                # On the clock, or at once when the goal block says the goal ended.
+                choose = (ages % self.goal_every == 0) | self.teacher.actor.goal_ended(t_obs, t_layout).cpu().numpy()
                 if choose.any():
-                    drawn = self.teacher.actor.goal_distribution(features, t_obs, t_layout)
+                    goal_features = features
+                    if self.slow_size:
+                        slow = torch.as_tensor(flat_slow[picked], device=self.device)
+                        goal_features = self.teacher.actor.slow_step(features, slow)
+                        stepped = goal_features.cpu().numpy()
+                        flat_slow[picked[choose]] = stepped[choose]
+                    drawn = self.teacher.actor.goal_distribution(goal_features, t_obs, t_layout)
                     chosen = (drawn.probs.argmax(-1) if self.deterministic else drawn.sample()).cpu().numpy()
                     goals[choose] = chosen[choose]
                 flat_goal[picked] = goals
-                flat_age[picked] = ages + 1
+                flat_age[picked] = np.where(choose, 1, ages + 1)
                 goal = torch.as_tensor(goals, dtype=torch.long, device=self.device)
             dist = self.teacher.actor.action_distribution(features, t_layout, t_mask, goal)
             teacher_actions = (dist.probs.argmax(-1) if self.deterministic else dist.sample()).cpu().numpy()

@@ -157,6 +157,51 @@ def compute_foresight(
     return targets
 
 
+def compute_span_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray, terminated: np.ndarray,
+                     chosen: np.ndarray, gamma: float, gae_lambda: float) -> tuple[np.ndarray, np.ndarray]:
+    """compute_slow_gae for every agent at once, vectorised over [E, A]: GAE over the decisions where `chosen`,
+    each a transition carrying every reward until the next chosen decision or its episode's end. `values` holds
+    the value at each chosen decision; a truncated episode, and the rollout's end, bootstrap from the value of the
+    last chosen decision before them (the state the span began in -- all there is of that clock). The two-clock
+    seat's goals (MappoConfig.slow_goal_size); a whole run's seats, where the director's loop was one agent's."""
+    steps = rewards.shape[0]
+    advantages = np.zeros_like(rewards, dtype=np.float32)
+    returns = np.zeros_like(rewards, dtype=np.float32)
+
+    # The latest chosen decision's value at every step, reset at each episode's start: the truncation bootstrap.
+    latest = np.zeros_like(values, dtype=np.float32)
+    carried = np.zeros(values.shape[1:], dtype=np.float32)
+    for t in range(steps):
+        carried = np.where(chosen[t], values[t], carried)
+        latest[t] = carried
+        carried = np.where(dones[t][:, None], 0.0, carried)
+
+    tail = np.zeros(values.shape[1:], dtype=np.float32)
+    boot = latest[-1].copy()
+    flows = np.ones(values.shape[1:], dtype=bool)
+    following = np.zeros(values.shape[1:], dtype=np.float32)
+    for t in reversed(range(steps)):
+        done = dones[t][:, None]
+        if t + 1 < steps:
+            # A span ending here: the next chosen decision bootstraps it and the credit flows on from it.
+            cut = chosen[t + 1] & ~done
+            tail = np.where(cut, 0.0, tail)
+            boot = np.where(cut, values[t + 1], boot)
+            following = np.where(cut, advantages[t + 1], following)
+            flows = np.where(cut, True, flows)
+        ended = np.broadcast_to(done, tail.shape)
+        final = np.where(np.broadcast_to(terminated[t][:, None], tail.shape), 0.0, latest[t])
+        tail = np.where(ended, rewards[t], rewards[t] + tail)
+        boot = np.where(ended, final, boot)
+        flows = np.where(ended, False, flows)
+        following = np.where(ended, 0.0, following)
+        delta = tail + gamma * boot - values[t]
+        gae = delta + np.where(flows, gamma * gae_lambda * following, 0.0)
+        advantages[t] = np.where(chosen[t], gae, 0.0)
+        returns[t] = np.where(chosen[t], gae + values[t], 0.0)
+    return advantages, returns
+
+
 def decisions_left(dones: np.ndarray) -> np.ndarray:
     """Decisions until each step's episode ends, [T, E]; -1 where it does not end inside the rollout."""
     steps, envs = dones.shape
@@ -170,12 +215,19 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
-                 foresight: int = 0, recurrent: int = 0, goals: bool = False):
+                 foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0):
         self.steps = steps
         self.foresight = foresight
         self.recurrent = recurrent
         self.goals = goals
+        self.slow_goal = slow_goal
         shape = (steps, envs, agents)
+        # The two-clock seat (MappoConfig.slow_goal_size): the slow memory each decision started from, the slow value
+        # where a goal was chosen, and the slow clock's advantages and returns over the chosen decisions.
+        self.slow_memory = np.zeros((*shape, slow_goal), dtype=np.float32)
+        self.slow_values = np.zeros(shape, dtype=np.float32)
+        self.slow_advantages = np.zeros(shape, dtype=np.float32)
+        self.slow_returns = np.zeros(shape, dtype=np.float32)
         # The goal each decision pursued, what choosing it was worth, and whether this decision chose it: only those
         # decisions carry the goal chooser's own gradient.
         self.goal = np.zeros(shape, dtype=np.int64)
@@ -239,7 +291,9 @@ class RolloutBuffer:
         if self.recurrent and critic_memory is not None:
             self.critic_memory[t] = critic_memory
         if self.goals and goals is not None:
-            self.goal[t], self.goal_log_probs[t], self.goal_chosen[t] = goals
+            self.goal[t], self.goal_log_probs[t], self.goal_chosen[t] = goals[:3]
+            if self.slow_goal and len(goals) > 3 and goals[3] is not None:
+                self.slow_memory[t], self.slow_values[t] = goals[3], goals[4]
 
     def store_rows(self, name: str, t: int, rows: slice, value, stream) -> None:
         """Envs `rows` of step `t` of obs, state or mask, from a device tensor, copied on `stream` (queued: the caller
@@ -284,7 +338,8 @@ class RolloutBuffer:
 
     def finish(self, last_values: np.ndarray, gamma: float, gae_lambda: float, last_foresight=None,
                foresight_gammas: tuple[float, ...] = (), time_scale_decisions: float = 0.0,
-               slow_layout: int = -1, slow_gamma: float = 0.0, slow_gae_lambda: float = 0.0) -> None:
+               slow_layout: int = -1, slow_gamma: float = 0.0, slow_gae_lambda: float = 0.0,
+               slow_goal: tuple[float, float] | None = None, obs_targets=None) -> None:
         self.advantages, self.returns = compute_gae(
             self.rewards,
             self.values,
@@ -316,6 +371,16 @@ class RolloutBuffer:
                 )
                 self.advantages = np.where(slow, advantages, self.advantages)
                 self.returns = np.where(slow, returns, self.returns)
+
+        # The two-clock seat's goals, on their own clock: every seat that chose a goal (not a slow layout's agent,
+        # whose goal means nothing), over the decisions that chose one.
+        if slow_goal is not None and self.slow_goal:
+            chosen = self.goal_chosen & self.valid
+            if slow_layout >= 0:
+                chosen = chosen & (self.layout != slow_layout)
+            self.slow_advantages, self.slow_returns = compute_span_gae(
+                self.rewards, self.slow_values, self.dones, self.terminated, chosen, slow_goal[0], slow_goal[1])
+            self.goal_chosen = chosen
         if not self.foresight or last_foresight is None:
             return
 
@@ -338,6 +403,40 @@ class RolloutBuffer:
         scale = max(1.0, time_scale_decisions)
         self.foresight_targets[..., horizons] = np.clip(left / scale, 0.0, 1.0)[..., None]
         self.foresight_valid[..., horizons] = known[..., None]
+
+        # What the seat will observe (MappoConfig.foresight_obs_targets): per target, the column of each layout
+        # (-1 where it has none), how many decisions ahead, and whether it is "at any point up to then" rather than
+        # "then". Only steps whose episode runs that far inside the rollout know it.
+        if obs_targets:
+            steps = self.steps
+            done_count = np.cumsum(self.dones.astype(np.int64), axis=0)
+            layout = self.layout
+            for index, (columns, ahead, window) in enumerate(obs_targets):
+                slot = horizons + 1 + index
+                column = np.asarray(columns, dtype=np.int64)[layout]
+                values = self._obs_column(np.maximum(column, 0))
+                target = np.zeros_like(values)
+                valid = np.zeros(values.shape, dtype=bool)
+                if ahead < steps:
+                    later = values[ahead:]
+                    if window:
+                        stacked = np.stack([values[k : steps - ahead + k] for k in range(1, ahead + 1)])
+                        later = stacked.max(axis=0)
+                    before = np.concatenate([np.zeros((1, done_count.shape[1]), np.int64), done_count[:-1]])
+                    clear = (done_count[ahead - 1 : steps - 1] - before[: steps - ahead]) == 0
+                    target[: steps - ahead] = later
+                    valid[: steps - ahead] = clear[..., None] & (column[: steps - ahead] >= 0)
+                self.foresight_targets[..., slot] = target
+                self.foresight_valid[..., slot] = valid
+
+    def _obs_column(self, column: np.ndarray) -> np.ndarray:
+        """obs[t, e, a, column[t, e, a]] as a [T, E, A] numpy array, wherever the observations are kept."""
+        if isinstance(self.obs, np.ndarray):
+            return np.take_along_axis(self.obs, column[..., None], axis=-1)[..., 0]
+        import torch
+
+        index = torch.as_tensor(column, device=self.obs.device)[..., None]
+        return self.obs.gather(-1, index)[..., 0].float().cpu().numpy()
 
     def reset(self) -> None:
         self.cursor = 0

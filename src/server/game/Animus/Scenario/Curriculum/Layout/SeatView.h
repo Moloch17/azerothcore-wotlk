@@ -352,6 +352,7 @@ namespace Animus::Curriculum
         /// The goal it held was reached or can no longer be pursued this decision: the learner chooses again now
         /// rather than at its clock (GoalBlock::OBS_ENDED).
         bool GoalEnded = false;
+        bool GoalReached = false;                   // ... because it was reached
         /// The seat's durative action, to read, start and stop. Null for a view without one.
         /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
         /// avoiding one possible rather than only leaving one.

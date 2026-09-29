@@ -112,3 +112,24 @@ def test_the_lean_sampler_draws_what_categorical_draws():
     frequencies = torch.stack([(draws == action).float().mean(0) for action in range(6)], dim=-1)
     torch.testing.assert_close(frequencies, reference.probs, atol=0.015, rtol=0.0)
     torch.testing.assert_close(log_prob_of(logits, draws[0]), reference.log_prob(draws[0]))
+
+
+def test_the_graph_runs_the_two_clock_seat_as_the_eager_path_does():
+    """Goals with targets masked by a goal block, the slow loop, fed-back predictions and the lookahead: the same in
+    the captured decision as in the eager one, the slow memory carried alike."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(16, 16), recurrent_size=8, goal_count=2, goal_targets=3, goal_every_decisions=2,
+                         foresight_horizons_seconds=(1.0, 4.0), slow_goal_size=6, foresight_obs_targets=True,
+                         foresight_feedback=True, goal_lookahead=True)
+    trainer = MappoTrainer(LAYOUTS, STATE, config, train_device="cuda", rollout_device="cuda")
+    # The goal block is the last 2 + 3 + 2 columns of the widest layout, and absent from the others.
+    trainer.actor.goal_head.set_space(np.ones((2, 3), bool), [-1, -1, 9 - 7])
+    trainer._sync_rollout()
+    rng = np.random.default_rng(4)
+    eager_state = trainer.acting_state(6, 2)
+    graph_state = copy.deepcopy(eager_state)
+    for _ in range(5):
+        arrays = inputs(rng)
+        assert_same(decide(trainer, False, eager_state, arrays), decide(trainer, True, graph_state, arrays))
+        for name in ("memory", "goal", "age", "slow_memory"):
+            np.testing.assert_allclose(getattr(eager_state, name), getattr(graph_state, name), rtol=1e-5, atol=1e-5)

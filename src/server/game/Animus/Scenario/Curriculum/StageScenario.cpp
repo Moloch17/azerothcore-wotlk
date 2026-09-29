@@ -2988,8 +2988,10 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         else if (!possible)
             ++seat.GoalsLost;
         seat.GoalEnded = reached || !possible;
+        seat.GoalWasReached = reached;
     }
     view.GoalEnded = seat.GoalEnded;
+    view.GoalReached = seat.GoalEnded && seat.GoalWasReached;
     seat.HasGoalPlace = seat.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(seat.Goal), seat.GoalPlace);
     seat.GoalFriend.Clear();
     if (uint32 const goalTarget = GoalTargetOf(seat.Goal); seat.Goal != NO_GOAL

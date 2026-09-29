@@ -255,6 +255,7 @@ namespace Animus::Curriculum
         uint32 StepGoalSwitches = 0;            // goal changes since the last reward (Goals.Switch)
         bool GoalEnded = false;                 // the goal held was reached or became impossible (GoalBlock::Status)
         bool GoalReachedPending = false;        // ... reached: Goals.Reached is paid at the next reward
+        bool GoalWasReached = false;            // the goal ended by being reached (not lost)
         uint32 GoalsReached = 0;
         uint32 GoalsLost = 0;
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
@@ -442,6 +443,7 @@ namespace Animus::Curriculum
             StepGoalSwitches = 0;
             GoalEnded = false;
             GoalReachedPending = false;
+            GoalWasReached = false;
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;

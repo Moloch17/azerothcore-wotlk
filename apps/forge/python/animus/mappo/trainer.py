@@ -14,7 +14,8 @@ from torch import nn
 from ..device import host
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, SharedInputDense, log_prob_of, per_layout, per_layout_host,
+from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, log_prob_of, per_layout,
+                       per_layout_host,
                        sample_logits, skip_distribution_checks, to_device, update_norms)
 from .valuenorm import ValueNorm
 
@@ -153,6 +154,32 @@ class MappoConfig:
     # a restart's boost still apply on top). Late on, the argmax policy that evaluation and exported models play
     # should be the one training sampled. 1 = constant.
     entropy_final_fraction: float = 1.0
+    # **The two-clock seat** (long-horizon plan, Component D): with slow_goal_size, the goal is chosen by a slow loop of
+    # its own -- a GRU of this size that steps only when a goal is chosen -- with its own value head and its own
+    # clock: each goal is one transition carrying every reward until the next choice, discounted per goal by
+    # slow_goal_gamma (0.993 over ~4 s goals is a horizon of about ten minutes), trained by its own PPO step and
+    # optimizer (slow_goal_lr) apart from the actions'. 0 = the goal head reads the fast features and shares the
+    # actions' objective, as before.
+    slow_goal_size: int = 0
+    slow_goal_gamma: float = 0.993
+    slow_goal_lambda: float = 0.95
+    slow_goal_lr: float = 0.0003
+    # Predictions fed back (Component P, layer 2): the foresight head also predicts the seat's own health 2 s and 5 s
+    # ahead and whether its goal is reached within 4 s (foresight_obs_targets), and its outputs, detached, are added
+    # to what the action head and the slow loop read (foresight_feedback).
+    foresight_obs_targets: bool = False
+    foresight_feedback: bool = False
+    # Goal-level lookahead (Component P, layer 3): per candidate goal, the chance it is reached and how long it takes,
+    # learned from the chosen goals' outcomes (lookahead_coef) and read by the goal choice.
+    goal_lookahead: bool = False
+    lookahead_coef: float = 0.5
+
+
+#: The foresight's observation targets (MappoConfig.foresight_obs_targets): the seat's health 8 and 20 decisions on
+#: (2 s and 5 s at 250 ms), and whether its goal was reached within the next 16 (GoalBlock::OBS_REACHED).
+FORESIGHT_OBS_TARGETS = (("health", 8, False), ("health", 20, False), ("goal_reached", 16, True))
+#: Where the seat's own health is in every layout that has a core block first (CoreBlock::OBS_HEALTH).
+CORE_HEALTH_COLUMN = 37
 
 
 @dataclass
@@ -168,6 +195,8 @@ class ActingState:
     # A slow layout's standing action and how many decisions it has stood for, kept as the goal is.
     action: np.ndarray | None = None
     slow_age: np.ndarray | None = None
+    # The two-clock seat's slow memory [E, A, S] (MappoConfig.slow_goal_size), stepped only when a goal is chosen.
+    slow_memory: np.ndarray | None = None
 
     def take(self, rows: slice) -> "ActingState":
         """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
@@ -189,6 +218,8 @@ class ActingState:
         if self.goal is not None:
             self.goal[done] = 0
             self.age[done] = 0
+        if self.slow_memory is not None:
+            self.slow_memory[done] = 0.0
         if self.slow_age is not None:
             # 0 makes the first decision of the new episode a choosing one, so a span never crosses an episode.
             self.action[done] = 0
@@ -247,6 +278,7 @@ class _Decided:
         self.goal_t = None
         self.goal_chosen = None
         self.goal_chosen_at = None
+        self.slow_before_at = self.slow_after_at = self.slow_value_at = None
         self.chosen = None
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.actions_at = self.log_probs_at = None
@@ -258,7 +290,11 @@ class _Decided:
             # The clock's choices and the ones an ended goal forced (GoalBlock::OBS_ENDED): both start the count again.
             chosen = fetched[self.goal_chosen_at].astype(bool)
             self.state.age = np.where(chosen, 1, self.state.age + 1)
-            goals = (goal, fetched[self.goal_log_prob_at], chosen)
+            slow_before = slow_value = None
+            if self.slow_before_at is not None:
+                slow_before, slow_value = fetched[self.slow_before_at], fetched[self.slow_value_at]
+                self.state.slow_memory = fetched[self.slow_after_at]
+            goals = (goal, fetched[self.goal_log_prob_at], chosen, slow_before, slow_value)
             self.state.goal = goal
         if self.memory_at is not None:
             self.state.memory = fetched[self.memory_at]
@@ -330,6 +366,8 @@ class _RolloutGraph:
                       ("critic_memory", (envs, agents, recurrent), torch.float32)]
         if goals:
             specs += [("goal", (envs, agents), torch.long), ("chosen", (envs, agents), torch.bool)]
+        if trainer.slow_goal_size:
+            specs += [("slow_memory", (envs, agents, trainer.slow_goal_size), torch.float32)]
         self.inputs = _Packed(specs, device)
         self.host_in = {**self.inputs.host, **self.large.host}
         self.outputs: _Packed | None = None     # laid out by the first warm-up, once the results' shapes are known
@@ -375,9 +413,18 @@ class _RolloutGraph:
         # decision's kernels.
         if trainer.goal_count:
             # Masked by the goal block (what is there now), and chosen again at once where it says the goal ended.
-            goal_logits = actor.goal_logits(features, obs_t, layout_t)
-            sampled, _ = sample_logits(goal_logits, self.deterministic)
             chosen_t = inputs["chosen"].reshape(rows) | actor.goal_ended(obs_t, layout_t)
+            goal_features = features
+            if trainer.slow_goal_size:
+                # The slow loop steps on the choosing rows only; the goal is drawn from where it stepped to.
+                slow_before = inputs["slow_memory"].reshape(rows, trainer.slow_goal_size)
+                goal_features = actor.slow_step(features, slow_before)
+                out["slow_memory"] = torch.where(chosen_t[:, None], goal_features, slow_before).reshape(
+                    envs, agents, trainer.slow_goal_size)
+                out["slow_before"] = slow_before.reshape(envs, agents, trainer.slow_goal_size)
+                out["slow_value"] = actor.slow_value(goal_features).reshape(envs, agents)
+            goal_logits = actor.goal_logits(goal_features, obs_t, layout_t)
+            sampled, _ = sample_logits(goal_logits, self.deterministic)
             goal_t = torch.where(chosen_t, sampled, inputs["goal"].reshape(rows))
             out["goal"] = goal_t.reshape(envs, agents)
             out["goal_log_prob"] = log_prob_of(goal_logits, goal_t).reshape(envs, agents)
@@ -433,6 +480,8 @@ class _RolloutGraph:
             chosen = (state.age % max(1, trainer.config.goal_every_decisions)) == 0
             np.copyto(host["goal"].numpy(), state.goal, casting="unsafe")
             np.copyto(host["chosen"].numpy(), chosen)
+        if trainer.slow_goal_size:
+            np.copyto(host["slow_memory"].numpy(), state.slow_memory)
 
         self.graph.replay()
         trainer._rollout_stream.synchronize()
@@ -445,7 +494,11 @@ class _RolloutGraph:
             chosen = fetched["goal_chosen"].astype(bool)
             state.age = np.where(chosen, 1, state.age + 1)
             state.goal = fetched["goal"]
-            goals = (fetched["goal"], fetched["goal_log_prob"], chosen)
+            slow_before = slow_value = None
+            if trainer.slow_goal_size:
+                slow_before, slow_value = fetched["slow_before"], fetched["slow_value"]
+                state.slow_memory = fetched["slow_memory"]
+            goals = (fetched["goal"], fetched["goal_log_prob"], chosen, slow_before, slow_value)
         if trainer.recurrent_size:
             state.memory = fetched["memory"]
             state.critic_memory = fetched["critic_memory"]
@@ -484,15 +537,19 @@ class MappoTrainer:
         self.goal_entropy_factor = config.goal_entropy_scale
 
         hidden = list(config.hidden)
-        self.foresight_outputs = (len(config.foresight_horizons_seconds) + 1) if config.foresight_coef > 0.0 else 0
+        self.foresight_outputs = ((len(config.foresight_horizons_seconds) + 1
+                                   + (len(FORESIGHT_OBS_TARGETS) if config.foresight_obs_targets else 0))
+                                  if config.foresight_coef > 0.0 else 0)
         self.recurrent_size = config.recurrent_size
         # config.goal_count is the goal kinds and config.goal_targets the target space (GoalHead); goal_count here is
         # the joint count, which the buffers, the wire and the stats count.
         self.goal_kinds = config.goal_count
         self.goal_targets = max(1, config.goal_targets)
         self.goal_count = self.goal_kinds * self.goal_targets if self.goal_kinds else 0
+        self.slow_goal_size = config.slow_goal_size if self.goal_count else 0
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
-                                 self.goal_kinds, self.goal_targets).to(self.train_device)
+                                 self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
+                                 config.goal_lookahead).to(self.train_device)
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
@@ -535,9 +592,21 @@ class MappoTrainer:
                                            + list(destination.named_buffers()))[name]))
         return pairs
 
+    def slow_parameters(self) -> list[torch.nn.Parameter]:
+        """The two-clock seat's slow loop (its GRU, the goal head, its value head): trained by the slow goal update
+        with an optimizer of their own, and by nothing else."""
+        if not self.slow_goal_size:
+            return []
+        actor = self.actor
+        return [*actor.slow_memory.parameters(), *actor.goal_head.parameters(), *actor.slow_value.parameters()]
+
     def reset_optimizers(self) -> None:
         """Fresh Adam state: after a restart the step sizes are no longer shrunk by the old gradient history."""
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.config.actor_lr, eps=1e-5)
+        slow = {id(parameter) for parameter in self.slow_parameters()}
+        self.actor_opt = torch.optim.Adam([p for p in self.actor.parameters() if id(p) not in slow],
+                                          lr=self.config.actor_lr, eps=1e-5)
+        self.slow_opt = (torch.optim.Adam(self.slow_parameters(), lr=self.config.slow_goal_lr, eps=1e-5)
+                         if self.slow_goal_size else None)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=self.config.critic_lr, eps=1e-5)
         # The last update's entropy and approx_kl per layout (animus.stage reads them per class), by layout index.
         self.layout_stats: dict[int, dict[str, float]] = {}
@@ -590,7 +659,8 @@ class MappoTrainer:
         """weights = shrink x weights + perturb x freshly initialised weights (Ash & Adams, 2020)."""
         hidden = list(self.config.hidden)
         fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
-                             self.goal_targets),
+                             self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
+                             self.config.goal_lookahead),
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
                               self.goal_targets))
         for network, init in zip((self.actor, self.critic), fresh):
@@ -785,11 +855,21 @@ class MappoTrainer:
         if self.goal_count and state is not None:
             # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
             chosen = (state.age % max(1, self.config.goal_every_decisions)) == 0
-            distribution = self._rollout_actor.goal_distribution(features, obs_t, layout_t)
-            sampled = distribution.logits.argmax(dim=-1) if deterministic else distribution.sample()
-            kept = self._tensor(state.goal, torch.long).reshape(rows)
             # A goal the sim says has ended is chosen again now rather than at the clock.
             chosen_t = self._tensor(chosen).reshape(rows).bool() | self._rollout_actor.goal_ended(obs_t, layout_t)
+            goal_features = features
+            if self.slow_goal_size:
+                # The slow loop steps on the choosing rows only, and the goal is drawn from where it stepped to.
+                slow_before = self._tensor(state.slow_memory).reshape(rows, self.slow_goal_size)
+                goal_features = self._rollout_actor.slow_step(features, slow_before)
+                slow_after = torch.where(chosen_t[:, None], goal_features, slow_before)
+                decided.slow_before_at = downloads.add(slow_before.reshape(envs, agents, self.slow_goal_size))
+                decided.slow_after_at = downloads.add(slow_after.reshape(envs, agents, self.slow_goal_size))
+                decided.slow_value_at = downloads.add(
+                    self._rollout_actor.slow_value(goal_features).reshape(envs, agents))
+            distribution = self._rollout_actor.goal_distribution(goal_features, obs_t, layout_t)
+            sampled = distribution.logits.argmax(dim=-1) if deterministic else distribution.sample()
+            kept = self._tensor(state.goal, torch.long).reshape(rows)
             decided.goal_t = torch.where(chosen_t, sampled, kept)
             decided.goal_log_prob_at = downloads.add(distribution.log_prob(decided.goal_t).reshape(envs, agents))
             decided.goal_at = downloads.add(decided.goal_t.reshape(envs, agents))
@@ -861,6 +941,8 @@ class MappoTrainer:
             age=np.zeros((envs, agents), dtype=np.int64) if self.goal_count else None,
             action=np.zeros((envs, agents), dtype=np.int64) if self.slow_layout >= 0 else None,
             slow_age=np.zeros((envs, agents), dtype=np.int64) if self.slow_layout >= 0 else None,
+            slow_memory=(np.zeros((envs, agents, self.slow_goal_size), dtype=np.float32) if self.slow_goal_size
+                         else None),
         )
 
     def _memory_tensor(self, memory: np.ndarray | None, rows: int) -> torch.Tensor:
@@ -919,6 +1001,152 @@ class MappoTrainer:
             stats["goal_kept_share"] = float(kept.sum() / chosen.sum().clamp(min=1.0))
         return stats
 
+    def foresight_obs_columns(self) -> list | None:
+        """The foresight's observation targets for RolloutBuffer.finish (MappoConfig.foresight_obs_targets): per
+        target, each layout's column (-1 without one), how far ahead, and whether it is "at any point by then". A
+        layout counts as a seat's when it has a goal block (set_goal_space); without a goal space, none has."""
+        if not self.config.foresight_obs_targets or not self.foresight_outputs:
+            return None
+        head = self.actor.goal_head
+        block_at = (head.block_at.cpu().numpy() if head is not None
+                    else np.full(len(self.layouts), -1, dtype=np.int64))
+        seats = block_at >= 0
+        targets = []
+        for name, ahead, window in FORESIGHT_OBS_TARGETS:
+            if name == "health":
+                columns = np.where(seats, CORE_HEALTH_COLUMN, -1)
+            else:
+                columns = np.where(seats, block_at + head.kinds + head.targets + 1, -1)
+            targets.append((columns.astype(np.int64), ahead, window))
+        return targets
+
+    def _update_goals(self, buffer: RolloutBuffer) -> dict[str, float]:
+        """The slow goal update (Component D): each seat's goal choices of the rollout replayed in order through
+        the slow GRU from the memory the first one started with (reset where an episode ended between two), then a
+        PPO step on the slow clock's advantages, the slow value on its returns, and the lookahead on what the chosen
+        goals did -- reached before the next choice or not, and how long they ran."""
+        cfg = self.config
+        chosen = buffer.goal_chosen & buffer.valid
+        if not chosen.any():
+            if self.ranks.active and cfg.rank_sync == "gradients":
+                # Every rank steps together: with nothing of its own to learn from, this one still takes its part
+                # of the others' averaged gradients, epoch for epoch.
+                for _ in range(cfg.epochs):
+                    self.slow_opt.zero_grad(set_to_none=True)
+                    self.ranks.average_gradients(self.slow_parameters())
+                    self.slow_opt.step()
+            return {}
+        device = self.train_device
+        steps, envs, agents = chosen.shape
+        columns = envs * agents
+        flat = chosen.reshape(steps, columns)
+        position = np.cumsum(flat, axis=0) - 1
+        length = int(flat.sum(axis=0).max())
+        step_of = np.full((length, columns), -1, dtype=np.int64)
+        t_idx, c_idx = np.nonzero(flat)
+        step_of[position[t_idx, c_idx], c_idx] = t_idx
+        present = step_of >= 0
+        env_of = np.broadcast_to((np.arange(columns) // agents)[None, :], step_of.shape)
+        agent_of = np.broadcast_to((np.arange(columns) % agents)[None, :], step_of.shape)
+        safe = np.maximum(step_of, 0)
+
+        # An episode that ended between two choices (a done in [t_k, t_k+1 - 1]) clears the slow memory before the
+        # second. done_count[t] counts the dones of steps before t.
+        done_count = np.concatenate([np.zeros((1, envs), np.int64), np.cumsum(buffer.dones, axis=0)])
+        ended_between = np.zeros((length, columns), dtype=bool)
+        if length > 1:
+            before = done_count[safe[:-1], env_of[:-1]]
+            after = done_count[safe[1:], env_of[1:]]
+            ended_between[:-1] = present[1:] & (after > before)
+        # The outcome of each choice, where the next one is inside the rollout and the same episode.
+        head = self.actor.goal_head
+        block_at = head.block_at.cpu().numpy()
+        # The goal block's "reached" column of each layout; a layout without a goal block knows no outcomes.
+        reached_column = np.where(block_at >= 0, block_at + head.kinds + head.targets + 1, -1)
+        known = np.zeros((length, columns), dtype=bool)
+        duration = np.zeros((length, columns), dtype=np.float32)
+        if length > 1:
+            known[:-1] = present[1:] & ~ended_between[:-1]
+            # How long the goal ran, as a share of a minute (240 decisions of 250 ms).
+            duration[:-1] = np.where(known[:-1], (step_of[1:] - step_of[:-1]) / 240.0, 0.0)
+
+        def rows(array, index=(safe, env_of, agent_of)):
+            if isinstance(array, np.ndarray):
+                return torch.as_tensor(array[index], device=device)
+            return array[tuple(torch.as_tensor(i, device=array.device) for i in index)].to(device)
+
+        obs = rows(buffer.obs).float().reshape(length * columns, -1)
+        layout = rows(buffer.layout).long().reshape(-1)
+        goal = rows(buffer.goal).long().reshape(-1)
+        old_log_prob = rows(buffer.goal_log_probs).float().reshape(-1)
+        advantages = rows(buffer.slow_advantages).float().reshape(-1)
+        returns = rows(buffer.slow_returns).float().reshape(-1)
+        memory = rows(buffer.memory).float().reshape(length * columns, -1) if self.recurrent_size else None
+        first = torch.as_tensor(buffer.slow_memory[safe[0], env_of[0], agent_of[0]], device=device)
+        valid = torch.as_tensor(present.reshape(-1), device=device)
+        reached = np.zeros((length, columns), dtype=np.float32)
+        if length > 1:
+            next_rows = (safe[1:], env_of[1:], agent_of[1:])
+            next_obs = rows(buffer.obs, next_rows).float()
+            next_layout = buffer.layout[next_rows]
+            column_np = reached_column[next_layout]
+            known[:-1] &= column_np >= 0
+            column = torch.as_tensor(np.clip(column_np, 0, next_obs.shape[-1] - 1), device=device)
+            reached[:-1] = (next_obs.gather(-1, column[..., None])[..., 0] > 0.5).cpu().numpy()
+        known_t = torch.as_tensor(known.reshape(-1), device=device) & valid
+        reached_t = torch.as_tensor(reached.reshape(-1), device=device)
+        duration_t = torch.as_tensor(duration.reshape(-1), device=device)
+        dones_seq = torch.as_tensor(ended_between, device=device)
+
+        with torch.no_grad():
+            features = self.actor.features(obs, layout, memory)
+            inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
+
+        counted = valid.float()
+        normalised = advantages[valid]
+        advantages = (advantages - normalised.mean()) / (normalised.std() + 1e-8) if normalised.numel() > 1 else advantages
+        totals = {"slow_policy_loss": 0.0, "slow_value_loss": 0.0, "goal_entropy": 0.0, "slow_approx_kl": 0.0,
+                  "lookahead_loss": 0.0}
+        for _ in range(cfg.epochs):
+            states = _carry_sequence(self.actor.slow_memory, self.slow_goal_size, inputs, first, dones_seq)
+            states = states.reshape(length * columns, -1)
+            logits = head.logits(states, obs, layout)
+            dist = torch.distributions.Categorical(logits=logits)
+            log_prob = dist.log_prob(goal)
+            log_ratio = (log_prob - old_log_prob) * counted
+            ratio = log_ratio.exp()
+            clipped = ratio.clamp(1 - cfg.clip, 1 + cfg.clip)
+            weight = counted.sum().clamp(min=1.0)
+            policy_loss = -(torch.min(ratio * advantages, clipped * advantages) * counted).sum() / weight
+            entropy = (dist.entropy() * counted).sum() / weight
+            value = self.actor.slow_value(states).squeeze(-1)
+            value_loss = (((value - returns) ** 2) * counted).sum() / weight
+            loss = policy_loss - self.entropy_coef * self.goal_entropy_factor * entropy + cfg.value_coef * value_loss
+            lookahead_loss = torch.zeros((), device=device)
+            if head.lookahead:
+                success, expected = head.predictions(states)
+                picked = goal[:, None]
+                success = success.gather(1, picked)[:, 0]
+                expected = expected.gather(1, picked)[:, 0]
+                mask = known_t.float()
+                lookahead_loss = ((nn.functional.binary_cross_entropy_with_logits(success, reached_t, reduction="none")
+                                   + (expected - duration_t) ** 2) * mask).sum() / mask.sum().clamp(min=1.0)
+                loss = loss + cfg.lookahead_coef * lookahead_loss
+            self.slow_opt.zero_grad(set_to_none=True)
+            loss.backward()
+            if cfg.rank_sync == "gradients":
+                self.ranks.average_gradients(self.slow_parameters())
+            nn.utils.clip_grad_norm_(self.slow_parameters(), cfg.max_grad_norm)
+            self.slow_opt.step()
+            with torch.no_grad():
+                totals["slow_policy_loss"] += float(policy_loss) / cfg.epochs
+                totals["slow_value_loss"] += float(value_loss) / cfg.epochs
+                totals["goal_entropy"] += float(entropy) / cfg.epochs
+                totals["slow_approx_kl"] += float((((ratio - 1) - log_ratio) * counted).sum() / weight) / cfg.epochs
+                totals["lookahead_loss"] += float(lookahead_loss) / cfg.epochs
+        totals["goal_reached_share"] = float(reached_t[known_t].mean()) if bool(known_t.any()) else 0.0
+        return totals
+
     # ------------------------------------------------------------------ update
 
     def update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
@@ -934,6 +1162,12 @@ class MappoTrainer:
                 stats = self._update(buffer, auxiliary, sync)
         else:
             stats = self._update(buffer, auxiliary, sync)
+        # The two-clock seat's goals, on their own clock and optimizer (after the fast update, whose features the
+        # slow loop reads detached). In full precision: it is small, and its value head is on the rewards' scale.
+        if self.slow_goal_size:
+            stats.update(self._update_goals(buffer))
+            if sync:
+                self._sync_rollout()
 
         if self.config.rank_sync == "weights" and self.ranks.active:
             self._updates_since_sync = getattr(self, "_updates_since_sync", 0) + 1
@@ -1015,7 +1249,7 @@ class MappoTrainer:
                 log_probs = dist.log_prob(data["actions"][idx])
                 action_entropy = dist.entropy().mean()
                 entropy = action_entropy
-                if self.goal_count:
+                if self.goal_count and not self.slow_goal_size:
                     # Choosing a goal is part of the decision that chose it: its log probability joins the action's,
                     # and its entropy is kept up on those decisions too. The goal term is averaged over every row,
                     # not only the rows that chose a goal, so a head consulted once in goal_every_decisions is worth
@@ -1041,7 +1275,7 @@ class MappoTrainer:
                     # error on the share of the episode left, which is already 0 to 1. Steps whose episode does not
                     # end inside the rollout have no share to learn, and are left out.
                     targets, valid = data["foresight_targets"][idx], data["foresight_valid"][idx]
-                    horizons = self.foresight_outputs - 1
+                    horizons = len(cfg.foresight_horizons_seconds)
                     errors = torch.cat([
                         nn.functional.smooth_l1_loss(predictions[:, :horizons], targets[:, :horizons],
                                                      reduction="none"),
@@ -1085,7 +1319,7 @@ class MappoTrainer:
                     # Reported on its own: the entropy floor compares this with ln(allowed actions), and folding
                     # the goal head's entropy in would hide a collapsing action policy.
                     totals["entropy"] += action_entropy.detach()
-                    if self.goal_count:
+                    if self.goal_count and not self.slow_goal_size:
                         totals["goal_entropy"] += goal_entropy
                     totals["clip_frac"] += ((ratio - 1).abs() > cfg.clip).float().mean()
                     totals["approx_kl"] += ((ratio - 1) - log_ratio).mean()
@@ -1262,7 +1496,7 @@ class MappoTrainer:
                 predictions = (self.actor.foresight(features).reshape(*lead, self.foresight_outputs)
                                if foresight else None)
                 goal_entropies = None
-                if self.goal_count:
+                if self.goal_count and not self.slow_goal_size:
                     goals = self.actor.goal_distribution(features, obs_all, layout_all)
                     chosen = data["goal_chosen"][:, chunk].reshape(-1).to(features.dtype)
                     log_probs = log_probs + (goals.log_prob(goal_all) * chosen).reshape(*lead)
@@ -1304,7 +1538,7 @@ class MappoTrainer:
                 if foresight:
                     targets = data["foresight_targets"][:, chunk]
                     known = data["foresight_valid"][:, chunk].to(torch.float32) * counted[..., None]
-                    horizons = self.foresight_outputs - 1
+                    horizons = len(cfg.foresight_horizons_seconds)
                     stacked = predictions
                     errors = torch.cat([
                         nn.functional.smooth_l1_loss(stacked[..., :horizons], targets[..., :horizons],

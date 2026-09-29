@@ -343,7 +343,7 @@ class DecisionRows:
     rollout buffer whole."""
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
-              "goal", "goal_log_prob", "goal_chosen", "critic_memory", "chosen")
+              "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory", "chosen")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -383,7 +383,8 @@ class DecisionRows:
     def recorded(self) -> tuple:
         """RolloutBuffer.add_decision's arguments."""
         a = {name: (None if value is DecisionRows.IN_BUFFER else value) for name, value in self.arrays.items()}
-        goals = (a["goal"], a["goal_log_prob"], a["goal_chosen"]) if a.get("goal") is not None else None
+        goals = ((a["goal"], a["goal_log_prob"], a["goal_chosen"], a.get("slow_before"), a.get("slow_value"))
+                 if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"))
 
@@ -588,7 +589,8 @@ class TrainingRun:
         def new_buffer() -> RolloutBuffer:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
-                                 self.trainer.recurrent_size, bool(self.trainer.goal_count))
+                                 self.trainer.recurrent_size, bool(self.trainer.goal_count),
+                                 self.trainer.slow_goal_size)
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -1221,7 +1223,10 @@ class TrainingRun:
                       time_scale_decisions=self.foresight_time_decisions,
                       slow_layout=self.slow_layout,
                       slow_gamma=self.config.mappo.slow_gamma,
-                      slow_gae_lambda=self.config.mappo.slow_gae_lambda)
+                      slow_gae_lambda=self.config.mappo.slow_gae_lambda,
+                      slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
+                      if trainer.slow_goal_size else None,
+                      obs_targets=trainer.foresight_obs_columns())
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions = buffer.mean_allowed_actions()
@@ -1316,7 +1321,8 @@ class TrainingRun:
             if cast_rows.any():
                 actions = self.cast.act(part, actions, cast_rows)
                 present = present & ~cast_rows
-        goal, goal_log_prob, goal_chosen = goals if goals is not None else (None, None, None)
+        goal, goal_log_prob, goal_chosen, slow_before, slow_value = (goals if goals is not None
+                                                                     else (None, None, None, None, None))
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
         # with this group's next STEP as soon as it has these actions. Copied from there into the decision on the
         # current stream, the copies queued behind an overlapped update's kernels (whose first half runs on the
@@ -1339,7 +1345,8 @@ class TrainingRun:
             decision.set(rows, obs=part.obs, state=part.state, mask=part.mask)
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
-                     goal_chosen=goal_chosen, critic_memory=critic_memory, chosen=chosen)
+                     goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
+                     critic_memory=critic_memory, chosen=chosen)
         send(rows.start, rows.stop - rows.start, actions, goals[0] if goals is not None else None)
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,

@@ -40,6 +40,7 @@ namespace Animus::Curriculum
             OBS_KIND_FIRST              = 0,                            // per SeatGoal: something for it is there
             OBS_TARGET_FIRST            = OBS_KIND_FIRST + GOAL_COUNT,  // per GoalTarget: it is there
             OBS_ENDED                   = OBS_TARGET_FIRST + GOAL_TARGETS,  // the goal held was reached or lost
+            OBS_REACHED,                                                // ... reached (what the learner predicts)
             OBS_COUNT
         };
 

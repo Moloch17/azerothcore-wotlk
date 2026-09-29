@@ -25,6 +25,14 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         f32  weight_hh[3 * recurrent_size * recurrent_size]
         f32  bias_ih[3 * recurrent_size]
         f32  bias_hh[3 * recurrent_size]
+    u32      foresight_outputs              0 = no predictions fed back (Component P, layer 2)
+    if foresight_outputs:
+        f32  foresight_weight[foresight_outputs * feature_width], foresight_bias[foresight_outputs]
+        f32  feedback_weight[feature_width * foresight_outputs], feedback_bias[feature_width]
+    u32      slow_size                      0 = the goal head reads the features (no two-clock seat)
+    if slow_size:
+        f32  slow_weight_ih[3 * slow_size * feature_width], slow_weight_hh[3 * slow_size * slow_size]
+        f32  slow_bias_ih[3 * slow_size], slow_bias_hh[3 * slow_size]
     u32      goal_kinds                     0 = the policy has no goals
     u32      goal_targets                   1 = goals name no target (the kind alone)
     u32      goal_every_decisions
@@ -40,6 +48,11 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         f32  kind_embedding[goal_kinds * feature_width]  added to the features the action head reads
         if goal_targets > 1:
             f32  target_embedding[goal_targets * feature_width]
+        u8   lookahead                      goal-level lookahead (Component P, layer 3)
+        if lookahead:
+            success and duration, each: kind_weight[K * goal_width], kind_bias[K], (target_weight[T * goal_width],
+            target_bias[T] if T > 1), pair[K * T]; then f32 lookahead_weight[2]
+    (goal_width: slow_size when there is one, else feature_width)
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
@@ -71,7 +84,7 @@ import torch
 from .stages import STAGE_FILE, model_names
 
 AMDL_MAGIC = b"AMDL"
-AMDL_VERSION = 3
+AMDL_VERSION = 4
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -141,6 +154,8 @@ def write_amdl(
     memory: dict[str, np.ndarray] | None = None,
     goals: dict[str, np.ndarray] | None = None,
     goal_every: int = 0,
+    feedback: dict[str, np.ndarray] | None = None,
+    slow: dict[str, np.ndarray] | None = None,
 ) -> None:
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
@@ -166,6 +181,17 @@ def write_amdl(
             for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh"):
                 out.write(np.ascontiguousarray(memory[name], dtype="<f4").tobytes())
 
+        outputs = 0 if feedback is None else int(feedback["foresight_weight"].shape[0])
+        out.write(struct.pack("<I", outputs))
+        if feedback is not None:
+            for name in ("foresight_weight", "foresight_bias", "feedback_weight", "feedback_bias"):
+                out.write(np.ascontiguousarray(feedback[name], dtype="<f4").tobytes())
+        slow_size = 0 if slow is None else int(slow["weight_hh"].shape[1])
+        out.write(struct.pack("<I", slow_size))
+        if slow is not None:
+            for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh"):
+                out.write(np.ascontiguousarray(slow[name], dtype="<f4").tobytes())
+
         kinds = 0 if goals is None else int(goals["kind_weight"].shape[0])
         targets = 1 if goals is None else int(goals["pair"].shape[1])
         out.write(struct.pack("<III", kinds, targets, goal_every if kinds else 0))
@@ -177,6 +203,14 @@ def write_amdl(
             out.write(struct.pack("<i", int(goals["block_at"])))
             for name in ["kind_embedding"] + (["target_embedding"] if targets > 1 else []):
                 out.write(np.ascontiguousarray(goals[name], dtype="<f4").tobytes())
+            lookahead = goals.get("lookahead")
+            out.write(struct.pack("<B", 1 if lookahead else 0))
+            if lookahead:
+                for part in ("success", "duration"):
+                    names = ["kind_weight", "kind_bias"] + (["target_weight", "target_bias"] if targets > 1 else [])
+                    for name in names + ["pair"]:
+                        out.write(np.ascontiguousarray(lookahead[part][name], dtype="<f4").tobytes())
+                out.write(np.ascontiguousarray(lookahead["weight"], dtype="<f4").tobytes())
 
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -207,7 +241,34 @@ def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[
         goals["target_weight"] = array("goal_head.target.weight")
         goals["target_bias"] = array("goal_head.target.bias")
         goals["target_embedding"] = array("goal_embedding.target.weight")
+    if "goal_head.lookahead_weight" in actor_state:
+        def part(prefix):
+            values = {"kind_weight": array(f"{prefix}.kind.weight"), "kind_bias": array(f"{prefix}.kind.bias"),
+                      "pair": array(f"{prefix}.pair")}
+            if f"{prefix}.target.weight" in actor_state:
+                values["target_weight"] = array(f"{prefix}.target.weight")
+                values["target_bias"] = array(f"{prefix}.target.bias")
+            return values
+        goals["lookahead"] = {"success": part("goal_head.success"), "duration": part("goal_head.duration"),
+                              "weight": array("goal_head.lookahead_weight")}
     return goals
+
+
+def feedback_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
+    """The foresight head and the projection that feeds its predictions back, or None when they are not fed back."""
+    if "foresight_proj.weight" not in actor_state:
+        return None
+    return {name: actor_state[key].detach().cpu().numpy().astype("<f4") for name, key in (
+        ("foresight_weight", "foresight.weight"), ("foresight_bias", "foresight.bias"),
+        ("feedback_weight", "foresight_proj.weight"), ("feedback_bias", "foresight_proj.bias"))}
+
+
+def slow_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
+    """The two-clock seat's slow GRU, or None without one."""
+    if "slow_memory.weight_ih" not in actor_state:
+        return None
+    return {name: actor_state[f"slow_memory.{name}"].detach().cpu().numpy().astype("<f4")
+            for name in ("weight_ih", "weight_hh", "bias_ih", "bias_hh")}
 
 
 def export_layouts(
@@ -235,7 +296,7 @@ def export_layouts(
         partial = out_dir / f".{target.name}.partial"
         try:
             write_amdl(partial, name, layout["obs_dim"], 1, layout["num_actions"], layers, memory, goals,
-                       goal_every)
+                       goal_every, feedback_weights(actor_state), slow_weights(actor_state))
             os.replace(partial, target)
         except OSError:
             partial.unlink(missing_ok=True)
@@ -293,14 +354,32 @@ def read_amdl(path: str | Path) -> dict:
             "bias_hh": floats(3 * recurrent, 3 * recurrent),
         }
 
+    width = layers[-1][0].shape[1]
+    (outputs,) = struct.unpack_from("<I", data, offset)
+    offset += 4
+    feedback = None
+    if outputs:
+        feedback = {"foresight_weight": floats(outputs * width, outputs, width),
+                    "foresight_bias": floats(outputs, outputs),
+                    "feedback_weight": floats(width * outputs, width, outputs),
+                    "feedback_bias": floats(width, width)}
+    (slow_size,) = struct.unpack_from("<I", data, offset)
+    offset += 4
+    slow = None
+    if slow_size:
+        slow = {"weight_ih": floats(3 * slow_size * width, 3 * slow_size, width),
+                "weight_hh": floats(3 * slow_size * slow_size, 3 * slow_size, slow_size),
+                "bias_ih": floats(3 * slow_size, 3 * slow_size),
+                "bias_hh": floats(3 * slow_size, 3 * slow_size)}
+
     kinds, targets, goal_every = struct.unpack_from("<III", data, offset)
     offset += 12
     goals = None
     if kinds:
-        width = layers[-1][0].shape[1]
-        goals = {"kind_weight": floats(kinds * width, kinds, width), "kind_bias": floats(kinds, kinds)}
+        goal_width = slow_size or width
+        goals = {"kind_weight": floats(kinds * goal_width, kinds, goal_width), "kind_bias": floats(kinds, kinds)}
         if targets > 1:
-            goals["target_weight"] = floats(targets * width, targets, width)
+            goals["target_weight"] = floats(targets * goal_width, targets, goal_width)
             goals["target_bias"] = floats(targets, targets)
         goals["pair"] = floats(kinds * targets, kinds, targets)
         goals["accepts"] = np.frombuffer(data, dtype="u1", count=kinds * targets, offset=offset).reshape(kinds, targets)
@@ -310,6 +389,17 @@ def read_amdl(path: str | Path) -> dict:
         goals["kind_embedding"] = floats(kinds * width, kinds, width)
         if targets > 1:
             goals["target_embedding"] = floats(targets * width, targets, width)
+        (lookahead,) = struct.unpack_from("<B", data, offset)
+        offset += 1
+        if lookahead:
+            def part():
+                values = {"kind_weight": floats(kinds * goal_width, kinds, goal_width), "kind_bias": floats(kinds, kinds)}
+                if targets > 1:
+                    values["target_weight"] = floats(targets * goal_width, targets, goal_width)
+                    values["target_bias"] = floats(targets, targets)
+                values["pair"] = floats(kinds * targets, kinds, targets)
+                return values
+            goals["lookahead"] = {"success": part(), "duration": part(), "weight": floats(2, 2)}
 
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
@@ -322,6 +412,8 @@ def read_amdl(path: str | Path) -> dict:
         "memory": memory,
         "goals": goals,
         "goal_every": goal_every,
+        "feedback": feedback,
+        "slow": slow,
     }
 
 
@@ -351,6 +443,13 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
         if state is not None:
             state["memory"] = x
 
+    # The predictions fed back (Component P, layer 2), onto what the action head and the slow loop read.
+    raw = x
+    feedback = model.get("feedback")
+    if feedback is not None:
+        predictions = feedback["foresight_weight"] @ x + feedback["foresight_bias"]
+        x = x + feedback["feedback_weight"] @ predictions + feedback["feedback_bias"]
+
     goals = model.get("goals")
     if goals is not None:
         every = max(1, model.get("goal_every", 1))
@@ -361,16 +460,35 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
         ended = False
         at = int(goals["block_at"])
         if at >= 0 and targets > 1:
-            block = obs[at : at + kinds + targets + 1] > 0.5
+            block = obs[at : at + kinds + targets + 2] > 0.5
             allowed &= block[:kinds, None] & block[kinds : kinds + targets][None, :]
-            ended = bool(block[-1])
+            ended = bool(block[kinds + targets])
         allowed = allowed.reshape(-1)
         allowed[0] = True
         choose = age % every == 0 or ended
         if choose:
-            joint = (goals["kind_weight"] @ x + goals["kind_bias"])[:, None] + goals["pair"]
-            if targets > 1:
-                joint = joint + (goals["target_weight"] @ x + goals["target_bias"])[None, :]
+            # From the slow loop, stepped on the fed-back features, or from the plain features without one.
+            source = raw
+            slow = model.get("slow")
+            if slow is not None:
+                size = slow["weight_hh"].shape[1]
+                carried = np.zeros(size, np.float32) if state is None else state.setdefault(
+                    "slow", np.zeros(size, np.float32))
+                source = _gru(slow, x, carried)
+                if state is not None:
+                    state["slow"] = source
+
+            def factored(part):
+                joint = (part["kind_weight"] @ source + part["kind_bias"])[:, None] + part["pair"]
+                if targets > 1:
+                    joint = joint + (part["target_weight"] @ source + part["target_bias"])[None, :]
+                return joint
+
+            joint = factored(goals)
+            lookahead = goals.get("lookahead")
+            if lookahead is not None:
+                joint = (joint + lookahead["weight"][0] * factored(lookahead["success"])
+                         + lookahead["weight"][1] * _sigmoid(factored(lookahead["duration"])))
             goal = int(np.where(allowed, joint.reshape(-1), -np.inf).argmax())
         if state is not None:
             state["goal"], state["age"] = goal, 1 if choose else age + 1
@@ -389,6 +507,17 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
+
+
+def _gru(weights: dict, x: np.ndarray, carried: np.ndarray) -> np.ndarray:
+    """One torch.nn.GRUCell step."""
+    size = weights["weight_hh"].shape[1]
+    gates = weights["weight_ih"] @ x + weights["bias_ih"]
+    recurrent = weights["weight_hh"] @ carried + weights["bias_hh"]
+    reset = _sigmoid(gates[:size] + recurrent[:size])
+    update = _sigmoid(gates[size:2 * size] + recurrent[size:2 * size])
+    candidate = np.tanh(gates[2 * size:] + reset * recurrent[2 * size:])
+    return (1.0 - update) * candidate + update * carried
 
 
 def main() -> None:

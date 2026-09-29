@@ -96,6 +96,19 @@ mappo:
   goal_count: 11
   goal_targets: 29
   goal_every_decisions: 16   # 16 decisions is 4 s at 250 ms
+  # The two-clock seat (Component D): goals chosen by a slow loop of their own -- a 128-unit GRU that steps only
+  # when a goal is chosen -- credited per goal on a ~10 minute horizon and trained by its own PPO step.
+  slow_goal_size: 128
+  slow_goal_gamma: 0.993
+  slow_goal_lambda: 0.95
+  slow_goal_lr: 0.0003
+  # Predictions the policy acts on (Component P): the foresight head also predicts its own health 2 s and 5 s on and
+  # whether its goal is reached within 4 s, and feeds its outputs back into what the heads read; the goal choice
+  # reads each candidate's predicted chance of being reached and how long it would take.
+  foresight_obs_targets: true
+  foresight_feedback: true
+  goal_lookahead: true
+  lookahead_coef: 0.5
   # The goal head's entropy bonus falls to a fifth of itself over each stage, so the head explores goals early and
   # commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full bonus
   # all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28).
