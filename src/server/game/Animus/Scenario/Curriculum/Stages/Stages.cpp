@@ -960,8 +960,11 @@ namespace
         // A group questing in the world (world_group, world_shared) is a party of its own, with no owner.
         bool const worldGroup = arena.Against == Opposition::Quest
             && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
-        if (arena.PartyGroup && !raidGroup && !worldGroup && (!arena.Owner || arena.Seats != SeatPlan::Party))
-            return "a party group needs an owner and party seats, unless it is a raid or a quest";
+        // So is a group running a dungeon: five learned seats and no owner.
+        bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
+        if (arena.PartyGroup && !raidGroup && !worldGroup && !dungeonGroup
+            && (!arena.Owner || arena.Seats != SeatPlan::Party))
+            return "a party group needs an owner and party seats, unless it is a raid, a quest or a dungeon";
         if (arena.OwnerCast && !arena.Owner)
             return "a cast owner is still an owner: the arena has to have one";
         if (arena.OwnerCast && stage.SeatCount() + TEAM_COUNT + 1 > MAX_SEATS)
