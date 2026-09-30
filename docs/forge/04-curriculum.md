@@ -475,6 +475,16 @@ party's tank; the enemy player and whether it is a learned seat. Encounters fill
 - The character features (level, race, spec, talents) are always written, alive or dead.
 - **A dead bot** sees only the duel block's dead features (whether it can resurrect itself), and its only possible
   action is the self-resurrect action.
+- **Death runs on** (`ArenaDefinition::DeathRuns`: the open-world quest arenas of `stage7_life`,
+  `stage9_world_group`, `stage18_world_shared` and `stage19_ship`, which carry the death block): a dead bot also sees
+  the death block and the goal block. It can release its spirit (to the nearest graveyard on the map), run its ghost
+  back to the corpse, rise there once in reach and the reclaim delay is over, take the spirit healer's resurrection at
+  the graveyard (with its sickness), or accept a friend's resurrection -- which the sim takes only when the seat
+  presses accept. Nobody is stood up and the episode does not end on deaths; time ends it. The costs are
+  `Death.TimeDead` (0.002 per decision dead or a ghost), `Death.DiedAgain` (3, dying within `Death.DiedAgainMs` of
+  rising), `Death.SpiritHealer` (1); a rise at the corpse with no hostile creature within its aggro radius + 5 yd pays
+  `Death.SafeRise` (0.5). Each death still costs the arena's own death term. The goal `Resurrect` (about nothing: the
+  own corpse) is offered while dead; about a dead friend it is offered to a seat with a resurrection spell.
 - **No target** (between gauntlet pulls) blocks observation and actions, unless the layout acts without a target, which
   is any layout with the gauntlet block (food, drink, and self-cast spells between pulls).
 - **Hidden enemies.** An enemy the bot can neither see nor detect (`CanSeeOrDetect`: stealth, invisibility) is left out

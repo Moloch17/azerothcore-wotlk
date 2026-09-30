@@ -399,13 +399,16 @@ void Animus::Curriculum::LifeEncounter::Reward(Env& env, uint32 seatIndex, Playe
 
     ledger.Add(RewardTerm::StepCost, -tuning.StepCost * _scenario.DecisionScale());
 
-    if (bot && !bot->IsAlive() && !mine.Died)
-        mine.Died = true;
-    if (mine.Died && !mine.DeathPaid)
+    // Where death runs on, every death is paid (the seat gets up and can die again); elsewhere the first ends it.
+    bool const dead = bot && !bot->IsAlive();
+    if (dead && !mine.DeadNow)
     {
+        mine.Died = true;
+        if (!mine.DeathPaid || _scenario.Arena(env).DeathRuns)
+            ledger.Add(RewardTerm::Death, -tuning.Death / TierScale(env));
         mine.DeathPaid = true;
-        ledger.Add(RewardTerm::Death, -tuning.Death / TierScale(env));
     }
+    mine.DeadNow = dead;
 
     // Potential-based shaping on the straight distance to the group's waypoint: what is closed pays, what is
     // given back costs. Spread over the trip's length (at least 100 yd) so a whole approach pays Life.Progress
@@ -462,6 +465,9 @@ bool Animus::Curriculum::LifeEncounter::IsTerminal(Env const& env) const
 
 bool Animus::Curriculum::LifeEncounter::AllDead(Env const& env) const
 {
+    // Where death runs on, the dead get up again: time ends the episode.
+    if (_scenario.Arena(env).DeathRuns)
+        return false;
     EnvLife const& life = _envs[env.Index];
     uint32 const seats = std::max<uint32>(1, _scenario.Data(env).ActiveSeats);
     for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)

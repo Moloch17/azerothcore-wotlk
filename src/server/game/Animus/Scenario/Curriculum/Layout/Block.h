@@ -58,6 +58,9 @@ namespace Animus::Curriculum
         Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
         World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
+        /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
+        /// friend's resurrection. Before the goal block, which stays last.
+        Death,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };

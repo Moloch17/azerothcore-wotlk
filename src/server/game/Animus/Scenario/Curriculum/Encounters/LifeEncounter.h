@@ -73,6 +73,7 @@ namespace Animus::Curriculum
         struct SeatLife
         {
             bool Died = false;
+            bool DeadNow = false;               // dead at the last reward (a death is paid when it starts)
             bool DeathPaid = false;
             uint32 Interactions = 0;
             uint32 Wasted = 0;

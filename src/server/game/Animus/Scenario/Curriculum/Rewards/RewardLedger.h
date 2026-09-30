@@ -105,6 +105,8 @@ namespace Animus::Curriculum
         TownStocked,
         TownEquipped,
         TownDone,
+        /// The corpse run (Death.*): time dead, dying again soon after rising, rising safely, the spirit healer.
+        DeathRun,
         Count
     };
 

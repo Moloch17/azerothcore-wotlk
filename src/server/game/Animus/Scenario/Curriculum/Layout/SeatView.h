@@ -451,6 +451,10 @@ namespace Animus::Curriculum
         float CombatTime = 0.0f;                    // time in combat / 60 s, clamped; 0 out of combat
         BattleSupplies Supplies;
         bool SelfResurrectAllowed = true;           // not in the PvP stages
+        /// Death runs on here (ArenaDefinition::DeathRuns; a companion in the world): a dead seat releases, runs
+        /// back and rises (DeathBlock) rather than being stood up. And how long it has been dead, in seconds.
+        bool DeathRuns = false;
+        float DeadSeconds = 0.0f;
         std::array<uint32, STABLE_SLOTS> Stable{};
         uint32 StableCount = 0;
 
@@ -648,6 +652,12 @@ namespace Animus::Curriculum
 
         uint32 PreparationMs = 0;                   // a helpful spell started out of combat: its cast time or a GCD
         bool SelfResurrected = false;
+        /// After dying, where death runs on (DeathBlock): the spirit released, a friend's resurrection accepted
+        /// (the runner takes it), risen at the corpse, or raised by the spirit healer.
+        bool Released = false;
+        bool AcceptResurrection = false;
+        bool RoseAtCorpse = false;
+        bool SpiritHealer = false;
         uint32 Revives = 0;                         // resurrection spells started on a dead ally
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in

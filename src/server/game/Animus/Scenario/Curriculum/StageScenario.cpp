@@ -26,10 +26,12 @@
 #include "BotAccounts.h"
 #include "Config.h"
 #include "Containers.h"
+#include "Corpse.h"
 #include "ObjectAccessor.h"
 #include "CoreBlock.h"
 #include "Creature.h"
 #include "DBCStores.h"
+#include "DeathBlock.h"
 #include "DuelBlock.h"
 #include "MoveBlock.h"
 #include "World.h"
@@ -581,6 +583,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
         });
+    if (_stage.Has(BlockId::Death))
+        _info.Add("reward_" + std::string(RewardTermName(RewardTerm::DeathRun)), [this](Env const& env, uint32 seat)
+        {
+            return Data(env).Seats[seat].Rewards.Episode(RewardTerm::DeathRun);
+        });
 
     _spec.EpisodeInfoDim = _info.Size();
     _spec.GoalCount = GOAL_JOINT_COUNT;
@@ -1026,6 +1033,35 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).SelfResurrections);
     });
+
+    // The corpse run, where death runs on.
+    if (_stage.Has(BlockId::Death))
+    {
+        auto const run = [seat](Env const& env, uint32 index) -> SeatState::DeathRunTally const&
+        {
+            return seat(env, index).DeathRun;
+        };
+        _info.Add("open_world_deaths", [run](Env const& env, uint32 index) { return float(run(env, index).Deaths); });
+        _info.Add("releases", [run](Env const& env, uint32 index) { return float(run(env, index).Releases); });
+        _info.Add("corpse_runs_completed", [run](Env const& env, uint32 index)
+        {
+            return float(run(env, index).CorpseRises);
+        });
+        _info.Add("seconds_dead", [run](Env const& env, uint32 index)
+        {
+            return float(run(env, index).DeadMs) / 1000.0f;
+        });
+        _info.Add("safe_rises", [run](Env const& env, uint32 index) { return float(run(env, index).SafeRises); });
+        _info.Add("died_again", [run](Env const& env, uint32 index) { return float(run(env, index).DiedAgain); });
+        _info.Add("spirit_healer_uses", [run](Env const& env, uint32 index)
+        {
+            return float(run(env, index).SpiritHealer);
+        });
+        _info.Add("resurrections_accepted", [run](Env const& env, uint32 index)
+        {
+            return float(run(env, index).Accepted);
+        });
+    }
 
     // Why a fight was not won, read off how it ended: which of the two ways it was lost, whether it ever started,
     // how far the opponent was from dead and the bot from it, the form and power it ended in, and time the
@@ -2427,6 +2463,17 @@ void Animus::Curriculum::StageScenario::AcceptResurrections(Env& env)
         if (!player->isResurrectRequested())
             continue;
 
+        // Where death runs on, a seat with the death block takes a resurrection when it chooses to (DeathBlock's
+        // accept), not the moment one is offered: waiting for one is its choice against the corpse run.
+        if (slot < data.ActiveSeats && Arena(env).DeathRuns && data.Seats[slot].L
+            && data.Seats[slot].L->Has(BlockId::Death))
+        {
+            if (!data.Seats[slot].DeathRun.AcceptResurrection)
+                continue;
+            data.Seats[slot].DeathRun.AcceptResurrection = false;
+            ++data.Seats[slot].DeathRun.Accepted;
+        }
+
         uint32 by = NO_SEAT;
         for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             if (Player* reviver = SeatBot(env, seat); reviver && player->isResurrectRequestedBy(reviver->GetGUID()))
@@ -2441,6 +2488,9 @@ void Animus::Curriculum::StageScenario::AcceptResurrections(Env& env)
 
 bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatIndex) const
 {
+    // Where death runs on, nobody is dead for good: the seat releases and runs back (DeathBlock).
+    if (Arena(env).DeathRuns)
+        return false;
     CombatTally const& tally = Data(env).Seats[seatIndex].Combat;
     Player* bot = env.FindBot(seatIndex);
     if (!tally.Died || (bot && bot->IsAlive()))
@@ -2590,6 +2640,8 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
                 || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false) || !bot->GetLootGUID().IsEmpty();
         case SeatGoal::Loot:
             return !bot->GetLootGUID().IsEmpty() || !bot->movespline->Finalized();
+        case SeatGoal::Resurrect:
+            return seat.StepRevivedAlly || bot->IsNonMeleeSpellCast(false);
         case SeatGoal::Count:
             break;
     }
@@ -2705,6 +2757,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
         ? std::min(1.0f, float(env.EpisodeElapsedMs - seat.CombatStartMs) / MAX_COMBAT_TIME_MS) : 0.0f;
     view.Supplies = seat.Supplies;
     view.SelfResurrectAllowed = !Arena(env).Pvp;
+    view.DeathRuns = Arena(env).DeathRuns;
+    view.DeadSeconds = seat.DeathRun.DeadSinceMs && env.EpisodeElapsedMs > seat.DeathRun.DeadSinceMs
+        ? float(env.EpisodeElapsedMs - seat.DeathRun.DeadSinceMs) / 1000.0f : 0.0f;
 
     view.StableCount = uint32(std::min<std::size_t>(seat.Stable.size(), STABLE_SLOTS));
     std::copy_n(seat.Stable.begin(), view.StableCount, view.Stable.begin());
@@ -2937,6 +2992,11 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.ItemUses += result.ItemUses;
     seat.ConsumablesUsed += result.ConsumablesUsed;
     seat.SelfResurrections += result.SelfResurrected ? 1 : 0;
+    seat.DeathRun.Releases += result.Released ? 1 : 0;
+    seat.DeathRun.CorpseRises += result.RoseAtCorpse ? 1 : 0;
+    seat.DeathRun.SpiritHealer += result.SpiritHealer ? 1 : 0;
+    seat.DeathRun.StepSpiritHealer |= result.SpiritHealer;
+    seat.DeathRun.AcceptResurrection |= result.AcceptResurrection;
     seat.PetAbilities += result.PetAbilities;
     seat.PetOrders += result.PetOrders;
     if (result.PetOrderGiven != PetOrder::None)
@@ -3202,6 +3262,10 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
             hold.ChoiceResource = std::min(bot->GetHealthPct() / 100.0f,
                 maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+            // Chosen while dead: a rise gives half of everything back, which is the rise's, not the recovery's --
+            // measured from zero, dying would farm Recover.
+            if (!bot->IsAlive())
+                hold.ChoiceResource = 0.5f;
         }
     }
     // A secondary that ended is gone: the learner drops it on seeing OBS_SECONDARY_ENDED, and so does the sim.
@@ -3329,15 +3393,29 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, GoalHold
 float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState const& seat, GoalHold const& hold,
     Player* bot, Unit const* target) const
 {
-    if (hold.Goal == NO_GOAL || !bot || !bot->IsAlive())
+    if (hold.Goal == NO_GOAL || !bot)
         return 0.0f;
+
+    auto const far = [](float yards) { return -std::min(yards, 60.0f) / 60.0f; };
+    SeatGoal const kind = SeatGoal(GoalKindOf(hold.Goal));
+    if (!bot->IsAlive())
+    {
+        // Dead: standing up again is what closes anything. A ghost closes half of it on the way back to its corpse;
+        // what rising gives back of Recover's pool is Recover's.
+        if (kind == SeatGoal::Resurrect && GoalTargetOf(hold.Goal) == GOAL_TARGET_NONE)
+        {
+            Corpse const* corpse = bot->GetCorpse();
+            return bot->HasPlayerFlag(PLAYER_FLAGS_GHOST) && corpse && corpse->IsInMap(bot)
+                ? -0.5f + 0.5f * far(bot->GetExactDist2d(corpse)) : -1.0f;
+        }
+        return kind == SeatGoal::Recover || kind == SeatGoal::Rest ? -1.0f : 0.0f;
+    }
 
     auto const health = [](Unit const* unit)
     {
         return unit && unit->IsAlive() ? float(unit->GetHealth()) / float(std::max<uint32>(1, unit->GetMaxHealth()))
             : 0.0f;
     };
-    auto const far = [](float yards) { return -std::min(yards, 60.0f) / 60.0f; };
     uint32 const goalTarget = GoalTargetOf(hold.Goal);
     bool const namesEnemy = goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST;
     switch (SeatGoal(GoalKindOf(hold.Goal)))
@@ -3381,6 +3459,12 @@ float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState
         }
         case SeatGoal::TravelTo:
             return hold.HasPlace ? far(bot->GetExactDist(&hold.Place)) : 0.0f;
+        case SeatGoal::Resurrect:
+        {
+            // A dead friend raised; standing itself up is over once alive.
+            Unit const* friendUnit = hold.Friend.IsEmpty() ? nullptr : Encoding::UnitThrough(*bot, hold.Friend);
+            return friendUnit && !friendUnit->IsAlive() ? -1.0f : 0.0f;
+        }
         default:
             return 0.0f;
     }
@@ -3665,6 +3749,7 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                     case SeatGoal::Loot:
                     case SeatGoal::Gather:
                     case SeatGoal::Interact:
+                    case SeatGoal::Resurrect:
                         // Starting a fight while resting, travelling or looting: unless something started it first
                         // (the mask's escape already let it through), it served nothing the seat said it wanted.
                         verdict = bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
@@ -3693,6 +3778,11 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                     case SeatGoal::Control:
                         // Help on someone else while the seat said it was fighting: it should have said Protect.
                         verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Resurrect:
+                        // Raising the friend it named (any dead friend when it names none).
+                        verdict = result.Revives && (namedFriend.IsEmpty() || result.CastAt == namedFriend)
+                            ? Verdict::Serves : Verdict::Neutral;
                         break;
                     case SeatGoal::Position:
                     case SeatGoal::TravelTo:
@@ -3842,6 +3932,52 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             ++seat.AimlessBy[size_t(cause)];
         }
     }
+}
+
+/// The corpse run, where death runs on (ArenaDefinition::DeathRuns): the time dead costs, a death soon after rising
+/// costs more, a rise at the corpse with nothing waiting to kill it again pays, and the spirit healer's sickness
+/// costs. Dying itself is the arena's own death term.
+void Animus::Curriculum::StageScenario::SettleDeath(Env& env, SeatState& seat, Player* bot)
+{
+    CurriculumTuning::DeathTuning const& tuning = _tuning.Death;
+    SeatState::DeathRunTally& run = seat.DeathRun;
+    uint64 const now = std::max<uint64>(1, env.EpisodeElapsedMs);
+    if (bot && !bot->IsAlive())
+    {
+        if (!run.DeadSinceMs)
+        {
+            run.DeadSinceMs = now;
+            ++run.Deaths;
+            if (run.RoseAtMs && now < run.RoseAtMs + tuning.DiedAgainMs)
+            {
+                ++run.DiedAgain;
+                seat.Rewards.Add(RewardTerm::DeathRun, -tuning.DiedAgain);
+            }
+        }
+        run.DeadMs += _decisionMs;
+        seat.Rewards.Add(RewardTerm::DeathRun, -tuning.TimeDead * DecisionScale());
+    }
+    else if (bot && run.DeadSinceMs)
+    {
+        // Risen, however it happened. Only a rise at the corpse is the seat's own choice of where.
+        bool const atCorpse = run.CorpseRises > run.SafeRisesChecked;
+        run.SafeRisesChecked = run.CorpseRises;
+        if (atCorpse && !DeathBlock::HostilesNear(bot, bot, DeathBlock::SAFE_RISE_SEARCH, true))
+        {
+            ++run.SafeRises;
+            seat.Rewards.Add(RewardTerm::DeathRun, tuning.SafeRise);
+        }
+        run.DeadSinceMs = 0;
+        run.RoseAtMs = now;
+    }
+    if (run.StepSpiritHealer)
+    {
+        run.StepSpiritHealer = false;
+        seat.Rewards.Add(RewardTerm::DeathRun, -tuning.SpiritHealer);
+    }
+    // An accept left over from a death already over is not one for the next.
+    if (bot && bot->IsAlive())
+        run.AcceptResurrection = false;
 }
 
 void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target)
@@ -4288,6 +4424,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // Standing again (resurrected, or recovered after a pull): the next death is paid for again.
     if (bot && bot->IsAlive())
         seat.Combat.DeathCounted = false;
+
+    if (Arena(env).DeathRuns)
+        SettleDeath(env, seat, bot);
 
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->Reward(env, seatIndex, bot, seat.Rewards);

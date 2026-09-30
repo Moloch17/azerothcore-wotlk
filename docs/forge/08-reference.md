@@ -145,6 +145,9 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.OwnerWinPulls` | 5 |
 | `Resurrection.GraceMs` | 20000 | | `Pulls.PackClear` | 10.0 |
 | `Resurrection.ReviveAlly` | 1.5 | | `Pulls.FastClear` | 1.0 |
+| `Death.TimeDead` | 0.002 | | `Death.DiedAgain` | 3.0 |
+| `Death.DiedAgainMs` | 30000 | | `Death.SafeRise` | 0.5 |
+| `Death.SpiritHealer` | 1.0 | | | |
 | `Duel.Timeout` | 10.0 | | `Pulls.PackHealthKept` | 0.5 |
 | `Duel.TimeoutFloor` | 0.5 | | `Pulls.TimeoutFloor` | 0.5 |
 | `Duel.Stall` | 0.08 | | `Difficulty.StretchChance` | 10 |

@@ -18,6 +18,7 @@
 
 #include "GoalBlock.h"
 #include "EncoderSupport.h"
+#include "Layout.h"
 #include "Player.h"
 #include "SeatView.h"
 
@@ -36,6 +37,8 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     if (!bot || !bot->IsAlive())
     {
         kinds[uint32(SeatGoal::Fight)] = true;
+        // Standing up again at its own corpse, where death runs on (DeathBlock).
+        kinds[uint32(SeatGoal::Resurrect)] = bot && view.DeathRuns;
         return;
     }
 
@@ -64,6 +67,17 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
             targets[GOAL_TARGET_FRIEND_FIRST + slot] = true;
             friends = true;
         }
+
+    // Dead friends a seat with a resurrection can raise (Resurrect about a friend slot).
+    bool deadFriends = false;
+    if (view.L && !view.L->AllyRevives.empty())
+        for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)
+            if (Unit* friendUnit = Encoding::FriendUnit(view, slot); friendUnit && friendUnit != bot
+                && !friendUnit->IsAlive())
+            {
+                targets[GOAL_TARGET_FRIEND_FIRST + slot] = true;
+                deadFriends = true;
+            }
 
     // The journal.
     WorldView const& world = view.World;
@@ -103,6 +117,7 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
         || targets[GOAL_TARGET_OBJECTIVE_FIRST + 1] || targets[GOAL_TARGET_OBJECTIVE_FIRST + 2]
         || targets[GOAL_TARGET_OBJECTIVE_FIRST + 3]);
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
+    kinds[uint32(SeatGoal::Resurrect)] = deadFriends;
 
     // A kind with no target it accepts is not on offer after all.
     for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
@@ -152,8 +167,15 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
     reached = false;
     possible = false;
     Player* bot = view.Bot;
-    if (goal < 0 || !bot || !bot->IsAlive())
+    if (goal < 0 || !bot)
         return;
+    if (!bot->IsAlive())
+    {
+        // Dead, only standing up again at its own corpse is still to do.
+        possible = SeatGoal(GoalKindOf(goal)) == SeatGoal::Resurrect && GoalTargetOf(goal) == GOAL_TARGET_NONE
+            && view.DeathRuns;
+        return;
+    }
 
     std::array<bool, GOAL_COUNT> kinds;
     std::array<bool, GOAL_TARGETS> targets;
@@ -226,6 +248,15 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             }
             else if (target == GOAL_TARGET_GIVER)
                 reached = !view.World.HasGiver;         // the quest is taken: the giver leaves the journal
+            break;
+        case SeatGoal::Resurrect:
+            if (target == GOAL_TARGET_NONE)
+                reached = possible = true;      // alive: it stood up (held from before, or true on choice)
+            else if (Unit* friendUnit = Encoding::FriendUnit(view, target - GOAL_TARGET_FRIEND_FIRST))
+            {
+                reached = friendUnit->IsAlive();
+                possible = true;
+            }
             break;
         case SeatGoal::Position:
         case SeatGoal::Prepare:

@@ -6492,6 +6492,21 @@ AnimusForge.Curriculum.Resurrection.GraceMs = 20000
 AnimusForge.Curriculum.Resurrection.ReviveAlly = 1.5
 
 #
+#    AnimusForge.Curriculum.Death.*
+#        Where death runs on (open-world quest arenas): a dead seat releases, runs back to its
+#        corpse and rises there, takes the spirit healer, or accepts a friend's resurrection.
+
+#   per decision dead or a ghost
+AnimusForge.Curriculum.Death.TimeDead = 0.002
+#   died again within DiedAgainMs (ms) of rising
+AnimusForge.Curriculum.Death.DiedAgain = 3.0
+AnimusForge.Curriculum.Death.DiedAgainMs = 30000
+#   rose with no hostile creature within its aggro radius + 5 yd
+AnimusForge.Curriculum.Death.SafeRise = 0.5
+#   took the spirit healer's resurrection and its sickness
+AnimusForge.Curriculum.Death.SpiritHealer = 1.0
+
+#
 #    AnimusForge.Curriculum.Opponent.*
 #        The scripted enemy player of the PvP stage.
 

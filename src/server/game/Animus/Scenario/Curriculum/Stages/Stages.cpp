@@ -550,9 +550,10 @@ namespace
             .Extends = "stage6_gauntlet",
             .Merges = { "stage2_travel" },
             .Summary = "a chain of quests of the level band, a field of herbs and ore, a town's traders",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Goal },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Death, Goal },
             .Arenas = {
-                { .Name = "quest", .Weight = 3, .Against = Opposition::Quest, .EpisodeSeconds = 600 },
+                { .Name = "quest", .Weight = 3, .Against = Opposition::Quest, .EpisodeSeconds = 600,
+                    .DeathRuns = true },
                 { .Name = "gather", .Weight = 1, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
                 { .Name = "town", .Weight = 1, .Against = Opposition::Town, .EpisodeSeconds = 120 },
             },
@@ -617,9 +618,11 @@ namespace
             // The world and travel blocks, from the life stage the party line does not carry.
             .Merges = { "stage7_life" },
             .Summary = "a group on a quest chain in the world, under a director",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Goal },
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Death,
+                Goal },
             .Arenas = { { .Name = "world_group", .Seats = SeatPlan::Party, .Against = Opposition::Quest,
-                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true } },
+                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
+                .DeathRuns = true } },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
             .MinLevel = 15,
@@ -822,14 +825,14 @@ namespace
             .Merges = { "stage9_world_group", "stage15_arena" },
             .Summary = "groups and solos questing in one zone, sharing its creatures, and ganked by hostile players",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Pvp, Hostiles, Support, World, Order,
-                Forecast, Goal },
+                Forecast, Death, Goal },
             .Arenas = {
                 { .Name = "world_shared", .Weight = 3, .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
                     .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
-                    .TeamSeats = 2, .LoneSeats = 2 },
+                    .TeamSeats = 2, .LoneSeats = 2, .DeathRuns = true },
                 { .Name = "world_gank", .Weight = 1, .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
                     .PartyGroup = true, .EpisodeSeconds = 600, .Ambushers = 2, .Directed = true,
-                    .DirectorLearned = true, .TeamSeats = 2, .LoneSeats = 2 },
+                    .DirectorLearned = true, .TeamSeats = 2, .LoneSeats = 2, .DeathRuns = true },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -862,7 +865,7 @@ namespace
             .Merges = { "stage2_travel", "stage7_life", "stage11_raids", "stage15_arena" },
             .Summary = "every phase in one policy: the trip, the fight, the quest, the party, the raid and the arena",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles,
-                Support, World, Order, Forecast, Goal },
+                Support, World, Order, Forecast, Death, Goal },
             .Arenas = {
                 // Movement
                 { .Name = "travel", .Weight = 3, .Against = Opposition::Travel, .EpisodeSeconds = 150,
@@ -881,7 +884,8 @@ namespace
                     .SpawnPoints = KalimdorGround(), .MapId = MAP_KALIMDOR, .HeldOutSpawnPoints = KalimdorControl() },
                 { .Name = "gauntlet", .Weight = 3, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .EpisodeSeconds = 450 },
-                { .Name = "quest", .Weight = 4, .Against = Opposition::Quest, .EpisodeSeconds = 600 },
+                { .Name = "quest", .Weight = 4, .Against = Opposition::Quest, .EpisodeSeconds = 600,
+                    .DeathRuns = true },
                 // Parties and raids
                 { .Name = "companion", .Weight = 4, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .EpisodeSeconds = 300 },
@@ -905,7 +909,7 @@ namespace
                     .HeldOutSpawnPoints = HillsbradControl(), .OpponentLevelRange = 10 },
                 { .Name = "world_shared", .Weight = 2, .Seats = SeatPlan::Teams, .Against = Opposition::Quest,
                     .PartyGroup = true, .EpisodeSeconds = 600, .Ambushers = 1, .Directed = true,
-                    .DirectorLearned = true, .TeamSeats = 2, .LoneSeats = 2 },
+                    .DirectorLearned = true, .TeamSeats = 2, .LoneSeats = 2, .DeathRuns = true },
                 // PvE and PvP in one episode: the owner ganked in the middle of the gauntlet.
                 { .Name = "ambush", .Weight = 2, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .Owner = true, .OwnerCast = true, .EpisodeSeconds = 300, .Ambushers = 2 },
@@ -930,6 +934,8 @@ namespace
             return "a pull schedule goes with pulls, and only with pulls";
         if (pulls && !stage.Has(BlockId::Pack))
             return "pulls need the pack block";
+        if (arena.DeathRuns && (!stage.Has(BlockId::Death) || arena.Against == Opposition::Instance))
+            return "death runs on in the open world, with the death block";
         if ((arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence)
             && !stage.Has(BlockId::Gauntlet))
             return "the gauntlet schedule needs the gauntlet block";

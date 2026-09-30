@@ -61,6 +61,15 @@ void Animus::Curriculum::SeatEncoder::Observe(SeatView const& view, float* obs, 
             BlockSlice const& duel = layout.Slice(BlockId::Duel);
             DuelBlock::ObserveDead(view, obs + duel.ObsFirst, blockMask(duel));
         }
+        // And where death runs on, what it can do about being dead, and the goals it can hold while it is.
+        for (BlockId id : { BlockId::Death, BlockId::Goal })
+            if (layout.Has(id))
+            {
+                BlockSlice const& slice = layout.Slice(id);
+                GetBlock(id).Observe(view, obs + slice.ObsFirst, blockMask(slice));
+            }
+        if (mask)
+            mask[0] = 1;
         return;
     }
 
@@ -87,12 +96,14 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
 
     Layout const& layout = *view.L;
 
-    // Dead: only its own resurrection.
+    // Dead: only its own resurrection, and what death running on offers (DeathBlock).
     if (!view.Bot->IsAlive())
     {
         BlockSlice const* duel = layout.Has(BlockId::Duel) ? &layout.Slice(BlockId::Duel) : nullptr;
         if (duel && action == int32(duel->ActionFirst + DuelBlock::ACTION_SELF_RESURRECT))
             GetBlock(BlockId::Duel).Apply(view, DuelBlock::ACTION_SELF_RESURRECT, result);
+        if (layout.Has(BlockId::Death) && action > 0 && layout.Slice(BlockId::Death).ContainsAction(uint32(action)))
+            GetBlock(BlockId::Death).Apply(view, uint32(action) - layout.Slice(BlockId::Death).ActionFirst, result);
         return;
     }
 

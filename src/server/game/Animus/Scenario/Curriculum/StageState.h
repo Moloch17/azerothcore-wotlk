@@ -391,6 +391,27 @@ namespace Animus::Curriculum
         uint32 Revives = 0;                   // dead allies (owner, teammates) the seat resurrected
         bool StepRevivedAlly = false;           // an ally the seat resurrected stood up this decision
 
+        /// The corpse run, where death runs on (DeathBlock, StageScenario::SettleDeath): deaths, releases, rises at
+        /// the corpse (and how many were safe), deaths soon after rising, spirit healer resurrections, friends'
+        /// resurrections accepted, and the time spent dead. DeadSinceMs and RoseAtMs are on the episode clock
+        /// (0: not dead, never rose); AcceptResurrection is the seat's accept, for AcceptResurrections to take.
+        struct DeathRunTally
+        {
+            uint32 Deaths = 0;
+            uint32 Releases = 0;
+            uint32 CorpseRises = 0;
+            uint32 SafeRises = 0;
+            uint32 DiedAgain = 0;
+            uint32 SpiritHealer = 0;
+            uint32 Accepted = 0;
+            uint32 SafeRisesChecked = 0;        // the corpse rises already judged for safety
+            uint32 DeadMs = 0;
+            uint64 DeadSinceMs = 0;
+            uint64 RoseAtMs = 0;
+            bool StepSpiritHealer = false;
+            bool AcceptResurrection = false;
+        } DeathRun;
+
         // Pacing (CurriculumTuning::ActionTuning) and what the seat has been doing, on the episode clock (sized to the
         // layout at the episode's first observation).
         SeatMemory Memory;
@@ -558,6 +579,7 @@ namespace Animus::Curriculum
             LastPetHealth = 0.0f;
             LastPetGuid.Clear();
             Revives = 0;
+            DeathRun = DeathRunTally();
             StepRevivedAlly = false;
             Memory.Reset(0);
             ActionsPressed = 0;

@@ -362,6 +362,7 @@ namespace Animus::Curriculum
         /// At the reward: settle a step's verdict, the fidget seconds, stops and starts, and charge the decision's
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
+        void SettleDeath(Env& env, SeatState& seat, Player* bot);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
         /// and which calls it may make (DirectorLayout).

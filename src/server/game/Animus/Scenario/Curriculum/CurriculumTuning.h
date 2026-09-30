@@ -762,6 +762,17 @@ namespace Animus::Curriculum
             float ReviveAlly = 1.5f;            // a dead ally the seat resurrected stood up
         } Resurrection;
 
+        /// Where death runs on (ArenaDefinition::DeathRuns, DeathBlock): the corpse run. Dying stays costed by the
+        /// arena's own death term; nothing here pays for dying.
+        struct DeathTuning
+        {
+            float TimeDead = 0.002f;            // per decision dead or a ghost: the clock keeps running
+            float DiedAgain = 3.0f;             // died within DiedAgainMs of rising
+            uint32 DiedAgainMs = 30000;
+            float SafeRise = 0.5f;              // rose with no hostile creature within its aggro radius + 5 yd
+            float SpiritHealer = 1.0f;          // took the spirit healer's resurrection and its sickness
+        } Death;
+
         /// The scripted enemy player of the PvP stage.
         struct OpponentTuning
         {
@@ -1205,6 +1216,11 @@ namespace Animus::Curriculum
 
             f("Resurrection.GraceMs", tuning.Resurrection.GraceMs);
             f("Resurrection.ReviveAlly", tuning.Resurrection.ReviveAlly);
+            f("Death.TimeDead", tuning.Death.TimeDead);
+            f("Death.DiedAgain", tuning.Death.DiedAgain);
+            f("Death.DiedAgainMs", tuning.Death.DiedAgainMs);
+            f("Death.SafeRise", tuning.Death.SafeRise);
+            f("Death.SpiritHealer", tuning.Death.SpiritHealer);
 
             f("Opponent.LevelSpread", tuning.Opponent.LevelSpread);
             f("Opponent.EngageMaxMs", tuning.Opponent.EngageMaxMs);
