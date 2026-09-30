@@ -526,48 +526,20 @@ namespace
         // Phase 3: parties and raids. Beside others, and then commanded.
         // ---------------------------------------------------------------------------------------------------------
 
-        // The parties phase in one stage (next-run plan 5.4): a companion beside a wandering owner (the separate
-        // companion stage was flat -- owner deaths ~1.05 an episode across its 50M -- while the party stage cut them
-        // from 1.23 to 0.58), a party of up to four under a director, the tanking and triage drills, a dungeon's
-        // bosses on their own, and whole dungeon wings from the door to the last boss with the trash alive. The
-        // wings carry the stage from its start and grow over it (WeightFinal) while the synthetic pulls fade: real
-        // content teaches the pacing the gauntlet stage was for, and a wipe there stands the group up at the door
-        // rather than ending the lesson (2026-09-30). The separate dungeon stage is gone with the
-        // teleport-to-the-boss it trained on. It extends the pack stage directly.
-        //
-        // The companion arena's owner is the script (it wanders, runs legs between pulls and engages on a timer):
-        // following a moving owner is the lesson. The party's owner is the cast one.
+        // The parties phase: one real dungeon, the Deadmines from its door to VanCleef, run by five learned seats of
+        // its own level range under a director (2026-09-30: only this one dungeon, only characters of its level).
+        // Every run opens a fresh instance and a wipe ends it. The synthetic party pulls, the companion arena and
+        // the tanking and triage drills are gone from the stage: the dungeon is the lesson. The companion block
+        // stays in the layout for the stages built on this one.
         stages.push_back({
             .Name = "stage6_party",
             .Suffix = "_party",
             .Extends = "stage5_pack",
-            .Summary = "a companion, a party under a director with its tanking and triage drills, dungeon bosses, "
-                "and whole dungeon wings from the door",
+            .Summary = "the Deadmines from the door to VanCleef, five seats of its level under a director",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
-                { .Name = "companion", .Weight = 3, .WeightFinal = 2, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .EpisodeSeconds = 450 },
-                { .Name = "party", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
-                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
-                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450, .Directed = true,
-                    .DirectorLearned = true },
-                // The group's roles, drilled early and fading as the dungeon takes over: a party seeded from the solo
-                // pack stage had never healed anyone but itself or held a pull off others (2026-09-30).
-                { .Name = "tanking", .Weight = 4, .WeightFinal = 1, .Seats = SeatPlan::Party,
-                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
-                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                    .SeatAptitudes = { AptitudeDemand::HoldsThePull() }, .Directed = true, .DirectorLearned = true },
-                { .Name = "triage", .Weight = 4, .WeightFinal = 1, .Seats = SeatPlan::Party,
-                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
-                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                    .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },
-                // Real content carries the stage (2026-09-30): a whole dungeon from the start, the synthetic pulls
-                // fading. The boss-only arena (the party teleported to a boss) is gone with the simulation it was.
-                // Five learned seats, no owner: the cast owner was a frozen pack-stage policy whose death cost every
-                // seat 15, and the parties learned to stop short rather than risk it (2026-09-30).
-                { .Name = "dungeon", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
-                    .Against = Opposition::Instance, .PartyGroup = true,
-                    .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
+                { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
                     .DirectorLearned = true },
             },
         });

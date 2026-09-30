@@ -1,9 +1,6 @@
-# The parties phase in one stage (next-run plan 5.4): a companion beside the scripted wandering owner, up to four
-# learned seats and the cast owner under a learned director, the tanking and triage drills (a fixed tank seat, a fixed
-# healer seat), a dungeon's bosses on their own, and whole dungeon wings from the door with the trash alive -- weighted
-# up over the stage (WeightFinal) as the pull clearing they need comes in. It replaces the companion (50M), party
-# (150M) and dungeon (50M) stages: the companion stage was flat and the dungeon stage trained on bosses reached by
-# teleport.
+# The parties phase: one real dungeon, the Deadmines from its door to VanCleef, run by five learned seats of its own
+# level range under a learned director. Every run is a fresh instance; a wipe ends it (2026-09-30: only this one
+# dungeon, only characters of its level).
 
 extends: stage5_pack.yaml
 run_name: stage6_party
@@ -13,12 +10,9 @@ total_env_steps: 200000000
 eval:
   every_env_steps: 20000000
   episodes: 512
-  report: [dps, died, deaths, kills, pulls_cleared, wipes, owner_deaths, owner_healing, follow_restarts,
-           follow_distance_mean, teammates_died, teammate_healing, threat_on_teammates, director_member_orders,
-           director_orders_churned, boss_killed, boss_rung, wing_trash_kills, wing_route_share, wing_wipes,
-           goals_reached, serving_share, casts_completed, casts_cancelled, aimless_presses, aimless_target_switch,
-           aimless_pet_off_goal, aimless_needless_move, aimless_consume_not_needed, aimless_trap_no_enemy,
-           aimless_mode_flip]
+  report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, teammates_died,
+           teammate_healing, idle_seconds_in_combat, director_member_orders, goals_reached, serving_share,
+           aimless_presses, combat_dps, dps_scaled, level]
 
 cast:
   agents:
