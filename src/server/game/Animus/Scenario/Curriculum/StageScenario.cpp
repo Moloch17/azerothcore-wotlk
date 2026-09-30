@@ -2014,16 +2014,21 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     if (data.EpisodeLevel)
         for (uint32 seat = dungeonLevel ? 0 : 1; seat < data.ActiveSeats; ++seat)
         {
+            // Among the castings that can be the level only: drawn again, an evaluation's seeded spread handed back
+            // the same death knight every time, and half the Deadmines evaluation was fought at 55 (2026-09-30).
             SeatState& s = data.Seats[seat];
-            for (uint32 attempt = 0; attempt < 32 && s.L && s.L->Assets->Kit->MinLevel() > data.EpisodeLevel; ++attempt)
-            {
-                Casting const casting = DrawCasting(env, seat, s.Want);
+            if (!s.L || s.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
+                continue;
+            std::vector<Casting> fits;
+            for (Casting const& casting : Castings(s.Want))
                 if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
-                {
-                    s.L = casting.L;
-                    s.Spec = casting.Spec;
-                }
-            }
+                    fits.push_back(casting);
+            if (fits.empty())
+                continue;
+            std::size_t const pick = env.EpisodeSeedIndex != NO_EPISODE_SEED
+                ? (std::size_t(env.EpisodeSeedIndex) + seat) % fits.size() : urand(0, uint32(fits.size()) - 1);
+            s.L = fits[pick].L;
+            s.Spec = fits[pick].Spec;
         }
 
     // One level every seat's class/role can be.
