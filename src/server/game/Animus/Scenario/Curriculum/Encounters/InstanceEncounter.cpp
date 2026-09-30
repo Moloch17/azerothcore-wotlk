@@ -48,6 +48,10 @@ namespace
 {
     /// A closed door this near a living seat opens (InstanceEncounter::UpdateWingEnemies).
     constexpr float DOOR_REACH = 15.0f;
+    /// Where a dungeon's navmesh does not join two stops, the route steps from creature to creature: to the nearest
+    /// within BREADCRUMB_REACH that is at least BREADCRUMB_MIN_GAIN closer to the far side.
+    constexpr float BREADCRUMB_REACH = 45.0f;
+    constexpr float BREADCRUMB_MIN_GAIN = 3.0f;
     /// How far from its spawn a boss is looked for by entry.
     constexpr float BOSS_SEARCH_YARDS = 100.0f;
     /// Legs of the entrance-to-boss path: PathGenerator stops at MAX_POINT_PATH_LENGTH points (~296 yd), and the
@@ -686,19 +690,38 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
                 if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
                     break;
             }
-            if (!back.empty())
+            // Across the gap, from creature to creature: the dungeon's trash stands in its corridors and rooms, so
+            // stepping to the nearest one that is closer to where the path back begins walks the way the dungeon
+            // goes where the navmesh does not join it (the Deadmines' foundry and ship legs, 2026-09-30).
+            Position const target = back.empty() ? stop : Position(back.back().x, back.back().y, back.back().z);
+            std::vector<Position> spawns;
+            for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+                if (creature)
+                    spawns.emplace_back(creature->GetHomePosition());
+            Position at(cursor);
+            for (uint32 step = 0; step < 64 && at.GetExactDist(&target) > BREADCRUMB_REACH; ++step)
             {
-                G3D::Vector3 const& meet = back.back();
-                bridged = cursor.GetExactDist(meet.x, meet.y, meet.z);
-                // Walked from the path's end across the gap to where the path back ends, then along it to the stop.
-                for (auto point = back.rbegin(); point != back.rend(); ++point)
-                    points.push_back(*point);
+                float const left = at.GetExactDist(&target);
+                Position const* next = nullptr;
+                for (Position const& spawn : spawns)
+                    if (spawn.GetExactDist(&target) < left - BREADCRUMB_MIN_GAIN
+                        && at.GetExactDist(&spawn) <= BREADCRUMB_REACH
+                        && (!next || at.GetExactDist(&spawn) < at.GetExactDist(next)))
+                        next = &spawn;
+                if (!next)
+                    break;
+                points.emplace_back(next->GetPositionX(), next->GetPositionY(), next->GetPositionZ());
+                at = *next;
             }
+            bridged = at.GetExactDist(&target);
+            for (auto point = back.rbegin(); point != back.rend(); ++point)
+                points.push_back(*point);
             points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
         }
         LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
             _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
-            missed > 5.0f ? Acore::StringFormat("; the path back from it leaves a {:.0f} yd gap", bridged) : "");
+            missed > 5.0f ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
+                : "");
         cursor = stop;
     }
 
