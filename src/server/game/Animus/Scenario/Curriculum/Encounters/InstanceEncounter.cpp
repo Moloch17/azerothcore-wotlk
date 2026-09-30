@@ -25,6 +25,7 @@
 #include "CreatureAI.h"
 #include "DBCStores.h"
 #include "Env.h"
+#include "GameObject.h"
 #include "EpisodeInfoTable.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
@@ -45,6 +46,8 @@
 
 namespace
 {
+    /// A closed door this near a living seat opens (InstanceEncounter::UpdateWingEnemies).
+    constexpr float DOOR_REACH = 15.0f;
     /// How far from its spawn a boss is looked for by entry.
     constexpr float BOSS_SEARCH_YARDS = 100.0f;
     /// Legs of the entrance-to-boss path: PathGenerator stops at MAX_POINT_PATH_LENGTH points (~296 yd), and the
@@ -636,6 +639,28 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     if (!seat || !seat->IsInWorld())
         return;
+
+    // A closed door in the party's way opens when a living seat reaches it with nothing fighting the party, as a
+    // player pulling its lever would. The party layout has no world actions to pull one with, and a dungeon behind
+    // a lever -- every door of the Deadmines -- stalled every run at the first of them (2026-09-30).
+    bool fighting = false;
+    for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
+        if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+            fighting = true;
+    if (!fighting)
+        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        {
+            Player* bot = _scenario.SeatBot(env, index);
+            if (!bot || !bot->IsAlive() || !bot->IsInWorld())
+                continue;
+            std::list<GameObject*> objects;
+            Acore::AllWorldObjectsInRange check(bot, DOOR_REACH);
+            Acore::GameObjectListSearcher<Acore::AllWorldObjectsInRange> searcher(bot, objects, check);
+            Cell::VisitObjects(bot, searcher, DOOR_REACH);
+            for (GameObject* object : objects)
+                if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
+                    object->SetGoState(GO_STATE_ACTIVE);
+        }
 
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
     for (ObjectGuid const& guid : fight.Watched)
