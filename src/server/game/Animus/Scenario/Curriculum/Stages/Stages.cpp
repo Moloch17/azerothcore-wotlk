@@ -561,8 +561,10 @@ namespace
                     .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },
                 // Real content carries the stage (2026-09-30): a whole dungeon from the start, the synthetic pulls
                 // fading. The boss-only arena (the party teleported to a boss) is gone with the simulation it was.
+                // Five learned seats, no owner: the cast owner was a frozen pack-stage policy whose death cost every
+                // seat 15, and the parties learned to stop short rather than risk it (2026-09-30).
                 { .Name = "dungeon", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
-                    .Against = Opposition::Instance, .Owner = true, .OwnerCast = true, .PartyGroup = true,
+                    .Against = Opposition::Instance, .PartyGroup = true,
                     .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
                     .DirectorLearned = true },
             },
@@ -889,7 +891,7 @@ namespace
                     .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
                     .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
                 { .Name = "dungeon", .Weight = 4, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Wing,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing,
                     .EpisodeSeconds = 1200, .Directed = true, .DirectorLearned = true },
                 { .Name = "raid10", .Weight = 2, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Raid10, .RaidSeats = 10, .EpisodeSeconds = 360,
@@ -1141,8 +1143,9 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
     switch (Seats)
     {
         // A party is the owner and its companions: GROUP_MEMBERS learned seats beside it, which is what this
-        // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid.
-        case SeatPlan::Party:  return GROUP_MEMBERS;
+        // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid. With no
+        // owner it is a whole group of learned seats (the dungeon, 2026-09-30).
+        case SeatPlan::Party:  return Owner ? GROUP_MEMBERS : GROUP_SEATS;
         case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
         case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT + LoneSeats;
         case SeatPlan::Mirror: return 2;

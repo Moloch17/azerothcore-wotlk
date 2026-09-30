@@ -243,7 +243,8 @@ namespace Animus::Curriculum
             float WingMidBoss = 8.0f;           // each dungeon boss killed on the way to the last
             /// The whole route walked, paid as it is walked (potential on the route still ahead). The waypoints are
             /// every WingWaypointYards now, which pay WingWaypoint each on top.
-            float WingProgress = 20.0f;
+            /// 60 since 2026-09-30: at 20 the parties learned to clear what was near and stop short of the next pull.
+            float WingProgress = 60.0f;
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
             uint32 WingWipes = 1;
