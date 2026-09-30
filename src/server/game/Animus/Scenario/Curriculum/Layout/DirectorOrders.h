@@ -72,6 +72,11 @@ namespace Animus::Curriculum
         uint32 Turns = 0;
         uint32 Calls = 0;
         uint32 MemberOrders = 0;
+        /// Member orders that replaced a live one, and those of them that replaced one of the same source younger
+        /// than HoldSteps: what the forge charges the director for (Director.OrderChange, Director.OrderChurn).
+        uint32 HoldSteps = 8;
+        uint32 Replaced = 0;
+        uint32 Churned = 0;
 
         void Changed(uint32 step)
         {

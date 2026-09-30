@@ -77,6 +77,12 @@ void Animus::Curriculum::DirectorRules::Order(DirectorOrders& orders, uint32 ste
         DirectorOrders::MemberOrder& member = orders.Members[slot];
         if (member.Kind != OrderKind::None && member.Source > orders.Address)
             continue;
+        if (member.Kind != OrderKind::None)
+        {
+            ++orders.Replaced;
+            if (member.Source == orders.Address && step < member.IssuedStep + orders.HoldSteps)
+                ++orders.Churned;
+        }
         member.Kind = kind;
         member.Target = target;
         member.Objective = objective;

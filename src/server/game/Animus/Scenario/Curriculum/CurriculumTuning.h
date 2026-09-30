@@ -366,6 +366,13 @@ namespace Animus::Curriculum
             uint32 ClockDecisions = 10;
             /// Below this share of its health a member counts as badly hurt, for the event.
             float LowHealth = 0.25f;
+            /// A member order stands this long (decisions; 8 is 2 s) before the same source can replace it for
+            /// free: one replaced sooner costs the director OrderChurn, on top of OrderChange for any live order it
+            /// replaces. Not a rule -- nothing stops the call -- so the director learns to let orders stand; the
+            /// raid director gave each member about 9,500 orders an episode at the start of stage12.
+            uint32 OrderHoldDecisions = 8;
+            float OrderChange = 0.01f;
+            float OrderChurn = 0.03f;
         } Director;
 
         /// Looking after itself and its friends, in every stage.
@@ -981,6 +988,9 @@ namespace Animus::Curriculum
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
             f("Director.ClockDecisions", tuning.Director.ClockDecisions);
+            f("Director.OrderHoldDecisions", tuning.Director.OrderHoldDecisions);
+            f("Director.OrderChange", tuning.Director.OrderChange);
+            f("Director.OrderChurn", tuning.Director.OrderChurn);
             f("Director.LowHealth", tuning.Director.LowHealth);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);

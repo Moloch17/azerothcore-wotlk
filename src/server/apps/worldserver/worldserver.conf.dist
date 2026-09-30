@@ -6100,6 +6100,12 @@ AnimusForge.Curriculum.Director.PlaceFarYards = 60
 AnimusForge.Curriculum.Director.ClockDecisions = 10
 #   below this share of its health a member counts as badly hurt, for the director's event
 AnimusForge.Curriculum.Director.LowHealth = 0.25
+#   a member order stands this many decisions before the same source can replace it for free; one replaced sooner costs
+#   the director OrderChurn, and any live order it replaces costs OrderChange. Nothing stops the call: it learns to
+#   let orders stand
+AnimusForge.Curriculum.Director.OrderHoldDecisions = 8
+AnimusForge.Curriculum.Director.OrderChange = 0.01
+AnimusForge.Curriculum.Director.OrderChurn = 0.03
 AnimusForge.Curriculum.Support.SelfHealing = 0.5
 #   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
 #   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank

@@ -928,6 +928,9 @@ namespace Animus::Curriculum
         /// from the shaping would learn to call whoever its seats were already fighting -- to look busy rather
         /// than to lead.
         [[nodiscard]] float ShapingPaid(Env const& env, uint32 seat) const;
+        /// What the side's director owes for the member orders it replaced since this was last asked
+        /// (Director.OrderChange, Director.OrderChurn); taken off its reward once a decision.
+        [[nodiscard]] float OrderCost(Env& env, uint32 side);
 
         /// What the agent commanding `side` sees. Built from the seats and the enemy side, then offered to every
         /// other active encounter (Encounter::ViewDirector) for the objective it alone knows.
@@ -949,6 +952,9 @@ namespace Animus::Curriculum
         /// encounter keeps besides: the place it resolved and the measurements.
         struct SideOrder : DirectorOrders
         {
+            /// Replaced and Churned already charged (OrderCost).
+            uint32 ReplacedPaid = 0;
+            uint32 ChurnedPaid = 0;
             /// Where the side was sent, rebuilt every decision from the anchor, offset and ring so a place hung on
             /// the focus or on the side's own centre follows them as they move. HasPlace is derived, never set on
             /// its own.

@@ -3478,7 +3478,8 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
                 ++seats;
             }
 
-        reward[_seatCount + side] = seats ? total / float(seats) : 0.0f;
+        reward[_seatCount + side] = (seats ? total / float(seats) : 0.0f)
+            - (_director && DirectorsActive(env) ? _director->OrderCost(env, side) : 0.0f);
     }
 
     // The owner's row is observed and acted on but never paid: it is a frozen checkpoint's, not a learner's.

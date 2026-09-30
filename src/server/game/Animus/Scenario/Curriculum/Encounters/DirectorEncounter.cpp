@@ -216,6 +216,14 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return float(_envs[env.Index].Sides[_scenario.SideOf(env, seat)].MemberOrders);
     });
+    table.Add("director_orders_replaced", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Sides[_scenario.SideOf(env, seat)].Replaced);
+    });
+    table.Add("director_orders_churned", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Sides[_scenario.SideOf(env, seat)].Churned);
+    });
     // The seat held an order of its own at the episode's end (a snapshot of whether they are being used).
     table.Add("order_own_kind", [this](Env const& env, uint32 seat)
     {
@@ -235,6 +243,19 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
 void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
 {
     _envs[env.Index] = EnvDirector();
+    for (SideOrder& side : _envs[env.Index].Sides)
+        side.HoldSteps = _scenario.Tuning().Director.OrderHoldDecisions;
+}
+
+float Animus::Curriculum::DirectorEncounter::OrderCost(Env& env, uint32 side)
+{
+    SideOrder& orders = _envs[env.Index].Sides[side];
+    CurriculumTuning::DirectorTuning const& tuning = _scenario.Tuning().Director;
+    float const cost = tuning.OrderChange * float(orders.Replaced - orders.ReplacedPaid)
+        + tuning.OrderChurn * float(orders.Churned - orders.ChurnedPaid);
+    orders.ReplacedPaid = orders.Replaced;
+    orders.ChurnedPaid = orders.Churned;
+    return cost;
 }
 
 bool Animus::Curriculum::DirectorEncounter::Learned(Env const& env) const
