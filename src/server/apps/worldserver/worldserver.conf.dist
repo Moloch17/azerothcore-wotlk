@@ -6230,7 +6230,7 @@ AnimusForge.Curriculum.Actions.SupplySpent = 0.02
 #   health (eating) or mana (drinking) at or above which consuming is ConsumeNotNeeded
 AnimusForge.Curriculum.Actions.ConsumeFullPct = 85
 #   every press but the no-op costs this, a tenth of an aimless one: when nothing needs doing, doing nothing wins
-AnimusForge.Curriculum.Actions.Effort = 0.002
+AnimusForge.Curriculum.Actions.Effort = 0.004
 #   per second spent moving in a fight while already at the range the spec wants, with nothing underfoot, the focus
 #   standing still and no from-behind spell to get into position for: the shuffle that reads as a bot
 AnimusForge.Curriculum.Actions.Fidget = 0.01

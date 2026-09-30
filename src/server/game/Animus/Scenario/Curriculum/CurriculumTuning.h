@@ -539,8 +539,10 @@ namespace Animus::Curriculum
             /// Resource at or above which eating (health) or drinking (mana) is ConsumeNotNeeded.
             float ConsumeFullPct = 85.0f;
             /// A small price on every press but the no-op, a tenth of an aimless one: when nothing needs doing,
-            /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press.
-            float Effort = 0.002f;
+            /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press. Raised
+            /// from 0.002 after the next-run trial (2026-09-30): with the per-cause prices, combat APM still ended at
+            /// 99 in the gauntlet and 89 in the pack, against a band of 30-70.
+            float Effort = 0.004f;
             /// In a fight, per second spent moving while already at the range the spec wants, with nothing on the
             /// ground to step out of: the shuffle that reads as a bot. Moving to reach range, to dodge, or out of a
             /// fight is untouched.

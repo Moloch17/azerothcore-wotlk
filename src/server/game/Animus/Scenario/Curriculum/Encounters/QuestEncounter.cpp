@@ -321,11 +321,13 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
                 && DrillStart(*candidate, ObjectiveKind(drill), SALT_DRILL + life.Draws, env, drillStart))
                 first = candidate;
         }
-        if (!first)
-            return false;
-        quests.Groups[0].Chain = { first };
+        // None of the kind in this band and side (explore quests are few): an ordinary quest instead, never a
+        // failed episode -- one env that cannot set up ends the whole plan.
+        quests.Drill = first != nullptr;
+        if (first)
+            quests.Groups[0].Chain = { first };
     }
-    else
+    if (!quests.Drill)
     {
         for (uint32 attempt = 0; attempt < DRAW_ATTEMPTS && (!first || Retired(first->Id)); ++attempt)
             first = drawOne(SALT_QUEST + life.Draws++);
