@@ -839,7 +839,7 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
     ledger.Add(RewardTerm::Timeout, -tuning.QuestTimeout * (1.0f - done) / tierScale);
 }
 
-void Animus::Curriculum::QuestEncounter::GuaranteeDrops(Env const& env, EnvLife const& life, EnvQuest& quest,
+void Animus::Curriculum::QuestEncounter::GuaranteeDrops(Env const& /*env*/, EnvLife const& life, EnvQuest& quest,
     std::vector<Player*> const& seats, Map* map) const
 {
     LifeWorld::QuestCandidate const* current = quest.Quest();

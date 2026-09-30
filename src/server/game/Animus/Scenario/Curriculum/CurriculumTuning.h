@@ -101,13 +101,15 @@ namespace Animus::Curriculum
             float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
             float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
             /// Healers in a raid: per member of its group above 50% health, per decision; the same charged per
-            /// member below 35%.
-            float KeepUp = 0.004f;
+            /// member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
+            /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
+            float KeepUp = 0.0002f;
             /// Damage dealers in a raid: their own damage as a share of the level's damage scale, times this.
             float Output = 0.5f;
             /// Party and raid: per decision in a fight with an enemy in reach, once nothing the seat did served or
-            /// was neutral -- no press, no damage, no healing -- for IdleMs.
-            float Idle = 0.01f;
+            /// was neutral -- no press, no damage, no healing -- for IdleMs. Per 50 ms of tuning: a minute idle
+            /// costs about 1.2.
+            float Idle = 0.001f;
             uint32 IdleMs = 4000;
             float IdleReach = 40.0f;            // yards: an enemy this near is one to act on
         } Raid;
@@ -256,8 +258,11 @@ namespace Animus::Curriculum
             float QuestTurnIn = 10.0f;          // times the tier scale
             float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
             /// Per decision a complete quest is not handed in (45% of completed quests never were): the turn-in is
-            /// the point, and walking off with a finished quest costs.
-            float CompleteHeld = 0.002f;
+            /// the point, and walking off with a finished quest costs. Per 50 ms of tuning, as every per-decision
+            /// term is (DecisionScale): a whole 600 s episode holding one costs 3.6, well under the turn-in's 10.
+            /// It was 0.002, which at 250 ms decisions charged 24 an episode -- a deliver quest is complete the
+            /// moment it is taken, and the trial's quest arena lost 10 an episode to it (2026-09-30).
+            float CompleteHeld = 0.0003f;
             /// Training only: a quest item's source that dies without dropping it has its loot rolled again, up to
             /// this many times, until it does -- the kill is what the seat must learn to pay for, not the drop
             /// chance. 0 turns it off; evaluation never rolls again.

@@ -5901,12 +5901,12 @@ AnimusForge.Curriculum.Raid.DamagePerGroup = 0.15
 #   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
 AnimusForge.Curriculum.Raid.TankHold = 0.006
 #   raid healers: per group member above 50% health per decision, the same charged per member below 35%
-AnimusForge.Curriculum.Raid.KeepUp = 0.004
+AnimusForge.Curriculum.Raid.KeepUp = 0.0002
 #   raid damage dealers: own damage as a share of the level's damage scale, times this
 AnimusForge.Curriculum.Raid.Output = 0.5
 #   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
 #   damaging or healing for IdleMs (ms)
-AnimusForge.Curriculum.Raid.Idle = 0.01
+AnimusForge.Curriculum.Raid.Idle = 0.001
 AnimusForge.Curriculum.Raid.IdleMs = 4000
 AnimusForge.Curriculum.Raid.IdleReach = 40.0
 
@@ -6052,7 +6052,7 @@ AnimusForge.Curriculum.Life.QuestCredit = 3.0
 AnimusForge.Curriculum.Life.QuestTurnIn = 10.0
 AnimusForge.Curriculum.Life.QuestTimeout = 3.0
 #   per decision a complete quest is not handed in
-AnimusForge.Curriculum.Life.CompleteHeld = 0.002
+AnimusForge.Curriculum.Life.CompleteHeld = 0.0003
 #   training only: a quest item's source that dies without it rolls its loot again, up to this many times (0: off)
 AnimusForge.Curriculum.Life.DropRerolls = 50
 #   quest credit a seat takes in a place another group holds (the world coordinator's claims), per share of the
