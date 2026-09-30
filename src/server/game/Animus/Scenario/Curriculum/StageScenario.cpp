@@ -2048,7 +2048,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         || std::any_of(ActiveEncounters(env).begin(), ActiveEncounters(env).end(),
             [&env](Encounter const* encounter) { return encounter->MatchFor(env) != nullptr; });
     // (An env whose last episode was on another map, an instance rung, rebuilds on the map this one wants.)
-    bool const changesMap = env.FindMap() && env.FindMap()->GetId() != EpisodeMapId(env);
+    // A dungeon run starts from a fresh instance every episode: every creature alive, every boss's script at its
+    // start. Reused, the trash a group killed stayed dead for the next one, and only the boss was reset.
+    bool const freshInstance = Arena(env).Instance == InstanceLadder::Wing;
+    bool const changesMap = (env.FindMap() && env.FindMap()->GetId() != EpisodeMapId(env)) || freshInstance;
     if (!firstBuild && !env.Evaluating && !onMatch && !changesMap && _tuning.Characters.ReuseEpisodes > 0)
         for (uint32 seat = 0; seat < data.ActiveSeats && seat < previousActiveSeats; ++seat)
         {
@@ -2073,7 +2076,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // seats were all lost keeps its instance while the map still exists, and opens a new one when it is gone. An
     // episode fixed to another map (an instance rung) opens a new instance of that map; the old one unloads once
     // its last bot has left.
-    Map* map = !firstBuild || env.InstanceId ? env.FindMap() : nullptr;
+    Map* map = (!firstBuild || env.InstanceId) && !freshInstance ? env.FindMap() : nullptr;
     // A battleground's map is its match's: a new match (FlagEncounter::BeforeSeats) gets a map of its own, which the
     // first seat's bot opens through the invitation it carries. Reused, the new bots stood on the last match's map --
     // "map 596 cannot unload: Forge31s19a (bg id 660)" -- and it was unloaded under them.

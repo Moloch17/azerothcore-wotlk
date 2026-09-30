@@ -231,8 +231,9 @@ namespace Animus::Curriculum
             float Stall = 0.08f;
             uint32 StallGraceMs = 15000;
             /// Whole wings (InstanceLadder::Wing): each trash creature killed, each waypoint of the route reached, the
-            /// wing's boss, each seat's death and each wipe (a wipe stands the party up at the door; WingWipes of them
-            /// end the episode). The kill and waypoint terms scale with the rung, the costs are divided by it.
+            /// wing's boss, each seat's death and each wipe (WingWipes of them end the episode; below that a wipe
+            /// stands the party up at the door). One since 2026-09-30: a wipe ends the run, and the next run starts
+            /// in a fresh instance with the whole dungeon reset -- never a second attempt on a half-cleared one. The kill and waypoint terms scale with the rung, the costs are divided by it.
             /// Raised 2026-09-30 so a wing pays for itself: over a 1,200 s run the per-press costs (jitter, repeat,
             /// effort, the combat clock) came to about -75, against 7.5 for 25 trash kills and 10 for a last boss
             /// no party reached. A dungeon takes long to learn; every step of it has to be worth taking.
@@ -242,7 +243,7 @@ namespace Animus::Curriculum
             float WingMidBoss = 8.0f;           // each dungeon boss killed on the way to the last
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
-            uint32 WingWipes = 3;
+            uint32 WingWipes = 1;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
         } Instance;
 

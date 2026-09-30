@@ -127,21 +127,16 @@ namespace
 
 namespace
 {
-    /// Whole wings, entrance to last boss (InstanceLadder::Wing): each row names the wing's last boss, the trash
-    /// before it stays, and the party starts at the wing's own door. The seats' level is the wing's.
+    /// Whole dungeons, entrance to last boss (InstanceLadder::Wing): each row names the last boss, the trash before
+    /// it stays, and the party starts at the door. The seats' level is the dungeon's.
+    ///
+    /// One dungeon to begin with (2026-09-30): the Deadmines, the whole of it to VanCleef, six scripted bosses, and
+    /// a navmesh path from the door to the last. Ragefire Chasm had no path from its door to its bosses (the party
+    /// was stood in front of them instead). The Scarlet Monastery wings (Graveyard to Thalnos, entrance 45; Library
+    /// to Doan, 614; Armory to Herod, 612) and Utgarde Keep to Ingvar (DataId 2) come back once this one is learned.
     std::vector<Animus::Curriculum::BossRow> const WING = {
-        { .MapId = 389, .Entry = 11519, .Level = 15, .Difficulty = 0, .Trash = true,
-            .Name = "Ragefire Chasm to Bazzalan" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = 0, .Trash = true,
             .Name = "the Deadmines to Edwin VanCleef" },
-        { .MapId = 189, .Entry = 4543, .Level = 35, .Difficulty = 0, .Trash = true, .Entrance = 45,
-            .Name = "the Graveyard to Bloodmage Thalnos" },
-        { .MapId = 189, .Entry = 6487, .Level = 37, .Difficulty = 0, .Trash = true, .Entrance = 614,
-            .Name = "the Library to Arcanist Doan" },
-        { .MapId = 189, .Entry = 3975, .Level = 40, .Difficulty = 0, .Trash = true, .Entrance = 612,
-            .Name = "the Armory to Herod" },
-        { .MapId = 574, .Entry = 23954, .DataId = 2, .Level = 72, .Difficulty = 0, .Trash = true,
-            .Name = "Utgarde Keep to Ingvar the Plunderer" },
     };
 }
 

@@ -559,11 +559,8 @@ namespace
                     .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
                     .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
                     .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },
-                // A boss on its own, for the repetitions a wing gives only once (Thalnos was killed 8% of the time).
-                { .Name = "dungeon_boss", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
-                    .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
-                // Real content carries the stage (2026-09-30): wings from the start, the synthetic pulls fading.
+                // Real content carries the stage (2026-09-30): a whole dungeon from the start, the synthetic pulls
+                // fading. The boss-only arena (the party teleported to a boss) is gone with the simulation it was.
                 { .Name = "dungeon_wing", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
                     .Against = Opposition::Instance, .Owner = true, .OwnerCast = true, .PartyGroup = true,
                     .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
@@ -892,8 +889,8 @@ namespace
                     .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
                     .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
                 { .Name = "dungeon", .Weight = 4, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
-                    .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
+                    .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Wing,
+                    .EpisodeSeconds = 1200, .Directed = true, .DirectorLearned = true },
                 { .Name = "raid10", .Weight = 2, .Seats = SeatPlan::Raid, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Raid10, .RaidSeats = 10, .EpisodeSeconds = 360,
                     .Directed = true, .DirectorLearned = true },
