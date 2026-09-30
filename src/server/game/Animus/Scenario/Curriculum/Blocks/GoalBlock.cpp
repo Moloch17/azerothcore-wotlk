@@ -81,6 +81,10 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
             found = places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
     if (world.Active && world.HasAssignment)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
+    // A trip's objective (the travel block's) is the place a travel stage is about. With no journal it takes the
+    // assignment's slot, so TravelTo has a target and the movement phase trains the goal level too.
+    if (!world.Active && view.HasObjective)
+        places = targets[GOAL_TARGET_ASSIGNMENT] = true;
 
     bool const combat = bot->IsInCombat();
     bool const hurt = bot->GetHealthPct() < 95.0f
@@ -117,7 +121,12 @@ bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Posi
 {
     WorldView const& world = view.World;
     if (!world.Active)
+    {
+        // A trip's objective, where there is no journal (Available).
+        if (t == GOAL_TARGET_ASSIGNMENT && view.HasObjective)
+            return where = view.Objective, true;
         return false;
+    }
     if (t >= GOAL_TARGET_OBJECTIVE_FIRST && t < GOAL_TARGET_GIVER)
     {
         WorldView::JournalObjective const& objective = world.Objectives[t - GOAL_TARGET_OBJECTIVE_FIRST];
