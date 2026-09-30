@@ -163,6 +163,11 @@ namespace Animus::Curriculum
         /// rising rung and neither reading could be ruled out. Overridden per arena by
         /// `<TuningPrefix>Arena.<stage>.<arena>.MaxRung`.
         int32 MaxRung = -1;
+        /// **Commanded goals** (next-run plan, 3.4): the sim gives the seat its primary goal -- a random one of those
+        /// the goal block offers, every COMMAND_EVERY decisions or when it ends -- as a director's order is given, so
+        /// the learner holds it without its goal head being trained on it. Paid only by the goal's own terms beside
+        /// the stage's: the fast loop learns to follow a goal before the slow loop learns to choose one.
+        bool CommandedGoals = false;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
         /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn

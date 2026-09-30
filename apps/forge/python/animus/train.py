@@ -640,6 +640,9 @@ class TrainingRun:
         if self.trainer.goal_count:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and
             # the share of decisions spent under each goal.
+            # Whether the goal changes the actions (goal_swap_action_change) and, with hindsight, how much was
+            # relabelled.
+            columns += ["goal_swap_action_change", "hindsight_loss", "hindsight_rows"]
             columns += ["goal_entropy", "goal_kept_share",
                         *(f"goal_{index}_share" for index in range(self.trainer.goal_kinds)),
                         *(("goal_targeted_share",) if self.trainer.goal_targets > 1 else ())]
@@ -648,7 +651,8 @@ class TrainingRun:
             # losses, and how well it foresees a goal being reached -- the Brier score against always predicting the
             # rollout's rate (lookahead_brier_base) -- and how long it takes.
             columns += ["slow_policy_loss", "slow_value_loss", "slow_approx_kl", "goal_reached_share",
-                        "lookahead_loss", "lookahead_brier", "lookahead_brier_base", "lookahead_duration_error"]
+                        "lookahead_loss", "lookahead_brier", "lookahead_brier_base", "lookahead_duration_error",
+                        "goal_best_by_lookahead"]
         if self.trainer.foresight_outputs:
             # The foresight (Component P layer 2): its loss, and its observation forecasts' quality -- health 2 s
             # and 5 s on (mean absolute error, as a share of full health), and the goal reached within 4 s (Brier).

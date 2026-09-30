@@ -464,6 +464,10 @@ namespace
                     .Drill = DummyDrill::Hitting },
                 { .Name = "bleeding", .Weight = 1, .Against = Opposition::Dummy, .EpisodeSeconds = 60,
                     .Drill = DummyDrill::Bleeding },
+                // Commanded goals (next-run plan, 3.4): the sim names the goal and pays for reaching it, so the kit
+                // is learned as the means to a stated end before any goal is the seat's own choice.
+                { .Name = "commanded", .Weight = 1, .Against = Opposition::Dummy, .EpisodeSeconds = 90,
+                    .Drill = DummyDrill::Moving, .CommandedGoals = true },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -507,6 +511,9 @@ namespace
                     .EpisodeSeconds = 150 },
                 { .Name = "hazards", .Weight = 1, .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
                     .EpisodeSeconds = 150, .Hazards = true },
+                // Commanded goals: fight this one, hold that one, recover -- given, then reached.
+                { .Name = "commanded", .Weight = 1, .Against = Opposition::Pulls,
+                    .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 150, .CommandedGoals = true },
             },
         });
 
@@ -526,6 +533,9 @@ namespace
                     .EpisodeSeconds = 450 },
                 { .Name = "endurance", .Weight = 1, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Sequence, .EpisodeSeconds = 900 },
+                // Commanded goals between and during pulls: Recover and Rest given in the breaks as often as Fight.
+                { .Name = "commanded", .Weight = 1, .Against = Opposition::Pulls,
+                    .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 450, .CommandedGoals = true },
             },
         });
 

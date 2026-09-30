@@ -2469,7 +2469,10 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). Under a learned director the member's standing order
         // is its primary, whatever it chose: one planner per group (OrderGoals.h). The secondary is the seat's own,
         // and none when it would repeat the primary.
-        int32 const ordered = _director ? _director->MemberGoal(env, seat) : NO_GOAL;
+        // A commanded arena's goal is given the same way (ArenaDefinition::CommandedGoals).
+        int32 ordered = _director ? _director->MemberGoal(env, seat) : NO_GOAL;
+        if (ordered == NO_GOAL && Arena(env).CommandedGoals)
+            ordered = state.Commanded;
         int32 const primary = ordered != NO_GOAL ? ordered : valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
         int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
         if (secondary == primary)
@@ -3190,7 +3193,29 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.GoalEvent = seat.Event;
     view.Achieved = seat.Achieved;
     view.Goal2 = seat.Holds[1].Goal;
-    view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
+    // A commanded arena gives the seat a new goal on its clock or when the one given ended, shown as an order is.
+    if (Arena(env).CommandedGoals && bot && bot->IsAlive())
+    {
+        constexpr uint32 COMMAND_EVERY_MS = 4000;
+        if (seat.Commanded == NO_GOAL || seat.Holds[0].Ended
+            || env.EpisodeElapsedMs >= seat.CommandedAtMs + COMMAND_EVERY_MS)
+        {
+            std::array<bool, GOAL_COUNT> kinds;
+            std::array<bool, GOAL_TARGETS> targets;
+            GoalBlock::Available(view, kinds, targets);
+            std::vector<int32> offered;
+            for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+                for (uint32 target = 0; kinds[kind] && target < GOAL_TARGETS; ++target)
+                    if (targets[target] && GoalAccepts(SeatGoal(kind), target))
+                        offered.push_back(MakeGoal(SeatGoal(kind), target));
+            seat.Commanded = offered.empty() ? MakeGoal(SeatGoal::Fight, GOAL_TARGET_NONE)
+                : offered[urand(0, uint32(offered.size()) - 1)];
+            seat.CommandedAtMs = env.EpisodeElapsedMs;
+        }
+        view.OrderGoal = seat.Commanded;
+    }
+    else
+        view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
     SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
     SeatEncoder::Observe(view, obs, mask);

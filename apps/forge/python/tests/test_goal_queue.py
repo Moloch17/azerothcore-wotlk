@@ -206,3 +206,40 @@ def test_the_exported_goal_queue_matches_the_learner(tmp_path):
         assert state["queue"] == queue[0].tolist(), step
         torch_logits = expected.logits[0].numpy()
         assert np.allclose(logits - logits[0], torch_logits - torch_logits[0], atol=1e-4), step
+
+
+def test_hindsight_relabels_what_was_achieved():
+    """A decision whose next observation shows an enemy killed that the held primary did not name is trained under
+    that goal too: the targets are read off the goal block, and the update reports the relabelled rows."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(8, 8), recurrent_size=6, goal_count=KINDS, goal_targets=TARGETS,
+                         goal_every_decisions=3, slow_goal_size=5, goal_slots=SLOTS, hindsight_coef=0.5, epochs=1)
+    trainer = MappoTrainer([(OBS, 2)], 4, config)
+    trainer.actor.goal_head.set_space(np.ones((KINDS, TARGETS), bool), [OWN])
+    trainer._sync_rollout()
+    steps, envs = 12, 2
+    buffer = RolloutBuffer(steps, envs, 1, OBS, 4, 2, trainer.foresight_outputs, trainer.recurrent_size, True,
+                           trainer.slow_goal_size, trainer.goal_slots)
+    acting = trainer.acting_state(envs, 1)
+    base = OWN + KINDS + TARGETS
+    achieved_kind = base + 5 + KINDS + TARGETS
+    for step in range(steps):
+        obs = block_obs(envs).numpy()[:, None, :]
+        if step % 3 == 2:
+            obs[:, 0, achieved_kind + 0] = 1.0                           # Fight ...
+            obs[:, 0, achieved_kind + KINDS + 1 + step % 3] = 1.0        # ... about an enemy slot
+        state = np.zeros((envs, 4), np.float32)
+        mask = np.ones((envs, 1, 2), bool)
+        layout = np.zeros((envs, 1), np.int64)
+        memory = acting.memory.copy()
+        actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+                                                                                 state=acting)
+        buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals)
+        buffer.add_outcome(np.ones((envs, 1), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),
+                           np.zeros((envs, 1), np.float32), np.zeros((envs, 1, trainer.foresight_outputs), np.float32))
+    buffer.finish(np.zeros((envs, 1), np.float32), 0.99, 0.95,
+                  slow_goal=(config.slow_goal_gamma, config.slow_goal_lambda))
+    trainer.hindsight_targets(buffer)
+    assert (buffer.achieved[1::3] >= 0).all() and (buffer.achieved[0::3] == -1).all()
+    stats = trainer.update(buffer)
+    assert stats.get("hindsight_rows", 0) > 0 and np.isfinite(stats["hindsight_loss"])

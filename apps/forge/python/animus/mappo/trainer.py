@@ -15,8 +15,8 @@ from ..device import host
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, log_prob_of, per_layout,
-                       per_layout_host, sample_logits, skip_distribution_checks, split_goal_pair, to_device,
-                       update_norms)
+                       per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
+                       to_device, update_norms)
 from .valuenorm import ValueNorm
 
 
@@ -124,6 +124,12 @@ class MappoConfig:
     # beside it and two goals queued behind them (GoalHead.draw, LayoutActor.decide_goals). The learner keeps the
     # queue and promotes its head when the primary ends; ACT carries the two held.
     goal_slots: int = 1
+    # **Hindsight** (next-run plan, 3.3): where a decision achieved a goal other than the primary it held -- an enemy
+    # killed under Fight about another, health back under Fight -- its action is also trained, as an auxiliary
+    # imitation loss of this weight, as if that had been the goal: free goal-following data. Not a PPO term (the
+    # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
+    # block's achieved columns).
+    hindsight_coef: float = 0.0
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -992,6 +998,21 @@ class MappoTrainer:
             return torch.zeros((rows, self.recurrent_size), device=self.rollout_device)
         return self._tensor(memory).reshape(rows, self.recurrent_size)
 
+    def hindsight_targets(self, buffer: RolloutBuffer) -> None:
+        """Fill buffer.achieved: per decision, what the next observation's goal block says it achieved (-1 for
+        nothing, and at the rollout's last step and where the episode ended, which have no next observation here)."""
+        buffer.achieved.fill(-1)
+        head = self.actor.goal_head
+        if head is None or head.slots <= 1 or buffer.steps < 2:
+            return
+        steps, envs, agents = buffer.layout.shape
+        with torch.no_grad():
+            obs = torch.as_tensor(buffer.obs[1:], device=self.train_device).reshape(-1, buffer.obs.shape[-1])
+            layout = torch.as_tensor(buffer.layout[1:], device=self.train_device).reshape(-1)
+            achieved = head.signals(obs.float(), layout)["achieved"].reshape(steps - 1, envs, agents).cpu().numpy()
+        ended = np.broadcast_to(buffer.dones[:-1, :, None], achieved.shape)
+        buffer.achieved[:-1] = np.where(ended, -1, achieved)
+
     def wire_goals(self, goal: np.ndarray) -> np.ndarray:
         """The goals ACT carries for held goals `goal` [E, A]: [E, A, 2], primary then secondary (-1 none)."""
         goal = np.asarray(goal, dtype=np.int64)
@@ -1235,6 +1256,14 @@ class MappoTrainer:
                         (((base_rate - reached_t) ** 2) * mask).sum() / known_n) / cfg.epochs
                     totals["lookahead_duration_error"] = totals.get("lookahead_duration_error", 0.0) + float(
                         ((expected - duration_t).abs() * mask).sum() / known_n) / cfg.epochs
+                    # Whether the goal chosen is the one the lookahead itself scores best (success and duration
+                    # weighed as the logits weigh them): a head that plans from its predictions picks it.
+                    all_success, all_duration = head.predictions(states)
+                    weight_la = head.lookahead_weight.to(all_success.dtype)
+                    planned = (weight_la[0] * all_success + weight_la[1] * all_duration).argmax(dim=-1)
+                    chosen_rows = counted > 0
+                    totals["goal_best_by_lookahead"] = totals.get("goal_best_by_lookahead", 0.0) + float(
+                        (planned == goal)[chosen_rows].float().mean() if bool(chosen_rows.any()) else 0.0) / cfg.epochs
             self.slow_opt.zero_grad(set_to_none=True)
             loss.backward()
             if cfg.rank_sync == "gradients":
@@ -1277,6 +1306,8 @@ class MappoTrainer:
     def update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update over the rollout. `auxiliary(data, idx, dist)` may add a loss to each minibatch's actor
         loss: it returns (loss, {stat: value}) or None (see animus.distill)."""
+        if self.config.hindsight_coef > 0.0:
+            self.hindsight_targets(buffer)
         precision = self.config.update_precision
         if precision not in ("fp32", "bf16"):
             raise ValueError(f"mappo.update_precision is {precision!r}: fp32 or bf16")
@@ -1679,6 +1710,40 @@ class MappoTrainer:
                     totals["foresight_loss"] += foresight_loss.detach()
                     self._foresight_quality(stacked.detach(), targets, known, horizons, auxiliary_stats)
 
+                if self.goal_count and epoch_updates == 0:
+                    # Does the goal change what is done? The greedy action under the goal held against under another
+                    # drawn at random, on the first minibatch of each epoch: a goal the actions ignore reads 0.
+                    with torch.no_grad():
+                        other = torch.randint(0, self.goal_count, goal_all.shape, device=goal_all.device)
+                        if self.goal_slots > 1:
+                            other = goal_pair(other, torch.full_like(other, -1), self.goal_count)
+                        swapped = self.actor.action_distribution(features, layout_all, mask_all, other, groups,
+                                                                 obs_all).logits.argmax(-1)
+                        rows_valid = valid[:, chunk].reshape(-1)
+                        changed = (swapped != dist.logits.argmax(-1))[rows_valid]
+                        auxiliary_stats["goal_swap_action_change"] = auxiliary_stats.get(
+                            "goal_swap_action_change", 0.0) + float(changed.float().mean() if changed.numel() else 0.0)
+                        auxiliary_stats["goal_swap_n"] = auxiliary_stats.get("goal_swap_n", 0.0) + 1.0
+
+                if cfg.hindsight_coef > 0.0 and self.goal_slots > 1 and "achieved" in data:
+                    # Hindsight: the rows whose decision achieved something other than the primary held, trained to
+                    # take the same action with that as the goal. An imitation term on the rows it covers.
+                    achieved = data["achieved"][:, chunk].reshape(-1)
+                    primary = split_goal_pair(goal_all, self.goal_count)[0]
+                    relabel = (achieved >= 0) & (achieved != primary) & valid[:, chunk].reshape(-1)
+                    if bool(relabel.any()):
+                        swapped = goal_pair(achieved[relabel], torch.full_like(achieved[relabel], -1),
+                                            self.goal_count)
+                        relabelled = self.actor.action_distribution(features[relabel], layout_all[relabel],
+                                                                    mask_all[relabel], swapped, None,
+                                                                    obs_all[relabel])
+                        hindsight_loss = -relabelled.log_prob(data["actions"][:, chunk].reshape(-1)[relabel]).mean()
+                        actor_loss = actor_loss + cfg.hindsight_coef * hindsight_loss
+                        auxiliary_stats["hindsight_loss"] = auxiliary_stats.get("hindsight_loss", 0.0) + float(
+                            hindsight_loss.detach())
+                        auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + float(
+                            relabel.sum())
+
                 if distill_rows:
                     # Already a mean over the sequence's taught decisions (Distiller.sequence_loss divides by
                     # rows_taught), exactly as the flat path's is over a minibatch's. Both paths add it as it comes:
@@ -1761,6 +1826,13 @@ class MappoTrainer:
         for name in [n for n in auxiliary_stats if n.startswith("forecast_") and not n.endswith("_n")]:
             count = auxiliary_stats.pop(name + "_n", 0.0)
             stats[name] = auxiliary_stats.pop(name) / max(count, 1.0)
+        if "goal_swap_n" in auxiliary_stats:
+            count = auxiliary_stats.pop("goal_swap_n")
+            stats["goal_swap_action_change"] = auxiliary_stats.pop("goal_swap_action_change") / max(count, 1.0)
+        # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
+        if "hindsight_loss" in auxiliary_stats:
+            stats["hindsight_rows"] = auxiliary_stats.pop("hindsight_rows")
+            stats["hindsight_loss"] = auxiliary_stats.pop("hindsight_loss") / max(1, updates)
         stats.update({name: value / auxiliary_updates for name, value in auxiliary_stats.items()})
         # What the update itself cost, as the flat path reports it.
         # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are

@@ -316,6 +316,9 @@ namespace Animus::Curriculum
         /// What the seat achieved this decision, whatever it was pursuing (GoalBlock's hindsight columns), and what
         /// it is measured against: which enemy slots were alive, and whether the seat was below Recover's line.
         int32 Achieved = NO_GOAL;
+        /// A commanded arena's goal for this seat (ArenaDefinition::CommandedGoals), and when it was given.
+        int32 Commanded = NO_GOAL;
+        uint32 CommandedAtMs = 0;
         std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -516,6 +519,8 @@ namespace Animus::Curriculum
             EventOwnerAttacked = false;
             Event = false;
             Achieved = NO_GOAL;
+            Commanded = NO_GOAL;
+            CommandedAtMs = 0;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;

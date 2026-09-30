@@ -95,6 +95,8 @@ mappo:
   goal_count: 12
   # Two goals held (a primary and a secondary beside it) and two queued behind them (next-run plan, Wave 4).
   goal_slots: 4
+  # Hindsight: a decision that achieved a goal other than the one held also trains its action under that goal.
+  hindsight_coef: 0.1
   goal_targets: 29
   goal_every_decisions: 16   # 16 decisions is 4 s at 250 ms
   # The two-clock seat (Component D): goals chosen by a slow loop of their own -- a 128-unit GRU that steps only
