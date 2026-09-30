@@ -158,28 +158,28 @@ def test_statistics_are_never_traded_as_deltas():
 
 def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
     leader_root, follower_root = tmp_path / "leader", tmp_path / "follower"
-    owner = leader_root / "stage6_gauntlet" / "best.pt"
-    league = leader_root / "stage12_duel_pvp" / "league" / "step_1.pt"
+    owner = leader_root / "stage5_pack" / "best.pt"
+    league = leader_root / "stage9_duel_pvp" / "league" / "step_1.pt"
     for path, body in ((owner, b"owner" * 1000), (league, b"member")):
         path.parent.mkdir(parents=True)
         path.write_bytes(body)
     outside = tmp_path / "elsewhere.pt"
     outside.write_bytes(b"not served")
     # One the follower already has, byte for byte, and one it has a stale copy of.
-    (follower_root / "stage12_duel_pvp" / "league").mkdir(parents=True)
-    (follower_root / "stage12_duel_pvp" / "league" / "step_1.pt").write_bytes(b"member")
-    (follower_root / "stage6_gauntlet").mkdir(parents=True)
-    (follower_root / "stage6_gauntlet" / "best.pt").write_bytes(b"old")
+    (follower_root / "stage9_duel_pvp" / "league").mkdir(parents=True)
+    (follower_root / "stage9_duel_pvp" / "league" / "step_1.pt").write_bytes(b"member")
+    (follower_root / "stage5_pack").mkdir(parents=True)
+    (follower_root / "stage5_pack" / "best.pt").write_bytes(b"old")
 
     listing = shared_listing(leader_root, [owner, league, outside, leader_root / "missing.pt", None])
-    assert sorted(listing) == ["stage12_duel_pvp/league/step_1.pt", "stage6_gauntlet/best.pt"]
+    assert sorted(listing) == ["stage5_pack/best.pt", "stage9_duel_pvp/league/step_1.pt"]
 
     address = f"127.0.0.1:{free_port()}"
     hub = Hub(address, networks(0), listing)
     try:
         fetched = fetch_shared(address, 1, follower_root, timeout=10.0)
-        assert fetched == ["stage6_gauntlet/best.pt"]
-        assert (follower_root / "stage6_gauntlet" / "best.pt").read_bytes() == owner.read_bytes()
+        assert fetched == ["stage5_pack/best.pt"]
+        assert (follower_root / "stage5_pack" / "best.pt").read_bytes() == owner.read_bytes()
         assert not any(path.name.endswith(".part") for path in follower_root.rglob("*"))
         # Nothing left to take the second time.
         assert fetch_shared(address, 1, follower_root, timeout=10.0) == []
@@ -189,7 +189,7 @@ def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
 
 def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
     root = tmp_path / "leader"
-    first = root / "stage12_duel_pvp" / "league" / "step_1.pt"
+    first = root / "stage9_duel_pvp" / "league" / "step_1.pt"
     first.parent.mkdir(parents=True)
     first.write_bytes(b"first")
     address = f"127.0.0.1:{free_port()}"
@@ -204,7 +204,7 @@ def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
         assert hub.control["shared"] == 1
         follower = tmp_path / "follower"
         assert sorted(fetch_shared(address, 1, follower, timeout=10.0)) == [
-            "stage12_duel_pvp/league/step_1.pt", "stage12_duel_pvp/league/step_2.pt"]
+            "stage9_duel_pvp/league/step_1.pt", "stage9_duel_pvp/league/step_2.pt"]
     finally:
         hub.close()
 

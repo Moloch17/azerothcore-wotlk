@@ -5,8 +5,8 @@
 # (150M) and dungeon (50M) stages: the companion stage was flat and the dungeon stage trained on bosses reached by
 # teleport.
 
-extends: stage7_life.yaml
-run_name: stage8_party
+extends: stage5_pack.yaml
+run_name: stage6_party
 
 total_env_steps: 200000000
 
@@ -22,4 +22,4 @@ eval:
 
 cast:
   agents:
-    owner: "{runs_dir}/stage6_gauntlet/best.pt"
+    owner: "{runs_dir}/stage5_pack/best.pt"

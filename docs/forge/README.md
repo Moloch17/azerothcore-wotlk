@@ -35,8 +35,8 @@ move ─ indoor ─ jump ─ dive ─ dodge ─ travel ─ flight   the feet: gr
      ─ flag ─ warsong ─ duo_led ─ crossroads             an objective, a director, and everything at once
 ```
 
-Twenty-one stages in four phases -- movement, classes, parties and raids, PvP -- numbered in the order they are
-trained (`stage1_move` to `stage19_ship`), all of them the default queue. The last, `stage19_ship`, replays every
+Eighteen stages in five phases -- movement, classes, parties and raids, PvP, life -- numbered in the order they are
+trained (`stage1_move` to `stage18_ship`), all of them the default queue. The last, `stage18_ship`, replays every
 phase and is the stage that ships. No stage has a pass gate: each ends when its convergence signals say so, and the
 queue moves on.
 

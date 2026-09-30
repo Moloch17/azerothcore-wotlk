@@ -3,8 +3,8 @@
 # a side's seats on the called target -- is the measure that matters: a seat that never obeys and a channel that never
 # arrives look identical without it.
 
-extends: stage12_duel_pvp.yaml
-run_name: stage15_arena
+extends: stage9_duel_pvp.yaml
+run_name: stage12_arena
 
 total_env_steps: 50000000
 rollout_length: 256

@@ -2,8 +2,8 @@
 # alive at 120 s (evade), or get out of sight and stay there, hiding again when found (hide). Every class plays both,
 # graded on the outcome rather than the button. Durnholde Keep and the Southshore farms, for cover.
 
-extends: stage12_duel_pvp.yaml
-run_name: stage13_escape
+extends: stage9_duel_pvp.yaml
+run_name: stage10_escape
 
 total_env_steps: 50000000
 

@@ -906,7 +906,7 @@ void Animus::EnvPool::RecordTargetInterrupted(Unit const* caster, Spell* spell, 
         return;
 
     // A target slot holds a creature or the scripted enemy player; in self-play the enemy is another seat's bot and
-    // is in no slot, so matching only the slots left every interrupt in stage15_arena and stage17_flag unrecorded --
+    // is in no slot, so matching only the slots left every interrupt in stage12_arena and stage17_flag unrecorded --
     // and so unpaid and uncounted, however well the seat played it.
     Env& owner = _envs[env->second];
     ObjectGuid const casterGuid = caster->GetGUID();

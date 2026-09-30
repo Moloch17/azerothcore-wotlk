@@ -901,7 +901,7 @@ bool AnimusForge::Forge::RunAdvanced(ForgeConfig const& config, std::string cons
 /// that stage finished -- an interrupted run does not write finished.json. RunAdvanced answers a different question
 /// (did this stage finish), and using it here warned that a parent would not be seeded from whenever its run had
 /// merely been cancelled, while the learner went on to seed from it: every `forge start stage19_duo_led` this
-/// session printed that warning and then seeded from stage15_arena's best.pt in the next breath. A warning that is
+/// session printed that warning and then seeded from stage12_arena's best.pt in the next breath. A warning that is
 /// usually wrong teaches operators to skip them.
 bool AnimusForge::Forge::RunSeedable(ForgeConfig const& config, std::string const& scenario) const
 {

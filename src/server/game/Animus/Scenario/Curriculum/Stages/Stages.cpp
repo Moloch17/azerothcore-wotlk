@@ -37,7 +37,7 @@
  * bought nothing as a stage of its own (tanking, triage, hide, endurance, the dodge field) is an arena of the stage it
  * serves instead: it trains beside the lesson rather than before the stage that overwrites it.
  *
- * Scenario names carry the stage's number (stage1_move ... stage19_ship), model names only its suffix (_move). The
+ * Scenario names carry the stage's number (stage1_move ... stage18_ship), model names only its suffix (_move). The
  * move stage is the first: nothing seeds it.
  *
  * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix
@@ -439,7 +439,8 @@ namespace
         });
 
         // ---------------------------------------------------------------------------------------------------------
-        // Phase 2: classes. One character playing its class: its kit, then fights, then its life in the world.
+        // Phase 2: classes. One character playing its class: its kit, then a fight, then a pack. Its life in the world
+        // comes last (phase 5), once it has fought beside others and against them.
         // ---------------------------------------------------------------------------------------------------------
 
         // The kit with nothing fighting back (DummyEncounter). The first place Component H's intent judgement is the
@@ -506,7 +507,10 @@ namespace
             // The pack block's slots, trained on the rotation drill's switching and dropped by the duel.
             .Merges = { "stage3_rotation" },
             .Summary = "a pack of 2-4, casters included, usually linked, and fire underfoot in a third of them",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Forecast, Goal },
+            // The gauntlet and support blocks start here -- food and drink, self-heals and shields -- since the
+            // gauntlet stage that brought them is gone (2026-09-30): pacing is learned on real content, in dungeon
+            // wings and on quests.
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast, Goal },
             .Arenas = {
                 { .Name = "pack", .Weight = 2, .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
                     .EpisodeSeconds = 150 },
@@ -518,61 +522,6 @@ namespace
             },
         });
 
-        // Pull after pull with short breaks: heals, food and drink. 450 s holds eight or more pulls, and the solo
-        // gauntlet is won by lasting to the end with Pulls.SoloGauntletWinPulls cleared. A third of the episodes are
-        // the endurance run: the same eight pulls in the same order, ending on an elite pack two levels up -- a plan
-        // rather than a fight, won by clearing the last pull alive. It was a stage of its own and was still rising
-        // at its budget; as an arena it trains alongside the gauntlet it grew out of.
-        stages.push_back({
-            .Name = "stage6_gauntlet",
-            .Suffix = "_gauntlet",
-            .Extends = "stage5_pack",
-            .Summary = "pull after pull with short breaks, and a known run of eight won by finishing it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support, Forecast, Goal },
-            .Arenas = {
-                { .Name = "gauntlet", .Weight = 2, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                    .EpisodeSeconds = 450 },
-                { .Name = "endurance", .Weight = 1, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Sequence, .EpisodeSeconds = 900 },
-                // Commanded goals between and during pulls: Recover and Rest given in the breaks as often as Fight.
-                { .Name = "commanded", .Weight = 1, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 450, .CommandedGoals = true },
-            },
-        });
-
-        // Life outside the fight, one character playing its class in the world: a chain of 1-3 quests of its level
-        // band (giver, objectives, turn-in, in the world's own zone), a field of herbs and ore with what lives among
-        // them, and a town to sell, repair, restock and dress in. The end of the classes phase: a quest is a run of
-        // small fights with walking between them, so it extends the gauntlet and merges the travel stage for the
-        // mount and the objective-bearing columns. The quest arena is weighted up: it was the worst of the three.
-        stages.push_back({
-            .Name = "stage7_life",
-            .Suffix = "_life",
-            .Extends = "stage6_gauntlet",
-            .Merges = { "stage2_travel" },
-            .Summary = "a chain of quests of the level band, a field of herbs and ore, a town's traders",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Death, Goal },
-            .Arenas = {
-                { .Name = "quest", .Weight = 9, .Against = Opposition::Quest, .EpisodeSeconds = 600,
-                    .DeathRuns = true },
-                { .Name = "gather", .Weight = 3, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
-                { .Name = "town", .Weight = 3, .Against = Opposition::Town, .EpisodeSeconds = 120 },
-                // Objective drills (next-run plan, 7.5): the quest taken, the seat within reach of one objective of
-                // a kind, two minutes. They fade as the stage goes, as the whole quest takes over.
-                { .Name = "drill_kill", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
-                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Kill) },
-                { .Name = "drill_loot", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
-                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::CollectFromCreature) },
-                { .Name = "drill_object", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
-                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::UseObject) },
-                { .Name = "drill_explore", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
-                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Explore) },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorGround(),
-            .MinLevel = 15,
-        });
-
         // ---------------------------------------------------------------------------------------------------------
         // Phase 3: parties and raids. Beside others, and then commanded.
         // ---------------------------------------------------------------------------------------------------------
@@ -581,22 +530,24 @@ namespace
         // companion stage was flat -- owner deaths ~1.05 an episode across its 50M -- while the party stage cut them
         // from 1.23 to 0.58), a party of up to four under a director, the tanking and triage drills, a dungeon's
         // bosses on their own, and whole dungeon wings from the door to the last boss with the trash alive. The
-        // wings are weighted up over the stage (WeightFinal) as the pull clearing they need comes in; the separate
-        // dungeon stage is gone with the teleport-to-the-boss it trained on.
+        // wings carry the stage from its start and grow over it (WeightFinal) while the synthetic pulls fade: real
+        // content teaches the pacing the gauntlet stage was for, and a wipe there stands the group up at the door
+        // rather than ending the lesson (2026-09-30). The separate dungeon stage is gone with the
+        // teleport-to-the-boss it trained on. It extends the pack stage directly.
         //
         // The companion arena's owner is the script (it wanders, runs legs between pulls and engages on a timer):
         // following a moving owner is the lesson. The party's owner is the cast one.
         stages.push_back({
-            .Name = "stage8_party",
+            .Name = "stage6_party",
             .Suffix = "_party",
-            .Extends = "stage7_life",
+            .Extends = "stage5_pack",
             .Summary = "a companion, a party under a director with its tanking and triage drills, dungeon bosses, "
                 "and whole dungeon wings from the door",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
                 { .Name = "companion", .Weight = 3, .WeightFinal = 2, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Gauntlet, .Owner = true, .EpisodeSeconds = 450 },
-                { .Name = "party", .Weight = 3, .WeightFinal = 2, .Seats = SeatPlan::Party,
+                { .Name = "party", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
                     .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
                     .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450, .Directed = true,
                     .DirectorLearned = true },
@@ -612,31 +563,12 @@ namespace
                 { .Name = "dungeon_boss", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
                     .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
-                { .Name = "dungeon_wing", .Weight = 0, .WeightFinal = 4, .Seats = SeatPlan::Party,
+                // Real content carries the stage (2026-09-30): wings from the start, the synthetic pulls fading.
+                { .Name = "dungeon_wing", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
                     .Against = Opposition::Instance, .Owner = true, .OwnerCast = true, .PartyGroup = true,
                     .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
                     .DirectorLearned = true },
             },
-        });
-
-        // A group questing in the world (Component F): two to four seats with a director, a chain of quests in a real
-        // zone, the journal shared -- where one member saw what the quest wants, all of them know. Kill and loot
-        // credit is the group's (a real group), and the director sends members to the objectives.
-        stages.push_back({
-            .Name = "stage9_world_group",
-            .Suffix = "_world_group",
-            .Extends = "stage8_party",
-            // The world and travel blocks, from the life stage the party line does not carry.
-            .Merges = { "stage7_life" },
-            .Summary = "a group on a quest chain in the world, under a director",
-            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Death,
-                Goal },
-            .Arenas = { { .Name = "world_group", .Seats = SeatPlan::Party, .Against = Opposition::Quest,
-                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
-                .DeathRuns = true } },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorGround(),
-            .MinLevel = 15,
         });
 
         // The raid, before the real raids: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group
@@ -645,14 +577,12 @@ namespace
         // adds, and why the mechanics a seat can read (a cast worth interrupting, something on the ground, where it
         // stands on the threat table) matter far more here. One fight, and a run of pulls with recovery between.
         //
-        // Forty seats an env is forty bots an env: AnimusForge.Stage.stage10_raid_pulls.Envs brings the env count
+        // Forty seats an env is forty bots an env: AnimusForge.Stage.stage7_raid_pulls.Envs brings the env count
         // down in proportion.
         stages.push_back({
-            .Name = "stage10_raid_pulls",
+            .Name = "stage7_raid_pulls",
             .Suffix = "_raid_pulls",
-            .Extends = "stage9_world_group",
-            // The companion block, which the world group dropped (it has no owner).
-            .Merges = { "stage8_party" },
+            .Extends = "stage6_party",
             .Summary = "a raid of eight groups against one elite and its adds, and a run of raid pulls",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -671,11 +601,11 @@ namespace
         // forty in Molten Core, Blackwing Lair and the Temple of Ahn'Qiraj. No owner (forty seats leave no slot for
         // one): seat 0 leads. Weighted against their cost -- a forty-seat episode is four ten-seat ones -- so each
         // size gets a fair share of the stage's bots rather than of its episodes. A ten-seat synthetic single pack
-        // stays as the control arena. The env count is set for the forty (Stage.stage11_raids.Envs).
+        // stays as the control arena. The env count is set for the forty (Stage.stage8_raids.Envs).
         stages.push_back({
-            .Name = "stage11_raids",
+            .Name = "stage8_raids",
             .Suffix = "_raids",
-            .Extends = "stage10_raid_pulls",
+            .Extends = "stage7_raid_pulls",
             .Summary = "raids of ten, twenty-five and forty seats against their bosses, in their instances",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -702,9 +632,9 @@ namespace
         // Self-play one-on-one: two learned seats of any classes, the far side played by the live policy or by a
         // frozen earlier checkpoint (the league), so the opponent is always something that learned to fight.
         stages.push_back({
-            .Name = "stage12_duel_pvp",
+            .Name = "stage9_duel_pvp",
             .Suffix = "_duel_pvp",
-            .Extends = "stage11_raids",
+            .Extends = "stage8_raids",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
@@ -720,9 +650,9 @@ namespace
         // whether to leave at all is part of the lesson. Cover is the whole point: Durnholde Keep and the Southshore
         // farms, on the instance map the PvP line fights on.
         stages.push_back({
-            .Name = "stage13_escape",
+            .Name = "stage10_escape",
             .Suffix = "_escape",
-            .Extends = "stage12_duel_pvp",
+            .Extends = "stage9_duel_pvp",
             .Summary = "a fight it may not win: break away and live, or get out of sight and stay there",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             .Arenas = {
@@ -742,9 +672,9 @@ namespace
         // bootstrap steps over it for the rest and merges its layouts forward. From level with the seat to six up:
         // stronger, so getting into position is worth its time, but close enough that a good opener decides it.
         stages.push_back({
-            .Name = "stage14_stealth",
+            .Name = "stage11_stealth",
             .Suffix = "_stealth",
-            .Extends = "stage13_escape",
+            .Extends = "stage10_escape",
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
@@ -760,11 +690,11 @@ namespace
         // interrupt, go there -- and learning that following it pays. Places are on: an arena has cover worth
         // sending someone to.
         stages.push_back({
-            .Name = "stage15_arena",
+            .Name = "stage12_arena",
             .Suffix = "_arena",
-            .Extends = "stage14_stealth",
+            .Extends = "stage11_stealth",
             // The pack, support and order blocks, trained through the party phase; the pvp line dropped them.
-            .Merges = { "stage11_raids" },
+            .Merges = { "stage8_raids" },
             .Summary = "two, three and five a side, under a director: follow the call",
             .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -785,9 +715,9 @@ namespace
         // Mounting between the bases and being dismounted by the flag come from travel; the fight from the arena.
         // The Barrens, since the second base is placed by the objective search 100-180 yd from the first.
         stages.push_back({
-            .Name = "stage16_flag",
+            .Name = "stage13_flag",
             .Suffix = "_flag",
-            .Extends = "stage15_arena",
+            .Extends = "stage12_arena",
             // The travel block, which the pvp line does not carry.
             .Merges = { "stage2_travel" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
@@ -803,11 +733,11 @@ namespace
         // Ten against ten in the real battleground, each side under its director: escort the carrier, hold the
         // base, stop theirs.
         stages.push_back({
-            .Name = "stage17_warsong",
+            .Name = "stage14_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage16_flag",
+            .Extends = "stage13_flag",
             // Ten a side is a group: the party and order blocks, which the flag line does not carry.
-            .Merges = { "stage11_raids" },
+            .Merges = { "stage8_raids" },
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Order, Forecast, Goal },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -823,17 +753,75 @@ namespace
             .MinLevel = 20,
         });
 
+        // ---------------------------------------------------------------------------------------------------------
+        // Phase 5: life. The world the character lives in, last: everything before it -- the class, fighting beside
+        // others and against them -- is what a life in the world is made of (2026-09-30: solo, party, PvP, life).
+        // ---------------------------------------------------------------------------------------------------------
+
+        // Life outside the fight, one character playing its class in the world: a chain of 1-3 quests of its level
+        // band (giver, objectives, turn-in, in the world's own zone), a field of herbs and ore with what lives among
+        // them, and a town to sell, repair, restock and dress in. It extends the last PvP stage, merges the travel
+        // stage for the mount and the objective-bearing columns, and the raids for the pack, gauntlet and support
+        // blocks the PvP line does not carry. The quest arena is weighted up: it was the worst of the three.
+        stages.push_back({
+            .Name = "stage15_life",
+            .Suffix = "_life",
+            .Extends = "stage14_warsong",
+            .Merges = { "stage2_travel", "stage8_raids" },
+            .Summary = "a chain of quests of the level band, a field of herbs and ore, a town's traders",
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Death, Goal },
+            .Arenas = {
+                { .Name = "quest", .Weight = 9, .Against = Opposition::Quest, .EpisodeSeconds = 600,
+                    .DeathRuns = true },
+                { .Name = "gather", .Weight = 3, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
+                { .Name = "town", .Weight = 3, .Against = Opposition::Town, .EpisodeSeconds = 120 },
+                // Objective drills (next-run plan, 7.5): the quest taken, the seat within reach of one objective of
+                // a kind, two minutes. They fade as the stage goes, as the whole quest takes over.
+                { .Name = "drill_kill", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Kill) },
+                { .Name = "drill_loot", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::CollectFromCreature) },
+                { .Name = "drill_object", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::UseObject) },
+                { .Name = "drill_explore", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Explore) },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .MinLevel = 15,
+        });
+
+        // A group questing in the world (Component F): two to four seats with a director, a chain of quests in a real
+        // zone, the journal shared -- where one member saw what the quest wants, all of them know. Kill and loot
+        // credit is the group's (a real group), and the director sends members to the objectives.
+        stages.push_back({
+            .Name = "stage16_world_group",
+            .Suffix = "_world_group",
+            .Extends = "stage15_life",
+            // The party and order blocks, from the raids the life stage does not carry.
+            .Merges = { "stage8_raids" },
+            .Summary = "a group on a quest chain in the world, under a director",
+            .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Support, World, Order, Forecast, Death,
+                Goal },
+            .Arenas = { { .Name = "world_group", .Seats = SeatPlan::Party, .Against = Opposition::Quest,
+                .PartyGroup = true, .EpisodeSeconds = 600, .Directed = true, .DirectorLearned = true,
+                .DeathRuns = true } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .MinLevel = 15,
+        });
+
         // The world with other people in it (Component F): two directed pairs and two solos questing in one zone,
         // every group half the time on the first group's quest, the zone's creatures shared. The coordinator's claims
         // show in the journal, and credit taken in a place another group holds is charged (Life.Poach): what it
         // teaches is going where the others are not. A quarter of the episodes add the world's other people: hostile
         // players who arrive mid-quest and gank whoever they find.
         stages.push_back({
-            .Name = "stage18_world_shared",
+            .Name = "stage17_world_shared",
             .Suffix = "_world_shared",
-            .Extends = "stage17_warsong",
-            // The world group for the life and group blocks, the arena for the hostiles block.
-            .Merges = { "stage9_world_group", "stage15_arena" },
+            .Extends = "stage16_world_group",
+            // The arena for the hostiles and PvP blocks.
+            .Merges = { "stage12_arena" },
             .Summary = "groups and solos questing in one zone, sharing its creatures, and ganked by hostile players",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Pvp, Hostiles, Support, World, Order,
                 Forecast, Death, Goal },
@@ -861,8 +849,8 @@ namespace
         // arrives by extension -- so each phase's arenas can be distilled from the model that trained them.
         //
         // Sixteen arenas (MAX_ARENAS), each phase's representatives rather than every drill: movement's trip, flight
-        // and water crossing (the earliest lesson, the likeliest overwritten); the classes' duel, gauntlet, quest and
-        // town; the companion, the directed party, the dungeon and a ten-seat raid; one-on-one, arena teams, the
+        // and water crossing (the earliest lesson, the likeliest overwritten); the classes' duel and pack, the quest
+        // and town; the companion, the directed party, the dungeon and a ten-seat raid; one-on-one, arena teams, the
         // escape drill and the shared world with its ganks; and the ganked owner, which needs PvE and PvP in one
         // episode. Left out: gathering (the quest's journal work covers finding and taking things), the rotation
         // drill (every fight replays the kit), ledges and rooms, the flag and Warsong, and the 25- and 40-seat raids
@@ -870,10 +858,10 @@ namespace
         // other maps than the host's say so (MapId). The raid makes this a ten-seat stage: the smaller arenas leave
         // the rest of the seats empty.
         stages.push_back({
-            .Name = "stage19_ship",
+            .Name = "stage18_ship",
             .Suffix = "_ship",
-            .Extends = "stage18_world_shared",
-            .Merges = { "stage2_travel", "stage7_life", "stage11_raids", "stage15_arena" },
+            .Extends = "stage17_world_shared",
+            .Merges = { "stage2_travel", "stage8_raids", "stage12_arena" },
             .Summary = "every phase in one policy: the trip, the fight, the quest, the party, the raid and the arena",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles,
                 Support, World, Order, Forecast, Death, Goal },
@@ -893,8 +881,8 @@ namespace
                 // Classes
                 { .Name = "duel", .Weight = 3, .Against = Opposition::Creature, .EpisodeSeconds = 90,
                     .SpawnPoints = KalimdorGround(), .MapId = MAP_KALIMDOR, .HeldOutSpawnPoints = KalimdorControl() },
-                { .Name = "gauntlet", .Weight = 3, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                    .EpisodeSeconds = 450 },
+                { .Name = "pack", .Weight = 3, .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
+                    .EpisodeSeconds = 150 },
                 { .Name = "quest", .Weight = 4, .Against = Opposition::Quest, .EpisodeSeconds = 600,
                     .DeathRuns = true },
                 // Parties and raids

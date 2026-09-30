@@ -186,7 +186,7 @@ eval:
   seed: 1000
   deterministic: true
   # A second, sampled evaluation every N evaluations was a third more evaluation for a number only the export stage
-  # reads (whether the argmax policy drifts from the sampled one); stage19_ship turns it on for itself.
+  # reads (whether the argmax policy drifts from the sampled one); stage18_ship turns it on for itself.
   sampled_every: 0
 
 # Done: the one rule every stage ends on (animus.stage). A class has converged when, over the last `window`

@@ -137,7 +137,7 @@ only when named), skipping any stage whose run already finished. Each stage:
 3. starts the learner, which seeds from the closest trained ancestor,
 4. trains until every class has converged or its budget is reached (the next stage starts), or it is cancelled.
 
-To train particular stages: `forge start stage12_duel_pvp stage13_escape`. List each stage after the stage it extends, or it
+To train particular stages: `forge start stage9_duel_pvp stage10_escape`. List each stage after the stage it extends, or it
 won't seed from it (the command warns you). With no arguments the queue is every default-queue stage in number
 order, which is already a valid order, so the usual case needs no arguments at all.
 
@@ -286,7 +286,7 @@ The updates have stopped moving the policy. Roughly half the stages measured end
 about 0.01 -- so the final third costs wall clock and buys very little.
 
 What to do: **nothing automatically.** The other half of the stages do not stall at all (`stage4_duel`'s KL
-*rises* over 683 updates; travel and flight stay flat), and `stage6_gauntlet` trips this check and then went on
+*rises* over 683 updates; travel and flight stay flat), and `stage5_pack` trips this check and then went on
 to 916 productive updates. Read it together with the evaluation: if the score is not improving either, the rest
 of the run is wall clock and the budget is better spent on the next stage.
 
@@ -297,8 +297,8 @@ of the run is wall clock and the budget is better spent on the next stage.
 | Freeze everything, sim and learner | `forge pause`, later `forge resume` |
 | Stop and keep the progress | `forge cancel` (saves `latest.pt`), later `forge resume` |
 | Give up on the current stage and go to the next | `forge skip` |
-| Continue a particular stage from its checkpoint | `forge resume stage6_gauntlet [stage8_party ...]` |
-| Retrain a finished stage | `forge start stage6_gauntlet`, which archives the old run |
+| Continue a particular stage from its checkpoint | `forge resume stage5_pack [stage6_party ...]` |
+| Retrain a finished stage | `forge start stage5_pack`, which archives the old run |
 | Fine-tune a stage from its own best (after reward or mask changes) | copy its `best.pt` to `runs/_finetune/<stage>/best.pt`, then `forge start <stage>`: the learner seeds from it before the seed chain (`finetune_from`) |
 
 ### After changing C++
@@ -342,18 +342,18 @@ A stage never halts the plan: it advances when every class has converged, or at 
 1. **Export**, even during training:
 
    ```
-   forge export stage8_party            # best.pt, else latest.pt
-   forge export stage8_party latest
+   forge export stage6_party            # best.pt, else latest.pt
+   forge export stage6_party latest
    ```
 
    Output goes to `AnimusForge.ModelDir` (default `modules/mod-animus-forge/models/`) as one `.amdl` and one `.json`
    per class, for example `warrior_tank_party.amdl` and `warrior_tank_party.json`. The export log is
-   `animus-export.log`. "Export of stage8_party finished" appears in the console.
+   `animus-export.log`. "Export of stage6_party finished" appears in the console.
 
 2. **Copy both files for every class** to the realm's `Animus.ModelDir` (default `<DataDir>/animus`).
 
 3. **Configure the realm** (`mod_animus.conf`): set `Animus.Curriculum.Stage` to the stage whose models companions
-   should play (`stage8_party`, or `stage19_ship` for PvE and PvP), and `Animus.Curriculum.DecisionMs` to the
+   should play (`stage6_party`, or `stage18_ship` for PvE and PvP), and `Animus.Curriculum.DecisionMs` to the
    training decision interval.
 
 4. **Load.** Models load on first use. On a running realm, `.reload config` resets the model cache.
@@ -379,8 +379,8 @@ On a stock realm with mod-animus and the models (`.animus stage open` turns GM m
 
 To see exactly the training conditions, copy the run's `stage.json` `"tuning"` values into `Animus.Curriculum.*`, and
 match `Animus.Stage.DecisionMs`, `EpisodeSeconds`, `Level` and `SpawnPoint.*` to the forge settings. To look at one
-situation of stage 8: `.animus stage open stage19_ship model ambush`. To compare with the baseline:
-`.animus stage open stage8_party fight`.
+situation of stage 8: `.animus stage open stage18_ship model ambush`. To compare with the baseline:
+`.animus stage open stage6_party fight`.
 
 ## 7.8 Running the learner by hand
 
@@ -409,7 +409,7 @@ docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/py
 
 ```bash
 python -m animus.evaluate --checkpoint runs/stage4_duel/best.pt --episodes 128 --seed 1000 --baseline fight
-python -m animus.evaluate --checkpoint runs/stage12_duel_pvp/best.pt --baseline fight --opponent-baseline
+python -m animus.evaluate --checkpoint runs/stage9_duel_pvp/best.pt --baseline fight --opponent-baseline
 ```
 
 ## 7.9 Extending the curriculum
@@ -547,7 +547,7 @@ to the core and a seam in `CoreHooks`, and install it from mod-animus-forge.
   update on a worker thread while the sim collects the next rollout and closes most of that gap; the rollout then acts
   on the update before last, and update stats are logged one update late. It is **off**, and `stage4_duel` sets it
   off for the whole curriculum that extends it. The serial cost is real and large -- `stage1_move` is a 1.82 s update
-  against a 3.2 s rollout, `stage14_stealth` 3.08 s against 4.26 s, so 36-42% of wall clock with the sim blocked in
+  against a 3.2 s rollout, `stage11_stealth` 3.08 s against 4.26 s, so 36-42% of wall clock with the sim blocked in
   `ReceiveAny`, and the rollout being the longer of the two is the case overlap should hide completely. It was
   measured on this machine anyway and gained nothing: 5,365 against 5,323 env steps/s, inside the noise. Whatever
   the rollout's forward pass and the update contend for does not show up in the per-decision buckets. Do not

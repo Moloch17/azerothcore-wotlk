@@ -3,15 +3,15 @@
 # the quest and the town; the companion, the directed party, the dungeon and a ten-seat raid; one-on-one, arena teams,
 # the escape drill and the shared world with its ganks; and an owner ganked mid-gauntlet.
 #
-# Seeding: the trunk from stage18_world_shared; the blocks it lacks from the last stage of each earlier phase
-# (stage2_travel, stage7_life, stage11_raids) and stage15_arena (the context block). Distillation: each arena is
+# Seeding: the trunk from stage17_world_shared; the blocks it lacks from the last stage of each earlier phase
+# (stage2_travel, stage15_life, stage8_raids) and stage12_arena (the context block). Distillation: each arena is
 # taught by the first parent that has it; the rest learn from the reward alone.
 #
 # The evaluation reports per phase (eval.phases): the gate is each phase within noise of its own stage's last
 # evaluation, so a phase this stage lets slip is named rather than averaged away.
 
-extends: stage8_party.yaml
-run_name: stage19_ship
+extends: stage6_party.yaml
+run_name: stage18_ship
 
 total_env_steps: 100000000
 
@@ -37,6 +37,6 @@ eval:
 
 cast:
   opponents: league
-  parent: "{runs_dir}/stage12_duel_pvp/best.pt"
+  parent: "{runs_dir}/stage9_duel_pvp/best.pt"
   agents:
-    owner: "{runs_dir}/stage6_gauntlet/best.pt"
+    owner: "{runs_dir}/stage5_pack/best.pt"

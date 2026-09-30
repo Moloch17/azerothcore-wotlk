@@ -85,7 +85,7 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     foresight_outputs = ((len(horizons) + 1 + (3 if obs_targets else 0))
                          if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0)
     # A directed stage's actor has the director's set encoder (stage.json "director"): rebuilt from the teacher's own
-    # stage, or its weights would not load -- the first fast pass stopped at stage12_duel_pvp, whose league was seeded
+    # stage, or its weights would not load -- the first fast pass stopped at stage9_duel_pvp, whose league was seeded
     # with the raid stage's directed checkpoint.
     t_names = [entry["name"] for entry in t_spec["layouts"]]
     t_stage = checkpoint.get("stage")
@@ -251,7 +251,7 @@ class Distiller:
 
         Every argument carries a leading [steps, rows] (logits [steps, rows, actions]). A recurrent teacher still has
         to see the decisions in order, but only its GRU cell does: its adapters and trunk run once over every step,
-        which is the difference between a matmul per step per teacher and one per teacher. stage19_ship has six
+        which is the difference between a matmul per step per teacher and one per teacher. stage18_ship has six
         teachers and measured a 306 s update against a 6 s rollout before this.
 
         Returns (loss, rows) with rows 0 when nothing was taught.

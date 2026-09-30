@@ -227,7 +227,7 @@ are cleaned up by the core at startup (group members without a character).
 
 ### Life outside the fight
 
-A companion whose model carries the **world block** -- exported from `stage7_life` or a later stage that keeps it, the
+A companion whose model carries the **world block** -- exported from `stage15_life` or a later stage that keeps it, the
 ship stage included -- lives a little on its own. The block is the one the forge's life stage trained (manual 4,
 stage 7): the nearest corpse it may loot, quest giver it has business with, gathering node and vendor, its own
 bags, gold, durability, food, drink and whether something in the bags rates higher than what it wears; and the

@@ -2712,7 +2712,7 @@ Unit* Animus::Curriculum::StageScenario::CurrentTarget(Env const& env, uint32 se
         target = env.FindTargetUnit(0);
 
     // Never a unit on its way out of the world or on another map than the seat's: the encoder's cast checks build a
-    // Spell against it (SpellChecks::CheckCast), and a stage7_life map thread faulted in
+    // Spell against it (SpellChecks::CheckCast), and a stage15_life map thread faulted in
     // Encoding::IsSpellActionAllowed on a target being removed while the seat was observed.
     if (target && (!target->IsInWorld() || target->IsDuringRemoveFromWorld()))
         return nullptr;

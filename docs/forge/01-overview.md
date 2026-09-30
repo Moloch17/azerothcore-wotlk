@@ -112,10 +112,10 @@ observation vector and action list it gets. The layout is built by placing the s
 model only works on a server that builds the same manifest.
 
 **Stage and arena.** A **stage** is a scenario the learner trains (`stage5_pack`). It extends an earlier stage and
-inherits that stage's trained weights. An **arena** is one situation a stage's episodes can be: a duel, a gauntlet, a
+inherits that stage's trained weights. An **arena** is one situation a stage's episodes can be: a duel, a pack, a
 party, an ambush, a trip or a flag match, each drawn by weight. A drill is an arena of the stage it serves: `stage1_move`
-mixes seven terrains, `stage8_party` the party, tanking and triage, and `stage19_ship`, the stage that ships, sixteen
-arenas from all four phases.
+mixes seven terrains, `stage6_party` the party, tanking and triage, and `stage18_ship`, the stage that ships, sixteen
+arenas from all five phases.
 
 **Decision.** One step of the environment, and `AnimusForge.DecisionMs` of game time (250 ms by default). For each
 decision, every env scores the last transition, resets if the episode ended, observes, receives an action per seat

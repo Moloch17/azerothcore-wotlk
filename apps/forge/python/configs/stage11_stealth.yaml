@@ -2,8 +2,8 @@
 # strike range with the opener in hand. Played only by the classes whose kit can stealth (NeedsStealth); the learner
 # steps over this stage for the rest and merges its layouts forward (animus.train, a restricted stage).
 
-extends: stage13_escape.yaml
-run_name: stage14_stealth
+extends: stage10_escape.yaml
+run_name: stage11_stealth
 
 total_env_steps: 50000000
 

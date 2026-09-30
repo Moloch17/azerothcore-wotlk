@@ -169,7 +169,7 @@ class CastConfig:
     # (the flag stage extends triage) names the last PvP stage's best.pt here, with {runs_dir} filled in.
     parent: str = ""
     opponent_share: float = 0.5  # share of self-play episodes whose far side is cast, drawn per env at episode start
-    # stage.json `cast` entries by name -> checkpoint path, e.g. {owner: "{runs_dir}/stage6_gauntlet/best.pt"}.
+    # stage.json `cast` entries by name -> checkpoint path, e.g. {owner: "{runs_dir}/stage5_pack/best.pt"}.
     agents: dict = field(default_factory=dict)
     deterministic: bool = False  # training samples: an argmax opponent is one the policy learns to exploit
     league_size: int = 8

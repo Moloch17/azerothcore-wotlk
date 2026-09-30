@@ -64,7 +64,7 @@ DEFAULT_EPISODE_SECONDS = 60
 # evaluation today.
 MAX_EVAL_SIM_SECONDS = 7_200
 # The raid stages run at their own env count (AnimusForge.Stage.<name>.Envs in the conf template).
-STAGE_ENVS = {"stage10_raid_pulls": 8, "stage11_raids": 16}
+STAGE_ENVS = {"stage7_raid_pulls": 8, "stage8_raids": 16}
 
 
 def longest_episode_seconds() -> dict[str, int]:
@@ -96,8 +96,8 @@ def test_the_queue_total_is_what_the_manual_says():
     rows = documented()
     # Every stage is in the default queue, the raids included (they run at their own env count).
     queue = sum(v["total_env_steps"] for v in rows.values())
-    assert queue == 1_350_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,350M"
-    assert len(rows) == 19
+    assert queue == 1_250_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,250M"
+    assert len(rows) == 18
 
 
 # --------------------------------------------------------------------------- 8.2 tuning defaults

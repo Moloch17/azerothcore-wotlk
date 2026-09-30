@@ -6,8 +6,8 @@
 #
 # 100M, with the quest weighted up: quest was the worst life stage of the second run.
 
-extends: stage6_gauntlet.yaml
-run_name: stage7_life
+extends: stage5_pack.yaml
+run_name: stage15_life
 
 total_env_steps: 100000000
 
