@@ -498,6 +498,7 @@ namespace Animus::Curriculum
         void UpdateEnemies(Env& env) override;
         void Update(Env& env) override;
         bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
@@ -506,6 +507,11 @@ namespace Animus::Curriculum
         struct SeatInstance
         {
             bool OutcomePaid = false;
+            // A wing's terms paid so far (kills, waypoints, wipes), and whether its death has been.
+            uint32 KillsPaid = 0;
+            uint32 WaypointsPaid = 0;
+            uint32 WipesPaid = 0;
+            bool DeathPaid = false;
         };
 
         struct EnvInstance
@@ -528,8 +534,22 @@ namespace Animus::Curriculum
             bool Recorded = false;
             bool Announced = false;             // the owner was told a pull is starting (OnPullStarting)
             uint32 TrashCleared = 0;
+            /// A whole wing (InstanceLadder::Wing): the route from the door to the boss and the next point on it, the
+            /// trash killed, the wipes, and the creatures watched for dying.
+            std::vector<Position> Route;
+            uint32 RouteNext = 0;
+            uint32 TrashKills = 0;
+            uint32 Wipes = 0;
+            std::vector<ObjectGuid> Watched;
+            std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;
         };
+
+        [[nodiscard]] bool Wing(Env const& env) const;
+        /// The door-to-boss path as points every Instance.WingWaypointYards (the last one the boss), once per boss.
+        [[nodiscard]] std::vector<Position> WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
+        void UpdateWingEnemies(Env& env, EnvInstance& fight);
+        void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
 
         [[nodiscard]] std::vector<BossRow const*> const& Rows(Env const& env) const;
         [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);

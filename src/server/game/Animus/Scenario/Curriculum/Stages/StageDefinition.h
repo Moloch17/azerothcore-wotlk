@@ -75,6 +75,8 @@ namespace Animus::Curriculum
         Raid10,
         Raid25,
         Raid40,
+        /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
+        Wing,
     };
 
     enum class PullSchedule : uint8

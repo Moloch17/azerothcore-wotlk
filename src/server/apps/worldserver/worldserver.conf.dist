@@ -5998,6 +5998,16 @@ AnimusForge.Curriculum.Instance.MaxTierScale = 6
 AnimusForge.Curriculum.Instance.BossProgress = 5.0
 #   the clock running out with the boss alive, scaled by what is left of it (Duel.TimeoutFloor), divided by the tier
 AnimusForge.Curriculum.Instance.Timeout = 10.0
+#   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
+#   (x the rung), each seat's death and each wipe (/ the rung); a wipe stands the party up at the door and WingWipes
+#   of them end the episode; the route's points are WingWaypointYards apart along the door-to-boss path
+AnimusForge.Curriculum.Instance.WingTrashKill = 0.3
+AnimusForge.Curriculum.Instance.WingWaypoint = 0.2
+AnimusForge.Curriculum.Instance.WingBoss = 10.0
+AnimusForge.Curriculum.Instance.WingDeath = 3.0
+AnimusForge.Curriculum.Instance.WingWipe = 5.0
+AnimusForge.Curriculum.Instance.WingWipes = 3
+AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 
 #
 #    AnimusForge.Curriculum.Life.*

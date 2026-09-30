@@ -41,6 +41,7 @@
 
 #include <algorithm>
 #include <map>
+#include <mutex>
 
 namespace
 {
@@ -149,6 +150,17 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     table.Add("engaged", [this](Env const& env, uint32) { return _envs[env.Index].Engaged ? 1.0f : 0.0f; });
     table.Add("wiped", [this](Env const& env, uint32) { return _envs[env.Index].Wiped ? 1.0f : 0.0f; });
     table.Add("evaded", [this](Env const& env, uint32) { return _envs[env.Index].Evaded ? 1.0f : 0.0f; });
+    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Instance == InstanceLadder::Wing; }))
+    {
+        table.Add("wing_trash_kills", [this](Env const& env, uint32) { return float(_envs[env.Index].TrashKills); });
+        table.Add("wing_route_share", [this](Env const& env, uint32)
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            return fight.Route.empty() ? 0.0f : float(std::min<std::size_t>(fight.RouteNext, fight.Route.size()))
+                / float(fight.Route.size());
+        });
+        table.Add("wing_wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
+    }
 }
 
 void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
@@ -378,10 +390,21 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     fight.Boss = boss->GetGUID();
     fight.BossHealth = std::max<uint32>(1, boss->GetMaxHealth());
 
+    EnvState& data = _scenario.Data(env);
+    // A whole wing: the party stays at the door with the trash alive, and the route to the boss is its objective.
+    if (Wing(env))
+    {
+        fight.Route = WingRoute(env, map, seat, boss);
+        env.Targets.clear();
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+                _scenario.PrepareFighter(bot, _scenario.Data(env).Seats[index]);
+        return true;
+    }
+
     // Where the raid stands, then the raid: the seats in the rows StageScenario laid them out in at the door, and
     // the owner with them.
     Position const engage = EngagePoint(env, map, seat, boss);
-    EnvState& data = _scenario.Data(env);
     // The episode's home is the boss room from here on: the scripted owner holds it rather than walking back to the
     // door through the trash that was never pulled.
     data.EpisodeSpawn = engage;
@@ -438,6 +461,11 @@ void Animus::Curriculum::InstanceEncounter::UpdateEnemies(Env& env)
     // The boss in slot 0, then the creatures in the fight nearest the seats: its adds and summons reach the pack
     // block's slots the way a pull's members do.
     EnvInstance& fight = _envs[env.Index];
+    if (Wing(env))
+    {
+        UpdateWingEnemies(env, fight);
+        return;
+    }
     Player* seat = _scenario.SeatBot(env, 0);
     if (!seat || fight.Boss.IsEmpty())
         return;
@@ -498,8 +526,215 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     for (uint32 index = 0; index < data.ActiveSeats && !anyoneAlive; ++index)
         if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive())
             anyoneAlive = true;
+    if (!Wing(env))
+    {
+        if (!anyoneAlive && !fight.BossDead)
+            fight.Wiped = true;
+        return;
+    }
+
+    // A wing: the next point of the route reached by any seat; a wipe stands the party up at the door (until
+    // Instance.WingWipes, which end it), with the trash that killed it still where it was.
+    if (fight.RouteNext < fight.Route.size())
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
+                && bot->GetExactDist2d(&fight.Route[fight.RouteNext]) <= 15.0f)
+            {
+                ++fight.RouteNext;
+                break;
+            }
     if (!anyoneAlive && !fight.BossDead)
-        fight.Wiped = true;
+    {
+        ++fight.Wipes;
+        if (fight.Wipes >= _scenario.Tuning().Instance.WingWipes)
+        {
+            fight.Wiped = true;
+            return;
+        }
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+            {
+                bot->ResurrectPlayer(0.5f);
+                bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
+                BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
+                fight.Seats[index].DeathPaid = false;
+            }
+        if (Player* owner = _scenario.Owner(env); owner && !owner->IsAlive())
+        {
+            owner->ResurrectPlayer(0.5f);
+            BotFactory::TeleportWithinMap(owner, data.EpisodeSpawn);
+        }
+    }
+}
+
+bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const
+{
+    return _scenario.Arena(env).Instance == InstanceLadder::Wing;
+}
+
+std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const& env, Map* map, Player* seat,
+    Creature* boss) const
+{
+    static std::map<EngageKey, std::vector<Position>> routes;
+    static std::mutex routesLock;
+    BossRow const& row = *_envs[env.Index].Row;
+    EngageKey const key{ row.MapId, row.Entry };
+    {
+        std::lock_guard<std::mutex> guard(routesLock);
+        if (auto const known = routes.find(key); known != routes.end())
+            return known->second;
+    }
+
+    // The server's path from the door to the boss, leg by leg as EngagePoint walks it, as points every
+    // WingWaypointYards; the boss's own position last.
+    std::vector<G3D::Vector3> points;
+    Position cursor(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+    points.emplace_back(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ());
+    for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+    {
+        map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
+        PathGenerator path(seat);
+        path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), boss->GetPositionX(),
+            boss->GetPositionY(), boss->GetPositionZ(), false);
+        if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
+            break;
+        for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+            points.push_back(path.GetPath()[i]);
+        G3D::Vector3 const& end = path.GetPath().back();
+        if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
+            break;
+        cursor.Relocate(end.x, end.y, end.z);
+        if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+            break;
+    }
+
+    float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
+    std::vector<Position> route;
+    float walked = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i)
+    {
+        walked += (points[i] - points[i - 1]).length();
+        if (walked >= spacing)
+        {
+            route.emplace_back(points[i].x, points[i].y, points[i].z);
+            walked = 0.0f;
+        }
+    }
+    route.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
+    LOG_INFO("module.animus", "{}: the route to {} ({}) is {} points from the door", _scenario.Name(), row.Name,
+        row.Entry, route.size());
+
+    std::lock_guard<std::mutex> guard(routesLock);
+    routes[key] = route;
+    return route;
+}
+
+void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInstance& fight)
+{
+    Player* seat = _scenario.SeatBot(env, 0);
+    Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
+    if (!seat || !seat->IsInWorld())
+        return;
+
+    // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
+    for (ObjectGuid const& guid : fight.Watched)
+    {
+        if (guid == fight.Boss || std::find(fight.Counted.begin(), fight.Counted.end(), guid) != fight.Counted.end())
+            continue;
+        Creature const* creature = Encoding::CreatureThrough(*seat, guid);
+        if (creature && !creature->IsAlive())
+        {
+            fight.Counted.push_back(guid);
+            ++fight.TrashKills;
+        }
+    }
+
+    // In the slots: what is fighting the party first, then the nearest of what stands ahead of it -- the next pack.
+    constexpr float WING_SIGHT = 45.0f;
+    std::list<Unit*> units;
+    Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, WING_SIGHT);
+    Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
+    Cell::VisitObjects(seat, searcher, WING_SIGHT);
+    units.remove_if([](Unit* unit) { return !unit->IsAlive() || unit->IsPlayer() || unit->IsTotem(); });
+    units.sort([seat](Unit* a, Unit* b)
+    {
+        if (a->IsInCombat() != b->IsInCombat())
+            return a->IsInCombat();
+        return seat->GetDistance(a) < seat->GetDistance(b);
+    });
+    env.Targets.clear();
+    for (Unit* unit : units)
+    {
+        if (env.Targets.size() >= PACK_SLOTS)
+            break;
+        env.Targets.push_back(unit->GetGUID());
+    }
+    // The boss once it is in the fight, whatever else is.
+    if (boss && boss->IsAlive() && boss->IsInCombat()
+        && std::find(env.Targets.begin(), env.Targets.end(), fight.Boss) == env.Targets.end())
+    {
+        if (env.Targets.size() >= PACK_SLOTS)
+            env.Targets.back() = fight.Boss;
+        else
+            env.Targets.push_back(fight.Boss);
+    }
+    for (ObjectGuid const& guid : env.Targets)
+        if (std::find(fight.Watched.begin(), fight.Watched.end(), guid) == fight.Watched.end())
+            fight.Watched.push_back(guid);
+}
+
+void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
+{
+    // A wing's route: the next point is where the party is going, a TravelTo target (GoalBlock's assignment slot).
+    EnvInstance const& fight = _envs[env.Index];
+    if (!Wing(env) || fight.Route.empty())
+        return;
+    view.HasObjective = true;
+    view.Objective = fight.Route[std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1)];
+}
+
+void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,
+    RewardLedger& ledger)
+{
+    EnvInstance& fight = _envs[env.Index];
+    SeatInstance& paid = fight.Seats[seatIndex];
+    CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
+    float const tierScale = TierScale(env);
+    uint32 const waypoints = std::min<uint32>(fight.RouteNext, uint32(fight.Route.size()));
+    if (bot && bot->IsAlive())
+    {
+        ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
+        ledger.Add(RewardTerm::Approach, tuning.WingWaypoint * tierScale * float(waypoints - paid.WaypointsPaid));
+    }
+    paid.KillsPaid = fight.TrashKills;
+    paid.WaypointsPaid = waypoints;
+    if (bot && !bot->IsAlive() && !paid.DeathPaid)
+    {
+        paid.DeathPaid = true;
+        ledger.Add(RewardTerm::Death, -tuning.WingDeath / tierScale);
+    }
+    if (fight.Wipes > paid.WipesPaid)
+    {
+        ledger.Add(RewardTerm::Death, -tuning.WingWipe * float(fight.Wipes - paid.WipesPaid) / tierScale);
+        paid.WipesPaid = fight.Wipes;
+    }
+
+    bool const over = fight.BossDead || fight.Wiped || TimeIsUp(env);
+    if (!over || paid.OutcomePaid)
+        return;
+    paid.OutcomePaid = true;
+    if (seatIndex == 0 && !fight.Recorded)
+    {
+        fight.Recorded = true;
+        if (fight.Counts)
+            _ladder.Record(fight.Layout, fight.Spec, fight.Tier, fight.BossDead,
+                uint32(std::max<std::size_t>(1, Rows(env).size())) - 1);
+    }
+    if (fight.BossDead)
+        ledger.Add(RewardTerm::Kill, tuning.WingBoss * tierScale);
+    else if (TimeIsUp(env) && !fight.Route.empty())
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * (1.0f - float(waypoints) / float(fight.Route.size()))
+            / tierScale);
 }
 
 bool Animus::Curriculum::InstanceEncounter::SelectTarget(Env const& env, uint32 seatIndex, Unit*& target)
@@ -544,6 +779,11 @@ bool Animus::Curriculum::InstanceEncounter::TimeIsUp(Env const& env)
 
 void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
+    if (Wing(env))
+    {
+        RewardWing(env, seatIndex, bot, ledger);
+        return;
+    }
     EnvInstance& fight = _envs[env.Index];
     Unit* boss = env.FindTargetUnit(0);
     float const tierScale = TierScale(env);
@@ -589,5 +829,8 @@ void Animus::Curriculum::InstanceEncounter::WriteState(Env const& env, float* st
 bool Animus::Curriculum::InstanceEncounter::IsTerminal(Env const& env) const
 {
     EnvInstance const& fight = _envs[env.Index];
+    // A wing goes on past an evade (the party can pull the boss again) and ends on the kill, the last wipe or time.
+    if (Wing(env))
+        return fight.BossDead || fight.Wiped || TimeIsUp(env);
     return fight.BossDead || fight.Wiped || fight.Evaded || TimeIsUp(env);
 }

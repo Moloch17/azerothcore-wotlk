@@ -203,6 +203,16 @@ namespace Animus::Curriculum
             /// fight has a gradient before its first kill: at 5, a wipe at 40% pays 3 (x the tier scale).
             float BossProgress = 5.0f;
             float Timeout = 10.0f;              // the clock, scaled by what is left of the boss (Duel.TimeoutFloor)
+            /// Whole wings (InstanceLadder::Wing): each trash creature killed, each waypoint of the route reached, the
+            /// wing's boss, each seat's death and each wipe (a wipe stands the party up at the door; WingWipes of them
+            /// end the episode). The kill and waypoint terms scale with the rung, the costs are divided by it.
+            float WingTrashKill = 0.3f;
+            float WingWaypoint = 0.2f;
+            float WingBoss = 10.0f;
+            float WingDeath = 3.0f;
+            float WingWipe = 5.0f;
+            uint32 WingWipes = 3;
+            uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -973,6 +983,13 @@ namespace Animus::Curriculum
             f("Instance.MaxTierScale", tuning.Instance.MaxTierScale);
             f("Instance.BossProgress", tuning.Instance.BossProgress);
             f("Instance.Timeout", tuning.Instance.Timeout);
+            f("Instance.WingTrashKill", tuning.Instance.WingTrashKill);
+            f("Instance.WingWaypoint", tuning.Instance.WingWaypoint);
+            f("Instance.WingBoss", tuning.Instance.WingBoss);
+            f("Instance.WingDeath", tuning.Instance.WingDeath);
+            f("Instance.WingWipe", tuning.Instance.WingWipe);
+            f("Instance.WingWipes", tuning.Instance.WingWipes);
+            f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);
