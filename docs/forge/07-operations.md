@@ -402,7 +402,7 @@ Useful for debugging the learner in an IDE:
 **Tests:**
 
 ```bash
-docker compose exec -w /azerothcore/modules/mod-animus-forge/python ac-dev-server .venv/bin/python -m pytest
+docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/python -m pytest
 ```
 
 **Standalone evaluation of a checkpoint** (the sim must be running the same scenario with no other learner attached):
