@@ -227,6 +227,7 @@ namespace Animus::Curriculum
             std::array<EnvQuest, LIFE_GROUPS> Groups;
             std::array<SeatPay, MAX_SEATS> Pay{};
             WorldCoordinator Coordinator;
+            bool Evaluating = false;            // the episode these are for (only training's count in the tally)
         };
 
         [[nodiscard]] uint32 GroupCount(Env const& env) const;
@@ -236,9 +237,17 @@ namespace Animus::Curriculum
         [[nodiscard]] bool Retired(uint32 questId) const;
         void Refused(uint32 questId);
 
+        /// How often quests with each objective kind were turned in, once reached, across every env's training
+        /// episodes: the draw favours the quests whose hardest kind is turned in least (QuestWeight), so the kinds
+        /// the seats fail at are not crowded out by deliveries. Evaluation draws uniformly.
+        void Tally(EnvQuests const& quests);
+        [[nodiscard]] uint32 QuestWeight(LifeWorld::QuestCandidate const& candidate) const;
+
         std::vector<EnvQuests> _quests;
         mutable std::mutex _refusedLock;
         std::unordered_map<uint32, uint32> _refusals;
+        std::array<uint32, size_t(ObjectiveKind::Count)> _kindAttempts{};     // under _refusedLock
+        std::array<uint32, size_t(ObjectiveKind::Count)> _kindTurnedIn{};
     };
 
     /// A field of the band's herb and ore nodes, with the zone's own creatures around them; the seat has the

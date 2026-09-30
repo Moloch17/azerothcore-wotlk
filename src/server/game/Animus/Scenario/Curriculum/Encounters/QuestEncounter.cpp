@@ -205,10 +205,54 @@ void Animus::Curriculum::QuestEncounter::Refused(uint32 questId)
             REFUSALS_TO_RETIRE);
 }
 
+void Animus::Curriculum::QuestEncounter::Tally(EnvQuests const& quests)
+{
+    if (quests.Evaluating)
+        return;
+
+    std::lock_guard<std::mutex> guard(_refusedLock);
+    for (EnvQuest const& group : quests.Groups)
+        // Each quest of the chain the group reached counts once for every kind among its objectives.
+        for (uint32 index = 0; index < group.Chain.size() && index <= group.TurnedInCount; ++index)
+        {
+            QuestPlan const* plan = group.Chain[index]->Plan;
+            if (!plan)
+                continue;
+            std::array<bool, size_t(ObjectiveKind::Count)> kinds{};
+            for (PlannedObjective const& objective : plan->Objectives)
+                kinds[size_t(objective.Kind)] = true;
+            for (size_t kind = 0; kind < kinds.size(); ++kind)
+                if (kinds[kind])
+                {
+                    ++_kindAttempts[kind];
+                    _kindTurnedIn[kind] += index < group.TurnedInCount ? 1 : 0;
+                }
+        }
+}
+
+uint32 Animus::Curriculum::QuestEncounter::QuestWeight(LifeWorld::QuestCandidate const& candidate) const
+{
+    // 1 / (the turn-in rate of its hardest kind), the rate smoothed (a kind never drawn reads as one in two) and
+    // floored at 5%, so a weight runs from 1 to 20; floored in turn at a quarter of the most, so what the seats
+    // already do well still comes up one draw in a few.
+    constexpr float MOST = 20.0f;
+    float rate = 1.0f;
+    if (candidate.Plan)
+        for (PlannedObjective const& objective : candidate.Plan->Objectives)
+        {
+            size_t const kind = size_t(objective.Kind);
+            rate = std::min(rate, (float(_kindTurnedIn[kind]) + 1.0f) / (float(_kindAttempts[kind]) + 2.0f));
+        }
+    float const weight = std::clamp(1.0f / std::max(rate, 0.05f), MOST * 0.25f, MOST);
+    return uint32(weight * 100.0f);
+}
+
 bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
 {
     EnvQuests& quests = _quests[env.Index];
+    Tally(quests);
     quests = EnvQuests();
+    quests.Evaluating = env.Evaluating;
 
     LifeWorld::QuestSet const& set = LifeWorld::QuestSet::Instance();
     std::vector<LifeWorld::QuestCandidate const*> const* candidates = &set.For(life.Tier, life.Side, env.Evaluating);
@@ -228,9 +272,33 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
         uint32 const roll = LifeWorld::Draw(env, weights, salt);
         return roll < CHAIN_WEIGHTS[0] ? 1u : roll < CHAIN_WEIGHTS[0] + CHAIN_WEIGHTS[1] ? 2u : 3u;
     };
+    // Training weighs each quest by how rarely its hardest objective kind is turned in; evaluation draws them alike,
+    // so its numbers stay comparable from one evaluation to the next.
+    std::vector<uint32> questWeights;
+    uint32 total = 0;
+    if (!env.Evaluating)
+    {
+        std::lock_guard<std::mutex> guard(_refusedLock);
+        questWeights.reserve(candidates->size());
+        for (LifeWorld::QuestCandidate const* candidate : *candidates)
+            total += questWeights.emplace_back(QuestWeight(*candidate));
+    }
+    auto const drawOne = [&](uint32 salt) -> LifeWorld::QuestCandidate const*
+    {
+        if (!total)
+            return (*candidates)[LifeWorld::Draw(env, uint32(candidates->size()), salt)];
+        uint32 roll = LifeWorld::Draw(env, total, salt);
+        for (size_t index = 0; index < questWeights.size(); ++index)
+        {
+            if (roll < questWeights[index])
+                return (*candidates)[index];
+            roll -= questWeights[index];
+        }
+        return candidates->back();
+    };
     LifeWorld::QuestCandidate const* first = nullptr;
     for (uint32 attempt = 0; attempt < DRAW_ATTEMPTS && (!first || Retired(first->Id)); ++attempt)
-        first = (*candidates)[LifeWorld::Draw(env, uint32(candidates->size()), SALT_QUEST + life.Draws++)];
+        first = drawOne(SALT_QUEST + life.Draws++);
     quests.Groups[0].Chain = ChainFrom(first, length(SALT_CHAIN + life.Draws), env.Evaluating, life.Side);
 
     // The other groups in the same zone (world_shared) -- the second side, and each seat questing alone beside

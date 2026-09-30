@@ -21,6 +21,7 @@
 #include "GameObject.h"
 #include "Log.h"
 #include "ObjectMgr.h"
+#include "DBCStores.h"
 #include "Player.h"
 #include "QuestDef.h"
 #include <algorithm>
@@ -220,6 +221,29 @@ Animus::Curriculum::QuestPlanner::QuestPlanner()
             escorts.insert(result->Fetch()[0].Get<uint32>());
         } while (result->NextRow());
 
+    // Quests whose creature credit comes from a spell, as the database says (SpecialFlags 32). The loaded quests
+    // cannot tell: ObjectMgr sets KILL, CAST and SPEAKTO together on every quest with a creature or object column,
+    // so every creature objective read as a cast and no quest was ever planned as a kill. A kill credits any quest
+    // naming the creature (Player::KilledMonsterCredit ignores CAST), so the rest are kills of whatever can be
+    // attacked.
+    std::unordered_set<uint32> castCredit;
+    if (QueryResult result = WorldDatabase.Query("SELECT ID FROM quest_template_addon WHERE SpecialFlags & 32"))
+        do
+        {
+            castCredit.insert(result->Fetch()[0].Get<uint32>());
+        } while (result->NextRow());
+
+    // Whether a player can fight the creature at all: not friendly to both sides' players, not flagged out of reach.
+    auto const attackable = [](uint32 entry)
+    {
+        CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(entry);
+        if (!creature || (creature->unit_flags & (UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE
+            | UNIT_FLAG_IMMUNE_TO_PC)))
+            return false;
+        FactionTemplateEntry const* faction = sFactionTemplateStore.LookupEntry(creature->faction);
+        return faction && (faction->friendlyMask & FACTION_MASK_PLAYER) != FACTION_MASK_PLAYER;
+    };
+
     std::unordered_map<std::string_view, uint32> refused;
     for (auto const& [id, quest] : sObjectMgr->GetQuestTemplates())
     {
@@ -242,7 +266,7 @@ Animus::Curriculum::QuestPlanner::QuestPlanner()
             ++refused[why];
         };
 
-        bool const cast = quest->HasSpecialFlag(QUEST_SPECIAL_FLAGS_CAST);
+        bool const cast = castCredit.contains(id);
         bool ok = true;
         if (quest->GetTimeAllowed())
             refuse("timed"), ok = false;
@@ -290,6 +314,13 @@ Animus::Curriculum::QuestPlanner::QuestPlanner()
                 objective.Entry = uint32(what);
                 objective.UseItem = item;
                 objective.Sources = { objective.Entry };
+            }
+            else if (!attackable(uint32(what)))
+            {
+                // Someone to speak to or a scripted event, which no objective a plan names completes.
+                refuse("creature credit that is not a kill");
+                ok = false;
+                break;
             }
             else
             {
