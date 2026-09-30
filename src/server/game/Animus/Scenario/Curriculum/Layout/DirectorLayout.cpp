@@ -96,6 +96,10 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         out[SEAT_ATTACKED] = seat.Attacked;
         out[SEAT_ORDER_FIRST + uint32(seat.Order)] = 1.0f;
         out[SEAT_ORDER_AGE] = seat.OrderAge;
+        if (int32 const kind = GoalKindOf(seat.Goal); kind >= 0 && kind < int32(GOAL_COUNT))
+            out[SEAT_GOAL_FIRST + uint32(kind)] = 1.0f;
+        if (int32 const kind = GoalKindOf(seat.Goal2); kind >= 0 && kind < int32(GOAL_COUNT))
+            out[SEAT_GOAL2_FIRST + uint32(kind)] = 1.0f;
 
         // A living member can be addressed, and healed by an order to whoever is addressed.
         if (speak && seat.Alive)

@@ -17,6 +17,7 @@
  */
 
 #include "CombatReward.h"
+#include "OrderGoals.h"
 #include "Encounters.h"
 #include "EpisodeInfoTable.h"
 #include "ObjectAccessor.h"
@@ -57,6 +58,32 @@ float Animus::Curriculum::DirectorEncounter::ShapingPaid(Env const& env, uint32 
     return seat < MAX_SEATS ? _envs[env.Index].Shaping[seat] : 0.0f;
 }
 
+void Animus::Curriculum::DirectorEncounter::AddShaping(Env const& env, uint32 seat, float paid)
+{
+    if (seat < MAX_SEATS)
+        _envs[env.Index].Shaping[seat] += paid;
+}
+
+int32 Animus::Curriculum::DirectorEncounter::MemberGoal(Env const& env, uint32 seat) const
+{
+    if (seat >= MAX_SEATS || !Learned(env) || _scenario.IsLoneSeat(env, seat))
+        return NO_GOAL;
+    uint32 const slot = SlotOf(env, seat);
+    SideOrder const& side = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
+    if (slot >= side.Members.size())
+        return NO_GOAL;
+
+    // Addressed to the member or its group: an order to the whole side stays advice (the order block's).
+    DirectorOrders::MemberOrder const& order = side.Members[slot];
+    if (order.Kind == OrderKind::None || order.Source == OrderSource::Side)
+        return NO_GOAL;
+    int32 enemySlot = -1;
+    for (uint32 index = 0; index < env.Targets.size() && index < PACK_SLOTS && enemySlot < 0; ++index)
+        if (env.Targets[index] == order.Target)
+            enemySlot = int32(index);
+    return OrderGoal(order.Kind, enemySlot, order.Objective);
+}
+
 void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
 {
     if (!bot || !bot->IsAlive() || seat >= MAX_SEATS || _scenario.IsLoneSeat(env, seat))
@@ -67,7 +94,10 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     RewardPlace(env, seat, bot, ledger);
 
     // Compliance shaping, per decision and small (Order.Focus): the seat's own order when it holds one, else the
-    // side's focus. Only an order the seat could be following: a dead or vanished target is not one.
+    // side's focus. Only an order the seat could be following: a dead or vanished target is not one. Not where
+    // the order is the seat's primary goal: its goal terms pay for following it, and paying both paid it twice.
+    if (_scenario.Data(env).Seats[seat].Holds[0].FromOrder)
+        return;
     uint32 const slot = SlotOf(env, seat);
     DirectorOrders::MemberOrder const own = slot < order.Members.size() ? order.Members[slot]
         : DirectorOrders::MemberOrder();
@@ -876,6 +906,8 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
             out.OrderAge = member.Kind == OrderKind::None ? 0.0f : std::min(1.0f,
                 float(state.Steps - std::min(state.Steps, member.IssuedStep)) / DirectorLayout::CALL_AGE_SCALE);
         }
+        out.Goal = _scenario.Data(env).Seats[seatIndex].Holds[0].Goal;
+        out.Goal2 = _scenario.Data(env).Seats[seatIndex].Holds[1].Goal;
         if (focus)
         {
             out.ToFocus = std::min(1.0f, bot->GetExactDist2d(focus) / DirectorLayout::DISTANCE_SCALE);

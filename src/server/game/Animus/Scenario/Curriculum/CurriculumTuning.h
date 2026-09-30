@@ -295,6 +295,11 @@ namespace Animus::Curriculum
             float ProtectValue = 0.2f;
             float TravelValue = 0.1f;
             float WorldValue = 0.2f;
+            /// The secondary goal (a second slot beside the primary: Fight A and hold B): paid this share of what the
+            /// primary would be for reaching it and for closing on it, and charged Secondary every decision it is held,
+            /// so covering everything is not free.
+            float SecondaryShare = 0.5f;
+            float Secondary = 0.002f;
         } Goals;
 
         /// The director's orders (TeamOrder), in every arena that has one.
@@ -1039,6 +1044,8 @@ namespace Animus::Curriculum
             f("Goals.ProtectValue", tuning.Goals.ProtectValue);
             f("Goals.TravelValue", tuning.Goals.TravelValue);
             f("Goals.WorldValue", tuning.Goals.WorldValue);
+            f("Goals.SecondaryShare", tuning.Goals.SecondaryShare);
+            f("Goals.Secondary", tuning.Goals.Secondary);
 
             f("Order.Focus", tuning.Order.Focus);
             f("Order.PlaceMatch", tuning.Order.PlaceMatch);

@@ -128,6 +128,31 @@ namespace Animus::Curriculum
     };
 
     /// One learned agent: its character, as built for the episode, and its episode totals.
+    /// A goal held in one of the seat's slots (the primary, Holds[0], and a secondary, Holds[1]) and where it stands:
+    /// ended (reached or no longer possible, GoalBlock::Status), paid for, and Goals.Progress's potential.
+    constexpr uint32 GOAL_SLOTS = 2;
+    struct GoalHold
+    {
+        int32 Goal = NO_GOAL;
+        bool Ended = false;
+        bool WasReached = false;            // it ended by being reached (not lost)
+        bool Rewarded = false;              // paid for (once per goal)
+        /// A goal is paid for reaching it, not for choosing it: one already true when chosen -- Fight about no one
+        /// with nothing to fight, Recover at full health -- is held unpaid until it stops being true and is then
+        /// reached again. Fresh asks the next observation to check.
+        bool Fresh = false;
+        bool SatisfiedAtChoice = false;
+        /// Goals.Progress: the potential at the last decision, once the goal's first observation has read it, and
+        /// the seat's health and mana then (what Recover restores is measured from).
+        bool PotentialReady = false;
+        float Potential = 0.0f;
+        float ChoiceResource = 1.0f;
+        bool HasPlace = false;              // the goal names a place (TravelTo, Gather, Interact): where it is
+        Position Place;
+        ObjectGuid Friend;                  // the goal names a friend (Protect): who
+        bool FromOrder = false;             // set by the director's order, not chosen by the seat (primary only)
+    };
+
     /// Why a press was aimless (StageScenario::JudgePress, SettleIntent): each is counted and priced on its own
     /// (Actions.Aimless.<cause>), so the one the seats do most can be charged more without touching the rest.
     enum class AimlessCause : uint8
@@ -267,35 +292,32 @@ namespace Animus::Curriculum
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
         uint32 TargetSlot = 0;                  // the selected enemy (pulls)
-        /// The goal the learner is pursuing for this seat (SeatGoal), NO_GOAL when its policy has no goal head, and
-        /// how the seat's decisions have matched it: decisions under a goal, matches, and goal changes.
-        int32 Goal = NO_GOAL;
+        /// The goals the learner is pursuing for this seat: the primary (Holds[0]) and a secondary (Holds[1]), each
+        /// NO_GOAL when there is none. How the seat's decisions matched the primary: decisions under a goal, matches,
+        /// and goal changes.
+        std::array<GoalHold, GOAL_SLOTS> Holds{};
         std::array<uint32, GOAL_COUNT> GoalDecisions{};
         std::array<uint32, GOAL_COUNT> GoalMatches{};
         uint32 GoalChanges = 0;
-        bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Reached, once per goal)
         uint32 StepGoalSwitches = 0;            // goal changes since the last reward (Goals.Switch)
-        bool GoalEnded = false;                 // the goal held was reached or became impossible (GoalBlock::Status)
-        bool GoalWasReached = false;            // the goal ended by being reached (not lost)
-        /// A goal is paid for reaching it, not for choosing it: one already true when chosen -- Fight about no one
-        /// with nothing to fight, Recover at full health -- is held unpaid until the clock, and pays only if it
-        /// stops being true and is then reached again. GoalFresh asks the next observation to check.
-        bool GoalFresh = false;
-        bool GoalSatisfiedAtChoice = false;
         uint32 GoalsReached = 0;
         uint32 GoalsLost = 0;
-        /// Goals.Progress: the potential of the goal held at the last decision, once the goal's first observation
-        /// has read it (GoalPotentialReady), and the seat's health and mana then (what Recover restores is measured
-        /// from). Goals chosen and reached, by kind (goal_success_<kind>).
-        float GoalPotential = 0.0f;
-        bool GoalPotentialReady = false;
-        float GoalChoiceResource = 1.0f;
+        /// Goals chosen and reached, by kind (goal_success_<kind>), either slot.
         std::array<uint32, GOAL_COUNT> GoalsChosenBy{};
         std::array<uint32, GOAL_COUNT> GoalsReachedBy{};
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
-        bool HasGoalPlace = false;              // the goal names a place (TravelTo, Gather, Interact): where it is
-        Position GoalPlace;
-        ObjectGuid GoalFriend;                  // the goal names a friend (Protect): who
+        uint32 SecondaryDecisions = 0;          // decisions a secondary goal was held (Goals.Secondary)
+        /// The goal block's event (GoalBlock::OBS_EVENT): what was true at the last observation, so only a change
+        /// raises it -- health under the escape line, the enemies in the fight, the owner under attack.
+        bool EventLow = false;
+        uint32 EventEnemies = 0;
+        bool EventOwnerAttacked = false;
+        bool Event = false;
+        /// What the seat achieved this decision, whatever it was pursuing (GoalBlock's hindsight columns), and what
+        /// it is measured against: which enemy slots were alive, and whether the seat was below Recover's line.
+        int32 Achieved = NO_GOAL;
+        std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
+        bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
@@ -478,25 +500,24 @@ namespace Animus::Curriculum
             InCombat = false;
             CombatStartMs = 0;
             TargetSlot = 0;
-            Goal = NO_GOAL;
+            Holds = {};
             GoalDecisions.fill(0);
             GoalMatches.fill(0);
             GoalChanges = 0;
-            GoalRewarded = false;
             StepGoalSwitches = 0;
-            GoalEnded = false;
-            GoalWasReached = false;
-            GoalPotential = 0.0f;
-            GoalPotentialReady = false;
-            GoalChoiceResource = 1.0f;
             GoalsChosenBy.fill(0);
             GoalsReachedBy.fill(0);
-            GoalFresh = false;
-            GoalSatisfiedAtChoice = false;
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;
-            HasGoalPlace = false;
+            SecondaryDecisions = 0;
+            EventLow = false;
+            EventEnemies = 0;
+            EventOwnerAttacked = false;
+            Event = false;
+            Achieved = NO_GOAL;
+            EnemySeenAlive.fill(0);
+            BelowRecover = false;
             StepPreparationMs = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;

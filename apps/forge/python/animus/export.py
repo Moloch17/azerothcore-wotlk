@@ -52,6 +52,12 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         if lookahead:
             success and duration, each: kind_weight[K * goal_width], kind_bias[K], (target_weight[T * goal_width],
             target_bias[T] if T > 1), pair[K * T]; then f32 lookahead_weight[2]
+        u32  goal_slots                     (version 6) 1 = one goal; else a primary, a secondary and a queue
+        if goal_slots > 1:
+            f32  slot_bias[(goal_slots - 1) * goal_width]       added to the features of each slot after the primary
+            f32  drawn[(K * T + 1) * goal_width]                 what was drawn before, by goal + 1 (0: none)
+            f32  none_bias[goal_slots - 1]                       each later slot's "none" logit
+            f32  gate                                            the secondary's share of the action head's embedding
     (goal_width: slow_size when there is one, else feature_width)
     u8       director_sets                  the director's members and enemies as sets (DirectorSets), else 0
     if director_sets:
@@ -92,7 +98,9 @@ import torch
 from .stages import STAGE_FILE, model_names
 
 AMDL_MAGIC = b"AMDL"
-AMDL_VERSION = 5
+# 6: two goals held and a queue (goal_slots, the slot parameters, the embedding's gate), a twelfth goal kind, and
+# the goal block's next-run columns (the secondary ending, the event, the director's primary, what was achieved).
+AMDL_VERSION = 6
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -220,6 +228,12 @@ def write_amdl(
                     for name in names + ["pair"]:
                         out.write(np.ascontiguousarray(lookahead[part][name], dtype="<f4").tobytes())
                 out.write(np.ascontiguousarray(lookahead["weight"], dtype="<f4").tobytes())
+            slots = int(goals.get("slots", 1))
+            out.write(struct.pack("<I", slots))
+            if slots > 1:
+                for name in ("slot_bias", "drawn", "none_bias"):
+                    out.write(np.ascontiguousarray(goals[name], dtype="<f4").tobytes())
+                out.write(struct.pack("<f", float(goals["gate"])))
 
         out.write(struct.pack("<B", 1 if sets else 0))
         if sets:
@@ -276,6 +290,12 @@ def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[
             return values
         goals["lookahead"] = {"success": part("goal_head.success"), "duration": part("goal_head.duration"),
                               "weight": array("goal_head.lookahead_weight")}
+    if "goal_head.slot_bias" in actor_state:
+        goals["slots"] = int(actor_state["goal_head.slot_bias"].shape[0]) + 1
+        goals["slot_bias"] = array("goal_head.slot_bias")
+        goals["drawn"] = array("goal_head.drawn.weight")
+        goals["none_bias"] = array("goal_head.none_bias")
+        goals["gate"] = float(actor_state["goal_embedding.gate"])
     return goals
 
 
@@ -454,6 +474,15 @@ def read_amdl(path: str | Path) -> dict:
                 values["pair"] = floats(kinds * targets, kinds, targets)
                 return values
             goals["lookahead"] = {"success": part(), "duration": part(), "weight": floats(2, 2)}
+        (slots,) = struct.unpack_from("<I", data, offset)
+        offset += 4
+        goals["slots"] = slots
+        if slots > 1:
+            goals["slot_bias"] = floats((slots - 1) * goal_width, slots - 1, goal_width)
+            goals["drawn"] = floats((kinds * targets + 1) * goal_width, kinds * targets + 1, goal_width)
+            goals["none_bias"] = floats(slots - 1, slots - 1)
+            (goals["gate"],) = struct.unpack_from("<f", data, offset)
+            offset += 4
 
     (has_sets,) = struct.unpack_from("<B", data, offset)
     offset += 1
@@ -546,51 +575,7 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
 
     goals = model.get("goals")
     if goals is not None:
-        every = max(1, model.get("goal_every", 1))
-        age = 0 if state is None else state.get("age", 0)
-        goal = 0 if state is None else state.get("goal", 0)
-        kinds, targets = goals["pair"].shape
-        allowed = goals["accepts"].astype(bool).copy()
-        ended = False
-        at = int(goals["block_at"])
-        if at < 0 and targets > 1:
-            allowed[:] = False              # no goal block (the director): only the first goal, which means none
-        if at >= 0 and targets > 1:
-            block = obs[at : at + kinds + targets + 2] > 0.5
-            allowed &= block[:kinds, None] & block[kinds : kinds + targets][None, :]
-            ended = bool(block[kinds + targets])
-        allowed = allowed.reshape(-1)
-        allowed[0] = True
-        choose = age % every == 0 or ended
-        if choose:
-            # From the slow loop, stepped on the fed-back features, or from the plain features without one.
-            source = raw
-            slow = model.get("slow")
-            if slow is not None:
-                size = slow["weight_hh"].shape[1]
-                carried = np.zeros(size, np.float32) if state is None else state.setdefault(
-                    "slow", np.zeros(size, np.float32))
-                source = _gru(slow, x, carried)
-                if state is not None:
-                    state["slow"] = source
-
-            def factored(part):
-                joint = (part["kind_weight"] @ source + part["kind_bias"])[:, None] + part["pair"]
-                if targets > 1:
-                    joint = joint + (part["target_weight"] @ source + part["target_bias"])[None, :]
-                return joint
-
-            joint = factored(goals)
-            lookahead = goals.get("lookahead")
-            if lookahead is not None:
-                joint = (joint + lookahead["weight"][0] * factored(lookahead["success"])
-                         + lookahead["weight"][1] * _sigmoid(factored(lookahead["duration"])))
-            goal = int(np.where(allowed, joint.reshape(-1), -np.inf).argmax())
-        if state is not None:
-            state["goal"], state["age"] = goal, 1 if choose else age + 1
-        x = x + goals["kind_embedding"][goal // targets]
-        if targets > 1:
-            x = x + goals["target_embedding"][goal % targets]
+        x = _reference_goals(model, goals, obs, raw, x, state)
 
     weight, bias = layers[-1]
     features = x
@@ -604,6 +589,116 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     if not allowed.any():
         return 0, x
     return int(np.where(allowed, x, -np.inf).argmax()), x
+
+
+def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray, x: np.ndarray,
+                     state: dict | None) -> np.ndarray:
+    """The goal decision of one step (LayoutActor.decide_goals, greedy) and its embedding added to `x`. `state`
+    carries "goal" (the pair held, with two slots or more), "queue", "age" and "slow"."""
+    every = max(1, model.get("goal_every", 1))
+    age = 0 if state is None else state.get("age", 0)
+    goal = 0 if state is None else state.get("goal", 0)
+    kinds, targets = goals["pair"].shape
+    count = kinds * targets
+    slots = int(goals.get("slots", 1))
+    accepts = goals["accepts"].astype(bool)
+    allowed = accepts.copy()
+    at = int(goals["block_at"])
+    base = kinds + targets
+    ended = secondary_ended = event = from_order = False
+    order_goal = 0
+    if at < 0 and targets > 1:
+        allowed[:] = False              # no goal block (the director): only the first goal, which means none
+    if at >= 0 and targets > 1:
+        width = base + 2 + (3 + 2 * base if slots > 1 else 0)
+        block = obs[at : at + width] > 0.5
+        present = block[:kinds, None] & block[kinds:base][None, :]
+        allowed &= present
+        ended = bool(block[base])
+        if slots > 1:
+            secondary_ended, event, from_order = bool(block[base + 2]), bool(block[base + 3]), bool(block[base + 4])
+            order_kind = int(np.argmax(block[base + 5 : base + 5 + kinds]))
+            order_target = int(np.argmax(block[base + 5 + kinds : base + 5 + base]))
+            order_goal = order_kind * targets + order_target
+    allowed = allowed.reshape(-1)
+    allowed[0] = True
+
+    queue = [-1] * max(0, slots - 2) if state is None else state.setdefault("queue", [-1] * max(0, slots - 2))
+    if slots > 1:
+        primary, secondary = goal // (count + 1), goal % (count + 1) - 1
+        if secondary_ended:
+            secondary = -1
+        promote = ended and queue[0] >= 0
+        if promote:
+            primary, queue = queue[0], queue[1:] + [-1]
+        choose = age % every == 0 or (ended and not promote) or event
+    else:
+        primary, secondary = goal, -1
+        choose = age % every == 0 or ended
+
+    if choose:
+        # From the slow loop, stepped on the fed-back features, or from the plain features without one.
+        source = raw
+        slow = model.get("slow")
+        if slow is not None:
+            size = slow["weight_hh"].shape[1]
+            carried = np.zeros(size, np.float32) if state is None else state.setdefault(
+                "slow", np.zeros(size, np.float32))
+            source = _gru(slow, x, carried)
+            if state is not None:
+                state["slow"] = source
+
+        def factored(part, features):
+            joint = (part["kind_weight"] @ features + part["kind_bias"])[:, None] + part["pair"]
+            if targets > 1:
+                joint = joint + (part["target_weight"] @ features + part["target_bias"])[None, :]
+            return joint
+
+        joint = factored(goals, source)
+        lookahead = goals.get("lookahead")
+        if lookahead is not None:
+            joint = (joint + lookahead["weight"][0] * factored(lookahead["success"], source)
+                     + lookahead["weight"][1] * _sigmoid(factored(lookahead["duration"], source)))
+        drawn = [int(np.where(allowed, joint.reshape(-1), -np.inf).argmax())]
+        if slots > 1:
+            before = [order_goal if from_order else drawn[0]]
+            for slot in range(1, slots):
+                shifted = source + goals["slot_bias"][slot - 1]
+                for previous in before:
+                    shifted = shifted + goals["drawn"][previous + 1]
+                later = accepts.copy()
+                if slot == 1 and at >= 0 and targets > 1:
+                    later &= present
+                if at < 0 and targets > 1:
+                    later[:] = False
+                scores = np.concatenate([np.where(later.reshape(-1), factored(goals, shifted).reshape(-1), -np.inf),
+                                         [goals["none_bias"][slot - 1]]])
+                pick = int(scores.argmax())
+                pick = -1 if pick == count else pick
+                before.append(pick)
+                drawn.append(pick)
+            primary, secondary, queue = drawn[0], drawn[1], drawn[2:]
+        else:
+            primary = drawn[0]
+    if slots > 1:
+        if from_order:
+            primary = order_goal
+        if secondary == primary:
+            secondary = -1
+        goal = primary * (count + 1) + secondary + 1
+    else:
+        goal = primary
+    if state is not None:
+        state["goal"], state["age"], state["queue"] = goal, 1 if choose else age + 1, list(queue)
+    x = x + goals["kind_embedding"][primary // targets]
+    if targets > 1:
+        x = x + goals["target_embedding"][primary % targets]
+    if slots > 1 and secondary >= 0:
+        extra = goals["kind_embedding"][secondary // targets]
+        if targets > 1:
+            extra = extra + goals["target_embedding"][secondary % targets]
+        x = x + goals["gate"] * extra
+    return x
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:

@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 17
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -268,7 +268,7 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
 
 def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> bytes:
     """ACT payload for envs [env_begin, env_begin + len(actions)): [E, A] actions, then the goals when the policy has a
-    goal head."""
+    goal head: [E, A, 2], primary then secondary (-1 none; MappoTrainer.wire_goals) -- protocol 17."""
     actions = np.ascontiguousarray(actions, dtype="<i4")
     payload = ACT_HEADER.pack(env_begin, actions.shape[0]) + actions.tobytes()
     if goals is not None:

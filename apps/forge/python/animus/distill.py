@@ -93,7 +93,7 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
                 if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        director=director)
+                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1))
     actor.load_state_dict(checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

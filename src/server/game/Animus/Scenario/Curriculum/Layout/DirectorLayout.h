@@ -71,7 +71,11 @@ namespace Animus::Curriculum::DirectorLayout
         SEAT_ATTACKED       = 20,   // enemies attacking it / PACK_SLOTS
         SEAT_ORDER_FIRST    = 21,   // one-hot over OrderKind: the order it holds
         SEAT_ORDER_AGE      = SEAT_ORDER_FIRST + ORDER_KIND_COUNT,     // decisions since / CALL_AGE_SCALE
-        SEAT_FEATURES
+        /// The goals it holds (one-hot over SeatGoal, all zero for none): the primary, which an order the director
+        /// gave may be, and the secondary it chose itself. One planner per group reads what the other level chose.
+        SEAT_GOAL_FIRST,
+        SEAT_GOAL2_FIRST    = SEAT_GOAL_FIRST + GOAL_COUNT,
+        SEAT_FEATURES       = SEAT_GOAL2_FIRST + GOAL_COUNT
     };
 
     /// Features an enemy slot contributes. The same slots the side's seats select between, so a called enemy and a
@@ -197,6 +201,8 @@ namespace Animus::Curriculum::DirectorLayout
             float Attacked = 0.0f;
             OrderKind Order = OrderKind::None;
             float OrderAge = 0.0f;
+            int32 Goal = NO_GOAL;               // the goals the member holds (SEAT_GOAL_FIRST, SEAT_GOAL2_FIRST)
+            int32 Goal2 = NO_GOAL;
         };
 
         struct EnemySlot

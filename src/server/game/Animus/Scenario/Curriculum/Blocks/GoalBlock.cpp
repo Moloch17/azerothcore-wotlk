@@ -261,4 +261,18 @@ void Animus::Curriculum::GoalBlock::Observe(SeatView const& view, float* obs, ui
         obs[OBS_TARGET_FIRST + target] = targets[target] ? 1.0f : 0.0f;
     obs[OBS_ENDED] = view.GoalEnded ? 1.0f : 0.0f;
     obs[OBS_REACHED] = view.GoalReached ? 1.0f : 0.0f;
+    obs[OBS_SECONDARY_ENDED] = view.Goal2Ended ? 1.0f : 0.0f;
+    obs[OBS_EVENT] = view.GoalEvent ? 1.0f : 0.0f;
+    // The zero-filled buffer is the caller's: one-hots only where there is something to say.
+    if (view.OrderGoal >= 0 && view.OrderGoal < int32(GOAL_JOINT_COUNT))
+    {
+        obs[OBS_FROM_ORDER] = 1.0f;
+        obs[OBS_ORDER_KIND_FIRST + GoalKindOf(view.OrderGoal)] = 1.0f;
+        obs[OBS_ORDER_TARGET_FIRST + GoalTargetOf(view.OrderGoal)] = 1.0f;
+    }
+    if (view.Achieved >= 0 && view.Achieved < int32(GOAL_JOINT_COUNT))
+    {
+        obs[OBS_ACHIEVED_KIND_FIRST + GoalKindOf(view.Achieved)] = 1.0f;
+        obs[OBS_ACHIEVED_TARGET_FIRST + GoalTargetOf(view.Achieved)] = 1.0f;
+    }
 }

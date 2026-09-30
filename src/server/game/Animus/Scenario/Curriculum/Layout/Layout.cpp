@@ -124,6 +124,7 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
         case SeatGoal::Gather:   return "gather";
         case SeatGoal::Interact: return "interact";
         case SeatGoal::Rest:     return "rest";
+        case SeatGoal::Resurrect: return "resurrect";
         case SeatGoal::Count:    break;
     }
 
@@ -168,6 +169,7 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
         case SeatGoal::Prepare:
         case SeatGoal::Loot:
         case SeatGoal::Rest:     return none;
+        case SeatGoal::Resurrect: return none || friendly;
         case SeatGoal::Count:    break;
     }
     return false;

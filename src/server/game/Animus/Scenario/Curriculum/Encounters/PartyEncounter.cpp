@@ -207,7 +207,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     {
         SeatState const& other = data.Seats[seat];
         shown[seat] = true;
-        view.Teammates[slot] = { env.FindBot(seat), other.Goal, other.Apt, other.L->Profile->Class };
+        view.Teammates[slot] = { env.FindBot(seat), other.Holds[0].Goal, other.Apt, other.L->Profile->Class };
     };
 
     // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat

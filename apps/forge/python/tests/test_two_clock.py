@@ -74,7 +74,7 @@ def rollout_with_every_part_on(**overrides):
         memory = acting.memory.copy()
         actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
                                                                                  state=acting)
-        assert len(goals) == 5 and goals[3].shape == (envs, 1, 5)
+        assert len(goals) == 6 and goals[3].shape == (envs, 1, 5)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals)
         dones = np.array([step == 15, False])
         buffer.add_outcome(rng.random((envs, 1), dtype=np.float32), dones, dones, np.zeros((envs, 1), np.float32),

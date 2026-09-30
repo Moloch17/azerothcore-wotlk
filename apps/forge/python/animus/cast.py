@@ -128,6 +128,9 @@ class CastActor:
         # A two-clock teacher's slow memory (MappoConfig.slow_goal_size), stepped when it chooses a goal.
         self.slow_size = self.teacher.actor.slow_size
         self.slow: np.ndarray | None = None
+        # A teacher with two goals and a queue (mappo.goal_slots > 1): the goals queued behind the pair it holds.
+        self.queue_width = max(1, self.teacher.actor.goal_slots - 2)
+        self.queue: np.ndarray | None = None
         self.fallback_rows = 0
 
     def ensure(self, envs: int, agents: int) -> None:
@@ -136,6 +139,7 @@ class CastActor:
             self.goal = np.zeros((envs, agents), dtype=np.int64)
             self.age = np.zeros((envs, agents), dtype=np.int64)
             self.slow = np.zeros((envs, agents, self.slow_size), dtype=np.float32)
+            self.queue = np.full((envs, agents, self.queue_width), -1, dtype=np.int64)
 
     def clear(self, done: np.ndarray) -> None:
         if self.memory is not None:
@@ -143,6 +147,7 @@ class CastActor:
             self.goal[done] = 0
             self.age[done] = 0
             self.slow[done] = 0.0
+            self.queue[done] = -1
 
     def reset_all(self) -> None:
         self.memory = None
@@ -166,6 +171,7 @@ class CastActor:
         flat_goal = self.goal.reshape(-1)
         flat_age = self.age.reshape(-1)
         flat_slow = self.slow.reshape(envs * agents, -1)
+        flat_queue = self.queue.reshape(envs * agents, -1)
         flat_actions = actions.reshape(-1)
 
         for index in np.unique(flat_layout[flat]):
@@ -189,22 +195,23 @@ class CastActor:
             goal = None
             if self.goal_count:
                 ages = flat_age[picked]
-                goals = flat_goal[picked].copy()
-                # On the clock, or at once when the goal block says the goal ended.
-                choose = (ages % self.goal_every == 0) | self.teacher.actor.goal_ended(t_obs, t_layout).cpu().numpy()
-                if choose.any():
-                    goal_features = features
-                    if self.slow_size:
-                        slow = torch.as_tensor(flat_slow[picked], device=self.device)
-                        goal_features = self.teacher.actor.slow_step(features, slow)
-                        stepped = goal_features.cpu().numpy()
-                        flat_slow[picked[choose]] = stepped[choose]
-                    drawn = self.teacher.actor.goal_distribution(goal_features, t_obs, t_layout)
-                    chosen = (drawn.probs.argmax(-1) if self.deterministic else drawn.sample()).cpu().numpy()
-                    goals[choose] = chosen[choose]
-                flat_goal[picked] = goals
+                # The same decision as the learner's own (LayoutActor.decide_goals): the queue, the clock, the
+                # goal block's ended and event, and the director's primary.
+                goal_features = features
+                if self.slow_size:
+                    slow = torch.as_tensor(flat_slow[picked], device=self.device)
+                    goal_features = self.teacher.actor.slow_step(features, slow)
+                decided = self.teacher.actor.decide_goals(
+                    goal_features, t_obs, t_layout, torch.as_tensor(flat_goal[picked], device=self.device),
+                    torch.as_tensor(flat_queue[picked], device=self.device),
+                    torch.as_tensor(ages % self.goal_every == 0, device=self.device), self.deterministic)
+                choose = decided["chosen"].cpu().numpy()
+                if self.slow_size and choose.any():
+                    flat_slow[picked[choose]] = goal_features.cpu().numpy()[choose]
+                goal = decided["goal"]
+                flat_goal[picked] = goal.cpu().numpy()
+                flat_queue[picked] = decided["queue"].cpu().numpy()
                 flat_age[picked] = np.where(choose, 1, ages + 1)
-                goal = torch.as_tensor(goals, dtype=torch.long, device=self.device)
             dist = self.teacher.actor.action_distribution(features, t_layout, t_mask, goal, obs=t_obs)
             teacher_actions = (dist.probs.argmax(-1) if self.deterministic else dist.sample()).cpu().numpy()
             if self.recurrent:

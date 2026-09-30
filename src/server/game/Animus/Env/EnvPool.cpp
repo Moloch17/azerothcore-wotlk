@@ -72,7 +72,9 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     EpisodeSeed.assign(envs, NO_EPISODE_SEED);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
-    Goals.assign(agents, -1);     // Curriculum::NO_GOAL: no goal until a learner with a goal head sends one
+    // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head
+    // sends them.
+    Goals.assign(std::size_t(agents) * GOAL_SLOTS_ON_WIRE, -1);
     _reportInfoSum.assign(_spec.EpisodeInfoDim, 0.0);
 
     // NOT_FILED, not MapKey(0, 0): map 0 instance 0 is Eastern Kingdoms, a key an env can really have.
@@ -315,7 +317,7 @@ void Animus::EnvPool::ApplyActionsForMap(Map const& map)
     {
         Env& env = _envs[index];
         if (!Goals.empty())
-            _scenario.ApplyGoals(env, &Goals[index * _spec.AgentsPerEnv]);
+            _scenario.ApplyGoals(env, &Goals[std::size_t(index) * _spec.AgentsPerEnv * GOAL_SLOTS_ON_WIRE]);
 
         _scenario.ApplyActions(env, &Actions[index * _spec.AgentsPerEnv]);
     }

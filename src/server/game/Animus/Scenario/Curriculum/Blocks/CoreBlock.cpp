@@ -83,13 +83,13 @@ namespace
     /// spells whenever the seat, its owner or a teammate is attacked, the seat is below 35% health, or it is
     /// stealthed (the opener ends a Prepare), so it can always answer what happens to it and to them; the goal
     /// then catches up on its own clock.
-    bool GoalCloses(SeatView const& view, ActionCatalog::Action const& def)
+    bool OneGoalCloses(SeatView const& view, int32 goal, ActionCatalog::Action const& def)
     {
-        if (view.Goal < 0 || def.Type != ActionCatalog::Kind::Spell)
+        if (goal < 0 || def.Type != ActionCatalog::Kind::Spell)
             return false;
 
         Player* bot = view.Bot;
-        switch (SeatGoal(GoalKindOf(view.Goal)))
+        switch (SeatGoal(GoalKindOf(goal)))
         {
             case SeatGoal::Recover:
             case SeatGoal::Prepare:
@@ -120,6 +120,15 @@ namespace
             default:
                 return false;
         }
+    }
+
+    /// With a secondary goal held beside the primary, only what both close is closed: a press either goal wants
+    /// stays open (Fight A while Recovering keeps the self-heals and the attacks).
+    bool GoalCloses(SeatView const& view, ActionCatalog::Action const& def)
+    {
+        if (!OneGoalCloses(view, view.Goal, def))
+            return false;
+        return view.Goal2 < 0 || OneGoalCloses(view, view.Goal2, def);
     }
 }
 

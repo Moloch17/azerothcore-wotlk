@@ -34,6 +34,9 @@ enum DamageEffectType : uint8;
 
 namespace Animus
 {
+    /// Goals per agent in ACT (protocol 17): the primary and the secondary (Curriculum::GOAL_SLOTS).
+    constexpr uint32 GOAL_SLOTS_ON_WIRE = 2;
+
     struct StageSettings;
 
     /// EpisodeSeed of an episode that was not an evaluation episode.
@@ -220,6 +223,7 @@ namespace Animus
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.
+        /// The goals ACT sent: GOAL_SLOTS_ON_WIRE per agent (primary, secondary), agent-major.
         std::vector<int32> Goals;
 
     private:

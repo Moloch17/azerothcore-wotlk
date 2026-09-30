@@ -467,7 +467,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                         "layout": layout_name,
                         "action": (action_names or {}).get(layout_name, [])[action]
                         if action < len((action_names or {}).get(layout_name, [])) else str(action),
-                        "goal": int(goals[e, a]) if goals is not None else -1,
+                        "goal": int(goals[e, a, 0] if goals.ndim == 3 else goals[e, a]) if goals is not None else -1,
                     })
 
         step = env.step(actions, goals)

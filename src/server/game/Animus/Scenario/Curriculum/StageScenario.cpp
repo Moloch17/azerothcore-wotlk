@@ -1484,6 +1484,20 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         goals["accepts"] = std::move(accepts);
         goals["targets"] = GOAL_TARGETS;
         goals["block"] = "goal";
+        // Where the next-run columns sit in the block, from its first column: the secondary ending, the event, the
+        // director's primary (a flag, then kind and target one-hots) and what was achieved (kind and target), and
+        // how many goals ACT carries a seat.
+        boost::json::object columns;
+        columns["secondary_ended"] = uint32(GoalBlock::OBS_SECONDARY_ENDED);
+        columns["event"] = uint32(GoalBlock::OBS_EVENT);
+        columns["from_order"] = uint32(GoalBlock::OBS_FROM_ORDER);
+        columns["order_kind"] = uint32(GoalBlock::OBS_ORDER_KIND_FIRST);
+        columns["order_target"] = uint32(GoalBlock::OBS_ORDER_TARGET_FIRST);
+        columns["achieved_kind"] = uint32(GoalBlock::OBS_ACHIEVED_KIND_FIRST);
+        columns["achieved_target"] = uint32(GoalBlock::OBS_ACHIEVED_TARGET_FIRST);
+        columns["width"] = uint32(GoalBlock::OBS_COUNT);
+        goals["columns"] = std::move(columns);
+        goals["slots_on_wire"] = GOAL_SLOTS_ON_WIRE;
     }
     stageFile["tuning"] = _tuning.Json();
 
@@ -2448,33 +2462,47 @@ void Animus::Curriculum::StageScenario::NotifyPullStarting(Env& env)
 void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
 {
     EnvState& data = Data(env);
+    auto const valid = [](int32 goal) { return goal >= 0 && goal < int32(GOAL_JOINT_COUNT) ? goal : NO_GOAL; };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
-        int32 const goal = goals[seat] >= 0 && goals[seat] < int32(GOAL_JOINT_COUNT) ? goals[seat] : NO_GOAL;
         SeatState& state = data.Seats[seat];
-        // A change of kind is a change of plan, charged (Goals.Switch); a new target for the same kind -- the next
-        // enemy, the next objective -- is the plan going on, and a goal that ended is chosen again for free.
-        if (goal != state.Goal && state.Goal != NO_GOAL && goal != NO_GOAL)
-        {
-            ++state.GoalChanges;
-            if (GoalKindOf(goal) != GoalKindOf(state.Goal) && !state.GoalEnded)
-                ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
-        }
+        // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). Under a learned director the member's standing order
+        // is its primary, whatever it chose: one planner per group (OrderGoals.h). The secondary is the seat's own,
+        // and none when it would repeat the primary.
+        int32 const ordered = _director ? _director->MemberGoal(env, seat) : NO_GOAL;
+        int32 const primary = ordered != NO_GOAL ? ordered : valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
+        int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
+        if (secondary == primary)
+            secondary = NO_GOAL;
+        state.Holds[0].FromOrder = ordered != NO_GOAL;
 
-        // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from its
-        // first observation, which knows where its place is (GoalPotentialReady).
-        if (goal != state.Goal)
+        std::array<int32, GOAL_SLOTS> const next = { primary, secondary };
+        for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
         {
-            state.GoalRewarded = false;
-            state.GoalEnded = false;
-            state.GoalFresh = true;
-            state.GoalSatisfiedAtChoice = false;
-            state.GoalPotentialReady = false;
-            if (goal != NO_GOAL)
-                ++state.GoalsChosenBy[GoalKindOf(goal)];
-        }
+            GoalHold& hold = state.Holds[slot];
+            int32 const goal = next[slot];
+            // A change of kind is a change of plan, charged (Goals.Switch); a new target for the same kind -- the
+            // next enemy, the next objective -- is the plan going on, and a goal that ended is chosen again free.
+            if (goal != hold.Goal && hold.Goal != NO_GOAL && goal != NO_GOAL)
+            {
+                ++state.GoalChanges;
+                if (GoalKindOf(goal) != GoalKindOf(hold.Goal) && !hold.Ended)
+                    ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
+            }
 
-        state.Goal = goal;
+            // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from
+            // its first observation, which knows where its place is (PotentialReady).
+            if (goal != hold.Goal)
+            {
+                bool const fromOrder = hold.FromOrder;
+                hold = GoalHold();
+                hold.Goal = goal;
+                hold.Fresh = true;
+                hold.FromOrder = fromOrder;
+                if (goal != NO_GOAL)
+                    ++state.GoalsChosenBy[GoalKindOf(goal)];
+            }
+        }
     }
 }
 
@@ -2483,10 +2511,10 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
 {
     SeatState const& seat = Data(env).Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    if (!bot || !bot->IsAlive() || seat.Goal == NO_GOAL)
+    if (!bot || !bot->IsAlive() || seat.Holds[0].Goal == NO_GOAL)
         return false;
 
-    switch (SeatGoal(GoalKindOf(seat.Goal)))
+    switch (SeatGoal(GoalKindOf(seat.Holds[0].Goal)))
     {
         case SeatGoal::Fight:
             return step.Damage > 0;
@@ -2535,7 +2563,7 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
         case SeatGoal::Gather:
         case SeatGoal::Interact:
             // On the way, or there and doing it (a cast, a loot window).
-            return (seat.HasGoalPlace && bot->GetExactDist2d(&seat.GoalPlace) <= GoalBlock::PLACE_REACH)
+            return (seat.Holds[0].HasPlace && bot->GetExactDist2d(&seat.Holds[0].Place) <= GoalBlock::PLACE_REACH)
                 || !bot->movespline->Finalized() || bot->IsNonMeleeSpellCast(false) || !bot->GetLootGUID().IsEmpty();
         case SeatGoal::Loot:
             return !bot->GetLootGUID().IsEmpty() || !bot->movespline->Finalized();
@@ -2617,8 +2645,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Race = seat.Race;
     view.Spec = seat.Spec;
     view.Apt = seat.Apt;
-    view.Goal = seat.Goal;
-    view.GoalEnded = seat.GoalEnded;
+    view.Goal = seat.Holds[0].Goal;
+    view.Goal2 = seat.Holds[1].Goal;
+    view.GoalEnded = seat.Holds[0].Ended;
     // How it is steering, carried over from the last decision: without this a held bearing is forgotten before it
     // can be walked a second time, and the facing actions have nothing to act on.
     view.HeldBearing = seat.HeldBearing;
@@ -3095,52 +3124,73 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.NearestHazard = seat.NearestHazard;
     view.Option = &seat.Option;
 
-    // The goal held, read off the world as it now is: reached (paid at the next reward) or no longer possible --
-    // either way it has ended, and the goal head chooses again at this decision rather than at its clock.
-    if (seat.Goal != NO_GOAL && !seat.GoalEnded)
+    // Each goal held, read off the world as it now is: reached (paid now, into this decision's reward) or no longer
+    // possible -- either way it has ended. A primary that ended makes the learner promote its queue or choose again
+    // at this decision; a secondary that ended is dropped by both sides until the next choice.
+    view.Goal2Ended = false;
+    for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
     {
+        GoalHold& hold = seat.Holds[slot];
+        if (hold.Goal == NO_GOAL || hold.Ended)
+            continue;
         bool reached = false;
         bool possible = false;
-        GoalBlock::Status(view, seat.Goal, reached, possible);
+        GoalBlock::Status(view, hold.Goal, reached, possible);
         // True already when chosen: nothing was done to reach it, so it is held unpaid (ending on its clock) until
         // it stops being true. Without this a goal that is true on choice -- Fight about no one where there is
         // nothing to fight -- was paid at every choice: the first fast pass of stage1_move earned ~14 an episode.
-        reached = GoalBlock::Earned(reached, seat.GoalFresh, seat.GoalSatisfiedAtChoice);
-        if (reached && !seat.GoalRewarded)
+        reached = GoalBlock::Earned(reached, hold.Fresh, hold.SatisfiedAtChoice);
+        if (reached && !hold.Rewarded)
         {
-            // Paid by what it achieved (GoalValue), into the reward of the decision that reached it: that decision
-            // belongs to the goal's own span, where paying it at the next one put it in the span of the goal chosen
-            // after -- crediting the plan that followed for the one that worked.
-            seat.GoalRewarded = true;
+            // Paid by what it achieved (GoalValue; a secondary at Goals.SecondaryShare), into the reward of the
+            // decision that reached it: that decision belongs to the goal's own span, where paying it at the next
+            // one put it in the span of the goal chosen after -- crediting the plan that followed for the one that
+            // worked.
+            hold.Rewarded = true;
             ++seat.GoalsReached;
-            ++seat.GoalsReachedBy[GoalKindOf(seat.Goal)];
-            float const value = GoalValue(seat, bot);
+            ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
+            float const value = GoalValue(hold, bot) * (slot ? _tuning.Goals.SecondaryShare : 1.0f);
             seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
             if (float* reward = Data(env).StepReward)
                 reward[seatIndex] += value;
         }
         else if (!possible)
             ++seat.GoalsLost;
-        seat.GoalEnded = reached || !possible;
-        seat.GoalWasReached = reached;
+        hold.Ended = reached || !possible;
+        hold.WasReached = reached;
+        if (slot && hold.Ended)
+            view.Goal2Ended = true;
     }
-    view.GoalEnded = seat.GoalEnded;
-    view.GoalReached = seat.GoalEnded && seat.GoalWasReached;
-    seat.HasGoalPlace = seat.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(seat.Goal), seat.GoalPlace);
-    seat.GoalFriend.Clear();
-    if (uint32 const goalTarget = GoalTargetOf(seat.Goal); seat.Goal != NO_GOAL
-        && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_OBJECTIVE_FIRST)
-        if (Unit* friendUnit = Encoding::FriendUnit(view, goalTarget - GOAL_TARGET_FRIEND_FIRST))
-            seat.GoalFriend = friendUnit->GetGUID();
-    // A new goal's progress starts here, with its place and friend known.
-    if (seat.Goal != NO_GOAL && !seat.GoalPotentialReady && bot)
+    view.GoalEnded = seat.Holds[0].Ended;
+    view.GoalReached = seat.Holds[0].Ended && seat.Holds[0].WasReached;
+    for (GoalHold& hold : seat.Holds)
     {
-        seat.GoalPotential = GoalPotential(env, seat, bot, target);
-        seat.GoalPotentialReady = true;
-        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-        seat.GoalChoiceResource = std::min(bot->GetHealthPct() / 100.0f,
-            maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+        hold.HasPlace = hold.Goal != NO_GOAL && GoalBlock::PlaceOf(view, GoalTargetOf(hold.Goal), hold.Place);
+        hold.Friend.Clear();
+        if (uint32 const goalTarget = GoalTargetOf(hold.Goal); hold.Goal != NO_GOAL
+            && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_OBJECTIVE_FIRST)
+            if (Unit* friendUnit = Encoding::FriendUnit(view, goalTarget - GOAL_TARGET_FRIEND_FIRST))
+                hold.Friend = friendUnit->GetGUID();
+        // A new goal's progress starts here, with its place and friend known.
+        if (hold.Goal != NO_GOAL && !hold.PotentialReady && bot)
+        {
+            hold.Potential = GoalPotential(env, seat, hold, bot, target);
+            hold.PotentialReady = true;
+            uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+            hold.ChoiceResource = std::min(bot->GetHealthPct() / 100.0f,
+                maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+        }
     }
+    // A secondary that ended is gone: the learner drops it on seeing OBS_SECONDARY_ENDED, and so does the sim.
+    if (seat.Holds[1].Ended)
+        seat.Holds[1] = GoalHold();
+
+    // The event (choose again now) and what the seat achieved this decision (the hindsight columns).
+    ObserveGoalSignals(env, seat, bot);
+    view.GoalEvent = seat.Event;
+    view.Achieved = seat.Achieved;
+    view.Goal2 = seat.Holds[1].Goal;
+    view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
     SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
     SeatEncoder::Observe(view, obs, mask);
@@ -3197,13 +3247,25 @@ void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, P
 
 float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* bot, Unit const* target) const
 {
-    if (!bot || !bot->IsAlive() || !seat.L || seat.Goal == NO_GOAL)
+    // Where either goal wants the seat: a step toward the nearer serves, and standing where one wants it is not
+    // fidgeting.
+    float nearest = -1.0f;
+    for (GoalHold const& hold : seat.Holds)
+        if (float const gap = GoalGap(seat, hold, bot, target); gap >= 0.0f && (nearest < 0.0f || gap < nearest))
+            nearest = gap;
+    return nearest;
+}
+
+float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, GoalHold const& hold, Player* bot,
+    Unit const* target) const
+{
+    if (!bot || !bot->IsAlive() || !seat.L || hold.Goal == NO_GOAL)
         return -1.0f;
 
-    SeatGoal const goal = SeatGoal(GoalKindOf(seat.Goal));
+    SeatGoal const goal = SeatGoal(GoalKindOf(hold.Goal));
     // A goal about a place: the yards still to go to it.
-    if ((goal == SeatGoal::TravelTo || goal == SeatGoal::Gather || goal == SeatGoal::Interact) && seat.HasGoalPlace)
-        return std::max(0.0f, bot->GetExactDist2d(&seat.GoalPlace) - GoalBlock::PLACE_REACH);
+    if ((goal == SeatGoal::TravelTo || goal == SeatGoal::Gather || goal == SeatGoal::Interact) && hold.HasPlace)
+        return std::max(0.0f, bot->GetExactDist2d(&hold.Place) - GoalBlock::PLACE_REACH);
     if ((goal != SeatGoal::Fight && goal != SeatGoal::Position) || !target || !target->IsAlive())
         return -1.0f;
 
@@ -3219,10 +3281,10 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* 
     return std::max(0.0f, distance - (wanted + GOAL_RANGE_SLACK_YARDS));
 }
 
-float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState const& seat, Player* bot,
-    Unit const* target) const
+float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState const& seat, GoalHold const& hold,
+    Player* bot, Unit const* target) const
 {
-    if (seat.Goal == NO_GOAL || !bot || !bot->IsAlive())
+    if (hold.Goal == NO_GOAL || !bot || !bot->IsAlive())
         return 0.0f;
 
     auto const health = [](Unit const* unit)
@@ -3231,9 +3293,9 @@ float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState
             : 0.0f;
     };
     auto const far = [](float yards) { return -std::min(yards, 60.0f) / 60.0f; };
-    uint32 const goalTarget = GoalTargetOf(seat.Goal);
+    uint32 const goalTarget = GoalTargetOf(hold.Goal);
     bool const namesEnemy = goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST;
-    switch (SeatGoal(GoalKindOf(seat.Goal)))
+    switch (SeatGoal(GoalKindOf(hold.Goal)))
     {
         case SeatGoal::Fight:
         {
@@ -3264,25 +3326,25 @@ float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState
         }
         case SeatGoal::Protect:
         {
-            Unit const* friendUnit = seat.GoalFriend.IsEmpty() ? nullptr : Encoding::UnitThrough(*bot, seat.GoalFriend);
+            Unit const* friendUnit = hold.Friend.IsEmpty() ? nullptr : Encoding::UnitThrough(*bot, hold.Friend);
             return friendUnit && friendUnit->IsAlive() ? health(friendUnit) - 1.0f : 0.0f;
         }
         case SeatGoal::Position:
         {
-            float const gap = GoalGap(seat, bot, target);
+            float const gap = GoalGap(seat, hold, bot, target);
             return gap > 0.0f ? far(gap) : 0.0f;
         }
         case SeatGoal::TravelTo:
-            return seat.HasGoalPlace ? far(bot->GetExactDist(&seat.GoalPlace)) : 0.0f;
+            return hold.HasPlace ? far(bot->GetExactDist(&hold.Place)) : 0.0f;
         default:
             return 0.0f;
     }
 }
 
-float Animus::Curriculum::StageScenario::GoalValue(SeatState const& seat, Player* bot) const
+float Animus::Curriculum::StageScenario::GoalValue(GoalHold const& hold, Player* bot) const
 {
     CurriculumTuning::GoalTuning const& tuning = _tuning.Goals;
-    switch (SeatGoal(GoalKindOf(seat.Goal)))
+    switch (SeatGoal(GoalKindOf(hold.Goal)))
     {
         case SeatGoal::Fight:    return tuning.FightValue;
         case SeatGoal::Control:  return tuning.ControlValue;
@@ -3300,11 +3362,53 @@ float Animus::Curriculum::StageScenario::GoalValue(SeatState const& seat, Player
             uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
             float const now = std::min(bot->GetHealthPct() / 100.0f,
                 maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
-            return tuning.RecoverValue * std::max(0.0f, now - seat.GoalChoiceResource);
+            return tuning.RecoverValue * std::max(0.0f, now - hold.ChoiceResource);
         }
         default:
             return tuning.Reached;
     }
+}
+
+void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, SeatState& seat, Player* bot) const
+{
+    seat.Event = false;
+    seat.Achieved = NO_GOAL;
+    if (!bot || !bot->IsAlive())
+        return;
+
+    // Achieved, whatever the seat pursued: an enemy in one of its slots died since the last decision, else its own
+    // health and mana came back past Recover's line. The learner trains the actions it took as if it had meant it.
+    std::array<uint8, PACK_SLOTS> alive{};
+    uint32 enemies = 0;
+    for (uint32 slot = 0; slot < PACK_SLOTS && slot < env.Targets.size(); ++slot)
+        if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
+        {
+            alive[slot] = 1;
+            if (enemy->IsInCombat())
+                ++enemies;
+        }
+    for (uint32 slot = 0; slot < PACK_SLOTS && seat.Achieved == NO_GOAL; ++slot)
+        if (seat.EnemySeenAlive[slot] && !alive[slot])
+            seat.Achieved = MakeGoal(SeatGoal::Fight, GOAL_TARGET_ENEMY_FIRST + slot);
+    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+    float const resource = std::min(bot->GetHealthPct() / 100.0f,
+        maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+    bool const below = resource < 0.8f;
+    if (seat.Achieved == NO_GOAL && seat.BelowRecover && !below && !bot->IsInCombat())
+        seat.Achieved = MakeGoal(SeatGoal::Recover, GOAL_TARGET_NONE);
+    seat.EnemySeenAlive = alive;
+    seat.BelowRecover = below;
+
+    // The event: something a plan should answer changed -- the seat newly below the escape line, more enemies in
+    // the fight than before, or the owner newly under attack.
+    constexpr float EVENT_HEALTH_PCT = 35.0f;
+    bool const low = bot->GetHealthPct() < EVENT_HEALTH_PCT;
+    Player const* owner = Owner(env);
+    bool const ownerAttacked = owner && owner->IsAlive() && !owner->getAttackers().empty();
+    seat.Event = (low && !seat.EventLow) || enemies > seat.EventEnemies || (ownerAttacked && !seat.EventOwnerAttacked);
+    seat.EventLow = low;
+    seat.EventEnemies = enemies;
+    seat.EventOwnerAttacked = ownerAttacked;
 }
 
 char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
@@ -3377,7 +3481,7 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         ++seat.RepeatedPresses;
     };
 
-    if (seat.Goal == NO_GOAL)
+    if (seat.Holds[0].Goal == NO_GOAL)
     {
         // Nothing to judge by: a repeat is charged unless it did something, as it was before goals. A step with no
         // goal is movement, which was free.
@@ -3386,16 +3490,6 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         return;
     }
 
-    SeatGoal const goal = SeatGoal(GoalKindOf(seat.Goal));
-    uint32 const goalTarget = GoalTargetOf(seat.Goal);
-    uint32 const local = action - layout.Slice(*block).ActionFirst;
-    enum class Verdict : uint8 { Neutral, Serves, Aimless };
-    Verdict verdict = Verdict::Neutral;
-    AimlessCause cause = AimlessCause::Count;           // why, when aimless (derived from the goal when not set)
-    bool judged = false;
-    // The enemy slot the goal names, if it names one.
-    int32 const namedSlot = goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS
-        ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
     // Below this share of its health the seat may act on any enemy (CoreBlock's goal escape uses the same).
     constexpr float ESCAPE_HEALTH_PCT = 35.0f;
     // An enemy hurting the seat or one of its friends: a reason to act on it whatever the goal names.
@@ -3403,6 +3497,14 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     {
         Unit const* victim = enemy && enemy->IsAlive() ? enemy->GetVictim() : nullptr;
         return victim && victim->IsAlive() && (victim == bot || bot->IsFriendlyTo(victim));
+    };
+    uint32 const local = action - layout.Slice(*block).ActionFirst;
+    enum class Verdict : uint8 { Neutral, Serves, Aimless };
+    struct Judgement
+    {
+        bool Judged = false;
+        Verdict Is = Verdict::Neutral;
+        AimlessCause Cause = AimlessCause::Count;
     };
 
     if (*block == BlockId::Move)
@@ -3421,140 +3523,239 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         return;
     }
 
-    if (result.SpellCasts && !result.Revives)
+    // The press judged against one goal held; the seat's verdict is the best over its goals (a press that serves
+    // the secondary is not aimless for missing the primary: Fight A and hold B).
+    auto const judgeFor = [&](GoalHold const& hold) -> Judgement
     {
-        judged = true;
-        bool const hurt = bot->GetHealthPct() < 50.0f;
-        bool const onSelf = result.CastAt == bot->GetGUID();
-        // The enemy the goal names, else the focus; the friend it names, if any.
-        Unit* named = target;
-        if (goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST)
-            if (Unit* slotted = env.FindTargetUnit(goalTarget - GOAL_TARGET_ENEMY_FIRST))
-                named = slotted;
-        bool const onFocus = named && result.CastAt == named->GetGUID();
-        ObjectGuid const namedFriend = seat.GoalFriend;     // resolved at the observation
-        bool const untargeted = result.CastAt.IsEmpty();
-        // An area spell has no unit to read: it serves a fight when the focus was inside its radius.
-        bool const focusNear = result.CastReachesFocus;
+        SeatGoal const goal = SeatGoal(GoalKindOf(hold.Goal));
+        uint32 const goalTarget = GoalTargetOf(hold.Goal);
+        Verdict verdict = Verdict::Neutral;
+        AimlessCause cause = AimlessCause::Count;           // why, when aimless (derived from the goal when not set)
+        bool judged = false;
+        // The enemy slot the goal names, if it names one.
+        int32 const namedSlot = goalTarget >= GOAL_TARGET_ENEMY_FIRST
+            && goalTarget < GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
 
-        if (result.CastTrap)
+
+        if (result.SpellCasts && !result.Revives)
         {
-            // A trap wants something to walk into it: an enemy near that is in the fight and hurting someone, or the
-            // one the goal names (Control or Fight), close. Laid anywhere else it waits for nothing.
-            bool near = false;
-            for (uint32 slot = 0; slot < env.Targets.size() && !near; ++slot)
+            judged = true;
+            bool const hurt = bot->GetHealthPct() < 50.0f;
+            bool const onSelf = result.CastAt == bot->GetGUID();
+            // The enemy the goal names, else the focus; the friend it names, if any.
+            Unit* named = target;
+            if (goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST)
+                if (Unit* slotted = env.FindTargetUnit(goalTarget - GOAL_TARGET_ENEMY_FIRST))
+                    named = slotted;
+            bool const onFocus = named && result.CastAt == named->GetGUID();
+            ObjectGuid const namedFriend = hold.Friend;     // resolved at the observation
+            bool const untargeted = result.CastAt.IsEmpty();
+            // An area spell has no unit to read: it serves a fight when the focus was inside its radius.
+            bool const focusNear = result.CastReachesFocus;
+
+            if (result.CastTrap)
             {
-                Unit* enemy = env.FindTargetUnit(slot);
-                if (!enemy || !enemy->IsAlive() || bot->GetDistance(enemy) > 30.0f)
-                    continue;
-                near = hurtingFriend(enemy) || (int32(slot) == namedSlot && bot->GetDistance(enemy) <= 15.0f
-                    && (goal == SeatGoal::Control || goal == SeatGoal::Fight));
+                // A trap wants something to walk into it: an enemy near that is in the fight and hurting someone, or
+                // the one the goal names (Control or Fight), close. Laid anywhere else it waits for nothing.
+                bool near = false;
+                for (uint32 slot = 0; slot < env.Targets.size() && !near; ++slot)
+                {
+                    Unit* enemy = env.FindTargetUnit(slot);
+                    if (!enemy || !enemy->IsAlive() || bot->GetDistance(enemy) > 30.0f)
+                        continue;
+                    near = hurtingFriend(enemy) || (int32(slot) == namedSlot && bot->GetDistance(enemy) <= 15.0f
+                        && (goal == SeatGoal::Control || goal == SeatGoal::Fight));
+                }
+                if (!near && bot->getAttackers().empty())
+                {
+                    verdict = Verdict::Aimless;
+                    cause = AimlessCause::TrapNoEnemy;
+                }
+                else
+                    verdict = goal == SeatGoal::Control ? Verdict::Serves : Verdict::Neutral;
             }
-            if (!near && bot->getAttackers().empty())
+            else if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
+                || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
+                verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
+            else if (result.CastHarmful)
+            {
+                switch (goal)
+                {
+                    case SeatGoal::Fight:
+                        verdict = onFocus || (untargeted && focusNear) ? Verdict::Serves : Verdict::Aimless;
+                        break;
+                    case SeatGoal::Control:
+                        // Control aimed at an enemy other than the focus, or an area one that lands on the fight.
+                        verdict = result.CastTactical && ((!onFocus && !untargeted) || (untargeted && focusNear))
+                            ? Verdict::Serves
+                            : onFocus || (untargeted && focusNear) ? Verdict::Neutral : Verdict::Aimless;
+                        break;
+                    case SeatGoal::Position:
+                        // Casting at the focus while getting to range is fine; once in range the seat is fighting
+                        // and should say so. Neutral for good, Position was a goal under which no cast could ever
+                        // be aimless: the 10M intent trial's rotation drill chose it 99% of the time, and its
+                        // serving share fell to 0.05.
+                        verdict = GoalGap(seat, hold, bot, named) > 0.0f && (onFocus || (untargeted && focusNear))
+                            ? Verdict::Neutral : Verdict::Aimless;
+                        break;
+                    case SeatGoal::Prepare:
+                        verdict = bot->IsInCombat() ? Verdict::Neutral : Verdict::Aimless;  // pulling while preparing
+                        break;
+                    case SeatGoal::Protect:
+                    {
+                        // Protecting someone in a fight is also taking down what is hitting them: the friend the goal
+                        // names, or any friend but the seat when it names none. Without it a damage dealer guarding its
+                        // owner served nothing all fight (the trial's companion stage read a serving share of 0.06).
+                        Unit const* hit = untargeted ? nullptr : Encoding::UnitThrough(*bot, result.CastAt);
+                        Unit const* victim = hit ? hit->GetVictim() : nullptr;
+                        bool const onAttacker = victim && victim != bot && victim->IsAlive()
+                            && (namedFriend.IsEmpty() ? bot->IsFriendlyTo(victim) : victim->GetGUID() == namedFriend);
+                        verdict = onAttacker ? Verdict::Serves
+                            : bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
+                        break;
+                    }
+                    case SeatGoal::Recover:
+                    case SeatGoal::Rest:
+                    case SeatGoal::TravelTo:
+                    case SeatGoal::Loot:
+                    case SeatGoal::Gather:
+                    case SeatGoal::Interact:
+                        // Starting a fight while resting, travelling or looting: unless something started it first
+                        // (the mask's escape already let it through), it served nothing the seat said it wanted.
+                        verdict = bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Count:
+                        break;
+                }
+            }
+            else
+            {
+                switch (goal)
+                {
+                    case SeatGoal::Protect:
+                        // The friend the goal names, or any friend when it names none.
+                        verdict = !onSelf && !untargeted && (namedFriend.IsEmpty() || result.CastAt == namedFriend)
+                            ? Verdict::Serves : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Recover:
+                    case SeatGoal::Rest:
+                        verdict = onSelf || untargeted ? Verdict::Serves : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Prepare:
+                        verdict = result.PreparationMs ? Verdict::Serves : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Fight:
+                    case SeatGoal::Control:
+                        // Help on someone else while the seat said it was fighting: it should have said Protect.
+                        verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
+                        break;
+                    case SeatGoal::Position:
+                    case SeatGoal::TravelTo:
+                    case SeatGoal::Loot:
+                    case SeatGoal::Gather:
+                    case SeatGoal::Interact:
+                    case SeatGoal::Count:
+                        break;
+                }
+            }
+
+            if (verdict == Verdict::Aimless && cause == AimlessCause::Count)
+            {
+                if (!result.CastHarmful)
+                    cause = AimlessCause::HelpOffGoal;
+                else if (goal == SeatGoal::Fight || goal == SeatGoal::Control)
+                    cause = untargeted ? AimlessCause::AoeMissed : AimlessCause::OffFocus;
+                else if (goal == SeatGoal::Position)
+                    cause = AimlessCause::InRangeCast;
+                else
+                    cause = AimlessCause::UnprovokedHarm;
+            }
+
+        }
+        else if (result.FoodUsed || result.DrinkUsed)
+        {
+            // Eating restores health and drinking mana: with that already nearly full it is a supply thrown away,
+            // whatever the goal says. Below it, it serves recovering.
+            judged = true;
+            uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+            float const full = _tuning.Actions.ConsumeFullPct;
+            bool const needed = (result.FoodUsed && bot->GetHealthPct() < full)
+                || (result.DrinkUsed && maxMana && 100.0f * float(bot->GetPower(POWER_MANA)) / float(maxMana) < full);
+            if (!needed)
             {
                 verdict = Verdict::Aimless;
-                cause = AimlessCause::TrapNoEnemy;
+                cause = AimlessCause::ConsumeNotNeeded;
             }
             else
-                verdict = goal == SeatGoal::Control ? Verdict::Serves : Verdict::Neutral;
+                verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare || goal == SeatGoal::Rest
+                    ? Verdict::Serves : Verdict::Neutral;
         }
-        else if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
-            || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
-            verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
-        else if (result.CastHarmful)
+        else if (*block == BlockId::Pack && local < PACK_SLOTS)
         {
-            switch (goal)
-            {
-                case SeatGoal::Fight:
-                    verdict = onFocus || (untargeted && focusNear) ? Verdict::Serves : Verdict::Aimless;
-                    break;
-                case SeatGoal::Control:
-                    // Control aimed at an enemy other than the focus, or an area one that lands on the fight.
-                    verdict = result.CastTactical && ((!onFocus && !untargeted) || (untargeted && focusNear))
-                        ? Verdict::Serves
-                        : onFocus || (untargeted && focusNear) ? Verdict::Neutral : Verdict::Aimless;
-                    break;
-                case SeatGoal::Position:
-                    // Casting at the focus while getting to range is fine; once in range the seat is fighting and
-                    // should say so. Neutral for good, Position was a goal under which no cast could ever be
-                    // aimless: the 10M intent trial's rotation drill chose it 99% of the time, and its serving share
-                    // fell to 0.05.
-                    verdict = GoalGap(seat, bot, named) > 0.0f && (onFocus || (untargeted && focusNear))
-                        ? Verdict::Neutral : Verdict::Aimless;
-                    break;
-                case SeatGoal::Prepare:
-                    verdict = bot->IsInCombat() ? Verdict::Neutral : Verdict::Aimless;  // pulling while preparing
-                    break;
-                case SeatGoal::Protect:
-                {
-                    // Protecting someone in a fight is also taking down what is hitting them: the friend the goal
-                    // names, or any friend but the seat when it names none. Without it a damage dealer guarding its
-                    // owner served nothing all fight (the trial's companion stage read a serving share of 0.06).
-                    Unit const* hit = untargeted ? nullptr : Encoding::UnitThrough(*bot, result.CastAt);
-                    Unit const* victim = hit ? hit->GetVictim() : nullptr;
-                    bool const onAttacker = victim && victim != bot && victim->IsAlive()
-                        && (namedFriend.IsEmpty() ? bot->IsFriendlyTo(victim) : victim->GetGUID() == namedFriend);
-                    verdict = onAttacker ? Verdict::Serves
-                        : bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
-                    break;
-                }
-                case SeatGoal::Recover:
-                case SeatGoal::Rest:
-                case SeatGoal::TravelTo:
-                case SeatGoal::Loot:
-                case SeatGoal::Gather:
-                case SeatGoal::Interact:
-                    // Starting a fight while resting, travelling or looting: unless something started it first
-                    // (the mask's escape already let it through), it served nothing the seat said it wanted.
-                    verdict = bot->getAttackers().empty() ? Verdict::Aimless : Verdict::Neutral;
-                    break;
-                case SeatGoal::Count:
-                    break;
-            }
-        }
-        else
-        {
-            switch (goal)
-            {
-                case SeatGoal::Protect:
-                    // The friend the goal names, or any friend when it names none.
-                    verdict = !onSelf && !untargeted && (namedFriend.IsEmpty() || result.CastAt == namedFriend)
-                        ? Verdict::Serves : Verdict::Neutral;
-                    break;
-                case SeatGoal::Recover:
-                case SeatGoal::Rest:
-                    verdict = onSelf || untargeted ? Verdict::Serves : Verdict::Neutral;
-                    break;
-                case SeatGoal::Prepare:
-                    verdict = result.PreparationMs ? Verdict::Serves : Verdict::Neutral;
-                    break;
-                case SeatGoal::Fight:
-                case SeatGoal::Control:
-                    // Help on someone else while the seat said it was fighting: it should have said Protect.
-                    verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
-                    break;
-                case SeatGoal::Position:
-                case SeatGoal::TravelTo:
-                case SeatGoal::Loot:
-                case SeatGoal::Gather:
-                case SeatGoal::Interact:
-                case SeatGoal::Count:
-                    break;
-            }
-        }
-
-        if (verdict == Verdict::Aimless && cause == AimlessCause::Count)
-        {
-            if (!result.CastHarmful)
-                cause = AimlessCause::HelpOffGoal;
-            else if (goal == SeatGoal::Fight || goal == SeatGoal::Control)
-                cause = untargeted ? AimlessCause::AoeMissed : AimlessCause::OffFocus;
-            else if (goal == SeatGoal::Position)
-                cause = AimlessCause::InRangeCast;
+            // Selecting an enemy: the one the goal names serves; another, only if it is hurting someone (peeling it) or
+            // the seat is in trouble. With no enemy named any choice is the seat's own.
+            judged = true;
+            Unit const* chosen = env.FindTargetUnit(local);
+            if (namedSlot < 0)
+                verdict = Verdict::Neutral;
+            else if (int32(local) == namedSlot)
+                verdict = Verdict::Serves;
+            else if (hurtingFriend(chosen) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
+                verdict = Verdict::Neutral;
             else
-                cause = AimlessCause::UnprovokedHarm;
+            {
+                verdict = Verdict::Aimless;
+                cause = AimlessCause::TargetSwitch;
+            }
+        }
+        else if (result.PetOrderGiven == PetOrder::Attack)
+        {
+            // The pet sent at the seat's target: judged like a selection.
+            judged = true;
+            Unit const* named = namedSlot >= 0 ? env.FindTargetUnit(uint32(namedSlot)) : nullptr;
+            if (!named || !target)
+                verdict = Verdict::Neutral;
+            else if (target == named)
+                verdict = Verdict::Serves;
+            else if (hurtingFriend(target) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
+                verdict = Verdict::Neutral;
+            else
+            {
+                verdict = Verdict::Aimless;
+                cause = AimlessCause::PetOffGoal;
+            }
+        }
+        else if (*block == BlockId::World && (result.Interactions || result.CorpsesLooted || result.NodesLooted
+            || result.GatherCasts || result.ItemsLooted))
+        {
+            // The world's presses serve the life goals that ask for them; under any other goal they are neutral.
+            judged = true;
+            bool const loot = result.CorpsesLooted || result.ItemsLooted || result.NodesLooted;
+            bool const gather = result.GatherCasts || result.NodesLooted;
+            verdict = (goal == SeatGoal::Loot && loot) || (goal == SeatGoal::Gather && gather)
+                || (goal == SeatGoal::Interact && result.Interactions && !result.Wasted)
+                ? Verdict::Serves : Verdict::Neutral;
         }
 
+        return { judged, verdict, cause };
+    };
+
+    Judgement judgement = judgeFor(seat.Holds[0]);
+    if (seat.Holds[1].Goal != NO_GOAL && judgement.Is != Verdict::Serves)
+    {
+        Judgement const second = judgeFor(seat.Holds[1]);
+        if (second.Judged && (second.Is == Verdict::Serves || (second.Is == Verdict::Neutral
+            && judgement.Is == Verdict::Aimless)))
+            judgement = second;
+    }
+    bool const judged = judgement.Judged;
+    Verdict verdict = judgement.Is;
+    AimlessCause cause = judgement.Cause;
+    if (result.FoodUsed || result.DrinkUsed)
+        seat.StepSuppliesSpent += result.FoodUsed + result.DrinkUsed;
+
+    if (result.SpellCasts && !result.Revives)
+    {
         // An aspect, stance, form or presence changed: a standing choice, made again only when something about the
         // seat's situation is different -- in or out of a fight, mana past a threshold (Viper in and out), mounted.
         // The same situation as at the last change is a flip, and a flip back within ten seconds a reversal.
@@ -3575,70 +3776,6 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             ++seat.StepModeSwitches;
             ++seat.ModeSwitches;
         }
-    }
-    else if (result.FoodUsed || result.DrinkUsed)
-    {
-        // Eating restores health and drinking mana: with that already nearly full it is a supply thrown away,
-        // whatever the goal says. Below it, it serves recovering.
-        judged = true;
-        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-        float const full = _tuning.Actions.ConsumeFullPct;
-        bool const needed = (result.FoodUsed && bot->GetHealthPct() < full)
-            || (result.DrinkUsed && maxMana && 100.0f * float(bot->GetPower(POWER_MANA)) / float(maxMana) < full);
-        seat.StepSuppliesSpent += result.FoodUsed + result.DrinkUsed;
-        if (!needed)
-        {
-            verdict = Verdict::Aimless;
-            cause = AimlessCause::ConsumeNotNeeded;
-        }
-        else
-            verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare || goal == SeatGoal::Rest
-                ? Verdict::Serves : Verdict::Neutral;
-    }
-    else if (*block == BlockId::Pack && local < PACK_SLOTS)
-    {
-        // Selecting an enemy: the one the goal names serves; another, only if it is hurting someone (peeling it) or
-        // the seat is in trouble. With no enemy named any choice is the seat's own.
-        judged = true;
-        Unit const* chosen = env.FindTargetUnit(local);
-        if (namedSlot < 0)
-            verdict = Verdict::Neutral;
-        else if (int32(local) == namedSlot)
-            verdict = Verdict::Serves;
-        else if (hurtingFriend(chosen) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
-            verdict = Verdict::Neutral;
-        else
-        {
-            verdict = Verdict::Aimless;
-            cause = AimlessCause::TargetSwitch;
-        }
-    }
-    else if (result.PetOrderGiven == PetOrder::Attack)
-    {
-        // The pet sent at the seat's target: judged like a selection.
-        judged = true;
-        Unit const* named = namedSlot >= 0 ? env.FindTargetUnit(uint32(namedSlot)) : nullptr;
-        if (!named || !target)
-            verdict = Verdict::Neutral;
-        else if (target == named)
-            verdict = Verdict::Serves;
-        else if (hurtingFriend(target) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
-            verdict = Verdict::Neutral;
-        else
-        {
-            verdict = Verdict::Aimless;
-            cause = AimlessCause::PetOffGoal;
-        }
-    }
-    else if (*block == BlockId::World && (result.Interactions || result.CorpsesLooted || result.NodesLooted
-        || result.GatherCasts || result.ItemsLooted))
-    {
-        // The world's presses serve the life goals that ask for them; under any other goal they are neutral.
-        judged = true;
-        bool const loot = result.CorpsesLooted || result.ItemsLooted || result.NodesLooted;
-        bool const gather = result.GatherCasts || result.NodesLooted;
-        verdict = (goal == SeatGoal::Loot && loot) || (goal == SeatGoal::Gather && gather)
-            || (goal == SeatGoal::Interact && result.Interactions && !result.Wasted) ? Verdict::Serves : Verdict::Neutral;
     }
 
     if (seat.PendingRepeat && verdict != Verdict::Serves && (judged || !result.DidSomething()))
@@ -4118,11 +4255,11 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     seat.StepJitter = 0.0f;
 
     // The goal the learner is pursuing, and whether this decision went with it.
-    if (seat.Goal != NO_GOAL)
+    if (seat.Holds[0].Goal != NO_GOAL)
     {
-        std::size_t const kind = std::size_t(GoalKindOf(seat.Goal));
+        std::size_t const kind = std::size_t(GoalKindOf(seat.Holds[0].Goal));
         ++seat.GoalDecisions[kind];
-        if (GoalTargetOf(seat.Goal) != GOAL_TARGET_NONE)
+        if (GoalTargetOf(seat.Holds[0].Goal) != GOAL_TARGET_NONE)
             ++seat.GoalTargetedDecisions;
         if (GoalHeld(env, seatIndex, bot, target))
             ++seat.GoalMatches[kind];
@@ -4132,12 +4269,25 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // ranged seat held SeatGoal::Position by standing at its range, and paying that every decision made keeping
     // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode). Closing on it is
     // paid here, potential-based: what moving toward it earns, moving away gives back.
-    if (seat.Goal != NO_GOAL && seat.GoalPotentialReady && !seat.GoalEnded)
+    // The secondary at Goals.SecondaryShare, and charged Goals.Secondary for being held at all. A primary the
+    // director's order set is shaping for following the order: taken off the director's reward with the rest.
+    for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
     {
-        float const potential = GoalPotential(env, seat, bot, target);
-        seat.Rewards.Add(RewardTerm::GoalProgress,
-            _tuning.Goals.Progress * (_tuning.Goals.ProgressGamma * potential - seat.GoalPotential));
-        seat.GoalPotential = potential;
+        GoalHold& hold = seat.Holds[slot];
+        if (hold.Goal == NO_GOAL || !hold.PotentialReady || hold.Ended)
+            continue;
+        float const potential = GoalPotential(env, seat, hold, bot, target);
+        float const paid = _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
+            * (_tuning.Goals.ProgressGamma * potential - hold.Potential);
+        seat.Rewards.Add(RewardTerm::GoalProgress, paid);
+        hold.Potential = potential;
+        if (hold.FromOrder && _director)
+            _director->AddShaping(env, seatIndex, paid);
+    }
+    if (seat.Holds[1].Goal != NO_GOAL)
+    {
+        ++seat.SecondaryDecisions;
+        seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Secondary);
     }
 
     seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));

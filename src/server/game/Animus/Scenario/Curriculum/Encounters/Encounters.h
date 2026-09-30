@@ -928,6 +928,12 @@ namespace Animus::Curriculum
         /// from the shaping would learn to call whoever its seats were already fighting -- to look busy rather
         /// than to lead.
         [[nodiscard]] float ShapingPaid(Env const& env, uint32 seat) const;
+        /// Shaping a seat was paid for following its order another way (Goals.Progress on a primary the order set):
+        /// taken off the director's reward with the rest, so it cannot pay itself by ordering what is easy.
+        void AddShaping(Env const& env, uint32 seat, float paid);
+        /// The seat's primary goal as its director's standing order says it (OrderGoals.h), under a learned
+        /// director; NO_GOAL when there is none (no order, a side-wide one, or one no goal says).
+        [[nodiscard]] int32 MemberGoal(Env const& env, uint32 seat) const;
         /// What the side's director owes for the member orders it replaced since this was last asked
         /// (Director.OrderChange, Director.OrderChurn); taken off its reward once a decision.
         [[nodiscard]] float OrderCost(Env& env, uint32 side);

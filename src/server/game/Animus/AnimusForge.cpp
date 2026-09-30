@@ -2043,16 +2043,19 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         RankRows const rows = RankGroup(rank, target);
         std::size_t const groupBytes = std::size_t(rows.Count) * agents * sizeof(int32);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
+        std::size_t const goalBytes = groupBytes * Animus::GOAL_SLOTS_ON_WIRE;
         if (type == MsgType::Act && modes.empty() && act.EnvBegin == rows.Local && act.EnvCount == rows.Count
-            && (body == groupBytes || body == 2 * groupBytes))
+            && (body == groupBytes || body == groupBytes + goalBytes))
         {
             std::size_t const first = std::size_t(rows.Global) * agents;
             char const* actions = payload.data() + sizeof(act);
             std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
-            if (body == 2 * groupBytes)
-                std::memcpy(_pool->Goals.data() + first, actions + groupBytes, groupBytes);
+            // The goals, when the policy has a goal head: primary and secondary per agent (protocol 17).
+            std::size_t const goalFirst = first * Animus::GOAL_SLOTS_ON_WIRE;
+            if (body == groupBytes + goalBytes)
+                std::memcpy(_pool->Goals.data() + goalFirst, actions + groupBytes, goalBytes);
             else
-                std::fill_n(_pool->Goals.begin() + first, groupBytes / sizeof(int32), -1);
+                std::fill_n(_pool->Goals.begin() + goalFirst, goalBytes / sizeof(int32), -1);
 
             _lastAct = std::chrono::steady_clock::now();
             ++rank;

@@ -49,9 +49,9 @@
  *                              u32 episode_seed[E]    evaluation seed index of the ended episode (valid if
  *                                                     done); NO_EPISODE_SEED for a training episode
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
- *                            { i32 actions[E*A], i32 goals[E*A] } -- the goal each agent is pursuing
- *                            (0..GoalCount-1, or -1 for none). Goals are scored and reported by the scenario and
- *                            shown to a party's teammates; they never mask an action.
+ *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
+ *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
+ *                            scenario and shown to a party's teammates; they never mask an action.
  *   client -> server  MODE   ModeMsg (instead of ACT) -- switch between training and evaluation; the server
  *                            resets every env and answers with a fresh STEP (zero reward and done)
  *   client -> server  WEIGHTS { u32 count, f32 weight[count] } (instead of ACT) -- how often training episodes
@@ -110,7 +110,9 @@ namespace AnimusForge
     // neither (the sim writes them into the buffers first). A learner that declines keeps the socket path.
     // 16: a goal in ACT is a kind and a target, kind * GOAL_TARGETS + target (SPEC's goal count is the joint count),
     // where it was one of six kinds: an older learner would send kinds the sim reads as targets of the first kind.
-    constexpr uint32 PROTOCOL_VERSION = 16;
+    // 17: ACT carries two goals per agent, primary then secondary (GOAL_SLOTS_ON_WIRE), where it carried one; and
+    // the goal space has a twelfth kind (Resurrect). The learner keeps the queue behind them itself.
+    constexpr uint32 PROTOCOL_VERSION = 17;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

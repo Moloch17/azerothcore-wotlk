@@ -41,7 +41,16 @@ namespace Animus::Curriculum
             OBS_TARGET_FIRST            = OBS_KIND_FIRST + GOAL_COUNT,  // per GoalTarget: it is there
             OBS_ENDED                   = OBS_TARGET_FIRST + GOAL_TARGETS,  // the goal held was reached or lost
             OBS_REACHED,                                                // ... reached (what the learner predicts)
-            OBS_COUNT
+            // The next-run format: the columns above keep their places.
+            OBS_SECONDARY_ENDED,                                        // the secondary ended: both sides drop it
+            OBS_EVENT,                                                  // choose again now (SeatView::GoalEvent)
+            OBS_FROM_ORDER,                                             // the primary is the director's order ...
+            OBS_ORDER_KIND_FIRST,                                       // ... this kind
+            OBS_ORDER_TARGET_FIRST      = OBS_ORDER_KIND_FIRST + GOAL_COUNT,        // ... about this target
+            // What was achieved this decision, whatever was pursued (hindsight):
+            OBS_ACHIEVED_KIND_FIRST     = OBS_ORDER_TARGET_FIRST + GOAL_TARGETS,
+            OBS_ACHIEVED_TARGET_FIRST   = OBS_ACHIEVED_KIND_FIRST + GOAL_COUNT,
+            OBS_COUNT                   = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Goal; }

@@ -222,6 +222,9 @@ namespace Animus::Curriculum
         Gather,         // gather the nodes around, or at a place found
         Interact,       // talk to the giver or the turn-in, use an objective's object, item or vendor
         Rest,           // eat and drink out of a fight until ready
+        /// Stand up again after dying: at the own corpse (target none) or a dead member raised (a friend slot).
+        /// In the goal space from the next-run format on; offered only once death runs exist (Wave 6).
+        Resurrect,
         Count
     };
 

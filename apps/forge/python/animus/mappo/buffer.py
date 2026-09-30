@@ -149,7 +149,8 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
-                 foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0):
+                 foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
+                 goal_slots: int = 1):
         self.steps = steps
         self.foresight = foresight
         self.recurrent = recurrent
@@ -168,6 +169,9 @@ class RolloutBuffer:
         self.goal = np.zeros(shape, dtype=np.int64)
         self.goal_log_probs = np.zeros(shape, dtype=np.float32)
         self.goal_chosen = np.zeros(shape, dtype=bool)
+        # With two goals and a queue (goal_slots > 1): the slots a choice drew, -1 for none (what the slow update
+        # scores again; `goal` holds the pair the seat then held).
+        self.goal_slots = np.full((*shape, goal_slots), -1, dtype=np.int64)
         # The memory each decision was taken with (LayoutActor's GRU), so the update can replay the rollout's
         # sequences from where they actually started.
         self.memory = np.zeros((*shape, recurrent), dtype=np.float32)
@@ -229,6 +233,8 @@ class RolloutBuffer:
             self.goal[t], self.goal_log_probs[t], self.goal_chosen[t] = goals[:3]
             if self.slow_goal and len(goals) > 3 and goals[3] is not None:
                 self.slow_memory[t], self.slow_values[t] = goals[3], goals[4]
+            if len(goals) > 5 and goals[5] is not None:
+                self.goal_slots[t] = goals[5]
 
     def store_rows(self, name: str, t: int, rows: slice, value, stream) -> None:
         """Envs `rows` of step `t` of obs, state or mask, from a device tensor, copied on `stream` (queued: the caller
