@@ -282,3 +282,19 @@ def test_the_slots_after_the_primary_are_a_share_of_the_entropy():
     _, _, tenth = head.draw(features, obs, layout, primary_given, given, False, slots)
     assert torch.allclose(tenth, alone + 0.1 * (full - alone), atol=1e-5)
     assert (full > alone).all()
+
+
+def test_an_actor_saved_before_the_goal_scale_loads_with_it_at_zero():
+    from animus.mappo.networks import load_actor_state
+    import pytest
+    net = actor()
+    state = {k: v for k, v in net.state_dict().items() if "_scale" not in k}
+    fresh = actor()
+    with torch.no_grad():
+        fresh.goal_embedding.kind_scale.weight.fill_(1.0)
+    load_actor_state(fresh, state)
+    assert float(fresh.goal_embedding.kind_scale.weight.abs().sum()) == 0.0
+    broken = dict(state)
+    broken.pop(next(k for k in broken if k.startswith("goal_head.")))
+    with pytest.raises(RuntimeError):
+        load_actor_state(actor(), broken)

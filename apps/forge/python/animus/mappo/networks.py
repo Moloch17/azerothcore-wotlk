@@ -746,6 +746,24 @@ class GoalEmbedding(nn.Module):
         return features * (1.0 + scale) + self._held(goal, False).to(features.dtype)
 
 
+# The goal's scale on the actor's features (GoalEmbedding.condition, .amdl 7) starts at zero; an actor saved before it
+# had none, and loads as exactly the actor it was.
+_GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_scale.weight")
+
+
+def load_actor_state(actor: nn.Module, state: dict) -> None:
+    """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero."""
+    missing, unexpected = actor.load_state_dict(state, strict=False)
+    wrong = [key for key in missing if key not in _GOAL_SCALE_KEYS]
+    if wrong or unexpected:
+        raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
+                           f"unexpected {list(unexpected)}")
+    parameters = dict(actor.named_parameters())
+    with torch.no_grad():
+        for key in missing:
+            parameters[key].zero_()
+
+
 def goal_pair(primary: torch.Tensor, secondary: torch.Tensor, count: int) -> torch.Tensor:
     """The pair of goals a seat holds as one number: primary * (count + 1) + secondary + 1 (secondary -1: none)."""
     return primary.long() * (count + 1) + secondary.long() + 1

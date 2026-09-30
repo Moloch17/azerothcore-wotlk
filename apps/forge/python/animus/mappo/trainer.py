@@ -14,8 +14,8 @@ from torch import nn
 from ..device import host
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, log_prob_of, per_layout,
-                       per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
+from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, load_actor_state, log_prob_of,
+                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
                        to_device, update_norms)
 from .valuenorm import ValueNorm
 
@@ -1867,7 +1867,7 @@ class MappoTrainer:
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
-        self.actor.load_state_dict(state["actor"])
+        load_actor_state(self.actor, state["actor"])
         self.critic.load_state_dict(state["critic"])
         if self.value_norm is not None and state.get("value_norm") is not None:
             self.value_norm.load_state_dict(state["value_norm"])

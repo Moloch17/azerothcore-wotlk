@@ -20,7 +20,7 @@ import torch
 
 from .bootstrap import DIRECTOR_LAYOUT
 
-from .mappo.networks import MASKED_LOGIT, LayoutActor
+from .mappo.networks import MASKED_LOGIT, LayoutActor, load_actor_state
 from .stages import Span, arena_names, arena_state_span, block_spans
 
 
@@ -94,7 +94,7 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
                         director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1))
-    actor.load_state_dict(checkpoint["trainer"]["actor"])
+    load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():
         param.requires_grad_(False)
