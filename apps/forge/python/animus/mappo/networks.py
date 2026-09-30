@@ -693,34 +693,57 @@ class GoalEmbedding(nn.Module):
     changes nothing until it is trained).
 
     With `paired` the goal a seat holds is its pair, primary * (count + 1) + secondary + 1 (goal_pair): the same one
-    number in every buffer and call, and the secondary adds its own embedding through a learned gate."""
+    number in every buffer and call, and the secondary adds its own embedding through a learned gate.
 
-    def __init__(self, kinds: int, targets: int, width: int, paired: bool = False):
+    The actor also scales the features by the goal (condition(): features x (1 + scale) + shift, FiLM). Added alone,
+    the goal only moved each action's logit by a constant through the linear heads -- it could not change what the
+    seat does in a situation, and swapping it changed the argmax action 13-21% of the time (next-run trials,
+    2026-09-30). The scale starts at zero, so a new model acts as the shift alone did until it learns one."""
+
+    def __init__(self, kinds: int, targets: int, width: int, paired: bool = False, scaled: bool = False):
         super().__init__()
         self.targets = max(1, targets)
         self.count = kinds * self.targets
         self.paired = paired
         self.kind = nn.Embedding(kinds, width)
         self.target = nn.Embedding(self.targets, width) if self.targets > 1 else None
+        # The actor's scale (condition()); the critic reads the shift alone and has none.
+        self.kind_scale = nn.Embedding(kinds, width) if scaled else None
+        self.target_scale = nn.Embedding(self.targets, width) if scaled and self.targets > 1 else None
         nn.init.zeros_(self.kind.weight)
         if self.target is not None:
             nn.init.zeros_(self.target.weight)
+        for table in (self.kind_scale, self.target_scale):
+            if table is not None:
+                nn.init.zeros_(table.weight)
         if paired:
             self.gate = nn.Parameter(torch.tensor(0.5))
 
-    def _one(self, goal: torch.Tensor) -> torch.Tensor:
-        embedded = self.kind(torch.div(goal, self.targets, rounding_mode="floor"))
-        if self.target is not None:
-            embedded = embedded + self.target(goal % self.targets)
+    def _one(self, goal: torch.Tensor, scale: bool = False) -> torch.Tensor:
+        kind, target = (self.kind_scale, self.target_scale) if scale else (self.kind, self.target)
+        embedded = kind(torch.div(goal, self.targets, rounding_mode="floor"))
+        if target is not None:
+            embedded = embedded + target(goal % self.targets)
         return embedded
 
-    def forward(self, goal: torch.Tensor) -> torch.Tensor:
+    def _held(self, goal: torch.Tensor, scale: bool) -> torch.Tensor:
         goal = goal.reshape(-1).long()
         if not self.paired:
-            return self._one(goal)
+            return self._one(goal, scale)
         primary, secondary = split_goal_pair(goal, self.count)
-        extra = self._one(secondary.clamp(min=0)) * (secondary >= 0)[:, None].to(self.kind.weight.dtype)
-        return self._one(primary) + self.gate.to(self.kind.weight.dtype) * extra
+        extra = self._one(secondary.clamp(min=0), scale) * (secondary >= 0)[:, None].to(self.kind.weight.dtype)
+        return self._one(primary, scale) + self.gate.to(self.kind.weight.dtype) * extra
+
+    def forward(self, goal: torch.Tensor) -> torch.Tensor:
+        """The shift alone (the critic's reading of the goal)."""
+        return self._held(goal, False)
+
+    def condition(self, features: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+        """The actor's features under `goal`: features x (1 + scale) + shift."""
+        if self.kind_scale is None:
+            return features + self._held(goal, False).to(features.dtype)
+        scale = self._held(goal, True).to(features.dtype)
+        return features * (1.0 + scale) + self._held(goal, False).to(features.dtype)
 
 
 def goal_pair(primary: torch.Tensor, secondary: torch.Tensor, count: int) -> torch.Tensor:
@@ -787,7 +810,7 @@ class LayoutActor(nn.Module):
                           if goal_count else None)
         self.goal_count = self.goal_head.count if self.goal_head is not None else 0
         self.goal_slots = self.goal_head.slots if self.goal_head is not None else 1
-        self.goal_embedding = (GoalEmbedding(goal_count, goal_targets, head_width, self.goal_slots > 1)
+        self.goal_embedding = (GoalEmbedding(goal_count, goal_targets, head_width, self.goal_slots > 1, scaled=True)
                                if goal_count else None)
         # **Predictions fed back** (Component P, layer 2): the foresight head's outputs, detached, projected onto the
         # features the action head and the slow loop read, so the policy acts on what it expects to happen.
@@ -898,7 +921,7 @@ class LayoutActor(nn.Module):
         """action_distribution's masked logits, unnormalised (for sample_logits)."""
         features = self.with_foresight(features)
         if self.goal_embedding is not None and goal is not None:
-            features = features + self.goal_embedding(goal.reshape(-1))
+            features = self.goal_embedding.condition(features, goal.reshape(-1))
 
         if self.dense_heads is not None:
             dense = self.dense_heads

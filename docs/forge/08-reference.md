@@ -149,6 +149,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.OwnerWinPulls` | 5 |
 | `Resurrection.GraceMs` | 20000 | | `Pulls.PackClear` | 10.0 |
 | `Resurrection.ReviveAlly` | 1.5 | | `Pulls.FastClear` | 1.0 |
+| `Output.Clock` | 0.03 | | | |
 | `Death.TimeDead` | 0.002 | | `Death.DiedAgain` | 3.0 |
 | `Death.DiedAgainMs` | 30000 | | `Death.SafeRise` | 0.5 |
 | `Death.SpiritHealer` | 1.0 | | | |

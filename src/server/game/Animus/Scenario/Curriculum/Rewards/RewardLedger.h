@@ -107,6 +107,8 @@ namespace Animus::Curriculum
         TownDone,
         /// The corpse run (Death.*): time dead, dying again soon after rising, rising safely, the spirit healer.
         DeathRun,
+        /// Every second an engaged enemy lives (Output.Clock): what makes killing faster pay.
+        CombatClock,
         Count
     };
 

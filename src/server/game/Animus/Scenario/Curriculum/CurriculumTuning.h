@@ -809,6 +809,16 @@ namespace Animus::Curriculum
             float ReviveAlly = 1.5f;            // a dead ally the seat resurrected stood up
         } Resurrection;
 
+        /// Output: how fast the enemies die. Damage is paid as a share of their health, so a kill paid the same
+        /// whether it took ten seconds or thirty, and only discounting and a small FastKill told a seat to hurry.
+        struct OutputTuning
+        {
+            /// Per second an engaged enemy lives, charged to every seat of the side -- a dead one too, so dying
+            /// never stops it -- in every arena but a raid's, whose wipe would. At 0.03 a 30 s fight costs 0.9,
+            /// and doubling the seat's damage saves half of it.
+            float Clock = 0.03f;
+        } Output;
+
         /// Where death runs on (ArenaDefinition::DeathRuns, DeathBlock): the corpse run. Dying stays costed by the
         /// arena's own death term; nothing here pays for dying.
         struct DeathTuning
@@ -1275,6 +1285,7 @@ namespace Animus::Curriculum
 
             f("Resurrection.GraceMs", tuning.Resurrection.GraceMs);
             f("Resurrection.ReviveAlly", tuning.Resurrection.ReviveAlly);
+            f("Output.Clock", tuning.Output.Clock);
             f("Death.TimeDead", tuning.Death.TimeDead);
             f("Death.DiedAgain", tuning.Death.DiedAgain);
             f("Death.DiedAgainMs", tuning.Death.DiedAgainMs);

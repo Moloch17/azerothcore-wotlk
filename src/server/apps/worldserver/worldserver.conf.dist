@@ -6518,6 +6518,13 @@ AnimusForge.Curriculum.Resurrection.GraceMs = 20000
 AnimusForge.Curriculum.Resurrection.ReviveAlly = 1.5
 
 #
+#    AnimusForge.Curriculum.Output.*
+#        How fast the enemies die: every second an engaged enemy lives costs every seat of the side
+#        (dead ones too), in every arena but a raid's.
+
+AnimusForge.Curriculum.Output.Clock = 0.03
+
+#
 #    AnimusForge.Curriculum.Death.*
 #        Where death runs on (open-world quest arenas): a dead seat releases, runs back to its
 #        corpse and rises there, takes the spirit healer, or accepts a friend's resurrection.

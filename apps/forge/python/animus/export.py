@@ -58,6 +58,9 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
             f32  drawn[(K * T + 1) * goal_width]                 what was drawn before, by goal + 1 (0: none)
             f32  none_bias[goal_slots - 1]                       each later slot's "none" logit
             f32  gate                                            the secondary's share of the action head's embedding
+        f32  kind_scale[goal_kinds * feature_width]      (version 7) the goal's scale on the features the action
+        if goal_targets > 1:                                head reads: features x (1 + scale) + embedding (FiLM),
+            f32  target_scale[goal_targets * feature_width] the secondary's through the gate as its embedding is
     (goal_width: slow_size when there is one, else feature_width)
     u8       director_sets                  the director's members and enemies as sets (DirectorSets), else 0
     if director_sets:
@@ -100,7 +103,9 @@ from .stages import STAGE_FILE, model_names
 AMDL_MAGIC = b"AMDL"
 # 6: two goals held and a queue (goal_slots, the slot parameters, the embedding's gate), a twelfth goal kind, and
 # the goal block's next-run columns (the secondary ending, the event, the director's primary, what was achieved).
-AMDL_VERSION = 6
+# 7: the goal also scales the action head's features (kind_scale, target_scale), so it can change what the seat does
+# in a situation rather than only shift each action's logit.
+AMDL_VERSION = 7
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -234,6 +239,9 @@ def write_amdl(
                 for name in ("slot_bias", "drawn", "none_bias"):
                     out.write(np.ascontiguousarray(goals[name], dtype="<f4").tobytes())
                 out.write(struct.pack("<f", float(goals["gate"])))
+            out.write(np.ascontiguousarray(goals["kind_scale"], dtype="<f4").tobytes())
+            if targets > 1:
+                out.write(np.ascontiguousarray(goals["target_scale"], dtype="<f4").tobytes())
 
         out.write(struct.pack("<B", 1 if sets else 0))
         if sets:
@@ -296,6 +304,12 @@ def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[
         goals["drawn"] = array("goal_head.drawn.weight")
         goals["none_bias"] = array("goal_head.none_bias")
         goals["gate"] = float(actor_state["goal_embedding.gate"])
+    goals["kind_scale"] = (array("goal_embedding.kind_scale.weight") if "goal_embedding.kind_scale.weight" in actor_state
+                           else np.zeros_like(goals["kind_embedding"]))
+    if "target_embedding" in goals:
+        goals["target_scale"] = (array("goal_embedding.target_scale.weight")
+                                 if "goal_embedding.target_scale.weight" in actor_state
+                                 else np.zeros_like(goals["target_embedding"]))
     return goals
 
 
@@ -483,6 +497,9 @@ def read_amdl(path: str | Path) -> dict:
             goals["none_bias"] = floats(slots - 1, slots - 1)
             (goals["gate"],) = struct.unpack_from("<f", data, offset)
             offset += 4
+        goals["kind_scale"] = floats(kinds * width, kinds, width)
+        if targets > 1:
+            goals["target_scale"] = floats(targets * width, targets, width)
 
     (has_sets,) = struct.unpack_from("<B", data, offset)
     offset += 1
@@ -690,15 +707,14 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
         goal = primary
     if state is not None:
         state["goal"], state["age"], state["queue"] = goal, 1 if choose else age + 1, list(queue)
-    x = x + goals["kind_embedding"][primary // targets]
-    if targets > 1:
-        x = x + goals["target_embedding"][primary % targets]
-    if slots > 1 and secondary >= 0:
-        extra = goals["kind_embedding"][secondary // targets]
-        if targets > 1:
-            extra = extra + goals["target_embedding"][secondary % targets]
-        x = x + goals["gate"] * extra
-    return x
+    def held(table: str) -> np.ndarray:
+        one = lambda goal: goals[f"kind_{table}"][goal // targets] + (
+            goals[f"target_{table}"][goal % targets] if targets > 1 else 0.0)
+        total = one(primary)
+        if slots > 1 and secondary >= 0:
+            total = total + goals["gate"] * one(secondary)
+        return total
+    return x * (1.0 + held("scale")) + held("embedding")
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:

@@ -578,7 +578,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // invisible in exactly the run where it matters.
     for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::Jitter, RewardTerm::Aimless, RewardTerm::Effort,
         RewardTerm::Fidget, RewardTerm::SelfHealing, RewardTerm::GoalReached,
-        RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana })
+        RewardTerm::GoalSwitch, RewardTerm::Hazard, RewardTerm::HealingMana, RewardTerm::CombatClock })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
@@ -776,6 +776,19 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         float const seconds = std::max(0.001f, float(env.EpisodeElapsedMs) / 1000.0f);
         return float(env.EpisodeStats[index].Damage) / seconds;
+    });
+    // Throughput where it counts: damage per second in combat, and that over the level's damage scale, so a level 80
+    // and a level 20 read on one scale (plan 1.9).
+    _info.Add("combat_dps", [seat](Env const& env, uint32 index)
+    {
+        float const seconds = std::max(1.0f, float(seat(env, index).CombatMs) / 1000.0f);
+        return float(env.EpisodeStats[index].Damage) / seconds;
+    });
+    _info.Add("dps_scaled", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        float const seconds = std::max(1.0f, float(state.CombatMs) / 1000.0f);
+        return float(env.EpisodeStats[index].Damage) / seconds / std::max(1.0f, state.DamageScale);
     });
     _info.Add("white_damage", [](Env const& env, uint32 index) { return float(env.EpisodeStats[index].WhiteDamage); });
     _info.Add("special_damage", [](Env const& env, uint32 index)
@@ -4431,6 +4444,17 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     if (Arena(env).DeathRuns)
         SettleDeath(env, seat, bot);
+
+    // The combat clock (Output.Clock): every second an engaged enemy lives costs every seat, dead or alive.
+    if (Arena(env).Seats != SeatPlan::Raid && _tuning.Output.Clock > 0.0f)
+    {
+        bool engaged = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !engaged; ++slot)
+            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+                engaged = true;
+        if (engaged)
+            seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(_decisionMs) / 1000.0f);
+    }
 
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->Reward(env, seatIndex, bot, seat.Rewards);
