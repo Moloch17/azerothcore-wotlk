@@ -1908,6 +1908,25 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->BeforeLevel(env);
 
+    // A level fixed that low (an instance rung below 55) is not every class's: the others' seats draw again among
+    // the classes that can be it. A death knight among them lifted every seat to 55, so the Ragefire Chasm,
+    // Deadmines and Scarlet Monastery rungs were fought twenty levels over. Seat 0 keeps its class: the rung was
+    // drawn for it (InstanceEncounter::BeforeLevel), and its ladder learns what its own level makes of the rung.
+    if (data.EpisodeLevel)
+        for (uint32 seat = 1; seat < data.ActiveSeats; ++seat)
+        {
+            SeatState& s = data.Seats[seat];
+            for (uint32 attempt = 0; attempt < 8 && s.L && s.L->Assets->Kit->MinLevel() > data.EpisodeLevel; ++attempt)
+            {
+                Casting const casting = DrawCasting(env, seat, s.Want);
+                if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
+                {
+                    s.L = casting.L;
+                    s.Spec = casting.Spec;
+                }
+            }
+        }
+
     // One level every seat's class/role can be.
     uint8 minLevel = 1;
     for (uint32 seat = 0; seat < _seatCount; ++seat)

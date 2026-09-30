@@ -48,6 +48,9 @@ namespace Animus::Curriculum
         std::vector<uint32> Keep{};
         /// Leave the trash around the boss standing: the pull to the boss is part of the fight.
         bool Trash = false;
+        /// The areatrigger_teleport whose target is this boss's way in, where the map has several (Scarlet
+        /// Monastery's four wings); 0 = the map's own entrance (ObjectMgr::GetMapEntranceTrigger).
+        uint32 Entrance = 0;
         char const* Name = "";
     };
 

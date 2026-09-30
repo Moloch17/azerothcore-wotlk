@@ -188,7 +188,12 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
 
     // The seats spawn at the instance's front door, as a group that walked in would; Build then takes them to the
     // boss along the server's own path.
-    AreaTriggerTeleport const* entrance = sObjectMgr->GetMapEntranceTrigger(fight.Row->MapId);
+    // A map with several ways in (Scarlet Monastery's wings) names the one for this boss: the map's first trigger is
+    // one wing's door for all of them, and the path from it to a boss in another wing does not exist.
+    AreaTriggerTeleport const* entrance = fight.Row->Entrance
+        ? sObjectMgr->GetAreaTriggerTeleport(fight.Row->Entrance) : nullptr;
+    if (!entrance || entrance->target_mapId != fight.Row->MapId)
+        entrance = sObjectMgr->GetMapEntranceTrigger(fight.Row->MapId);
     data.EpisodeSpawn.Relocate(entrance->target_X, entrance->target_Y, entrance->target_Z, entrance->target_Orientation);
     data.HasEpisodeSpawn = true;
 }
@@ -463,6 +468,16 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     Creature* boss = seat && !fight.Boss.IsEmpty() ? Encoding::CreatureThrough(*seat, fight.Boss) : nullptr;
     if (!boss)
         return;
+
+    // The boss is the episode's pull. Announced on the first update, once the owner is configured (which clears its
+    // engage timer): the scripted owner's timer is only ever set by a pull starting, so in an instance it attacked
+    // the boss on its first update, before the party had moved. Now a tank owner pulls after a moment and any other
+    // waits for the tank, as it does for a pull.
+    if (!fight.Announced)
+    {
+        fight.Announced = true;
+        _scenario.NotifyPullStarting(env);
+    }
 
     fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
     if (!fight.BossDead && !boss->IsAlive())

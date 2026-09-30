@@ -526,6 +526,7 @@ namespace Animus::Curriculum
             bool Wiped = false;
             bool Evaded = false;
             bool Recorded = false;
+            bool Announced = false;             // the owner was told a pull is starting (OnPullStarting)
             uint32 TrashCleared = 0;
             std::array<SeatInstance, MAX_SEATS> Seats;
         };
