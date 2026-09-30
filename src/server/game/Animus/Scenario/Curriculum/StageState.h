@@ -445,6 +445,7 @@ namespace Animus::Curriculum
         uint32 AimlessPresses = 0;
         uint32 EffortPresses = 0;
         uint32 ServingPresses = 0;
+        uint64 PurposefulMs = 0;                // the last press judged serving or neutral (Raid.Idle)
         uint32 JudgedPresses = 0;
         uint32 FidgetMs = 0;
         uint32 CombatMs = 0;
@@ -603,6 +604,7 @@ namespace Animus::Curriculum
             AimlessPresses = 0;
             EffortPresses = 0;
             ServingPresses = 0;
+            PurposefulMs = 0;
             JudgedPresses = 0;
             FidgetMs = 0;
             CombatMs = 0;

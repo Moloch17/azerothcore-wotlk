@@ -12,4 +12,4 @@ eval:
   every_env_steps: 10000000
   episodes: 64
   report: [pulls_cleared, died, wipes, teammates_died, engage_health, engage_mana, low_health_seconds, threat_share,
-           director_member_orders]
+           director_member_orders, idle_seconds_in_combat, dps, teammate_healing]

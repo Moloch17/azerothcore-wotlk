@@ -93,6 +93,25 @@ namespace Animus::Curriculum
             float TeammateDeath = 3.0f;
         } Party;
 
+        /// Raids (a raid's seat plan): the synthetic pulls sized to the raid, and each role paid for its own part
+        /// -- a forty-seat raid paid only as a party learned to leave the fight to the others.
+        struct RaidTuning
+        {
+            float HealthPerGroup = 1.0f;        // a raid pull's health x (seats / 5) x this
+            float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
+            float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
+            /// Healers in a raid: per member of its group above 50% health, per decision; the same charged per
+            /// member below 35%.
+            float KeepUp = 0.004f;
+            /// Damage dealers in a raid: their own damage as a share of the level's damage scale, times this.
+            float Output = 0.5f;
+            /// Party and raid: per decision in a fight with an enemy in reach, once nothing the seat did served or
+            /// was neutral -- no press, no damage, no healing -- for IdleMs.
+            float Idle = 0.01f;
+            uint32 IdleMs = 4000;
+            float IdleReach = 40.0f;            // yards: an enemy this near is one to act on
+        } Raid;
+
         /// One-on-one fights against a creature (the duel) or a player (PvP).
         struct DuelTuning
         {
@@ -199,10 +218,16 @@ namespace Animus::Curriculum
             /// 5.75x, where the pool ladders stop at 2.5x. Kill, HealthKept and BossProgress are multiplied by the
             /// capped scale, Death and Timeout divided by it.
             uint32 MaxTierScale = 6;
-            /// Paid on a wipe or an evade for the share of the boss's health the fight took off it, so a forty-seat
-            /// fight has a gradient before its first kill: at 5, a wipe at 40% pays 3 (x the tier scale).
+            /// Paid on a wipe, an evade or the clock for the share of the boss's health the fight took off it, so a
+            /// forty-seat fight has a gradient before its first kill: at 5, a wipe at 40% pays 3 (x the tier scale).
+            /// It was not paid on the clock, so a raid that could not win learned that doing nothing cost the same
+            /// as trying (stage13_raids, 2026-09-29: 0 kills, output falling, idle rising).
             float BossProgress = 5.0f;
             float Timeout = 10.0f;              // the clock, scaled by what is left of the boss (Duel.TimeoutFloor)
+            /// Per second the boss has not been engaged once StallGraceMs of the episode are gone, as the single
+            /// pack's Pulls.Stall.
+            float Stall = 0.08f;
+            uint32 StallGraceMs = 15000;
             /// Whole wings (InstanceLadder::Wing): each trash creature killed, each waypoint of the route reached, the
             /// wing's boss, each seat's death and each wipe (a wipe stands the party up at the door; WingWipes of them
             /// end the episode). The kill and waypoint terms scale with the rung, the costs are divided by it.
@@ -963,6 +988,14 @@ namespace Animus::Curriculum
             f("Party.TankLoseTeammate", tuning.Party.TankLoseTeammate);
             f("Party.PulledThreat", tuning.Party.PulledThreat);
             f("Party.TeammateDeath", tuning.Party.TeammateDeath);
+            f("Raid.HealthPerGroup", tuning.Raid.HealthPerGroup);
+            f("Raid.DamagePerGroup", tuning.Raid.DamagePerGroup);
+            f("Raid.TankHold", tuning.Raid.TankHold);
+            f("Raid.KeepUp", tuning.Raid.KeepUp);
+            f("Raid.Output", tuning.Raid.Output);
+            f("Raid.Idle", tuning.Raid.Idle);
+            f("Raid.IdleMs", tuning.Raid.IdleMs);
+            f("Raid.IdleReach", tuning.Raid.IdleReach);
 
             f("Duel.DamageDealt", tuning.Duel.DamageDealt);
             f("Duel.DamageTaken", tuning.Duel.DamageTaken);
@@ -1004,6 +1037,8 @@ namespace Animus::Curriculum
             f("Instance.MaxTierScale", tuning.Instance.MaxTierScale);
             f("Instance.BossProgress", tuning.Instance.BossProgress);
             f("Instance.Timeout", tuning.Instance.Timeout);
+            f("Instance.Stall", tuning.Instance.Stall);
+            f("Instance.StallGraceMs", tuning.Instance.StallGraceMs);
             f("Instance.WingTrashKill", tuning.Instance.WingTrashKill);
             f("Instance.WingWaypoint", tuning.Instance.WingWaypoint);
             f("Instance.WingBoss", tuning.Instance.WingBoss);

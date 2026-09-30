@@ -464,6 +464,8 @@ namespace Animus::Curriculum
             uint64 ThreatOnTeammates = 0;
             uint32 TeammatesDied = 0;
             std::array<bool, MAX_SEATS> TeammateDeathSeen{};
+            uint64 ActiveMs = 0;                // the seat last dealt damage or healed (Raid.Idle)
+            uint32 IdleMs = 0;                  // in a fight with an enemy in reach and nothing done (Raid.Idle)
         };
 
         struct EnvParty
@@ -476,6 +478,8 @@ namespace Animus::Curriculum
         /// The first seat of the group `seat` is in: a party is one group, a raid is RAID_GROUPS of them.
         [[nodiscard]] static uint32 GroupFirstSeat(uint32 seat) { return seat / GROUP_SEATS * GROUP_SEATS; }
         void Disband(Env& env);
+        /// Each role paid for its own part, and idling charged (Raid.*).
+        void RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger, bool raid);
 
         std::vector<EnvParty> _envs;
     };

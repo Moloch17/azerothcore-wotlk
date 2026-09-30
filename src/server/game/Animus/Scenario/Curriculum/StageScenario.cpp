@@ -3920,6 +3920,8 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         return;
 
     ++seat.JudgedPresses;
+    if (verdict != Verdict::Aimless)
+        seat.PurposefulMs = env.EpisodeElapsedMs;
     if (verdict == Verdict::Serves)
         ++seat.ServingPresses;
     else if (verdict == Verdict::Aimless)

@@ -5892,6 +5892,25 @@ AnimusForge.Curriculum.Party.PulledThreat = 0.004
 AnimusForge.Curriculum.Party.TeammateDeath = 3.0
 
 #
+#    AnimusForge.Curriculum.Raid.*
+#        Raids: synthetic pulls sized to the raid, and each role paid for its own part.
+
+#   a raid pull's health x (seats / 5) x HealthPerGroup, its melee damage x (1 + DamagePerGroup x (groups - 1))
+AnimusForge.Curriculum.Raid.HealthPerGroup = 1.0
+AnimusForge.Curriculum.Raid.DamagePerGroup = 0.15
+#   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
+AnimusForge.Curriculum.Raid.TankHold = 0.006
+#   raid healers: per group member above 50% health per decision, the same charged per member below 35%
+AnimusForge.Curriculum.Raid.KeepUp = 0.004
+#   raid damage dealers: own damage as a share of the level's damage scale, times this
+AnimusForge.Curriculum.Raid.Output = 0.5
+#   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
+#   damaging or healing for IdleMs (ms)
+AnimusForge.Curriculum.Raid.Idle = 0.01
+AnimusForge.Curriculum.Raid.IdleMs = 4000
+AnimusForge.Curriculum.Raid.IdleReach = 40.0
+
+#
 #    AnimusForge.Curriculum.Duel.*
 #        One-on-one fights against a creature (the duel) or a player (PvP).
 
@@ -5998,6 +6017,9 @@ AnimusForge.Curriculum.Instance.MaxTierScale = 6
 AnimusForge.Curriculum.Instance.BossProgress = 5.0
 #   the clock running out with the boss alive, scaled by what is left of it (Duel.TimeoutFloor), divided by the tier
 AnimusForge.Curriculum.Instance.Timeout = 10.0
+#   per second the boss is not engaged once StallGraceMs (ms) are gone
+AnimusForge.Curriculum.Instance.Stall = 0.08
+AnimusForge.Curriculum.Instance.StallGraceMs = 15000
 #   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
 #   (x the rung), each seat's death and each wipe (/ the rung); a wipe stands the party up at the door and WingWipes
 #   of them end the episode; the route's points are WingWaypointYards apart along the door-to-boss path

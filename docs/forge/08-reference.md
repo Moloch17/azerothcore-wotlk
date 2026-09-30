@@ -125,6 +125,10 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Party.TeammateHealing` | 2.0 | | `Pulls.OwnerPullsMaxMs` | 1500 |
 | `Party.TankLoseTeammate` | 0.02 | | `Pulls.OwnerPullsChance` | 30 |
 | `Party.TeammateDeath` | 3.0 | | `Pulls.RecoverFraction` | 0.5 |
+| `Raid.HealthPerGroup` | 1.0 | | `Raid.DamagePerGroup` | 0.15 |
+| `Raid.TankHold` | 0.006 | | `Raid.KeepUp` | 0.004 |
+| `Raid.Output` | 0.5 | | `Raid.Idle` | 0.01 |
+| `Raid.IdleMs` | 4000 | | `Raid.IdleReach` | 40.0 |
 | `Duel.DamageDealt` | 2.0 | | `Pulls.DamageDealt` | 2.0 |
 | `Duel.DamageTaken` | 1.0 | | `Pulls.DamageTaken` | 1.0 |
 | `Duel.Approach` | 0.5 | | `Pulls.GauntletDamageTaken` | 1.5 |
@@ -211,6 +215,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Instance.MaxTierScale` | 6 | | | |
 | `Instance.BossProgress` | 5.0 | | | |
 | `Instance.Timeout` | 10.0 | | | |
+| `Instance.Stall` | 0.08 | | `Instance.StallGraceMs` | 15000 |
 | `Life.StepCost` | 0.0002 | | | |
 | `Life.Progress` | 2.0 | | | |
 | `Life.Wasted` | 0.1 | | | |

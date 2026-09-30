@@ -34,7 +34,8 @@ Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::RewardTerms() const
 {
     return { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing, RewardTerm::TeammateThreat,
-        RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive };
+        RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive, RewardTerm::DamageDealt,
+        RewardTerm::Stall };
 }
 
 void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -61,6 +62,10 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     table.Add("threat_on_teammates", [this](Env const& env, uint32 seat)
     {
         return float(_envs[env.Index].Seats[seat].ThreatOnTeammates);
+    });
+    table.Add("idle_seconds_in_combat", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Seats[seat].IdleMs) / 1000.0f;
     });
 }
 
@@ -408,6 +413,62 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             ++seat.TeammatesDied;
             ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath * weight);
         }
+    }
+
+    RewardRole(env, seatIndex, bot, ledger, raid);
+}
+
+void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger,
+    bool raid)
+{
+    // Each role paid for its own part (Raid.*): the tank for what it holds, in a raid the healer for its group kept
+    // up and the damage dealer for its own output, and every seat charged for standing idle in a fight.
+    CurriculumTuning::RaidTuning const& tuning = _scenario.Tuning().Raid;
+    EnvState const& data = _scenario.Data(env);
+    SeatParty& seat = _envs[env.Index].Seats[seatIndex];
+    SeatState const& state = data.Seats[seatIndex];
+    Aptitude const& apt = state.Apt;
+    AgentStats const& step = env.StepStats[seatIndex];
+    float const scale = _scenario.DecisionScale();
+    if (!bot->IsAlive())
+        return;
+
+    uint32 onBot = 0;
+    bool enemyNear = false;
+    for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
+        if (Unit* enemy = env.FindTargetUnit(enemySlot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+        {
+            onBot += enemy->GetVictim() == bot ? 1 : 0;
+            enemyNear = enemyNear || (enemy->IsInMap(bot) && bot->GetExactDist(enemy) <= tuning.IdleReach);
+        }
+    // Beside an owner the owner encounter pays the tank for this (Owner.TankHold).
+    if (HoldsThePull(apt) && !_scenario.Arena(env).Owner)
+        ledger.Add(RewardTerm::Threat, tuning.TankHold * float(onBot) * scale);
+
+    if (raid && Heals(apt))
+    {
+        uint32 const first = GroupFirstSeat(seatIndex);
+        int32 kept = 0;
+        for (uint32 member = first; member < first + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
+            if (Player* mate = env.FindBot(member); mate && data.Seats[member].L && mate->IsAlive())
+                kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
+        ledger.Add(RewardTerm::TeammateHealing, tuning.KeepUp * float(kept) * scale);
+    }
+    else if (raid && !HoldsThePull(apt))
+        ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);
+
+    // Idle: in a fight, an enemy in reach, and nothing done -- no press that served or was neutral, no damage, no
+    // healing -- for IdleMs.
+    uint64 healed = step.AllyHealing;
+    for (uint64 amount : step.AgentHealingBy)
+        healed += amount;
+    if (step.Damage || healed)
+        seat.ActiveMs = env.EpisodeElapsedMs;
+    uint64 const active = std::max<uint64>(seat.ActiveMs, state.PurposefulMs);
+    if (bot->IsInCombat() && enemyNear && env.EpisodeElapsedMs >= active + tuning.IdleMs)
+    {
+        seat.IdleMs += _scenario.DecisionMs();
+        ledger.Add(RewardTerm::Stall, -tuning.Idle * scale);
     }
 }
 

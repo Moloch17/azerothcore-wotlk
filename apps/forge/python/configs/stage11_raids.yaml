@@ -12,4 +12,4 @@ eval:
   every_env_steps: 10000000
   episodes: 128
   report: [boss_killed, boss_health_left, wiped, evaded, engaged, died, teammates_died, director_member_orders,
-           boss_rung, instance_map]
+           boss_rung, instance_map, idle_seconds_in_combat, dps]

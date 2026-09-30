@@ -503,6 +503,26 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     if (pack.empty())
         return false;
 
+    // A raid's pull is sized to the raid: health by the seats (a party's pull for every five), melee damage by the
+    // groups, so there is something for forty to do and the healers have to heal. Stat modifiers, not a bare
+    // SetMaxHealth, which a stat update would undo.
+    if (arena.Seats == SeatPlan::Raid)
+    {
+        CurriculumTuning::RaidTuning const& raid = _scenario.Tuning().Raid;
+        float const seats = float(std::max<uint32>(1, data.ActiveSeats));
+        float const groups = std::ceil(seats / float(GROUP_SEATS));
+        float const health = std::max(1.0f, seats / float(GROUP_SEATS) * raid.HealthPerGroup);
+        float const damage = 1.0f + raid.DamagePerGroup * (groups - 1.0f);
+        for (Creature* member : pack)
+        {
+            member->ApplyStatPctModifier(UNIT_MOD_HEALTH, TOTAL_PCT, (health - 1.0f) * 100.0f);
+            member->UpdateMaxHealth();
+            member->SetFullHealth();
+            member->ApplyStatPctModifier(UNIT_MOD_DAMAGE_MAINHAND, TOTAL_PCT, (damage - 1.0f) * 100.0f);
+            member->UpdateDamagePhysical(BASE_ATTACK);
+        }
+    }
+
     // The new pull replaces the old one's creatures; enemy players (ambushers) keep their slots, first.
     std::erase_if(env.Targets, [](ObjectGuid const& guid) { return !guid.IsPlayer(); });
     for (Creature* member : pack)

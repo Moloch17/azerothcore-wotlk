@@ -130,7 +130,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
-        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout,
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout, RewardTerm::Stall,
         RewardTerm::Readiness };
 }
 
@@ -794,6 +794,10 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     CombatReward::OneOnOne(_scenario, env, seatIndex, bot, boss, ledger, tierScale);
 
     CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
+    // Not engaged once the grace is gone: the clock costs by the second, as the single pack's stall does.
+    if (!fight.Engaged && env.EpisodeElapsedMs > tuning.StallGraceMs)
+        ledger.Add(RewardTerm::Stall, -tuning.Stall * float(_scenario.DecisionMs()) / 1000.0f);
+
     bool const over = fight.BossDead || fight.Wiped || fight.Evaded || TimeIsUp(env);
     if (!over || fight.Seats[seatIndex].OutcomePaid)
         return;
@@ -813,7 +817,7 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
     // A lost fight is not one bit: what the raid took off the boss before it wiped or the script reset is paid as
     // progress, so a forty-seat fight has a gradient before its first kill. The clock costs what a duel's does.
     float const progress = std::clamp(1.0f - fight.HealthLeft, 0.0f, 1.0f);
-    if ((fight.Wiped || fight.Evaded) && progress > 0.0f)
+    if (progress > 0.0f)
         ledger.Add(RewardTerm::BossProgress, tuning.BossProgress * progress * tierScale);
     if (!fight.Wiped && !fight.Evaded && TimeIsUp(env))
         ledger.Add(RewardTerm::Timeout, -tuning.Timeout
