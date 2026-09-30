@@ -369,8 +369,11 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (bot->IsInCombat() && !owner->IsInCombat() && !HoldsThePull(apt))
             ledger.Add(RewardTerm::SoloFight, -tuning.SoloFight * scale);
 
-        // Out of combat, stay with the owner.
-        if (bot->IsAlive() && !bot->IsInCombat() && !owner->IsInCombat() && owner->IsInMap(bot))
+        // Out of combat, stay with the owner -- a companion only. In a party the owner is one member of five, and a
+        // seat that is not at its heel is not lost: in a dungeon wing the per-yard trail cost came to -108 an
+        // episode against +9 for the kills (2026-09-30), and the group was paid for hugging one player.
+        bool const companion = _scenario.Arena(env).Seats == SeatPlan::Solo;
+        if (companion && bot->IsAlive() && !bot->IsInCombat() && !owner->IsInCombat() && owner->IsInMap(bot))
         {
             float const distance = bot->GetDistance(owner);
             if (distance > tuning.FollowFarDistance)
