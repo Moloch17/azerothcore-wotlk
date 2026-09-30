@@ -19,9 +19,9 @@ VENV="$LEARNER/.venv"
 # Left by ./forge.sh --build: compile before this start.
 BUILD_REQUEST="$ROOT/env/dist/.forge-build"
 # Optimised with line info (-O2 -g): a crash on a map thread comes with file and line in its backtrace, which a
-# Release build (conf/dist/config.sh's default) merges into whatever was inlined. CTYPE=Release in the service's
-# environment builds the old way.
-export CTYPE="${CTYPE:-RelWithDebInfo}"
+# Release build merges into whatever was inlined. conf/dist/env.ac sets CTYPE=Release for every AzerothCore
+# container, so the forge's own choice is FORGE_CTYPE (FORGE_CTYPE=Release builds the old way).
+export CTYPE="${FORGE_CTYPE:-RelWithDebInfo}"
 
 mkdir -p "$LOGS"
 
