@@ -431,15 +431,19 @@ class TrainingRun:
 
         self.run_dir = Path(config.runs_dir) / config.run_name
         self.resume_path: Path | None = None
-        if resume:
+        # A learner on another machine than the leader's (a worker's rank: the first, and only, of its machine) keeps
+        # a runs directory of its own that nothing but it writes. It never resumes from it -- the leader's networks
+        # are the run's, and every rank takes them once they are loaded -- and a fresh start archives it as the
+        # leader archives its own: a stale stage1_move/latest.pt from an earlier run made every worker's learner
+        # refuse to resume.
+        remote = not leader and config.local()[0] == 0
+        if resume and not remote:
             try:
                 self.resume_path = resume_checkpoint_path(self.run_dir)
             except FileNotFoundError as error:
-                # A learner on another machine has no run of its own: it starts from the leader's networks, which
-                # every rank takes once they are loaded.
                 if leader:
                     raise SystemExit(str(error)) from None
-        elif leader and (archived := archive_run(self.run_dir)):
+        elif (leader or remote) and not resume and (archived := archive_run(self.run_dir)):
             print(f"Archived the earlier {config.run_name} run to {archived}; training from scratch", flush=True)
         self.ranks.barrier()  # the others read the run directory only once the leader has archived it
         self.finished_path = self.run_dir / FINISHED_FILE
