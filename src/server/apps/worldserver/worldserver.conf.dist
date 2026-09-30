@@ -6444,11 +6444,13 @@ AnimusForge.Curriculum.Owner.PulledThreat = 0.004
 #   per decision in combat while the owner is not
 AnimusForge.Curriculum.Owner.SoloFight = 0.01
 #   per decision out of combat beyond FollowFarDistance
-AnimusForge.Curriculum.Owner.FollowFar = 0.002
+AnimusForge.Curriculum.Owner.FollowFar = 0.004
 #   per decision out of combat within FollowNearDistance
-AnimusForge.Curriculum.Owner.FollowNear = 0.0005
-AnimusForge.Curriculum.Owner.FollowFarDistance = 25.0
-AnimusForge.Curriculum.Owner.FollowNearDistance = 12.0
+AnimusForge.Curriculum.Owner.FollowNear = 0.002
+AnimusForge.Curriculum.Owner.FollowFarDistance = 15.0
+AnimusForge.Curriculum.Owner.FollowNearDistance = 6.0
+#   per decision and yard the companion trails a moving owner past FollowNearDistance (up to 20)
+AnimusForge.Curriculum.Owner.FollowTrail = 0.001
 AnimusForge.Curriculum.Owner.Death = 15.0
 
 #

@@ -320,6 +320,9 @@ namespace Animus::Curriculum
     {
         std::array<SeatOption, std::size_t(SeatOptionSlot::Count)> Slots{};
         OwnerTrail Trail;
+        /// A follow: since when the owner has stood still (0 while it moves). The run settles only once the owner
+        /// has stood a moment, so an owner pausing between steps does not end it and make the seat start again.
+        uint64 OwnerStillSinceMs = 0;
 
         [[nodiscard]] SeatOption& Of(SeatOptionKind kind) { return Slots[std::size_t(SlotOf(kind))]; }
         [[nodiscard]] SeatOption const& Of(SeatOptionKind kind) const { return Slots[std::size_t(SlotOf(kind))]; }
@@ -339,6 +342,7 @@ namespace Animus::Curriculum
         {
             Slots = {};
             Trail.Clear();
+            OwnerStillSinceMs = 0;
         }
     };
 

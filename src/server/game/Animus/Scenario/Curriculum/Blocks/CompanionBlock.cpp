@@ -40,6 +40,8 @@ namespace
     constexpr float FOLLOW_TRAIL = 3.5f;
     constexpr float FOLLOW_START_DISTANCE = 6.0f;
     constexpr float FOLLOW_STOP_DISTANCE = 3.0f;
+    /// How long the owner has to stand still before a follow settles.
+    constexpr uint64 FOLLOW_SETTLE_MS = 1000;
     /// A running follow is re-aimed at most once a second, or sooner when its run is about to end with the owner
     /// still moving (so the feet never stop between two runs) or when the spot has moved far from where it heads.
     constexpr uint32 FOLLOW_REAIM_MS = 1000;
@@ -255,8 +257,15 @@ void Animus::Curriculum::CompanionBlock::BeforeApply(SeatView& view, SeatActionR
     }
 
     result.FollowDistance = bot->GetExactDist2d(owner);
-    if (result.FollowDistance <= FOLLOW_STOP_DISTANCE + FOLLOW_TRAIL && !owner->isMoving()
-        && bot->movespline->Finalized())
+    // Settling needs the owner to have stood still a second, not a decision: the run stopped at every pause in the
+    // owner's walking and the seat pressed follow again, 35-41 restarts a minute in the four-phase run.
+    bool const ownerMoving = owner->isMoving() || !owner->movespline->Finalized();
+    if (ownerMoving)
+        view.Option->OwnerStillSinceMs = 0;
+    else if (!view.Option->OwnerStillSinceMs)
+        view.Option->OwnerStillSinceMs = std::max<uint64>(1, view.NowMs);
+    bool const ownerSettled = !ownerMoving && view.NowMs >= view.Option->OwnerStillSinceMs + FOLLOW_SETTLE_MS;
+    if (result.FollowDistance <= FOLLOW_STOP_DISTANCE + FOLLOW_TRAIL && ownerSettled && bot->movespline->Finalized())
     {
         view.Option->Stop(SeatOptionKind::Follow);
         return;

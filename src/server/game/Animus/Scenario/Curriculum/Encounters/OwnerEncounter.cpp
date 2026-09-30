@@ -377,6 +377,11 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
                 ledger.Add(RewardTerm::Follow, -tuning.FollowFar * scale);
             else if (distance < tuning.FollowNearDistance)
                 ledger.Add(RewardTerm::Follow, tuning.FollowNear * scale);
+            // Trailing a moving owner: every yard past the band, up to twenty (a lost companion is FollowFar's).
+            bool const ownerMoving = owner->isMoving() || !owner->movespline->Finalized();
+            if (ownerMoving && distance > tuning.FollowNearDistance)
+                ledger.Add(RewardTerm::Follow, -tuning.FollowTrail * scale
+                    * std::min(20.0f, distance - tuning.FollowNearDistance));
         }
     }
     else if (!seatOwner.DeathSeen)

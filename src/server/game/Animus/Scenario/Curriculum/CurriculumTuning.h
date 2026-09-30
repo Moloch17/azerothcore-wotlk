@@ -649,10 +649,14 @@ namespace Animus::Curriculum
             float PulledThreat = 0.004f;        // damage dealers and healers beside a TANK owner: per enemy on
                                                 // the bot, per decision; not charged beside any other owner
             float SoloFight = 0.01f;            // per decision in combat while the owner is not
-            float FollowFar = 0.002f;           // per decision out of combat beyond FollowFarDistance
-            float FollowNear = 0.0005f;         // per decision out of combat within FollowNearDistance
-            float FollowFarDistance = 25.0f;
-            float FollowNearDistance = 12.0f;
+            // Staying close: in-game testing of the four-phase models found companions trailing about 16 yards
+            // where a player keeps 3-6 (2026-09-29). Near is now the band a player keeps, far starts where a
+            // player would call it lost, and a moving owner charges every yard it is trailed by past the band.
+            float FollowFar = 0.004f;           // per decision out of combat beyond FollowFarDistance
+            float FollowNear = 0.002f;          // per decision out of combat within FollowNearDistance
+            float FollowFarDistance = 15.0f;
+            float FollowNearDistance = 6.0f;
+            float FollowTrail = 0.001f;         // per decision and yard past FollowNearDistance while the owner moves
             float Death = 15.0f;                // per owner death, every seat: more than the seat's own (GauntletDeath)
         } Owner;
 
@@ -1145,6 +1149,7 @@ namespace Animus::Curriculum
             f("Owner.SoloFight", tuning.Owner.SoloFight);
             f("Owner.FollowFar", tuning.Owner.FollowFar);
             f("Owner.FollowNear", tuning.Owner.FollowNear);
+            f("Owner.FollowTrail", tuning.Owner.FollowTrail);
             f("Owner.FollowFarDistance", tuning.Owner.FollowFarDistance);
             f("Owner.FollowNearDistance", tuning.Owner.FollowNearDistance);
             f("Owner.Death", tuning.Owner.Death);
