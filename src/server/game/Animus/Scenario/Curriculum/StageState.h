@@ -276,7 +276,6 @@ namespace Animus::Curriculum
         bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Reached, once per goal)
         uint32 StepGoalSwitches = 0;            // goal changes since the last reward (Goals.Switch)
         bool GoalEnded = false;                 // the goal held was reached or became impossible (GoalBlock::Status)
-        bool GoalReachedPending = false;        // ... reached: Goals.Reached is paid at the next reward
         bool GoalWasReached = false;            // the goal ended by being reached (not lost)
         /// A goal is paid for reaching it, not for choosing it: one already true when chosen -- Fight about no one
         /// with nothing to fight, Recover at full health -- is held unpaid until the clock, and pays only if it
@@ -285,6 +284,14 @@ namespace Animus::Curriculum
         bool GoalSatisfiedAtChoice = false;
         uint32 GoalsReached = 0;
         uint32 GoalsLost = 0;
+        /// Goals.Progress: the potential of the goal held at the last decision, once the goal's first observation
+        /// has read it (GoalPotentialReady), and the seat's health and mana then (what Recover restores is measured
+        /// from). Goals chosen and reached, by kind (goal_success_<kind>).
+        float GoalPotential = 0.0f;
+        bool GoalPotentialReady = false;
+        float GoalChoiceResource = 1.0f;
+        std::array<uint32, GOAL_COUNT> GoalsChosenBy{};
+        std::array<uint32, GOAL_COUNT> GoalsReachedBy{};
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
         bool HasGoalPlace = false;              // the goal names a place (TravelTo, Gather, Interact): where it is
         Position GoalPlace;
@@ -478,8 +485,12 @@ namespace Animus::Curriculum
             GoalRewarded = false;
             StepGoalSwitches = 0;
             GoalEnded = false;
-            GoalReachedPending = false;
             GoalWasReached = false;
+            GoalPotential = 0.0f;
+            GoalPotentialReady = false;
+            GoalChoiceResource = 1.0f;
+            GoalsChosenBy.fill(0);
+            GoalsReachedBy.fill(0);
             GoalFresh = false;
             GoalSatisfiedAtChoice = false;
             GoalsReached = 0;
@@ -585,6 +596,9 @@ namespace Animus::Curriculum
         /// while reading as three. The episode columns `spawn_drawn` and `spawn_point` are these two fields.
         uint32 SpawnDrawn = 0;
         std::array<SeatState, MAX_SEATS> Seats;
+        /// This decision's reward row while the observation that follows it runs (Reward sets it, Observe clears
+        /// it): a goal reached is paid into the decision that reached it, so the goal's own span carries it.
+        float* StepReward = nullptr;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry

@@ -278,6 +278,23 @@ namespace Animus::Curriculum
             /// switch costs a little more than a match earns, so changing goal has to be worth it on the stage's own
             /// terms -- which is what committing to a plan means.
             float Switch = 0.03f;
+            /// Progress toward the goal held (potential-based, so it cannot be farmed): Progress x (gamma x phi' -
+            /// phi) every decision, phi in [-1, 0] per kind -- the yards left to its place (over 60), the named
+            /// enemy's health, the seat's own health and mana for Recover and Rest, the friend's health for Protect.
+            /// A goal chosen and walked away from costs what closing on it pays. ProgressGamma is the learner's gamma.
+            float Progress = 0.5f;
+            float ProgressGamma = 0.999f;
+            /// What reaching a goal is worth, by what it achieved (paid once, in place of Reached, which stays for
+            /// the kinds that have no value of their own): a named enemy dead, one held in crowd control, a friend
+            /// brought back up, a place reached, a corpse, node or objective done. Recover and Rest pay by the share
+            /// of health and mana they restored since the goal was chosen. A flat 0.05 against episode returns of
+            /// 10-50 made choosing well nearly worthless: in groups 3-8% of chosen goals were reached.
+            float FightValue = 0.3f;
+            float ControlValue = 0.2f;
+            float RecoverValue = 1.0f;
+            float ProtectValue = 0.2f;
+            float TravelValue = 0.1f;
+            float WorldValue = 0.2f;
         } Goals;
 
         /// The director's orders (TeamOrder), in every arena that has one.
@@ -1014,6 +1031,14 @@ namespace Animus::Curriculum
 
             f("Goals.Reached", tuning.Goals.Reached);
             f("Goals.Switch", tuning.Goals.Switch);
+            f("Goals.Progress", tuning.Goals.Progress);
+            f("Goals.ProgressGamma", tuning.Goals.ProgressGamma);
+            f("Goals.FightValue", tuning.Goals.FightValue);
+            f("Goals.ControlValue", tuning.Goals.ControlValue);
+            f("Goals.RecoverValue", tuning.Goals.RecoverValue);
+            f("Goals.ProtectValue", tuning.Goals.ProtectValue);
+            f("Goals.TravelValue", tuning.Goals.TravelValue);
+            f("Goals.WorldValue", tuning.Goals.WorldValue);
 
             f("Order.Focus", tuning.Order.Focus);
             f("Order.PlaceMatch", tuning.Order.PlaceMatch);

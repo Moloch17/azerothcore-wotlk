@@ -69,6 +69,7 @@ namespace Animus::Curriculum
         SelfHealing,
         GoalReached,        // the goal held was reached (Goals.Reached)
         GoalSwitch,         // the goal head changed a seat's goal (Goals.Switch)
+        GoalProgress,       // closing on the goal held (Goals.Progress, potential-based)
         OrderMatch,
         PlaceMatch,
         BrokeContact,
@@ -118,6 +119,13 @@ namespace Animus::Curriculum
         void Add(RewardTerm term, float value)
         {
             _step += value;
+            _episode[std::size_t(term)] += value;
+        }
+
+        /// A term paid into a decision whose total has already been taken (StageScenario pays a goal reached, seen
+        /// at the observation, into the reward row of the decision that reached it): the episode's sums only.
+        void AddTaken(RewardTerm term, float value)
+        {
             _episode[std::size_t(term)] += value;
         }
 

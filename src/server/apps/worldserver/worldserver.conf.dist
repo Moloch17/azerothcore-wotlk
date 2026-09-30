@@ -6070,6 +6070,19 @@ AnimusForge.Curriculum.Goals.Reached = 0.05
 #   head that switched at every choice was paid for the churn. A little more than a match, so a change of goal has
 #   to be worth it on the stage's own terms
 AnimusForge.Curriculum.Goals.Switch = 0.03
+#   closing on the goal held, potential-based (Progress x (gamma x phi' - phi), phi in [-1, 0]): yards to its place
+#   over 60, the named enemy's health, the seat's own health and mana, the friend's health. Gamma is the learner's
+AnimusForge.Curriculum.Goals.Progress = 0.5
+AnimusForge.Curriculum.Goals.ProgressGamma = 0.999
+#   what reaching a goal is worth, by what it achieved (Reached stays for the kinds with no value of their own):
+#   a named enemy dead, one held in crowd control, Recover/Rest by the share of health and mana restored since the
+#   choice, a friend brought back up, a place reached, a corpse, node or objective done
+AnimusForge.Curriculum.Goals.FightValue = 0.3
+AnimusForge.Curriculum.Goals.ControlValue = 0.2
+AnimusForge.Curriculum.Goals.RecoverValue = 1.0
+AnimusForge.Curriculum.Goals.ProtectValue = 0.2
+AnimusForge.Curriculum.Goals.TravelValue = 0.1
+AnimusForge.Curriculum.Goals.WorldValue = 0.2
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
 #   channel that correlates with nothing cannot bootstrap into that. stage17_arena ran 30M steps with the order

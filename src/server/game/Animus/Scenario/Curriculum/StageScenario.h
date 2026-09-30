@@ -347,6 +347,10 @@ namespace Animus::Curriculum
         /// How far the seat is from where its goal wants it, in yards: the gap to its spec's range from the target
         /// under Fight and Position. Negative when the goal names no place (or there is no goal or target).
         [[nodiscard]] float GoalGap(SeatState const& seat, Player* bot, Unit const* target) const;
+        /// Goals.Progress's potential of the goal the seat holds, in [-1, 0] (0: nothing to close on).
+        [[nodiscard]] float GoalPotential(Env const& env, SeatState const& seat, Player* bot, Unit const* target) const;
+        /// What reaching the goal the seat holds is worth (Goals.*Value).
+        [[nodiscard]] float GoalValue(SeatState const& seat, Player* bot) const;
         /// At the reward: settle a step's verdict, the fidget seconds, stops and starts, and charge the decision's
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);

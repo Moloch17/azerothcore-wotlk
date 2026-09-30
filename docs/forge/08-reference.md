@@ -255,10 +255,10 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Owner.TankLose` | 0.02 | | `ScriptedPlayers.SpellMaxMs` | 4000 |
 | `Owner.PulledThreat` | 0.004 | | `ScriptedPlayers.HealMinMs` | 1500 |
 | `Owner.SoloFight` | 0.01 | | `ScriptedPlayers.HealMaxMs` | 2500 |
-| `Owner.FollowFar` | 0.002 | | `ScriptedPlayers.WanderMinMs` | 6000 |
-| `Owner.FollowNear` | 0.0005 | | `ScriptedPlayers.WanderMaxMs` | 12000 |
-| `Owner.FollowFarDistance` | 25.0 | | `ScriptedPlayers.RegenFraction` | 0.04 |
-| `Owner.FollowNearDistance` | 12.0 | | `ScriptedPlayers.HealBelow` | 0.85 |
+| `Owner.FollowFar` | 0.004 | | `ScriptedPlayers.WanderMinMs` | 6000 |
+| `Owner.FollowNear` | 0.002 | | `ScriptedPlayers.WanderMaxMs` | 12000 |
+| `Owner.FollowFarDistance` | 15.0 | | `ScriptedPlayers.RegenFraction` | 0.04 |
+| `Owner.FollowNearDistance` | 6.0 | | `ScriptedPlayers.HealBelow` | 0.85 |
 | `Owner.Death` | 15.0 | | `ScriptedPlayers.SelfHealBelow` | 0.6 |
 | | | | `ScriptedPlayers.RunChance` | 35 |
 | | | | `ScriptedPlayers.RunMinYards` | 40.0 |

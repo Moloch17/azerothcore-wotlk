@@ -1121,6 +1121,15 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     for (size_t cause = 0; cause < AIMLESS_CAUSES; ++cause)
         _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
             uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
+    // Of the goals chosen of each kind, the share reached: which kinds the seat can actually finish.
+    for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
+        _info.Add(std::string("goal_success_") + std::string(GoalName(SeatGoal(kind))), [seat, kind](Env const& env,
+            uint32 index)
+        {
+            SeatState const& state = seat(env, index);
+            return state.GoalsChosenBy[kind] ? float(state.GoalsReachedBy[kind]) / float(state.GoalsChosenBy[kind])
+                : 0.0f;
+        });
     _info.Add("mode_switches", [seat](Env const& env, uint32 index) { return float(seat(env, index).ModeSwitches); });
     _info.Add("effort_presses", [seat](Env const& env, uint32 index)
     {
@@ -2452,13 +2461,17 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
                 ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
         }
 
-        // A new goal is a new thing to reach, and is paid for again when it is.
+        // A new goal is a new thing to reach, and is paid for again when it is. Its progress is measured from its
+        // first observation, which knows where its place is (GoalPotentialReady).
         if (goal != state.Goal)
         {
             state.GoalRewarded = false;
             state.GoalEnded = false;
             state.GoalFresh = true;
             state.GoalSatisfiedAtChoice = false;
+            state.GoalPotentialReady = false;
+            if (goal != NO_GOAL)
+                ++state.GoalsChosenBy[GoalKindOf(goal)];
         }
 
         state.Goal = goal;
@@ -2909,6 +2922,8 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
 {
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr);
+    // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
+    Data(env).StepReward = nullptr;
 
     for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
         ObserveDirector(env, side, obs + (_seatCount + side) * _spec.ObsDim,
@@ -3093,9 +3108,16 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         reached = GoalBlock::Earned(reached, seat.GoalFresh, seat.GoalSatisfiedAtChoice);
         if (reached && !seat.GoalRewarded)
         {
+            // Paid by what it achieved (GoalValue), into the reward of the decision that reached it: that decision
+            // belongs to the goal's own span, where paying it at the next one put it in the span of the goal chosen
+            // after -- crediting the plan that followed for the one that worked.
             seat.GoalRewarded = true;
-            seat.GoalReachedPending = true;
             ++seat.GoalsReached;
+            ++seat.GoalsReachedBy[GoalKindOf(seat.Goal)];
+            float const value = GoalValue(seat, bot);
+            seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
+            if (float* reward = Data(env).StepReward)
+                reward[seatIndex] += value;
         }
         else if (!possible)
             ++seat.GoalsLost;
@@ -3110,6 +3132,15 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         && goalTarget >= GOAL_TARGET_FRIEND_FIRST && goalTarget < GOAL_TARGET_OBJECTIVE_FIRST)
         if (Unit* friendUnit = Encoding::FriendUnit(view, goalTarget - GOAL_TARGET_FRIEND_FIRST))
             seat.GoalFriend = friendUnit->GetGUID();
+    // A new goal's progress starts here, with its place and friend known.
+    if (seat.Goal != NO_GOAL && !seat.GoalPotentialReady && bot)
+    {
+        seat.GoalPotential = GoalPotential(env, seat, bot, target);
+        seat.GoalPotentialReady = true;
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        seat.GoalChoiceResource = std::min(bot->GetHealthPct() / 100.0f,
+            maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+    }
     SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
     SeatEncoder::Observe(view, obs, mask);
@@ -3186,6 +3217,94 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* 
     if (distance < _tuning.Duel.MeleeRange)
         return _tuning.Duel.MeleeRange - distance;
     return std::max(0.0f, distance - (wanted + GOAL_RANGE_SLACK_YARDS));
+}
+
+float Animus::Curriculum::StageScenario::GoalPotential(Env const& env, SeatState const& seat, Player* bot,
+    Unit const* target) const
+{
+    if (seat.Goal == NO_GOAL || !bot || !bot->IsAlive())
+        return 0.0f;
+
+    auto const health = [](Unit const* unit)
+    {
+        return unit && unit->IsAlive() ? float(unit->GetHealth()) / float(std::max<uint32>(1, unit->GetMaxHealth()))
+            : 0.0f;
+    };
+    auto const far = [](float yards) { return -std::min(yards, 60.0f) / 60.0f; };
+    uint32 const goalTarget = GoalTargetOf(seat.Goal);
+    bool const namesEnemy = goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_FRIEND_FIRST;
+    switch (SeatGoal(GoalKindOf(seat.Goal)))
+    {
+        case SeatGoal::Fight:
+        {
+            if (namesEnemy)
+                return -health(env.FindTargetUnit(goalTarget - GOAL_TARGET_ENEMY_FIRST));
+            // About no one: what is left of every enemy in the fight.
+            float left = 0.0f;
+            uint32 enemies = 0;
+            for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+                if (Unit const* enemy = env.FindTargetUnit(slot))
+                {
+                    left += health(enemy);
+                    ++enemies;
+                }
+            return enemies ? -left / float(enemies) : 0.0f;
+        }
+        case SeatGoal::Control:
+        {
+            Unit const* enemy = namesEnemy ? env.FindTargetUnit(goalTarget - GOAL_TARGET_ENEMY_FIRST) : nullptr;
+            return enemy && enemy->IsAlive() && !Encoding::IsCrowdControlled(enemy) ? -1.0f : 0.0f;
+        }
+        case SeatGoal::Recover:
+        case SeatGoal::Rest:
+        {
+            uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+            return std::min(bot->GetHealthPct() / 100.0f,
+                maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f) - 1.0f;
+        }
+        case SeatGoal::Protect:
+        {
+            Unit const* friendUnit = seat.GoalFriend.IsEmpty() ? nullptr : Encoding::UnitThrough(*bot, seat.GoalFriend);
+            return friendUnit && friendUnit->IsAlive() ? health(friendUnit) - 1.0f : 0.0f;
+        }
+        case SeatGoal::Position:
+        {
+            float const gap = GoalGap(seat, bot, target);
+            return gap > 0.0f ? far(gap) : 0.0f;
+        }
+        case SeatGoal::TravelTo:
+            return seat.HasGoalPlace ? far(bot->GetExactDist(&seat.GoalPlace)) : 0.0f;
+        default:
+            return 0.0f;
+    }
+}
+
+float Animus::Curriculum::StageScenario::GoalValue(SeatState const& seat, Player* bot) const
+{
+    CurriculumTuning::GoalTuning const& tuning = _tuning.Goals;
+    switch (SeatGoal(GoalKindOf(seat.Goal)))
+    {
+        case SeatGoal::Fight:    return tuning.FightValue;
+        case SeatGoal::Control:  return tuning.ControlValue;
+        case SeatGoal::Protect:  return tuning.ProtectValue;
+        case SeatGoal::TravelTo: return tuning.TravelValue;
+        case SeatGoal::Loot:
+        case SeatGoal::Gather:
+        case SeatGoal::Interact: return tuning.WorldValue;
+        case SeatGoal::Recover:
+        case SeatGoal::Rest:
+        {
+            // By what it restored since it was chosen: recovering from half costs half a pool's worth of pay.
+            if (!bot)
+                return 0.0f;
+            uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+            float const now = std::min(bot->GetHealthPct() / 100.0f,
+                maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+            return tuning.RecoverValue * std::max(0.0f, now - seat.GoalChoiceResource);
+        }
+        default:
+            return tuning.Reached;
+    }
 }
 
 char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
@@ -3669,6 +3788,8 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
 
 void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
 {
+    // Held until this decision's observation, which pays a goal it sees reached into this row.
+    Data(env).StepReward = reward;
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->BeforeRewards(env);
 
@@ -4007,13 +4128,16 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
             ++seat.GoalMatches[kind];
     }
 
-    // Paid for reaching the goal, once (GoalBlock::Status, seen at the observation), not for sitting in it: a
+    // Reaching the goal is paid once, at the observation that sees it (ObserveSeat), not for sitting in it: a
     // ranged seat held SeatGoal::Position by standing at its range, and paying that every decision made keeping
-    // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode).
-    if (seat.GoalReachedPending)
+    // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode). Closing on it is
+    // paid here, potential-based: what moving toward it earns, moving away gives back.
+    if (seat.Goal != NO_GOAL && seat.GoalPotentialReady && !seat.GoalEnded)
     {
-        seat.GoalReachedPending = false;
-        seat.Rewards.Add(RewardTerm::GoalReached, _tuning.Goals.Reached);
+        float const potential = GoalPotential(env, seat, bot, target);
+        seat.Rewards.Add(RewardTerm::GoalProgress,
+            _tuning.Goals.Progress * (_tuning.Goals.ProgressGamma * potential - seat.GoalPotential));
+        seat.GoalPotential = potential;
     }
 
     seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Switch * float(seat.StepGoalSwitches));
