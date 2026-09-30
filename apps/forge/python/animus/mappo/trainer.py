@@ -137,6 +137,10 @@ class MappoConfig:
     # through (goal entropy 1.59 of ln 6 = 1.79, goal kept 22% of choices against chance's 17%, 2026-09-28).
     goal_entropy_scale: float = 1.0
     goal_entropy_final_fraction: float = 1.0
+    # The entropy bonus of each goal slot after the primary (the secondary and the queue), as a share of the
+    # primary's. Summed at full weight over four slots of 12 kinds x 29 targets, the bonus held the head near uniform
+    # (goal entropy 10.4-12.2 nats through the next-run trial, 2026-09-30) and actions stopped depending on goals.
+    goal_slot_entropy_weight: float = 0.1
     # A layout whose agents decide on a slower clock than the seats and are credited on that clock: the director
     # (Curriculum::DirectorLayout). Named rather than indexed, because a layout's index moves with the stage.
     #
@@ -593,6 +597,8 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, director, self.goal_slots).to(self.train_device)
+        if self.actor.goal_head is not None:
+            self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets, director,
                                    self.goal_slots).to(self.train_device)

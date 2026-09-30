@@ -2554,12 +2554,14 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         {
             GoalHold& hold = state.Holds[slot];
             int32 const goal = next[slot];
-            // A change of kind is a change of plan, charged (Goals.Switch); a new target for the same kind -- the
-            // next enemy, the next objective -- is the plan going on, and a goal that ended is chosen again free.
+            // Any change of a goal still in progress -- its kind or its target -- is a plan abandoned, charged
+            // (Goals.Switch); a goal that ended (reached, or no longer possible: the next enemy after this one died)
+            // is replaced free, and so is one the director's order set or replaced, which is not the seat's doing.
             if (goal != hold.Goal && hold.Goal != NO_GOAL && goal != NO_GOAL)
             {
                 ++state.GoalChanges;
-                if (GoalKindOf(goal) != GoalKindOf(hold.Goal) && !hold.Ended)
+                bool const ordered = slot == 0 && (hold.FromOrder || state.Holds[0].FromOrder);
+                if (!hold.Ended && !ordered)
                     ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
             }
 

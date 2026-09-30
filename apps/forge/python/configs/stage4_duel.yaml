@@ -98,7 +98,10 @@ mappo:
   # Hindsight: a decision that achieved a goal other than the one held also trains its action under that goal.
   hindsight_coef: 0.1
   goal_targets: 29
-  goal_every_decisions: 16   # 16 decisions is 4 s at 250 ms
+  # A goal is held until it ends (reached or no longer possible) or an event (health below 35%, a new enemy engaged,
+  # the owner attacked) calls for a new plan; the clock is only the fallback that re-plans one held too long. At
+  # 4 s the head was asked to replace goals still in progress every few seconds (next-run trial, 2026-09-30).
+  goal_every_decisions: 64   # 64 decisions is 16 s at 250 ms
   # The two-clock seat (Component D): goals chosen by a slow loop of their own -- a 128-unit GRU that steps only
   # when a goal is chosen -- credited per goal on a ~10 minute horizon and trained by its own PPO step.
   slow_goal_size: 128
@@ -118,11 +121,14 @@ mappo:
   slow_layout: director
   slow_gamma: 0.996
   slow_gae_lambda: 0.98
-  # The goal head's entropy bonus falls to a fifth of itself over each stage, so the head explores goals early and
-  # commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full bonus
-  # all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28).
+  # The goal head's entropy bonus falls to a twentieth of itself over each stage, so the head explores goals early
+  # and commits to the ones that pay late; with Goals.Switch in the sim, changing goal has to be worth it. At full
+  # bonus all run the first full run's head chose close to uniformly (goal entropy 1.59 of 1.79, 2026-09-28), and
+  # falling only to a fifth, with every slot at full weight, the next-run trial's head stayed near uniform too
+  # (10.4 nats at 20M, 2026-09-30). The slots after the primary get a tenth of its bonus.
   goal_entropy_scale: 1.0
-  goal_entropy_final_fraction: 0.2
+  goal_entropy_final_fraction: 0.05
+  goal_slot_entropy_weight: 0.1
   # Both change the shape of the policy and the exported model format (.amdl 2), so turning them off again retrains
   # the whole curriculum from this stage and rebuilds every shipped model.
   clip: 0.2

@@ -243,3 +243,42 @@ def test_hindsight_relabels_what_was_achieved():
     assert (buffer.achieved[1::3] >= 0).all() and (buffer.achieved[0::3] == -1).all()
     stats = trainer.update(buffer)
     assert stats.get("hindsight_rows", 0) > 0 and np.isfinite(stats["hindsight_loss"])
+
+
+def test_every_slot_draws_only_goals_that_are_there():
+    # Only kind 1 and target 2 are present: whatever a slot draws is that goal or none -- the queue too, which
+    # once drew from every goal its kind accepts and held the head's entropy near uniform (2026-09-30).
+    net = actor()
+    obs = block_obs(64)
+    obs[:, OWN : OWN + KINDS + TARGETS] = 0.0
+    obs[:, OWN + 1] = 1.0
+    obs[:, OWN + KINDS + 2] = 1.0
+    features = torch.randn(64, 5)
+    head = net.goal_head
+    drawn = [torch.full((64,), 1 * TARGETS + 2)]
+    for slot in range(1, SLOTS):
+        logits = head.slot_logits(features, slot, drawn, obs, torch.zeros(64, dtype=torch.long))
+        allowed = logits > -1e8
+        assert allowed[:, -1].all()                                  # none is always there
+        assert allowed[:, :-1].sum(dim=-1).le(1).all()
+        assert not allowed[:, :-1].any() or allowed[:, 1 * TARGETS + 2].all()
+
+
+def test_the_slots_after_the_primary_are_a_share_of_the_entropy():
+    net = actor()
+    head = net.goal_head
+    rows = 16
+    obs = block_obs(rows)
+    features = torch.randn(rows, 5)
+    layout = torch.zeros(rows, dtype=torch.long)
+    given = torch.zeros(rows, dtype=torch.bool)
+    primary_given = torch.zeros(rows, dtype=torch.long)
+    torch.manual_seed(3)
+    head.slot_entropy_weight = 0.0
+    slots, _, alone = head.draw(features, obs, layout, primary_given, given, False)
+    head.slot_entropy_weight = 1.0
+    _, _, full = head.draw(features, obs, layout, primary_given, given, False, slots)
+    head.slot_entropy_weight = 0.1
+    _, _, tenth = head.draw(features, obs, layout, primary_given, given, False, slots)
+    assert torch.allclose(tenth, alone + 0.1 * (full - alone), atol=1e-5)
+    assert (full > alone).all()

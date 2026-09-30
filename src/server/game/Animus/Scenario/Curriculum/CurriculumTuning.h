@@ -326,8 +326,10 @@ namespace Animus::Curriculum
             /// switched goals at every choice collected it again each time: churn was paid, and in the first full
             /// run's combat stages the head kept its goal only 22% of the time against chance's 17% (2026-09-28). A
             /// switch costs a little more than a match earns, so changing goal has to be worth it on the stage's own
-            /// terms -- which is what committing to a plan means.
-            float Switch = 0.03f;
+            /// terms -- which is what committing to a plan means. Charged for any change of a goal still in progress,
+            /// its kind or its target (a goal that ended is replaced free), and raised from 0.03 when the next-run
+            /// trial's goals stayed near random (2026-09-30).
+            float Switch = 0.1f;
             /// Progress toward the goal held (potential-based, so it cannot be farmed): Progress x (gamma x phi' -
             /// phi) every decision, phi in [-1, 0] per kind -- the yards left to its place (over 60), the named
             /// enemy's health, the seat's own health and mana for Recover and Rest, the friend's health for Protect.
@@ -510,7 +512,9 @@ namespace Animus::Curriculum
             /// run's final evaluations 63-70% of the ground stages' turns were undone within three decisions, and in
             /// flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course
             /// is the habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
-            float Jitter = 0.02f;
+            /// Raised from 0.02 after the next-run trial, where bearing flips ran twice the last run's and did not
+            /// fall over 20M steps (2026-09-30).
+            float Jitter = 0.05f;
             /// **Presses with intent** (StageScenario::JudgePress). Every spell and movement press is judged against
             /// the goal the seat holds: it serves it (damage on the focus under Fight, a heal on someone else under
             /// Protect, a step that closes on the wanted range under Position), is neutral (an interrupt, a
@@ -754,8 +758,9 @@ namespace Animus::Curriculum
             /// How soon after a turn, a pitch or a bearing another one that undoes it counts as jitter
             /// (Actions.Jitter). About three decisions: long enough to catch a head twitching side to side, short
             /// enough that a seat that walked one way for a moment and then chose another is not charged for having
-            /// changed its mind.
-            uint32 JitterWindowMs = 750;
+            /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
+            /// a second later went uncharged, and bearing flips did not fall.
+            uint32 JitterWindowMs = 1500;
             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the

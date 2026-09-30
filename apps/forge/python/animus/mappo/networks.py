@@ -388,6 +388,8 @@ class GoalHead(nn.Module):
         # learned bias per slot plus the embedding of what was drawn) and each able to say "none". The kind, target
         # and pair parameters are shared by every slot. The learner keeps the queue; the sim holds the two in front.
         self.slots = max(1, slots)
+        # The entropy of each slot after the primary, as a share of the primary's (MappoConfig.goal_slot_entropy_weight).
+        self.slot_entropy_weight = 0.1
         if self.slots > 1:
             self.slot_bias = nn.Parameter(torch.zeros(self.slots - 1, width))
             self.drawn = nn.Embedding(kinds * self.targets + 1, width)     # 0 = none, goal g at g + 1
@@ -485,8 +487,9 @@ class GoalHead(nn.Module):
                     obs: torch.Tensor | None = None, layout: torch.Tensor | None = None) -> torch.Tensor:
         """Masked logits [rows, count + 1] of a slot after the primary, the last column being none: the shared
         parameters over the features plus the slot's bias and the embedding of what was drawn before it. The
-        secondary is masked by what the goal block says is there; a queued goal only by what its kind accepts (it
-        is for later)."""
+        secondary and the queue are masked by what the goal block says is there, as the primary is: a queued goal
+        about something absent was a draw from hundreds of goals that could never be pursued, and its entropy kept
+        the whole head near uniform (next-run trial, 2026-09-30)."""
         shifted = features + self.slot_bias[slot - 1].to(features.dtype)
         for goal in drawn:
             shifted = shifted + self.drawn(goal.long() + 1).to(features.dtype)
@@ -494,7 +497,7 @@ class GoalHead(nn.Module):
         if self.target is not None:
             joint = joint + self.target(shifted)[:, None, :]
         allowed = self.accepts[None].expand(features.shape[0], -1, -1)
-        if slot == 1 and obs is not None and layout is not None:
+        if obs is not None and layout is not None:
             block, has = self._block(obs.reshape(-1, obs.shape[-1]), layout.reshape(-1))
             present = block[:, : self.kinds, None] & block[:, self.kinds : self.kinds + self.targets][:, None, :]
             allowed = torch.where(has[:, None, None], allowed & present, allowed)
@@ -533,7 +536,9 @@ class GoalHead(nn.Module):
                 choice = torch.where(slots[:, slot] < 0, torch.full_like(slots[:, slot], none), slots[:, slot])
                 lp = log_prob_of(logits, choice)
             log_prob = log_prob + lp
-            entropy = entropy + _entropy(logits)
+            # The primary is the plan; the rest beside it are weighed at slot_entropy_weight, so the entropy bonus
+            # does not grow with the number of slots and keep the primary near uniform.
+            entropy = entropy + self.slot_entropy_weight * _entropy(logits)
             goal = torch.where(choice == none, torch.full_like(choice, -1), choice)
             drawn.append(goal)
             out.append(goal)

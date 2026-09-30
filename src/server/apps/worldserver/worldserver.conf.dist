@@ -6105,7 +6105,7 @@ AnimusForge.Curriculum.Goals.Reached = 0.05
 #   every stage with a goal head, per change of a seat's goal: Match is paid once per goal held, so without this a
 #   head that switched at every choice was paid for the churn. A little more than a match, so a change of goal has
 #   to be worth it on the stage's own terms
-AnimusForge.Curriculum.Goals.Switch = 0.03
+AnimusForge.Curriculum.Goals.Switch = 0.1
 #   closing on the goal held, potential-based (Progress x (gamma x phi' - phi), phi in [-1, 0]): yards to its place
 #   over 60, the named enemy's health, the seat's own health and mana, the friend's health. Gamma is the learner's
 AnimusForge.Curriculum.Goals.Progress = 0.5
@@ -6200,7 +6200,7 @@ AnimusForge.Curriculum.Actions.RepeatFree = 3
 #   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed
 #   within it swings the feet round from the last one: steering that does not commit, which on screen is a head
 #   twitching side to side, a flyer bobbing up and down, and feet that zigzag
-AnimusForge.Curriculum.Actions.Jitter = 0.02
+AnimusForge.Curriculum.Actions.Jitter = 0.05
 #   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
 #   it (damage off the focus under Fight, a nuke while Recovering, a step that opens the gap to the wanted range) is
 #   charged this. Serving presses are free
@@ -6423,7 +6423,7 @@ AnimusForge.Curriculum.Options.MoveTurnMs = 250
 #   60 degree dive to a 60 degree climb) and ends when it gets there.
 AnimusForge.Curriculum.Options.MovePitchMs = 250
 #   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
-AnimusForge.Curriculum.Options.JitterWindowMs = 750
+AnimusForge.Curriculum.Options.JitterWindowMs = 1500
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
 #   3.5 yd back along its own path at its pace, re-aimed at most once a second; it ends on its own when the seat is

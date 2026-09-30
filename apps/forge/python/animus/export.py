@@ -667,7 +667,7 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
                 for previous in before:
                     shifted = shifted + goals["drawn"][previous + 1]
                 later = accepts.copy()
-                if slot == 1 and at >= 0 and targets > 1:
+                if at >= 0 and targets > 1:
                     later &= present
                 if at < 0 and targets > 1:
                     later[:] = False
