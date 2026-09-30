@@ -561,7 +561,7 @@ namespace
                     .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },
                 // Real content carries the stage (2026-09-30): a whole dungeon from the start, the synthetic pulls
                 // fading. The boss-only arena (the party teleported to a boss) is gone with the simulation it was.
-                { .Name = "dungeon_wing", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
+                { .Name = "dungeon", .Weight = 3, .WeightFinal = 6, .Seats = SeatPlan::Party,
                     .Against = Opposition::Instance, .Owner = true, .OwnerCast = true, .PartyGroup = true,
                     .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
                     .DirectorLearned = true },
