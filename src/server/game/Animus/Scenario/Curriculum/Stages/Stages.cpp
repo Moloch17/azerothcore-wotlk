@@ -952,14 +952,16 @@ namespace
             return "RaidSeats is a raid's seat count: a multiple of GROUP_SEATS, up to MAX_SEATS";
         if (arena.Owner && (!(pulls || ambushOnly || instance) || !stage.Has(BlockId::Companion)))
             return "an owner needs pulls, an ambush or an instance, and the companion block";
-        bool const raidGroup = instance && arena.Seats == SeatPlan::Raid;
+        // A raid is a group of its own, in an instance or against pulls (stage12's raid arenas): no owner.
+        bool const raidGroup = arena.Seats == SeatPlan::Raid
+            && (instance || arena.Against == Opposition::Pulls);
         if (arena.PartyGroup && !stage.Has(BlockId::Party))
             return "a party group needs the party block";
         // A group questing in the world (world_group, world_shared) is a party of its own, with no owner.
         bool const worldGroup = arena.Against == Opposition::Quest
             && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
         if (arena.PartyGroup && !raidGroup && !worldGroup && (!arena.Owner || arena.Seats != SeatPlan::Party))
-            return "a party group needs an owner and party seats, unless it is a raid in an instance or a quest";
+            return "a party group needs an owner and party seats, unless it is a raid or a quest";
         if (arena.OwnerCast && !arena.Owner)
             return "a cast owner is still an owner: the arena has to have one";
         if (arena.OwnerCast && stage.SeatCount() + TEAM_COUNT + 1 > MAX_SEATS)
