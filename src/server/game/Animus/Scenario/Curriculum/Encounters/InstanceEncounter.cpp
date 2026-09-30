@@ -660,12 +660,45 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
                 break;
         }
+        // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well; where
+        // the two halves come within a door's width of each other, only that gap is walked straight. Otherwise the
+        // straight line from the path's end, which went through the rock (the Deadmines' foundry and ship legs).
         float const missed = cursor.GetExactDist(&stop);
+        float bridged = missed;
+        if (missed > 5.0f)
+        {
+            std::vector<G3D::Vector3> back;
+            Position from(stop);
+            for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+            {
+                map->LoadGrid(from.GetPositionX(), from.GetPositionY());
+                PathGenerator path(seat);
+                path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(),
+                    cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), false);
+                if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
+                    break;
+                for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                    back.push_back(path.GetPath()[i]);
+                G3D::Vector3 const& end = path.GetPath().back();
+                if (Distance2d(from, Position(end.x, end.y, end.z)) < 1.0f)
+                    break;
+                from.Relocate(end.x, end.y, end.z);
+                if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+                    break;
+            }
+            if (!back.empty())
+            {
+                G3D::Vector3 const& meet = back.back();
+                bridged = cursor.GetExactDist(meet.x, meet.y, meet.z);
+                // Walked from the path's end across the gap to where the path back ends, then along it to the stop.
+                for (auto point = back.rbegin(); point != back.rend(); ++point)
+                    points.push_back(*point);
+            }
+            points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
+        }
         LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
             _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
-            missed > 5.0f ? "; a straight line the rest of the way" : "");
-        if (missed > 5.0f)
-            points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
+            missed > 5.0f ? Acore::StringFormat("; the path back from it leaves a {:.0f} yd gap", bridged) : "");
         cursor = stop;
     }
 
