@@ -551,11 +551,13 @@ namespace
                     .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
                     .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450, .Directed = true,
                     .DirectorLearned = true },
-                { .Name = "tanking", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
+                // The group's roles, drilled early and fading as the dungeon takes over: a party seeded from the solo
+                // pack stage had never healed anyone but itself or held a pull off others (2026-09-30).
+                { .Name = "tanking", .Weight = 4, .WeightFinal = 1, .Seats = SeatPlan::Party,
                     .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
                     .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
                     .SeatAptitudes = { AptitudeDemand::HoldsThePull() }, .Directed = true, .DirectorLearned = true },
-                { .Name = "triage", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
+                { .Name = "triage", .Weight = 4, .WeightFinal = 1, .Seats = SeatPlan::Party,
                     .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
                     .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
                     .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },

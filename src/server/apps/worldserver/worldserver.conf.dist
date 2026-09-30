@@ -5901,7 +5901,7 @@ AnimusForge.Curriculum.Raid.HealthPerGroup = 1.0
 AnimusForge.Curriculum.Raid.DamagePerGroup = 0.15
 #   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
 AnimusForge.Curriculum.Raid.TankHold = 0.006
-#   raid healers: per group member above 50% health per decision, the same charged per member below 35%
+#   healers (party and raid): per group member above 50% health per decision, the same charged per member below 35%
 AnimusForge.Curriculum.Raid.KeepUp = 0.0002
 #   raid damage dealers: own damage as a share of the level's damage scale, times this
 AnimusForge.Curriculum.Raid.Output = 0.5

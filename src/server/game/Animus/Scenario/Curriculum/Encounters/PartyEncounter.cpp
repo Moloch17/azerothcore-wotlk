@@ -423,8 +423,8 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
 void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger,
     bool raid)
 {
-    // Each role paid for its own part (Raid.*): the tank for what it holds, in a raid the healer for its group kept
-    // up and the damage dealer for its own output, and every seat charged for standing idle in a fight.
+    // Each role paid for its own part (Raid.*): the tank for what it holds, the healer for its group kept up, in a
+    // raid the damage dealer for its own output, and every seat charged for standing idle in a fight.
     CurriculumTuning::RaidTuning const& tuning = _scenario.Tuning().Raid;
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
@@ -447,7 +447,9 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     if (HoldsThePull(apt) && !_scenario.Arena(env).Owner)
         ledger.Add(RewardTerm::Threat, tuning.TankHold * float(onBot) * scale);
 
-    if (raid && Heals(apt))
+    // The healer keeps its group up, in a party as in a raid: in the Deadmines a level-20 healer cast about five
+    // heals a run and its party wiped at the first packs (2026-09-30).
+    if (Heals(apt))
     {
         uint32 const first = GroupFirstSeat(seatIndex);
         int32 kept = 0;

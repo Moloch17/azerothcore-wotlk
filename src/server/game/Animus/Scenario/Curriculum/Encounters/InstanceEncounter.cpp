@@ -197,6 +197,13 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     data.EpisodeMapId = fight.Row->MapId;
     data.HasEpisodeMap = true;
     data.EpisodeLevel = fight.Row->Level;
+    // A whole dungeon is run by characters of its own level range: the dungeon finder's target range for the map
+    // and difficulty (LFGDungeons.dbc), a level drawn in it every run. The row's level is the fallback.
+    if (Wing(env))
+    {
+        auto const [low, high] = DungeonLevels(*fight.Row);
+        data.EpisodeLevel = uint8(urand(low, high));
+    }
     MapEntry const* mapEntry = sMapStore.LookupEntry(fight.Row->MapId);
     bool const raid = mapEntry && mapEntry->IsRaid();
     data.DungeonDifficulty = raid ? 0 : fight.Row->Difficulty;
@@ -545,7 +552,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     if (fight.RouteNext < fight.Route.size())
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
-                && bot->GetExactDist2d(&fight.Route[fight.RouteNext]) <= 15.0f)
+                && bot->GetExactDist(&fight.Route[fight.RouteNext]) <= 15.0f)
             {
                 ++fight.RouteNext;
                 break;
@@ -577,6 +584,20 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const
 {
     return _scenario.Arena(env).Instance == InstanceLadder::Wing;
+}
+
+std::pair<uint32, uint32> Animus::Curriculum::InstanceEncounter::DungeonLevels(BossRow const& row)
+{
+    for (LFGDungeonEntry const* dungeon : sLFGDungeonStore)
+    {
+        if (!dungeon || dungeon->MapID != row.MapId || dungeon->Difficulty != row.Difficulty)
+            continue;
+        uint32 const low = dungeon->TargetLevelMin ? dungeon->TargetLevelMin : dungeon->MinLevel;
+        uint32 const high = dungeon->TargetLevelMax ? dungeon->TargetLevelMax : dungeon->MaxLevel;
+        if (low && high >= low)
+            return { low, std::min<uint32>(high, DEFAULT_MAX_LEVEL) };
+    }
+    return { row.Level, row.Level };
 }
 
 std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const& env, Map* map, Player* seat,
@@ -639,7 +660,11 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
                 break;
         }
-        if (Distance2d(cursor, stop) > 5.0f)
+        float const missed = cursor.GetExactDist(&stop);
+        LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
+            _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
+            missed > 5.0f ? "; a straight line the rest of the way" : "");
+        if (missed > 5.0f)
             points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
         cursor = stop;
     }
@@ -800,7 +825,7 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
         {
             std::size_t const next = fight.RouteNext;
             float const total = std::max(1.0f, fight.RouteRemain.front());
-            float const ahead = bot->GetExactDist2d(&fight.Route[next]) + fight.RouteRemain[next];
+            float const ahead = bot->GetExactDist(&fight.Route[next]) + fight.RouteRemain[next];
             float const potential = -ahead / total;
             if (paid.PotentialReady)
                 ledger.Add(RewardTerm::Approach, tuning.WingProgress * tierScale * (potential - paid.Potential));

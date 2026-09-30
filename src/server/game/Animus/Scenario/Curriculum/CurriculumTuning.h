@@ -100,8 +100,8 @@ namespace Animus::Curriculum
             float HealthPerGroup = 1.0f;        // a raid pull's health x (seats / 5) x this
             float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
             float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
-            /// Healers in a raid: per member of its group above 50% health, per decision; the same charged per
-            /// member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
+            /// Healers in a party or a raid: per member of its group above 50% health, per decision; the same
+            /// charged per member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
             float KeepUp = 0.0002f;
             /// Damage dealers in a raid: their own damage as a share of the level's damage scale, times this.

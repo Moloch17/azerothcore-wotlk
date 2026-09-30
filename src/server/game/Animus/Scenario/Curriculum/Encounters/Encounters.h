@@ -562,6 +562,8 @@ namespace Animus::Curriculum
         /// The door-to-boss path as points every Instance.WingWaypointYards (the last one the boss), once per boss.
         [[nodiscard]] std::vector<Position> WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);
+        /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
+        [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
 
         [[nodiscard]] std::vector<BossRow const*> const& Rows(Env const& env) const;
