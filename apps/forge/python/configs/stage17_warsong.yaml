@@ -2,8 +2,8 @@
 # A capture needs an escort, a base needs somebody left on it, and an enemy carrier can be chased by ten. A capture,
 # pickup, return or carrier kill pays every seat of the side; a death charges only the seat that died.
 
-extends: stage18_flag.yaml
-run_name: stage19_warsong
+extends: stage16_flag.yaml
+run_name: stage17_warsong
 
 total_env_steps: 50000000
 

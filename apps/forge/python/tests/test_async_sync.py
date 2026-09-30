@@ -159,20 +159,20 @@ def test_statistics_are_never_traded_as_deltas():
 def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
     leader_root, follower_root = tmp_path / "leader", tmp_path / "follower"
     owner = leader_root / "stage6_gauntlet" / "best.pt"
-    league = leader_root / "stage14_duel_pvp" / "league" / "step_1.pt"
+    league = leader_root / "stage12_duel_pvp" / "league" / "step_1.pt"
     for path, body in ((owner, b"owner" * 1000), (league, b"member")):
         path.parent.mkdir(parents=True)
         path.write_bytes(body)
     outside = tmp_path / "elsewhere.pt"
     outside.write_bytes(b"not served")
     # One the follower already has, byte for byte, and one it has a stale copy of.
-    (follower_root / "stage14_duel_pvp" / "league").mkdir(parents=True)
-    (follower_root / "stage14_duel_pvp" / "league" / "step_1.pt").write_bytes(b"member")
+    (follower_root / "stage12_duel_pvp" / "league").mkdir(parents=True)
+    (follower_root / "stage12_duel_pvp" / "league" / "step_1.pt").write_bytes(b"member")
     (follower_root / "stage6_gauntlet").mkdir(parents=True)
     (follower_root / "stage6_gauntlet" / "best.pt").write_bytes(b"old")
 
     listing = shared_listing(leader_root, [owner, league, outside, leader_root / "missing.pt", None])
-    assert sorted(listing) == ["stage14_duel_pvp/league/step_1.pt", "stage6_gauntlet/best.pt"]
+    assert sorted(listing) == ["stage12_duel_pvp/league/step_1.pt", "stage6_gauntlet/best.pt"]
 
     address = f"127.0.0.1:{free_port()}"
     hub = Hub(address, networks(0), listing)
@@ -189,7 +189,7 @@ def test_a_follower_fetches_what_it_lacks_and_keeps_what_it_has(tmp_path):
 
 def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
     root = tmp_path / "leader"
-    first = root / "stage14_duel_pvp" / "league" / "step_1.pt"
+    first = root / "stage12_duel_pvp" / "league" / "step_1.pt"
     first.parent.mkdir(parents=True)
     first.write_bytes(b"first")
     address = f"127.0.0.1:{free_port()}"
@@ -204,7 +204,7 @@ def test_sharing_a_new_league_member_tells_the_followers(tmp_path):
         assert hub.control["shared"] == 1
         follower = tmp_path / "follower"
         assert sorted(fetch_shared(address, 1, follower, timeout=10.0)) == [
-            "stage14_duel_pvp/league/step_1.pt", "stage14_duel_pvp/league/step_2.pt"]
+            "stage12_duel_pvp/league/step_1.pt", "stage12_duel_pvp/league/step_2.pt"]
     finally:
         hub.close()
 

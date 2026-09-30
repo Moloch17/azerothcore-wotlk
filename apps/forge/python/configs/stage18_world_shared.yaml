@@ -4,8 +4,8 @@
 # what is learned is going where the others are not. A quarter of the episodes (world_gank) add hostile players who
 # arrive mid-quest and attack whoever they find.
 
-extends: stage11_world_group.yaml
-run_name: stage20_world_shared
+extends: stage9_world_group.yaml
+run_name: stage18_world_shared
 
 total_env_steps: 50000000
 

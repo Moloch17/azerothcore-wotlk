@@ -7,7 +7,7 @@
 # together; the per-class won/died columns are the ones to read.
 
 extends: stage4_duel.yaml
-run_name: stage14_duel_pvp
+run_name: stage12_duel_pvp
 
 total_env_steps: 50000000
 rollout_length: 256

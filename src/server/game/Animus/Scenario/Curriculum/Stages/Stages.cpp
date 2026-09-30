@@ -37,7 +37,7 @@
  * bought nothing as a stage of its own (tanking, triage, hide, endurance, the dodge field) is an arena of the stage it
  * serves instead: it trains beside the lesson rather than before the stage that overwrites it.
  *
- * Scenario names carry the stage's number (stage1_move ... stage21_ship), model names only its suffix (_move). The
+ * Scenario names carry the stage's number (stage1_move ... stage19_ship), model names only its suffix (_move). The
  * move stage is the first: nothing seeds it.
  *
  * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix
@@ -565,62 +565,45 @@ namespace
         // Phase 3: parties and raids. Beside others, and then commanded.
         // ---------------------------------------------------------------------------------------------------------
 
-        // The gauntlet beside a cast owner: follow it (Component H's path-trailing follow), assist, guard and heal
-        // it. 450 s, as the solo gauntlet: two or three pulls would leave nothing to recover for and no win to reach.
-        stages.push_back({
-            .Name = "stage8_companion",
-            .Suffix = "_companion",
-            .Extends = "stage7_life",
-            .Summary = "the gauntlet beside an owner: follow, assist, guard and heal it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support, Forecast, Goal },
-            .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                .Owner = true, .OwnerCast = true, .EpisodeSeconds = 450 } },
-        });
-
-        // A group under a director, and its drills as arenas of it. The tanking and triage drills were stages of
-        // their own and their best checkpoints were their seeds (0M): the next stage overwrote whatever they taught.
-        // Here a third of the episodes fix a tank seat that has to hold what the pull brings (the threat table is
-        // the episode), and a third a healer seat that has to keep the hurt one up and spend mana to do it.
+        // The parties phase in one stage (next-run plan 5.4): a companion beside a wandering owner (the separate
+        // companion stage was flat -- owner deaths ~1.05 an episode across its 50M -- while the party stage cut them
+        // from 1.23 to 0.58), a party of up to four under a director, the tanking and triage drills, a dungeon's
+        // bosses on their own, and whole dungeon wings from the door to the last boss with the trash alive. The
+        // wings are weighted up over the stage (WeightFinal) as the pull clearing they need comes in; the separate
+        // dungeon stage is gone with the teleport-to-the-boss it trained on.
         //
-        // The hazard charge lands about four times harder on a tank than on a ranged seat, because a tank cannot walk
-        // out of what it is holding an enemy in: that is Hazards.Standing tuned for a seat with a choice.
+        // The companion arena's owner is the script (it wanders, runs legs between pulls and engages on a timer):
+        // following a moving owner is the lesson. The party's owner is the cast one.
         stages.push_back({
-            .Name = "stage9_party",
+            .Name = "stage8_party",
             .Suffix = "_party",
-            .Extends = "stage8_companion",
-            .Summary = "a party and its owner under a director, with a fixed tank or a fixed healer in two thirds",
+            .Extends = "stage7_life",
+            .Summary = "a companion, a party under a director with its tanking and triage drills, dungeon bosses, "
+                "and whole dungeon wings from the door",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
-                { .Name = "party", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
-                    .EpisodeSeconds = 450, .Directed = true, .DirectorLearned = true },
-                { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
-                    .EpisodeSeconds = 300, .SeatAptitudes = { AptitudeDemand::HoldsThePull() },
-                    .Directed = true, .DirectorLearned = true },
-                { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
-                    .EpisodeSeconds = 300, .SeatAptitudes = { AptitudeDemand::KeepsThemUp() },
-                    .Directed = true, .DirectorLearned = true },
-            },
-        });
-
-        // The first real instance: a party and its owner against a dungeon's own scripted bosses, in the dungeon
-        // (InstanceEncounter), the rungs five dungeons across the level bands. The party gauntlet on the host map
-        // stays as a control arena at a tenth of the episodes.
-        stages.push_back({
-            .Name = "stage10_dungeon",
-            .Suffix = "_dungeon",
-            .Extends = "stage9_party",
-            .Summary = "a party and its owner against real dungeon bosses, in their instances",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
-            .Arenas = {
-                { .Name = "dungeon", .Weight = 9, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                { .Name = "companion", .Weight = 3, .WeightFinal = 2, .Against = Opposition::Pulls,
+                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .EpisodeSeconds = 450 },
+                { .Name = "party", .Weight = 3, .WeightFinal = 2, .Seats = SeatPlan::Party,
+                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
+                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 450, .Directed = true,
+                    .DirectorLearned = true },
+                { .Name = "tanking", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
+                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
+                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                    .SeatAptitudes = { AptitudeDemand::HoldsThePull() }, .Directed = true, .DirectorLearned = true },
+                { .Name = "triage", .Weight = 2, .WeightFinal = 1, .Seats = SeatPlan::Party,
+                    .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet, .Owner = true,
+                    .OwnerCast = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                    .SeatAptitudes = { AptitudeDemand::KeepsThemUp() }, .Directed = true, .DirectorLearned = true },
+                // A boss on its own, for the repetitions a wing gives only once (Thalnos was killed 8% of the time).
+                { .Name = "dungeon_boss", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .Owner = true, .OwnerCast = true, .PartyGroup = true, .Instance = InstanceLadder::Dungeon,
                     .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
-                { .Name = "dungeon_control", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .Owner = true, .OwnerCast = true, .PartyGroup = true,
-                    .EpisodeSeconds = 300, .Directed = true, .DirectorLearned = true },
+                { .Name = "dungeon_wing", .Weight = 0, .WeightFinal = 4, .Seats = SeatPlan::Party,
+                    .Against = Opposition::Instance, .Owner = true, .OwnerCast = true, .PartyGroup = true,
+                    .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
+                    .DirectorLearned = true },
             },
         });
 
@@ -628,9 +611,9 @@ namespace
         // zone, the journal shared -- where one member saw what the quest wants, all of them know. Kill and loot
         // credit is the group's (a real group), and the director sends members to the objectives.
         stages.push_back({
-            .Name = "stage11_world_group",
+            .Name = "stage9_world_group",
             .Suffix = "_world_group",
-            .Extends = "stage10_dungeon",
+            .Extends = "stage8_party",
             // The world and travel blocks, from the life stage the party line does not carry.
             .Merges = { "stage7_life" },
             .Summary = "a group on a quest chain in the world, under a director",
@@ -648,14 +631,14 @@ namespace
         // adds, and why the mechanics a seat can read (a cast worth interrupting, something on the ground, where it
         // stands on the threat table) matter far more here. One fight, and a run of pulls with recovery between.
         //
-        // Forty seats an env is forty bots an env: AnimusForge.Stage.stage12_raid_pulls.Envs brings the env count
+        // Forty seats an env is forty bots an env: AnimusForge.Stage.stage10_raid_pulls.Envs brings the env count
         // down in proportion.
         stages.push_back({
-            .Name = "stage12_raid_pulls",
+            .Name = "stage10_raid_pulls",
             .Suffix = "_raid_pulls",
-            .Extends = "stage11_world_group",
+            .Extends = "stage9_world_group",
             // The companion block, which the world group dropped (it has no owner).
-            .Merges = { "stage10_dungeon" },
+            .Merges = { "stage8_party" },
             .Summary = "a raid of eight groups against one elite and its adds, and a run of raid pulls",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -674,11 +657,11 @@ namespace
         // forty in Molten Core, Blackwing Lair and the Temple of Ahn'Qiraj. No owner (forty seats leave no slot for
         // one): seat 0 leads. Weighted against their cost -- a forty-seat episode is four ten-seat ones -- so each
         // size gets a fair share of the stage's bots rather than of its episodes. A ten-seat synthetic single pack
-        // stays as the control arena. The env count is set for the forty (Stage.stage13_raids.Envs).
+        // stays as the control arena. The env count is set for the forty (Stage.stage11_raids.Envs).
         stages.push_back({
-            .Name = "stage13_raids",
+            .Name = "stage11_raids",
             .Suffix = "_raids",
-            .Extends = "stage12_raid_pulls",
+            .Extends = "stage10_raid_pulls",
             .Summary = "raids of ten, twenty-five and forty seats against their bosses, in their instances",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -705,9 +688,9 @@ namespace
         // Self-play one-on-one: two learned seats of any classes, the far side played by the live policy or by a
         // frozen earlier checkpoint (the league), so the opponent is always something that learned to fight.
         stages.push_back({
-            .Name = "stage14_duel_pvp",
+            .Name = "stage12_duel_pvp",
             .Suffix = "_duel_pvp",
-            .Extends = "stage13_raids",
+            .Extends = "stage11_raids",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
@@ -723,9 +706,9 @@ namespace
         // whether to leave at all is part of the lesson. Cover is the whole point: Durnholde Keep and the Southshore
         // farms, on the instance map the PvP line fights on.
         stages.push_back({
-            .Name = "stage15_escape",
+            .Name = "stage13_escape",
             .Suffix = "_escape",
-            .Extends = "stage14_duel_pvp",
+            .Extends = "stage12_duel_pvp",
             .Summary = "a fight it may not win: break away and live, or get out of sight and stay there",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
             .Arenas = {
@@ -745,9 +728,9 @@ namespace
         // bootstrap steps over it for the rest and merges its layouts forward. From level with the seat to six up:
         // stronger, so getting into position is worth its time, but close enough that a good opener decides it.
         stages.push_back({
-            .Name = "stage16_stealth",
+            .Name = "stage14_stealth",
             .Suffix = "_stealth",
-            .Extends = "stage15_escape",
+            .Extends = "stage13_escape",
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
             .Blocks = { Core, Move, Duel, Pet, Pvp, Forecast, Goal },
@@ -763,11 +746,11 @@ namespace
         // interrupt, go there -- and learning that following it pays. Places are on: an arena has cover worth
         // sending someone to.
         stages.push_back({
-            .Name = "stage17_arena",
+            .Name = "stage15_arena",
             .Suffix = "_arena",
-            .Extends = "stage16_stealth",
+            .Extends = "stage14_stealth",
             // The pack, support and order blocks, trained through the party phase; the pvp line dropped them.
-            .Merges = { "stage13_raids" },
+            .Merges = { "stage11_raids" },
             .Summary = "two, three and five a side, under a director: follow the call",
             .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order, Forecast, Goal },
             .Arenas = {
@@ -788,9 +771,9 @@ namespace
         // Mounting between the bases and being dismounted by the flag come from travel; the fight from the arena.
         // The Barrens, since the second base is placed by the objective search 100-180 yd from the first.
         stages.push_back({
-            .Name = "stage18_flag",
+            .Name = "stage16_flag",
             .Suffix = "_flag",
-            .Extends = "stage17_arena",
+            .Extends = "stage15_arena",
             // The travel block, which the pvp line does not carry.
             .Merges = { "stage2_travel" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
@@ -806,11 +789,11 @@ namespace
         // Ten against ten in the real battleground, each side under its director: escort the carrier, hold the
         // base, stop theirs.
         stages.push_back({
-            .Name = "stage19_warsong",
+            .Name = "stage17_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage18_flag",
+            .Extends = "stage16_flag",
             // Ten a side is a group: the party and order blocks, which the flag line does not carry.
-            .Merges = { "stage13_raids" },
+            .Merges = { "stage11_raids" },
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party, Order, Forecast, Goal },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -832,11 +815,11 @@ namespace
         // teaches is going where the others are not. A quarter of the episodes add the world's other people: hostile
         // players who arrive mid-quest and gank whoever they find.
         stages.push_back({
-            .Name = "stage20_world_shared",
+            .Name = "stage18_world_shared",
             .Suffix = "_world_shared",
-            .Extends = "stage19_warsong",
+            .Extends = "stage17_warsong",
             // The world group for the life and group blocks, the arena for the hostiles block.
-            .Merges = { "stage11_world_group", "stage17_arena" },
+            .Merges = { "stage9_world_group", "stage15_arena" },
             .Summary = "groups and solos questing in one zone, sharing its creatures, and ganked by hostile players",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Party, Pvp, Hostiles, Support, World, Order,
                 Forecast, Goal },
@@ -873,10 +856,10 @@ namespace
         // other maps than the host's say so (MapId). The raid makes this a ten-seat stage: the smaller arenas leave
         // the rest of the seats empty.
         stages.push_back({
-            .Name = "stage21_ship",
+            .Name = "stage19_ship",
             .Suffix = "_ship",
-            .Extends = "stage20_world_shared",
-            .Merges = { "stage2_travel", "stage7_life", "stage13_raids", "stage17_arena" },
+            .Extends = "stage18_world_shared",
+            .Merges = { "stage2_travel", "stage7_life", "stage11_raids", "stage15_arena" },
             .Summary = "every phase in one policy: the trip, the fight, the quest, the party, the raid and the arena",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles,
                 Support, World, Order, Forecast, Goal },

@@ -743,7 +743,7 @@ goals per row.
 ```yaml
 cast:
   opponents: league        # "" live self-play | auto = the seed chain's parent best.pt | league = parent + this run's snapshots | a path
-  parent: "{runs_dir}/stage14_duel_pvp/best.pt"   # the league's first member when the seed parent is a PvE policy
+  parent: "{runs_dir}/stage12_duel_pvp/best.pt"   # the league's first member when the seed parent is a PvE policy
   opponent_share: 0.5      # share of self-play episodes whose far side is cast, drawn per env at episode start
   agents: {owner: "{runs_dir}/stage6_gauntlet/best.pt"}   # stage.json `cast` entries by name
   snapshot_every_env_steps: 5000000

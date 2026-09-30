@@ -26,7 +26,7 @@ DATED = re.compile(r"20\d\d-\d\d-\d\d|\bat \d+(\.\d+)?M\b")
 
 def defined_names() -> set[str]:
     names = set(re.findall(r'\.Name = "(stage\d+_\w+)"', STAGES_CPP.read_text()))
-    assert len(names) >= 20, "Stages.cpp parsed badly"
+    assert len(names) >= 15, "Stages.cpp parsed badly"
     return names
 
 

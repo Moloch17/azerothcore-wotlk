@@ -82,7 +82,7 @@ def test_each_layout_exports_as_the_same_mlp(tmp_path):
 def test_model_names():
     duel = {"warrior_dps": "warrior_dps_duel", "druid_heal": "druid_heal_duel"}
     assert model_name("stage4_duel", "warrior_dps", 18, duel) == "warrior_dps_duel"
-    assert model_name("stage9_party", "druid_heal", 18, {"druid_heal": "druid_heal_party"}) == "druid_heal_party"
+    assert model_name("stage8_party", "druid_heal", 18, {"druid_heal": "druid_heal_party"}) == "druid_heal_party"
     # Without stage.json: a single-layout scenario keeps its name, others append the layout's.
     assert model_name("custom", "custom", 1) == "custom"
     assert model_name("custom", "mage_dps", 2) == "custom_mage_dps"

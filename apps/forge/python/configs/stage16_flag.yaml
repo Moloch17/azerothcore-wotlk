@@ -3,8 +3,8 @@
 # ride, the dead stand up at their base after a 15 s wave, and the first to three captures wins. The flag columns
 # say more than the score, which a policy against itself barely moves.
 
-extends: stage14_duel_pvp.yaml
-run_name: stage18_flag
+extends: stage12_duel_pvp.yaml
+run_name: stage16_flag
 
 total_env_steps: 50000000
 
@@ -13,4 +13,4 @@ eval:
 
 cast:
   opponents: league
-  parent: "{runs_dir}/stage14_duel_pvp/best.pt"
+  parent: "{runs_dir}/stage12_duel_pvp/best.pt"

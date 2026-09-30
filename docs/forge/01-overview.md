@@ -114,7 +114,7 @@ model only works on a server that builds the same manifest.
 **Stage and arena.** A **stage** is a scenario the learner trains (`stage5_pack`). It extends an earlier stage and
 inherits that stage's trained weights. An **arena** is one situation a stage's episodes can be: a duel, a gauntlet, a
 party, an ambush, a trip or a flag match, each drawn by weight. A drill is an arena of the stage it serves: `stage1_move`
-mixes seven terrains, `stage9_party` the party, tanking and triage, and `stage21_ship`, the stage that ships, sixteen
+mixes seven terrains, `stage8_party` the party, tanking and triage, and `stage19_ship`, the stage that ships, sixteen
 arenas from all four phases.
 
 **Decision.** One step of the environment, and `AnimusForge.DecisionMs` of game time (250 ms by default). For each

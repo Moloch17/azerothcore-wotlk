@@ -5037,11 +5037,11 @@ AnimusForge.OutputDir = ""
 #                       movement  "stage1_move" (every ground on foot), "stage2_travel" (the mount, the air)
 #                       classes   "stage3_rotation" (the kit against dummies), "stage4_duel", "stage5_pack",
 #                                 "stage6_gauntlet", "stage7_life" (quests, herbs and ore, a town)
-#                       parties   "stage8_companion", "stage9_party", "stage10_dungeon",
-#                                 "stage11_world_group", "stage12_raid_pulls", "stage13_raids"
-#                       pvp       "stage14_duel_pvp", "stage15_escape", "stage16_stealth", "stage17_arena",
-#                                 "stage18_flag", "stage19_warsong", "stage20_world_shared"
-#                       ship      "stage21_ship" - every phase in one policy: the stage that ships
+#                       parties   "stage8_party" (companion, party, dungeon bosses and wings),
+#                                 "stage9_world_group", "stage10_raid_pulls", "stage11_raids"
+#                       pvp       "stage12_duel_pvp", "stage13_escape", "stage14_stealth", "stage15_arena",
+#                                 "stage16_flag", "stage17_warsong", "stage18_world_shared"
+#                       ship      "stage19_ship" - every phase in one policy: the stage that ships
 #                     Every stage is in the default queue, the raids included (they set their own env
 #                     count: AnimusForge.Stage.<name>.Envs).
 #        Example:     "stage4_duel" - (train a single scenario)
@@ -5115,12 +5115,12 @@ AnimusForge.ContinentReplicas = 0
 #
 #    AnimusForge.Stage.<name>.Envs
 #        Description: a stage's own env count, where the default would not do. The real raids are forty seats an
-#                     env, so `forge start stage13_raids` at 128 envs could be 5,120 bots; these keep the bots in
+#                     env, so `forge start stage11_raids` at 128 envs could be 5,120 bots; these keep the bots in
 #                     the world where the pool stages have them. Any stage name works.
 #        Default:     AnimusForge.Envs
 
-AnimusForge.Stage.stage12_raid_pulls.Envs = 8
-AnimusForge.Stage.stage13_raids.Envs = 16
+AnimusForge.Stage.stage10_raid_pulls.Envs = 8
+AnimusForge.Stage.stage11_raids.Envs = 16
 
 #
 #    AnimusForge.DecisionMs
@@ -5731,7 +5731,7 @@ AnimusForge.Bench.AutoTune = 0
 #        Description: Comma-separated scenarios `forge fast` trains when given none, in order, each again
 #                     from scratch (nothing is skipped because an earlier fast run of it finished).
 #        Default:     ""  - (every curriculum stage in order, the raid stages included: a full run)
-#                     "stage4_duel, stage14_duel_pvp, stage21_ship" - (a stage from scratch, one seeded from
+#                     "stage4_duel, stage12_duel_pvp, stage19_ship" - (a stage from scratch, one seeded from
 #                     it, and a stage that mixes arenas, merges parents and distills)
 
 AnimusForge.Fast.Queue = ""
@@ -6099,7 +6099,7 @@ AnimusForge.Curriculum.Goals.SecondaryShare = 0.5
 AnimusForge.Curriculum.Goals.Secondary = 0.002
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
-#   channel that correlates with nothing cannot bootstrap into that. stage17_arena ran 30M steps with the order
+#   channel that correlates with nothing cannot bootstrap into that. stage15_arena ran 30M steps with the order
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
 #   world and it never left exploration. The same job Goals.Reached does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
@@ -6503,7 +6503,7 @@ AnimusForge.Curriculum.Opponent.TankChance = 20
 
 #
 #    AnimusForge.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage15_escape's evade and hide arenas). Time spent unseen is
+#        Getting away from a fight that cannot be won (stage13_escape's evade and hide arenas). Time spent unseen is
 #        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
 #        paid is the transition out of contact, once a break, with a cooldown.
 
@@ -6516,7 +6516,7 @@ AnimusForge.Curriculum.Evade.EscapeMs = 8000
 
 #
 #    AnimusForge.Curriculum.Stealth.*
-#        Stalking (stage16_stealth): closing on someone while stealthed and unseen, and holding there. The one
+#        Stalking (stage14_stealth): closing on someone while stealthed and unseen, and holding there. The one
 #        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
 #        is still never paid -- the distance condition is what makes this a skill, since detection is a check
 #        the seat is losing the whole time it stands inside the band.
@@ -6534,7 +6534,7 @@ AnimusForge.Curriculum.Stealth.OpenerWindowMs = 6000
 
 #
 #    AnimusForge.Curriculum.Ambush.*
-#        Scripted enemy players who ambush the owner (stage21_ship's ambush arena, and stage20_world_shared's ganks).
+#        Scripted enemy players who ambush the owner (stage19_ship's ambush arena, and stage18_world_shared's ganks).
 #        Their class, role and level follow the Opponent.* chances and spread.
 
 #   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)

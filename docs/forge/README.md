@@ -36,7 +36,7 @@ move ─ indoor ─ jump ─ dive ─ dodge ─ travel ─ flight   the feet: gr
 ```
 
 Twenty-one stages in four phases -- movement, classes, parties and raids, PvP -- numbered in the order they are
-trained (`stage1_move` to `stage21_ship`), all of them the default queue. The last, `stage21_ship`, replays every
+trained (`stage1_move` to `stage19_ship`), all of them the default queue. The last, `stage19_ship`, replays every
 phase and is the stage that ships. No stage has a pass gate: each ends when its convergence signals say so, and the
 queue moves on.
 

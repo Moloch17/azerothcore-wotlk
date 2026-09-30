@@ -2,8 +2,8 @@
 # real zone, the journal shared -- where one member saw what the quest wants, all of them know -- and kill and loot
 # credit the group's. The world and travel blocks come from stage7_life (a merge).
 
-extends: stage10_dungeon.yaml
-run_name: stage11_world_group
+extends: stage8_party.yaml
+run_name: stage9_world_group
 
 total_env_steps: 50000000
 

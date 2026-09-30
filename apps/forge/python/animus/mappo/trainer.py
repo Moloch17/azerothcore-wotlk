@@ -1669,7 +1669,7 @@ class MappoTrainer:
                 if teach is not None:
                     # The whole chunk in one call. A recurrent teacher still sees the decisions in order, but only
                     # its GRU cell runs per step: replaying every teacher's adapters and trunk decision by decision
-                    # cost stage21_ship a 306 s update against a 6 s rollout, with six teachers.
+                    # cost stage19_ship a 306 s update against a 6 s rollout, with six teachers.
                     state_all = (data["state"][:, chunk][:, :, None, :]
                                  .expand(steps, envs_here, agents, data["state"].shape[-1])
                                  .reshape(steps, rows_here, -1))

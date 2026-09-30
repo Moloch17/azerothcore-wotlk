@@ -6,8 +6,8 @@
 # the hurt one up, which is restoration: its healing is mostly over time rather than on demand, and it has to shift
 # out of a form to cast at all, so overhealing and healing per mana read differently for it than for a paladin.
 
-extends: ../stage9_party.yaml
-run_name: stage9_party
+extends: ../stage8_party.yaml
+run_name: stage8_party
 
 eval:
   report: [threat_share, threat_on_teammates, teammate_damage_taken, low_health_seconds, overheal_share,
