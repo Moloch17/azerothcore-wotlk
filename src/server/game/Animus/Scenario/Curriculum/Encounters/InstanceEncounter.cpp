@@ -153,6 +153,7 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Instance == InstanceLadder::Wing; }))
     {
         table.Add("wing_trash_kills", [this](Env const& env, uint32) { return float(_envs[env.Index].TrashKills); });
+        table.Add("wing_boss_kills", [this](Env const& env, uint32) { return float(_envs[env.Index].BossKills); });
         table.Add("wing_route_share", [this](Env const& env, uint32)
         {
             EnvInstance const& fight = _envs[env.Index];
@@ -646,6 +647,8 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         {
             fight.Counted.push_back(guid);
             ++fight.TrashKills;
+            if (creature->IsDungeonBoss() || creature->isWorldBoss())
+                ++fight.BossKills;
         }
     }
 
@@ -705,8 +708,10 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
         ledger.Add(RewardTerm::Approach, tuning.WingWaypoint * tierScale * float(waypoints - paid.WaypointsPaid));
+        ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * tierScale * float(fight.BossKills - paid.BossKillsPaid));
     }
     paid.KillsPaid = fight.TrashKills;
+    paid.BossKillsPaid = fight.BossKills;
     paid.WaypointsPaid = waypoints;
     if (bot && !bot->IsAlive() && !paid.DeathPaid)
     {

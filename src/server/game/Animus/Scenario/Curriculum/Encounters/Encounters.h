@@ -513,6 +513,7 @@ namespace Animus::Curriculum
             bool OutcomePaid = false;
             // A wing's terms paid so far (kills, waypoints, wipes), and whether its death has been.
             uint32 KillsPaid = 0;
+            uint32 BossKillsPaid = 0;
             uint32 WaypointsPaid = 0;
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
@@ -543,6 +544,7 @@ namespace Animus::Curriculum
             std::vector<Position> Route;
             uint32 RouteNext = 0;
             uint32 TrashKills = 0;
+            uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)
             uint32 Wipes = 0;
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;

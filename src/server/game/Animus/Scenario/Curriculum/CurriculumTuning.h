@@ -233,9 +233,13 @@ namespace Animus::Curriculum
             /// Whole wings (InstanceLadder::Wing): each trash creature killed, each waypoint of the route reached, the
             /// wing's boss, each seat's death and each wipe (a wipe stands the party up at the door; WingWipes of them
             /// end the episode). The kill and waypoint terms scale with the rung, the costs are divided by it.
-            float WingTrashKill = 0.3f;
-            float WingWaypoint = 0.2f;
-            float WingBoss = 10.0f;
+            /// Raised 2026-09-30 so a wing pays for itself: over a 1,200 s run the per-press costs (jitter, repeat,
+            /// effort, the combat clock) came to about -75, against 7.5 for 25 trash kills and 10 for a last boss
+            /// no party reached. A dungeon takes long to learn; every step of it has to be worth taking.
+            float WingTrashKill = 1.0f;
+            float WingWaypoint = 1.0f;
+            float WingBoss = 25.0f;
+            float WingMidBoss = 8.0f;           // each dungeon boss killed on the way to the last
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
             uint32 WingWipes = 3;
@@ -1064,6 +1068,7 @@ namespace Animus::Curriculum
             f("Instance.WingTrashKill", tuning.Instance.WingTrashKill);
             f("Instance.WingWaypoint", tuning.Instance.WingWaypoint);
             f("Instance.WingBoss", tuning.Instance.WingBoss);
+            f("Instance.WingMidBoss", tuning.Instance.WingMidBoss);
             f("Instance.WingDeath", tuning.Instance.WingDeath);
             f("Instance.WingWipe", tuning.Instance.WingWipe);
             f("Instance.WingWipes", tuning.Instance.WingWipes);
