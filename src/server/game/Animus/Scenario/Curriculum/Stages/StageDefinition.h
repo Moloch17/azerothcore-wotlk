@@ -180,6 +180,10 @@ namespace Animus::Curriculum
         /// waits for a friend's (DeathBlock, which the stage must carry). Open-world arenas only: a release inside an
         /// instance would take the ghost to another map.
         bool DeathRuns = false;
+        /// **An objective drill** (next-run plan, 7.5): a quest with an objective of this kind (ObjectiveKind), taken
+        /// already, the seat starting within reach of that objective -- a kill, a collection from creatures, an
+        /// object used, a place reached -- so the doing is practised without the walk. -1: not a drill.
+        int8 QuestDrill = -1;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
         /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn

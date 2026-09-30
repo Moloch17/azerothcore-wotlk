@@ -49,6 +49,7 @@
  */
 
 #include "StageDefinition.h"
+#include "QuestPlanner.h"
 #include "Log.h"
 #include "AreaDefines.h"
 #include <algorithm>
@@ -552,10 +553,20 @@ namespace
             .Summary = "a chain of quests of the level band, a field of herbs and ore, a town's traders",
             .Blocks = { Core, Move, Travel, Duel, Pet, Pack, Gauntlet, Support, World, Forecast, Death, Goal },
             .Arenas = {
-                { .Name = "quest", .Weight = 3, .Against = Opposition::Quest, .EpisodeSeconds = 600,
+                { .Name = "quest", .Weight = 9, .Against = Opposition::Quest, .EpisodeSeconds = 600,
                     .DeathRuns = true },
-                { .Name = "gather", .Weight = 1, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
-                { .Name = "town", .Weight = 1, .Against = Opposition::Town, .EpisodeSeconds = 120 },
+                { .Name = "gather", .Weight = 3, .Against = Opposition::Gather, .EpisodeSeconds = 240 },
+                { .Name = "town", .Weight = 3, .Against = Opposition::Town, .EpisodeSeconds = 120 },
+                // Objective drills (next-run plan, 7.5): the quest taken, the seat within reach of one objective of
+                // a kind, two minutes. They fade as the stage goes, as the whole quest takes over.
+                { .Name = "drill_kill", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Kill) },
+                { .Name = "drill_loot", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::CollectFromCreature) },
+                { .Name = "drill_object", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::UseObject) },
+                { .Name = "drill_explore", .Weight = 3, .WeightFinal = 1, .Against = Opposition::Quest,
+                    .EpisodeSeconds = 120, .QuestDrill = int8(ObjectiveKind::Explore) },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorGround(),
@@ -936,6 +947,9 @@ namespace
             return "pulls need the pack block";
         if (arena.DeathRuns && (!stage.Has(BlockId::Death) || arena.Against == Opposition::Instance))
             return "death runs on in the open world, with the death block";
+        if (arena.QuestDrill >= 0 && (arena.Against != Opposition::Quest || arena.Seats == SeatPlan::Teams
+            || arena.QuestDrill >= int8(OBJECTIVE_KIND_COUNT)))
+            return "an objective drill is a quest arena of one group, with an objective kind";
         if ((arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence)
             && !stage.Has(BlockId::Gauntlet))
             return "the gauntlet schedule needs the gauntlet block";

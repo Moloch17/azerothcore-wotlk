@@ -11,7 +11,8 @@ eval:
   every_env_steps: 10000000
   episodes: 128
   report: [quests_turned_in, quest_turned_in, quest_progress, quest_held_out, quest_places_found, order_changes,
-           director_member_orders, goals_reached, serving_share, died, quest_band]
+           director_member_orders, goals_reached, serving_share, died, quest_band, open_world_deaths,
+           corpse_runs_completed, safe_rises, resurrections_accepted]
 
 cast:
   agents: {}

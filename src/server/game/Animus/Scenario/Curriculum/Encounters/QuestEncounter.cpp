@@ -18,6 +18,7 @@
 
 #include "LifeEncounter.h"
 #include "Creature.h"
+#include "LootMgr.h"
 #include "Env.h"
 #include "EpisodeInfoTable.h"
 #include "Log.h"
@@ -54,6 +55,11 @@ namespace
 
     enum Waypoints : uint8 { WAY_GIVER = 1, WAY_OBJECTIVE = 2, WAY_ENDER = 3 };
 
+    /// An objective drill starts this far from the objective's place: within reach, not on top of it.
+    constexpr float DRILL_START_MIN = 25.0f;
+    constexpr float DRILL_START_MAX = 60.0f;
+    constexpr uint32 SALT_DRILL = 43;
+
     bool IsCreatureKind(ObjectiveKind kind)
     {
         return kind == ObjectiveKind::Kill || kind == ObjectiveKind::CollectFromCreature
@@ -73,7 +79,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::QuestEncounter::
 {
     return { RewardTerm::StepCost, RewardTerm::Progress, RewardTerm::Death, RewardTerm::Wasted,
         RewardTerm::QuestAccepted, RewardTerm::QuestCredit, RewardTerm::QuestTurnIn, RewardTerm::Timeout,
-        RewardTerm::Poach };
+        RewardTerm::Poach, RewardTerm::Stall };
 }
 
 uint32 Animus::Curriculum::QuestEncounter::GroupCount(Env const& env) const
@@ -207,6 +213,9 @@ void Animus::Curriculum::QuestEncounter::Refused(uint32 questId)
 
 void Animus::Curriculum::QuestEncounter::Tally(EnvQuests const& quests)
 {
+    // A drill's quest was taken for it and started beside its objective: not a turn-in rate of the kind.
+    if (quests.Drill)
+        return;
     if (quests.Evaluating)
         return;
 
@@ -297,9 +306,31 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
         return candidates->back();
     };
     LifeWorld::QuestCandidate const* first = nullptr;
-    for (uint32 attempt = 0; attempt < DRAW_ATTEMPTS && (!first || Retired(first->Id)); ++attempt)
-        first = drawOne(SALT_QUEST + life.Draws++);
-    quests.Groups[0].Chain = ChainFrom(first, length(SALT_CHAIN + life.Draws), env.Evaluating, life.Side);
+    int8 const drill = _scenario.Arena(env).QuestDrill;
+    Position drillStart;
+    if (drill >= 0)
+    {
+        // A drill: a quest with an objective of the drill's kind, from a random point in the candidates, and a
+        // place to start within reach of it.
+        quests.Drill = true;
+        uint32 const from = LifeWorld::Draw(env, uint32(candidates->size()), SALT_DRILL + life.Draws++);
+        for (uint32 i = 0; i < candidates->size() && !first; ++i)
+        {
+            LifeWorld::QuestCandidate const* candidate = (*candidates)[(from + i) % candidates->size()];
+            if (!Retired(candidate->Id)
+                && DrillStart(*candidate, ObjectiveKind(drill), SALT_DRILL + life.Draws, env, drillStart))
+                first = candidate;
+        }
+        if (!first)
+            return false;
+        quests.Groups[0].Chain = { first };
+    }
+    else
+    {
+        for (uint32 attempt = 0; attempt < DRAW_ATTEMPTS && (!first || Retired(first->Id)); ++attempt)
+            first = drawOne(SALT_QUEST + life.Draws++);
+        quests.Groups[0].Chain = ChainFrom(first, length(SALT_CHAIN + life.Draws), env.Evaluating, life.Side);
+    }
 
     // The other groups in the same zone (world_shared) -- the second side, and each seat questing alone beside
     // them: half the time the same quest -- the same creatures, the hardest sharing there is -- else another whose
@@ -317,8 +348,8 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
             if (!near.empty())
                 other = near[LifeWorld::Draw(env, uint32(near.size()), SALT_QUEST + 31 * g + life.Draws)];
         }
-        quests.Groups[g].Chain = ChainFrom(other, length(SALT_CHAIN + 13 * g + life.Draws), env.Evaluating,
-            life.Side);
+        quests.Groups[g].Chain = quests.Drill ? std::vector<LifeWorld::QuestCandidate const*>{ first }
+            : ChainFrom(other, length(SALT_CHAIN + 13 * g + life.Draws), env.Evaluating, life.Side);
     }
 
     EnvState& data = _scenario.Data(env);
@@ -334,8 +365,43 @@ bool Animus::Curriculum::QuestEncounter::Place(Env& env, EnvLife& life)
     float const facing = giver.GetOrientation();
     data.EpisodeSpawn.Relocate(giver.GetPositionX() + std::cos(facing) * START_YARDS,
         giver.GetPositionY() + std::sin(facing) * START_YARDS, giver.GetPositionZ(), facing + float(M_PI));
+    if (quests.Drill)
+        data.EpisodeSpawn = drillStart;
     data.HasEpisodeSpawn = true;
     return true;
+}
+
+bool Animus::Curriculum::QuestEncounter::DrillStart(LifeWorld::QuestCandidate const& candidate, ObjectiveKind kind,
+    uint32 salt, Env const& env, Position& start)
+{
+    for (uint32 i = 0; i < candidate.Plan->Objectives.size() && i < candidate.Places.size(); ++i)
+    {
+        if (candidate.Plan->Objectives[i].Kind != kind)
+            continue;
+        // Where a creature of the world stands a little way off: its spawn is on the ground, which the objective's
+        // place (a quest_poi centroid) need not be.
+        Position const& where = candidate.Places[i].Where;
+        std::vector<LifeWorld::Spawn const*> spawns;
+        LifeWorld::SpawnIndex::Instance().CreaturesNear(candidate.Giver->Map, where.GetPositionX(),
+            where.GetPositionY(), DRILL_START_MAX, spawns);
+        std::erase_if(spawns, [&where](LifeWorld::Spawn const* spawn)
+        {
+            return spawn->Object || spawn->Pos.GetExactDist2d(&where) < DRILL_START_MIN;
+        });
+        if (spawns.empty())
+        {
+            // Nothing to stand beside: on the place itself, except where reaching the place is the objective.
+            if (kind == ObjectiveKind::Explore)
+                continue;
+            start = where;
+            return true;
+        }
+        Position const& at = spawns[LifeWorld::Draw(env, uint32(spawns.size()), salt)]->Pos;
+        start.Relocate(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(),
+            std::atan2(where.GetPositionY() - at.GetPositionY(), where.GetPositionX() - at.GetPositionX()));
+        return true;
+    }
+    return false;
 }
 
 bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level*/)
@@ -405,6 +471,13 @@ bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level
             return false;
         }
 
+        // A drill starts with the quest taken.
+        if (quests.Drill)
+            for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+                if (Player* bot = _scenario.SeatBot(env, seat); bot && GroupOf(env, seat) == g
+                    && bot->CanTakeQuest(info, false) && bot->CanAddQuest(info, false))
+                    bot->AddQuestAndCheckCompletion(info, nullptr);
+
         for (LifeWorld::QuestCandidate const* q : quest.Chain)
         {
             ObjectGuid const giver = npc(*q->Giver);
@@ -432,6 +505,28 @@ bool Animus::Curriculum::QuestEncounter::Build(Env& env, Map* map, uint8 /*level
                 if (IsCreatureKind(kind) && placed < tuning.ObjectiveSpawns)
                     SummonAround(env, life, map, place.Where, tuning.ObjectiveRadius, tuning.ObjectiveSpawns - placed,
                         false);
+                // Objects to use or open: at least twice what the objective counts, so every count can be made
+                // (a summoned object is gone once used). Copies stand a few yards round the ones placed.
+                if (q->Plan->Objectives[i].SourcesAreObjects && placed)
+                {
+                    uint32 const wanted = std::min(tuning.ObjectiveSpawns, 2 * q->Plan->Objectives[i].Count);
+                    std::vector<LifeWorld::Spawn const*> objects;
+                    for (LifeWorld::Spawn const* spawn : place.Spawns)
+                        if (spawn->Object)
+                            objects.push_back(spawn);
+                    for (uint32 copy = 0; placed < wanted && !objects.empty() && copy < wanted; ++copy)
+                    {
+                        LifeWorld::Spawn moved = *objects[copy % objects.size()];
+                        float const angle = float(copy) * 2.39996f;     // the golden angle: spread, never stacked
+                        float const yards = 3.0f + float(copy / objects.size()) * 2.0f;
+                        float const x = moved.Pos.GetPositionX() + std::cos(angle) * yards;
+                        float const y = moved.Pos.GetPositionY() + std::sin(angle) * yards;
+                        float const ground = map->GetHeight(x, y, moved.Pos.GetPositionZ() + 2.0f);
+                        moved.Pos.Relocate(x, y, ground > INVALID_HEIGHT ? ground : moved.Pos.GetPositionZ());
+                        if (SummonObject(env, life, map, moved))
+                            ++placed;
+                    }
+                }
             }
         }
 
@@ -505,6 +600,8 @@ void Animus::Curriculum::QuestEncounter::Update(Env& env)
         }
         if (!living)
             continue;
+        if (accepted && !complete && !env.Evaluating && tuning.DropRerolls)
+            GuaranteeDrops(env, life, quest, seats, map);
         quest.Complete = complete;
         quest.TurnedIn = quest.TurnedIn || turnedIn;
         quest.Progress = done / float(living);
@@ -713,8 +810,11 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
     }
     if (quest.Progress > pay.ProgressPaid)
     {
+        // Per objective (Life.QuestCredit): the progress is the objectives' mean, so times their number.
+        LifeWorld::QuestCandidate const* current = quest.Quest();
+        float const objectives = current ? float(std::max<std::size_t>(1, current->Plan->Objectives.size())) : 1.0f;
         float const gained = quest.Progress - pay.ProgressPaid;
-        ledger.Add(RewardTerm::QuestCredit, tuning.QuestCredit * gained * tierScale);
+        ledger.Add(RewardTerm::QuestCredit, tuning.QuestCredit * objectives * gained * tierScale);
         pay.ProgressPaid = quest.Progress;
         // Taken in a place another group holds: poached.
         if (bot && bot->IsAlive() && quests.Coordinator.ClaimedByOther(g, *bot, env.EpisodeElapsedMs))
@@ -725,6 +825,9 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
     }
     for (; pay.TurnInsPaid < quest.TurnedInCount; ++pay.TurnInsPaid)
         ledger.Add(RewardTerm::QuestTurnIn, tuning.QuestTurnIn * tierScale);
+    // A finished quest carried about instead of handed in.
+    if (quest.Accepted && quest.Complete && !quest.TurnedIn)
+        ledger.Add(RewardTerm::Stall, -tuning.CompleteHeld * _scenario.DecisionScale());
 
     // The clock without the whole chain costs what a lost fight costs, less what was done -- once per seat.
     if (pay.TimeoutPaid || life.OutcomePaid || Finished(env, life) || !TimeIsUp(env) || quest.Chain.empty())
@@ -732,6 +835,64 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
     pay.TimeoutPaid = true;
     float const done = (float(quest.TurnedInCount) + quest.Progress) / float(quest.Chain.size());
     ledger.Add(RewardTerm::Timeout, -tuning.QuestTimeout * (1.0f - done) / tierScale);
+}
+
+void Animus::Curriculum::QuestEncounter::GuaranteeDrops(Env const& env, EnvLife const& life, EnvQuest& quest,
+    std::vector<Player*> const& seats, Map* map) const
+{
+    LifeWorld::QuestCandidate const* current = quest.Quest();
+    uint32 const rerolls = _scenario.Tuning().Life.DropRerolls;
+    if (!current || !map)
+        return;
+
+    for (ObjectGuid const& guid : life.Spawned)
+    {
+        if (!guid.IsCreatureOrVehicle())
+            continue;
+        Creature* creature = map->GetCreature(guid);
+        if (!creature || creature->IsAlive()
+            || std::find(quest.DropsChecked.begin(), quest.DropsChecked.end(), guid) != quest.DropsChecked.end())
+            continue;
+        // Checked once, at the first decision it lies dead: nobody has looted it yet (loot is taken in the seats'
+        // actions, after this), so rolling it again takes nothing from anyone.
+        quest.DropsChecked.push_back(guid);
+        uint32 const lootId = creature->GetCreatureTemplate()->lootid;
+        if (!lootId || creature->loot.isLooted())
+            continue;
+
+        for (PlannedObjective const& objective : current->Plan->Objectives)
+        {
+            if (objective.Kind != ObjectiveKind::CollectFromCreature
+                || std::find(objective.Sources.begin(), objective.Sources.end(), creature->GetEntry())
+                    == objective.Sources.end())
+                continue;
+            // A member who still needs it, to roll the loot for (its group shares the quest items).
+            auto const needs = std::find_if(seats.begin(), seats.end(), [&objective](Player* bot)
+            {
+                return bot->IsAlive() && bot->HasQuestForItem(objective.Entry);
+            });
+            if (needs == seats.end())
+                continue;
+            auto const dropped = [creature, &objective]()
+            {
+                return std::any_of(creature->loot.quest_items.begin(), creature->loot.quest_items.end(),
+                    [&objective](LootItem const& item) { return item.itemid == objective.Entry; });
+            };
+            for (uint32 roll = 0; roll < rerolls && !dropped(); ++roll)
+            {
+                // As the kill filled it (Unit::Kill): cleared, filled for the looter and its group, then the money.
+                creature->loot.clear();
+                creature->loot.FillLoot(lootId, LootTemplates_Creature, *needs, false, false, creature->GetLootMode(),
+                    creature);
+                if (creature->GetLootMode())
+                    creature->loot.generateMoneyLoot(creature->GetCreatureTemplate()->mingold,
+                        creature->GetCreatureTemplate()->maxgold);
+            }
+            if (!creature->loot.isLooted())
+                creature->SetDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
+            break;
+        }
+    }
 }
 
 bool Animus::Curriculum::QuestEncounter::Finished(Env const& env, EnvLife const& /*life*/) const

@@ -56,7 +56,7 @@ namespace Animus::Curriculum::LifeWorld
         uint8 Max;
     };
 
-    constexpr uint32 BAND_COUNT = 3;
+    constexpr uint32 BAND_COUNT = 4;
     [[nodiscard]] Band const& BandAt(uint32 index);
     [[nodiscard]] uint32 BandOf(uint8 level);
 

@@ -219,6 +219,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Life.QuestCredit` | 3.0 | | | |
 | `Life.QuestTurnIn` | 10.0 | | | |
 | `Life.QuestTimeout` | 3.0 | | | |
+| `Life.CompleteHeld` | 0.002 | | `Life.DropRerolls` | 50 |
 | `Life.GatherNode` | 2.0 | | | |
 | `Life.GatherSkillUp` | 0.5 | | | |
 | `Life.TownSold` | 2.0 | | | |

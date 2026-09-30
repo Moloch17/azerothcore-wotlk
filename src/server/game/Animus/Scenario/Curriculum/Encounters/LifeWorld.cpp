@@ -38,11 +38,14 @@ namespace
 {
     using namespace Animus::Curriculum::LifeWorld;
 
-    constexpr std::array<Band, BAND_COUNT> BANDS = { { { 15, 20 }, { 35, 40 }, { 58, 60 } } };
+    /// The last is Northrend's first zones (Borean Tundra, Howling Fjord): without it no life episode saw a level
+    /// above 60, and a companion is mostly played at 80.
+    constexpr std::array<Band, BAND_COUNT> BANDS = { { { 15, 20 }, { 35, 40 }, { 58, 60 }, { 70, 75 } } };
 
     constexpr float CELL_YARDS = 100.0f;
     constexpr uint32 MAP_EASTERN_KINGDOMS = 0;
     constexpr uint32 MAP_KALIMDOR = 1;
+    constexpr uint32 MAP_NORTHREND = 571;
 
     /// The playable races of each side as a race mask (1 << (race - 1)): what quest_template.AllowableRaces holds.
     constexpr uint32 ALLIANCE_RACES = (1u << (RACE_HUMAN - 1)) | (1u << (RACE_DWARF - 1)) | (1u << (RACE_NIGHTELF - 1))
@@ -53,7 +56,7 @@ namespace
     /// How far a quest may reach, per band: the turn-in from the giver, and each objective's place from the
     /// giver. A 300 s episode on foot covers about 2,000 yards; the upper bands ride, and their quests are given
     /// further from where they are done.
-    constexpr std::array<float, 3> QUEST_REACH = { 800.0f, 1200.0f, 1600.0f };
+    constexpr std::array<float, BAND_COUNT> QUEST_REACH = { 800.0f, 1200.0f, 1600.0f, 1600.0f };
     /// How close an objective's spawns count as one place.
     constexpr float OBJECTIVE_CLUSTER_YARDS = 60.0f;
     /// A POI point's place gets its height from the creature spawns around it.
@@ -61,7 +64,7 @@ namespace
 
     bool IsContinent(uint32 map)
     {
-        return map == MAP_EASTERN_KINGDOMS || map == MAP_KALIMDOR;
+        return map == MAP_EASTERN_KINGDOMS || map == MAP_KALIMDOR || map == MAP_NORTHREND;
     }
 
     uint64 CellKey(uint32 map, int32 cx, int32 cy)
@@ -499,7 +502,8 @@ std::vector<Animus::Curriculum::LifeWorld::Ground> const& Animus::Curriculum::Li
 {
     // The three densest 400-yard cells of herb and ore spawns per zone (acore_world, 2026-09-24), each the average
     // of its nodes. Band 0: the Barrens, Westfall, Loch Modan. Band 1: Thousand Needles, Stranglethorn, Arathi,
-    // Feralas. Band 2: Un'Goro, Winterspring, the Eastern Plaguelands, Silithus, the Burning Steppes.
+    // Feralas. Band 2: Un'Goro, Winterspring, the Eastern Plaguelands, Silithus, the Burning Steppes. Band 3: the
+    // Borean Tundra and the Howling Fjord (goldclover, tiger lily, Talandra's rose, cobalt; 2026-09-29).
     static std::vector<Ground> const grounds[BAND_COUNT] =
     {
         {
@@ -520,6 +524,12 @@ std::vector<Animus::Curriculum::LifeWorld::Ground> const& Animus::Curriculum::Li
             { 1, -7756.0f, 1823.0f, 16.0f }, { 1, -6619.0f, 213.0f, 20.0f },
             { 0, -7858.0f, -2622.0f, 161.0f }, { 0, -8193.0f, -1807.0f, 148.0f },
         },
+        {
+            { 571, 3039.0f, 5441.0f, 50.0f }, { 571, 2571.0f, 5788.0f, 32.0f }, { 571, 3375.0f, 5474.0f, 42.0f },
+            { 571, 3412.0f, 4585.0f, 13.0f }, { 571, 3789.0f, 4176.0f, 23.0f },
+            { 571, 255.0f, -5739.0f, 217.0f }, { 571, 699.0f, -4611.0f, 192.0f }, { 571, 2195.0f, -5745.0f, 235.0f },
+            { 571, 2643.0f, -4106.0f, 336.0f },
+        },
     };
 
     return grounds[std::min<uint32>(band, BAND_COUNT - 1)];
@@ -528,9 +538,12 @@ std::vector<Animus::Curriculum::LifeWorld::Ground> const& Animus::Curriculum::Li
 std::vector<uint32> const& Animus::Curriculum::LifeWorld::TownInns(uint32 band, Side side)
 {
     // Innkeeper entries: the Crossroads (3934) and Goldshire (295); Camp Taurajo (7714), Menethil Harbor (1464)
-    // and neutral Ratchet (6791); Orgrimmar (6929), the Undercity (6741), Stormwind (6740), Ironforge (5111).
-    static std::vector<uint32> const horde[BAND_COUNT] = { { 3934 }, { 7714, 6791 }, { 6929, 6741 } };
-    static std::vector<uint32> const alliance[BAND_COUNT] = { { 295 }, { 1464, 6791 }, { 6740, 5111 } };
+    // and neutral Ratchet (6791); Orgrimmar (6929), the Undercity (6741), Stormwind (6740), Ironforge (5111);
+    // Warsong Hold (25278) and Vengeance Landing (24342), Valiance Keep (25245) and Valgarde (23731).
+    static std::vector<uint32> const horde[BAND_COUNT] = { { 3934 }, { 7714, 6791 }, { 6929, 6741 },
+        { 25278, 24342 } };
+    static std::vector<uint32> const alliance[BAND_COUNT] = { { 295 }, { 1464, 6791 }, { 6740, 5111 },
+        { 25245, 23731 } };
     uint32 const b = std::min<uint32>(band, BAND_COUNT - 1);
     return side == Side::Horde ? horde[b] : alliance[b];
 }

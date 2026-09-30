@@ -203,6 +203,8 @@ namespace Animus::Curriculum
             struct Found { Position Where; uint32 SeenMs = 0; uint8 Objective = 0; };
             std::vector<Found> Places;
             uint32 ScannedMs = 0;
+            /// Dead quest item sources whose loot was already checked (Life.DropRerolls).
+            std::vector<ObjectGuid> DropsChecked;
 
             [[nodiscard]] LifeWorld::QuestCandidate const* Quest() const
             {
@@ -229,9 +231,18 @@ namespace Animus::Curriculum
             std::array<SeatPay, MAX_SEATS> Pay{};
             WorldCoordinator Coordinator;
             bool Evaluating = false;            // the episode these are for (only training's count in the tally)
+            bool Drill = false;                 // an objective drill: the quest is taken at the start (QuestDrill)
         };
 
         [[nodiscard]] uint32 GroupCount(Env const& env) const;
+        /// Training: roll a dead quest item source's loot again until it drops the item a member still needs
+        /// (Life.DropRerolls), as the kill that filled it would have with the drop's luck.
+        void GuaranteeDrops(Env const& env, EnvLife const& life, EnvQuest& quest, std::vector<Player*> const& seats,
+            Map* map) const;
+        /// An objective drill's quest and start: a candidate with an objective of the drill's kind and somewhere to
+        /// stand within reach of it. False when this candidate has none.
+        [[nodiscard]] static bool DrillStart(LifeWorld::QuestCandidate const& candidate, ObjectiveKind kind,
+            uint32 salt, Env const& env, Position& start);
         /// Quests refused at build for a reason every bot would meet (a chain or breadcrumb the table does not show,
         /// an exclusive group; not a class, race, level, skill or reputation) are drawn again only until refused
         /// REFUSALS_TO_RETIRE times; then never. Shared by every env, which build on the map threads.

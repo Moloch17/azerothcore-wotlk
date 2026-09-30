@@ -224,9 +224,19 @@ namespace Animus::Curriculum
             float Wasted = 0.1f;                // a press that did nothing (an interact with nothing in reach)
             float Death = 5.0f;                 // divided by the band's tier scale
             float QuestAccepted = 1.0f;
-            float QuestCredit = 3.0f;           // spread over the objectives' counts, times the tier scale
+            /// Per objective of the quest, spread over its count (a kill of five pays a fifth), times the tier scale:
+            /// a quest of two objectives pays twice what one of one pays. It was per quest, so an objective unit of a
+            /// three-objective quest of ten paid 0.1 -- less than the fight for it cost.
+            float QuestCredit = 3.0f;
             float QuestTurnIn = 10.0f;          // times the tier scale
             float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
+            /// Per decision a complete quest is not handed in (45% of completed quests never were): the turn-in is
+            /// the point, and walking off with a finished quest costs.
+            float CompleteHeld = 0.002f;
+            /// Training only: a quest item's source that dies without dropping it has its loot rolled again, up to
+            /// this many times, until it does -- the kill is what the seat must learn to pay for, not the drop
+            /// chance. 0 turns it off; evaluation never rolls again.
+            uint32 DropRerolls = 50;
             /// Quest credit a seat takes in a place another group holds (WorldCoordinator), per share of the quest:
             /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair. Against the
             /// credit itself (QuestCredit 3.0 per share, times a tier scale of 1 or more) it takes back a twelfth
@@ -1009,6 +1019,8 @@ namespace Animus::Curriculum
             f("Life.QuestCredit", tuning.Life.QuestCredit);
             f("Life.QuestTurnIn", tuning.Life.QuestTurnIn);
             f("Life.QuestTimeout", tuning.Life.QuestTimeout);
+            f("Life.CompleteHeld", tuning.Life.CompleteHeld);
+            f("Life.DropRerolls", tuning.Life.DropRerolls);
             f("Life.Poach", tuning.Life.Poach);
             f("Life.ClaimHoldMs", tuning.Life.ClaimHoldMs);
             f("Life.ClaimRadius", tuning.Life.ClaimRadius);

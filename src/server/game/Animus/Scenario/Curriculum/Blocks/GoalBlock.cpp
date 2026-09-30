@@ -248,6 +248,10 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             }
             else if (target == GOAL_TARGET_GIVER)
                 reached = !view.World.HasGiver;         // the quest is taken: the giver leaves the journal
+            else if (target == GOAL_TARGET_ENDER)
+                // Handed in: the quest is no longer complete and waiting. True while it is still being done, so a
+                // hand-in chosen early is held unpaid until the quest completes, and paid when it is handed in.
+                reached = view.World.QuestState != WorldView::QUEST_COMPLETE;
             break;
         case SeatGoal::Resurrect:
             if (target == GOAL_TARGET_NONE)

@@ -16,4 +16,6 @@ eval:
   episodes: 1024
   report: [quest_turned_in, quests_turned_in, quest_accepted, quest_progress, quest_complete, quest_held_out,
            quest_chain_length, quest_kills, nodes_gathered, skill_ups, town_won, sold_out, repaired, stocked,
-           upgrades_equipped, corpses_looted, wasted_presses, goals_reached, serving_share, died, quest_band]
+           upgrades_equipped, corpses_looted, wasted_presses, goals_reached, serving_share, died, quest_band,
+           open_world_deaths, releases, corpse_runs_completed, safe_rises, died_again, spirit_healer_uses,
+           resurrections_accepted, seconds_dead]
