@@ -82,6 +82,7 @@
 #include "World.h"
 #include "WorldSessionMgr.h"
 #include "WorldSocketMgr.h"
+#include <filesystem>
 #include <boost/asio/signal_set.hpp>
 #include <algorithm>
 #include <csignal>
@@ -363,8 +364,13 @@ int main(int argc, char** argv)
     ForgeCore::LoadSettings();
 
     // The training host's keys live in worldserver.conf now; a modules/mod_animus_forge.conf left from the module
-    // days is still read, after it, so a tuned installation keeps its values.
-    sConfigMgr->LoadAdditionalFile(sConfigMgr->GetConfigPath() + "modules/mod_animus_forge.conf", true);
+    // days is still read, after it, so a tuned installation keeps its values. Read in full when it is there: loaded
+    // as an optional file, the config drops every key its templates do not define, which is every per-stage one
+    // (AnimusForge.Stage.<name>.Envs) -- and only a build that still listed the old module read the file again as
+    // a module config, so the cluster's workers ran without their own stage caps (2026-09-30).
+    std::string const forgeConf = sConfigMgr->GetConfigPath() + "modules/mod_animus_forge.conf";
+    if (std::filesystem::exists(forgeConf))
+        sConfigMgr->LoadAdditionalFile(forgeConf, false);
 
     std::shared_ptr<Acore::Asio::IoContext> ioContext = std::make_shared<Acore::Asio::IoContext>();
 
