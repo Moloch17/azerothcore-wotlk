@@ -1167,9 +1167,13 @@ class MappoTrainer:
                     known_n = mask.sum().clamp(min=1.0)
                     probability = torch.sigmoid(success)
                     base_rate = (reached_t * mask).sum() / known_n
-                    totals["lookahead_brier"] = float((((probability - reached_t) ** 2) * mask).sum() / known_n)
-                    totals["lookahead_brier_base"] = float((((base_rate - reached_t) ** 2) * mask).sum() / known_n)
-                    totals["lookahead_duration_error"] = float(((expected - duration_t).abs() * mask).sum() / known_n)
+                    # Averaged over the epochs, as the losses are (the last epoch alone was the one reported).
+                    totals["lookahead_brier"] = totals.get("lookahead_brier", 0.0) + float(
+                        (((probability - reached_t) ** 2) * mask).sum() / known_n) / cfg.epochs
+                    totals["lookahead_brier_base"] = totals.get("lookahead_brier_base", 0.0) + float(
+                        (((base_rate - reached_t) ** 2) * mask).sum() / known_n) / cfg.epochs
+                    totals["lookahead_duration_error"] = totals.get("lookahead_duration_error", 0.0) + float(
+                        ((expected - duration_t).abs() * mask).sum() / known_n) / cfg.epochs
             self.slow_opt.zero_grad(set_to_none=True)
             loss.backward()
             if cfg.rank_sync == "gradients":

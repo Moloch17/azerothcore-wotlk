@@ -64,6 +64,10 @@ PLOT_PREFERRED = [
     "episode_damage_taken", "episode_dps", "episode_arrived", "episode_hazard_seconds",
     "episode_casts_completed", "episode_casts_cancelled", "episode_interrupts", "episode_control_seconds",
     "episode_stealth_openers", "episode_detected", "episode_escaped",
+    # How good the plans' predictions are: the goal lookahead against always guessing the rollout's own rate, and
+    # the observation forecasts.
+    "lookahead_brier", "lookahead_brier_base", "lookahead_duration_error",
+    "forecast_health_8_error", "forecast_health_20_error", "forecast_goal_reached_16_brier",
 ]
 
 # Bookkeeping rather than behaviour: what class the seat rolled says nothing about what the stage taught.
