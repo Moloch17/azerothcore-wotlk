@@ -470,8 +470,12 @@ void MapMgr::Update(uint32 diff)
 uint32 MapMgr::ForgeTickDiff(Map& map, uint32 diff)
 {
     map.AccrueTickDiff(diff);
-    // An instance container runs its own bookkeeping every world tick; only the instances in it hold envs.
-    if (!map.ToMapInstanced() && sAnimusForge->IsMapFrozen(map))
+    // An instance container runs its own bookkeeping every world tick; only the instances in it hold envs. The
+    // container is the instanceable map of instance 0: ToMapInstanced() answers for every instanceable map, the
+    // instances too, and testing it exempted every instance from the freeze -- the envs in dungeon and arena
+    // instances ticked, and were scored and observed, on both halves' turns: twice a decision (2026-09-30).
+    bool const container = map.Instanceable() && !map.GetInstanceId();
+    if (!container && sAnimusForge->IsMapFrozen(map))
         return 0;
 
     return map.TakeAccruedDiff();
