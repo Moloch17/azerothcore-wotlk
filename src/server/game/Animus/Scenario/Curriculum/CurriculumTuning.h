@@ -238,9 +238,12 @@ namespace Animus::Curriculum
             /// effort, the combat clock) came to about -75, against 7.5 for 25 trash kills and 10 for a last boss
             /// no party reached. A dungeon takes long to learn; every step of it has to be worth taking.
             float WingTrashKill = 1.0f;
-            float WingWaypoint = 1.0f;
+            float WingWaypoint = 0.5f;
             float WingBoss = 25.0f;
             float WingMidBoss = 8.0f;           // each dungeon boss killed on the way to the last
+            /// The whole route walked, paid as it is walked (potential on the route still ahead). The waypoints are
+            /// every WingWaypointYards now, which pay WingWaypoint each on top.
+            float WingProgress = 20.0f;
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
             uint32 WingWipes = 1;
@@ -1076,6 +1079,7 @@ namespace Animus::Curriculum
             f("Instance.WingWaypoint", tuning.Instance.WingWaypoint);
             f("Instance.WingBoss", tuning.Instance.WingBoss);
             f("Instance.WingMidBoss", tuning.Instance.WingMidBoss);
+            f("Instance.WingProgress", tuning.Instance.WingProgress);
             f("Instance.WingDeath", tuning.Instance.WingDeath);
             f("Instance.WingWipe", tuning.Instance.WingWipe);
             f("Instance.WingWipes", tuning.Instance.WingWipes);

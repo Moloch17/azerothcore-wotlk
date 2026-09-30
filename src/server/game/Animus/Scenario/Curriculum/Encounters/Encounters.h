@@ -517,6 +517,8 @@ namespace Animus::Curriculum
             uint32 WaypointsPaid = 0;
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
+            float Potential = 0.0f;             // the route still ahead of it (Instance.WingProgress)
+            bool PotentialReady = false;
         };
 
         struct EnvInstance
@@ -542,6 +544,7 @@ namespace Animus::Curriculum
             /// A whole wing (InstanceLadder::Wing): the route from the door to the boss and the next point on it, the
             /// trash killed, the wipes, and the creatures watched for dying.
             std::vector<Position> Route;
+            std::vector<float> RouteRemain;     // per route point: yards along the route from it to the end
             uint32 RouteNext = 0;
             uint32 TrashKills = 0;
             uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)

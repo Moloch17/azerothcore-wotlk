@@ -399,6 +399,9 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     if (Wing(env))
     {
         fight.Route = WingRoute(env, map, seat, boss);
+        fight.RouteRemain.assign(fight.Route.size(), 0.0f);
+        for (std::size_t i = fight.Route.size(); i-- > 1;)
+            fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
         env.Targets.clear();
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index))
@@ -589,40 +592,75 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             return known->second;
     }
 
-    // The server's path from the door to the boss, leg by leg as EngagePoint walks it, as points every
-    // WingWaypointYards; the boss's own position last.
+    // The whole dungeon, end to end: every dungeon boss in the instance, nearest next from the door, then the last
+    // boss. Straight to the last boss, the path gave out a third of the way in the Deadmines (a door's tunnel the
+    // navmesh does not join) and passed Gilnid by.
+    std::vector<Position> stops;
+    {
+        std::vector<Creature const*> bosses;
+        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+            if (creature && creature != boss && creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss()))
+                bosses.push_back(creature);
+        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+        while (!bosses.empty())
+        {
+            auto const nearest = std::min_element(bosses.begin(), bosses.end(), [&at](Creature const* a, Creature const* b)
+            {
+                return a->GetExactDist(&at) < b->GetExactDist(&at);
+            });
+            at.Relocate((*nearest)->GetPositionX(), (*nearest)->GetPositionY(), (*nearest)->GetPositionZ());
+            stops.push_back(at);
+            bosses.erase(nearest);
+        }
+        stops.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
+    }
+
+    // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
+    // stops, the straight line between them (a door's tunnel is walked, the navmesh just does not cross it).
     std::vector<G3D::Vector3> points;
     Position cursor(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
     points.emplace_back(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ());
-    for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+    for (Position const& stop : stops)
     {
-        map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
-        PathGenerator path(seat);
-        path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), boss->GetPositionX(),
-            boss->GetPositionY(), boss->GetPositionZ(), false);
-        if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
-            break;
-        for (std::size_t i = 1; i < path.GetPath().size(); ++i)
-            points.push_back(path.GetPath()[i]);
-        G3D::Vector3 const& end = path.GetPath().back();
-        if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
-            break;
-        cursor.Relocate(end.x, end.y, end.z);
-        if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
-            break;
+        for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+        {
+            map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
+            PathGenerator path(seat);
+            path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(),
+                stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), false);
+            if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
+                break;
+            for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                points.push_back(path.GetPath()[i]);
+            G3D::Vector3 const& end = path.GetPath().back();
+            if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
+                break;
+            cursor.Relocate(end.x, end.y, end.z);
+            if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+                break;
+        }
+        if (Distance2d(cursor, stop) > 5.0f)
+            points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
+        cursor = stop;
     }
 
+    // A point every WingWaypointYards along it, between corners too; the last boss's own position last.
     float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
     std::vector<Position> route;
-    float walked = 0.0f;
+    float carried = 0.0f;
     for (std::size_t i = 1; i < points.size(); ++i)
     {
-        walked += (points[i] - points[i - 1]).length();
-        if (walked >= spacing)
+        G3D::Vector3 const& from = points[i - 1];
+        G3D::Vector3 const segment = points[i] - from;
+        float const length = segment.length();
+        float along = spacing - carried;
+        while (along <= length)
         {
-            route.emplace_back(points[i].x, points[i].y, points[i].z);
-            walked = 0.0f;
+            G3D::Vector3 const at = from + segment * (along / std::max(0.001f, length));
+            route.emplace_back(at.x, at.y, at.z);
+            along += spacing;
         }
+        carried = length - (along - spacing);
     }
     route.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
     LOG_INFO("module.animus", "{}: the route to {} ({}) is {} points from the door", _scenario.Name(), row.Name,
@@ -753,7 +791,25 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
         ledger.Add(RewardTerm::Approach, tuning.WingWaypoint * tierScale * float(waypoints - paid.WaypointsPaid));
         ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * tierScale * float(fight.BossKills - paid.BossKillsPaid));
+
+        // Forward through the dungeon, paid as it is walked (Instance.WingProgress over the whole route): the
+        // potential is the route still ahead -- to the next point, then along the route from it -- so going back
+        // costs what coming forward paid. The route points alone were a coarse signal, and the parties stood at
+        // the door.
+        if (!fight.Route.empty() && fight.RouteNext < fight.Route.size() && !fight.RouteRemain.empty())
+        {
+            std::size_t const next = fight.RouteNext;
+            float const total = std::max(1.0f, fight.RouteRemain.front());
+            float const ahead = bot->GetExactDist2d(&fight.Route[next]) + fight.RouteRemain[next];
+            float const potential = -ahead / total;
+            if (paid.PotentialReady)
+                ledger.Add(RewardTerm::Approach, tuning.WingProgress * tierScale * (potential - paid.Potential));
+            paid.Potential = potential;
+            paid.PotentialReady = true;
+        }
     }
+    else
+        paid.PotentialReady = false;
     paid.KillsPaid = fight.TrashKills;
     paid.BossKillsPaid = fight.BossKills;
     paid.WaypointsPaid = waypoints;

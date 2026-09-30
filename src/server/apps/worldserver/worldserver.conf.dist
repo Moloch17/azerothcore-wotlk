@@ -6025,10 +6025,12 @@ AnimusForge.Curriculum.Instance.StallGraceMs = 15000
 #   (x the rung), each seat's death and each wipe (/ the rung); WingWipes wipes end the episode (1: a wipe ends it,
 #   and the next run starts in a fresh instance with the dungeon reset); the route's points are WingWaypointYards apart along the door-to-boss path
 AnimusForge.Curriculum.Instance.WingTrashKill = 1.0
-AnimusForge.Curriculum.Instance.WingWaypoint = 1.0
+AnimusForge.Curriculum.Instance.WingWaypoint = 0.5
 AnimusForge.Curriculum.Instance.WingBoss = 25.0
 #   each dungeon boss killed on the way to the wing's last (times the tier scale)
 AnimusForge.Curriculum.Instance.WingMidBoss = 8.0
+#   the whole route from the door to the last boss, paid as it is walked (x the tier scale)
+AnimusForge.Curriculum.Instance.WingProgress = 20.0
 AnimusForge.Curriculum.Instance.WingDeath = 3.0
 AnimusForge.Curriculum.Instance.WingWipe = 5.0
 AnimusForge.Curriculum.Instance.WingWipes = 1

@@ -366,7 +366,9 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
         // Fighting on its own: the companion pulled something, or kept fighting after the owner stopped. Whoever
         // is holding the pull pulls first by design, in a party and beside a single owner alike, so it is never
         // charged for it.
-        if (bot->IsInCombat() && !owner->IsInCombat() && !HoldsThePull(apt))
+        // A companion's rule: in a party the owner is one member, and a seat that engages first is not off alone.
+        if (_scenario.Arena(env).Seats == SeatPlan::Solo && bot->IsInCombat() && !owner->IsInCombat()
+            && !HoldsThePull(apt))
             ledger.Add(RewardTerm::SoloFight, -tuning.SoloFight * scale);
 
         // Out of combat, stay with the owner -- a companion only. In a party the owner is one member of five, and a
