@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -248,6 +249,9 @@ namespace AnimusForge
         /// What the scenario and its env pool take from these settings (animus-lib's StageSettings); `scenario`
         /// names the stage so its own env count (StageEnvs) can apply.
         [[nodiscard]] Animus::StageSettings Stage(std::string const& scenario = "") const;
+        /// The stage's own env count (StageEnvs) for one learner's sim, when it has one: what a cluster host tells
+        /// its workers, so a worker never runs more envs of a stage than one of the host's learners does.
+        [[nodiscard]] std::optional<uint32> StageEnvsPerLearner(std::string const& scenario) const;
 
         /// These settings for one `forge bench` trial: `envs` envs, everything in the bench output directory (so a
         /// trial never archives, seeds from or overwrites a real run), and a learner that only trains -- no

@@ -289,7 +289,7 @@ namespace AnimusForge
         /// `restart`: only the learners start again (after one failed), the workers' sims carry on.
         void DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume, bool restart);
         [[nodiscard]] Plan WorkerPlan(std::string const& scenario, bool resume, bool fast,
-            ClusterRank const& rank) const;
+            ClusterRank const& rank, std::optional<uint32> envs) const;
 
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
@@ -377,6 +377,16 @@ namespace AnimusForge
         uint32 _autoResumes = 0;        // host: learner restarts of the current scenario after a rank failed
         /// Worker: when its next PROGRESS goes to the host.
         std::chrono::steady_clock::time_point _nextClusterReport{};
+        /// A worker's own rates for its PROGRESS report, over the interval since the last one: _ticksPerSecond is
+        /// only kept by Snapshot, which runs on a periodic report (Progress.Interval, off by default) or a status.
+        struct ClusterRates
+        {
+            std::chrono::steady_clock::time_point Time{};
+            uint64 Ticks = 0;
+            uint64 WorldNs = 0;
+            uint64 SimNs = 0;
+            uint64 LearnerNs = 0;
+        } _clusterRates;
         std::string _clusterStart;
         bool _halfBatch = false;
         uint32 _turn = 0;

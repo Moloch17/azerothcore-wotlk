@@ -1016,11 +1016,25 @@ void AnimusForge::Forge::PollCluster()
     if (now >= _nextClusterReport)
     {
         _nextClusterReport = now + std::chrono::seconds(5);
+
+        // Since the last report (a new scenario restarts _ticks, which reads as no decisions yet).
+        ClusterRates& last = _clusterRates;
+        double const seconds = last.Time == std::chrono::steady_clock::time_point{} ? 0.0
+            : std::chrono::duration<double>(now - last.Time).count();
+        uint64 const ticks = _ticks >= last.Ticks ? _ticks - last.Ticks : 0;
+        double const perTick = ticks ? double(ticks) * 1e6 : 1.0;
+        auto const since = [](uint64 now, uint64 then) { return double(now - std::min(now, then)); };
+        double const ticksPerSecond = seconds > 0.0 ? double(ticks) / seconds : 0.0;
+        uint32 const envs = _pool ? _pool->NumEnvs() : 0;
+        uint32 const agents = _pool ? _pool->Spec().AgentsPerEnv : 0;
+        // env_steps_per_s counts agent steps (decisions x envs x agents), as the host's own rate and the learner's
+        // total_env_steps do.
         _cluster.Report(Acore::StringFormat("state={} scenario={} envs={} env_steps_per_s={:.0f} decision_ms={:.1f} "
             "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f}", StateName(), _current.empty() ? "-" : _current,
-            _pool ? _pool->NumEnvs() : 0, _ticksPerSecond * double(_pool ? _pool->NumEnvs() : 0),
-            _ticksPerSecond > 0.0 ? 1000.0 / _ticksPerSecond : 0.0, _worldMsPerTick, _simMsPerTick,
-            _learnerMsPerTick));
+            envs, ticksPerSecond * double(envs) * double(agents), ticksPerSecond > 0.0 ? 1000.0 / ticksPerSecond : 0.0,
+            ticks ? since(_worldNs, last.WorldNs) / perTick : 0.0, ticks ? since(_simNs, last.SimNs) / perTick : 0.0,
+            ticks ? since(_learnerNs, last.LearnerNs) / perTick : 0.0));
+        last = { now, _ticks, _worldNs, _simNs, _learnerNs };
     }
 
     // Orders only ask: the scenario is torn down and started from OnUpdate, never from inside a wait on the learner
@@ -1044,6 +1058,14 @@ void AnimusForge::Forge::PollCluster()
                     rank.Address = dist;
                 rank.Sync = read == 4 ? sync : "weights";
             }
+            // The host's env count for the stage, at most (a worker's own smaller count stands).
+            std::optional<uint32> envs;
+            if (char const* at = std::strstr(order->c_str(), " envs="))
+            {
+                unsigned count = 0;
+                if (std::sscanf(at, " envs=%u", &count) == 1 && count)
+                    envs = count;
+            }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
             // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
             // Never for a cluster rank: a rank's learner cannot rejoin its learners' group once the host has
@@ -1060,7 +1082,7 @@ void AnimusForge::Forge::PollCluster()
             LOG_INFO("module.animus", "Cluster: the host orders {}{}{}", scenario, fast ? " (fast)" : "",
                 rank.World > 1 ? Acore::StringFormat(", with this machine's learner as rank {} of {}", rank.Rank,
                     rank.World) : "");
-            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank);
+            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs);
             if (_state != State::Idle)
                 _request = Request::Cancel;
         }
@@ -1077,8 +1099,14 @@ void AnimusForge::Forge::PollCluster()
 void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume,
     bool restart)
 {
-    std::string const start = Acore::StringFormat("START {} {} {}", scenario, resume ? 1 : 0, _plan.Fast ? 1 : 0);
-    _clusterStart = Acore::StringFormat("START {} 0 {}", scenario, _plan.Fast ? 1 : 0);
+    // The stage's own env count, when this machine's conf gives it one: a worker's own conf may lack the line (the
+    // confs are each machine's and never synced), and forty-seat raid envs at a worker's default count ran every
+    // worker's GPU out of memory.
+    std::optional<uint32> const envs = learnerConfig.StageEnvsPerLearner(scenario);
+    std::string const cap = envs ? Acore::StringFormat(" envs={}", *envs) : "";
+    std::string const start = Acore::StringFormat("START {} {} {}{}", scenario, resume ? 1 : 0, _plan.Fast ? 1 : 0,
+        cap);
+    _clusterStart = Acore::StringFormat("START {} 0 {}{}", scenario, _plan.Fast ? 1 : 0, cap);
 
     // A worker with a learner of its own trains on its own sim, as one more rank of this run's learners, their
     // networks averaged once an update; the others' sims are this machine's learners' to train on.
@@ -1133,7 +1161,7 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
 }
 
 AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast,
-    ClusterRank const& rank) const
+    ClusterRank const& rank, std::optional<uint32> envs) const
 {
     // A fast run's scenarios are built from the fast profile (its classes, levels, envs): the host's learner refuses a
     // worker whose sim is not the same scenario as its own.
@@ -1151,6 +1179,13 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
         config.DistAddress = rank.Address;
         config.DistIface = ClusterLink::InterfaceOf(_cluster.LocalAddress());
         config.DistSync = rank.Sync;
+    }
+    if (envs)
+    {
+        uint32 const own = config.Stage(scenario).Envs;
+        config.StageEnvs[scenario] = std::min(own, *envs);
+        LOG_INFO("module.animus", "Cluster: {} runs {} envs here (the host's cap {}, this machine's own {})", scenario,
+            config.StageEnvs[scenario], *envs, own);
     }
 
     Plan plan;

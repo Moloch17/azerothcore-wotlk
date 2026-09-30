@@ -576,6 +576,15 @@ void AnimusForge::ForgeConfig::ApplyGpuMode()
             GpuModeSetting == GpuMode::Auto ? " (auto)" : "", LearnerRanks, LearnerRanks == 1 ? "" : "s", Envs, found);
 }
 
+std::optional<uint32> AnimusForge::ForgeConfig::StageEnvsPerLearner(std::string const& scenario) const
+{
+    auto const own = StageEnvs.find(scenario);
+    if (own == StageEnvs.end())
+        return std::nullopt;
+    // A multi-GPU host's stage counts are its learners' together (LoadGpu multiplies them).
+    return std::max<uint32>(1, own->second / std::max<uint32>(1, MultiGpu ? LearnerRanks : 1));
+}
+
 Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenario) const
 {
     Animus::StageSettings stage;

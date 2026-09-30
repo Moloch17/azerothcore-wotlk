@@ -39,7 +39,9 @@ namespace AnimusForge
     ///   worker -> host   CAPS learner=<0|1>   whether it runs a learner of its own (AnimusForge.Cluster.Learner)
     ///   host -> worker   START ... rank=<r> world=<n> dist=<address:port> iface=<name>   to such a worker: its
     ///                    learner's rank among all of the cluster's, and where they meet (torch.distributed)
-    ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1>
+    ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1> [envs=<n>]   envs: the host's own env count
+    ///                    for this stage (AnimusForge.Stage.<name>.Envs, per learner); the worker runs at most that
+    ///                    many, and fewer where its own conf says so
     ///   host -> worker   STOP
     ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast
     /// A worker that loses the host reconnects every few seconds and registers again; a host that loses a worker
