@@ -1893,7 +1893,11 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     data.ActiveSeats = arena.SeatCount();
     if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
     {
-        if (arena.Seats == SeatPlan::Party)
+        // An instance is run by a full group with somebody to hold the pull and somebody to keep them up: a heroic
+        // attempted by two or three was lost before it started, and the dungeon stage fielded a full five 40% of the
+        // time. Companions in the open world keep the random size (1-4, Party.SizeWeight*).
+        bool const instance = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
+        if (arena.Seats == SeatPlan::Party && !instance)
             data.ActiveSeats = RandomPartySize(_tuning.Party);
 
         // Some parties are the classic makeup (somebody to hold the pull, somebody to keep the hurt one up, and no
@@ -1901,7 +1905,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         // built for the seats actually in play: a four-entry array left the other MAX_SEATS - 4 zero-filled, which
         // a raid would have shuffled into the group that got them.
         std::array<AptitudeDemand, MAX_SEATS> demands = ClassicDemands(data.ActiveSeats);
-        if (roll_chance_i(_tuning.Party.ClassicChance))
+        if (instance || roll_chance_i(_tuning.Party.ClassicChance))
             std::shuffle(demands.begin(), demands.begin() + data.ActiveSeats, RandomEngine::Instance());
         else
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
