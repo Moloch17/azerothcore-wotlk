@@ -244,6 +244,12 @@ namespace Animus::Curriculum
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
             uint32 WingWipes = 1;
+            /// Per second once WingStallGraceMs pass with no kill, no step along the route and nothing fighting the
+            /// party; and the clock's cost for the share of the route left (over the tier scale). Standing at the
+            /// door has to cost more than fighting through the dungeon badly.
+            float WingStall = 0.1f;
+            uint32 WingStallGraceMs = 60000;
+            float WingTimeout = 30.0f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
         } Instance;
 
@@ -1073,6 +1079,9 @@ namespace Animus::Curriculum
             f("Instance.WingDeath", tuning.Instance.WingDeath);
             f("Instance.WingWipe", tuning.Instance.WingWipe);
             f("Instance.WingWipes", tuning.Instance.WingWipes);
+            f("Instance.WingStall", tuning.Instance.WingStall);
+            f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
+            f("Instance.WingTimeout", tuning.Instance.WingTimeout);
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);

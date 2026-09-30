@@ -704,6 +704,25 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
     float const tierScale = TierScale(env);
     uint32 const waypoints = std::min<uint32>(fight.RouteNext, uint32(fight.Route.size()));
+
+    // Standing still in a dungeon costs (Instance.WingStall): once WingStallGraceMs pass with nothing killed, no
+    // step along the route and nothing fighting the party, every seat pays by the second. Without it a party at the
+    // door paid only the timeout, and early in training that beat fighting through half the dungeon.
+    if (seatIndex == 0)
+    {
+        uint32 const seen = fight.TrashKills + waypoints;
+        bool engaged = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !engaged; ++slot)
+            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+                engaged = true;
+        if (seen != fight.ProgressSeen || engaged)
+        {
+            fight.ProgressSeen = seen;
+            fight.ProgressMs = env.EpisodeElapsedMs;
+        }
+    }
+    if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
+        ledger.Add(RewardTerm::Stall, -tuning.WingStall * float(_scenario.DecisionMs()) / 1000.0f);
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
@@ -738,7 +757,7 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     if (fight.BossDead)
         ledger.Add(RewardTerm::Kill, tuning.WingBoss * tierScale);
     else if (TimeIsUp(env) && !fight.Route.empty())
-        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * (1.0f - float(waypoints) / float(fight.Route.size()))
+        ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - float(waypoints) / float(fight.Route.size()))
             / tierScale);
 }
 

@@ -6032,6 +6032,11 @@ AnimusForge.Curriculum.Instance.WingMidBoss = 8.0
 AnimusForge.Curriculum.Instance.WingDeath = 3.0
 AnimusForge.Curriculum.Instance.WingWipe = 5.0
 AnimusForge.Curriculum.Instance.WingWipes = 1
+#   per second once WingStallGraceMs (ms) pass with no kill, no route step and nothing fighting the party; and the
+#   clock's cost for the share of the route left (over the tier scale)
+AnimusForge.Curriculum.Instance.WingStall = 0.1
+AnimusForge.Curriculum.Instance.WingStallGraceMs = 60000
+AnimusForge.Curriculum.Instance.WingTimeout = 30.0
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 
 #

@@ -545,6 +545,10 @@ namespace Animus::Curriculum
             uint32 RouteNext = 0;
             uint32 TrashKills = 0;
             uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)
+            /// The last decision the dungeon went forward (a kill, a waypoint) or anything fought the party
+            /// (Instance.WingStall).
+            uint32 ProgressMs = 0;
+            uint32 ProgressSeen = 0;            // kills + waypoints at ProgressMs
             uint32 Wipes = 0;
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
