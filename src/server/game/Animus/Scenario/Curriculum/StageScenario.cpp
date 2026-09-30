@@ -2546,11 +2546,25 @@ Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat)
 Unit* Animus::Curriculum::StageScenario::CurrentTarget(Env const& env, uint32 seat)
 {
     Unit* target = nullptr;
+    bool chosen = false;
     for (Encounter* encounter : ActiveEncounters(env))
         if (encounter->SelectTarget(env, seat, target))
-            return target;
+        {
+            chosen = true;
+            break;
+        }
+    if (!chosen)
+        target = env.FindTargetUnit(0);
 
-    return env.FindTargetUnit(0);
+    // Never a unit on its way out of the world or on another map than the seat's: the encoder's cast checks build a
+    // Spell against it (SpellChecks::CheckCast), and a stage7_life map thread faulted in
+    // Encoding::IsSpellActionAllowed on a target being removed while the seat was observed.
+    if (target && (!target->IsInWorld() || target->IsDuringRemoveFromWorld()))
+        return nullptr;
+    Player* bot = target ? env.FindBot(seat) : nullptr;
+    if (bot && bot->IsInWorld() && target->GetMap() != bot->GetMap())
+        return nullptr;
+    return target;
 }
 
 Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env const& env,

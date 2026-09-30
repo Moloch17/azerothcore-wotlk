@@ -18,6 +18,10 @@ LEARNER="$ROOT/apps/forge/python"
 VENV="$LEARNER/.venv"
 # Left by ./forge.sh --build: compile before this start.
 BUILD_REQUEST="$ROOT/env/dist/.forge-build"
+# Optimised with line info (-O2 -g): a crash on a map thread comes with file and line in its backtrace, which a
+# Release build (conf/dist/config.sh's default) merges into whatever was inlined. CTYPE=Release in the service's
+# environment builds the old way.
+export CTYPE="${CTYPE:-RelWithDebInfo}"
 
 mkdir -p "$LOGS"
 

@@ -261,7 +261,9 @@ Player* Animus::Curriculum::OpponentEncounter::Find(Env const& env, uint32 seat)
             if (Player* bot = _scenario.SeatBot(env, enemies[other]); bot && bot->IsAlive())
                 return bot;
 
-        return _scenario.SeatBot(env, enemies[0]);
+        // All down: the first, as long as it is in the world (a seat's bot mid-teleport is not, BotSlot::Active).
+        Player* first = _scenario.SeatBot(env, enemies[0]);
+        return first && first->IsInWorld() ? first : nullptr;
     }
 
     Player* opponent = _envs[env.Index].Bot.Active();
