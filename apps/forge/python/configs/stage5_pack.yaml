@@ -16,4 +16,5 @@ mappo:
 
 eval:
   report: [clean_kill, won, died, kills, dps, interrupts, control_seconds, hazard_seconds, hazard_damage,
-           damage_taken]
+           damage_taken,
+           aimless_presses, aimless_target_switch, aimless_pet_off_goal, aimless_needless_move, aimless_mode_flip, aimless_trap_no_enemy]

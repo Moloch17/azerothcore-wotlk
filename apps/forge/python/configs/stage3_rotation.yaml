@@ -14,7 +14,8 @@ total_env_steps: 50000000
 eval:
   every_env_steps: 5000000
   report: [dummy_output, dummy_adds, dummy_killed, mana_kept, dps, died, aimless_presses, effort_presses,
-           serving_share, casts_completed, casts_cancelled]
+           serving_share, casts_completed, casts_cancelled,
+           mode_switches, aimless_mode_flip, aimless_needless_move, aimless_trap_no_enemy]
 
 layout_sampling:
   metric: dummy_output

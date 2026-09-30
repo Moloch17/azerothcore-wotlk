@@ -49,6 +49,30 @@
 
 namespace
 {
+    /// A trap: a spell that summons a trap object, or a missile whose landing does (Freezing Arrow).
+    bool IsTrapSpell(SpellInfo const* info, uint32 depth = 0)
+    {
+        if (!info || depth > 1)
+            return false;
+        for (SpellEffectInfo const& effect : info->GetEffects())
+            switch (effect.Effect)
+            {
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT1:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT2:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT3:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT4:
+                    return true;
+                case SPELL_EFFECT_TRIGGER_MISSILE:
+                    if (effect.TriggerSpell != info->Id && IsTrapSpell(sSpellMgr->GetSpellInfo(effect.TriggerSpell),
+                        depth + 1))
+                        return true;
+                    break;
+                default:
+                    break;
+            }
+        return false;
+    }
+
     enum EncoderSpells : uint32
     {
         SPELL_CALL_PET          = 883,      // its GCD is applied to calling a stabled beast
@@ -306,6 +330,7 @@ namespace Animus::Curriculum::Encoding
         ++result.SpellCasts;
         result.CastHarmful = !info->IsPositive();
         result.CastTactical = def.From == ActionCatalog::Group::Tactical;
+        result.CastTrap = IsTrapSpell(info);
         result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
         // inside its radius, measured from where it lands (the target's spot for a ground spell, else the caster).

@@ -663,6 +663,7 @@ namespace Animus::Curriculum
         ObjectGuid CastAt;
         bool CastHarmful = false;
         bool CastTactical = false;
+        bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius
     };

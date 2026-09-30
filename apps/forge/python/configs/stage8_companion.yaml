@@ -16,7 +16,8 @@ eval:
   every_env_steps: 10000000
   episodes: 1024
   report: [clean_kill, won, died, pulls_cleared, owner_deaths, owner_healing, follow_restarts, follow_distance_mean,
-           serving_share, aimless_presses]
+           serving_share, aimless_presses,
+           aimless_consume_not_needed, aimless_trap_no_enemy, aimless_mode_flip, aimless_needless_move, aimless_pet_off_goal]
 
 cast:
   agents:

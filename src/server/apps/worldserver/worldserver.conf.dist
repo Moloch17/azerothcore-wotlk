@@ -6152,6 +6152,30 @@ AnimusForge.Curriculum.Actions.Jitter = 0.02
 #   it (damage off the focus under Fight, a nuke while Recovering, a step that opens the gap to the wanted range) is
 #   charged this. Serving presses are free
 AnimusForge.Curriculum.Actions.Aimless = 0.02
+#   aimless presses by cause, each its own price (StageScenario::JudgePress): harm on an enemy the goal does not
+#   name, an area spell missing it, casting under Position once in range, harm under a goal that is not fighting
+#   with nothing attacking, help on someone else while fighting, a step away from where the goal wants the seat,
+#   selecting or sending the pet at an enemy the goal does not name when it is hurting nobody, eating or drinking
+#   with that resource nearly full, a trap with nothing near, an aspect/stance/form changed with nothing changed (and
+#   back within ten seconds), a ranged seat moving about a fight it could stand and shoot in
+AnimusForge.Curriculum.Actions.Aimless.OffFocus = 0.02
+AnimusForge.Curriculum.Actions.Aimless.AoeMissed = 0.02
+AnimusForge.Curriculum.Actions.Aimless.InRangeCast = 0.02
+AnimusForge.Curriculum.Actions.Aimless.UnprovokedHarm = 0.02
+AnimusForge.Curriculum.Actions.Aimless.HelpOffGoal = 0.02
+AnimusForge.Curriculum.Actions.Aimless.StepAway = 0.02
+AnimusForge.Curriculum.Actions.Aimless.TargetSwitch = 0.04
+AnimusForge.Curriculum.Actions.Aimless.PetOffGoal = 0.04
+AnimusForge.Curriculum.Actions.Aimless.ConsumeNotNeeded = 0.03
+AnimusForge.Curriculum.Actions.Aimless.TrapNoEnemy = 0.03
+AnimusForge.Curriculum.Actions.Aimless.ModeFlip = 0.03
+AnimusForge.Curriculum.Actions.Aimless.ModeReverse = 0.06
+AnimusForge.Curriculum.Actions.Aimless.NeedlessMove = 0.02
+#   every aspect, stance, form or presence changed; every food or drink consumed
+AnimusForge.Curriculum.Actions.ModeSwitch = 0.01
+AnimusForge.Curriculum.Actions.SupplySpent = 0.02
+#   health (eating) or mana (drinking) at or above which consuming is ConsumeNotNeeded
+AnimusForge.Curriculum.Actions.ConsumeFullPct = 85
 #   every press but the no-op costs this, a tenth of an aimless one: when nothing needs doing, doing nothing wins
 AnimusForge.Curriculum.Actions.Effort = 0.002
 #   per second spent moving in a fight while already at the range the spec wants, with nothing underfoot, the focus

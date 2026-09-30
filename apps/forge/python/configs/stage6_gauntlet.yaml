@@ -17,4 +17,5 @@ eval:
   episodes: 1024
   trace_episodes: 4
   report: [clean_kill, won, died, pulls_cleared, dps, engage_health, engage_mana, supplies_used, control_seconds,
-           hazard_seconds]
+           hazard_seconds,
+           aimless_presses, aimless_consume_not_needed, aimless_mode_flip, aimless_needless_move, aimless_trap_no_enemy]

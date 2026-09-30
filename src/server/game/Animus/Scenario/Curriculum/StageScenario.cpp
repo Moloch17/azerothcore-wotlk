@@ -1117,6 +1117,11 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).AimlessPresses);
     });
+    // The aimless presses by cause (AimlessCause), and the mode changes: what each price is charging.
+    for (size_t cause = 0; cause < AIMLESS_CAUSES; ++cause)
+        _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
+            uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
+    _info.Add("mode_switches", [seat](Env const& env, uint32 index) { return float(seat(env, index).ModeSwitches); });
     _info.Add("effort_presses", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).EffortPresses);
@@ -3183,6 +3188,56 @@ float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* 
     return std::max(0.0f, distance - (wanted + GOAL_RANGE_SLACK_YARDS));
 }
 
+char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
+{
+    switch (cause)
+    {
+        case AimlessCause::OffFocus:         return "off_focus";
+        case AimlessCause::AoeMissed:        return "aoe_missed";
+        case AimlessCause::InRangeCast:      return "in_range_cast";
+        case AimlessCause::UnprovokedHarm:   return "unprovoked_harm";
+        case AimlessCause::HelpOffGoal:      return "help_off_goal";
+        case AimlessCause::StepAway:         return "step_away";
+        case AimlessCause::TargetSwitch:     return "target_switch";
+        case AimlessCause::PetOffGoal:       return "pet_off_goal";
+        case AimlessCause::ConsumeNotNeeded: return "consume_not_needed";
+        case AimlessCause::TrapNoEnemy:      return "trap_no_enemy";
+        case AimlessCause::ModeFlip:         return "mode_flip";
+        case AimlessCause::ModeReverse:      return "mode_reverse";
+        case AimlessCause::NeedlessMove:     return "needless_move";
+        case AimlessCause::Count:            break;
+    }
+    return "unknown";
+}
+
+namespace
+{
+    /// Actions.Aimless.<cause>.
+    float AimlessPrice(Animus::Curriculum::CurriculumTuning::ActionTuning const& tuning,
+        Animus::Curriculum::AimlessCause cause)
+    {
+        using Animus::Curriculum::AimlessCause;
+        switch (cause)
+        {
+            case AimlessCause::OffFocus:         return tuning.AimlessOffFocus;
+            case AimlessCause::AoeMissed:        return tuning.AimlessAoeMissed;
+            case AimlessCause::InRangeCast:      return tuning.AimlessInRangeCast;
+            case AimlessCause::UnprovokedHarm:   return tuning.AimlessUnprovokedHarm;
+            case AimlessCause::HelpOffGoal:      return tuning.AimlessHelpOffGoal;
+            case AimlessCause::StepAway:         return tuning.AimlessStepAway;
+            case AimlessCause::TargetSwitch:     return tuning.AimlessTargetSwitch;
+            case AimlessCause::PetOffGoal:       return tuning.AimlessPetOffGoal;
+            case AimlessCause::ConsumeNotNeeded: return tuning.AimlessConsumeNotNeeded;
+            case AimlessCause::TrapNoEnemy:      return tuning.AimlessTrapNoEnemy;
+            case AimlessCause::ModeFlip:         return tuning.AimlessModeFlip;
+            case AimlessCause::ModeReverse:      return tuning.AimlessModeReverse;
+            case AimlessCause::NeedlessMove:     return tuning.AimlessNeedlessMove;
+            case AimlessCause::Count:            break;
+        }
+        return tuning.Aimless;
+    }
+}
+
 void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target,
     uint32 action, SeatActionResult const& result) const
 {
@@ -3217,7 +3272,19 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     uint32 const local = action - layout.Slice(*block).ActionFirst;
     enum class Verdict : uint8 { Neutral, Serves, Aimless };
     Verdict verdict = Verdict::Neutral;
+    AimlessCause cause = AimlessCause::Count;           // why, when aimless (derived from the goal when not set)
     bool judged = false;
+    // The enemy slot the goal names, if it names one.
+    int32 const namedSlot = goalTarget >= GOAL_TARGET_ENEMY_FIRST && goalTarget < GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS
+        ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
+    // Below this share of its health the seat may act on any enemy (CoreBlock's goal escape uses the same).
+    constexpr float ESCAPE_HEALTH_PCT = 35.0f;
+    // An enemy hurting the seat or one of its friends: a reason to act on it whatever the goal names.
+    auto const hurtingFriend = [bot](Unit const* enemy)
+    {
+        Unit const* victim = enemy && enemy->IsAlive() ? enemy->GetVictim() : nullptr;
+        return victim && victim->IsAlive() && (victim == bot || bot->IsFriendlyTo(victim));
+    };
 
     if (*block == BlockId::Move)
     {
@@ -3251,7 +3318,28 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         // An area spell has no unit to read: it serves a fight when the focus was inside its radius.
         bool const focusNear = result.CastReachesFocus;
 
-        if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
+        if (result.CastTrap)
+        {
+            // A trap wants something to walk into it: an enemy near that is in the fight and hurting someone, or the
+            // one the goal names (Control or Fight), close. Laid anywhere else it waits for nothing.
+            bool near = false;
+            for (uint32 slot = 0; slot < env.Targets.size() && !near; ++slot)
+            {
+                Unit* enemy = env.FindTargetUnit(slot);
+                if (!enemy || !enemy->IsAlive() || bot->GetDistance(enemy) > 30.0f)
+                    continue;
+                near = hurtingFriend(enemy) || (int32(slot) == namedSlot && bot->GetDistance(enemy) <= 15.0f
+                    && (goal == SeatGoal::Control || goal == SeatGoal::Fight));
+            }
+            if (!near && bot->getAttackers().empty())
+            {
+                verdict = Verdict::Aimless;
+                cause = AimlessCause::TrapNoEnemy;
+            }
+            else
+                verdict = goal == SeatGoal::Control ? Verdict::Serves : Verdict::Neutral;
+        }
+        else if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
             || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
             verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
         else if (result.CastHarmful)
@@ -3335,12 +3423,93 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                     break;
             }
         }
+
+        if (verdict == Verdict::Aimless && cause == AimlessCause::Count)
+        {
+            if (!result.CastHarmful)
+                cause = AimlessCause::HelpOffGoal;
+            else if (goal == SeatGoal::Fight || goal == SeatGoal::Control)
+                cause = untargeted ? AimlessCause::AoeMissed : AimlessCause::OffFocus;
+            else if (goal == SeatGoal::Position)
+                cause = AimlessCause::InRangeCast;
+            else
+                cause = AimlessCause::UnprovokedHarm;
+        }
+
+        // An aspect, stance, form or presence changed: a standing choice, made again only when something about the
+        // seat's situation is different -- in or out of a fight, mana past a threshold (Viper in and out), mounted.
+        // The same situation as at the last change is a flip, and a flip back within ten seconds a reversal.
+        if (action < layout.ModeGroups.size() && layout.ModeGroups[action])
+        {
+            uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+            float const manaPct = maxMana ? 100.0f * float(bot->GetPower(POWER_MANA)) / float(maxMana) : 100.0f;
+            uint8 const manaBand = manaPct < 30.0f ? 0 : manaPct < 80.0f ? 1 : 2;
+            uint8 const situation = uint8((bot->IsInCombat() ? 1 : 0) | (manaBand << 1) | (bot->IsMounted() ? 8 : 0));
+            if (seat.ModeSituation == situation)
+            {
+                verdict = Verdict::Aimless;
+                cause = env.EpisodeElapsedMs < seat.ModeChangedMs + 10000 ? AimlessCause::ModeReverse
+                    : AimlessCause::ModeFlip;
+            }
+            seat.ModeSituation = situation;
+            seat.ModeChangedMs = env.EpisodeElapsedMs;
+            ++seat.StepModeSwitches;
+            ++seat.ModeSwitches;
+        }
     }
     else if (result.FoodUsed || result.DrinkUsed)
     {
+        // Eating restores health and drinking mana: with that already nearly full it is a supply thrown away,
+        // whatever the goal says. Below it, it serves recovering.
         judged = true;
-        verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare || goal == SeatGoal::Rest ? Verdict::Serves
-            : Verdict::Neutral;
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        float const full = _tuning.Actions.ConsumeFullPct;
+        bool const needed = (result.FoodUsed && bot->GetHealthPct() < full)
+            || (result.DrinkUsed && maxMana && 100.0f * float(bot->GetPower(POWER_MANA)) / float(maxMana) < full);
+        seat.StepSuppliesSpent += result.FoodUsed + result.DrinkUsed;
+        if (!needed)
+        {
+            verdict = Verdict::Aimless;
+            cause = AimlessCause::ConsumeNotNeeded;
+        }
+        else
+            verdict = goal == SeatGoal::Recover || goal == SeatGoal::Prepare || goal == SeatGoal::Rest
+                ? Verdict::Serves : Verdict::Neutral;
+    }
+    else if (*block == BlockId::Pack && local < PACK_SLOTS)
+    {
+        // Selecting an enemy: the one the goal names serves; another, only if it is hurting someone (peeling it) or
+        // the seat is in trouble. With no enemy named any choice is the seat's own.
+        judged = true;
+        Unit const* chosen = env.FindTargetUnit(local);
+        if (namedSlot < 0)
+            verdict = Verdict::Neutral;
+        else if (int32(local) == namedSlot)
+            verdict = Verdict::Serves;
+        else if (hurtingFriend(chosen) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
+            verdict = Verdict::Neutral;
+        else
+        {
+            verdict = Verdict::Aimless;
+            cause = AimlessCause::TargetSwitch;
+        }
+    }
+    else if (result.PetOrderGiven == PetOrder::Attack)
+    {
+        // The pet sent at the seat's target: judged like a selection.
+        judged = true;
+        Unit const* named = namedSlot >= 0 ? env.FindTargetUnit(uint32(namedSlot)) : nullptr;
+        if (!named || !target)
+            verdict = Verdict::Neutral;
+        else if (target == named)
+            verdict = Verdict::Serves;
+        else if (hurtingFriend(target) || bot->GetHealthPct() < ESCAPE_HEALTH_PCT)
+            verdict = Verdict::Neutral;
+        else
+        {
+            verdict = Verdict::Aimless;
+            cause = AimlessCause::PetOffGoal;
+        }
     }
     else if (*block == BlockId::World && (result.Interactions || result.CorpsesLooted || result.NodesLooted
         || result.GatherCasts || result.ItemsLooted))
@@ -3366,6 +3535,11 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     {
         ++seat.StepAimless;
         ++seat.AimlessPresses;
+        if (cause != AimlessCause::Count)
+        {
+            ++seat.StepAimlessBy[size_t(cause)];
+            ++seat.AimlessBy[size_t(cause)];
+        }
     }
 }
 
@@ -3390,6 +3564,8 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
                 // rest).
                 ++seat.StepAimless;
                 ++seat.AimlessPresses;
+                ++seat.StepAimlessBy[size_t(AimlessCause::StepAway)];
+                ++seat.AimlessBy[size_t(AimlessCause::StepAway)];
             }
             if (seat.MoveRepeat && !serves)
             {
@@ -3442,10 +3618,49 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
             seat.StepFidgetMs += _decisionMs;
             seat.FidgetMs += _decisionMs;
         }
+
+        // A ranged seat moving in a fight it could stand and shoot in: its target in reach and in sight, nothing
+        // underfoot, nothing in melee with it, its owner (if it has one) close. Moving stops a hunter's Auto Shot
+        // and a caster's cast, which is what a player stands still to avoid. Kiting, stepping out of melee or out
+        // of fire, getting back into range or sight and keeping up with the owner are untouched.
+        bool const ranged = seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee;
+        if (ranged && moving && combat && target && target->IsAlive() && !focusMoving)
+        {
+            float const distance = bot->GetDistance(target);
+            float const minRange = bot->getClass() == CLASS_HUNTER ? 8.0f : 0.0f;
+            bool meleed = false;
+            for (Unit* attacker : bot->getAttackers())
+                if (attacker->IsAlive() && attacker->IsWithinMeleeRange(bot))
+                    meleed = true;
+            Player* owner = Owner(env);
+            bool const ownerNear = !owner || !owner->IsAlive() || bot->GetDistance(owner) <= 15.0f;
+            if (distance >= minRange && distance <= 30.0f && bot->IsWithinLOSInMap(target) && !meleed && ownerNear
+                && !Encoding::StandingInHazards(bot, nullptr))
+            {
+                ++seat.StepAimless;
+                ++seat.AimlessPresses;
+                ++seat.StepAimlessBy[size_t(AimlessCause::NeedlessMove)];
+                ++seat.AimlessBy[size_t(AimlessCause::NeedlessMove)];
+            }
+        }
     }
 
-    seat.Rewards.Add(RewardTerm::Aimless, -tuning.Aimless * float(seat.StepAimless));
-    seat.Rewards.Add(RewardTerm::Effort, -tuning.Effort * float(seat.StepEffort));
+    // Each cause at its own price; one left without a cause (none should be) at the plain one.
+    float aimless = 0.0f;
+    uint32 caused = 0;
+    for (size_t c = 0; c < AIMLESS_CAUSES; ++c)
+    {
+        aimless += AimlessPrice(tuning, AimlessCause(c)) * float(seat.StepAimlessBy[c]);
+        caused += seat.StepAimlessBy[c];
+    }
+    aimless += tuning.Aimless * float(seat.StepAimless - std::min(seat.StepAimless, caused));
+    aimless += tuning.ModeSwitch * float(seat.StepModeSwitches);
+    seat.Rewards.Add(RewardTerm::Aimless, -aimless);
+    seat.Rewards.Add(RewardTerm::Effort, -tuning.Effort * float(seat.StepEffort)
+        - tuning.SupplySpent * float(seat.StepSuppliesSpent));
+    seat.StepAimlessBy.fill(0);
+    seat.StepModeSwitches = 0;
+    seat.StepSuppliesSpent = 0;
     seat.Rewards.Add(RewardTerm::Fidget, -tuning.Fidget * float(seat.StepFidgetMs) / 1000.0f);
     seat.StepAimless = 0;
     seat.StepEffort = 0;

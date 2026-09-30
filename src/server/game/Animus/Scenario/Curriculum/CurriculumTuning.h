@@ -447,6 +447,30 @@ namespace Animus::Curriculum
             /// models found ~180 actions a minute with 18-21% of decisions serving the chosen goal (2026-09-28):
             /// abilities pressed without intent. The goal is the reason for a press; this is what makes it one.
             float Aimless = 0.02f;
+            /// Aimless by its cause (StageState's AimlessCause), each its own price so the trial can raise one
+            /// without the rest. The ones in-game testing of the four-phase models saw most start higher: a
+            /// companion drinking at full mana, laying traps with nothing near, dancing between aspects, and
+            /// moving about a fight it could stand and shoot in (2026-09-29); switching targets and sending the
+            /// pet at enemies the goal does not name (6.5 times over-represented in the aimless-heavy episodes).
+            float AimlessOffFocus = 0.02f;
+            float AimlessAoeMissed = 0.02f;
+            float AimlessInRangeCast = 0.02f;
+            float AimlessUnprovokedHarm = 0.02f;
+            float AimlessHelpOffGoal = 0.02f;
+            float AimlessStepAway = 0.02f;
+            float AimlessTargetSwitch = 0.04f;
+            float AimlessPetOffGoal = 0.04f;
+            float AimlessConsumeNotNeeded = 0.03f;
+            float AimlessTrapNoEnemy = 0.03f;
+            float AimlessModeFlip = 0.03f;
+            float AimlessModeReverse = 0.06f;
+            float AimlessNeedlessMove = 0.02f;
+            /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
+            float ModeSwitch = 0.01f;
+            /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
+            float SupplySpent = 0.02f;
+            /// Resource at or above which eating (health) or drinking (mana) is ConsumeNotNeeded.
+            float ConsumeFullPct = 85.0f;
             /// A small price on every press but the no-op, a tenth of an aimless one: when nothing needs doing,
             /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press.
             float Effort = 0.002f;
@@ -963,6 +987,22 @@ namespace Animus::Curriculum
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
             f("Actions.Jitter", tuning.Actions.Jitter);
             f("Actions.Aimless", tuning.Actions.Aimless);
+            f("Actions.Aimless.OffFocus", tuning.Actions.AimlessOffFocus);
+            f("Actions.Aimless.AoeMissed", tuning.Actions.AimlessAoeMissed);
+            f("Actions.Aimless.InRangeCast", tuning.Actions.AimlessInRangeCast);
+            f("Actions.Aimless.UnprovokedHarm", tuning.Actions.AimlessUnprovokedHarm);
+            f("Actions.Aimless.HelpOffGoal", tuning.Actions.AimlessHelpOffGoal);
+            f("Actions.Aimless.StepAway", tuning.Actions.AimlessStepAway);
+            f("Actions.Aimless.TargetSwitch", tuning.Actions.AimlessTargetSwitch);
+            f("Actions.Aimless.PetOffGoal", tuning.Actions.AimlessPetOffGoal);
+            f("Actions.Aimless.ConsumeNotNeeded", tuning.Actions.AimlessConsumeNotNeeded);
+            f("Actions.Aimless.TrapNoEnemy", tuning.Actions.AimlessTrapNoEnemy);
+            f("Actions.Aimless.ModeFlip", tuning.Actions.AimlessModeFlip);
+            f("Actions.Aimless.ModeReverse", tuning.Actions.AimlessModeReverse);
+            f("Actions.Aimless.NeedlessMove", tuning.Actions.AimlessNeedlessMove);
+            f("Actions.ModeSwitch", tuning.Actions.ModeSwitch);
+            f("Actions.SupplySpent", tuning.Actions.SupplySpent);
+            f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);
             f("Actions.Effort", tuning.Actions.Effort);
             f("Actions.Fidget", tuning.Actions.Fidget);
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);

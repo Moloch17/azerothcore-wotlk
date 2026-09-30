@@ -16,7 +16,8 @@ eval:
   episodes: 512
   report: [dps, died, deaths, kills, pulls_cleared, wipes, owner_deaths, owner_healing, teammates_died,
     teammate_healing, threat_on_teammates, director_member_orders, order_changes, goals_reached, serving_share,
-    casts_completed, casts_cancelled]
+    casts_completed, casts_cancelled,
+           aimless_presses, aimless_target_switch, aimless_pet_off_goal, aimless_needless_move]
 
 cast:
   agents:

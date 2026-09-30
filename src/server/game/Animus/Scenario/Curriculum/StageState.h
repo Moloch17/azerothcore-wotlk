@@ -128,6 +128,28 @@ namespace Animus::Curriculum
     };
 
     /// One learned agent: its character, as built for the episode, and its episode totals.
+    /// Why a press was aimless (StageScenario::JudgePress, SettleIntent): each is counted and priced on its own
+    /// (Actions.Aimless.<cause>), so the one the seats do most can be charged more without touching the rest.
+    enum class AimlessCause : uint8
+    {
+        OffFocus,           // harm on an enemy the goal does not name (Fight, Control)
+        AoeMissed,          // an area spell with the goal's enemy outside it
+        InRangeCast,        // Position held while already in range, casting as if fighting
+        UnprovokedHarm,     // harm under a goal that is not fighting, with nothing attacking the seat
+        HelpOffGoal,        // help on someone else while the seat said it was fighting
+        StepAway,           // a step that opened the gap to where the goal wants the seat
+        TargetSwitch,       // selecting an enemy the goal does not name, when it is hurting nobody
+        PetOffGoal,         // sending the pet at an enemy the goal does not name, when it is hurting nobody
+        ConsumeNotNeeded,   // eating or drinking with that resource already nearly full
+        TrapNoEnemy,        // a trap laid with nothing near to walk into it
+        ModeFlip,           // an aspect, stance or form changed with nothing about the seat's situation changed
+        ModeReverse,        // ... and back again within ten seconds
+        NeedlessMove,       // a ranged seat moving in a fight it could stand and shoot in
+        Count
+    };
+    constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);
+    [[nodiscard]] char const* AimlessCauseName(AimlessCause cause);
+
     struct SeatState
     {
         Layout const* L = nullptr;              // null for a party seat left empty this episode
@@ -359,6 +381,14 @@ namespace Animus::Curriculum
         uint32 StepAimless = 0;
         uint32 StepEffort = 0;
         uint32 StepFidgetMs = 0;
+        std::array<uint32, AIMLESS_CAUSES> StepAimlessBy{};     // this decision's, by cause (priced at the reward)
+        std::array<uint32, AIMLESS_CAUSES> AimlessBy{};         // the episode's
+        uint32 StepModeSwitches = 0;            // aspects, stances and forms changed this decision (Actions.ModeSwitch)
+        uint32 ModeSwitches = 0;
+        uint32 StepSuppliesSpent = 0;           // food and drink consumed this decision (Actions.SupplySpent)
+        /// The situation at the last mode change (combat, mana band, mounted), 0xFF before one, and when it was.
+        uint8 ModeSituation = 0xFF;
+        uint32 ModeChangedMs = 0;
         uint32 AimlessPresses = 0;
         uint32 EffortPresses = 0;
         uint32 ServingPresses = 0;
@@ -504,6 +534,13 @@ namespace Animus::Curriculum
             StepAimless = 0;
             StepEffort = 0;
             StepFidgetMs = 0;
+            StepAimlessBy.fill(0);
+            AimlessBy.fill(0);
+            StepModeSwitches = 0;
+            ModeSwitches = 0;
+            StepSuppliesSpent = 0;
+            ModeSituation = 0xFF;
+            ModeChangedMs = 0;
             AimlessPresses = 0;
             EffortPresses = 0;
             ServingPresses = 0;
