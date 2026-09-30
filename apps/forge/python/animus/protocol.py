@@ -32,6 +32,7 @@ class MsgType(IntEnum):
     REPLAY = 8
     DEVICE = 9
     DEVICE_ACK = 10
+    PROGRESS = 11       # f32: how far through its budget the stage's training is (arena weight schedules)
 
 
 HEADER = struct.Struct("<II")  # type, payload length
@@ -296,6 +297,11 @@ def decode_mode(payload: bytes) -> tuple[bool, int, int, str, bool]:
 def decode_mode_first_seed(payload: bytes) -> int:
     """The first seed index a MODE's evaluation plays (0 unless a cluster split the seeds)."""
     return MODE.unpack(payload)[4]
+
+
+def encode_progress(progress: float) -> bytes:
+    """PROGRESS payload: how far through its budget the stage's training is, 0 to 1 (protocol 17)."""
+    return struct.pack("<f", float(min(1.0, max(0.0, progress))))
 
 
 def encode_weights(weights) -> bytes:

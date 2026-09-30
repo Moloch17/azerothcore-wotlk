@@ -131,6 +131,12 @@ class ForgeEnv:
         payload = p.encode_weights(weights)
         self.sock.sendall(p.encode_header(p.MsgType.WEIGHTS, len(payload)) + payload)
 
+    def set_stage_progress(self, progress: float) -> None:
+        """How far through its budget the stage's training is (protocol PROGRESS): arenas whose weights change over
+        a stage draw by it. Nothing is sent back."""
+        payload = p.encode_progress(progress)
+        self.sock.sendall(p.encode_header(p.MsgType.PROGRESS, len(payload)) + payload)
+
     def set_replay(self, seed_base: int, fraction: float, seeds) -> None:
         """Evaluation seeds of `seed_base` that `fraction` of the training resets rebuild (see protocol REPLAY), in
         place of the ones sent before; no seeds or a fraction of 0 stops replaying. Nothing is sent back."""
@@ -418,6 +424,14 @@ class ClusterEnv:
             if sim is not None:
                 try:
                     sim.set_layout_weights(weights)
+                except OSError as error:
+                    self._drop(index, error)
+
+    def set_stage_progress(self, progress: float) -> None:
+        for index, sim in enumerate(self.sims):
+            if sim is not None:
+                try:
+                    sim.set_stage_progress(progress)
                 except OSError as error:
                     self._drop(index, error)
 

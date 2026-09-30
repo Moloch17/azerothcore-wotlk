@@ -519,6 +519,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _arenaWeights.push_back(sConfigMgr->GetOption<uint32>(
             Acore::StringFormat("{}Arena.{}.{}.Weight", settings.TuningPrefix, _stage.Name, arena.Name), arena.Weight,
             false));
+        _arenaWeightsFinal.push_back(uint32(std::max(0, sConfigMgr->GetOption<int32>(
+            Acore::StringFormat("{}Arena.{}.{}.WeightFinal", settings.TuningPrefix, _stage.Name, arena.Name),
+            arena.WeightFinal >= 0 ? arena.WeightFinal : int32(_arenaWeights.back()), false))));
 
         _arenaMaxRung.push_back(sConfigMgr->GetOption<int32>(
             Acore::StringFormat("{}Arena.{}.{}.MaxRung", settings.TuningPrefix, _stage.Name, arena.Name),
@@ -530,6 +533,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         longestMs = std::max(longestMs, episodeMs);
     }
 
+    if (std::all_of(_arenaWeightsFinal.begin(), _arenaWeightsFinal.end(), [](uint32 weight) { return weight == 0; }))
+        _arenaWeightsFinal = _arenaWeights;
     if (std::all_of(_arenaWeights.begin(), _arenaWeights.end(), [](uint32 weight) { return weight == 0; }))
     {
         LOG_ERROR("module.animus", "{}: every arena weight is 0; the arenas are drawn evenly", Name());
@@ -717,21 +722,32 @@ std::vector<Animus::Curriculum::Encounter*> const& Animus::Curriculum::StageScen
     return arena < _arenaRewardOrder.size() ? _arenaRewardOrder[arena] : none;
 }
 
-uint32 Animus::Curriculum::StageScenario::DrawArena() const
+uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
 {
     if (_arenaWeights.size() == 1)
         return 0;
 
+    // Linear from Weight to WeightFinal over the stage's budget; an evaluation draws by the final weights, so it
+    // measures what the stage is heading for.
+    float const progress = evaluating ? 1.0f : _stageProgress.load(std::memory_order_relaxed);
+    std::vector<uint32> weights(_arenaWeights.size());
     uint32 total = 0;
-    for (uint32 weight : _arenaWeights)
-        total += weight;
-
-    uint32 roll = urand(0, total - 1);
     for (uint32 arena = 0; arena < _arenaWeights.size(); ++arena)
     {
-        if (roll < _arenaWeights[arena])
+        float const from = float(_arenaWeights[arena]);
+        float const to = float(_arenaWeightsFinal[arena]);
+        weights[arena] = uint32(std::lround(100.0f * (from + (to - from) * progress)));
+        total += weights[arena];
+    }
+    if (!total)
+        return 0;
+
+    uint32 roll = urand(0, total - 1);
+    for (uint32 arena = 0; arena < weights.size(); ++arena)
+    {
+        if (roll < weights[arena])
             return arena;
-        roll -= _arenaWeights[arena];
+        roll -= weights[arena];
     }
 
     return 0;
@@ -1794,7 +1810,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
-    data.Arena = DrawArena();
+    data.Arena = DrawArena(env.Evaluating);
     // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
     // own map (an instance rung, a quest giver's) still decides later, in BeforeLevel.
     data.EpisodeMapId = _stage.Arenas[data.Arena].MapId;

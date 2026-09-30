@@ -2108,6 +2108,14 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             continue;
         }
 
+        if (type == MsgType::Progress && payload.size() == sizeof(float))
+        {
+            float progress = 0.0f;
+            std::memcpy(&progress, payload.data(), sizeof(progress));
+            _pool->SetStageProgress(std::clamp(progress, 0.0f, 1.0f));
+            continue;
+        }
+
         if (type == MsgType::Replay && payload.size() >= sizeof(ReplayHeader))
         {
             ReplayHeader header{};

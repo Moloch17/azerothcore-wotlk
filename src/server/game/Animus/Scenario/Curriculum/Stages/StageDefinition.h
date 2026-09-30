@@ -101,6 +101,11 @@ namespace Animus::Curriculum
     {
         std::string Name;               // unique in the stage: episode info, stage.json, tuning keys
         uint32 Weight = 1;              // share of episodes; <TuningPrefix>Arena.<stage>.<name>.Weight
+        /// The share at the end of the stage's budget, reached linearly from Weight as training goes (the
+        /// learner's PROGRESS): an arena weighted up as the skills it needs come in -- whole dungeon wings in the
+        /// party stage. -1 keeps Weight throughout. Evaluation draws by the final weights.
+        /// <TuningPrefix>Arena.<stage>.<name>.WeightFinal
+        int32 WeightFinal = -1;
         SeatPlan Seats = SeatPlan::Solo;
         Opposition Against = Opposition::Creature;
         PullSchedule Schedule = PullSchedule::None;

@@ -113,7 +113,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                     body = read_exact(conn, length)
                     if msg_type == p.MsgType.REPLAY:
                         replays.append(p.decode_replay(body))
-                    elif msg_type != p.MsgType.WEIGHTS:
+                    elif msg_type not in (p.MsgType.WEIGHTS, p.MsgType.PROGRESS):
                         break
                 decision += 1
                 if hang_up_after is not None and decision > hang_up_after:

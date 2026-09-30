@@ -132,6 +132,10 @@ namespace AnimusForge
         Replay = 8,
         Device = 9,
         DeviceAck = 10,
+        /// client -> server { f32 progress }: how far through its budget the stage's training is, 0 to 1, sent after
+        /// every update and applied without an answer; arenas whose weights change over a stage (ArenaDefinition::
+        /// WeightFinal) draw by it. Protocol 17.
+        Progress = 11,
     };
 
 #pragma pack(push, 1)

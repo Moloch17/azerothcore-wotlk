@@ -124,6 +124,8 @@ namespace Animus
         /// How often training episodes draw each of the scenario's layouts (the forge's WEIGHTS message), in layout
         /// order; empty restores the even draw. Takes effect as envs reset; evaluation episodes are never weighted.
         void SetLayoutWeights(std::vector<float> const& weights) { _scenario.SetLayoutWeights(weights); }
+        /// How far through its budget the stage's training is (the learner's PROGRESS).
+        void SetStageProgress(float progress) { _scenario.SetStageProgress(progress); }
 
         /// Replaying lost evaluation episodes (the forge's REPLAY message): `fraction` of training resets rebuild one
         /// of `seeds` -- evaluation seed indexes of `seedBase` -- from the very random numbers the evaluation built it

@@ -139,6 +139,8 @@ namespace Animus
         /// vector restores it. Evaluation episodes are unaffected: they spread their seeds over the layouts evenly.
         /// Scenarios that have one layout, or draw none, need not implement it.
         virtual void SetLayoutWeights(std::vector<float> const& /*weights*/) { }
+        /// How far through its budget the stage's training is, 0 to 1 (the learner's PROGRESS).
+        virtual void SetStageProgress(float /*progress*/) { }
 
         /// Once at shutdown: remove bots (without saving) and targets.
         virtual void Teardown(Env& env) = 0;

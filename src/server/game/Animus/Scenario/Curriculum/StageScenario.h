@@ -310,7 +310,8 @@ namespace Animus::Curriculum
 
         bool Rebuild(Env& env);
         /// The next episode's arena: drawn by weight (no draw for a single arena, so its random numbers are as before).
-        [[nodiscard]] uint32 DrawArena() const;
+        [[nodiscard]] uint32 DrawArena(bool evaluating) const;
+        void SetStageProgress(float progress) override { _stageProgress.store(progress, std::memory_order_relaxed); }
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -424,6 +425,10 @@ namespace Animus::Curriculum
         std::vector<std::vector<Encounter*>> _arenaRewardOrder;
         /// Per arena: its share of episodes (<TuningPrefix>Arena.<stage>.<arena>.Weight) and episode length.
         std::vector<uint32> _arenaWeights;
+        /// Each arena's weight at the end of the stage's budget (ArenaDefinition::WeightFinal; its Weight when it has
+        /// none), and how far through the budget training is (the learner's PROGRESS).
+        std::vector<uint32> _arenaWeightsFinal;
+        std::atomic<float> _stageProgress{ 0.0f };
         std::vector<uint32> _arenaEpisodeMs;
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         OwnerEncounter* _owner = nullptr;

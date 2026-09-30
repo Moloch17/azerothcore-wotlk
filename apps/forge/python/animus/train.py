@@ -1296,6 +1296,10 @@ class TrainingRun:
         if self.link is not None:
             self.link.steps_since += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
+        # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal). Sent
+        # while the sim waits for this rollout's last ACT, as WEIGHTS is.
+        if hasattr(self.env, "set_stage_progress") and self.config.total_env_steps > 0:
+            self.env.set_stage_progress(self.env_steps / self.config.total_env_steps)
 
         if self.updater is None:
             stats = trainer.update(buffer, self.distiller)
