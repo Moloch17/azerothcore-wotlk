@@ -34,7 +34,7 @@ Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::RewardTerms() const
 {
     return { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing, RewardTerm::TeammateThreat,
-        RewardTerm::TeammateDeath, RewardTerm::Threat };
+        RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive };
 }
 
 void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -44,6 +44,12 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].Seats[seat].TeammatesDied);
     });
+    // The owner encounter's column where there is one; a party or raid with no owner counts its revives too.
+    if (!table.Contains("revives"))
+        table.Add("revives", [this](Env const& env, uint32 seat)
+        {
+            return float(_scenario.Data(env).Seats[seat].Revives);
+        });
     table.Add("teammate_damage_taken", [this](Env const& env, uint32 seat)
     {
         return float(_envs[env.Index].Seats[seat].TeammateDamageTaken);
@@ -300,6 +306,15 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
 
 void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
+    // A dead teammate the seat resurrected stood up, where no owner encounter pays for it (stage13's raids have no
+    // owner, and their revives went unpaid).
+    SeatState& reviver = _scenario.Data(env).Seats[seatIndex];
+    if (reviver.StepRevivedAlly && !_scenario.Arena(env).Owner)
+    {
+        ledger.Add(RewardTerm::Revive, _scenario.Tuning().Resurrection.ReviveAlly);
+        reviver.StepRevivedAlly = false;
+    }
+
     if (!bot)
         return;
 
@@ -330,6 +345,19 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         }
     }
 
+    // In a raid the seat's own group is its to keep up in full, and the raiders outside it count together as one
+    // more group would: summed over every seat, a forty-seat wipe charged each seat 39 teammate deaths (about 117)
+    // where a party wipe charges 4, and any engagement looked like a risk no win could repay.
+    bool const raid = data.ActiveSeats > GROUP_SEATS;
+    uint32 const groupFirst = GroupFirstSeat(seatIndex);
+    auto const inGroup = [&](uint32 other) { return other >= groupFirst && other < groupFirst + GROUP_SEATS; };
+    uint32 outside = 0;
+    if (raid)
+        for (uint32 other = 0; other < _scenario.SeatCount(); ++other)
+            if (other != seatIndex && !inGroup(other) && data.Seats[other].L && env.FindBot(other))
+                ++outside;
+    float const outsideWeight = outside ? float(GROUP_MEMBERS) / float(outside) : 1.0f;
+
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
     // raider outside the seat's group is still the party's to keep alive.
     for (uint32 teammateSeat = 0; teammateSeat < _scenario.SeatCount(); ++teammateSeat)
@@ -337,6 +365,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         Player* teammate = teammateSeat == seatIndex ? nullptr : env.FindBot(teammateSeat);
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
+        float const weight = raid && !inGroup(teammateSeat) ? outsideWeight : 1.0f;
 
         Aptitude const& teammateApt = data.Seats[teammateSeat].Apt;
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
@@ -352,7 +381,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!HoldsThePull(teammateApt))
             ledger.Add(RewardTerm::TeammateDamageTaken,
                 -(Protects(apt) ? tuning.TeammateDamageTakenProtector : tuning.TeammateDamageTakenDps)
-                * float(taken) / health);
+                * weight * float(taken) / health);
 
         if (Heals(apt))
             ledger.Add(RewardTerm::TeammateHealing, tuning.TeammateHealing * float(healed) / health);
@@ -368,7 +397,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             seat.ThreatOnTeammates += onTeammate;
             if (HoldsThePull(apt))
                 ledger.Add(RewardTerm::TeammateThreat,
-                    -tuning.TankLoseTeammate * float(onTeammate) * _scenario.DecisionScale());
+                    -tuning.TankLoseTeammate * weight * float(onTeammate) * _scenario.DecisionScale());
         }
 
         if (teammate->IsAlive())
@@ -377,7 +406,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         {
             seat.TeammateDeathSeen[teammateSeat] = true;
             ++seat.TeammatesDied;
-            ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath);
+            ledger.Add(RewardTerm::TeammateDeath, -tuning.TeammateDeath * weight);
         }
     }
 }

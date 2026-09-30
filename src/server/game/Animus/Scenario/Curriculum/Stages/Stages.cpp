@@ -649,12 +649,14 @@ namespace
             .Summary = "a raid of eight groups against one elite and its adds, and a run of raid pulls",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
             .Arenas = {
+                // A raid group (PartyGroup): the party encounter's teammate terms and columns, the dead standing up
+                // between pulls, and a wipe -- not seat 0's death -- ending the episode.
                 { .Name = "raid_single", .Weight = 1, .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300, .Directed = true,
-                    .DirectorLearned = true },
+                    .Schedule = PullSchedule::SinglePack, .PartyGroup = true, .EpisodeSeconds = 300,
+                    .Directed = true, .DirectorLearned = true },
                 { .Name = "raid_gauntlet", .Weight = 1, .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                    .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600, .Directed = true,
-                    .DirectorLearned = true },
+                    .Schedule = PullSchedule::Gauntlet, .PartyGroup = true, .EpisodeSeconds = 600,
+                    .Directed = true, .DirectorLearned = true },
             },
         });
 

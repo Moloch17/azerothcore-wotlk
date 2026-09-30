@@ -114,7 +114,11 @@ void Animus::Curriculum::OwnerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         uint64 const total = onSeat + owner.ThreatOnOwner;
         return total ? float(onSeat) / float(total) : 0.0f;
     });
-    table.Add("revives", [this](Env const& env, uint32 seat) { return float(_scenario.Data(env).Seats[seat].Revives); });
+    if (!table.Contains("revives"))
+        table.Add("revives", [this](Env const& env, uint32 seat)
+        {
+            return float(_scenario.Data(env).Seats[seat].Revives);
+        });
 }
 
 void Animus::Curriculum::OwnerEncounter::ResetEpisode(Env& env)
@@ -297,7 +301,8 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     EnvOwner& state = _envs[env.Index];
     Player* owner = Find(env);
 
-    // A dead ally (the owner, a teammate) the seat resurrected stood up: revives exist only beside an owner.
+    // A dead ally (the owner, a teammate) the seat resurrected stood up. Paid here beside an owner, and by the party
+    // encounter in a party or raid with none (PartyEncounter::Reward).
     if (SeatState& reviver = _scenario.Data(env).Seats[seatIndex]; reviver.StepRevivedAlly)
     {
         ledger.Add(RewardTerm::Revive, _scenario.Tuning().Resurrection.ReviveAlly);

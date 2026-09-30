@@ -282,7 +282,7 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         });
     }
 
-    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
+    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Owner || arena.PartyGroup; }))
         table.Add("wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
 }
 
@@ -519,7 +519,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     pulls.PullStartMs = env.EpisodeElapsedMs;
     pulls.PullEngaged = false;
     pulls.Arrived = false;
-    if (SoloGauntlet(env))
+    if (PullsArrive(env))
     {
         uint32 const wait = urand(tuning.ArriveMinMs, tuning.ArriveMaxMs);
         uint32 const shrink = std::min(wait, tuning.ArriveShrinkMs * pulls.PullsCleared);
@@ -575,16 +575,14 @@ void Animus::Curriculum::PullsEncounter::UpdateEnemies(Env& env)
 void Animus::Curriculum::PullsEncounter::Update(Env& env)
 {
     bool const hasOwner = _scenario.Arena(env).Owner;
-    if (hasOwner)
-    {
-        // Seen before Recover stands it up again: an owner death loses the episode's win.
-        if (Player* owner = _scenario.Owner(env); owner && !owner->IsAlive())
-            _envs[env.Index].OwnerDied = true;
+    // Seen before Recover stands it up again: an owner death loses the episode's win.
+    if (Player* owner = hasOwner ? _scenario.Owner(env) : nullptr; owner && !owner->IsAlive())
+        _envs[env.Index].OwnerDied = true;
+    if (Grouped(env))
         Recover(env);
-    }
 
     EnvPulls const& pulls = _envs[env.Index];
-    if (SoloGauntlet(env) && HasCreatures(env) && !pulls.PullEngaged && env.EpisodeElapsedMs >= pulls.ArriveMs)
+    if (PullsArrive(env) && HasCreatures(env) && !pulls.PullEngaged && env.EpisodeElapsedMs >= pulls.ArriveMs)
         SendPull(env);
 
     if (!Gauntlet(env) || HasCreatures(env) || env.EpisodeElapsedMs < pulls.NextPullMs)
@@ -609,8 +607,27 @@ void Animus::Curriculum::PullsEncounter::Update(Env& env)
 void Animus::Curriculum::PullsEncounter::SendPull(Env& env)
 {
     EnvPulls& pulls = _envs[env.Index];
-    Player* bot = env.FindBot(0);
-    if (!bot || !bot->IsAlive())
+    // The seat it walks to: the only one alone, the nearest one standing in a group (a raid's seat 0 may be dead or
+    // at the back).
+    Player* bot = nullptr;
+    Creature const* lead = nullptr;
+    for (uint32 slot = 0; slot < env.Targets.size() && !lead; ++slot)
+        if (Creature* member = env.FindTarget(slot); member && member->IsAlive())
+            lead = member;
+    float nearest = 0.0f;
+    for (uint32 seat = 0; seat < (Grouped(env) ? _scenario.Data(env).ActiveSeats : 1); ++seat)
+    {
+        Player* candidate = _scenario.SeatBot(env, seat);
+        if (!candidate || !candidate->IsAlive() || !candidate->IsInWorld())
+            continue;
+        float const distance = lead ? lead->GetExactDist(candidate) : 0.0f;
+        if (!bot || distance < nearest)
+        {
+            bot = candidate;
+            nearest = distance;
+        }
+    }
+    if (!bot)
         return;
 
     if (!pulls.Arrived)
@@ -791,7 +808,7 @@ void Animus::Curriculum::PullsEncounter::View(Env const& env, uint32 seat, SeatV
     view.GauntletSupplies = Supplies(env);
 
     bool const pullActive = HasCreatures(env);
-    view.PullArrival = SoloGauntlet(env) && pullActive && !pulls.PullEngaged && !pulls.Arrived
+    view.PullArrival = PullsArrive(env) && pullActive && !pulls.PullEngaged && !pulls.Arrived
         ? std::min(1.0f, float(pulls.ArriveMs - std::min(pulls.ArriveMs, env.EpisodeElapsedMs)) / ARRIVAL_SCALE_MS)
         : 0.0f;
     uint32 const nextPullMs = pulls.NextPullMs - std::min(pulls.NextPullMs, env.EpisodeElapsedMs);
@@ -1349,6 +1366,20 @@ bool Animus::Curriculum::PullsEncounter::IsTerminal(Env const& env) const
     // A single pack also ends on its clock, as a lost fight rather than a cut-off the critic bootstraps across.
     if (_scenario.Arena(env).Owner)
         return false;
+
+    // A party or raid of its own: a wipe ends it (the pull that did it is cleared away and counted in Recover),
+    // never one seat's death -- seat 0 is one raider of forty.
+    if (_scenario.Arena(env).PartyGroup)
+    {
+        EnvPulls const& pulls = _envs[env.Index];
+        if (pulls.Wipes)
+            return true;
+        if (Sequence(env))
+            return pulls.PullsCleared >= SEQUENCE_PULLS.size();
+        if (Gauntlet(env))
+            return false;
+        return pulls.PullsCleared > 0 || TimeIsUp(env);
+    }
 
     bool const dead = _scenario.DeadForGood(env, 0);
     if (Sequence(env))

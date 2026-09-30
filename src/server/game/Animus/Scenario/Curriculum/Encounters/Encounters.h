@@ -313,8 +313,23 @@ namespace Animus::Curriculum
             return schedule == PullSchedule::Gauntlet || schedule == PullSchedule::Sequence;
         }
 
-        /// Pull after pull with no owner: won by lasting (PullTuning::SoloGauntlet*).
+        /// Seats that fight as a group: beside an owner, or a party or raid of their own. The dead stand up between
+        /// pulls (Recover), and the group's win is lasting with no wipe (GauntletOwnerTerms).
+        [[nodiscard]] bool Grouped(Env const& env) const
+        {
+            ArenaDefinition const& arena = _scenario.Arena(env);
+            return arena.Owner || arena.PartyGroup;
+        }
+
+        /// Pull after pull with no owner and no group: won by lasting (PullTuning::SoloGauntlet*).
         [[nodiscard]] bool SoloGauntlet(Env const& env) const
+        {
+            return Gauntlet(env) && !Grouped(env);
+        }
+
+        /// A gauntlet nobody starts the pulls of (no owner to engage them): each pull walks to the seats after its
+        /// arrival wait.
+        [[nodiscard]] bool PullsArrive(Env const& env) const
         {
             return Gauntlet(env) && !_scenario.Arena(env).Owner;
         }
