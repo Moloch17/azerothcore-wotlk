@@ -1027,13 +1027,11 @@ namespace
         ready = ready && (ownMana <= 0.0f || ownMana >= DUNGEON_READY_MANA);
         for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
         {
-            // The dead do not hold the pull up: the healer raises who it can between pulls, and a party that has
-            // lost somebody nobody can raise goes on without them (a dead member kept the first script waiting out
-            // the hour).
-            if (!MemberLive(row, member))
-                continue;
+            // Every member, the dead included: the healer raises them between pulls, or they rise at the door
+            // (Instance.WingRiseMs) and walk back, and the pull waits until they have rejoined.
             float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
-            ready = MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
+            ready = MemberLive(row, member)
+                && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
                 && (mana <= 0.0f || mana >= DUNGEON_READY_MANA)
                 && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
         }

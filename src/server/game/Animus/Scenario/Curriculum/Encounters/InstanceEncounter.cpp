@@ -176,6 +176,7 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         });
         table.Add("wing_crowd_seconds", [this](Env const& env, uint32) { return _envs[env.Index].CrowdSeconds; });
         table.Add("wing_assist", [this](Env const& env, uint32) { return _envs[env.Index].Assist; });
+        table.Add("wing_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].Rises); });
         table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
     }
@@ -593,6 +594,65 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     TraceWing(env, fight, fight.Fighting || !anyoneAlive);
     fight.LastMs = env.EpisodeElapsedMs;
     fight.Level = uint32(data.EpisodeLevel);
+
+    // The dead rejoin: one nobody has raised by Instance.WingRiseMs after the fight is over rises at the door, as a
+    // player who released and ran back would, and walks back to the group (the pull waits for it).
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+    {
+        Player* bot = _scenario.SeatBot(env, index);
+        SeatInstance& seatState = fight.Seats[index];
+        if (!bot || bot->IsAlive())
+        {
+            seatState.DeadSinceMs = 0;
+            continue;
+        }
+        if (fight.Fighting || !anyoneAlive)
+        {
+            seatState.DeadSinceMs = 0;
+            continue;
+        }
+        if (!seatState.DeadSinceMs)
+            seatState.DeadSinceMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+        if (env.EpisodeElapsedMs >= seatState.DeadSinceMs + _scenario.Tuning().Instance.WingRiseMs)
+        {
+            bot->ResurrectPlayer(0.5f);
+            bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
+            BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
+            seatState.DeathPaid = false;
+            seatState.DeadSinceMs = 0;
+            ++fight.Rises;
+        }
+    }
+
+    // A run stuck for two minutes, and every ten after (Instance.WingTrace): each seat's state against the tank's, and
+    // the tank's way on, so a script or a party that stands still says why.
+    constexpr uint32 STUCK_FIRST_MS = 120000;
+    constexpr uint32 STUCK_EVERY_MS = 600000;
+    uint32 const still = env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.ProgressMs);
+    if (_scenario.Tuning().Instance.WingTrace && still >= STUCK_FIRST_MS && env.EpisodeElapsedMs >= fight.StuckLoggedMs)
+    {
+        fight.StuckLoggedMs = env.EpisodeElapsedMs + STUCK_EVERY_MS;
+        Unit* tank = nullptr;
+        if (Player* any = _scenario.SeatBot(env, 0); any && !fight.Tank.IsEmpty())
+            tank = ObjectAccessor::GetUnit(*any, fight.Tank);
+        std::string seats;
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+            {
+                uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}]", seats.empty() ? "" : " ", index,
+                    bot == tank ? " tank" : "", bot->GetHealthPct(),
+                    maxMana ? std::to_string(bot->GetPower(POWER_MANA) * 100 / maxMana) + "%" : "-",
+                    tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f,
+                    bot->IsAlive() ? "" : " dead", bot->IsInCombat() ? " combat" : "");
+            }
+        float const toNext = tank && fight.RouteNext < fight.Route.size()
+            ? tank->GetExactDist(&fight.Route[fight.RouteNext]) : -1.0f;
+        LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
+            "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
+            fight.OnParty, fight.HasAhead && tank ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead),
+            fight.AheadSize) : std::string("none"), seats);
+    }
     for (uint32 index = 0; index < data.ActiveSeats && !fight.Scripted; ++index)
         fight.Scripted = data.Seats[index].Scripted;
 

@@ -282,6 +282,8 @@ namespace Animus::Curriculum
             /// of the budget: parties see the whole dungeon before they can clear it themselves.
             float WingScript = 1.0f;
             float WingScriptEnd = 0.4f;
+            /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
+            uint32 WingRiseMs = 30000;
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
             /// leader.
             float WingStray = 0.02f;
@@ -1133,6 +1135,7 @@ namespace Animus::Curriculum
             f("Instance.WingFullClear", tuning.Instance.WingFullClear);
             f("Instance.WingScript", tuning.Instance.WingScript);
             f("Instance.WingScriptEnd", tuning.Instance.WingScriptEnd);
+            f("Instance.WingRiseMs", tuning.Instance.WingRiseMs);
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Life.StepCost", tuning.Life.StepCost);

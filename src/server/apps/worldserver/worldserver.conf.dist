@@ -6065,6 +6065,8 @@ AnimusForge.Curriculum.Instance.WingFullClear = 1
 #   the share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd of the budget
 AnimusForge.Curriculum.Instance.WingScript = 1.0
 AnimusForge.Curriculum.Instance.WingScriptEnd = 0.4
+#   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
+AnimusForge.Curriculum.Instance.WingRiseMs = 30000
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
 

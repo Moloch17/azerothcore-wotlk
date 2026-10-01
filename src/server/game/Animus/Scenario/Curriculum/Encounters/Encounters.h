@@ -519,6 +519,7 @@ namespace Animus::Curriculum
             bool DeathPaid = false;
             float Potential = 0.0f;             // the least route ahead it has reached (Instance.WingProgress)
             bool PotentialReady = false;
+            uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
         };
 
         struct EnvInstance
@@ -582,6 +583,8 @@ namespace Animus::Curriculum
             bool Scripted = false;              // a seat of this run was played by the script (WingScript)
             uint32 LastMs = 0;                  // the run's clock at its last update, and its level, for its log line
             uint32 Level = 0;
+            uint32 StuckLoggedMs = 0;           // when the next "Wing stuck" line may be written
+            uint32 Rises = 0;                   // seats that rose at the door and ran back (WingRiseMs)
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
             /// and the nearest pack not in the fight.
             uint32 OnTank = 0;
