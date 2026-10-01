@@ -578,6 +578,8 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
+        # The hint block's columns (a dungeon's suggested action) are kept out of both networks, seeded or resumed.
+        self.trainer.set_hint_space(self.stage, [layout.name for layout in self.spec.layouts])
         # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:

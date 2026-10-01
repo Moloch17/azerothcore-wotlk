@@ -130,6 +130,11 @@ class MappoConfig:
     # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
     # block's achieved columns).
     hindsight_coef: float = 0.0
+    # **Action hints**: where the sim writes a suggested action into a layout's hint block (a whole dungeon's support,
+    # Instance.WingHint), the action head is also trained to take it, an imitation loss of this weight times the
+    # weight the sim wrote (which falls with the support, and is 0 in evaluation). The hint columns are kept out of the
+    # networks (attach_blind_columns): the policy is taught the suggestion, never shown it.
+    hint_coef: float = 0.0
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -590,6 +595,7 @@ class MappoTrainer:
         self.goal_count = self.goal_kinds * self.goal_targets if self.goal_kinds else 0
         self.slow_goal_size = config.slow_goal_size if self.goal_count else 0
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
+        self.hint_at: torch.Tensor | None = None
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
         if self.goal_slots > 1 and (not self.slow_goal_size or self.goal_slots < 3):
@@ -744,6 +750,51 @@ class MappoTrainer:
         for actor in (self.actor, self._rollout_actor):
             if actor is not None and actor.goal_head is not None:
                 actor.goal_head.set_space(goals["accepts"], block_at)
+
+    def set_hint_space(self, stage: dict | None, layout_names: list[str]) -> None:
+        """Where each layout's hint block is (stage.json layouts' blocks named "hint"): its two columns, the suggested
+        action and its weight, are read by the imitation loss and kept out of both networks."""
+        from .networks import attach_blind_columns
+        at = []
+        for layout in layout_names:
+            blocks = (((stage or {}).get("layouts") or {}).get(layout) or {}).get("blocks") or []
+            at.append(next((int(b["obs"][0]) for b in blocks if b.get("name") == "hint"), -1))
+        self.hint_at = torch.tensor(at, dtype=torch.long, device=self.train_device) if any(a >= 0 for a in at) \
+            else None
+        if self.hint_at is None:
+            return
+        columns = {index: [a, a + 1] for index, a in enumerate(at) if a >= 0}
+        for network in (self.actor, self.critic):
+            if network is not None and hasattr(network, "adapters"):
+                attach_blind_columns(network, columns)
+        self._sync_rollout()
+
+    def _hint_loss(self, dist, obs: torch.Tensor, layout: torch.Tensor, valid: torch.Tensor, stats: dict):
+        """The imitation term for the rows with a hint: -log p(hinted action) weighted by the sim's weight, over the
+        weight; None where no row has one."""
+        if self.config.hint_coef <= 0.0 or getattr(self, "hint_at", None) is None:
+            return None
+        at = self.hint_at[layout.long()]
+        rows = (at >= 0) & valid
+        if not bool(rows.any()):
+            return None
+        index = torch.arange(obs.shape[0], device=obs.device)
+        safe = at.clamp(min=0)
+        action = obs[index, safe].round().long()
+        weight = obs[index, safe + 1].float()
+        hinted = rows & (action > 0) & (weight > 0)
+        if not bool(hinted.any()):
+            return None
+        log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))
+        w = weight * hinted.float()
+        loss = -(log_prob * w).sum() / w.sum().clamp(min=1e-6)
+        with torch.no_grad():
+            match = (dist.logits.argmax(-1) == action) & hinted
+            stats["hint_loss"] = stats.get("hint_loss", 0.0) + float(loss.detach())
+            stats["hint_match"] = stats.get("hint_match", 0.0) + float(match.sum() / hinted.sum())
+            stats["hint_weight"] = stats.get("hint_weight", 0.0) + float(weight[hinted].mean())
+            stats["hint_n"] = stats.get("hint_n", 0.0) + 1.0
+        return self.config.hint_coef * loss
 
     def director_columns_clear(self) -> bool:
         """Whether both networks' director adapters still read nothing from the slot columns."""
@@ -1432,6 +1483,10 @@ class MappoTrainer:
                 policy_loss = -torch.min(ratio * adv, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * adv).mean()
 
                 actor_loss = policy_loss - self.entropy_coef * entropy
+                hint_loss = self._hint_loss(dist, obs, layout, torch.ones_like(layout, dtype=torch.bool),
+                                            auxiliary_stats)
+                if hint_loss is not None:
+                    actor_loss = actor_loss + hint_loss
                 if foresight:
                     # Huber on the discounted returns, which are on the rewards' scale and have outliers; squared
                     # error on the share of the episode left, which is already 0 to 1. Steps whose episode does not
@@ -1516,6 +1571,10 @@ class MappoTrainer:
         result["explained_variance"] = float(explained)
         result["epochs_run"] = float(epochs_run)
         result.update(self._goal_stats(data))
+        if "hint_n" in auxiliary_stats:
+            count = max(auxiliary_stats.pop("hint_n"), 1.0)
+            for name in ("hint_loss", "hint_match", "hint_weight"):
+                result[name] = auxiliary_stats.pop(name, 0.0) / count
         result.update({k: v / auxiliary_updates for k, v in auxiliary_stats.items()})
         # What the update itself cost. With overlap_updates the run's own timer measures the wait for this to
         # finish, not the work, so without this the work is invisible.
@@ -1750,6 +1809,10 @@ class MappoTrainer:
                         auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + float(
                             relabel.sum())
 
+                hint_loss = self._hint_loss(dist, obs_all, layout_all, valid[:, chunk].reshape(-1), auxiliary_stats)
+                if hint_loss is not None:
+                    actor_loss = actor_loss + hint_loss
+
                 if distill_rows:
                     # Already a mean over the sequence's taught decisions (Distiller.sequence_loss divides by
                     # rows_taught), exactly as the flat path's is over a minibatch's. Both paths add it as it comes:
@@ -1835,6 +1898,11 @@ class MappoTrainer:
         if "goal_swap_n" in auxiliary_stats:
             count = auxiliary_stats.pop("goal_swap_n")
             stats["goal_swap_action_change"] = auxiliary_stats.pop("goal_swap_action_change") / max(count, 1.0)
+        # Hints: the imitation loss, how often the greedy action is the hint and the sim's weight, per minibatch.
+        if "hint_n" in auxiliary_stats:
+            count = max(auxiliary_stats.pop("hint_n"), 1.0)
+            for name in ("hint_loss", "hint_match", "hint_weight"):
+                stats[name] = auxiliary_stats.pop(name, 0.0) / count
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             stats["hindsight_rows"] = auxiliary_stats.pop("hindsight_rows")

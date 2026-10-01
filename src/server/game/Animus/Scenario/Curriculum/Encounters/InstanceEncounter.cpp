@@ -617,6 +617,13 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
     EnvInstance::FightTrace& trace = fight.Trace;
     EnvState const& data = _scenario.Data(env);
     fight.OnParty = 0;
+    fight.OnTank = 0;
+    fight.Elites = 0;
+    fight.Tank = ObjectGuid::Empty;
+    for (uint32 index = 0; index < data.ActiveSeats && fight.Tank.IsEmpty(); ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
+            && AptitudeDemand::HoldsThePull().MetBy(data.Seats[index].Apt))
+            fight.Tank = bot->GetGUID();
     if (!fighting)
     {
         trace.InFight = false;
@@ -669,6 +676,8 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
             }
         }
         fight.OnParty = engaged;
+        fight.OnTank = onTank;
+        fight.Elites = elites;
         if (engaged > _scenario.Tuning().Instance.WingCrowdFree)
             fight.CrowdSeconds += float(_scenario.DecisionMs()) / 1000.0f;
         if (engaged > trace.PeakEngaged)
@@ -966,6 +975,28 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     for (ObjectGuid const& guid : env.Targets)
         if (std::find(fight.Watched.begin(), fight.Watched.end(), guid) == fight.Watched.end())
             fight.Watched.push_back(guid);
+
+    // Past the slots (CrowdBlock): the next of them, fight first, and the nearest pack not in the fight with the
+    // creatures standing within a pack's reach of it.
+    constexpr float PACK_REACH = 12.0f;
+    fight.Overflow.clear();
+    fight.HasAhead = false;
+    fight.AheadSize = 0;
+    for (Unit* unit : units)
+    {
+        if (std::find(env.Targets.begin(), env.Targets.end(), unit->GetGUID()) != env.Targets.end())
+            continue;
+        if (fight.Overflow.size() < CROWD_SLOTS)
+            fight.Overflow.push_back(unit->GetGUID());
+        if (!fight.HasAhead && !unit->IsInCombat())
+        {
+            fight.HasAhead = true;
+            fight.Ahead.Relocate(unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ());
+        }
+    }
+    if (fight.HasAhead)
+        for (Unit* unit : units)
+            fight.AheadSize += !unit->IsInCombat() && unit->GetExactDist(&fight.Ahead) <= PACK_REACH ? 1 : 0;
 }
 
 void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
@@ -974,6 +1005,21 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
     EnvInstance const& fight = _envs[env.Index];
     if (!Wing(env) || fight.Route.empty())
         return;
+    CrowdView& crowd = view.Crowd;
+    crowd.Present = true;
+    crowd.OnParty = fight.OnParty;
+    crowd.OnTank = fight.OnTank;
+    crowd.Elites = fight.Elites;
+    if (view.Bot)
+    {
+        crowd.Tank = fight.Tank.IsEmpty() ? nullptr : ObjectAccessor::GetUnit(*view.Bot, fight.Tank);
+        for (ObjectGuid const& guid : fight.Overflow)
+            if (Unit* unit = ObjectAccessor::GetUnit(*view.Bot, guid); unit && crowd.Count < CROWD_SLOTS)
+                crowd.Units[crowd.Count++] = unit;
+    }
+    crowd.HasAhead = fight.HasAhead;
+    crowd.Ahead = fight.Ahead;
+    crowd.AheadSize = fight.AheadSize;
     view.HasObjective = true;
     view.Objective = fight.Route[std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1)];
 }

@@ -43,6 +43,21 @@ namespace Animus::Curriculum
     struct Layout;
     class SeatMemory;
 
+    /// What is on the party past the pack's slots, as a whole dungeon reports it (CrowdBlock).
+    struct CrowdView
+    {
+        bool Present = false;
+        uint32 OnParty = 0;                         // creatures whose victim is one of the party
+        uint32 OnTank = 0;                          // ... the party's tank
+        uint32 Elites = 0;
+        Unit const* Tank = nullptr;                 // the seat the crowd is counted against
+        std::array<Unit*, CROWD_SLOTS> Units{};     // the next enemies past the pack's slots, fight first
+        uint32 Count = 0;
+        bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it
+        Position Ahead;
+        uint32 AheadSize = 0;
+    };
+
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
     /// service for a companion): the nearest thing of each kind within the seat's senses, and the episode's quest.
     struct WorldView
@@ -457,6 +472,9 @@ namespace Animus::Curriculum
         float DeadSeconds = 0.0f;
         std::array<uint32, STABLE_SLOTS> Stable{};
         uint32 StableCount = 0;
+
+        // The crowd past the pack's slots (CrowdBlock), where the encounter reports one.
+        CrowdView Crowd;
 
         // Pack: the current pull's enemies, in slot order (null for a slot whose enemy is gone).
         std::array<Unit*, PACK_SLOTS> Enemies{};

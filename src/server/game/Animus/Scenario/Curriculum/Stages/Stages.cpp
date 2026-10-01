@@ -536,7 +536,10 @@ namespace
             .Suffix = "_party",
             .Extends = "stage5_pack",
             .Summary = "the Deadmines from the door to VanCleef, five seats of its level under a director",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Goal },
+            // Crowd: what is on the party past the pack's four slots, and the pack ahead. Hint: the suggestion the
+            // learner imitates while the support lasts, hidden from the networks.
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Crowd, Hint,
+                Goal },
             .Arenas = {
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,

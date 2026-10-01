@@ -680,6 +680,27 @@ def _attach_director(network: nn.Module, director, head_width: int = 0) -> None:
     weight.register_hook(lambda grad: grad * network.director_keep)
 
 
+def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]]) -> None:
+    """Keep layout adapters blind to some of their observation columns (layout index -> columns): the weights start at
+    zero and their gradient is masked, so they stay zero through every update and the rollout copies' folding. For
+    columns the learner reads and the policy must not (the hint block: a suggestion imitated, never copied). Once per
+    network; a later call only zeroes again."""
+    for index, cols in columns.items():
+        if not cols or index >= len(network.adapters):
+            continue
+        weight = network.adapters[index].weight
+        name = f"blind_keep_{index}"
+        keep = torch.ones((1, weight.shape[1]), dtype=weight.dtype, device=weight.device)
+        keep[0, [c for c in cols if c < weight.shape[1]]] = 0.0
+        if hasattr(network, name):
+            getattr(network, name).copy_(keep)
+        else:
+            network.register_buffer(name, keep)
+            weight.register_hook(lambda grad, network=network, name=name: grad * getattr(network, name))
+        with torch.no_grad():
+            weight.mul_(getattr(network, name))
+
+
 def clear_director_columns(network: nn.Module) -> None:
     """Zero the director adapter's slot columns again (after a seed or a load brought weights from elsewhere)."""
     if getattr(network, "director_sets", None) is None:

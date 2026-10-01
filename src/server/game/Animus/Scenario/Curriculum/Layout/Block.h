@@ -58,6 +58,8 @@ namespace Animus::Curriculum
         Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
         World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
+        Crowd,          // what is on the party past the pack's slots, and the pack ahead (no actions)
+        Hint,           // a suggested action the learner imitates while the support lasts; hidden from the networks
         /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
         /// friend's resurrection. Before the goal block, which stays last.
         Death,
@@ -192,6 +194,7 @@ namespace Animus::Curriculum
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.
     constexpr uint32 PARTY_MEMBERS = GROUP_MEMBERS + SPOTLIGHT_SLOTS;
     constexpr uint32 PACK_SLOTS = 4;        // enemies observed
+    constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
     /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
     /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
     constexpr uint32 SENSE_RAYS = 16;

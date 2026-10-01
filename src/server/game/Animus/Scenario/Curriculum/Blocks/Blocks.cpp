@@ -23,6 +23,7 @@
 #include "CompanionBlock.h"
 #include "ContextBlock.h"
 #include "CoreBlock.h"
+#include "CrowdBlock.h"
 #include "DeathBlock.h"
 #include "DuelBlock.h"
 #include "MoveBlock.h"
@@ -31,6 +32,7 @@
 #include "GoalBlock.h"
 #include "OrderBlock.h"
 #include "GauntletBlock.h"
+#include "HintBlock.h"
 #include "HostilesBlock.h"
 #include "PackBlock.h"
 #include "PartyBlock.h"
@@ -59,6 +61,8 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static OrderBlock const order;
     static WorldBlock const world;
     static ForecastBlock const forecast;
+    static CrowdBlock const crowd;
+    static HintBlock const hint;
     static DeathBlock const death;
     static GoalBlock const goal;
 
@@ -66,7 +70,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static std::array<Block const*, BLOCK_COUNT> const blocks =
     {
         &core, &move, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet, &travel,
-        &flag, &support, &order, &world, &forecast, &death, &goal
+        &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &goal
     };
 
     return *blocks[std::size_t(id)];

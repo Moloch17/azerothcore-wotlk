@@ -578,6 +578,15 @@ namespace Animus::Curriculum
             bool Fighting = false;
             uint32 OnParty = 0;
             float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
+            /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
+            /// and the nearest pack not in the fight.
+            uint32 OnTank = 0;
+            uint32 Elites = 0;
+            ObjectGuid Tank;
+            std::vector<ObjectGuid> Overflow;
+            bool HasAhead = false;
+            Position Ahead;
+            uint32 AheadSize = 0;
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;

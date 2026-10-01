@@ -272,6 +272,10 @@ namespace Animus::Curriculum
             /// the next one. The Deadmines' parties had a median of eight on them when they wiped (2026-10-01).
             float WingCrowd = 0.05f;
             uint32 WingCrowdFree = 4;
+            /// The support is gone by this share of the stage's budget, whatever the parties earned.
+            float WingAssistEnd = 0.6f;
+            /// The learner imitates the scripted fight's press with this weight x the support (HintBlock).
+            float WingHint = 1.0f;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1114,6 +1118,8 @@ namespace Animus::Curriculum
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
+            f("Instance.WingAssistEnd", tuning.Instance.WingAssistEnd);
+            f("Instance.WingHint", tuning.Instance.WingHint);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);

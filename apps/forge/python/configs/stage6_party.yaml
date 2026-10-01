@@ -18,3 +18,8 @@ eval:
 cast:
   agents:
     owner: "{runs_dir}/stage5_pack/best.pt"
+
+mappo:
+  # Imitate the scripted fight's press where the sim suggests one (the dungeon's support, Instance.WingHint): the
+  # weight the sim writes falls with the support and is 0 by 60% of the budget and in every evaluation.
+  hint_coef: 1.0

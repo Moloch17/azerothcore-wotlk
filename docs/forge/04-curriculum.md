@@ -1798,6 +1798,22 @@ only for ground the seat had not reached before; and every creature on the party
 (`WingCrowdFree`) costs `WingCrowd` (0.05) a second. `wing_crowd_seconds` reports the time spent with more than a
 pack on the party.
 
+**Seeing the crowd, and hints for the whole group** (2026-10-01, after the second support run stayed flat). The pack
+block shows four enemies, and the fights that wiped had eight. The stage adds a `crowd` block (no actions): how many
+creatures are on the party, on its tank and loose, the elites, how many are past the pack's slots, the next four of
+them one by one, and the nearest pack not yet in the fight with how many stand with it. Every other block keeps its
+size, so the stage still seeds from `stage5_pack` whole.
+
+The support is now also gone by `Instance.WingAssistEnd` (60%) of the budget whatever the parties earned: the first
+support run held at 0.7 from 40M to the end, so training never met the level the evaluation plays at.
+
+While the support lasts, every seat gets an action hint: what the scripted `fight` policy would press with that
+seat's own row -- heal the most hurt, the class's rotation, close to the target -- in a `hint` block, with a weight of
+`Instance.WingHint` x the support. The learner trains the action head toward it (`mappo.hint_coef`, 1.0 here) and keeps
+the block's two columns out of both networks (their adapter weights are held at zero), so the policy is taught the
+suggestion and never shown it. The weight is 0 in evaluation and after `WingAssistEnd`. The learner reports
+`hint_loss`, `hint_match` (how often the greedy action is the hint) and `hint_weight`.
+
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages
 on a timer, the shape the follow lesson was built on -- in the rest and in every evaluation, so `owner_deaths` keeps

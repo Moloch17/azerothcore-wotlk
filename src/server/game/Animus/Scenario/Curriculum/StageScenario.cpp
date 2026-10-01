@@ -37,6 +37,7 @@
 #include "World.h"
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
+#include "HintBlock.h"
 #include "Encounters.h"
 #include "SpellMgr.h"
 #include "Env.h"
@@ -1732,8 +1733,14 @@ float Animus::Curriculum::StageScenario::WingAssist(Env const& env) const
 {
     if (env.Evaluating)
         return 0.0f;
+    // Eased by success, and gone by Instance.WingAssistEnd of the stage's budget whatever happened: the parties of the
+    // first support run never earned it down (it held at 0.7 from 40M to 200M), so training never met the level and
+    // the wipes the evaluation plays at.
     float const mastery = std::max(_tuning.Instance.WingMastery, 0.01f);
-    return std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
+    float const earned = std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
+    float const end = std::max(_tuning.Instance.WingAssistEnd, 0.01f);
+    float const clock = std::clamp(1.0f - _stageProgress.load(std::memory_order_relaxed) / end, 0.0f, 1.0f);
+    return std::min(earned, clock);
 }
 
 void Animus::Curriculum::StageScenario::NoteWingRun(float share)
@@ -3363,6 +3370,19 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         for (uint32 action = 1; action < seat.L->NumActions; ++action)
             if (mask[action] && Paced(env, seat, action))
                 mask[action] = 0;
+
+    // The suggestion to imitate while a whole dungeon's support lasts (HintBlock, Instance.WingHint): what the
+    // scripted fight would press with this row -- heal the most hurt, the rotation, close to the target -- weighted
+    // by the support, so it fades as parties succeed and is never there in evaluation. Only an allowed press.
+    if (mask && bot && bot->IsAlive() && seat.L->Has(BlockId::Hint) && Arena(env).Instance == InstanceLadder::Wing)
+        if (float const weight = _tuning.Instance.WingHint * WingAssist(env); weight > 0.0f)
+            if (int32 const hint = Baselines::Choose("fight", *seat.L, obs, mask);
+                hint > 0 && hint < int32(seat.L->NumActions) && mask[hint])
+            {
+                float* columns = obs + seat.L->Slice(BlockId::Hint).ObsFirst;
+                columns[HintBlock::OBS_ACTION] = float(hint);
+                columns[HintBlock::OBS_WEIGHT] = weight;
+            }
 }
 
 bool Animus::Curriculum::StageScenario::Paced(Env const& env, SeatState const& seat, uint32 action) const
