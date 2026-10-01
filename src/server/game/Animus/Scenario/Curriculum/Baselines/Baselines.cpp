@@ -865,22 +865,6 @@ namespace
         return best;
     }
 
-    /// The party's tank among the seat's own group: the most mitigation, alive; -1 for none.
-    int32 TankMember(Row const& row)
-    {
-        int32 best = -1;
-        float most = 0.3f;
-        for (uint32 member = 0; member < GROUP_MEMBERS; ++member)
-            if (MemberLive(row, member))
-                if (float const mitigation = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
-                    + uint32(Aptitude::BRIEF_MITIGATION)); mitigation > most)
-                {
-                    most = mitigation;
-                    best = int32(member);
-                }
-        return best;
-    }
-
     bool IsDungeonTank(Row const& row)
     {
         if (row.Has(BlockId::Crowd))
@@ -955,9 +939,10 @@ namespace
         if (!fighting)
             fighting = SlotOnParty(row, false) >= 0;
 
-        int32 const leader = tank ? -1 : TankMember(row);
-        float const leaderYards = leader >= 0 ? MemberObs(row, uint32(leader), PartyBlock::MEMBER_DISTANCE) * 40.0f
-            : 0.0f;
+        // The leader is the tank the party block follows, as the crowd block shows it.
+        bool const hasCrowd = row.Has(BlockId::Crowd);
+        bool const hasLeader = !tank && hasCrowd && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_PRESENT) > 0.0f;
+        float const leaderYards = hasLeader ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_DISTANCE) * 40.0f : 0.0f;
         auto const follow = [&row]() { return row.Allowed(BlockId::Party, PartyBlock::ACTION_FOLLOW_TANK); };
 
         if (fighting)
@@ -981,12 +966,12 @@ namespace
             else
             {
                 // Back to the tank if the fight has drawn the seat away; then the tank's target.
-                if (leader >= 0 && leaderYards > DUNGEON_LEASH_YARDS)
+                if (hasLeader && leaderYards > DUNGEON_LEASH_YARDS)
                     if (std::optional<int32> back = follow())
                         return back;
-                if (leader >= 0)
+                if (hasLeader)
                     for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
-                        if (MemberObs(row, uint32(leader), PartyBlock::MEMBER_TARGET_FIRST + slot) > 0.0f
+                        if (row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f
                             && SlotFighting(row, slot))
                             want = int32(slot);
                 if (want < 0)
@@ -1013,9 +998,16 @@ namespace
 
         if (!tank)
         {
-            if (leader >= 0 && leaderYards > DUNGEON_FOLLOW_YARDS)
+            if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
+            {
                 if (std::optional<int32> go = follow())
                     return go;
+                // The follow order is paced: between its presses, walk the tank's way.
+                if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_SIN),
+                    row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_COS)))
+                    return go;
+                return 0;
+            }
             if (std::optional<int32> halt = Halt(row))
                 return halt;
             return 0;
