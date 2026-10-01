@@ -1331,13 +1331,23 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
     // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the others
     // up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at the door
     // the next point was hundreds of yards on through the rock, and the seats walked into walls towards it.
+    // A seat that has caught up with the tank's place goes to the tank itself: the tank waits short of its next
+    // point for the party, and a seat sent to that point waited there for the tank (2026-10-01).
     std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);
     std::size_t walk = last;
-    if (view.Bot)
-        for (uint32 index = 0; index < MAX_SEATS; ++index)
-            if (_scenario.SeatBot(env, index) == view.Bot)
+    std::size_t tankWalk = last;
+    for (uint32 index = 0; index < MAX_SEATS; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index))
+        {
+            if (bot == view.Bot)
                 walk = std::min<std::size_t>(fight.Seats[index].Walk, last);
+            if (bot->GetGUID() == fight.Tank)
+                tankWalk = std::min<std::size_t>(fight.Seats[index].Walk, last);
+        }
     view.Objective = fight.Route[walk];
+    Unit const* tank = view.Crowd.Tank;
+    if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot) && walk >= tankWalk)
+        view.Objective.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,
