@@ -6044,7 +6044,7 @@ AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   evaluation; the party is WingLevelLift x assist levels above the dungeon's range, WingWipesExtra x assist more
 #   wipes stand up at the door, and a seat's goal is set by its role's rule with chance WingInstruct x assist (the
 #   healer protects whoever is under WingInstructHeal % health); WingMasteryRate is the running share's step per run
-AnimusForge.Curriculum.Instance.WingMastery = 0.8
+AnimusForge.Curriculum.Instance.WingMastery = 0.5
 AnimusForge.Curriculum.Instance.WingMasteryRate = 0.02
 AnimusForge.Curriculum.Instance.WingLevelLift = 5.0
 AnimusForge.Curriculum.Instance.WingWipesExtra = 4.0
@@ -6052,6 +6052,9 @@ AnimusForge.Curriculum.Instance.WingInstruct = 0.8
 AnimusForge.Curriculum.Instance.WingInstructHeal = 70.0
 #   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
 AnimusForge.Curriculum.Instance.WingTrace = 1
+#   per second for each hostile creature on the party beyond WingCrowdFree (a pack): a pull run into the next
+AnimusForge.Curriculum.Instance.WingCrowd = 0.05
+AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 
 #
 #    AnimusForge.Curriculum.Life.*

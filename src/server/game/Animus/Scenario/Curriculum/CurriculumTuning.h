@@ -259,7 +259,7 @@ namespace Animus::Curriculum
             /// / WingMastery), clamped to 0..1, and 0 in evaluation. At assist a the party is WingLevelLift x a
             /// levels above the dungeon's range, WingWipesExtra x a more wipes are stood up at the door, and each
             /// seat is instructed with chance WingInstruct x a (its goal set by its role's rule, unlearned).
-            float WingMastery = 0.8f;
+            float WingMastery = 0.5f;
             float WingMasteryRate = 0.02f;      // the running share's step per finished training run
             float WingLevelLift = 5.0f;
             float WingWipesExtra = 4.0f;
@@ -268,6 +268,10 @@ namespace Animus::Curriculum
             float WingInstructHeal = 70.0f;
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
             uint32 WingTrace = 1;
+            /// Per second, for each hostile creature on the party past WingCrowdFree (a pack): the pull that ran into
+            /// the next one. The Deadmines' parties had a median of eight on them when they wiped (2026-10-01).
+            float WingCrowd = 0.05f;
+            uint32 WingCrowdFree = 4;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1108,6 +1112,8 @@ namespace Animus::Curriculum
             f("Instance.WingInstruct", tuning.Instance.WingInstruct);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
+            f("Instance.WingCrowd", tuning.Instance.WingCrowd);
+            f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);

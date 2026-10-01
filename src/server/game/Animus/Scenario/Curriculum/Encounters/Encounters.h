@@ -517,7 +517,7 @@ namespace Animus::Curriculum
             uint32 WaypointsPaid = 0;
             uint32 WipesPaid = 0;
             bool DeathPaid = false;
-            float Potential = 0.0f;             // the route still ahead of it (Instance.WingProgress)
+            float Potential = 0.0f;             // the least route ahead it has reached (Instance.WingProgress)
             bool PotentialReady = false;
         };
 
@@ -572,7 +572,12 @@ namespace Animus::Curriculum
                 std::string PeakEntries;
                 std::string Deaths;
                 std::array<bool, MAX_SEATS> Dead{};
+                std::array<uint8, MAX_SEATS> Mana{};    // each seat's mana share when last seen alive
             } Trace;
+            /// The party is in a fight this decision, and how many hostile creatures are on it.
+            bool Fighting = false;
+            uint32 OnParty = 0;
+            float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;

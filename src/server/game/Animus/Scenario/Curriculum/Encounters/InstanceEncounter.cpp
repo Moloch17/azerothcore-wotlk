@@ -138,7 +138,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout, RewardTerm::Stall,
-        RewardTerm::Readiness };
+        RewardTerm::Readiness, RewardTerm::Threat };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -168,6 +168,7 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
                 / float(fight.Route.size());
         });
         table.Add("wing_wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
+        table.Add("wing_crowd_seconds", [this](Env const& env, uint32) { return _envs[env.Index].CrowdSeconds; });
         table.Add("wing_assist", [this](Env const& env, uint32) { return _envs[env.Index].Assist; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
     }
@@ -564,19 +565,19 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         return;
     }
 
-    if (_scenario.Tuning().Instance.WingTrace)
-    {
-        bool fighting = false;
-        for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
-            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
-                fighting = true;
-        TraceWing(env, fight, fighting || !anyoneAlive);
-    }
+    // Whether the party is in a fight, and how many are on it (Instance.WingCrowd), followed for the wipe's line too.
+    fight.Fighting = false;
+    for (uint32 slot = 0; slot < env.Targets.size() && !fight.Fighting; ++slot)
+        if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+            fight.Fighting = true;
+    TraceWing(env, fight, fight.Fighting || !anyoneAlive);
 
-    // A wing: the next point of the route reached by any seat; a wipe stands the party up at the door (until
+    // A wing: the next point of the route reached by any seat out of a fight -- ground is taken by clearing it, not
+    // by running past what is still fighting (the Deadmines' parties ran into the next pack mid-fight and had eight on
+    // them at once, 2026-10-01); a wipe stands the party up at the door (until
     // the run's allowance, Instance.WingWipes and more while the support lasts, which ends it), with the trash that
     // killed it still where it was.
-    if (fight.RouteNext < fight.Route.size())
+    if (fight.RouteNext < fight.Route.size() && !fight.Fighting)
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
                 && bot->GetExactDist(&fight.Route[fight.RouteNext]) <= 15.0f)
@@ -615,6 +616,7 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
 {
     EnvInstance::FightTrace& trace = fight.Trace;
     EnvState const& data = _scenario.Data(env);
+    fight.OnParty = 0;
     if (!fighting)
     {
         trace.InFight = false;
@@ -666,6 +668,9 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
                 ++entries[creature->GetEntry()];
             }
         }
+        fight.OnParty = engaged;
+        if (engaged > _scenario.Tuning().Instance.WingCrowdFree)
+            fight.CrowdSeconds += float(_scenario.DecisionMs()) / 1000.0f;
         if (engaged > trace.PeakEngaged)
         {
             trace.PeakEngaged = engaged;
@@ -687,17 +692,19 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
     for (uint32 index = 0; index < data.ActiveSeats; ++index)
     {
         Player* bot = _scenario.SeatBot(env, index);
+        if (bot && bot->IsAlive() && bot->GetMaxPower(POWER_MANA))
+            trace.Mana[index] = uint8(bot->GetPower(POWER_MANA) * 100 / bot->GetMaxPower(POWER_MANA));
         if (!bot || bot->IsAlive() || trace.Dead[index])
             continue;
         trace.Dead[index] = true;
         Aptitude const& apt = data.Seats[index].Apt;
         char const* role = AptitudeDemand::HoldsThePull().MetBy(apt) ? "tank"
             : AptitudeDemand::KeepsThemUp().MetBy(apt) ? "healer" : "dps";
-        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        // The mana it had last alive: a corpse has none.
         trace.Deaths += Acore::StringFormat("{}{} {} {:.0f}s{}", trace.Deaths.empty() ? "" : ", ", role,
             bot->getClass() < std::size(CLASS_NAMES) ? CLASS_NAMES[bot->getClass()] : "?",
             float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
-            maxMana ? Acore::StringFormat(" mana {}%", bot->GetPower(POWER_MANA) * 100 / maxMana) : "");
+            bot->GetMaxPower(POWER_MANA) ? Acore::StringFormat(" mana {}%", trace.Mana[index]) : "");
     }
 }
 
@@ -998,6 +1005,10 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     }
     if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
         ledger.Add(RewardTerm::Stall, -tuning.WingStall * float(_scenario.DecisionMs()) / 1000.0f);
+    // More on the party than a pack (Instance.WingCrowd, past WingCrowdFree): a pull that ran into the next.
+    if (fight.OnParty > tuning.WingCrowdFree)
+        ledger.Add(RewardTerm::Threat, -tuning.WingCrowd * float(fight.OnParty - tuning.WingCrowdFree)
+            * float(_scenario.DecisionMs()) / 1000.0f);
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
@@ -1005,23 +1016,23 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
         ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * tierScale * float(fight.BossKills - paid.BossKillsPaid));
 
         // Forward through the dungeon, paid as it is walked (Instance.WingProgress over the whole route): the
-        // potential is the route still ahead -- to the next point, then along the route from it -- so going back
-        // costs what coming forward paid. The route points alone were a coarse signal, and the parties stood at
-        // the door.
-        if (!fight.Route.empty() && fight.RouteNext < fight.Route.size() && !fight.RouteRemain.empty())
+        // potential is the route still ahead -- to the next point, then along the route from it. The route points
+        // alone were a coarse signal, and the parties stood at the door. Paid once, for ground the seat had not
+        // reached before, and only out of a fight: walking past a pack still fighting paid it to pull the next one.
+        if (!fight.Route.empty() && fight.RouteNext < fight.Route.size() && !fight.RouteRemain.empty()
+            && !fight.Fighting)
         {
             std::size_t const next = fight.RouteNext;
             float const total = std::max(1.0f, fight.RouteRemain.front());
             float const ahead = bot->GetExactDist(&fight.Route[next]) + fight.RouteRemain[next];
             float const potential = -ahead / total;
-            if (paid.PotentialReady)
+            if (paid.PotentialReady && potential > paid.Potential)
                 ledger.Add(RewardTerm::Approach, tuning.WingProgress * tierScale * (potential - paid.Potential));
-            paid.Potential = potential;
+            if (!paid.PotentialReady || potential > paid.Potential)
+                paid.Potential = potential;
             paid.PotentialReady = true;
         }
     }
-    else
-        paid.PotentialReady = false;
     paid.KillsPaid = fight.TrashKills;
     paid.BossKillsPaid = fight.BossKills;
     paid.WaypointsPaid = waypoints;

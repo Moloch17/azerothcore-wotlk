@@ -1777,7 +1777,7 @@ drawn for its seats. The companion arena, the synthetic party pulls and the tank
 the stage; the companion block stays in its layout for the stages built on it.
 
 **Support that eases off with success.** While parties get nowhere the dungeon is made easier in three ways, all set
-by one number, the assist: 1 minus the running route share of training runs over `Instance.WingMastery` (0.8),
+by one number, the assist: 1 minus the running route share of training runs over `Instance.WingMastery` (0.5),
 clamped to 0..1. At assist *a*:
 
 - the party is `WingLevelLift` x *a* levels above the dungeon's range (5: 22-25 at the start, 17-20 at the end);
@@ -1789,6 +1789,14 @@ clamped to 0..1. At assist *a*:
 
 The assist is 0 in evaluation, which always runs the dungeon at its own level, with one wipe and no instruction.
 `wing_assist` and `wing_level` are in the episode report.
+
+**Ground is taken by clearing it.** A wipe trace (`Instance.WingTrace`, a log line per wipe) of the first support run
+showed the parties wiping at the mine's first packs with a median of eight creatures on them -- seven miners, an
+overseer and an evoker -- and in 57% of those fights none on the tank: they walked on into the next pack mid-fight,
+because the route paid for it. Now a route point is reached, and the route's progress paid, only out of a fight, and
+only for ground the seat had not reached before; and every creature on the party past a pack's four
+(`WingCrowdFree`) costs `WingCrowd` (0.05) a second. `wing_crowd_seconds` reports the time spent with more than a
+pack on the party.
 
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages
