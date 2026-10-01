@@ -335,10 +335,9 @@ namespace Animus::Curriculum
         /// can hold a pull).
         [[nodiscard]] std::vector<Casting> Castings(AptitudeDemand demand) const;
         /// A whole dungeon's party is a tank, a healer and three damage dealers: places in it, and whether a casting
-        /// fits one. The tank is a build that holds a pull; the healer one geared to heal (its spec's stat profile);
-        /// a damage dealer is neither -- a retribution paladin or an enhancement shaman, whose heals did not make
+        /// fits one, by what its spec is geared for (its stat profile): the tank geared to tank, the healer to heal,
+        /// a damage dealer neither -- a retribution paladin or an enhancement shaman, whose heals did not make
         /// them the healer, and parties of three healers or two tanks were drawn by the looser makeup (2026-10-01).
-        enum DungeonRole : uint8 { DUNGEON_ANY = 0, DUNGEON_TANK, DUNGEON_HEALER, DUNGEON_DAMAGE };
         [[nodiscard]] static bool FitsDungeonRole(Casting const& casting, uint8 role);
 
         /// The class and build `seat` plays this episode. An evaluation episode takes both from its seed index, so

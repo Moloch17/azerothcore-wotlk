@@ -110,7 +110,9 @@ Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
         if (!tank || !tank->IsAlive())
             continue;
 
-        bool const can = HoldsThePull(state.Apt);
+        // A dungeon's party names its tank (StageScenario::FitsDungeonRole); any other reads it off the build.
+        bool const can = state.DungeonRole == DUNGEON_TANK
+            || (state.DungeonRole == DUNGEON_ANY && HoldsThePull(state.Apt));
         if ((can && !holds) || (can == holds && state.Apt[Aptitude::MITIGATION] > most))
         {
             holds = holds || can;

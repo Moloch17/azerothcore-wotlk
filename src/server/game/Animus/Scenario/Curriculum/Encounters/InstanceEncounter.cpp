@@ -857,8 +857,11 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && data.Seats[index].L)
             {
+                // The seat drawn as the party's tank, while it lives (StageScenario::FitsDungeonRole).
                 Aptitude const& apt = data.Seats[index].Apt;
-                bool const can = AptitudeDemand::HoldsThePull().MetBy(apt);
+                bool const can = data.Seats[index].DungeonRole == DUNGEON_TANK
+                    || (data.Seats[index].DungeonRole == DUNGEON_ANY
+                        && AptitudeDemand::HoldsThePull().MetBy(apt));
                 if ((can && !holds) || (can == holds && apt[Aptitude::MITIGATION] > most))
                 {
                     holds = holds || can;

@@ -175,6 +175,10 @@ namespace Animus::Curriculum
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);
     [[nodiscard]] char const* AimlessCauseName(AimlessCause cause);
 
+    /// A seat's place in a whole dungeon's party (StageScenario::FitsDungeonRole): any, or the tank, the healer or a
+    /// damage dealer.
+    enum DungeonRole : uint8 { DUNGEON_ANY = 0, DUNGEON_TANK, DUNGEON_HEALER, DUNGEON_DAMAGE };
+
     struct SeatState
     {
         Layout const* L = nullptr;              // null for a party seat left empty this episode

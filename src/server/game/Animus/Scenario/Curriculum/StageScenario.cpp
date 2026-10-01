@@ -1685,13 +1685,11 @@ bool Animus::Curriculum::StageScenario::FitsDungeonRole(Casting const& casting, 
 {
     if (role == DUNGEON_ANY || !casting.L || !casting.L->Profile || casting.Spec >= casting.L->Profile->Specs.size())
         return true;
-    ClassAssets const& assets = ClassAssets::For(*casting.L->Profile);
-    if (casting.Spec >= assets.SpecAptitudes.size())
-        return true;
-    Aptitude const& aptitude = assets.SpecAptitudes[casting.Spec];
-    bool const holds = AptitudeDemand::HoldsThePull().MetBy(aptitude);
-    bool const heals = casting.L->Profile->Specs[casting.Spec].Stats == StatProfile::Healer
-        && AptitudeDemand::KeepsThemUp().MetBy(aptitude);
+    // What the spec is geared for: a level-80 aptitude read a restoration shaman with a shield as somebody who holds
+    // a pull, and drew parties of two "tanks" and no healer at 17-20 (2026-10-01).
+    StatProfile const stats = casting.L->Profile->Specs[casting.Spec].Stats;
+    bool const holds = stats == StatProfile::Tank;
+    bool const heals = stats == StatProfile::Healer;
     switch (role)
     {
         case DUNGEON_TANK:
