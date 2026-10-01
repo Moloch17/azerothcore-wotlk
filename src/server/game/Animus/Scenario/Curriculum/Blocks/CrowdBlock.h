@@ -76,7 +76,13 @@ namespace Animus::Curriculum
         {
             /// Use the nearest usable thing within reach: pull a lever, press a button, fire the cannon, open a door.
             ACTION_USE_OBJECT   = 0,
-            ACTION_COUNT        = 1
+            /// Walk the server's path to the seat's objective: the next point of the route, or for a seat other than
+            /// the tank the route back towards it. Smooth, pathed movement the script uses and a seat can learn,
+            /// where held bearings zig-zagged and walked into walls (2026-10-01).
+            ACTION_ADVANCE      = 1,
+            /// Walk the server's path to the nearest usable thing (a lever, the cannon).
+            ACTION_APPROACH_OBJECT = 2,
+            ACTION_COUNT        = 3
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
@@ -84,6 +90,10 @@ namespace Animus::Curriculum
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+        [[nodiscard]] bool IsMovement(uint32 local) const override
+        {
+            return local == ACTION_ADVANCE || local == ACTION_APPROACH_OBJECT;
+        }
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
     };
 }

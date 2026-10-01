@@ -1002,8 +1002,7 @@ namespace
             // Far behind (risen at the door, or left behind): back along the route to the tank.
             if (hasLeader && leaderYards > DUNGEON_FAR_YARDS)
             {
-                if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
-                    row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+                if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
                     return go;
                 return 0;
             }
@@ -1011,10 +1010,7 @@ namespace
             {
                 if (std::optional<int32> go = follow())
                     return go;
-                // The follow order is paced: between its presses, walk the tank's way.
-                if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_SIN),
-                    row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_COS)))
-                    return go;
+                // The follow order is paced: between its presses it is still walking the path to the tank.
                 return 0;
             }
             if (std::optional<int32> halt = Halt(row))
@@ -1072,16 +1068,13 @@ namespace
         {
             if (std::optional<int32> use = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_USE_OBJECT))
                 return use;
-            if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_SIN),
-                row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_COS)))
+            if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_APPROACH_OBJECT))
                 return go;
             return 0;
         }
 
-        // On along the route.
-        float const toSin = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN);
-        float const toCos = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS);
-        if (std::optional<int32> go = Steer(row, toSin, toCos))
+        // On along the route, on the server's path: smooth, and round the corners.
+        if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
             return go;
         return 0;
     }

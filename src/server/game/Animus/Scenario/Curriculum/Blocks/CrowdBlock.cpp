@@ -22,8 +22,17 @@
 #include "Player.h"
 #include "WorldActions.h"
 #include "SeatView.h"
+#include "EncoderSupport.h"
+#include "MotionMaster.h"
 #include <boost/json/object.hpp>
 #include <cmath>
+
+namespace
+{
+    constexpr uint32 ADVANCE_POINT_ID = 31;
+    constexpr uint32 APPROACH_OBJECT_POINT_ID = 32;
+    constexpr float ARRIVED_YARDS = 3.0f;
+}
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CrowdBlock::Size(Layout const& /*layout*/) const
 {
@@ -63,9 +72,16 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         obs[OBS_OBJECT_SIN] = std::sin(angle);
         obs[OBS_OBJECT_COS] = std::cos(angle);
         obs[OBS_OBJECT_DOOR] = object->GetGoType() == GAMEOBJECT_TYPE_DOOR ? 1.0f : 0.0f;
-        if (mask && bot->IsAlive() && !bot->IsInCombat() && bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS))
-            mask[ACTION_USE_OBJECT] = 1;
+        if (mask && bot->IsAlive() && !bot->IsInCombat())
+        {
+            bool const inReach = bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS);
+            mask[ACTION_USE_OBJECT] = inReach ? 1 : 0;
+            mask[ACTION_APPROACH_OBJECT] = inReach ? 0 : 1;
+        }
     }
+    if (mask && bot->IsAlive() && view.HasObjective && bot->GetExactDist(&view.Objective) > ARRIVED_YARDS
+        && !bot->HasUnitState(Encoding::IMMOBILE_STATES))
+        mask[ACTION_ADVANCE] = 1;
 
     obs[OBS_PRESENT] = 1.0f;
     obs[OBS_ON_PARTY] = std::min(2.0f, float(crowd.OnParty) / 8.0f);
@@ -108,9 +124,25 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
 void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
 {
     Player* bot = view.Bot;
+    if (!bot || !bot->IsAlive())
+        return;
+    if (local == ACTION_ADVANCE)
+    {
+        if (view.HasObjective)
+            Encoding::MoveTo(bot, ADVANCE_POINT_ID, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
+                view.Objective.GetPositionZ());
+        return;
+    }
     GameObject* object = view.Crowd.Object;
-    if (local != ACTION_USE_OBJECT || !bot || !bot->IsAlive() || bot->IsInCombat() || !object || !object->IsInMap(bot)
-        || !bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS))
+    if (bot->IsInCombat() || !object || !object->IsInMap(bot))
+        return;
+    if (local == ACTION_APPROACH_OBJECT)
+    {
+        Encoding::MoveTo(bot, APPROACH_OBJECT_POINT_ID, object->GetPositionX(), object->GetPositionY(),
+            object->GetPositionZ());
+        return;
+    }
+    if (local != ACTION_USE_OBJECT || !bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS))
         return;
     // A right-click on it: a lever or a button runs what it is linked to, the cannon fires, a door opens.
     object->Use(bot);
@@ -118,5 +150,11 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
 
 std::string Animus::Curriculum::CrowdBlock::ActionName(Layout const& /*layout*/, uint32 local) const
 {
-    return local == ACTION_USE_OBJECT ? "use_object" : std::string();
+    switch (local)
+    {
+        case ACTION_USE_OBJECT:         return "use_object";
+        case ACTION_ADVANCE:            return "advance";
+        case ACTION_APPROACH_OBJECT:    return "approach_object";
+        default:                        return {};
+    }
 }

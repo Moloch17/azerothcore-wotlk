@@ -649,6 +649,14 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             }
         float const toNext = tank && fight.RouteNext < fight.Route.size()
             ? tank->GetExactDist(&fight.Route[fight.RouteNext]) : -1.0f;
+        std::string objects;
+        if (tank)
+            for (ObjectGuid const& guid : fight.Objects)
+                if (GameObject* object = ObjectAccessor::GetGameObject(*tank, guid))
+                    objects += Acore::StringFormat("{}{} type {} state {} {:.0f}yd", objects.empty() ? "" : ", ",
+                        object->GetEntry(), uint32(object->GetGoType()), uint32(object->GetGoState()),
+                        tank->GetExactDist(object));
+        seats += " | objects: " + (objects.empty() ? std::string("none") : objects);
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
             fight.OnParty, fight.HasAhead && tank ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead),
