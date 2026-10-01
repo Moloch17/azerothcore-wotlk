@@ -629,6 +629,37 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         }
     }
 
+    // A thing the tank has had within reach of the script (25 yd), out of a fight, unused for 45 s is out of its
+    // reach (on a ledge, in the wall): it is passed by for the rest of the run, as used.
+    constexpr float NEAR_OBJECT_YARDS = 25.0f;
+    constexpr uint32 GIVE_UP_MS = 45000;
+    {
+        Player* tank = nullptr;
+        for (uint32 index = 0; index < data.ActiveSeats && !tank; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->GetGUID() == fight.Tank && bot->IsAlive())
+                tank = bot;
+        GameObject* nearest = nullptr;
+        if (tank && !fight.Fighting)
+            for (ObjectGuid const& guid : fight.Objects)
+                if (GameObject* object = ObjectAccessor::GetGameObject(*tank, guid); object && Usable(object)
+                    && CrowdBlock::CanUse(tank, object) && tank->GetExactDist(object) <= NEAR_OBJECT_YARDS
+                    && std::find(fight.Used.begin(), fight.Used.end(), guid) == fight.Used.end()
+                    && (!nearest || tank->GetExactDist(object) < tank->GetExactDist(nearest)))
+                    nearest = object;
+        if (!nearest)
+            fight.Approached = ObjectGuid::Empty;
+        else if (nearest->GetGUID() != fight.Approached)
+        {
+            fight.Approached = nearest->GetGUID();
+            fight.ApproachedMs = env.EpisodeElapsedMs;
+        }
+        else if (env.EpisodeElapsedMs > fight.ApproachedMs + GIVE_UP_MS)
+        {
+            fight.Used.push_back(fight.Approached);
+            fight.Approached = ObjectGuid::Empty;
+        }
+    }
+
     // Each seat's place on the route: on to the furthest of the next few points it is near, up to the route's next
     // point for the tank and up to the tank's place for the others.
     constexpr float WALK_REACH = 12.0f;
@@ -908,7 +939,15 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
         case GAMEOBJECT_TYPE_BUTTON:
         case GAMEOBJECT_TYPE_GOOBER:
         case GAMEOBJECT_TYPE_CHEST:
+        {
+            // Only a chest any hand opens (the Deadmines' gunpowder): a vein, a herb or a locked chest wants a skill
+            // the party may not have, and the tank stood by a Tin Vein in the wall for the hour (2026-10-01).
+            LockEntry const* lock = sLockStore.LookupEntry(object->GetGOInfo()->GetLockId());
+            for (uint32 i = 0; lock && i < MAX_LOCK_CASE; ++i)
+                if (lock->Type[i] == LOCK_KEY_SKILL && lock->Skill[i])
+                    return false;
             return true;
+        }
         case GAMEOBJECT_TYPE_DOOR:
             // A door with a lock is opened by what its lock names (a lever, the cannon), not by a hand on it.
             return !object->GetGOInfo()->GetLockId();

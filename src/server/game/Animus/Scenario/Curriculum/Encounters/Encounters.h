@@ -594,6 +594,8 @@ namespace Animus::Curriculum
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
+            ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
+            uint32 ApproachedMs = 0;
             bool HasAhead = false;
             Position Ahead;
             uint32 AheadSize = 0;
