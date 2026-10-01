@@ -147,7 +147,7 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 256 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 128 |
 | `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
 | `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
 | `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
@@ -1817,7 +1817,7 @@ suggestion and never shown it. The weight is 0 in evaluation and after `WingAssi
 **A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
 clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
 pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, nearest next from the door,
-VanCleef last, and the episode runs up to an hour. `wing_cleared_share` is the share of the instance's creatures
+VanCleef last, and the episode runs up to 90 minutes. `wing_cleared_share` is the share of the instance's creatures
 killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
 
 - the tank leads along the route, waits until every member is above 80% health and 60% mana and within 15 yd, then

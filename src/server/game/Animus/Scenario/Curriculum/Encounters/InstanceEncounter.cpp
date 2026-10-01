@@ -622,6 +622,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             bot->ResurrectPlayer(0.5f);
             bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
             BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
+            bot->CombatStopWithPets(true);
             seatState.DeathPaid = false;
             seatState.Walk = 0;
             seatState.DeadSinceMs = 0;
@@ -774,6 +775,9 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 bot->ResurrectPlayer(0.5f);
                 bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
                 BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
+                // Out of the fight it lost: what killed it stays where it was, and a party still flagged in combat
+                // with it could not eat or drink at the door, and waited there for the hour (2026-10-01).
+                bot->CombatStopWithPets(true);
                 fight.Seats[index].DeathPaid = false;
                 fight.Seats[index].Walk = 0;
             }
