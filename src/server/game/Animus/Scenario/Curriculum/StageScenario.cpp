@@ -3535,6 +3535,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
                 columns[HintBlock::OBS_SCRIPTED] = seat.Scripted ? 1.0f : 0.0f;
                 if (seat.Scripted)
                     seat.ScriptAction = hint;
+                seat.ScriptReason = Baselines::LastDungeonReason();
             }
     }
 }

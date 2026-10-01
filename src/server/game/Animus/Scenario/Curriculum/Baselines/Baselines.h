@@ -35,6 +35,9 @@ namespace Animus::Curriculum::Baselines
 
     /// The baseline's action for one seat's row; 0 when nothing fits.
     [[nodiscard]] int32 Choose(std::string const& policy, Layout const& layout, float const* obs, uint8 const* mask);
+
+    /// Why the "dungeon" policy made this thread's last choice, in words: the "Wing stuck" log line shows it.
+    [[nodiscard]] std::string const& LastDungeonReason();
 }
 
 #endif

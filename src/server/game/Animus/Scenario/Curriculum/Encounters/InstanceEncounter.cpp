@@ -750,11 +750,13 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             if (Player* bot = _scenario.SeatBot(env, index))
             {
                 uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}]", seats.empty() ? "" : " ",
+                std::string const& reason = data.Seats[index].ScriptReason;
+                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}{}]", seats.empty() ? "" : " ",
                     index, bot == tank ? " tank" : "", bot->GetHealthPct(),
                     maxMana ? std::to_string(bot->GetPower(POWER_MANA) * 100 / maxMana) + "%" : "-",
                     tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f,
-                    bot->IsAlive() ? "" : " dead", bot->IsInCombat() ? " combat" : "");
+                    bot->IsAlive() ? "" : " dead", bot->IsInCombat() ? " combat" : "",
+                    reason.empty() ? std::string() : " {" + reason + "}");
             }
         float const toNext = tank && fight.RouteNext < fight.Route.size()
             ? tank->GetExactDist(&fight.Route[fight.RouteNext]) : -1.0f;

@@ -29,6 +29,7 @@
 #include "PetBlock.h"
 #include "SupportBlock.h"
 #include "SharedDefines.h"
+#include "StringFormat.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "TravelBlock.h"
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace
@@ -959,8 +961,12 @@ namespace
         return Rotation(row, layout);
     }
 
+    /// Why the dungeon script chose what it chose last on this thread, for the "Wing stuck" log line.
+    thread_local std::string DungeonReason;
+
     std::optional<int32> Dungeon(Row const& row, Layout const& layout)
     {
+        DungeonReason = "fight";
         if (!row.Has(BlockId::Pack) || !row.Has(BlockId::Party))
             return Fight(row, layout);
 
@@ -1007,7 +1013,10 @@ namespace
                 // Back to the tank if the fight has drawn the seat away; then the tank's target.
                 if (hasLeader && leaderYards > DUNGEON_LEASH_YARDS)
                     if (std::optional<int32> back = follow())
+                    {
+                        DungeonReason = "fight: back to the tank";
                         return back;
+                    }
                 if (hasLeader)
                     for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
                         if (row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f
@@ -1075,7 +1084,10 @@ namespace
                 // About to take it off the tank: hold back a moment.
                 if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
                     && SlotObs(row, uint32(want), PackBlock::SLOT_THREAT_SHARE) >= 0.9f)
+                {
+                    DungeonReason = "fight: holding back (threat)";
                     return 0;
+                }
             }
 
             if (want >= 0 || healer)
@@ -1084,6 +1096,7 @@ namespace
             return 0;
         }
 
+        DungeonReason = "between pulls";
         // Between pulls: raise the dead, heal whoever is actually hurt, then eat and drink. The healer kept its shield
         // and heal over time up between pulls and never got its mana back, and the pull waited for it (2026-10-01).
         if (std::optional<int32> revive = Revive(row))
@@ -1095,7 +1108,10 @@ namespace
             if (std::optional<int32> heal = Support(row, layout))
                 return heal;
         if (std::optional<int32> rest = Rest(row))
+        {
+            DungeonReason = *rest ? "eat or drink" : "eating or drinking";
             return rest;
+        }
 
         if (!tank)
         {
@@ -1103,12 +1119,15 @@ namespace
             // along the route to it, which is always walkable.
             if (hasLeader && leaderYards > DUNGEON_GATHER_YARDS)
             {
+                DungeonReason = Acore::StringFormat("walking the route to the tank ({:.0f} yd)", leaderYards);
                 if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
                     return go;
+                DungeonReason += ", advance not allowed";
                 return 0;
             }
             if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
             {
+                DungeonReason = Acore::StringFormat("following the tank ({:.0f} yd)", leaderYards);
                 if (std::optional<int32> go = follow())
                     return go;
                 // The follow order is paced: between its presses it is still walking the path to the tank.
@@ -1138,6 +1157,25 @@ namespace
         }
         if (!ready)
         {
+            DungeonReason = "the tank waits:";
+            if (row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) < DUNGEON_READY_HEALTH)
+                DungeonReason += " its own health";
+            for (uint32 member = 0; member < GROUP_MEMBERS; ++member)
+            {
+                if (MemberObs(row, member, PartyBlock::MEMBER_PRESENT) == 0.0f)
+                    continue;
+                if (!MemberLive(row, member))
+                    DungeonReason += Acore::StringFormat(" member {} dead;", member);
+                else if (MemberObs(row, member, PartyBlock::MEMBER_HEALTH) < DUNGEON_READY_HEALTH)
+                    DungeonReason += Acore::StringFormat(" member {} health;", member);
+                else if (MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f > DUNGEON_GATHER_YARDS)
+                    DungeonReason += Acore::StringFormat(" member {} {:.0f} yd;", member,
+                        MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f);
+                else if (MemberObs(row, member, PartyBlock::MEMBER_MANA) > 0.0f
+                    && MemberObs(row, member, PartyBlock::MEMBER_MANA) < DUNGEON_READY_MANA)
+                    DungeonReason += Acore::StringFormat(" member {} mana {:.0f}%;", member,
+                        MemberObs(row, member, PartyBlock::MEMBER_MANA) * 100.0f);
+            }
             // A tank that rose at the door goes back to its party rather than waiting for it to come out.
             if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_BEHIND) > 0.0f)
                 if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
@@ -1183,6 +1221,11 @@ namespace
             return go;
         return 0;
     }
+}
+
+std::string const& Animus::Curriculum::Baselines::LastDungeonReason()
+{
+    return DungeonReason;
 }
 
 bool Animus::Curriculum::Baselines::Supports(std::string const& policy, Layout const& layout)

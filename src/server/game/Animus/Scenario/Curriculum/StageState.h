@@ -333,6 +333,7 @@ namespace Animus::Curriculum
         bool Scripted = false;
         bool ScriptDrawn = false;
         int32 ScriptAction = -1;
+        std::string ScriptReason;               // why the dungeon script chose it (Baselines::LastDungeonReason)
         std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
