@@ -811,8 +811,8 @@ namespace
     /// stays with the tank, attacks the tank's target, and the healer keeps them up. Between pulls everyone eats,
     /// drinks and raises the dead. Reads only the row, like every baseline.
     constexpr float DUNGEON_PULL_YARDS = 25.0f;         // the tank pulls the pack ahead from this close
-    constexpr float DUNGEON_READY_HEALTH = 0.8f;        // ... once everybody has this much health
-    constexpr float DUNGEON_READY_MANA = 0.6f;          // ... and mana
+    constexpr float DUNGEON_READY_HEALTH = 0.7f;        // ... once everybody has this much health
+    constexpr float DUNGEON_READY_MANA = 0.5f;          // ... and the healer this much mana
     constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
     constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
     constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
