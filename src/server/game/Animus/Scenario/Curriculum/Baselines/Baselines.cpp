@@ -1062,6 +1062,19 @@ namespace
             }
         }
 
+        // What opens the way on -- a lever, the cannon, a door -- once nothing is left to pull near it: walk to it and
+        // use it.
+        if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_PRESENT) > 0.0f
+            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_DISTANCE) * 40.0f <= DUNGEON_PULL_YARDS)
+        {
+            if (std::optional<int32> use = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_USE_OBJECT))
+                return use;
+            if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_SIN),
+                row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_COS)))
+                return go;
+            return 0;
+        }
+
         // On along the route.
         float const toSin = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN);
         float const toCos = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS);

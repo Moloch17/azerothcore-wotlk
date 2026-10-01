@@ -591,6 +591,7 @@ namespace Animus::Curriculum
             uint32 Elites = 0;
             ObjectGuid Tank;
             std::vector<ObjectGuid> Overflow;
+            std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
             bool HasAhead = false;
             Position Ahead;
             uint32 AheadSize = 0;
@@ -603,6 +604,8 @@ namespace Animus::Curriculum
         /// A creature a full clear kills (Instance.WingFullClear): alive, hostile to the party, not a critter, a
         /// civilian, a totem, a pet or a summon, and attackable.
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
+        /// A lever, a button, a goober (the Deadmines' cannon) or a closed door, spawned, ready and not locked.
+        [[nodiscard]] static bool Usable(GameObject const* object);
         /// The door-to-boss path as points every Instance.WingWaypointYards (the last one the boss), once per boss.
         [[nodiscard]] std::vector<Position> WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);

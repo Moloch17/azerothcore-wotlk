@@ -284,6 +284,8 @@ namespace Animus::Curriculum
             float WingScriptEnd = 0.4f;
             /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
             uint32 WingRiseMs = 30000;
+            /// 1: a closed door opens by itself when a seat reaches it out of a fight (before the use action existed).
+            uint32 WingAutoDoors = 0;
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
             /// leader.
             float WingStray = 0.02f;
@@ -1136,6 +1138,7 @@ namespace Animus::Curriculum
             f("Instance.WingScript", tuning.Instance.WingScript);
             f("Instance.WingScriptEnd", tuning.Instance.WingScriptEnd);
             f("Instance.WingRiseMs", tuning.Instance.WingRiseMs);
+            f("Instance.WingAutoDoors", tuning.Instance.WingAutoDoors);
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Life.StepCost", tuning.Life.StepCost);

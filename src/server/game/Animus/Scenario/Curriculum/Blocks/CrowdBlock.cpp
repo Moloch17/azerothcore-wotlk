@@ -18,14 +18,16 @@
 
 #include "CrowdBlock.h"
 #include "Creature.h"
+#include "GameObject.h"
 #include "Player.h"
+#include "WorldActions.h"
 #include "SeatView.h"
 #include <boost/json/object.hpp>
 #include <cmath>
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CrowdBlock::Size(Layout const& /*layout*/) const
 {
-    return { OBS_SLOT_FIRST + CROWD_SLOTS * SLOT_FEATURES, 0 };
+    return { OBS_SLOT_FIRST + CROWD_SLOTS * SLOT_FEATURES, ACTION_COUNT };
 }
 
 void Animus::Curriculum::CrowdBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
@@ -34,12 +36,24 @@ void Animus::Curriculum::CrowdBlock::DescribeManifest(Layout const& /*layout*/, 
     block["slot_features"] = uint32(SLOT_FEATURES);
 }
 
-void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
+void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
     CrowdView const& crowd = view.Crowd;
     Player* bot = view.Bot;
     if (!crowd.Present || !bot)
         return;
+
+    if (GameObject const* object = crowd.Object; object && object->IsInMap(bot))
+    {
+        obs[OBS_OBJECT_PRESENT] = 1.0f;
+        obs[OBS_OBJECT_DISTANCE] = std::min(1.0f, bot->GetExactDist(object) / 40.0f);
+        float const angle = bot->GetRelativeAngle(object);
+        obs[OBS_OBJECT_SIN] = std::sin(angle);
+        obs[OBS_OBJECT_COS] = std::cos(angle);
+        obs[OBS_OBJECT_DOOR] = object->GetGoType() == GAMEOBJECT_TYPE_DOOR ? 1.0f : 0.0f;
+        if (mask && bot->IsAlive() && !bot->IsInCombat() && bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS))
+            mask[ACTION_USE_OBJECT] = 1;
+    }
 
     obs[OBS_PRESENT] = 1.0f;
     obs[OBS_ON_PARTY] = std::min(2.0f, float(crowd.OnParty) / 8.0f);
@@ -77,4 +91,20 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         Creature const* creature = unit->ToCreature();
         features[SLOT_ELITE] = creature && creature->isElite() ? 1.0f : 0.0f;
     }
+}
+
+void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
+{
+    Player* bot = view.Bot;
+    GameObject* object = view.Crowd.Object;
+    if (local != ACTION_USE_OBJECT || !bot || !bot->IsAlive() || bot->IsInCombat() || !object || !object->IsInMap(bot)
+        || !bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS))
+        return;
+    // A right-click on it: a lever or a button runs what it is linked to, the cannon fires, a door opens.
+    object->Use(bot);
+}
+
+std::string Animus::Curriculum::CrowdBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+{
+    return local == ACTION_USE_OBJECT ? "use_object" : std::string();
 }

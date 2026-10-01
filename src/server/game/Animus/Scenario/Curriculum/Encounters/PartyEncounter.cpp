@@ -94,21 +94,29 @@ Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
 {
     // Whoever is best placed to hold it, rather than whoever was labelled: the living seat with the most
     // mitigation, provided its build can really do the job at all.
+    // With no such build in the party, the one with the most mitigation all the same: somebody leads (a party of
+    // level-17 builds none of which could hold a pull had nobody to follow and stood at the door, 2026-10-01).
     EnvState const& data = _scenario.Data(env);
     Player* best = nullptr;
-    float most = 0.0f;
+    float most = -1.0f;
+    bool holds = false;
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
     {
         SeatState const& state = data.Seats[seat];
-        if (!state.L || !HoldsThePull(state.Apt))
+        if (!state.L)
             continue;
 
         Player* tank = _scenario.SeatBot(env, seat);
-        if (!tank || !tank->IsAlive() || state.Apt[Aptitude::MITIGATION] <= most)
+        if (!tank || !tank->IsAlive())
             continue;
 
-        most = state.Apt[Aptitude::MITIGATION];
-        best = tank;
+        bool const can = HoldsThePull(state.Apt);
+        if ((can && !holds) || (can == holds && state.Apt[Aptitude::MITIGATION] > most))
+        {
+            holds = holds || can;
+            most = state.Apt[Aptitude::MITIGATION];
+            best = tank;
+        }
     }
 
     return best;

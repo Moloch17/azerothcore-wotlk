@@ -6067,6 +6067,9 @@ AnimusForge.Curriculum.Instance.WingScript = 1.0
 AnimusForge.Curriculum.Instance.WingScriptEnd = 0.4
 #   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
 AnimusForge.Curriculum.Instance.WingRiseMs = 30000
+#   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd
+#   block's use action (levers, buttons, the cannon, doors)
+AnimusForge.Curriculum.Instance.WingAutoDoors = 0
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
 

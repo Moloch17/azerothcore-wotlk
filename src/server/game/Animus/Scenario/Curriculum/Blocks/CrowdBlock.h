@@ -27,7 +27,8 @@ namespace Animus::Curriculum
     /// had a median of eight creatures on the party (2026-10-01), half of them out of sight of a seat that saw four.
     /// Counts over every creature on the party, the next CROWD_SLOTS of them one by one, and the nearest pack not yet
     /// in the fight. A separate block, so the blocks built on PACK_SLOTS keep their sizes and their seeded weights. No
-    /// actions: what it shows is fought through the pack block's slots, and stopped short of by the feet.
+    /// actions but one, using what opens the way on (a lever, the cannon): what it shows is fought through the pack
+    /// block's slots, and stopped short of by the feet.
     class CrowdBlock final : public Block
     {
     public:
@@ -44,7 +45,12 @@ namespace Animus::Curriculum
             OBS_AHEAD_SIN       = 8,    // its bearing in the seat's own frame
             OBS_AHEAD_COS       = 9,
             OBS_IS_TANK         = 10,   // this seat is the one the party's crowd is counted against
-            OBS_SLOT_FIRST      = 11
+            OBS_OBJECT_PRESENT  = 11,   // the nearest thing the party can use (a lever, a button, the cannon, a door)
+            OBS_OBJECT_DISTANCE = 12,   // / 40 yd
+            OBS_OBJECT_SIN      = 13,
+            OBS_OBJECT_COS      = 14,
+            OBS_OBJECT_DOOR     = 15,   // it is a door (else a lever, a button or the like)
+            OBS_SLOT_FIRST      = 16
         };
 
         enum SlotFeature : uint32
@@ -61,10 +67,19 @@ namespace Animus::Curriculum
             SLOT_FEATURES       = 9
         };
 
+        enum Action : uint32
+        {
+            /// Use the nearest usable thing within reach: pull a lever, press a button, fire the cannon, open a door.
+            ACTION_USE_OBJECT   = 0,
+            ACTION_COUNT        = 1
+        };
+
         [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+        [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
     };
 }
 

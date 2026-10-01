@@ -48,6 +48,7 @@ namespace
 {
     /// A closed door this near a living seat opens (InstanceEncounter::UpdateWingEnemies).
     constexpr float DOOR_REACH = 15.0f;
+    constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far (CrowdView::Object)
     /// Where a dungeon's navmesh does not join two stops, the route steps from creature to creature: to the nearest
     /// within BREADCRUMB_REACH that is at least BREADCRUMB_MIN_GAIN closer to the far side.
     constexpr float BREADCRUMB_REACH = 45.0f;
@@ -703,11 +704,26 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
     fight.OnParty = 0;
     fight.OnTank = 0;
     fight.Elites = 0;
+    // The tank: the living seat with the most mitigation among those that can hold a pull, else among all -- the
+    // party block's rule (PartyEncounter::Tank), so the seats follow the one the crowd is counted against. A party
+    // of level-17 builds none of which could hold one had no tank and stood at the door (2026-10-01).
     fight.Tank = ObjectGuid::Empty;
-    for (uint32 index = 0; index < data.ActiveSeats && fight.Tank.IsEmpty(); ++index)
-        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
-            && AptitudeDemand::HoldsThePull().MetBy(data.Seats[index].Apt))
-            fight.Tank = bot->GetGUID();
+    {
+        float most = -1.0f;
+        bool holds = false;
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && data.Seats[index].L)
+            {
+                Aptitude const& apt = data.Seats[index].Apt;
+                bool const can = AptitudeDemand::HoldsThePull().MetBy(apt);
+                if ((can && !holds) || (can == holds && apt[Aptitude::MITIGATION] > most))
+                {
+                    holds = holds || can;
+                    most = apt[Aptitude::MITIGATION];
+                    fight.Tank = bot->GetGUID();
+                }
+            }
+    }
     if (!fighting)
     {
         trace.InFight = false;
@@ -822,6 +838,23 @@ bool Animus::Curriculum::InstanceEncounter::Hostile(Player const* seat, Creature
         && !creature->IsTotem() && !creature->IsPet() && !creature->IsSummon()
         && !creature->HasUnitFlag(UNIT_FLAG_NOT_SELECTABLE | UNIT_FLAG_NON_ATTACKABLE)
         && creature->IsHostileTo(seat);
+}
+
+bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
+{
+    if (!object || !object->isSpawned() || object->GetGoState() != GO_STATE_READY
+        || object->HasGameObjectFlag(GameObjectFlags(GO_FLAG_NOT_SELECTABLE | GO_FLAG_LOCKED | GO_FLAG_INTERACT_COND
+            | GO_FLAG_IN_USE)))
+        return false;
+    switch (object->GetGoType())
+    {
+        case GAMEOBJECT_TYPE_BUTTON:
+        case GAMEOBJECT_TYPE_GOOBER:
+        case GAMEOBJECT_TYPE_DOOR:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const
@@ -1028,27 +1061,36 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     if (!seat || !seat->IsInWorld())
         return;
 
-    // A closed door in the party's way opens when a living seat reaches it with nothing fighting the party, as a
-    // player pulling its lever would. The party layout has no world actions to pull one with, and a dungeon behind
-    // a lever -- every door of the Deadmines -- stalled every run at the first of them (2026-09-30).
+    // What the party can use near it -- a lever, a button, the Deadmines' cannon, a closed door it may open -- for the
+    // crowd block's use action (CrowdBlock::ACTION_USE_OBJECT): a dungeon's way on is opened the way a player opens
+    // it (2026-10-01: "they need to be able to use the proper actions to activate doors and cannons"). With
+    // Instance.WingAutoDoors a closed door also opens by itself when a seat reaches it out of a fight, as it did
+    // before the action existed.
     bool fighting = false;
     for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fighting = true;
-    if (!fighting)
-        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+    fight.Objects.clear();
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+    {
+        Player* bot = _scenario.SeatBot(env, index);
+        if (!bot || !bot->IsAlive() || !bot->IsInWorld())
+            continue;
+        std::list<GameObject*> objects;
+        Acore::AllWorldObjectsInRange check(bot, OBJECT_SIGHT);
+        Acore::GameObjectListSearcher<Acore::AllWorldObjectsInRange> searcher(bot, objects, check);
+        Cell::VisitObjects(bot, searcher, OBJECT_SIGHT);
+        for (GameObject* object : objects)
         {
-            Player* bot = _scenario.SeatBot(env, index);
-            if (!bot || !bot->IsAlive() || !bot->IsInWorld())
+            if (!Usable(object))
                 continue;
-            std::list<GameObject*> objects;
-            Acore::AllWorldObjectsInRange check(bot, DOOR_REACH);
-            Acore::GameObjectListSearcher<Acore::AllWorldObjectsInRange> searcher(bot, objects, check);
-            Cell::VisitObjects(bot, searcher, DOOR_REACH);
-            for (GameObject* object : objects)
-                if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->GetGoState() == GO_STATE_READY)
-                    object->SetGoState(GO_STATE_ACTIVE);
+            if (std::find(fight.Objects.begin(), fight.Objects.end(), object->GetGUID()) == fight.Objects.end())
+                fight.Objects.push_back(object->GetGUID());
+            if (!fighting && _scenario.Tuning().Instance.WingAutoDoors && object->GetGoType() == GAMEOBJECT_TYPE_DOOR
+                && bot->GetExactDist(object) <= DOOR_REACH)
+                object->SetGoState(GO_STATE_ACTIVE);
         }
+    }
 
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
     for (ObjectGuid const& guid : fight.Watched)
@@ -1143,6 +1185,11 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
             if (Unit* unit = ObjectAccessor::GetUnit(*view.Bot, guid); unit && crowd.Count < CROWD_SLOTS)
                 crowd.Units[crowd.Count++] = unit;
     }
+    if (view.Bot)
+        for (ObjectGuid const& guid : fight.Objects)
+            if (GameObject* object = ObjectAccessor::GetGameObject(*view.Bot, guid); object && Usable(object)
+                && (!crowd.Object || view.Bot->GetExactDist(object) < view.Bot->GetExactDist(crowd.Object)))
+                crowd.Object = object;
     crowd.HasAhead = fight.HasAhead;
     crowd.Ahead = fight.Ahead;
     crowd.AheadSize = fight.AheadSize;
