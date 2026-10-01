@@ -33,6 +33,7 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
+#include "MotionMaster.h"
 #include "EncoderSupport.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
@@ -658,6 +659,17 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         object->GetEntry(), uint32(object->GetGoType()), uint32(object->GetGoState()),
                         tank->GetExactDist(object));
         seats += " | objects: " + (objects.empty() ? std::string("none") : objects);
+        if (Player* tankPlayer = tank ? tank->ToPlayer() : nullptr; tankPlayer && fight.RouteNext < fight.Route.size())
+        {
+            Position const& next = fight.Route[fight.RouteNext];
+            PathGenerator path(tankPlayer);
+            path.CalculatePath(next.GetPositionX(), next.GetPositionY(), next.GetPositionZ(), false);
+            G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
+            seats += Acore::StringFormat(" | path to the point: type {} {} points, ends {:.0f} yd from it; tank z {:.1f}, "
+                "point z {:.1f}, motion {}", uint32(path.GetPathType()), path.GetPath().size(),
+                next.GetExactDist(end.x, end.y, end.z), tankPlayer->GetPositionZ(), next.GetPositionZ(),
+                uint32(tankPlayer->GetMotionMaster()->GetCurrentMovementGeneratorType()));
+        }
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
             fight.OnParty, fight.HasAhead && tank ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead),
