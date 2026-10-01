@@ -669,6 +669,16 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 "point z {:.1f}, motion {}", uint32(path.GetPathType()), path.GetPath().size(),
                 next.GetExactDist(end.x, end.y, end.z), tankPlayer->GetPositionZ(), next.GetPositionZ(),
                 uint32(tankPlayer->GetMotionMaster()->GetCurrentMovementGeneratorType()));
+            std::string fighters;
+            for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+                if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+                    fighters += Acore::StringFormat(" {}({} on {})", enemy->GetEntry(),
+                        tankPlayer->GetExactDist(enemy), enemy->GetVictim() ? enemy->GetVictim()->GetName() : "nobody");
+            SeatView probe;
+            probe.Bot = tankPlayer;
+            View(env, 0, probe);
+            seats += Acore::StringFormat(" | fighting {}{}, moving {}, objective {:.0f} yd", fight.Fighting ? 1 : 0,
+                fighters, tankPlayer->isMoving() ? 1 : 0, tankPlayer->GetExactDist(&probe.Objective));
         }
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
@@ -1272,7 +1282,12 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
             : Position(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
         return;
     }
-    view.Objective = fight.Route[std::min(here + 1, last)];
+    // The tank goes for the route's next point itself; only far from it (stood up at the door) does it pick the route
+    // up from where it is. Taking the next point from the nearest one everywhere sent it to a point beside it that is
+    // not the next and held it there (2026-10-01).
+    constexpr float OFF_ROUTE_YARDS = 60.0f;
+    if (view.Bot->GetExactDist(&fight.Route[last]) > OFF_ROUTE_YARDS)
+        view.Objective = fight.Route[std::min(here + 1, last)];
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,
