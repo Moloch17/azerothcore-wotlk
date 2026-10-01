@@ -147,7 +147,7 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 1000000M | 20M | 64 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 1000000M | 40M | 64 |
 | `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
 | `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
 | `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
@@ -1780,25 +1780,34 @@ the stage; the companion block stays in its layout for the stages built on it.
 **A support ladder the policy earns its way down** (2026-10-01: "taper off only based on the progress made by the
 learner"). Training runs are on a rung of `StageScenario::WING_RUNGS`; each rung fixes the dungeon script's share of
 seats, the levels above the dungeon's range, the wipes to spare (with their kills kept, the party stood up at the door)
-and the weight of the hints every seat imitates:
+and the weight of the hints every seat imitates. The script leaves first, at the top level; then the levels come down
+one at a time, the wipes and the hints with them:
 
 | Rung | Script plays | Levels | Wipes | Hints |
 |---|---|---|---|---|
-| 0 | 100% of seats | 25-28 | 5 | 1.0 |
-| 1 | 75% | 25-28 | 5 | 1.0 |
-| 2 | 50% | 24-27 | 4 | 1.0 |
-| 3 | 25% | 22-25 | 3 | 1.0 |
-| 4 | none | 20-23 | 2 | 0.5 |
-| 5 | none | 17-20 | 1 | none |
+| 0-3 | 100%, 75%, 50%, 25% of seats | 25-28 | 5 | 1.0 |
+| 4 | none | 25-28 | 5 | 1.0 |
+| 5, 6 | none | 24-27, 23-26 | 4 | 1.0 |
+| 7, 8 | none | 22-25, 21-24 | 3 | 0.75 |
+| 9, 10 | none | 20-23, 19-22 | 2 | 0.5 |
+| 11 | none | 18-21 | 1 | 0.25 |
+| 12 | none | 17-20 | 1 | none |
 
 `Instance.WingProbe` (20%) of training runs are probes: no script, no hints and no instruction, at the rung's level
 and wipes. Only they measure the policy. Once `WingRungRuns` (40) probes on a rung have made, on average,
-`WingRungStep` (0.8) of the progress the rung's other runs make -- progress is the share of the dungeon's creatures
-killed, 1 for a clear -- and at least `WingRungFloor` (0.3), the ladder steps down a rung; if the probes on a rung fall
-below `WingRungFallback` (0.5) of what they made when it was stepped onto, it steps back up. Nothing moves on a clock,
-and the stage has no end: it trains until it is stopped by hand (its budget is out of reach and `convergence.advance`
-is off). Each training process keeps its own ladder from its own runs and logs every step ("the dungeon ladder
-steps"); `wing_rung` and `wing_probe` are in the episode report.
+`WingRungTarget` (0.6) of the dungeon -- the share of its creatures killed, 1 for a clear -- the ladder steps down a
+rung; if the probes on a rung fall below `WingRungFallback` (0.5) of what they made when it was stepped onto, it steps
+back up. The target is fixed: measured against the rung's other runs, it crept up from 0.71 to 0.82 on rung 0 as
+they did. Nothing moves on a clock, and the stage has no end: it trains until it is stopped by hand (its budget is out
+of reach and `convergence.advance` is off). In a cluster the host's ladder is every machine's: workers send their runs
+in their PROGRESS reports (`wing=`), and the host sends the rung (`RUNG <n>`). The ladder is not saved with the policy;
+a resumed run names the rung it had reached in `WingRungStart`. Every step is logged ("the dungeon ladder steps");
+`wing_rung` and `wing_probe` are in the episode report.
+
+**The party is a tank, a healer and three damage dealers** (`StageScenario::FitsDungeonRole`): the tank a build that
+holds a pull, the healer one geared to heal (its spec's stat profile), the others neither. The looser makeup -- one
+seat that could hold a pull, one that could heal, anybody else -- drew parties of three healers or two tanks, and a
+retribution paladin in the healer's seat.
 
 A seat that the script does not play is instructed for the run with the rung's script share: its primary goal is its
 role's rule -- the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights
@@ -1834,11 +1843,16 @@ pack in the instance (`Instance.WingFullClear`): every hostile creature grouped 
 nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share of the instance's creatures
 killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
 
-- the tank leads along the route, waits until every member is above 70% health (the healer 50% mana) and within 20 yd,
+- the tank leads along the route, waits until every member is above 70% health (the healer 70% mana) and within 20 yd,
   then pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
 - everyone else follows the tank between pulls (6 yd), comes back past 30 yd in a fight, and attacks the tank's
   target; the healer heals the most hurt first;
-- between pulls everybody eats, drinks and raises the dead.
+- between pulls everybody eats, drinks and raises the dead;
+- in a fight the tank taunts a loose enemy it has just picked up and uses its threat on many at once when two are
+  loose or three are in the fight; the damage dealers interrupt their target's casts, hold one extra enemy with crowd
+  control (Polymorph, Sap, Shackle, Hibernate; never a fear) when the tank has more than it can hold, and hold back
+  when about to take their target off the tank; the healer waits for 70% mana before a pull. The probe wipes of the
+  first ladder run had a median of one enemy on the tank and the tank dying first.
 
 A seat is played by that script for a whole run with the rung's script share: parties see the whole dungeon long
 before they can clear it. The script's press is the seat's action; the hint block's third column says so, and the

@@ -14,7 +14,8 @@ convergence:
   hold_share: 1.0
 
 eval:
-  every_env_steps: 20000000
+  # Every 40M: an evaluation of 64 runs of up to four hours kept the host's learner evaluating most of the time.
+  every_env_steps: 40000000
   episodes: 64
   report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, wing_rung, wing_probe,
            wing_cleared_share, wing_scripted, wing_crowd_seconds, wing_level, teammates_died, teammate_healing,
