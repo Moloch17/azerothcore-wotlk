@@ -245,14 +245,22 @@ namespace Animus::Curriculum
             uint32 ExtraWipes;
             float Hint;
         };
-        /// The ladder, from the most support to none: the last rung is the evaluation's own conditions.
-        static constexpr std::array<WingRung, 6> WING_RUNGS =
+        /// The ladder, from the most support to none: the last rung is the evaluation's own conditions. The script
+        /// leaves first, at the top level; then the levels come down one at a time, the wipes and the hints with them.
+        static constexpr std::array<WingRung, 13> WING_RUNGS =
         {{
             { 1.0f, 8, 4, 1.0f },
             { 0.75f, 8, 4, 1.0f },
-            { 0.5f, 7, 3, 1.0f },
-            { 0.25f, 5, 2, 1.0f },
+            { 0.5f, 8, 4, 1.0f },
+            { 0.25f, 8, 4, 1.0f },
+            { 0.0f, 8, 4, 1.0f },
+            { 0.0f, 7, 3, 1.0f },
+            { 0.0f, 6, 3, 1.0f },
+            { 0.0f, 5, 2, 0.75f },
+            { 0.0f, 4, 2, 0.75f },
             { 0.0f, 3, 1, 0.5f },
+            { 0.0f, 2, 1, 0.5f },
+            { 0.0f, 1, 0, 0.25f },
             { 0.0f, 0, 0, 0.0f },
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
@@ -260,6 +268,11 @@ namespace Animus::Curriculum
         /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe and how far it got (the
         /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
         void NoteWingRun(uint32 rung, bool probe, float progress);
+
+        std::string TakeClusterTally() override;
+        void AddClusterTally(std::string const& tally) override;
+        [[nodiscard]] int32 ClusterRung() const override { return int32(WingRungNow()); }
+        void FollowClusterRung(uint32 rung) override;
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
 
@@ -321,6 +334,12 @@ namespace Animus::Curriculum
         /// all of them (StageSettings::Classes may leave classes out, and a run of rogues and mages has nobody who
         /// can hold a pull).
         [[nodiscard]] std::vector<Casting> Castings(AptitudeDemand demand) const;
+        /// A whole dungeon's party is a tank, a healer and three damage dealers: places in it, and whether a casting
+        /// fits one. The tank is a build that holds a pull; the healer one geared to heal (its spec's stat profile);
+        /// a damage dealer is neither -- a retribution paladin or an enhancement shaman, whose heals did not make
+        /// them the healer, and parties of three healers or two tanks were drawn by the looser makeup (2026-10-01).
+        enum DungeonRole : uint8 { DUNGEON_ANY = 0, DUNGEON_TANK, DUNGEON_HEALER, DUNGEON_DAMAGE };
+        [[nodiscard]] static bool FitsDungeonRole(Casting const& casting, uint8 role);
 
         /// The class and build `seat` plays this episode. An evaluation episode takes both from its seed index, so
         /// the seeds spread evenly over the (class, spec) pairs -- one model per class, but a paladin's healing
@@ -467,6 +486,12 @@ namespace Animus::Curriculum
         std::vector<float> _wingProbes;         // the rung's probes' progress, the latest WingRungRuns
         std::vector<float> _wingOthers;         // ... its other training runs'
         std::array<float, WING_RUNGS.size()> _wingSteppedAt{};  // the probes' mean when each rung was stepped onto
+        /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
+        /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
+        bool _wingFollower = false;
+        std::string _wingTallyProbes;
+        std::string _wingTallyOthers;
+        uint32 _wingTallyRung = 0;
         std::vector<uint32> _arenaEpisodeMs;
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         OwnerEncounter* _owner = nullptr;

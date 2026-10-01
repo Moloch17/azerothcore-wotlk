@@ -142,6 +142,14 @@ namespace Animus
         /// How far through its budget the stage's training is, 0 to 1 (the learner's PROGRESS).
         virtual void SetStageProgress(float /*progress*/) { }
 
+        /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
+        /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the
+        /// workers what it decided ("RUNG <n>"), which they follow instead of deciding for themselves.
+        [[nodiscard]] virtual std::string TakeClusterTally() { return {}; }
+        virtual void AddClusterTally(std::string const& /*tally*/) { }
+        [[nodiscard]] virtual int32 ClusterRung() const { return -1; }
+        virtual void FollowClusterRung(uint32 /*rung*/) { }
+
         /// Once at shutdown: remove bots (without saving) and targets.
         virtual void Teardown(Env& env) = 0;
     };

@@ -6041,13 +6041,14 @@ AnimusForge.Curriculum.Instance.WingStallGraceMs = 60000
 AnimusForge.Curriculum.Instance.WingTimeout = 30.0
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   the support ladder: each rung fixes the dungeon script's share of seats, the level lift, the wipes to spare and the
-#   hint weight; WingProbe of training runs are probes (no script, no hints) and only they measure the policy: after
-#   WingRungRuns probes making WingRungStep of the rung's other runs' progress (at least WingRungFloor) it steps down,
-#   and back up if the probes fall below WingRungFallback of what they made when the rung was stepped onto
+#   hint weight; WingProbe of training runs are probes (no script, no hints) and only they measure the policy: once
+#   WingRungRuns probes have made WingRungTarget of the dungeon on average it steps down, and back up if the probes
+#   fall below WingRungFallback of what they made when the rung was stepped onto; a cluster's host decides for all
 AnimusForge.Curriculum.Instance.WingProbe = 0.2
 AnimusForge.Curriculum.Instance.WingRungRuns = 40
-AnimusForge.Curriculum.Instance.WingRungStep = 0.8
-AnimusForge.Curriculum.Instance.WingRungFloor = 0.3
+AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
+#   the rung a run starts on (the ladder is not saved: a resumed run names the rung it had reached)
+AnimusForge.Curriculum.Instance.WingRungStart = 0
 AnimusForge.Curriculum.Instance.WingRungFallback = 0.5
 AnimusForge.Curriculum.Instance.WingInstructHeal = 70.0
 #   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order

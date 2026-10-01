@@ -289,6 +289,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _seatCount(stage.SeatCount()), _level(settings.Level),
     _decisionScale(float(settings.DecisionMs) / REWARD_TUNING_MS), _decisionMs(settings.DecisionMs)
 {
+    // The ladder is not saved with the policy: a run resumed from a checkpoint names the rung it had reached.
+    _wingRung.store(std::min<uint32>(_tuning.Instance.WingRungStart, uint32(WING_RUNGS.size()) - 1),
+        std::memory_order_relaxed);
+
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
 
@@ -1677,6 +1681,30 @@ std::vector<Animus::Curriculum::StageScenario::Casting> Animus::Curriculum::Stag
     return castings;
 }
 
+bool Animus::Curriculum::StageScenario::FitsDungeonRole(Casting const& casting, uint8 role)
+{
+    if (role == DUNGEON_ANY || !casting.L || !casting.L->Profile || casting.Spec >= casting.L->Profile->Specs.size())
+        return true;
+    ClassAssets const& assets = ClassAssets::For(*casting.L->Profile);
+    if (casting.Spec >= assets.SpecAptitudes.size())
+        return true;
+    Aptitude const& aptitude = assets.SpecAptitudes[casting.Spec];
+    bool const holds = AptitudeDemand::HoldsThePull().MetBy(aptitude);
+    bool const heals = casting.L->Profile->Specs[casting.Spec].Stats == StatProfile::Healer
+        && AptitudeDemand::KeepsThemUp().MetBy(aptitude);
+    switch (role)
+    {
+        case DUNGEON_TANK:
+            return holds;
+        case DUNGEON_HEALER:
+            return heals && !holds;
+        case DUNGEON_DAMAGE:
+            return !holds && !heals;
+        default:
+            return true;
+    }
+}
+
 std::string Animus::Curriculum::StageScenario::SpecName(uint16 layout, uint8 spec) const
 {
     if (layout >= _layouts.size() || !_layouts[layout].Profile)
@@ -1732,15 +1760,31 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
 void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress)
 {
     // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
-    // the learner"): the probes against the rung's other runs, which have the script and the hints.
+    // the learner"): the probes, against a fixed target (Instance.WingRungTarget) -- the rung's other runs, as the
+    // reference, crept up from 0.71 to 0.82 on rung 0 and took the target with them.
     CurriculumTuning::InstanceTuning const& tuning = _tuning.Instance;
     std::lock_guard<std::mutex> guard(_wingLadderLock);
     uint32 const now = _wingRung.load(std::memory_order_relaxed);
     if (rung != now)
         return;
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    // A worker reports its runs to the host, whose ladder is the cluster's.
+    if (_wingFollower)
+    {
+        if (_wingTallyRung != rung)
+        {
+            _wingTallyProbes.clear();
+            _wingTallyOthers.clear();
+            _wingTallyRung = rung;
+        }
+        std::string& tally = probe ? _wingTallyProbes : _wingTallyOthers;
+        tally += Acore::StringFormat("{}{:.3f}", tally.empty() ? "" : ",", progress);
+        return;
+    }
+
     std::size_t const window = std::max<uint32>(1, tuning.WingRungRuns);
     std::vector<float>& runs = probe ? _wingProbes : _wingOthers;
-    runs.push_back(std::clamp(progress, 0.0f, 1.0f));
+    runs.push_back(progress);
     if (runs.size() > window)
         runs.erase(runs.begin());
     if (!probe || _wingProbes.size() < window)
@@ -1754,24 +1798,69 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
         return values.empty() ? 0.0f : sum / float(values.size());
     };
     float const probes = mean(_wingProbes);
-    float const others = _wingOthers.size() * 2 >= window ? mean(_wingOthers) : probes;
-    float const target = std::max(tuning.WingRungFloor, tuning.WingRungStep * others);
+    float const others = mean(_wingOthers);
     uint32 next = now;
-    if (now + 1 < WING_RUNGS.size() && probes >= target)
+    if (now + 1 < WING_RUNGS.size() && probes >= tuning.WingRungTarget)
         next = now + 1;
     else if (now > 0 && probes < tuning.WingRungFallback * _wingSteppedAt[now])
         next = now - 1;
     if (next == now)
         return;
 
-    LOG_INFO("module.animus", "{}: the dungeon ladder steps {} from rung {} to {}: the last {} probes made {:.2f} of the "
-        "dungeon against {:.2f} for the rung's other runs (target {:.2f})", Name(), next > now ? "down" : "back up", now,
-        next, window, probes, others, target);
+    LOG_INFO("module.animus", "{}: the dungeon ladder steps {} from rung {} to {}: the last {} probes made {:.2f} of "
+        "the dungeon (target {:.2f}; the rung's other runs {:.2f})", Name(), next > now ? "down" : "back up", now, next,
+        window, probes, tuning.WingRungTarget, others);
     if (next > now)
         _wingSteppedAt[next] = probes;
     _wingRung.store(next, std::memory_order_relaxed);
     _wingProbes.clear();
     _wingOthers.clear();
+}
+
+std::string Animus::Curriculum::StageScenario::TakeClusterTally()
+{
+    std::lock_guard<std::mutex> guard(_wingLadderLock);
+    if (!_wingFollower || (_wingTallyProbes.empty() && _wingTallyOthers.empty()))
+        return {};
+    std::string tally = Acore::StringFormat("{}/{}/{}", _wingTallyRung,
+        _wingTallyProbes.empty() ? "-" : _wingTallyProbes, _wingTallyOthers.empty() ? "-" : _wingTallyOthers);
+    _wingTallyProbes.clear();
+    _wingTallyOthers.clear();
+    return tally;
+}
+
+void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally)
+{
+    // "rung/probes/others": each a comma-separated list of runs' progress, or "-".
+    std::size_t const first = tally.find('/');
+    std::size_t const second = first == std::string::npos ? std::string::npos : tally.find('/', first + 1);
+    if (second == std::string::npos)
+        return;
+    uint32 const rung = uint32(std::strtoul(tally.substr(0, first).c_str(), nullptr, 10));
+    auto const each = [&](std::string const& list, bool probe)
+    {
+        if (list == "-")
+            return;
+        std::size_t at = 0;
+        while (at < list.size())
+        {
+            std::size_t const end = std::min(list.find(',', at), list.size());
+            NoteWingRun(rung, probe, std::strtof(list.substr(at, end - at).c_str(), nullptr));
+            at = end + 1;
+        }
+    };
+    each(tally.substr(second + 1), false);
+    each(tally.substr(first + 1, second - first - 1), true);
+}
+
+void Animus::Curriculum::StageScenario::FollowClusterRung(uint32 rung)
+{
+    std::lock_guard<std::mutex> guard(_wingLadderLock);
+    _wingFollower = true;
+    uint32 const next = std::min<uint32>(rung, uint32(WING_RUNGS.size()) - 1);
+    if (next != _wingRung.load(std::memory_order_relaxed))
+        LOG_INFO("module.animus", "{}: the host puts the dungeon ladder on rung {}", Name(), next);
+    _wingRung.store(next, std::memory_order_relaxed);
 }
 
 float Animus::Curriculum::StageScenario::Weight(Layout const& layout, uint8 spec) const
@@ -2017,7 +2106,28 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             data.Seats[seat].L = casting.L;
             data.Seats[seat].Want = seat < data.ActiveSeats ? demands[seat] : AptitudeDemand::Anything();
             data.Seats[seat].Spec = casting.Spec;
+            data.Seats[seat].DungeonRole = DUNGEON_ANY;
         }
+
+        // A whole dungeon: a tank, a healer and three damage dealers, whichever seats they are (the demands were
+        // shuffled), each drawn among the castings that fit its place; the level redraw below keeps to them too.
+        if (instance && arena.Instance == InstanceLadder::Wing)
+            for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+            {
+                SeatState& s = data.Seats[seat];
+                s.DungeonRole = s.Want.Feature == AptitudeDemand::HoldsThePull().Feature ? DUNGEON_TANK
+                    : s.Want.Feature == AptitudeDemand::KeepsThemUp().Feature ? DUNGEON_HEALER : DUNGEON_DAMAGE;
+                std::vector<Casting> fits;
+                for (Casting const& casting : Castings(s.Want))
+                    if (FitsDungeonRole(casting, s.DungeonRole))
+                        fits.push_back(casting);
+                if (fits.empty())
+                    continue;
+                std::size_t const pick = env.EpisodeSeedIndex != NO_EPISODE_SEED
+                    ? (std::size_t(env.EpisodeSeedIndex) + seat) % fits.size() : urand(0, uint32(fits.size()) - 1);
+                s.L = fits[pick].L;
+                s.Spec = fits[pick].Spec;
+            }
     }
     else
     {
@@ -2067,7 +2177,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                 continue;
             std::vector<Casting> fits;
             for (Casting const& casting : Castings(s.Want))
-                if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
+                if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel
+                    && FitsDungeonRole(casting, s.DungeonRole))
                     fits.push_back(casting);
             if (fits.empty())
                 continue;

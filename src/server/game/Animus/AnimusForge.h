@@ -377,6 +377,11 @@ namespace AnimusForge
         uint32 _autoResumes = 0;        // host: learner restarts of the current scenario after a rank failed
         /// Worker: when its next PROGRESS goes to the host.
         std::chrono::steady_clock::time_point _nextClusterReport{};
+        /// The cluster's dungeon ladder (Scenario::ClusterRung): the host's last broadcast and when it sends it again;
+        /// a worker's rung from the host.
+        int32 _clusterRungSent = -1;
+        std::chrono::steady_clock::time_point _nextRungBroadcast{};
+        uint32 _clusterRung = 0;
         /// A worker's own rates for its PROGRESS report, over the interval since the last one: _ticksPerSecond is
         /// only kept by Snapshot, which runs on a periodic report (Progress.Interval, off by default) or a status.
         struct ClusterRates

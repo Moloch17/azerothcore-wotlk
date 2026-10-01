@@ -323,6 +323,8 @@ namespace Animus::Curriculum
         /// instructed seat's goal is its role's rule (StageScenario::InstructedGoal), unlearned.
         bool Instructed = false;
         bool InstructDrawn = false;
+        /// A whole dungeon's party makeup (StageScenario::FitsDungeonRole): this seat's place in it.
+        uint8 DungeonRole = 0;
         /// Played by the dungeon script this run (Instance.WingScript), and the script's press for this decision.
         bool Scripted = false;
         bool ScriptDrawn = false;

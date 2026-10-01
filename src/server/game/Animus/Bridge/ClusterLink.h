@@ -23,6 +23,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace AnimusForge
@@ -43,7 +44,9 @@ namespace AnimusForge
     ///                    for this stage (AnimusForge.Stage.<name>.Envs, per learner); the worker runs at most that
     ///                    many, and fewer where its own conf says so
     ///   host -> worker   STOP
-    ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast
+    ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast, and with
+    ///                    wing=<tally> its dungeon runs since the last (Scenario::TakeClusterTally)
+    ///   host -> worker   RUNG <n>   the cluster's dungeon ladder rung, which the worker follows
     /// A worker that loses the host reconnects every few seconds and registers again; a host that loses a worker
     /// drops it, and it joins the next scenario the host starts after it is back.
     class ClusterLink
@@ -96,6 +99,8 @@ namespace AnimusForge
         void SendTo(std::string const& sim, std::string const& line);
         /// Host: the sims of the workers that registered since the last call (a new one, or one back after a drop).
         std::vector<std::string> TakeRegistrations();
+        /// Host: the "wing=" fields of the workers' PROGRESS lines since the last call (Scenario::TakeClusterTally).
+        std::vector<std::string> TakeTallies() { return std::exchange(_tallies, {}); }
 
         /// Worker: the next order from the host, if one has come.
         std::optional<std::string> NextOrder();
@@ -136,6 +141,7 @@ namespace AnimusForge
         int _listener = -1;
         std::vector<Peer> _workers;
         std::vector<std::string> _registered;
+        std::vector<std::string> _tallies;   // host: the workers' "wing=" fields, until taken
 
         Peer _host;
         std::string _hostAddress;

@@ -22,6 +22,7 @@
 #include "CrowdBlock.h"
 #include "DuelBlock.h"
 #include "GauntletBlock.h"
+#include "IncomingSpell.h"
 #include "MoveBlock.h"
 #include "PackBlock.h"
 #include "PartyBlock.h"
@@ -812,7 +813,7 @@ namespace
     /// drinks and raises the dead. Reads only the row, like every baseline.
     constexpr float DUNGEON_PULL_YARDS = 25.0f;         // the tank pulls the pack ahead from this close
     constexpr float DUNGEON_READY_HEALTH = 0.7f;        // ... once everybody has this much health
-    constexpr float DUNGEON_READY_MANA = 0.5f;          // ... and the healer this much mana
+    constexpr float DUNGEON_READY_MANA = 0.7f;          // ... and the healer this much mana
     constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
     constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
     constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
@@ -913,6 +914,42 @@ namespace
     }
 
     /// The fight itself once the right slot is the target: the rotation, closing in, the pet.
+    /// What a catalog spell does in a party's fight, read off the spell: a taunt, an interrupt, threat on many at
+    /// once, or crowd control that holds an extra enemy out of the fight (Polymorph, Sap, Shackle, Hibernate -- not a
+    /// fear, which sends it running into the next pack).
+    SpellInfo const* SpellOf(ActionCatalog::Action const& action)
+    {
+        return action.Type == ActionCatalog::Kind::Spell ? sSpellMgr->GetSpellInfo(action.FirstRank) : nullptr;
+    }
+
+    bool IsTaunt(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        return info && (info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_MOD_TAUNT));
+    }
+
+    bool IsInterrupt(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        return info && info->HasEffect(SPELL_EFFECT_INTERRUPT_CAST);
+    }
+
+    bool IsAreaThreat(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        return info && !info->IsPositive() && info->IsAffectingArea() && !info->HasAura(SPELL_AURA_MOD_FEAR)
+            && !info->HasAura(SPELL_AURA_MOD_CONFUSE);
+    }
+
+    bool IsCrowdControl(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        if (!info || info->IsPositive() || info->IsAffectingArea() || info->HasAura(SPELL_AURA_MOD_FEAR))
+            return false;
+        return info->HasAura(SPELL_AURA_MOD_CONFUSE) || info->HasAura(SPELL_AURA_TRANSFORM)
+            || (info->HasAura(SPELL_AURA_MOD_STUN) && info->GetMaxDuration() >= 8000);
+    }
+
     std::optional<int32> Engage(Row const& row, Layout const& layout)
     {
         if (std::optional<int32> action = Fight(row, layout))
@@ -983,6 +1020,64 @@ namespace
             if (want >= 0)
                 if (std::optional<int32> select = SelectSlot(row, uint32(want)))
                     return select;
+
+            // How the fight stands: enemies in it, and those on somebody other than the tank.
+            uint32 inFight = 0;
+            uint32 loose = 0;
+            bool controlled = false;
+            for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+                if (SlotFighting(row, slot))
+                {
+                    ++inFight;
+                    controlled = controlled || SlotObs(row, slot, PackBlock::SLOT_CROWD_CONTROLLED) > 0.0f;
+                }
+            if (row.Has(BlockId::Crowd))
+            {
+                float const onParty = row.Obs(BlockId::Crowd, CrowdBlock::OBS_ON_PARTY) * 8.0f;
+                loose = uint32(std::lround(row.Obs(BlockId::Crowd, CrowdBlock::OBS_LOOSE) * 8.0f));
+                inFight = std::max(inFight, uint32(std::lround(onParty)));
+            }
+
+            if (tank)
+            {
+                // The loose one it just took: taunt it. Several loose, or a crowd: threat on all of them at once.
+                if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f)
+                    if (std::optional<int32> taunt = FirstSpell(row, layout, IsTaunt))
+                        return taunt;
+                if (loose >= 2 || inFight >= 3)
+                    if (std::optional<int32> area = FirstSpell(row, layout, IsAreaThreat))
+                        return area;
+            }
+            else if (!healer)
+            {
+                // A cast it can stop, on the enemy it is hitting.
+                if (want >= 0 && SlotObs(row, uint32(want), uint32(PackBlock::SLOT_CAST_FIRST)
+                    + uint32(IncomingSpell::FEATURE_INTERRUPTIBLE)) > 0.0f)
+                    if (std::optional<int32> stop = FirstSpell(row, layout, IsInterrupt))
+                        return stop;
+                // More than the tank can hold: one extra enemy -- not the tank's -- held out of the fight, once.
+                if (!controlled && (loose >= 2 || inFight >= 4))
+                    for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+                    {
+                        if (!SlotFighting(row, slot) || (hasLeader && row.Obs(BlockId::Crowd,
+                            CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f))
+                            continue;
+                        if (SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) == 0.0f)
+                        {
+                            if (std::optional<int32> select = SelectSlot(row, slot))
+                                return select;
+                            break;
+                        }
+                        if (std::optional<int32> hold = FirstSpell(row, layout, IsCrowdControl))
+                            return hold;
+                        break;
+                    }
+                // About to take it off the tank: hold back a moment.
+                if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
+                    && SlotObs(row, uint32(want), PackBlock::SLOT_THREAT_SHARE) >= 0.9f)
+                    return 0;
+            }
+
             if (want >= 0 || healer)
                 if (std::optional<int32> action = Engage(row, layout))
                     return action;

@@ -258,14 +258,15 @@ namespace Animus::Curriculum
             /// The support ladder (StageScenario::WING_RUNGS): each rung fixes the dungeon script's share of seats,
             /// the level lift, the wipes to spare and the hint weight. WingProbe of training runs are probes -- no
             /// script, no hints, no instruction, at the rung's level and wipes -- and only they measure the policy:
-            /// once WingRungRuns probes at a rung have made, on average, WingRungStep of the progress the rung's other
-            /// runs make (and at least WingRungFloor), the ladder steps down; if the probes on a rung fall below
-            /// WingRungFallback of what they made when it was stepped onto, it steps back up. Nothing on a clock.
+            /// once WingRungRuns probes at a rung have made, on average, WingRungTarget of the dungeon (the share of its
+            /// creatures killed, 1 for a clear), the ladder steps down; if the probes on a rung fall below
+            /// WingRungFallback of what they made when it was stepped onto, it steps back up. Nothing on a clock. In a
+            /// cluster the host's ladder decides for every machine, from all their runs.
             float WingProbe = 0.2f;
             uint32 WingRungRuns = 40;
-            float WingRungStep = 0.8f;
-            float WingRungFloor = 0.3f;
+            float WingRungTarget = 0.6f;
             float WingRungFallback = 0.5f;
+            uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
             /// The instructed healer protects whoever is below this health share.
             float WingInstructHeal = 70.0f;
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
@@ -1119,8 +1120,8 @@ namespace Animus::Curriculum
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
             f("Instance.WingProbe", tuning.Instance.WingProbe);
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
-            f("Instance.WingRungStep", tuning.Instance.WingRungStep);
-            f("Instance.WingRungFloor", tuning.Instance.WingRungFloor);
+            f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
+            f("Instance.WingRungStart", tuning.Instance.WingRungStart);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Instance.WingTrace", tuning.Instance.WingTrace);

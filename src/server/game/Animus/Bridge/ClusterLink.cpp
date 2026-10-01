@@ -316,6 +316,13 @@ void AnimusForge::ClusterLink::Poll()
                 {
                     it->Progress = line.substr(9);
                     it->ProgressAt = std::chrono::steady_clock::now();
+                    if (std::size_t const wing = it->Progress.find(" wing="); wing != std::string::npos)
+                    {
+                        std::size_t const end = it->Progress.find(' ', wing + 6);
+                        _tallies.push_back(it->Progress.substr(wing + 6, end == std::string::npos ? std::string::npos
+                            : end - wing - 6));
+                        it->Progress.erase(wing, end == std::string::npos ? std::string::npos : end - wing);
+                    }
                 }
             }
             if (it->Refused)

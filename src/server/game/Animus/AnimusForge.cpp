@@ -984,6 +984,22 @@ void AnimusForge::Forge::PollCluster()
                 LOG_INFO("module.animus", "Cluster: {} joins the next scenario this host starts", sim);
         }
 
+        // The cluster's dungeon ladder is this host's: every worker's runs feed it, and the workers are told the rung
+        // whenever it changes and every half minute (one back after a drop learns it again).
+        if (_scenario)
+        {
+            for (std::string const& tally : _cluster.TakeTallies())
+                _scenario->AddClusterTally(tally);
+            int32 const rung = _scenario->ClusterRung();
+            auto const now = std::chrono::steady_clock::now();
+            if (rung >= 0 && _state == State::Training && (rung != _clusterRungSent || now >= _nextRungBroadcast))
+            {
+                _cluster.Broadcast(Acore::StringFormat("RUNG {}", rung));
+                _clusterRungSent = rung;
+                _nextRungBroadcast = now + std::chrono::seconds(30);
+            }
+        }
+
         // A cluster run whose learners span machines stops when any of them fails (a machine down, a learner killed:
         // the others' collectives fail rather than hang). It starts again from its latest checkpoint with the workers
         // there now, a few times a scenario -- a failure that repeats is a bug, not a machine, and waits for `forge
@@ -1029,11 +1045,18 @@ void AnimusForge::Forge::PollCluster()
         uint32 const agents = _pool ? _pool->Spec().AgentsPerEnv : 0;
         // env_steps_per_s counts agent steps (decisions x envs x agents), as the host's own rate and the learner's
         // total_env_steps do.
+        // This worker's dungeon runs, for the host's ladder (Scenario::TakeClusterTally); and it follows the host's.
+        std::string tally;
+        if (_scenario)
+        {
+            _scenario->FollowClusterRung(_clusterRung);
+            tally = _scenario->TakeClusterTally();
+        }
         _cluster.Report(Acore::StringFormat("state={} scenario={} envs={} env_steps_per_s={:.0f} decision_ms={:.1f} "
-            "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f}", StateName(), _current.empty() ? "-" : _current,
+            "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f}{}", StateName(), _current.empty() ? "-" : _current,
             envs, ticksPerSecond * double(envs) * double(agents), ticksPerSecond > 0.0 ? 1000.0 / ticksPerSecond : 0.0,
             ticks ? since(_worldNs, last.WorldNs) / perTick : 0.0, ticks ? since(_simNs, last.SimNs) / perTick : 0.0,
-            ticks ? since(_learnerNs, last.LearnerNs) / perTick : 0.0));
+            ticks ? since(_learnerNs, last.LearnerNs) / perTick : 0.0, tally.empty() ? "" : " wing=" + tally));
         last = { now, _ticks, _worldNs, _simNs, _learnerNs };
     }
 
@@ -1085,6 +1108,12 @@ void AnimusForge::Forge::PollCluster()
             _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs);
             if (_state != State::Idle)
                 _request = Request::Cancel;
+        }
+        else if (unsigned rung = 0; std::sscanf(order->c_str(), "RUNG %u", &rung) == 1)
+        {
+            _clusterRung = rung;
+            if (_scenario)
+                _scenario->FollowClusterRung(rung);
         }
         else if (*order == "STOP")
         {
