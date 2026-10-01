@@ -147,7 +147,7 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 64 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 1000000M | 20M | 64 |
 | `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
 | `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
 | `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
@@ -158,7 +158,8 @@ stage trains its whole budget).
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128), except the raid stages, which set their own
 (`AnimusForge.Stage.<name>.Envs`: 8 for `stage7_raid_pulls`, 16 for `stage8_raids`). The queue's ceiling is
-**1,250M**, with more of it on the stages that were still rising at their budgets in the second run (the movement
+**1,050M** plus `stage6_party`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
+and convergence does not end it), with more of it on the stages that were still rising at their budgets in the second run (the movement
 root, life, the party, the raids and the ship stage at 100-200M; the rest 50M). A per-class build
 trains the movement phase once for every class, and each class's line from `stage3_rotation` (a
 `configs/<class>/stage3_rotation.yaml` names the shared travel checkpoint; `{shared_runs}` in a path is the shared
@@ -1776,20 +1777,35 @@ boss's script at its start, and a wipe ends the run (`Instance.WingWipes` 1). On
 drawn for its seats. The companion arena, the synthetic party pulls and the tanking and triage drills are gone from
 the stage; the companion block stays in its layout for the stages built on it.
 
-**Support that eases off with success.** While parties get nowhere the dungeon is made easier in three ways, all set
-by one number, the assist: 1 minus the running route share of training runs over `Instance.WingMastery` (0.5),
-clamped to 0..1. At assist *a*:
+**A support ladder the policy earns its way down** (2026-10-01: "taper off only based on the progress made by the
+learner"). Training runs are on a rung of `StageScenario::WING_RUNGS`; each rung fixes the dungeon script's share of
+seats, the levels above the dungeon's range, the wipes to spare (with their kills kept, the party stood up at the door)
+and the weight of the hints every seat imitates:
 
-- the party is `WingLevelLift` x *a* levels above the dungeon's range (8: 25-28 at the start, 17-20 at the end;
-  the dungeon script clears about 90% of its runs at 25-28 and 40% at 22-25, 2026-10-01);
-- `WingWipesExtra` x *a* more wipes (4) stand the party up at the door with its kills kept, before one ends the run;
-- each seat is instructed for the run with chance `WingInstruct` x *a* (0.8): its primary goal is its role's rule --
-  the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights whatever is hitting
-  someone else, everyone else fights the tank's target. It arrives as an order does, so the goal head is not trained
-  on it; the action head learns to carry it out.
+| Rung | Script plays | Levels | Wipes | Hints |
+|---|---|---|---|---|
+| 0 | 100% of seats | 25-28 | 5 | 1.0 |
+| 1 | 75% | 25-28 | 5 | 1.0 |
+| 2 | 50% | 24-27 | 4 | 1.0 |
+| 3 | 25% | 22-25 | 3 | 1.0 |
+| 4 | none | 20-23 | 2 | 0.5 |
+| 5 | none | 17-20 | 1 | none |
 
-The assist is 0 in evaluation, which always runs the dungeon at its own level, with one wipe and no instruction.
-`wing_assist` and `wing_level` are in the episode report.
+`Instance.WingProbe` (20%) of training runs are probes: no script, no hints and no instruction, at the rung's level
+and wipes. Only they measure the policy. Once `WingRungRuns` (40) probes on a rung have made, on average,
+`WingRungStep` (0.8) of the progress the rung's other runs make -- progress is the share of the dungeon's creatures
+killed, 1 for a clear -- and at least `WingRungFloor` (0.3), the ladder steps down a rung; if the probes on a rung fall
+below `WingRungFallback` (0.5) of what they made when it was stepped onto, it steps back up. Nothing moves on a clock,
+and the stage has no end: it trains until it is stopped by hand (its budget is out of reach and `convergence.advance`
+is off). Each training process keeps its own ladder from its own runs and logs every step ("the dungeon ladder
+steps"); `wing_rung` and `wing_probe` are in the episode report.
+
+A seat that the script does not play is instructed for the run with the rung's script share: its primary goal is its
+role's rule -- the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights
+whatever is hitting someone else, everyone else fights the tank's target. It arrives as an order does, so the goal
+head is not trained on it.
+
+Evaluation always runs the dungeon at its own level, with one wipe, no script, hints or instruction.
 
 **Ground is taken by clearing it.** A wipe trace (`Instance.WingTrace`, a log line per wipe) of the first support run
 showed the parties wiping at the mine's first packs with a median of eight creatures on them -- seven miners, an
@@ -1805,36 +1821,31 @@ creatures are on the party, on its tank and loose, the elites, how many are past
 them one by one, and the nearest pack not yet in the fight with how many stand with it. Every other block keeps its
 size, so the stage still seeds from `stage5_pack` whole.
 
-The support is now also gone by `Instance.WingAssistEnd` (80%) of the budget whatever the parties earned: the first
-support run held at 0.7 from 40M to the end, so training never met the level the evaluation plays at.
-
-While the support lasts, every seat gets an action hint: what the scripted `fight` policy would press with that
-seat's own row -- heal the most hurt, the class's rotation, close to the target -- in a `hint` block, with a weight of
-`Instance.WingHint` x the support. The learner trains the action head toward it (`mappo.hint_coef`, 1.0 here) and keeps
-the block's two columns out of both networks (their adapter weights are held at zero), so the policy is taught the
-suggestion and never shown it. The weight is 0 in evaluation and after `WingAssistEnd`. The learner reports
-`hint_loss`, `hint_match` (how often the greedy action is the hint) and `hint_weight`.
+Every seat outside a probe gets an action hint: what the dungeon script (below) would press with that seat's own row, in
+a `hint` block, at the rung's hint weight. The learner trains the action head toward it (`mappo.hint_coef`, 1.0 here)
+and keeps the block's columns out of both networks (their adapter weights are held at zero), so the policy is taught
+the suggestion and never shown it. The weight is 0 in evaluation and in a probe. The learner reports `hint_loss`,
+`hint_match` (how often the greedy action is the hint), `hint_match_<block>` (the same for the hints of each block's
+actions: target picks are `pack`, revives and following `party`, pathed moves and object use `crowd`) and `hint_weight`.
 
 **A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
 clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
-pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, nearest next from the door,
-VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share of the instance's creatures
+pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route passes
+nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share of the instance's creatures
 killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
 
-- the tank leads along the route, waits until every member is above 70% health (the healer 50% mana) and within 20 yd, then
-  pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
+- the tank leads along the route, waits until every member is above 70% health (the healer 50% mana) and within 20 yd,
+  then pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
 - everyone else follows the tank between pulls (6 yd), comes back past 30 yd in a fight, and attacks the tank's
   target; the healer heals the most hurt first;
 - between pulls everybody eats, drinks and raises the dead.
 
-A seat is played by that script for a whole run with chance `WingScript` (1.0) x the support's ease, falling to 0 by
-`WingScriptEnd` (60%) of the budget: parties see the whole dungeon long before they can clear it. The script's press is
-the seat's action; the hint block's third column says so, and the learner leaves those rows out of the PPO update (they
-are not the policy's) while imitating them. A run any seat of which was scripted does not count towards the support's
-running share. The script's no-ops are never imitated: it presses nothing while an order it gave is still walking,
-resting or gathering, and the first run's policy, taught those, stood still on its own (2.5 kills an evaluation). The
-hint (the same script, every seat) fades by `WingAssistEnd` (80%), and staying more than `WingStrayYards` (25) from the
-tank costs `WingStray` (0.02) a second.
+A seat is played by that script for a whole run with the rung's script share: parties see the whole dungeon long
+before they can clear it. The script's press is the seat's action; the hint block's third column says so, and the
+learner leaves those rows out of the PPO update (they are not the policy's) while imitating them. The script's no-ops
+are never imitated: it presses nothing while an order it gave is still walking, resting or gathering, and the first
+run's policy, taught those, stood still on its own (2.5 kills an evaluation). Staying more than `WingStrayYards` (25)
+from the tank costs `WingStray` (0.02) a second.
 
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages

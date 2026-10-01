@@ -30,6 +30,8 @@
 #include "StageSettings.h"
 #include "StageState.h"
 #include <atomic>
+#include <array>
+#include <mutex>
 #include <memory>
 #include <optional>
 
@@ -234,14 +236,30 @@ namespace Animus::Curriculum
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
-        /// A whole dungeon's support (Instance.WingMastery): 1 while training parties get nowhere, falling to 0 as
-        /// their running route share reaches WingMastery; always 0 in evaluation.
-        [[nodiscard]] float WingAssist(Env const& env) const;
-        /// The chance a seat is played by the dungeon script for a run (Instance.WingScript): eased like the assist,
-        /// gone by Instance.WingScriptEnd of the budget, 0 in evaluation.
-        [[nodiscard]] float WingScriptShare(Env const& env) const;
-        /// A finished training run of a whole dungeon: the share of its route walked (1 when the last boss died).
-        void NoteWingRun(float share);
+        /// A rung of the whole dungeon's support ladder: the share of seats the dungeon script plays, the levels
+        /// above the dungeon's range, the wipes to spare and the weight of the hints every seat imitates.
+        struct WingRung
+        {
+            float Script;
+            uint32 Lift;
+            uint32 ExtraWipes;
+            float Hint;
+        };
+        /// The ladder, from the most support to none: the last rung is the evaluation's own conditions.
+        static constexpr std::array<WingRung, 6> WING_RUNGS =
+        {{
+            { 1.0f, 8, 4, 1.0f },
+            { 0.75f, 8, 4, 1.0f },
+            { 0.5f, 7, 3, 1.0f },
+            { 0.25f, 5, 2, 1.0f },
+            { 0.0f, 3, 1, 0.5f },
+            { 0.0f, 0, 0, 0.0f },
+        }};
+        /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
+        [[nodiscard]] uint32 WingRungNow() const { return _wingRung.load(std::memory_order_relaxed); }
+        /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe and how far it got (the
+        /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
+        void NoteWingRun(uint32 rung, bool probe, float progress);
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
 
@@ -444,7 +462,11 @@ namespace Animus::Curriculum
         std::atomic<float> _stageProgress{ 0.0f };
         /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
-        std::atomic<float> _wingMastery{ 0.0f };
+        std::atomic<uint32> _wingRung{ 0 };
+        std::mutex _wingLadderLock;
+        std::vector<float> _wingProbes;         // the rung's probes' progress, the latest WingRungRuns
+        std::vector<float> _wingOthers;         // ... its other training runs'
+        std::array<float, WING_RUNGS.size()> _wingSteppedAt{};  // the probes' mean when each rung was stepped onto
         std::vector<uint32> _arenaEpisodeMs;
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         OwnerEncounter* _owner = nullptr;

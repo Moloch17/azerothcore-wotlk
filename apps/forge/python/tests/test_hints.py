@@ -33,7 +33,8 @@ def test_hint_loss_weights_and_skips():
     from types import SimpleNamespace
     from animus.mappo.trainer import MappoTrainer
 
-    fake = SimpleNamespace(config=SimpleNamespace(hint_coef=2.0), hint_at=torch.tensor([3, -1]))
+    fake = SimpleNamespace(config=SimpleNamespace(hint_coef=2.0), hint_at=torch.tensor([3, -1]),
+                           hint_owner=torch.tensor([[0, 0, 1, 1], [-1, -1, -1, -1]]), hint_block_names=["core", "move"])
     obs = torch.zeros(3, 6)
     obs[0, 3], obs[0, 4] = 3.0, 0.5      # layout 0, hint action 2 (stored + 1), weight 0.5
     obs[1, 3], obs[1, 4] = 1.0, 0.5      # layout 0, the no-op (stored + 1): never imitated
@@ -46,6 +47,8 @@ def test_hint_loss_weights_and_skips():
     loss.backward()
     assert logits.grad[1].abs().sum() == 0 and logits.grad[2].abs().sum() == 0
     assert stats["hint_n"] == 1.0 and abs(stats["hint_weight"] - 0.5) < 1e-6
+    # Action 2 is the second block's: counted there, and the argmax of uniform logits (0) does not match it.
+    assert stats["hint_all_move"] == 1.0 and stats["hint_ok_move"] == 0.0
 
 
 def test_scripted_rows():

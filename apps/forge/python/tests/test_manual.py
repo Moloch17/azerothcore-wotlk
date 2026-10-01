@@ -95,8 +95,9 @@ def test_the_queue_total_is_what_the_manual_says():
     """The manual states the whole queue in one number, which is the one a person plans a run from."""
     rows = documented()
     # Every stage is in the default queue, the raids included (they run at their own env count).
-    queue = sum(v["total_env_steps"] for v in rows.values())
-    assert queue == 1_250_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,250M"
+    # stage6_party has no end (a budget no run reaches): the manual states the rest.
+    queue = sum(v["total_env_steps"] for v in rows.values() if v["total_env_steps"] < 1_000_000_000_000)
+    assert queue == 1_050_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 1,050M"
     assert len(rows) == 18
 
 

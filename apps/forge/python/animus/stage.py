@@ -275,7 +275,8 @@ class ConvergenceController:
     def after_eval(self, env_steps: int) -> Outcome:
         """Call after each training evaluation: ADVANCE once every class the run plays has converged."""
         played = self.played_layouts()
-        if played and self.evals >= self.config.convergence.window and all(s.converged for s in played):
+        if (self.config.convergence.advance and played and self.evals >= self.config.convergence.window
+                and all(s.converged for s in played)):
             return self._decide(Outcome(ADVANCE, "converged", self.report()))
         return self._decide(Outcome(CONTINUE, report=self.report()))
 

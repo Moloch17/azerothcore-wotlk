@@ -757,9 +757,28 @@ class MappoTrainer:
         out of both networks."""
         from .networks import attach_blind_columns
         at = []
+        # Which block each layout's action belongs to, for the agreement by kind of action (hint_match_<block>).
+        self.hint_block_names: list[str] = []
+        owners: list[list[int]] = []
         for layout in layout_names:
             blocks = (((stage or {}).get("layouts") or {}).get(layout) or {}).get("blocks") or []
             at.append(next((int(b["obs"][0]) for b in blocks if b.get("name") == "hint"), -1))
+            owner: list[int] = []
+            for block in blocks:
+                first, count = int(block["actions"][0]), int(block["actions"][1])
+                if count <= 0:
+                    continue
+                name = str(block.get("name"))
+                if name not in self.hint_block_names:
+                    self.hint_block_names.append(name)
+                if len(owner) < first + count:
+                    owner.extend([-1] * (first + count - len(owner)))
+                for action in range(first, first + count):
+                    owner[action] = self.hint_block_names.index(name)
+            owners.append(owner)
+        width = max((len(owner) for owner in owners), default=0)
+        self.hint_owner = torch.tensor([owner + [-1] * (width - len(owner)) for owner in owners] or [[-1]],
+                                       dtype=torch.long, device=self.train_device)
         self.hint_at = torch.tensor(at, dtype=torch.long, device=self.train_device) if any(a >= 0 for a in at) \
             else None
         if self.hint_at is None:
@@ -794,6 +813,17 @@ class MappoTrainer:
         loss = -(log_prob * w).sum() / w.sum().clamp(min=1e-6)
         with torch.no_grad():
             match = (dist.logits.argmax(-1) == action) & hinted
+            owners = getattr(self, "hint_owner", None)
+            if owners is not None and owners.shape[1] > 0:
+                layout_rows = layout.long()[hinted]
+                actions = action[hinted].clamp(max=owners.shape[1] - 1)
+                kind = owners[layout_rows, actions]
+                for index, name in enumerate(self.hint_block_names):
+                    of_kind = kind == index
+                    if bool(of_kind.any()):
+                        ok = float(match[hinted][of_kind].sum())
+                        stats[f"hint_ok_{name}"] = stats.get(f"hint_ok_{name}", 0.0) + ok
+                        stats[f"hint_all_{name}"] = stats.get(f"hint_all_{name}", 0.0) + float(of_kind.sum())
             stats["hint_loss"] = stats.get("hint_loss", 0.0) + float(loss.detach())
             stats["hint_match"] = stats.get("hint_match", 0.0) + float(match.sum() / hinted.sum())
             stats["hint_weight"] = stats.get("hint_weight", 0.0) + float(weight[hinted].mean())
@@ -1588,6 +1618,10 @@ class MappoTrainer:
             count = max(auxiliary_stats.pop("hint_n"), 1.0)
             for name in ("hint_loss", "hint_match", "hint_weight"):
                 result[name] = auxiliary_stats.pop(name, 0.0) / count
+        for key in [k for k in auxiliary_stats if k.startswith("hint_all_")]:
+            name = key[len("hint_all_"):]
+            total = max(auxiliary_stats.pop(key), 1.0)
+            result[f"hint_match_{name}"] = auxiliary_stats.pop(f"hint_ok_{name}", 0.0) / total
         result.update({k: v / auxiliary_updates for k, v in auxiliary_stats.items()})
         # What the update itself cost. With overlap_updates the run's own timer measures the wait for this to
         # finish, not the work, so without this the work is invisible.
@@ -1922,6 +1956,10 @@ class MappoTrainer:
             count = max(auxiliary_stats.pop("hint_n"), 1.0)
             for name in ("hint_loss", "hint_match", "hint_weight"):
                 stats[name] = auxiliary_stats.pop(name, 0.0) / count
+        for key in [k for k in auxiliary_stats if k.startswith("hint_all_")]:
+            name = key[len("hint_all_"):]
+            total = max(auxiliary_stats.pop(key), 1.0)
+            stats[f"hint_match_{name}"] = auxiliary_stats.pop(f"hint_ok_{name}", 0.0) / total
         if "scripted_share" in auxiliary_stats:
             stats["scripted_share"] = auxiliary_stats.pop("scripted_share") / max(1, updates)
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.

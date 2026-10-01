@@ -104,6 +104,9 @@ class ConvergenceConfig:
     has settled. The stage advances when every class the run plays has converged, or at total_env_steps.
     """
 
+    # False: the stage never ends on convergence (it trains until stopped or its total_env_steps); classes that
+    # converge still leave the draw by hold_share. stage6_party, whose user watches it and stops it by hand.
+    advance: bool = True
     patience: int = 0  # evaluations without a new *overall* best before the score counts as plateaued (LR anneal)
     window: int = 4  # evaluations every class signal is read over
     z: float = 2.0  # a new best beats the best by this many standard errors ...

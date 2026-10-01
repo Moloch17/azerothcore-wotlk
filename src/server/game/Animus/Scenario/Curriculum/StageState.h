@@ -673,6 +673,11 @@ namespace Animus::Curriculum
         uint32 EpisodeMapId = 0;            // read only when HasEpisodeMap: Eastern Kingdoms is map 0
         bool HasEpisodeMap = false;
         uint8 EpisodeLevel = 0;
+        /// A whole dungeon's run (InstanceEncounter::BeforeLevel, from the ladder's rung): the chance each seat is
+        /// played by the dungeon script, and the weight of the hints every seat imitates; both 0 in a probe and in
+        /// evaluation.
+        float WingScript = 0.0f;
+        float WingHint = 0.0f;
         /// The side the episode wants its seats on (TeamId + 1; 0: any): a quest or a town belongs to one. The race
         /// draw honours it, and a kept character of the other side is rebuilt.
         uint8 EpisodeTeam = 0;

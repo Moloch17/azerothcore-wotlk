@@ -1729,37 +1729,49 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     return castings.back();
 }
 
-float Animus::Curriculum::StageScenario::WingAssist(Env const& env) const
+void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress)
 {
-    if (env.Evaluating)
-        return 0.0f;
-    // Eased by success, and gone by Instance.WingAssistEnd of the stage's budget whatever happened: the parties of the
-    // first support run never earned it down (it held at 0.7 from 40M to 200M), so training never met the level and
-    // the wipes the evaluation plays at.
-    float const mastery = std::max(_tuning.Instance.WingMastery, 0.01f);
-    float const earned = std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
-    float const end = std::max(_tuning.Instance.WingAssistEnd, 0.01f);
-    float const clock = std::clamp(1.0f - _stageProgress.load(std::memory_order_relaxed) / end, 0.0f, 1.0f);
-    return std::min(earned, clock);
-}
+    // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
+    // the learner"): the probes against the rung's other runs, which have the script and the hints.
+    CurriculumTuning::InstanceTuning const& tuning = _tuning.Instance;
+    std::lock_guard<std::mutex> guard(_wingLadderLock);
+    uint32 const now = _wingRung.load(std::memory_order_relaxed);
+    if (rung != now)
+        return;
+    std::size_t const window = std::max<uint32>(1, tuning.WingRungRuns);
+    std::vector<float>& runs = probe ? _wingProbes : _wingOthers;
+    runs.push_back(std::clamp(progress, 0.0f, 1.0f));
+    if (runs.size() > window)
+        runs.erase(runs.begin());
+    if (!probe || _wingProbes.size() < window)
+        return;
 
-float Animus::Curriculum::StageScenario::WingScriptShare(Env const& env) const
-{
-    // The share of seats the script plays: eased by success like the assist, and gone by Instance.WingScriptEnd.
-    if (env.Evaluating)
-        return 0.0f;
-    float const mastery = std::max(_tuning.Instance.WingMastery, 0.01f);
-    float const earned = std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
-    float const end = std::max(_tuning.Instance.WingScriptEnd, 0.01f);
-    float const clock = std::clamp(1.0f - _stageProgress.load(std::memory_order_relaxed) / end, 0.0f, 1.0f);
-    return std::clamp(_tuning.Instance.WingScript, 0.0f, 1.0f) * std::min(earned, clock);
-}
+    auto const mean = [](std::vector<float> const& values)
+    {
+        float sum = 0.0f;
+        for (float value : values)
+            sum += value;
+        return values.empty() ? 0.0f : sum / float(values.size());
+    };
+    float const probes = mean(_wingProbes);
+    float const others = _wingOthers.size() * 2 >= window ? mean(_wingOthers) : probes;
+    float const target = std::max(tuning.WingRungFloor, tuning.WingRungStep * others);
+    uint32 next = now;
+    if (now + 1 < WING_RUNGS.size() && probes >= target)
+        next = now + 1;
+    else if (now > 0 && probes < tuning.WingRungFallback * _wingSteppedAt[now])
+        next = now - 1;
+    if (next == now)
+        return;
 
-void Animus::Curriculum::StageScenario::NoteWingRun(float share)
-{
-    float const rate = std::clamp(_tuning.Instance.WingMasteryRate, 0.0f, 1.0f);
-    float const was = _wingMastery.load(std::memory_order_relaxed);
-    _wingMastery.store(was + rate * (std::clamp(share, 0.0f, 1.0f) - was), std::memory_order_relaxed);
+    LOG_INFO("module.animus", "{}: the dungeon ladder steps {} from rung {} to {}: the last {} probes made {:.2f} of the "
+        "dungeon against {:.2f} for the rung's other runs (target {:.2f})", Name(), next > now ? "down" : "back up", now,
+        next, window, probes, others, target);
+    if (next > now)
+        _wingSteppedAt[next] = probes;
+    _wingRung.store(next, std::memory_order_relaxed);
+    _wingProbes.clear();
+    _wingOthers.clear();
 }
 
 float Animus::Curriculum::StageScenario::Weight(Layout const& layout, uint8 spec) const
@@ -3342,13 +3354,12 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.GoalEvent = seat.Event;
     view.Achieved = seat.Achieved;
     view.Goal2 = seat.Holds[1].Goal;
-    // A whole dungeon instructs some seats while parties get nowhere (Instance.WingInstruct x WingAssist), each drawn
-    // once a run; never in evaluation, where the assist is 0.
+    // A whole dungeon instructs a seat with the chance the rung gives the script (EnvState::WingScript), drawn once
+    // a run; never in a probe or in evaluation, where that is 0.
     if (!seat.InstructDrawn && seat.L)
     {
         seat.InstructDrawn = true;
-        seat.Instructed = Arena(env).Instance == InstanceLadder::Wing
-            && frand(0.0f, 1.0f) < _tuning.Instance.WingInstruct * WingAssist(env);
+        seat.Instructed = Arena(env).Instance == InstanceLadder::Wing && frand(0.0f, 1.0f) < Data(env).WingScript;
     }
     // An instructed seat's goal is its role's rule, renewed every decision; with nothing to instruct it is its own.
     if (seat.Instructed && !Arena(env).CommandedGoals)
@@ -3390,21 +3401,21 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
                 mask[action] = 0;
 
     // The scripted dungeon run (Baselines "dungeon": the tank pulls one pack at a time, the rest stay with it and hit
-    // its target, the healer keeps them up), while a whole dungeon's support lasts. A scripted seat (drawn once a run,
-    // Instance.WingScript) plays it -- its action this decision is the script's, whatever the policy sends -- so
+    // its target, the healer keeps them up), while a whole dungeon's support lasts. A scripted seat (drawn once a run
+    // with the rung's script share) plays it -- its action this decision is the script's, whatever the policy sends -- so
     // parties reach the whole dungeon before they can clear it themselves; every seat is also shown it as a hint to
-    // imitate (HintBlock, Instance.WingHint). Both fall with the support and the clock, and neither is ever there in
-    // evaluation. The waiting the script does (the no-op) is part of what it shows.
+    // imitate (HintBlock) at the rung's hint weight. Both step down the ladder as the probes succeed, and neither is
+    // there in a probe or in evaluation. The waiting the script does (the no-op) is part of what it shows.
     seat.ScriptAction = -1;
     if (mask && bot && bot->IsAlive() && seat.L->Has(BlockId::Hint) && Arena(env).Instance == InstanceLadder::Wing)
     {
+        EnvState const& wing = Data(env);
         if (!seat.ScriptDrawn)
         {
             seat.ScriptDrawn = true;
-            seat.Scripted = frand(0.0f, 1.0f) < WingScriptShare(env);
+            seat.Scripted = frand(0.0f, 1.0f) < wing.WingScript;
         }
-        float const weight = std::max(_tuning.Instance.WingHint * WingAssist(env),
-            seat.Scripted ? WingScriptShare(env) : 0.0f);
+        float const weight = std::max(wing.WingHint, seat.Scripted ? 1.0f : 0.0f);
         if (weight > 0.0f || seat.Scripted)
             if (int32 const hint = Baselines::Choose("dungeon", *seat.L, obs, mask);
                 hint >= 0 && hint < int32(seat.L->NumActions) && mask[hint])

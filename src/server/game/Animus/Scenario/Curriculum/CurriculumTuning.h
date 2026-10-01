@@ -255,15 +255,17 @@ namespace Animus::Curriculum
             uint32 WingStallGraceMs = 60000;
             float WingTimeout = 30.0f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
-            /// Support that eases off as parties succeed: the assist is 1 - (running route share of training runs
-            /// / WingMastery), clamped to 0..1, and 0 in evaluation. At assist a the party is WingLevelLift x a
-            /// levels above the dungeon's range, WingWipesExtra x a more wipes are stood up at the door, and each
-            /// seat is instructed with chance WingInstruct x a (its goal set by its role's rule, unlearned).
-            float WingMastery = 0.5f;
-            float WingMasteryRate = 0.02f;      // the running share's step per finished training run
-            float WingLevelLift = 8.0f;
-            float WingWipesExtra = 4.0f;
-            float WingInstruct = 0.8f;
+            /// The support ladder (StageScenario::WING_RUNGS): each rung fixes the dungeon script's share of seats,
+            /// the level lift, the wipes to spare and the hint weight. WingProbe of training runs are probes -- no
+            /// script, no hints, no instruction, at the rung's level and wipes -- and only they measure the policy:
+            /// once WingRungRuns probes at a rung have made, on average, WingRungStep of the progress the rung's other
+            /// runs make (and at least WingRungFloor), the ladder steps down; if the probes on a rung fall below
+            /// WingRungFallback of what they made when it was stepped onto, it steps back up. Nothing on a clock.
+            float WingProbe = 0.2f;
+            uint32 WingRungRuns = 40;
+            float WingRungStep = 0.8f;
+            float WingRungFloor = 0.3f;
+            float WingRungFallback = 0.5f;
             /// The instructed healer protects whoever is below this health share.
             float WingInstructHeal = 70.0f;
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
@@ -272,16 +274,8 @@ namespace Animus::Curriculum
             /// the next one. The Deadmines' parties had a median of eight on them when they wiped (2026-10-01).
             float WingCrowd = 0.05f;
             uint32 WingCrowdFree = 4;
-            /// The support is gone by this share of the stage's budget, whatever the parties earned.
-            float WingAssistEnd = 0.8f;
-            /// The learner imitates the scripted fight's press with this weight x the support (HintBlock).
-            float WingHint = 1.0f;
             /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
             uint32 WingFullClear = 1;
-            /// The share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd
-            /// of the budget: parties see the whole dungeon before they can clear it themselves.
-            float WingScript = 1.0f;
-            float WingScriptEnd = 0.6f;
             /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
             uint32 WingRiseMs = 30000;
             /// 1: a closed door opens by itself when a seat reaches it out of a fight (before the use action existed).
@@ -1123,20 +1117,16 @@ namespace Animus::Curriculum
             f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
             f("Instance.WingTimeout", tuning.Instance.WingTimeout);
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
-            f("Instance.WingMastery", tuning.Instance.WingMastery);
-            f("Instance.WingMasteryRate", tuning.Instance.WingMasteryRate);
-            f("Instance.WingLevelLift", tuning.Instance.WingLevelLift);
-            f("Instance.WingWipesExtra", tuning.Instance.WingWipesExtra);
-            f("Instance.WingInstruct", tuning.Instance.WingInstruct);
+            f("Instance.WingProbe", tuning.Instance.WingProbe);
+            f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
+            f("Instance.WingRungStep", tuning.Instance.WingRungStep);
+            f("Instance.WingRungFloor", tuning.Instance.WingRungFloor);
+            f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
-            f("Instance.WingAssistEnd", tuning.Instance.WingAssistEnd);
-            f("Instance.WingHint", tuning.Instance.WingHint);
             f("Instance.WingFullClear", tuning.Instance.WingFullClear);
-            f("Instance.WingScript", tuning.Instance.WingScript);
-            f("Instance.WingScriptEnd", tuning.Instance.WingScriptEnd);
             f("Instance.WingRiseMs", tuning.Instance.WingRiseMs);
             f("Instance.WingAutoDoors", tuning.Instance.WingAutoDoors);
             f("Instance.WingStray", tuning.Instance.WingStray);

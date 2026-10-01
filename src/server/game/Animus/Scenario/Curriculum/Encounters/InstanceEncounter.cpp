@@ -179,7 +179,8 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
                 / float(fight.HostileTotal + 1)) : 0.0f;
         });
         table.Add("wing_crowd_seconds", [this](Env const& env, uint32) { return _envs[env.Index].CrowdSeconds; });
-        table.Add("wing_assist", [this](Env const& env, uint32) { return _envs[env.Index].Assist; });
+        table.Add("wing_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
+        table.Add("wing_probe", [this](Env const& env, uint32) { return _envs[env.Index].Probe ? 1.0f : 0.0f; });
         table.Add("wing_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].Rises); });
         table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
@@ -192,17 +193,21 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
     if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing run: env {} {}{} level {} | point {}/{} at the end, {} of {} creatures killed, "
+        LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
             "{} bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
-            env.Index, fight.Evaluating ? "eval" : "train", fight.Scripted ? " scripted" : "", fight.Level,
+            env.Index, fight.Evaluating ? "eval" : "train", fight.Scripted ? " scripted" : "",
+            fight.Probe ? " probe" : "", fight.Rung, fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
             fight.BossDead ? "killed" : "alive", fight.Wipes,
             float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
             fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
-    // A run the script played part of is the script's success, not the policy's.
-    if (!fight.Route.empty() && !fight.Evaluating && !fight.Scripted)
-        _scenario.NoteWingRun(fight.BossDead ? 1.0f
-            : float(std::min<std::size_t>(fight.RouteNext, fight.Route.size())) / float(fight.Route.size()));
+    // Every training run counts for its rung; the probes are the policy's own.
+    if (!fight.Route.empty() && !fight.Evaluating)
+    {
+        float const cleared = fight.HostileTotal
+            ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
+        _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : std::min(1.0f, cleared));
+    }
     fight = EnvInstance();
 }
 
@@ -232,17 +237,21 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     data.EpisodeLevel = fight.Row->Level;
     // A whole dungeon is run by characters of its own level range: the dungeon finder's target range for the map
     // and difficulty (LFGDungeons.dbc), a level drawn in it every run. The row's level is the fallback.
-    // While parties get nowhere they run it above that range and with wipes to spare (Instance.WingLevelLift,
-    // WingWipesExtra), both easing off as they succeed; an evaluation runs it as it is.
+    // Training runs it at the support ladder's rung (StageScenario::WING_RUNGS): above that range, with wipes to
+    // spare, the script playing some seats and every seat shown its hints; a probe at the rung's level and wipes with
+    // neither; an evaluation as it is.
     if (Wing(env))
     {
         CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
         fight.Evaluating = env.Evaluating;
-        fight.Assist = _scenario.WingAssist(env);
-        fight.WipesAllowed = tuning.WingWipes + uint32(std::lround(fight.Assist * tuning.WingWipesExtra));
+        fight.Rung = env.Evaluating ? uint32(StageScenario::WING_RUNGS.size()) - 1 : _scenario.WingRungNow();
+        StageScenario::WingRung const& rung = StageScenario::WING_RUNGS[fight.Rung];
+        fight.Probe = !env.Evaluating && frand(0.0f, 1.0f) < tuning.WingProbe;
+        fight.WipesAllowed = tuning.WingWipes + rung.ExtraWipes;
+        data.WingScript = env.Evaluating || fight.Probe ? 0.0f : rung.Script;
+        data.WingHint = env.Evaluating || fight.Probe ? 0.0f : rung.Hint;
         auto const [low, high] = DungeonLevels(*fight.Row);
-        uint32 const lift = uint32(std::lround(fight.Assist * tuning.WingLevelLift));
-        data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
+        data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + rung.Lift, DEFAULT_MAX_LEVEL));
     }
     MapEntry const* mapEntry = sMapStore.LookupEntry(fight.Row->MapId);
     bool const raid = mapEntry && mapEntry->IsRaid();
@@ -955,10 +964,11 @@ void Animus::Curriculum::InstanceEncounter::LogWipe(Env const& env, EnvInstance 
 {
     EnvInstance::FightTrace const& trace = fight.Trace;
     // The healers' mana when the party went down is in its deaths (each seat's mana as it died).
-    LOG_INFO("module.animus", "Wing wipe: env {} {} assist {:.2f} level {} wipe {}/{} at {:.0f}s, point {}/{} "
+    LOG_INFO("module.animus", "Wing wipe: env {} {} rung {}{} level {} wipe {}/{} at {:.0f}s, point {}/{} "
         "(fight began at point {}, lasted {:.0f}s, {} kills in it, {} before) | peak {} on the party ({} elite, {} on "
         "the tank): {} | deaths: {}",
-        env.Index, fight.Evaluating ? "eval" : "train", fight.Assist, uint32(_scenario.Data(env).EpisodeLevel),
+        env.Index, fight.Evaluating ? "eval" : "train", fight.Rung, fight.Probe ? " probe" : "",
+        uint32(_scenario.Data(env).EpisodeLevel),
         fight.Wipes, fight.WipesAllowed, float(env.EpisodeElapsedMs) / 1000.0f, fight.RouteNext, fight.Route.size(),
         trace.PointAtStart, float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
         fight.TrashKills - trace.KillsAtStart, trace.KillsAtStart, trace.PeakEngaged, trace.PeakElites,
