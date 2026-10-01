@@ -772,9 +772,15 @@ class GoalEmbedding(nn.Module):
 _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_scale.weight")
 
 
+def without_blind_columns(state: dict) -> dict:
+    """A saved network's state without its blind-column masks (attach_blind_columns): they are made again from the
+    stage's layouts after loading (MappoTrainer.set_hint_space), and a network not yet given them refused them."""
+    return {key: value for key, value in state.items() if not key.split(".")[-1].startswith("blind_keep_")}
+
+
 def load_actor_state(actor: nn.Module, state: dict) -> None:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero."""
-    missing, unexpected = actor.load_state_dict(state, strict=False)
+    missing, unexpected = actor.load_state_dict(without_blind_columns(state), strict=False)
     wrong = [key for key in missing if key not in _GOAL_SCALE_KEYS]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "

@@ -62,3 +62,13 @@ def test_scripted_rows():
     layout = torch.tensor([0, 0, 1])
     rows = MappoTrainer._scripted_rows(fake, obs, layout)
     assert rows.tolist() == [True, False, False]
+
+
+def test_a_checkpoint_with_blind_columns_loads_into_a_fresh_actor():
+    from animus.mappo.networks import without_blind_columns
+    net = _Net()
+    attach_blind_columns(net, {0: [4, 5]})
+    saved = net.state_dict()
+    assert any(key.startswith("blind_keep_") for key in saved)
+    fresh = _Net()
+    fresh.load_state_dict(without_blind_columns(saved))   # strict: the masks are made again, not loaded

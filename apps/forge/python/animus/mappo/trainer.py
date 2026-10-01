@@ -1994,8 +1994,13 @@ class MappoTrainer:
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
+        from .networks import without_blind_columns
         load_actor_state(self.actor, state["actor"])
-        self.critic.load_state_dict(state["critic"])
+        missing, unexpected = self.critic.load_state_dict(without_blind_columns(state["critic"]), strict=False)
+        missing = [key for key in missing if not key.split(".")[-1].startswith("blind_keep_")]
+        if missing or unexpected:
+            raise RuntimeError(f"Error(s) in loading state_dict for the critic: missing {missing}, unexpected "
+                               f"{list(unexpected)}")
         if self.value_norm is not None and state.get("value_norm") is not None:
             self.value_norm.load_state_dict(state["value_norm"])
         if load_optimizers:
