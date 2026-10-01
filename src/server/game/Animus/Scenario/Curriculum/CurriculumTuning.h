@@ -261,7 +261,7 @@ namespace Animus::Curriculum
             /// seat is instructed with chance WingInstruct x a (its goal set by its role's rule, unlearned).
             float WingMastery = 0.5f;
             float WingMasteryRate = 0.02f;      // the running share's step per finished training run
-            float WingLevelLift = 5.0f;
+            float WingLevelLift = 8.0f;
             float WingWipesExtra = 4.0f;
             float WingInstruct = 0.8f;
             /// The instructed healer protects whoever is below this health share.

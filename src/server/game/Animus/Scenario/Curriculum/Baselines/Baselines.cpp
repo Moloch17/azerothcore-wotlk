@@ -856,10 +856,12 @@ namespace
             bool const onSeat = SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
             bool onMember = false;
             for (uint32 member = 0; member < GROUP_MEMBERS && !onMember; ++member)
-                onMember = MemberLive(row, member) && MemberObs(row, member, PartyBlock::MEMBER_SLOT_ON_FIRST + slot) > 0.0f;
+                onMember = MemberLive(row, member)
+                    && MemberObs(row, member, PartyBlock::MEMBER_SLOT_ON_FIRST + slot) > 0.0f;
             if (!(onMember || (onSeat && !notOnSeat)) || (notOnSeat && onSeat))
                 continue;
-            if (best < 0 || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(best), PackBlock::SLOT_DISTANCE))
+            if (best < 0
+                || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(best), PackBlock::SLOT_DISTANCE))
                 best = int32(slot);
         }
         return best;
@@ -926,8 +928,8 @@ namespace
             return Fight(row, layout);
 
         // One healer: the seat that heals best of the group (ties both heal). Every other build with a heal in it -- a
-        // feral druid, an enhancement shaman, a retribution paladin -- deals damage: the first script let them all heal,
-        // the fights ran 80-110 s and the real healer died dry (2026-10-01).
+        // feral druid, an enhancement shaman, a retribution paladin -- deals damage: the first script let them all
+        // heal, the fights ran 80-110 s and the real healer died dry (2026-10-01).
         bool const tank = IsDungeonTank(row);
         float const ownHealing = std::max({ AptitudeOf(row, Aptitude::DIRECT_HEAL), AptitudeOf(row, Aptitude::HOT_HEAL),
             AptitudeOf(row, Aptitude::AREA_HEAL) });
@@ -1031,8 +1033,9 @@ namespace
             // Every member, the dead included: the healer raises them between pulls, or they rise at the door
             // (Instance.WingRiseMs) and walk back, and the pull waits until they have rejoined.
             float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
-            bool const heals = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
-                + uint32(Aptitude::BRIEF_HEALING)) >= std::max(bestHealing - 1e-3f, AptitudeDemand::KeepsThemUp().AtLeast);
+            float const memberHealing = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
+                + uint32(Aptitude::BRIEF_HEALING));
+            bool const heals = memberHealing >= std::max(bestHealing - 1e-3f, AptitudeDemand::KeepsThemUp().AtLeast);
             ready = MemberLive(row, member)
                 && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
                 && (!heals || mana <= 0.0f || mana >= DUNGEON_READY_MANA)
@@ -1056,8 +1059,8 @@ namespace
         {
             int32 nearest = -1;
             for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
-                if (SlotLive(row, slot) && (nearest < 0
-                    || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(nearest), PackBlock::SLOT_DISTANCE)))
+                if (SlotLive(row, slot) && (nearest < 0 || SlotObs(row, slot, PackBlock::SLOT_DISTANCE)
+                    < SlotObs(row, uint32(nearest), PackBlock::SLOT_DISTANCE)))
                     nearest = int32(slot);
             if (nearest >= 0)
             {

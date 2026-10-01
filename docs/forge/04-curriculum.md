@@ -147,7 +147,7 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 96 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 64 |
 | `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
 | `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
 | `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
@@ -1780,7 +1780,8 @@ the stage; the companion block stays in its layout for the stages built on it.
 by one number, the assist: 1 minus the running route share of training runs over `Instance.WingMastery` (0.5),
 clamped to 0..1. At assist *a*:
 
-- the party is `WingLevelLift` x *a* levels above the dungeon's range (5: 22-25 at the start, 17-20 at the end);
+- the party is `WingLevelLift` x *a* levels above the dungeon's range (8: 25-28 at the start, 17-20 at the end;
+  the dungeon script clears about 90% of its runs at 25-28 and 40% at 22-25, 2026-10-01);
 - `WingWipesExtra` x *a* more wipes (4) stand the party up at the door with its kills kept, before one ends the run;
 - each seat is instructed for the run with chance `WingInstruct` x *a* (0.8): its primary goal is its role's rule --
   the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights whatever is hitting
@@ -1817,7 +1818,7 @@ suggestion and never shown it. The weight is 0 in evaluation and after `WingAssi
 **A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
 clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
 pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, nearest next from the door,
-VanCleef last, and the episode runs up to two hours. `wing_cleared_share` is the share of the instance's creatures
+VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share of the instance's creatures
 killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
 
 - the tank leads along the route, waits until every member is above 70% health (the healer 50% mana) and within 20 yd, then

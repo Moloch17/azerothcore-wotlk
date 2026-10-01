@@ -192,8 +192,8 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
     if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing run: env {} {}{} level {} | point {}/{} at the end, {} of {} creatures killed, {} "
-            "bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
+        LOG_INFO("module.animus", "Wing run: env {} {}{} level {} | point {}/{} at the end, {} of {} creatures killed, "
+            "{} bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
             env.Index, fight.Evaluating ? "eval" : "train", fight.Scripted ? " scripted" : "", fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
             fight.BossDead ? "killed" : "alive", fight.Wipes,
@@ -621,8 +621,9 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         unit->GetVictim() ? unit->GetVictim()->GetName() : "nobody",
                         unit->HasUnitState(UNIT_STATE_EVADE) ? " evading" : "");
         }
-        LOG_INFO("module.animus", "Wing time: env {} at point {}/{}, fighting {}, {} on the party, last kill {:.0f}s ago, "
-            "in combat around:{}", env.Index, fight.RouteNext, fight.Route.size(), fight.Fighting ? 1 : 0, fight.OnParty,
+        LOG_INFO("module.animus", "Wing time: env {} at point {}/{}, fighting {}, {} on the party, last kill {:.0f}s "
+            "ago, in combat around:{}", env.Index, fight.RouteNext, fight.Route.size(), fight.Fighting ? 1 : 0,
+            fight.OnParty,
             float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.LastKillMs)) / 1000.0f,
             around.empty() ? " nothing" : around);
     }
@@ -728,8 +729,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             if (Player* bot = _scenario.SeatBot(env, index))
             {
                 uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}]", seats.empty() ? "" : " ", index,
-                    bot == tank ? " tank" : "", bot->GetHealthPct(),
+                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}]", seats.empty() ? "" : " ",
+                    index, bot == tank ? " tank" : "", bot->GetHealthPct(),
                     maxMana ? std::to_string(bot->GetPower(POWER_MANA) * 100 / maxMana) + "%" : "-",
                     tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f,
                     bot->IsAlive() ? "" : " dead", bot->IsInCombat() ? " combat" : "");
@@ -751,8 +752,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 PathGenerator path(bot);
                 path.CalculatePath(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ(), false);
                 G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
-                seats += Acore::StringFormat(" | seat {} to the tank: path type {}, ends {:.0f} yd from it, walk {}, motion {}, "
-                    "moving {}", index, uint32(path.GetPathType()), tank->GetExactDist(end.x, end.y, end.z),
+                seats += Acore::StringFormat(" | seat {} to the tank: path type {}, ends {:.0f} yd from it, walk {}, "
+                    "motion {}, moving {}", index, uint32(path.GetPathType()), tank->GetExactDist(end.x, end.y, end.z),
                     fight.Seats[index].Walk, uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()),
                     bot->isMoving() ? 1 : 0);
             }
@@ -762,8 +763,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             PathGenerator path(tankPlayer);
             path.CalculatePath(next.GetPositionX(), next.GetPositionY(), next.GetPositionZ(), false);
             G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
-            seats += Acore::StringFormat(" | path to the point: type {} {} points, ends {:.0f} yd from it; tank z {:.1f}, "
-                "point z {:.1f}, motion {}", uint32(path.GetPathType()), path.GetPath().size(),
+            seats += Acore::StringFormat(" | path to the point: type {} {} points, ends {:.0f} yd from it; tank z "
+                "{:.1f}, point z {:.1f}, motion {}", uint32(path.GetPathType()), path.GetPath().size(),
                 next.GetExactDist(end.x, end.y, end.z), tankPlayer->GetPositionZ(), next.GetPositionZ(),
                 uint32(tankPlayer->GetMotionMaster()->GetCurrentMovementGeneratorType()));
             std::string fighters;
@@ -779,8 +780,9 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         }
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
-            fight.OnParty, fight.HasAhead && tank ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead),
-            fight.AheadSize) : std::string("none"), seats);
+            fight.OnParty, fight.HasAhead && tank
+                ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead), fight.AheadSize)
+                : std::string("none"), seats);
     }
     for (uint32 index = 0; index < data.ActiveSeats && !fight.Scripted; ++index)
         fight.Scripted = data.Seats[index].Scripted;
@@ -1040,12 +1042,14 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
     {
         std::vector<Creature const*> bosses;
         for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature != boss && creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss()))
+            if (creature && creature != boss && creature->IsAlive()
+                && (creature->IsDungeonBoss() || creature->isWorldBoss()))
                 bosses.push_back(creature);
         Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
         while (!bosses.empty())
         {
-            auto const nearest = std::min_element(bosses.begin(), bosses.end(), [&at](Creature const* a, Creature const* b)
+            auto const nearest = std::min_element(bosses.begin(), bosses.end(),
+                [&at](Creature const* a, Creature const* b)
             {
                 return a->GetExactDist(&at) < b->GetExactDist(&at);
             });
@@ -1082,9 +1086,10 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
                 if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
                     break;
             }
-            // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well; where
-            // the two halves come within a door's width of each other, only that gap is walked straight. Otherwise the
-            // straight line from the path's end, which went through the rock (the Deadmines' foundry and ship legs).
+            // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well;
+            // where the two halves come within a door's width of each other, only that gap is walked straight.
+            // Otherwise the straight line from the path's end, which went through the rock (the Deadmines' foundry
+            // and ship legs).
             float const missed = cursor.GetExactDist(&stop);
             float bridged = missed;
             if (missed > 5.0f)
@@ -1139,7 +1144,8 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             if (log)
             LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
                 _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
-                missed > 5.0f ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
+                missed > 5.0f
+                    ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
                     : "");
             cursor = stop;
         }
@@ -1253,7 +1259,8 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Cell::VisitObjects(bot, searcher, OBJECT_SIGHT);
         for (GameObject* object : objects)
         {
-            if (!Usable(object) || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
+            if (!Usable(object)
+                || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;
             if (std::find(fight.Objects.begin(), fight.Objects.end(), object->GetGUID()) == fight.Objects.end())
                 fight.Objects.push_back(object->GetGUID());
@@ -1373,9 +1380,9 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
     crowd.Ahead = fight.Ahead;
     crowd.AheadSize = fight.AheadSize;
     view.HasObjective = true;
-    // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the others
-    // up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at the door
-    // the next point was hundreds of yards on through the rock, and the seats walked into walls towards it.
+    // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the
+    // others up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at
+    // the door the next point was hundreds of yards on through the rock, and the seats walked into walls towards it.
     // A seat that has caught up with the tank's place goes to the tank itself: the tank waits short of its next
     // point for the party, and a seat sent to that point waited there for the tank (2026-10-01).
     std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);

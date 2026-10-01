@@ -6046,7 +6046,7 @@ AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   healer protects whoever is under WingInstructHeal % health); WingMasteryRate is the running share's step per run
 AnimusForge.Curriculum.Instance.WingMastery = 0.5
 AnimusForge.Curriculum.Instance.WingMasteryRate = 0.02
-AnimusForge.Curriculum.Instance.WingLevelLift = 5.0
+AnimusForge.Curriculum.Instance.WingLevelLift = 8.0
 AnimusForge.Curriculum.Instance.WingWipesExtra = 4.0
 AnimusForge.Curriculum.Instance.WingInstruct = 0.8
 AnimusForge.Curriculum.Instance.WingInstructHeal = 70.0
