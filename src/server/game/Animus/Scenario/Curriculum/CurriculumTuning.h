@@ -276,6 +276,16 @@ namespace Animus::Curriculum
             float WingAssistEnd = 0.6f;
             /// The learner imitates the scripted fight's press with this weight x the support (HintBlock).
             float WingHint = 1.0f;
+            /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
+            uint32 WingFullClear = 1;
+            /// The share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd
+            /// of the budget: parties see the whole dungeon before they can clear it themselves.
+            float WingScript = 1.0f;
+            float WingScriptEnd = 0.4f;
+            /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
+            /// leader.
+            float WingStray = 0.02f;
+            float WingStrayYards = 25.0f;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1120,6 +1130,11 @@ namespace Animus::Curriculum
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
             f("Instance.WingAssistEnd", tuning.Instance.WingAssistEnd);
             f("Instance.WingHint", tuning.Instance.WingHint);
+            f("Instance.WingFullClear", tuning.Instance.WingFullClear);
+            f("Instance.WingScript", tuning.Instance.WingScript);
+            f("Instance.WingScriptEnd", tuning.Instance.WingScriptEnd);
+            f("Instance.WingStray", tuning.Instance.WingStray);
+            f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);

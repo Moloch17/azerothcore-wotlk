@@ -542,7 +542,7 @@ namespace
                 Goal },
             .Arenas = {
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .EpisodeSeconds = 1200, .Directed = true,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .EpisodeSeconds = 3600, .Directed = true,
                     .DirectorLearned = true },
             },
         });

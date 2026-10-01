@@ -147,7 +147,7 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 512 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 200M | 20M | 256 |
 | `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
 | `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
 | `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
@@ -1813,6 +1813,25 @@ seat's own row -- heal the most hurt, the class's rotation, close to the target 
 the block's two columns out of both networks (their adapter weights are held at zero), so the policy is taught the
 suggestion and never shown it. The weight is 0 in evaluation and after `WingAssistEnd`. The learner reports
 `hint_loss`, `hint_match` (how often the greedy action is the hint) and `hint_weight`.
+
+**A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
+clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
+pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, nearest next from the door,
+VanCleef last, and the episode runs up to an hour. `wing_cleared_share` is the share of the instance's creatures
+killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
+
+- the tank leads along the route, waits until every member is above 80% health and 60% mana and within 15 yd, then
+  pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
+- everyone else follows the tank between pulls (6 yd), comes back past 30 yd in a fight, and attacks the tank's
+  target; the healer heals the most hurt first;
+- between pulls everybody eats, drinks and raises the dead.
+
+A seat is played by that script for a whole run with chance `WingScript` (1.0) x the support's ease, falling to 0 by
+`WingScriptEnd` (40%) of the budget: parties see the whole dungeon long before they can clear it. The script's press
+is the seat's action; the hint block's third column says so, and the learner leaves those rows out of the PPO update
+(they are not the policy's) while imitating them. A run any seat of which was scripted does not count towards the
+support's running share. The hint (the same script, every seat) fades by `WingAssistEnd` (60%), and staying more
+than `WingStrayYards` (25) from the tank costs `WingStray` (0.02) a second.
 
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages

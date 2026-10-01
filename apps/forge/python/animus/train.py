@@ -639,7 +639,7 @@ class TrainingRun:
             "lr_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
-            "hint_loss", "hint_match", "hint_weight",
+            "hint_loss", "hint_match", "hint_weight", "scripted_share",
         ]
         if self.trainer.goal_count:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and

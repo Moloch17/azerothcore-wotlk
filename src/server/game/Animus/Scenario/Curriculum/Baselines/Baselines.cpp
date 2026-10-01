@@ -19,9 +19,12 @@
 #include "Baselines.h"
 #include "ClassAssets.h"
 #include "CoreBlock.h"
+#include "CrowdBlock.h"
 #include "DuelBlock.h"
 #include "GauntletBlock.h"
 #include "MoveBlock.h"
+#include "PackBlock.h"
+#include "PartyBlock.h"
 #include "PetBlock.h"
 #include "SupportBlock.h"
 #include "SharedDefines.h"
@@ -62,6 +65,7 @@ namespace
         Row(Layout const& layout, float const* obs, uint8 const* mask) : _layout(layout), _obs(obs), _mask(mask) { }
 
         [[nodiscard]] bool Has(BlockId block) const { return _layout.Has(block); }
+        [[nodiscard]] Animus::Curriculum::Layout const& RowLayout() const { return _layout; }
 
         [[nodiscard]] float Obs(BlockId block, uint32 feature) const
         {
@@ -800,9 +804,271 @@ namespace
     }
 }
 
+namespace
+{
+    /// `dungeon`: a party clearing a dungeon pack by pack, as players do. The tank leads along the route, waits for
+    /// the party to be up and gathered, pulls the nearest pack and takes whatever hits somebody else; everyone else
+    /// stays with the tank, attacks the tank's target, and the healer keeps them up. Between pulls everyone eats,
+    /// drinks and raises the dead. Reads only the row, like every baseline.
+    constexpr float DUNGEON_PULL_YARDS = 25.0f;         // the tank pulls the pack ahead from this close
+    constexpr float DUNGEON_READY_HEALTH = 0.8f;        // ... once everybody has this much health
+    constexpr float DUNGEON_READY_MANA = 0.6f;          // ... and mana
+    constexpr float DUNGEON_GATHER_YARDS = 15.0f;       // ... and is this near
+    constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
+    constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
+    constexpr float DUNGEON_REST_HEALTH = 0.7f;
+    constexpr float DUNGEON_REST_MANA = 0.6f;
+
+    float SlotObs(Row const& row, uint32 slot, uint32 feature)
+    {
+        return row.Obs(BlockId::Pack, PackBlock::OBS_GLOBAL_COUNT + slot * PackBlock::SLOT_FEATURES + feature);
+    }
+
+    float MemberObs(Row const& row, uint32 member, uint32 feature)
+    {
+        return row.Obs(BlockId::Party, PartyBlock::OBS_GLOBAL_COUNT + member * PartyBlock::MEMBER_FEATURES + feature);
+    }
+
+    bool SlotLive(Row const& row, uint32 slot)
+    {
+        return SlotObs(row, slot, PackBlock::SLOT_PRESENT) > 0.0f && SlotObs(row, slot, PackBlock::SLOT_ALIVE) > 0.0f;
+    }
+
+    bool SlotFighting(Row const& row, uint32 slot)
+    {
+        return SlotLive(row, slot) && SlotObs(row, slot, PackBlock::SLOT_IN_COMBAT) > 0.0f;
+    }
+
+    bool MemberLive(Row const& row, uint32 member)
+    {
+        return MemberObs(row, member, PartyBlock::MEMBER_PRESENT) > 0.0f
+            && MemberObs(row, member, PartyBlock::MEMBER_ALIVE) > 0.0f;
+    }
+
+    /// The slot attacked by a party member (or by the seat), nearest first, or -1.
+    int32 SlotOnParty(Row const& row, bool notOnSeat)
+    {
+        int32 best = -1;
+        for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+        {
+            if (!SlotFighting(row, slot))
+                continue;
+            bool const onSeat = SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
+            bool onMember = false;
+            for (uint32 member = 0; member < GROUP_MEMBERS && !onMember; ++member)
+                onMember = MemberLive(row, member) && MemberObs(row, member, PartyBlock::MEMBER_SLOT_ON_FIRST + slot) > 0.0f;
+            if (!(onMember || (onSeat && !notOnSeat)) || (notOnSeat && onSeat))
+                continue;
+            if (best < 0 || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(best), PackBlock::SLOT_DISTANCE))
+                best = int32(slot);
+        }
+        return best;
+    }
+
+    /// The party's tank among the seat's own group: the most mitigation, alive; -1 for none.
+    int32 TankMember(Row const& row)
+    {
+        int32 best = -1;
+        float most = 0.3f;
+        for (uint32 member = 0; member < GROUP_MEMBERS; ++member)
+            if (MemberLive(row, member))
+                if (float const mitigation = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
+                    + uint32(Aptitude::BRIEF_MITIGATION)); mitigation > most)
+                {
+                    most = mitigation;
+                    best = int32(member);
+                }
+        return best;
+    }
+
+    bool IsDungeonTank(Row const& row)
+    {
+        if (row.Has(BlockId::Crowd))
+            return row.Obs(BlockId::Crowd, CrowdBlock::OBS_IS_TANK) > 0.0f;
+        return CanHoldThePull(row);
+    }
+
+    std::optional<int32> SelectSlot(Row const& row, uint32 slot)
+    {
+        if (SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) > 0.0f)
+            return std::nullopt;
+        return row.Allowed(BlockId::Pack, PackBlock::ACTION_SLOT_FIRST + slot);
+    }
+
+    /// Eat and drink out of a fight, and keep sitting until full.
+    std::optional<int32> Rest(Row const& row)
+    {
+        if (!row.Has(BlockId::Gauntlet))
+            return std::nullopt;
+        float const health = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH);
+        float const mana = row.Obs(BlockId::Core, CoreBlock::OBS_MANA);
+        bool const eating = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_EATING) > 0.0f;
+        bool const drinking = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINKING) > 0.0f;
+        if ((eating && health < 0.99f) || (drinking && mana > 0.0f && mana < 0.99f))
+            return 0;
+        if (health < DUNGEON_REST_HEALTH)
+            if (std::optional<int32> eat = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_EAT))
+                return eat;
+        if (mana > 0.0f && mana < DUNGEON_REST_MANA)
+            if (std::optional<int32> drink = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_DRINK))
+                return drink;
+        return std::nullopt;
+    }
+
+    std::optional<int32> Revive(Row const& row)
+    {
+        if (!row.Has(BlockId::Party))
+            return std::nullopt;
+        BlockSlice const& slice = row.RowLayout().Slice(BlockId::Party);
+        for (uint32 action = PartyBlock::ACTION_REVIVE_FIRST; action < slice.ActionCount; ++action)
+            if (std::optional<int32> revive = row.Allowed(BlockId::Party, action))
+                return revive;
+        return std::nullopt;
+    }
+
+    /// The fight itself once the right slot is the target: the rotation, closing in, the pet.
+    std::optional<int32> Engage(Row const& row, Layout const& layout)
+    {
+        if (std::optional<int32> action = Fight(row, layout))
+            return action;
+        if (std::optional<int32> ability = PetDamage(row, layout))
+            return ability;
+        return Rotation(row, layout);
+    }
+
+    std::optional<int32> Dungeon(Row const& row, Layout const& layout)
+    {
+        if (!row.Has(BlockId::Pack) || !row.Has(BlockId::Party))
+            return Fight(row, layout);
+
+        bool const tank = IsDungeonTank(row);
+        bool const healer = !tank && CanHeal(row);
+        bool fighting = row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_ON_PARTY) > 0.0f;
+        for (uint32 slot = 0; slot < PACK_SLOTS && !fighting; ++slot)
+            fighting = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
+        if (!fighting)
+            fighting = SlotOnParty(row, false) >= 0;
+
+        int32 const leader = tank ? -1 : TankMember(row);
+        float const leaderYards = leader >= 0 ? MemberObs(row, uint32(leader), PartyBlock::MEMBER_DISTANCE) * 40.0f
+            : 0.0f;
+        auto const follow = [&row]() { return row.Allowed(BlockId::Party, PartyBlock::ACTION_FOLLOW_TANK); };
+
+        if (fighting)
+        {
+            if (healer)
+                if (std::optional<int32> heal = Support(row, layout))
+                    return heal;
+
+            int32 want = -1;
+            if (tank)
+            {
+                // Whatever is on somebody else first, then what it already holds, then the nearest in the fight.
+                want = SlotOnParty(row, true);
+                if (want < 0)
+                    for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
+                        if (SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) > 0.0f)
+                            want = int32(slot);
+                if (want < 0)
+                    want = SlotOnParty(row, false);
+            }
+            else
+            {
+                // Back to the tank if the fight has drawn the seat away; then the tank's target.
+                if (leader >= 0 && leaderYards > DUNGEON_LEASH_YARDS)
+                    if (std::optional<int32> back = follow())
+                        return back;
+                if (leader >= 0)
+                    for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
+                        if (MemberObs(row, uint32(leader), PartyBlock::MEMBER_TARGET_FIRST + slot) > 0.0f
+                            && SlotFighting(row, slot))
+                            want = int32(slot);
+                if (want < 0)
+                    want = SlotOnParty(row, false);
+            }
+
+            if (want >= 0)
+                if (std::optional<int32> select = SelectSlot(row, uint32(want)))
+                    return select;
+            if (want >= 0 || healer)
+                if (std::optional<int32> action = Engage(row, layout))
+                    return action;
+            return 0;
+        }
+
+        // Between pulls.
+        if (std::optional<int32> revive = Revive(row))
+            return revive;
+        if (healer)
+            if (std::optional<int32> heal = Support(row, layout))
+                return heal;
+        if (std::optional<int32> rest = Rest(row))
+            return rest;
+
+        if (!tank)
+        {
+            if (leader >= 0 && leaderYards > DUNGEON_FOLLOW_YARDS)
+                if (std::optional<int32> go = follow())
+                    return go;
+            if (std::optional<int32> halt = Halt(row))
+                return halt;
+            return 0;
+        }
+
+        // The tank: everybody up, rested and gathered before the next pull.
+        bool ready = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) >= DUNGEON_READY_HEALTH;
+        float const ownMana = row.Obs(BlockId::Core, CoreBlock::OBS_MANA);
+        ready = ready && (ownMana <= 0.0f || ownMana >= DUNGEON_READY_MANA);
+        for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
+        {
+            if (MemberObs(row, member, PartyBlock::MEMBER_PRESENT) == 0.0f)
+                continue;
+            float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
+            ready = MemberLive(row, member)
+                && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
+                && (mana <= 0.0f || mana >= DUNGEON_READY_MANA)
+                && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
+        }
+        if (!ready)
+        {
+            if (std::optional<int32> halt = Halt(row))
+                return halt;
+            return 0;
+        }
+
+        // The pack ahead, close enough: target its nearest and go and get it.
+        float const ahead = row.Has(BlockId::Crowd) ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_AHEAD_DISTANCE) * 60.0f
+            : 60.0f;
+        if (ahead <= DUNGEON_PULL_YARDS)
+        {
+            int32 nearest = -1;
+            for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+                if (SlotLive(row, slot) && (nearest < 0
+                    || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(nearest), PackBlock::SLOT_DISTANCE)))
+                    nearest = int32(slot);
+            if (nearest >= 0)
+            {
+                if (std::optional<int32> select = SelectSlot(row, uint32(nearest)))
+                    return select;
+                if (std::optional<int32> action = Engage(row, layout))
+                    return action;
+                return 0;
+            }
+        }
+
+        // On along the route.
+        float const toSin = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN);
+        float const toCos = row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS);
+        if (std::optional<int32> go = Steer(row, toSin, toCos))
+            return go;
+        return 0;
+    }
+}
+
 bool Animus::Curriculum::Baselines::Supports(std::string const& policy, Layout const& layout)
 {
     return policy == "greedy" || (policy == "fight" && layout.Has(BlockId::Duel))
+        || (policy == "dungeon" && layout.Has(BlockId::Duel))
         || (policy == "life" && layout.Has(BlockId::World) && layout.Has(BlockId::Duel));
 }
 
@@ -831,6 +1097,9 @@ int32 Animus::Curriculum::Baselines::Choose(std::string const& policy, Layout co
             return *go;
         return 0;
     }
+
+    if (policy == "dungeon" && layout.Has(BlockId::Duel))
+        return Dungeon(row, layout).value_or(0);
 
     if (policy == "fight" && layout.Has(BlockId::Duel))
     {

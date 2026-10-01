@@ -9,10 +9,10 @@ total_env_steps: 200000000
 
 eval:
   every_env_steps: 20000000
-  episodes: 512
+  episodes: 256
   report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, wing_assist,
-           wing_crowd_seconds, wing_level, teammates_died, teammate_healing, idle_seconds_in_combat,
-           director_member_orders, goals_reached, serving_share,
+           wing_cleared_share, wing_scripted, wing_crowd_seconds, wing_level, teammates_died, teammate_healing,
+           idle_seconds_in_combat, director_member_orders, goals_reached, serving_share,
            aimless_presses, combat_dps, dps_scaled, level]
 
 cast:

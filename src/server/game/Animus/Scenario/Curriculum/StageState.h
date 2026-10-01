@@ -323,6 +323,10 @@ namespace Animus::Curriculum
         /// instructed seat's goal is its role's rule (StageScenario::InstructedGoal), unlearned.
         bool Instructed = false;
         bool InstructDrawn = false;
+        /// Played by the dungeon script this run (Instance.WingScript), and the script's press for this decision.
+        bool Scripted = false;
+        bool ScriptDrawn = false;
+        int32 ScriptAction = -1;
         std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -549,6 +553,9 @@ namespace Animus::Curriculum
             CommandedAtMs = 0;
             Instructed = false;
             InstructDrawn = false;
+            Scripted = false;
+            ScriptDrawn = false;
+            ScriptAction = -1;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;

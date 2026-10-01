@@ -168,8 +168,15 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
                 / float(fight.Route.size());
         });
         table.Add("wing_wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
+        table.Add("wing_cleared_share", [this](Env const& env, uint32)
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            return fight.HostileTotal ? std::min(1.0f, float(fight.TrashKills + (fight.BossDead ? 1 : 0))
+                / float(fight.HostileTotal + 1)) : 0.0f;
+        });
         table.Add("wing_crowd_seconds", [this](Env const& env, uint32) { return _envs[env.Index].CrowdSeconds; });
         table.Add("wing_assist", [this](Env const& env, uint32) { return _envs[env.Index].Assist; });
+        table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
     }
 }
@@ -178,7 +185,8 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
     // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
-    if (!fight.Route.empty() && !fight.Evaluating)
+    // A run the script played part of is the script's success, not the policy's.
+    if (!fight.Route.empty() && !fight.Evaluating && !fight.Scripted)
         _scenario.NoteWingRun(fight.BossDead ? 1.0f
             : float(std::min<std::size_t>(fight.RouteNext, fight.Route.size())) / float(fight.Route.size()));
     fight = EnvInstance();
@@ -424,6 +432,9 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     if (Wing(env))
     {
         fight.Route = WingRoute(env, map, seat, boss);
+        fight.HostileTotal = 0;
+        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+            fight.HostileTotal += Hostile(seat, creature) ? 1 : 0;
         fight.RouteRemain.assign(fight.Route.size(), 0.0f);
         for (std::size_t i = fight.Route.size(); i-- > 1;)
             fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
@@ -571,6 +582,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fight.Fighting = true;
     TraceWing(env, fight, fight.Fighting || !anyoneAlive);
+    for (uint32 index = 0; index < data.ActiveSeats && !fight.Scripted; ++index)
+        fight.Scripted = data.Seats[index].Scripted;
 
     // A wing: the next point of the route reached by any seat out of a fight -- ground is taken by clearing it, not
     // by running past what is still fighting (the Deadmines' parties ran into the next pack mid-fight and had eight on
@@ -732,6 +745,14 @@ void Animus::Curriculum::InstanceEncounter::LogWipe(Env const& env, EnvInstance 
         trace.Deaths.empty() ? "none seen" : trace.Deaths);
 }
 
+bool Animus::Curriculum::InstanceEncounter::Hostile(Player const* seat, Creature const* creature)
+{
+    return creature && seat && creature->IsAlive() && !creature->IsCritter() && !creature->IsCivilian()
+        && !creature->IsTotem() && !creature->IsPet() && !creature->IsSummon()
+        && !creature->HasUnitFlag(UNIT_FLAG_NOT_SELECTABLE | UNIT_FLAG_NON_ATTACKABLE)
+        && creature->IsHostileTo(seat);
+}
+
 bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const
 {
     return _scenario.Arena(env).Instance == InstanceLadder::Wing;
@@ -764,27 +785,57 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             return known->second;
     }
 
-    // The whole dungeon, end to end: every dungeon boss in the instance, nearest next from the door, then the last
-    // boss. Straight to the last boss, the path gave out a third of the way in the Deadmines (a door's tunnel the
-    // navmesh does not join) and passed Gilnid by.
+    // The whole dungeon, end to end: every pack in the instance -- trash, side bosses and all, Instance.WingFullClear
+    // -- nearest next from the door, then the last boss. Only the bosses, the route passed packs by and the parties
+    // never cleared a room (2026-10-01: "clear every pull and every boss, even side ones"). Straight to the last
+    // boss, the path gave out a third of the way in the Deadmines (a door's tunnel the navmesh does not join).
     std::vector<Position> stops;
     {
-        std::vector<Creature const*> bosses;
+        constexpr float PACK_REACH = 15.0f;
+        bool const fullClear = _scenario.Tuning().Instance.WingFullClear != 0;
+        std::vector<Position> packs;
+        std::vector<Creature const*> left;
         for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature != boss && creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss()))
-                bosses.push_back(creature);
-        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
-        while (!bosses.empty())
+            if (creature && creature != boss && (fullClear ? Hostile(seat, creature)
+                : creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss())))
+                left.push_back(creature);
+        // A pack: a creature and every other within PACK_REACH of it, stood at their middle.
+        while (!left.empty())
         {
-            auto const nearest = std::min_element(bosses.begin(), bosses.end(), [&at](Creature const* a, Creature const* b)
-            {
-                return a->GetExactDist(&at) < b->GetExactDist(&at);
-            });
-            at.Relocate((*nearest)->GetPositionX(), (*nearest)->GetPositionY(), (*nearest)->GetPositionZ());
-            stops.push_back(at);
-            bosses.erase(nearest);
+            Creature const* first = left.front();
+            float x = 0.0f, y = 0.0f, z = 0.0f;
+            uint32 count = 0;
+            for (auto it = left.begin(); it != left.end();)
+                if ((*it)->GetHomePosition().GetExactDist(&first->GetHomePosition()) <= PACK_REACH)
+                {
+                    x += (*it)->GetHomePosition().GetPositionX();
+                    y += (*it)->GetHomePosition().GetPositionY();
+                    z += (*it)->GetHomePosition().GetPositionZ();
+                    ++count;
+                    it = left.erase(it);
+                }
+                else
+                    ++it;
+            // The middle can be in the air between two ledges; the nearest member's own spot is walkable.
+            Position const middle(x / float(count), y / float(count), z / float(count));
+            packs.push_back(middle);
         }
-        stops.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
+        // Packs standing by the last boss are its room: the route ends there, with them.
+        Position const last(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
+        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+        while (!packs.empty())
+        {
+            auto const nearest = std::min_element(packs.begin(), packs.end(), [&at](Position const& a, Position const& b)
+            {
+                return a.GetExactDist(&at) < b.GetExactDist(&at);
+            });
+            at = *nearest;
+            stops.push_back(at);
+            packs.erase(nearest);
+        }
+        stops.push_back(last);
+        LOG_INFO("module.animus", "{}: {} route stops ({} the whole dungeon's packs)", _scenario.Name(), stops.size(),
+            fullClear ? "every one of" : "only");
     }
 
     // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
@@ -987,7 +1038,11 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         if (std::find(env.Targets.begin(), env.Targets.end(), unit->GetGUID()) != env.Targets.end())
             continue;
         if (fight.Overflow.size() < CROWD_SLOTS)
+        {
             fight.Overflow.push_back(unit->GetGUID());
+            if (std::find(fight.Watched.begin(), fight.Watched.end(), unit->GetGUID()) == fight.Watched.end())
+                fight.Watched.push_back(unit->GetGUID());
+        }
         if (!fight.HasAhead && !unit->IsInCombat())
         {
             fight.HasAhead = true;
@@ -1055,6 +1110,11 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     if (fight.OnParty > tuning.WingCrowdFree)
         ledger.Add(RewardTerm::Threat, -tuning.WingCrowd * float(fight.OnParty - tuning.WingCrowdFree)
             * float(_scenario.DecisionMs()) / 1000.0f);
+    // Away from the leader (Instance.WingStray): a seat other than the tank further than WingStrayYards from it.
+    if (bot && bot->IsAlive() && !fight.Tank.IsEmpty() && bot->GetGUID() != fight.Tank)
+        if (Unit* tank = ObjectAccessor::GetUnit(*bot, fight.Tank); tank && tank->IsAlive() && tank->IsInMap(bot)
+            && bot->GetExactDist(tank) > tuning.WingStrayYards)
+            ledger.Add(RewardTerm::Approach, -tuning.WingStray * float(_scenario.DecisionMs()) / 1000.0f);
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));

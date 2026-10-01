@@ -6059,6 +6059,14 @@ AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 #   fight's press (a hint every seat gets) with weight WingHint x the support
 AnimusForge.Curriculum.Instance.WingAssistEnd = 0.6
 AnimusForge.Curriculum.Instance.WingHint = 1.0
+#   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
+#   other than the tank is further than WingStrayYards from it, WingStray
+AnimusForge.Curriculum.Instance.WingFullClear = 1
+#   the share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd of the budget
+AnimusForge.Curriculum.Instance.WingScript = 1.0
+AnimusForge.Curriculum.Instance.WingScriptEnd = 0.4
+AnimusForge.Curriculum.Instance.WingStray = 0.02
+AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
 
 #
 #    AnimusForge.Curriculum.Life.*

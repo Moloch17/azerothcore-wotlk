@@ -578,6 +578,8 @@ namespace Animus::Curriculum
             bool Fighting = false;
             uint32 OnParty = 0;
             float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
+            uint32 HostileTotal = 0;            // the instance's creatures a full clear kills, at the start
+            bool Scripted = false;              // a seat of this run was played by the script (WingScript)
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
             /// and the nearest pack not in the fight.
             uint32 OnTank = 0;
@@ -593,6 +595,9 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] bool Wing(Env const& env) const;
+        /// A creature a full clear kills (Instance.WingFullClear): alive, hostile to the party, not a critter, a
+        /// civilian, a totem, a pet or a summon, and attackable.
+        [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
         /// The door-to-boss path as points every Instance.WingWaypointYards (the last one the boss), once per boss.
         [[nodiscard]] std::vector<Position> WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);

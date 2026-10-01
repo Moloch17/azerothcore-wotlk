@@ -237,6 +237,9 @@ namespace Animus::Curriculum
         /// A whole dungeon's support (Instance.WingMastery): 1 while training parties get nowhere, falling to 0 as
         /// their running route share reaches WingMastery; always 0 in evaluation.
         [[nodiscard]] float WingAssist(Env const& env) const;
+        /// The chance a seat is played by the dungeon script for a run (Instance.WingScript): eased like the assist,
+        /// gone by Instance.WingScriptEnd of the budget, 0 in evaluation.
+        [[nodiscard]] float WingScriptShare(Env const& env) const;
         /// A finished training run of a whole dungeon: the share of its route walked (1 when the last boss died).
         void NoteWingRun(float share);
         /// The decision interval, in ms of game time.

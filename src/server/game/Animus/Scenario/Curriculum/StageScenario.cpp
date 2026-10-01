@@ -1743,6 +1743,18 @@ float Animus::Curriculum::StageScenario::WingAssist(Env const& env) const
     return std::min(earned, clock);
 }
 
+float Animus::Curriculum::StageScenario::WingScriptShare(Env const& env) const
+{
+    // The share of seats the script plays: eased by success like the assist, and gone by Instance.WingScriptEnd.
+    if (env.Evaluating)
+        return 0.0f;
+    float const mastery = std::max(_tuning.Instance.WingMastery, 0.01f);
+    float const earned = std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
+    float const end = std::max(_tuning.Instance.WingScriptEnd, 0.01f);
+    float const clock = std::clamp(1.0f - _stageProgress.load(std::memory_order_relaxed) / end, 0.0f, 1.0f);
+    return std::clamp(_tuning.Instance.WingScript, 0.0f, 1.0f) * std::min(earned, clock);
+}
+
 void Animus::Curriculum::StageScenario::NoteWingRun(float share)
 {
     float const rate = std::clamp(_tuning.Instance.WingMasteryRate, 0.0f, 1.0f);
@@ -2877,6 +2889,12 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     SeatState& seat = Data(env).Seats[seatIndex];
     if (!bot || !seat.L)
         return;
+    // A scripted seat plays the script's press from its observation (ObserveSeat), not the policy's.
+    if (seat.Scripted && seat.ScriptAction >= 0)
+    {
+        action = seat.ScriptAction;
+        seat.ScriptAction = -1;
+    }
 
     Unit* target = CurrentTarget(env, seatIndex);
     if (!target && !SeatEncoder::ActsWithoutTarget(*seat.L))
@@ -3371,18 +3389,34 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             if (mask[action] && Paced(env, seat, action))
                 mask[action] = 0;
 
-    // The suggestion to imitate while a whole dungeon's support lasts (HintBlock, Instance.WingHint): what the
-    // scripted fight would press with this row -- heal the most hurt, the rotation, close to the target -- weighted
-    // by the support, so it fades as parties succeed and is never there in evaluation. Only an allowed press.
+    // The scripted dungeon run (Baselines "dungeon": the tank pulls one pack at a time, the rest stay with it and hit
+    // its target, the healer keeps them up), while a whole dungeon's support lasts. A scripted seat (drawn once a run,
+    // Instance.WingScript) plays it -- its action this decision is the script's, whatever the policy sends -- so
+    // parties reach the whole dungeon before they can clear it themselves; every seat is also shown it as a hint to
+    // imitate (HintBlock, Instance.WingHint). Both fall with the support and the clock, and neither is ever there in
+    // evaluation. The waiting the script does (the no-op) is part of what it shows.
+    seat.ScriptAction = -1;
     if (mask && bot && bot->IsAlive() && seat.L->Has(BlockId::Hint) && Arena(env).Instance == InstanceLadder::Wing)
-        if (float const weight = _tuning.Instance.WingHint * WingAssist(env); weight > 0.0f)
-            if (int32 const hint = Baselines::Choose("fight", *seat.L, obs, mask);
-                hint > 0 && hint < int32(seat.L->NumActions) && mask[hint])
+    {
+        if (!seat.ScriptDrawn)
+        {
+            seat.ScriptDrawn = true;
+            seat.Scripted = frand(0.0f, 1.0f) < WingScriptShare(env);
+        }
+        float const weight = std::max(_tuning.Instance.WingHint * WingAssist(env),
+            seat.Scripted ? WingScriptShare(env) : 0.0f);
+        if (weight > 0.0f || seat.Scripted)
+            if (int32 const hint = Baselines::Choose("dungeon", *seat.L, obs, mask);
+                hint >= 0 && hint < int32(seat.L->NumActions) && mask[hint])
             {
                 float* columns = obs + seat.L->Slice(BlockId::Hint).ObsFirst;
-                columns[HintBlock::OBS_ACTION] = float(hint);
-                columns[HintBlock::OBS_WEIGHT] = weight;
+                columns[HintBlock::OBS_ACTION] = float(hint + 1);
+                columns[HintBlock::OBS_WEIGHT] = std::max(weight, seat.Scripted ? 0.05f : 0.0f);
+                columns[HintBlock::OBS_SCRIPTED] = seat.Scripted ? 1.0f : 0.0f;
+                if (seat.Scripted)
+                    seat.ScriptAction = hint;
             }
+    }
 }
 
 bool Animus::Curriculum::StageScenario::Paced(Env const& env, SeatState const& seat, uint32 action) const

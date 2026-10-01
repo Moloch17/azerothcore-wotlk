@@ -752,8 +752,9 @@ class MappoTrainer:
                 actor.goal_head.set_space(goals["accepts"], block_at)
 
     def set_hint_space(self, stage: dict | None, layout_names: list[str]) -> None:
-        """Where each layout's hint block is (stage.json layouts' blocks named "hint"): its two columns, the suggested
-        action and its weight, are read by the imitation loss and kept out of both networks."""
+        """Where each layout's hint block is (stage.json layouts' blocks named "hint"): its columns -- the suggested
+        action + 1, its weight, and whether the script played the decision -- are read by the imitation loss and kept
+        out of both networks."""
         from .networks import attach_blind_columns
         at = []
         for layout in layout_names:
@@ -763,7 +764,7 @@ class MappoTrainer:
             else None
         if self.hint_at is None:
             return
-        columns = {index: [a, a + 1] for index, a in enumerate(at) if a >= 0}
+        columns = {index: [a, a + 1, a + 2] for index, a in enumerate(at) if a >= 0}
         for network in (self.actor, self.critic):
             if network is not None and hasattr(network, "adapters"):
                 attach_blind_columns(network, columns)
@@ -780,9 +781,9 @@ class MappoTrainer:
             return None
         index = torch.arange(obs.shape[0], device=obs.device)
         safe = at.clamp(min=0)
-        action = obs[index, safe].round().long()
+        action = obs[index, safe].round().long() - 1
         weight = obs[index, safe + 1].float()
-        hinted = rows & (action > 0) & (weight > 0)
+        hinted = rows & (action >= 0) & (weight > 0)
         if not bool(hinted.any()):
             return None
         log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))
@@ -795,6 +796,15 @@ class MappoTrainer:
             stats["hint_weight"] = stats.get("hint_weight", 0.0) + float(weight[hinted].mean())
             stats["hint_n"] = stats.get("hint_n", 0.0) + 1.0
         return self.config.hint_coef * loss
+
+    def _scripted_rows(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor | None:
+        """The rows whose action the dungeon script played (the hint block's third column): not the policy's, so out
+        of the PPO terms; the imitation loss still learns from them. None without a hint block."""
+        if getattr(self, "hint_at", None) is None:
+            return None
+        at = self.hint_at[layout.long()]
+        index = torch.arange(obs.shape[0], device=obs.device)
+        return (at >= 0) & (obs[index, (at + 2).clamp(min=0)] > 0.5)
 
     def director_columns_clear(self) -> bool:
         """Whether both networks' director adapters still read nothing from the slot columns."""
@@ -1698,6 +1708,12 @@ class MappoTrainer:
                 groups = per_layout_host(host["layout"][:, picked], len(self.layouts), self.train_device)
                 dones_host = torch.from_numpy(np.repeat(host["dones"][:, picked], agents, axis=1))
                 counted = valid[:, chunk].to(torch.float32)
+                # A row the dungeon script played is not a sample of the policy: no ratio, no entropy for it.
+                scripted = self._scripted_rows(obs_all, layout_all)
+                if scripted is not None:
+                    counted = counted * (~scripted).reshape(counted.shape).to(torch.float32)
+                    auxiliary_stats["scripted_share"] = auxiliary_stats.get("scripted_share", 0.0) + float(
+                        scripted.float().mean())
                 weight = counted.sum().clamp(min=1.0)
 
                 # The actor's half of the minibatch on one stream, the critic's on another: they share only these
@@ -1903,6 +1919,8 @@ class MappoTrainer:
             count = max(auxiliary_stats.pop("hint_n"), 1.0)
             for name in ("hint_loss", "hint_match", "hint_weight"):
                 stats[name] = auxiliary_stats.pop(name, 0.0) / count
+        if "scripted_share" in auxiliary_stats:
+            stats["scripted_share"] = auxiliary_stats.pop("scripted_share") / max(1, updates)
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             stats["hindsight_rows"] = auxiliary_stats.pop("hindsight_rows")

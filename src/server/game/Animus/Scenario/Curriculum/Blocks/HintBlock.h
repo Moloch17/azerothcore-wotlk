@@ -33,9 +33,10 @@ namespace Animus::Curriculum
     public:
         enum Feature : uint32
         {
-            OBS_ACTION  = 0,    // the suggested action's index in the layout (0: none)
+            OBS_ACTION  = 0,    // the suggested action's index in the layout + 1 (0: none; 1: the no-op, waiting)
             OBS_WEIGHT  = 1,    // how much the learner imitates it (0: not at all)
-            OBS_COUNT   = 2
+            OBS_SCRIPTED = 2,   // 1: the script played this decision (Instance.WingScript), not the policy
+            OBS_COUNT   = 3
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Hint; }

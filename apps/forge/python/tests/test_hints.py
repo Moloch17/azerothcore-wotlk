@@ -34,9 +34,9 @@ def test_hint_loss_weights_and_skips():
     from animus.mappo.trainer import MappoTrainer
 
     fake = SimpleNamespace(config=SimpleNamespace(hint_coef=2.0), hint_at=torch.tensor([3, -1]))
-    obs = torch.zeros(3, 5)
-    obs[0, 3], obs[0, 4] = 2.0, 0.5      # layout 0, hint action 2, weight 0.5
-    obs[1, 3], obs[1, 4] = 0.0, 0.5      # layout 0, no action: skipped
+    obs = torch.zeros(3, 6)
+    obs[0, 3], obs[0, 4] = 3.0, 0.5      # layout 0, hint action 2 (stored + 1), weight 0.5
+    obs[1, 3], obs[1, 4] = 0.0, 0.5      # layout 0, no hint: skipped
     layout = torch.tensor([0, 0, 1])     # row 2: a layout without the block
     logits = torch.zeros(3, 4, requires_grad=True)
     dist = torch.distributions.Categorical(logits=logits)
@@ -46,3 +46,16 @@ def test_hint_loss_weights_and_skips():
     loss.backward()
     assert logits.grad[1].abs().sum() == 0 and logits.grad[2].abs().sum() == 0
     assert stats["hint_n"] == 1.0 and abs(stats["hint_weight"] - 0.5) < 1e-6
+
+
+def test_scripted_rows():
+    from types import SimpleNamespace
+    from animus.mappo.trainer import MappoTrainer
+
+    fake = SimpleNamespace(hint_at=torch.tensor([3, -1]))
+    obs = torch.zeros(3, 6)
+    obs[0, 5] = 1.0                      # layout 0, played by the script
+    obs[2, 5] = 1.0                      # layout 1 has no hint block: never scripted
+    layout = torch.tensor([0, 0, 1])
+    rows = MappoTrainer._scripted_rows(fake, obs, layout)
+    assert rows.tolist() == [True, False, False]
