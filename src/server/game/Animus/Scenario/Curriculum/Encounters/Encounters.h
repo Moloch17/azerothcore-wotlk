@@ -553,6 +553,11 @@ namespace Animus::Curriculum
             uint32 ProgressMs = 0;
             uint32 ProgressSeen = 0;            // kills + waypoints at ProgressMs
             uint32 Wipes = 0;
+            /// The run's support (StageScenario::WingAssist) and the wipes it stands up at the door, fixed when the
+            /// run is drawn; and whether it is an evaluation's, which the running route share leaves out.
+            float Assist = 0.0f;
+            uint32 WipesAllowed = 1;
+            bool Evaluating = false;
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;

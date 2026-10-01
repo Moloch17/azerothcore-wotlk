@@ -234,6 +234,11 @@ namespace Animus::Curriculum
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
+        /// A whole dungeon's support (Instance.WingMastery): 1 while training parties get nowhere, falling to 0 as
+        /// their running route share reaches WingMastery; always 0 in evaluation.
+        [[nodiscard]] float WingAssist(Env const& env) const;
+        /// A finished training run of a whole dungeon: the share of its route walked (1 when the last boss died).
+        void NoteWingRun(float share);
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
 
@@ -345,6 +350,10 @@ namespace Animus::Curriculum
         /// whether it closed on or opened the gap to where the goal wants the seat (SettleIntent).
         void JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target, uint32 action,
             SeatActionResult const& result) const;
+        /// An instructed seat's goal in a whole dungeon (SeatState::Instructed), by its role: the healer protects the
+        /// most hurt member under Instance.WingInstructHeal, the tank fights whatever is hitting someone else, and
+        /// everyone else (the healer with nobody hurt) fights the tank's target. NO_GOAL leaves the seat its own.
+        [[nodiscard]] int32 InstructedGoal(Env const& env, uint32 seatIndex, SeatView const& view, Player* bot) const;
         /// How far the seat is from where its goal wants it, in yards: the gap to its spec's range from the target
         /// under Fight and Position. Negative when the goal names no place (or there is no goal or target).
         /// The yards to where the goals want the seat: the nearer of the two slots' (-1 when neither says).
@@ -430,6 +439,9 @@ namespace Animus::Curriculum
         /// none), and how far through the budget training is (the learner's PROGRESS).
         std::vector<uint32> _arenaWeightsFinal;
         std::atomic<float> _stageProgress{ 0.0f };
+        /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
+        /// lose a step to each other, which a running average does not mind.
+        std::atomic<float> _wingMastery{ 0.0f };
         std::vector<uint32> _arenaEpisodeMs;
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         OwnerEncounter* _owner = nullptr;

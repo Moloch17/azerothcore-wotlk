@@ -168,12 +168,18 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
                 / float(fight.Route.size());
         });
         table.Add("wing_wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
+        table.Add("wing_assist", [this](Env const& env, uint32) { return _envs[env.Index].Assist; });
+        table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
     }
 }
 
 void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
+    // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
+    if (!fight.Route.empty() && !fight.Evaluating)
+        _scenario.NoteWingRun(fight.BossDead ? 1.0f
+            : float(std::min<std::size_t>(fight.RouteNext, fight.Route.size())) / float(fight.Route.size()));
     fight = EnvInstance();
 }
 
@@ -203,10 +209,17 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     data.EpisodeLevel = fight.Row->Level;
     // A whole dungeon is run by characters of its own level range: the dungeon finder's target range for the map
     // and difficulty (LFGDungeons.dbc), a level drawn in it every run. The row's level is the fallback.
+    // While parties get nowhere they run it above that range and with wipes to spare (Instance.WingLevelLift,
+    // WingWipesExtra), both easing off as they succeed; an evaluation runs it as it is.
     if (Wing(env))
     {
+        CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
+        fight.Evaluating = env.Evaluating;
+        fight.Assist = _scenario.WingAssist(env);
+        fight.WipesAllowed = tuning.WingWipes + uint32(std::lround(fight.Assist * tuning.WingWipesExtra));
         auto const [low, high] = DungeonLevels(*fight.Row);
-        data.EpisodeLevel = uint8(urand(low, high));
+        uint32 const lift = uint32(std::lround(fight.Assist * tuning.WingLevelLift));
+        data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
     }
     MapEntry const* mapEntry = sMapStore.LookupEntry(fight.Row->MapId);
     bool const raid = mapEntry && mapEntry->IsRaid();
@@ -552,7 +565,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     }
 
     // A wing: the next point of the route reached by any seat; a wipe stands the party up at the door (until
-    // Instance.WingWipes, which end it), with the trash that killed it still where it was.
+    // the run's allowance, Instance.WingWipes and more while the support lasts, which ends it), with the trash that
+    // killed it still where it was.
     if (fight.RouteNext < fight.Route.size())
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
@@ -564,7 +578,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     if (!anyoneAlive && !fight.BossDead)
     {
         ++fight.Wipes;
-        if (fight.Wipes >= _scenario.Tuning().Instance.WingWipes)
+        if (fight.Wipes >= fight.WipesAllowed)
         {
             fight.Wiped = true;
             return;

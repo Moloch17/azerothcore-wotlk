@@ -319,6 +319,10 @@ namespace Animus::Curriculum
         /// A commanded arena's goal for this seat (ArenaDefinition::CommandedGoals), and when it was given.
         int32 Commanded = NO_GOAL;
         uint32 CommandedAtMs = 0;
+        /// A whole dungeon's instruction (Instance.WingInstruct): drawn once a run, while the support lasts; an
+        /// instructed seat's goal is its role's rule (StageScenario::InstructedGoal), unlearned.
+        bool Instructed = false;
+        bool InstructDrawn = false;
         std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -543,6 +547,8 @@ namespace Animus::Curriculum
             Achieved = NO_GOAL;
             Commanded = NO_GOAL;
             CommandedAtMs = 0;
+            Instructed = false;
+            InstructDrawn = false;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;

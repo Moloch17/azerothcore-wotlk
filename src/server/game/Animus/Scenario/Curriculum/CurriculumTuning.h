@@ -255,6 +255,17 @@ namespace Animus::Curriculum
             uint32 WingStallGraceMs = 60000;
             float WingTimeout = 30.0f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
+            /// Support that eases off as parties succeed: the assist is 1 - (running route share of training runs
+            /// / WingMastery), clamped to 0..1, and 0 in evaluation. At assist a the party is WingLevelLift x a
+            /// levels above the dungeon's range, WingWipesExtra x a more wipes are stood up at the door, and each
+            /// seat is instructed with chance WingInstruct x a (its goal set by its role's rule, unlearned).
+            float WingMastery = 0.8f;
+            float WingMasteryRate = 0.02f;      // the running share's step per finished training run
+            float WingLevelLift = 5.0f;
+            float WingWipesExtra = 4.0f;
+            float WingInstruct = 0.8f;
+            /// The instructed healer protects whoever is below this health share.
+            float WingInstructHeal = 70.0f;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1088,6 +1099,12 @@ namespace Animus::Curriculum
             f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
             f("Instance.WingTimeout", tuning.Instance.WingTimeout);
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
+            f("Instance.WingMastery", tuning.Instance.WingMastery);
+            f("Instance.WingMasteryRate", tuning.Instance.WingMasteryRate);
+            f("Instance.WingLevelLift", tuning.Instance.WingLevelLift);
+            f("Instance.WingWipesExtra", tuning.Instance.WingWipesExtra);
+            f("Instance.WingInstruct", tuning.Instance.WingInstruct);
+            f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);

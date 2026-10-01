@@ -1728,6 +1728,21 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     return castings.back();
 }
 
+float Animus::Curriculum::StageScenario::WingAssist(Env const& env) const
+{
+    if (env.Evaluating)
+        return 0.0f;
+    float const mastery = std::max(_tuning.Instance.WingMastery, 0.01f);
+    return std::clamp(1.0f - _wingMastery.load(std::memory_order_relaxed) / mastery, 0.0f, 1.0f);
+}
+
+void Animus::Curriculum::StageScenario::NoteWingRun(float share)
+{
+    float const rate = std::clamp(_tuning.Instance.WingMasteryRate, 0.0f, 1.0f);
+    float const was = _wingMastery.load(std::memory_order_relaxed);
+    _wingMastery.store(was + rate * (std::clamp(share, 0.0f, 1.0f) - was), std::memory_order_relaxed);
+}
+
 float Animus::Curriculum::StageScenario::Weight(Layout const& layout, uint8 spec) const
 {
     std::size_t const row = std::size_t(layout.Index) * MAX_SPECS + std::size_t(std::min<uint32>(spec, MAX_SPECS - 1));
@@ -2564,7 +2579,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         // and none when it would repeat the primary.
         // A commanded arena's goal is given the same way (ArenaDefinition::CommandedGoals).
         int32 ordered = _director ? _director->MemberGoal(env, seat) : NO_GOAL;
-        if (ordered == NO_GOAL && Arena(env).CommandedGoals)
+        if (ordered == NO_GOAL && (Arena(env).CommandedGoals || state.Instructed))
             ordered = state.Commanded;
         int32 const primary = ordered != NO_GOAL ? ordered : valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
         int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
@@ -3302,8 +3317,23 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.GoalEvent = seat.Event;
     view.Achieved = seat.Achieved;
     view.Goal2 = seat.Holds[1].Goal;
+    // A whole dungeon instructs some seats while parties get nowhere (Instance.WingInstruct x WingAssist), each drawn
+    // once a run; never in evaluation, where the assist is 0.
+    if (!seat.InstructDrawn && seat.L)
+    {
+        seat.InstructDrawn = true;
+        seat.Instructed = Arena(env).Instance == InstanceLadder::Wing
+            && frand(0.0f, 1.0f) < _tuning.Instance.WingInstruct * WingAssist(env);
+    }
+    // An instructed seat's goal is its role's rule, renewed every decision; with nothing to instruct it is its own.
+    if (seat.Instructed && !Arena(env).CommandedGoals)
+    {
+        seat.Commanded = bot && bot->IsAlive() ? InstructedGoal(env, seatIndex, view, bot) : NO_GOAL;
+        view.OrderGoal = seat.Commanded != NO_GOAL ? seat.Commanded
+            : seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
+    }
     // A commanded arena gives the seat a new goal on its clock or when the one given ended, shown as an order is.
-    if (Arena(env).CommandedGoals && bot && bot->IsAlive())
+    else if (Arena(env).CommandedGoals && bot && bot->IsAlive())
     {
         constexpr uint32 COMMAND_EVERY_MS = 4000;
         if (seat.Commanded == NO_GOAL || seat.Holds[0].Ended
@@ -3377,6 +3407,72 @@ void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, P
         ++seat.StepRepeats;
         ++seat.RepeatedPresses;
     }
+}
+
+int32 Animus::Curriculum::StageScenario::InstructedGoal(Env const& env, uint32 seatIndex, SeatView const& view,
+    Player* bot) const
+{
+    EnvState const& data = Data(env);
+    Aptitude const& apt = data.Seats[seatIndex].Apt;
+    auto const enemySlot = [&view](Unit const* unit) -> int32
+    {
+        for (uint32 slot = 0; unit && slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+            if (view.Enemies[slot] == unit && unit->IsAlive())
+                return int32(slot);
+        return -1;
+    };
+
+    if (AptitudeDemand::KeepsThemUp().MetBy(apt))
+    {
+        uint32 best = FRIEND_SLOTS;
+        float lowest = _tuning.Instance.WingInstructHeal;
+        for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)
+            if (Unit* mate = Encoding::FriendUnit(view, slot); mate && mate != bot && mate->IsAlive()
+                && mate->GetHealthPct() < lowest)
+            {
+                lowest = mate->GetHealthPct();
+                best = slot;
+            }
+        if (bot->GetHealthPct() < lowest)
+            return MakeGoal(SeatGoal::Recover, GOAL_TARGET_NONE);
+        if (best < FRIEND_SLOTS)
+            return MakeGoal(SeatGoal::Protect, GOAL_TARGET_FRIEND_FIRST + best);
+    }
+    else if (AptitudeDemand::HoldsThePull().MetBy(apt))
+    {
+        // Whatever is hitting someone else first, the nearest of them; else the nearest enemy in the fight.
+        int32 peel = -1;
+        int32 nearest = -1;
+        float peelDist = 0.0f;
+        float nearDist = 0.0f;
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        {
+            Unit* enemy = view.Enemies[slot];
+            if (!enemy || !enemy->IsAlive() || !enemy->IsInCombat() || !enemy->IsInMap(bot))
+                continue;
+            float const dist = bot->GetExactDist(enemy);
+            if (Unit* victim = enemy->GetVictim(); victim && victim != bot && (peel < 0 || dist < peelDist))
+            {
+                peel = int32(slot);
+                peelDist = dist;
+            }
+            if (nearest < 0 || dist < nearDist)
+            {
+                nearest = int32(slot);
+                nearDist = dist;
+            }
+        }
+        int32 const slot = peel >= 0 ? peel : nearest;
+        return slot >= 0 ? MakeGoal(SeatGoal::Fight, GOAL_TARGET_ENEMY_FIRST + uint32(slot)) : NO_GOAL;
+    }
+
+    // The tank's target.
+    for (uint32 other = 0; other < data.ActiveSeats; ++other)
+        if (other != seatIndex && AptitudeDemand::HoldsThePull().MetBy(data.Seats[other].Apt))
+            if (Player* tank = env.FindBot(other); tank && tank->IsAlive())
+                if (int32 const slot = enemySlot(tank->GetVictim()); slot >= 0)
+                    return MakeGoal(SeatGoal::Fight, GOAL_TARGET_ENEMY_FIRST + uint32(slot));
+    return NO_GOAL;
 }
 
 float Animus::Curriculum::StageScenario::GoalGap(SeatState const& seat, Player* bot, Unit const* target) const

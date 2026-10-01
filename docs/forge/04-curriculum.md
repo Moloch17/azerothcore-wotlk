@@ -1776,6 +1776,20 @@ boss's script at its start, and a wipe ends the run (`Instance.WingWipes` 1). On
 drawn for its seats. The companion arena, the synthetic party pulls and the tanking and triage drills are gone from
 the stage; the companion block stays in its layout for the stages built on it.
 
+**Support that eases off with success.** While parties get nowhere the dungeon is made easier in three ways, all set
+by one number, the assist: 1 minus the running route share of training runs over `Instance.WingMastery` (0.8),
+clamped to 0..1. At assist *a*:
+
+- the party is `WingLevelLift` x *a* levels above the dungeon's range (5: 22-25 at the start, 17-20 at the end);
+- `WingWipesExtra` x *a* more wipes (4) stand the party up at the door with its kills kept, before one ends the run;
+- each seat is instructed for the run with chance `WingInstruct` x *a* (0.8): its primary goal is its role's rule --
+  the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights whatever is hitting
+  someone else, everyone else fights the tank's target. It arrives as an order does, so the goal head is not trained
+  on it; the action head learns to carry it out.
+
+The assist is 0 in evaluation, which always runs the dungeon at its own level, with one wipe and no instruction.
+`wing_assist` and `wing_level` are in the episode report.
+
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages
 on a timer, the shape the follow lesson was built on -- in the rest and in every evaluation, so `owner_deaths` keeps

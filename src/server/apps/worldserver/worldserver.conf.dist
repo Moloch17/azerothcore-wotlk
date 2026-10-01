@@ -6040,6 +6040,16 @@ AnimusForge.Curriculum.Instance.WingStall = 0.1
 AnimusForge.Curriculum.Instance.WingStallGraceMs = 60000
 AnimusForge.Curriculum.Instance.WingTimeout = 30.0
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
+#   support that eases off with success: assist = 1 - (running route share of training runs / WingMastery), 0 in
+#   evaluation; the party is WingLevelLift x assist levels above the dungeon's range, WingWipesExtra x assist more
+#   wipes stand up at the door, and a seat's goal is set by its role's rule with chance WingInstruct x assist (the
+#   healer protects whoever is under WingInstructHeal % health); WingMasteryRate is the running share's step per run
+AnimusForge.Curriculum.Instance.WingMastery = 0.8
+AnimusForge.Curriculum.Instance.WingMasteryRate = 0.02
+AnimusForge.Curriculum.Instance.WingLevelLift = 5.0
+AnimusForge.Curriculum.Instance.WingWipesExtra = 4.0
+AnimusForge.Curriculum.Instance.WingInstruct = 0.8
+AnimusForge.Curriculum.Instance.WingInstructHeal = 70.0
 
 #
 #    AnimusForge.Curriculum.Life.*
