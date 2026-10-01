@@ -51,7 +51,7 @@ namespace Animus::Curriculum
             OBS_OBJECT_COS      = 14,
             OBS_OBJECT_DOOR     = 15,   // it is a door (else a lever, a button or the like)
             OBS_TANK_PRESENT    = 16,   // the party's tank (the one the party block follows), alive, and not this seat
-            OBS_TANK_DISTANCE   = 17,   // / 40 yd
+            OBS_TANK_DISTANCE   = 17,   // / 100 yd
             OBS_TANK_SIN        = 18,
             OBS_TANK_COS        = 19,
             OBS_TANK_TARGET_FIRST = 20, // one-hot over the pack block's slots: the enemy the tank is on

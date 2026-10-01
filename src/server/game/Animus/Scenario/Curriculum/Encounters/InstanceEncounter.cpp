@@ -1108,7 +1108,12 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     }
 
     // In the slots: what is fighting the party first, then the nearest of what stands ahead of it -- the next pack.
+    // Seen from the tank, who leads and pulls, while it is up; seat 0 otherwise. From seat 0 the pack the tank was
+    // about to pull was often not in the slots at all (2026-10-01).
     constexpr float WING_SIGHT = 45.0f;
+    if (Player* tank = fight.Tank.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(*seat, fight.Tank);
+        tank && tank->IsAlive() && tank->IsInWorld() && tank->IsInMap(seat))
+        seat = tank;
     std::list<Unit*> units;
     Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, WING_SIGHT);
     Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
@@ -1194,7 +1199,31 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
     crowd.Ahead = fight.Ahead;
     crowd.AheadSize = fight.AheadSize;
     view.HasObjective = true;
-    view.Objective = fight.Route[std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1)];
+    // Where along the route the seat is, and the next point on from there: after a wipe stood the party up at the
+    // door, the route's next point was hundreds of yards on through the rock, and the seats walked into walls
+    // towards it. A seat other than the tank walks the route towards the tank instead (the dead rise at the door).
+    std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);
+    auto const nearest = [&fight, last](WorldObject const* at)
+    {
+        std::size_t best = 0;
+        for (std::size_t i = 1; i <= last; ++i)
+            if (at->GetExactDist(&fight.Route[i]) < at->GetExactDist(&fight.Route[best]))
+                best = i;
+        return best;
+    };
+    view.Objective = fight.Route[last];
+    if (!view.Bot || !view.Bot->IsInMap(view.Bot))
+        return;
+    std::size_t const here = nearest(view.Bot);
+    Unit const* tank = view.Crowd.Tank;
+    if (tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot))
+    {
+        std::size_t const there = nearest(tank);
+        view.Objective = here < there ? fight.Route[here + 1] : here > there ? fight.Route[here - 1]
+            : Position(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+        return;
+    }
+    view.Objective = fight.Route[std::min(here + 1, last)];
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,

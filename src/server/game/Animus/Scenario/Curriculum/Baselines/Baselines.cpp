@@ -813,9 +813,10 @@ namespace
     constexpr float DUNGEON_PULL_YARDS = 25.0f;         // the tank pulls the pack ahead from this close
     constexpr float DUNGEON_READY_HEALTH = 0.8f;        // ... once everybody has this much health
     constexpr float DUNGEON_READY_MANA = 0.6f;          // ... and mana
-    constexpr float DUNGEON_GATHER_YARDS = 15.0f;       // ... and is this near
+    constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
     constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
     constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
+    constexpr float DUNGEON_FAR_YARDS = 40.0f;          // further than this, they walk the route back to the tank
     constexpr float DUNGEON_REST_HEALTH = 0.7f;
     constexpr float DUNGEON_REST_MANA = 0.6f;
 
@@ -942,7 +943,7 @@ namespace
         // The leader is the tank the party block follows, as the crowd block shows it.
         bool const hasCrowd = row.Has(BlockId::Crowd);
         bool const hasLeader = !tank && hasCrowd && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_PRESENT) > 0.0f;
-        float const leaderYards = hasLeader ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_DISTANCE) * 40.0f : 0.0f;
+        float const leaderYards = hasLeader ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_DISTANCE) * 100.0f : 0.0f;
         auto const follow = [&row]() { return row.Allowed(BlockId::Party, PartyBlock::ACTION_FOLLOW_TANK); };
 
         if (fighting)
@@ -998,6 +999,14 @@ namespace
 
         if (!tank)
         {
+            // Far behind (risen at the door, or left behind): back along the route to the tank.
+            if (hasLeader && leaderYards > DUNGEON_FAR_YARDS)
+            {
+                if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
+                    row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+                    return go;
+                return 0;
+            }
             if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
             {
                 if (std::optional<int32> go = follow())
@@ -1013,18 +1022,20 @@ namespace
             return 0;
         }
 
-        // The tank: everybody up, rested and gathered before the next pull.
+        // The tank: everybody up, rested and gathered before the next pull -- every member alive, healthy and near,
+        // and the healer's mana up (the healer's mana is what a pull spends; the others' waited the hour out).
         bool ready = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) >= DUNGEON_READY_HEALTH;
-        float const ownMana = row.Obs(BlockId::Core, CoreBlock::OBS_MANA);
-        ready = ready && (ownMana <= 0.0f || ownMana >= DUNGEON_READY_MANA);
+        float const bestHealing = row.Obs(BlockId::Party, PartyBlock::OBS_BEST_HEALING);
         for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
         {
             // Every member, the dead included: the healer raises them between pulls, or they rise at the door
             // (Instance.WingRiseMs) and walk back, and the pull waits until they have rejoined.
             float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
+            bool const heals = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
+                + uint32(Aptitude::BRIEF_HEALING)) >= std::max(bestHealing - 1e-3f, AptitudeDemand::KeepsThemUp().AtLeast);
             ready = MemberLive(row, member)
                 && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
-                && (mana <= 0.0f || mana >= DUNGEON_READY_MANA)
+                && (!heals || mana <= 0.0f || mana >= DUNGEON_READY_MANA)
                 && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
         }
         if (!ready)

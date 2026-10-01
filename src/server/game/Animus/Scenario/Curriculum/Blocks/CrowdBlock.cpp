@@ -46,7 +46,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
     if (Unit const* tank = crowd.Tank; tank && tank != bot && tank->IsAlive() && tank->IsInMap(bot))
     {
         obs[OBS_TANK_PRESENT] = 1.0f;
-        obs[OBS_TANK_DISTANCE] = std::min(1.0f, bot->GetExactDist(tank) / 40.0f);
+        obs[OBS_TANK_DISTANCE] = std::min(1.0f, bot->GetExactDist(tank) / 100.0f);
         float const angle = bot->GetRelativeAngle(tank);
         obs[OBS_TANK_SIN] = std::sin(angle);
         obs[OBS_TANK_COS] = std::cos(angle);
