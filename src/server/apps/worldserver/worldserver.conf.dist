@@ -6057,14 +6057,14 @@ AnimusForge.Curriculum.Instance.WingCrowd = 0.05
 AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 #   the support is gone by WingAssistEnd of the stage's budget whatever was earned; the learner imitates the scripted
 #   fight's press (a hint every seat gets) with weight WingHint x the support
-AnimusForge.Curriculum.Instance.WingAssistEnd = 0.6
+AnimusForge.Curriculum.Instance.WingAssistEnd = 0.8
 AnimusForge.Curriculum.Instance.WingHint = 1.0
 #   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
 #   other than the tank is further than WingStrayYards from it, WingStray
 AnimusForge.Curriculum.Instance.WingFullClear = 1
 #   the share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd of the budget
 AnimusForge.Curriculum.Instance.WingScript = 1.0
-AnimusForge.Curriculum.Instance.WingScriptEnd = 0.4
+AnimusForge.Curriculum.Instance.WingScriptEnd = 0.6
 #   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
 AnimusForge.Curriculum.Instance.WingRiseMs = 30000
 #   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd

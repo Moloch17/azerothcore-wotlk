@@ -36,7 +36,7 @@ def test_hint_loss_weights_and_skips():
     fake = SimpleNamespace(config=SimpleNamespace(hint_coef=2.0), hint_at=torch.tensor([3, -1]))
     obs = torch.zeros(3, 6)
     obs[0, 3], obs[0, 4] = 3.0, 0.5      # layout 0, hint action 2 (stored + 1), weight 0.5
-    obs[1, 3], obs[1, 4] = 0.0, 0.5      # layout 0, no hint: skipped
+    obs[1, 3], obs[1, 4] = 1.0, 0.5      # layout 0, the no-op (stored + 1): never imitated
     layout = torch.tensor([0, 0, 1])     # row 2: a layout without the block
     logits = torch.zeros(3, 4, requires_grad=True)
     dist = torch.distributions.Categorical(logits=logits)

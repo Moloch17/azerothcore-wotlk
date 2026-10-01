@@ -783,7 +783,10 @@ class MappoTrainer:
         safe = at.clamp(min=0)
         action = obs[index, safe].round().long() - 1
         weight = obs[index, safe + 1].float()
-        hinted = rows & (action >= 0) & (weight > 0)
+        # The no-op is never imitated: the script presses nothing while an order it gave is still walking, while
+        # resting and while the party gathers, and a policy taught those no-ops stood still on its own (2026-10-01:
+        # 2.5 kills an evaluation, none of them wiped).
+        hinted = rows & (action > 0) & (weight > 0)
         if not bool(hinted.any()):
             return None
         log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))

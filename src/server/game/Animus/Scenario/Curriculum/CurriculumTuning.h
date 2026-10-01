@@ -273,7 +273,7 @@ namespace Animus::Curriculum
             float WingCrowd = 0.05f;
             uint32 WingCrowdFree = 4;
             /// The support is gone by this share of the stage's budget, whatever the parties earned.
-            float WingAssistEnd = 0.6f;
+            float WingAssistEnd = 0.8f;
             /// The learner imitates the scripted fight's press with this weight x the support (HintBlock).
             float WingHint = 1.0f;
             /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
@@ -281,7 +281,7 @@ namespace Animus::Curriculum
             /// The share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd
             /// of the budget: parties see the whole dungeon before they can clear it themselves.
             float WingScript = 1.0f;
-            float WingScriptEnd = 0.4f;
+            float WingScriptEnd = 0.6f;
             /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
             uint32 WingRiseMs = 30000;
             /// 1: a closed door opens by itself when a seat reaches it out of a fight (before the use action existed).

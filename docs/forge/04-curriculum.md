@@ -1805,7 +1805,7 @@ creatures are on the party, on its tank and loose, the elites, how many are past
 them one by one, and the nearest pack not yet in the fight with how many stand with it. Every other block keeps its
 size, so the stage still seeds from `stage5_pack` whole.
 
-The support is now also gone by `Instance.WingAssistEnd` (60%) of the budget whatever the parties earned: the first
+The support is now also gone by `Instance.WingAssistEnd` (80%) of the budget whatever the parties earned: the first
 support run held at 0.7 from 40M to the end, so training never met the level the evaluation plays at.
 
 While the support lasts, every seat gets an action hint: what the scripted `fight` policy would press with that
@@ -1828,11 +1828,13 @@ killed. The instructor is the `dungeon` script (Baselines), not `fight`, which c
 - between pulls everybody eats, drinks and raises the dead.
 
 A seat is played by that script for a whole run with chance `WingScript` (1.0) x the support's ease, falling to 0 by
-`WingScriptEnd` (40%) of the budget: parties see the whole dungeon long before they can clear it. The script's press
-is the seat's action; the hint block's third column says so, and the learner leaves those rows out of the PPO update
-(they are not the policy's) while imitating them. A run any seat of which was scripted does not count towards the
-support's running share. The hint (the same script, every seat) fades by `WingAssistEnd` (60%), and staying more
-than `WingStrayYards` (25) from the tank costs `WingStray` (0.02) a second.
+`WingScriptEnd` (60%) of the budget: parties see the whole dungeon long before they can clear it. The script's press is
+the seat's action; the hint block's third column says so, and the learner leaves those rows out of the PPO update (they
+are not the policy's) while imitating them. A run any seat of which was scripted does not count towards the support's
+running share. The script's no-ops are never imitated: it presses nothing while an order it gave is still walking,
+resting or gathering, and the first run's policy, taught those, stood still on its own (2.5 kills an evaluation). The
+hint (the same script, every seat) fades by `WingAssistEnd` (80%), and staying more than `WingStrayYards` (25) from the
+tank costs `WingStray` (0.02) a second.
 
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages
