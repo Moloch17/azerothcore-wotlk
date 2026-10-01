@@ -599,6 +599,34 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     fight.LastMs = env.EpisodeElapsedMs;
     fight.Level = uint32(data.EpisodeLevel);
 
+    // The clock ran out (Instance.WingTrace): what the party was doing -- what is in combat around it, where, on whom.
+    if (_scenario.Tuning().Instance.WingTrace && !fight.EndLogged && TimeIsUp(env))
+    {
+        fight.EndLogged = true;
+        Player* anchor = nullptr;
+        for (uint32 index = 0; index < data.ActiveSeats && !anchor; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive())
+                anchor = bot;
+        std::string around;
+        if (anchor)
+        {
+            std::list<Unit*> units;
+            Acore::AnyUnfriendlyUnitInObjectRangeCheck check(anchor, anchor, 80.0f);
+            Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(anchor, units, check);
+            Cell::VisitObjects(anchor, searcher, 80.0f);
+            for (Unit* unit : units)
+                if (unit->IsAlive() && !unit->IsPlayer() && unit->IsInCombat())
+                    around += Acore::StringFormat(" {}({:.0f}yd dz {:.0f} on {}{})", unit->GetEntry(),
+                        anchor->GetExactDist(unit), unit->GetPositionZ() - anchor->GetPositionZ(),
+                        unit->GetVictim() ? unit->GetVictim()->GetName() : "nobody",
+                        unit->HasUnitState(UNIT_STATE_EVADE) ? " evading" : "");
+        }
+        LOG_INFO("module.animus", "Wing time: env {} at point {}/{}, fighting {}, {} on the party, last kill {:.0f}s ago, "
+            "in combat around:{}", env.Index, fight.RouteNext, fight.Route.size(), fight.Fighting ? 1 : 0, fight.OnParty,
+            float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.LastKillMs)) / 1000.0f,
+            around.empty() ? " nothing" : around);
+    }
+
     // The dead rejoin: one nobody has raised by Instance.WingRiseMs after the fight is over rises at the door, as a
     // player who released and ran back would, and walks back to the group (the pull waits for it).
     for (uint32 index = 0; index < data.ActiveSeats; ++index)
@@ -1245,6 +1273,7 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         {
             fight.Counted.push_back(guid);
             ++fight.TrashKills;
+            fight.LastKillMs = env.EpisodeElapsedMs;
             if (creature->IsDungeonBoss() || creature->isWorldBoss())
                 ++fight.BossKills;
         }

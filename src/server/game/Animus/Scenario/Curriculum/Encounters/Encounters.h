@@ -596,6 +596,8 @@ namespace Animus::Curriculum
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
             uint32 ApproachedMs = 0;
+            bool EndLogged = false;             // the "Wing time" line is written once, when the clock runs out
+            uint32 LastKillMs = 0;              // when the party last killed something
             bool HasAhead = false;
             Position Ahead;
             uint32 AheadSize = 0;
