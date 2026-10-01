@@ -267,6 +267,7 @@ namespace Animus::Curriculum
             float WingRungTarget = 0.6f;
             float WingRungFallback = 0.5f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
+            uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
             /// The instructed healer protects whoever is below this health share.
             float WingInstructHeal = 70.0f;
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
@@ -1122,6 +1123,7 @@ namespace Animus::Curriculum
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
+            f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Instance.WingTrace", tuning.Instance.WingTrace);

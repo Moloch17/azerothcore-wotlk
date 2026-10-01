@@ -41,6 +41,7 @@
 #include "PathGenerator.h"
 #include "Player.h"
 #include "StageScenario.h"
+#include "Supplies.h"
 
 #include <algorithm>
 #include <limits>
@@ -462,9 +463,20 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         for (std::size_t i = fight.Route.size(); i-- > 1;)
             fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
         env.Targets.clear();
+        // Food and water for the whole dungeon, as a party brings: without them nobody could eat or drink between
+        // pulls (the gauntlet's encounter was the only one that gave them), and a healer waiting for its mana on
+        // natural regeneration held the party for the hour (2026-10-01).
+        ConsumablePool const& consumables = ConsumablePool::Instance();
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index))
-                _scenario.PrepareFighter(bot, _scenario.Data(env).Seats[index]);
+            {
+                SeatState& seatState = _scenario.Data(env).Seats[index];
+                _scenario.PrepareFighter(bot, seatState);
+                SeatInstance& supplies = fight.Seats[index];
+                supplies.FoodItem = consumables.Food(seatState.Level);
+                supplies.DrinkItem = bot->GetMaxPower(POWER_MANA) ? consumables.Drink(seatState.Level) : 0;
+                StockConsumables(bot, supplies.FoodItem, supplies.DrinkItem, _scenario.Tuning().Instance.WingSupplies);
+            }
         return true;
     }
 
@@ -1364,12 +1376,17 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
             fight.AheadSize += !unit->IsInCombat() && unit->GetExactDist(&fight.Ahead) <= PACK_REACH ? 1 : 0;
 }
 
-void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
+void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     // A wing's route: the next point is where the party is going, a TravelTo target (GoalBlock's assignment slot).
     EnvInstance const& fight = _envs[env.Index];
     if (!Wing(env) || fight.Route.empty())
         return;
+    if (seat < fight.Seats.size())
+    {
+        view.FoodItem = fight.Seats[seat].FoodItem;
+        view.DrinkItem = fight.Seats[seat].DrinkItem;
+    }
     CrowdView& crowd = view.Crowd;
     crowd.Present = true;
     crowd.OnParty = fight.OnParty;

@@ -521,6 +521,8 @@ namespace Animus::Curriculum
             bool PotentialReady = false;
             uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
+            uint32 FoodItem = 0;                // what it eats and drinks between pulls (Instance.WingSupplies)
+            uint32 DrinkItem = 0;
         };
 
         struct EnvInstance

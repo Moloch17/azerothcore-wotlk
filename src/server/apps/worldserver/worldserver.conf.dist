@@ -6049,6 +6049,8 @@ AnimusForge.Curriculum.Instance.WingRungRuns = 40
 AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
 #   the rung a run starts on (the ladder is not saved: a resumed run names the rung it had reached)
 AnimusForge.Curriculum.Instance.WingRungStart = 0
+#   food and drink each seat brings into a whole dungeon
+AnimusForge.Curriculum.Instance.WingSupplies = 60
 AnimusForge.Curriculum.Instance.WingRungFallback = 0.5
 AnimusForge.Curriculum.Instance.WingInstructHeal = 70.0
 #   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
