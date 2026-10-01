@@ -520,6 +520,7 @@ namespace Animus::Curriculum
             float Potential = 0.0f;             // the least route ahead it has reached (Instance.WingProgress)
             bool PotentialReady = false;
             uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
+            uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
         };
 
         struct EnvInstance

@@ -622,9 +622,33 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
             BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
             seatState.DeathPaid = false;
+            seatState.Walk = 0;
             seatState.DeadSinceMs = 0;
             ++fight.Rises;
         }
+    }
+
+    // Each seat's place on the route: on to the furthest of the next few points it is near, up to the route's next
+    // point for the tank and up to the tank's place for the others.
+    constexpr float WALK_REACH = 12.0f;
+    constexpr std::size_t WALK_LOOK = 6;
+    uint32 tankWalk = fight.RouteNext;
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->GetGUID() == fight.Tank)
+            tankWalk = fight.Seats[index].Walk;
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+    {
+        Player* bot = _scenario.SeatBot(env, index);
+        if (!bot || !bot->IsAlive() || fight.Route.empty())
+            continue;
+        SeatInstance& seatState = fight.Seats[index];
+        uint32 const cap = std::min<uint32>(bot->GetGUID() == fight.Tank ? fight.RouteNext : tankWalk,
+            uint32(fight.Route.size()) - 1);
+        std::size_t reached = seatState.Walk;
+        for (std::size_t i = seatState.Walk; i <= cap && i < seatState.Walk + WALK_LOOK; ++i)
+            if (bot->GetExactDist(&fight.Route[i]) <= WALK_REACH)
+                reached = i + 1;
+        seatState.Walk = uint32(std::min<std::size_t>(reached, cap));
     }
 
     // A run stuck for two minutes, and every ten after (Instance.WingTrace): each seat's state against the tank's, and
@@ -719,6 +743,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
                 BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
                 fight.Seats[index].DeathPaid = false;
+                fight.Seats[index].Walk = 0;
             }
         if (Player* owner = _scenario.Owner(env); owner && !owner->IsAlive())
         {
@@ -1258,36 +1283,16 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
     crowd.Ahead = fight.Ahead;
     crowd.AheadSize = fight.AheadSize;
     view.HasObjective = true;
-    // Where along the route the seat is, and the next point on from there: after a wipe stood the party up at the
-    // door, the route's next point was hundreds of yards on through the rock, and the seats walked into walls
-    // towards it. A seat other than the tank walks the route towards the tank instead (the dead rise at the door).
+    // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the others
+    // up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at the door
+    // the next point was hundreds of yards on through the rock, and the seats walked into walls towards it.
     std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);
-    auto const nearest = [&fight, last](WorldObject const* at)
-    {
-        std::size_t best = 0;
-        for (std::size_t i = 1; i <= last; ++i)
-            if (at->GetExactDist(&fight.Route[i]) < at->GetExactDist(&fight.Route[best]))
-                best = i;
-        return best;
-    };
-    view.Objective = fight.Route[last];
-    if (!view.Bot || !view.Bot->IsInMap(view.Bot))
-        return;
-    std::size_t const here = nearest(view.Bot);
-    Unit const* tank = view.Crowd.Tank;
-    if (tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot))
-    {
-        std::size_t const there = nearest(tank);
-        view.Objective = here < there ? fight.Route[here + 1] : here > there ? fight.Route[here - 1]
-            : Position(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
-        return;
-    }
-    // The tank goes for the route's next point itself; only far from it (stood up at the door) does it pick the route
-    // up from where it is. Taking the next point from the nearest one everywhere sent it to a point beside it that is
-    // not the next and held it there (2026-10-01).
-    constexpr float OFF_ROUTE_YARDS = 60.0f;
-    if (view.Bot->GetExactDist(&fight.Route[last]) > OFF_ROUTE_YARDS)
-        view.Objective = fight.Route[std::min(here + 1, last)];
+    std::size_t walk = last;
+    if (view.Bot)
+        for (uint32 index = 0; index < MAX_SEATS; ++index)
+            if (_scenario.SeatBot(env, index) == view.Bot)
+                walk = std::min<std::size_t>(fight.Seats[index].Walk, last);
+    view.Objective = fight.Route[walk];
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,
