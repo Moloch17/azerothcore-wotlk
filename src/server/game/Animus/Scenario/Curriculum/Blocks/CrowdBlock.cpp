@@ -94,6 +94,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
     obs[OBS_ELITES] = std::min(2.0f, float(crowd.Elites) / 4.0f);
     obs[OBS_UNSEEN] = std::min(2.0f, float(crowd.OnParty - std::min(crowd.OnParty, PACK_SLOTS)) / 4.0f);
     obs[OBS_IS_TANK] = crowd.Tank == bot ? 1.0f : 0.0f;
+    obs[OBS_BEHIND] = crowd.Behind ? 1.0f : 0.0f;
     obs[OBS_AHEAD_DISTANCE] = 1.0f;
     if (crowd.HasAhead)
     {

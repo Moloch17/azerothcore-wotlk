@@ -1040,6 +1040,10 @@ namespace
         }
         if (!ready)
         {
+            // A tank that rose at the door goes back to its party rather than waiting for it to come out.
+            if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_BEHIND) > 0.0f)
+                if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+                    return go;
             if (std::optional<int32> halt = Halt(row))
                 return halt;
             return 0;

@@ -716,6 +716,18 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         object->GetEntry(), uint32(object->GetGoType()), uint32(object->GetGoState()),
                         tank->GetExactDist(object));
         seats += " | objects: " + (objects.empty() ? std::string("none") : objects);
+        for (uint32 index = 0; index < data.ActiveSeats && tank; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot != tank && bot->IsAlive() && tank->IsInMap(bot)
+                && bot->GetExactDist(tank) > 20.0f)
+            {
+                PathGenerator path(bot);
+                path.CalculatePath(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ(), false);
+                G3D::Vector3 const end = path.GetPath().empty() ? G3D::Vector3(0, 0, 0) : path.GetPath().back();
+                seats += Acore::StringFormat(" | seat {} to the tank: path type {}, ends {:.0f} yd from it, walk {}, motion {}, "
+                    "moving {}", index, uint32(path.GetPathType()), tank->GetExactDist(end.x, end.y, end.z),
+                    fight.Seats[index].Walk, uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()),
+                    bot->isMoving() ? 1 : 0);
+            }
         if (Player* tankPlayer = tank ? tank->ToPlayer() : nullptr; tankPlayer && fight.RouteNext < fight.Route.size())
         {
             Position const& next = fight.Route[fight.RouteNext];
@@ -1349,6 +1361,9 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
                 tankWalk = std::min<std::size_t>(fight.Seats[index].Walk, last);
         }
     view.Objective = fight.Route[walk];
+    // Behind the party: the route's next point (the party's) is well ahead of the seat's own place -- the tank that
+    // rose at the door, walking back to a party that is still deep in.
+    view.Crowd.Behind = walk + 2 < last;
     Unit const* tank = view.Crowd.Tank;
     if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot) && walk >= tankWalk)
         view.Objective.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
