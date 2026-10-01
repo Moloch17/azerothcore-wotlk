@@ -1839,8 +1839,10 @@ actions: target picks are `pack`, revives and following `party`, pathed moves an
 
 **A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
 clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
-pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route passes
-nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share of the instance's creatures
+pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route
+passes
+nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours.
+`wing_cleared_share` is the share of the instance's creatures
 killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
 
 - the tank leads along the route, waits until every member is above 70% health (the healer 70% mana) and within 20 yd,
@@ -1861,7 +1863,8 @@ are never imitated: it presses nothing while an order it gave is still walking, 
 run's policy, taught those, stood still on its own (2.5 kills an evaluation). Staying more than `WingStrayYards` (25)
 from the tank costs `WingStray` (0.02) a second.
 
-**The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the endurance policy through
+**The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the
+endurance policy through
 the learner's cast (`cast.agents.owner`) in 70% of training episodes, and by the script -- which wanders and engages
 on a timer, the shape the follow lesson was built on -- in the rest and in every evaluation, so `owner_deaths` keeps
 its meaning. The seat learns to follow, assist, guard, heal and resurrect it, and
