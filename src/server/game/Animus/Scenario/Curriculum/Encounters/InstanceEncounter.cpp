@@ -41,6 +41,7 @@
 #include "StageScenario.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <mutex>
 
@@ -897,19 +898,133 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             return known->second;
     }
 
-    // The whole dungeon, end to end: every pack in the instance -- trash, side bosses and all, Instance.WingFullClear
-    // -- nearest next from the door, then the last boss. Only the bosses, the route passed packs by and the parties
-    // never cleared a room (2026-10-01: "clear every pull and every boss, even side ones"). Straight to the last
-    // boss, the path gave out a third of the way in the Deadmines (a door's tunnel the navmesh does not join).
+    // The whole dungeon, end to end. First the bosses, nearest next from the door, then the last boss: the order the
+    // dungeon opens up in (a boss's death opens the door behind it). Straight to the last boss, the path gave out a
+    // third of the way in the Deadmines (a door's tunnel the navmesh does not join).
     std::vector<Position> stops;
+    Position const last(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
     {
+        std::vector<Creature const*> bosses;
+        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+            if (creature && creature != boss && creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss()))
+                bosses.push_back(creature);
+        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+        while (!bosses.empty())
+        {
+            auto const nearest = std::min_element(bosses.begin(), bosses.end(), [&at](Creature const* a, Creature const* b)
+            {
+                return a->GetExactDist(&at) < b->GetExactDist(&at);
+            });
+            at.Relocate((*nearest)->GetPositionX(), (*nearest)->GetPositionY(), (*nearest)->GetPositionZ());
+            stops.push_back(at);
+            bosses.erase(nearest);
+        }
+        stops.push_back(last);
+    }
+
+    // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
+    // stops, the straight line between them (a door's tunnel is walked, the navmesh just does not cross it).
+    auto const pathThrough = [&](std::vector<Position> const& stops, bool log)
+    {
+        std::vector<G3D::Vector3> points;
+        Position cursor(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+        points.emplace_back(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ());
+        for (Position const& stop : stops)
+        {
+            for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+            {
+                map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
+                PathGenerator path(seat);
+                path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(),
+                    stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), false);
+                if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
+                    break;
+                for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                    points.push_back(path.GetPath()[i]);
+                G3D::Vector3 const& end = path.GetPath().back();
+                if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
+                    break;
+                cursor.Relocate(end.x, end.y, end.z);
+                if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+                    break;
+            }
+            // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well; where
+            // the two halves come within a door's width of each other, only that gap is walked straight. Otherwise the
+            // straight line from the path's end, which went through the rock (the Deadmines' foundry and ship legs).
+            float const missed = cursor.GetExactDist(&stop);
+            float bridged = missed;
+            if (missed > 5.0f)
+            {
+                std::vector<G3D::Vector3> back;
+                Position from(stop);
+                for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
+                {
+                    map->LoadGrid(from.GetPositionX(), from.GetPositionY());
+                    PathGenerator path(seat);
+                    path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(),
+                        cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), false);
+                    if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
+                        break;
+                    for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                        back.push_back(path.GetPath()[i]);
+                    G3D::Vector3 const& end = path.GetPath().back();
+                    if (Distance2d(from, Position(end.x, end.y, end.z)) < 1.0f)
+                        break;
+                    from.Relocate(end.x, end.y, end.z);
+                    if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
+                        break;
+                }
+                // Across the gap, from creature to creature: the dungeon's trash stands in its corridors and rooms, so
+                // stepping to the nearest one that is closer to where the path back begins walks the way the dungeon
+                // goes where the navmesh does not join it (the Deadmines' foundry and ship legs, 2026-09-30).
+                Position const target = back.empty() ? stop : Position(back.back().x, back.back().y, back.back().z);
+                std::vector<Position> spawns;
+                for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+                    if (creature)
+                        spawns.emplace_back(creature->GetHomePosition());
+                Position at(cursor);
+                for (uint32 step = 0; step < 64 && at.GetExactDist(&target) > BREADCRUMB_REACH; ++step)
+                {
+                    float const left = at.GetExactDist(&target);
+                    Position const* next = nullptr;
+                    for (Position const& spawn : spawns)
+                        if (spawn.GetExactDist(&target) < left - BREADCRUMB_MIN_GAIN
+                            && at.GetExactDist(&spawn) <= BREADCRUMB_REACH
+                            && (!next || at.GetExactDist(&spawn) < at.GetExactDist(next)))
+                            next = &spawn;
+                    if (!next)
+                        break;
+                    points.emplace_back(next->GetPositionX(), next->GetPositionY(), next->GetPositionZ());
+                    at = *next;
+                }
+                bridged = at.GetExactDist(&target);
+                for (auto point = back.rbegin(); point != back.rend(); ++point)
+                    points.push_back(*point);
+                points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
+            }
+            if (log)
+            LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
+                _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
+                missed > 5.0f ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
+                    : "");
+            cursor = stop;
+        }
+        return points;
+    };
+
+
+    // Then every pack in the instance -- trash, side bosses and all (Instance.WingFullClear) -- each where the boss
+    // route passes nearest it, so the clear goes the way the dungeon opens up. Only the bosses, the route passed the
+    // packs by and the parties never cleared a room (2026-10-01: "clear every pull and every boss, even side ones");
+    // the packs nearest next from the door led through doors that open later, and the parties stood at them.
+    if (_scenario.Tuning().Instance.WingFullClear)
+    {
+        std::vector<G3D::Vector3> const spine = pathThrough(stops, false);
         constexpr float PACK_REACH = 15.0f;
-        bool const fullClear = _scenario.Tuning().Instance.WingFullClear != 0;
-        std::vector<Position> packs;
+        std::vector<std::pair<std::pair<std::size_t, float>, Position>> packs;
         std::vector<Creature const*> left;
         for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            if (creature && creature != boss && (fullClear ? Hostile(seat, creature)
-                : creature->IsAlive() && (creature->IsDungeonBoss() || creature->isWorldBoss())))
+            if (creature && creature != boss && Hostile(seat, creature))
                 left.push_back(creature);
         // A pack: a creature and every other within PACK_REACH of it, stood at their middle.
         while (!left.empty())
@@ -928,112 +1043,26 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
                 }
                 else
                     ++it;
-            // The middle can be in the air between two ledges; the nearest member's own spot is walkable.
             Position const middle(x / float(count), y / float(count), z / float(count));
-            packs.push_back(middle);
+            std::size_t along = 0;
+            float nearest = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < spine.size(); ++i)
+                if (float const d = middle.GetExactDist(spine[i].x, spine[i].y, spine[i].z); d < nearest)
+                {
+                    nearest = d;
+                    along = i;
+                }
+            packs.push_back({ { along, nearest }, middle });
         }
-        // Packs standing by the last boss are its room: the route ends there, with them.
-        Position const last(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
-        Position at(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
-        while (!packs.empty())
-        {
-            auto const nearest = std::min_element(packs.begin(), packs.end(), [&at](Position const& a, Position const& b)
-            {
-                return a.GetExactDist(&at) < b.GetExactDist(&at);
-            });
-            at = *nearest;
-            stops.push_back(at);
-            packs.erase(nearest);
-        }
+        std::sort(packs.begin(), packs.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        stops.clear();
+        for (auto const& [key, pack] : packs)
+            stops.push_back(pack);
         stops.push_back(last);
-        LOG_INFO("module.animus", "{}: {} route stops ({} the whole dungeon's packs)", _scenario.Name(), stops.size(),
-            fullClear ? "every one of" : "only");
     }
-
-    // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
-    // stops, the straight line between them (a door's tunnel is walked, the navmesh just does not cross it).
-    std::vector<G3D::Vector3> points;
-    Position cursor(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
-    points.emplace_back(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ());
-    for (Position const& stop : stops)
-    {
-        for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
-        {
-            map->LoadGrid(cursor.GetPositionX(), cursor.GetPositionY());
-            PathGenerator path(seat);
-            path.CalculatePath(cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(),
-                stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), false);
-            if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
-                break;
-            for (std::size_t i = 1; i < path.GetPath().size(); ++i)
-                points.push_back(path.GetPath()[i]);
-            G3D::Vector3 const& end = path.GetPath().back();
-            if (Distance2d(cursor, Position(end.x, end.y, end.z)) < 1.0f)
-                break;
-            cursor.Relocate(end.x, end.y, end.z);
-            if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
-                break;
-        }
-        // Short of the stop: a closed door's gap in the navmesh, most likely. Path back from the stop as well; where
-        // the two halves come within a door's width of each other, only that gap is walked straight. Otherwise the
-        // straight line from the path's end, which went through the rock (the Deadmines' foundry and ship legs).
-        float const missed = cursor.GetExactDist(&stop);
-        float bridged = missed;
-        if (missed > 5.0f)
-        {
-            std::vector<G3D::Vector3> back;
-            Position from(stop);
-            for (uint32 leg = 0; leg < PATH_LEGS; ++leg)
-            {
-                map->LoadGrid(from.GetPositionX(), from.GetPositionY());
-                PathGenerator path(seat);
-                path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(),
-                    cursor.GetPositionX(), cursor.GetPositionY(), cursor.GetPositionZ(), false);
-                if (path.GetPathType() & PATHFIND_NOPATH || path.GetPath().size() < 2)
-                    break;
-                for (std::size_t i = 1; i < path.GetPath().size(); ++i)
-                    back.push_back(path.GetPath()[i]);
-                G3D::Vector3 const& end = path.GetPath().back();
-                if (Distance2d(from, Position(end.x, end.y, end.z)) < 1.0f)
-                    break;
-                from.Relocate(end.x, end.y, end.z);
-                if (!(path.GetPathType() & (PATHFIND_INCOMPLETE | PATHFIND_SHORT)))
-                    break;
-            }
-            // Across the gap, from creature to creature: the dungeon's trash stands in its corridors and rooms, so
-            // stepping to the nearest one that is closer to where the path back begins walks the way the dungeon
-            // goes where the navmesh does not join it (the Deadmines' foundry and ship legs, 2026-09-30).
-            Position const target = back.empty() ? stop : Position(back.back().x, back.back().y, back.back().z);
-            std::vector<Position> spawns;
-            for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-                if (creature)
-                    spawns.emplace_back(creature->GetHomePosition());
-            Position at(cursor);
-            for (uint32 step = 0; step < 64 && at.GetExactDist(&target) > BREADCRUMB_REACH; ++step)
-            {
-                float const left = at.GetExactDist(&target);
-                Position const* next = nullptr;
-                for (Position const& spawn : spawns)
-                    if (spawn.GetExactDist(&target) < left - BREADCRUMB_MIN_GAIN
-                        && at.GetExactDist(&spawn) <= BREADCRUMB_REACH
-                        && (!next || at.GetExactDist(&spawn) < at.GetExactDist(next)))
-                        next = &spawn;
-                if (!next)
-                    break;
-                points.emplace_back(next->GetPositionX(), next->GetPositionY(), next->GetPositionZ());
-                at = *next;
-            }
-            bridged = at.GetExactDist(&target);
-            for (auto point = back.rbegin(); point != back.rend(); ++point)
-                points.push_back(*point);
-            points.emplace_back(stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
-        }
-        LOG_INFO("module.animus", "{}: {} route leg to ({:.0f} {:.0f} {:.0f}): the path ends {:.0f} yd short{}",
-            _scenario.Name(), row.Name, stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ(), missed,
-            missed > 5.0f ? Acore::StringFormat("; stepped across by the creatures, {:.0f} yd left straight", bridged)
-                : "");
-        cursor = stop;
-    }
+    LOG_INFO("module.animus", "{}: {} route stops ({})", _scenario.Name(), stops.size(),
+        _scenario.Tuning().Instance.WingFullClear ? "every pack, in the bosses' order" : "the bosses");
+    std::vector<G3D::Vector3> const points = pathThrough(stops, true);
 
     // A point every WingWaypointYards along it, between corners too; the last boss's own position last.
     float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
