@@ -941,8 +941,14 @@ namespace
         if (!row.Has(BlockId::Pack) || !row.Has(BlockId::Party))
             return Fight(row, layout);
 
+        // One healer: the seat that heals best of the group (ties both heal). Every other build with a heal in it -- a
+        // feral druid, an enhancement shaman, a retribution paladin -- deals damage: the first script let them all heal,
+        // the fights ran 80-110 s and the real healer died dry (2026-10-01).
         bool const tank = IsDungeonTank(row);
-        bool const healer = !tank && CanHeal(row);
+        float const ownHealing = std::max({ AptitudeOf(row, Aptitude::DIRECT_HEAL), AptitudeOf(row, Aptitude::HOT_HEAL),
+            AptitudeOf(row, Aptitude::AREA_HEAL) });
+        bool const healer = !tank && CanHeal(row)
+            && ownHealing >= row.Obs(BlockId::Party, PartyBlock::OBS_BEST_HEALING) - 1e-3f;
         bool fighting = row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_ON_PARTY) > 0.0f;
         for (uint32 slot = 0; slot < PACK_SLOTS && !fighting; ++slot)
             fighting = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
@@ -1021,11 +1027,13 @@ namespace
         ready = ready && (ownMana <= 0.0f || ownMana >= DUNGEON_READY_MANA);
         for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
         {
-            if (MemberObs(row, member, PartyBlock::MEMBER_PRESENT) == 0.0f)
+            // The dead do not hold the pull up: the healer raises who it can between pulls, and a party that has
+            // lost somebody nobody can raise goes on without them (a dead member kept the first script waiting out
+            // the hour).
+            if (!MemberLive(row, member))
                 continue;
             float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
-            ready = MemberLive(row, member)
-                && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
+            ready = MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
                 && (mana <= 0.0f || mana >= DUNGEON_READY_MANA)
                 && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
         }

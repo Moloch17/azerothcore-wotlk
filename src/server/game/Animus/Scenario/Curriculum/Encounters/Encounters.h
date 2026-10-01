@@ -580,6 +580,8 @@ namespace Animus::Curriculum
             float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
             uint32 HostileTotal = 0;            // the instance's creatures a full clear kills, at the start
             bool Scripted = false;              // a seat of this run was played by the script (WingScript)
+            uint32 LastMs = 0;                  // the run's clock at its last update, and its level, for its log line
+            uint32 Level = 0;
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
             /// and the nearest pack not in the fight.
             uint32 OnTank = 0;

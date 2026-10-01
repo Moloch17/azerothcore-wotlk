@@ -185,6 +185,15 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
 {
     EnvInstance& fight = _envs[env.Index];
     // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
+    // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
+    if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
+        LOG_INFO("module.animus", "Wing run: env {} {}{} level {} | point {}/{} at the end, {} of {} creatures killed, {} "
+            "bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
+            env.Index, fight.Evaluating ? "eval" : "train", fight.Scripted ? " scripted" : "", fight.Level,
+            fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
+            fight.BossDead ? "killed" : "alive", fight.Wipes,
+            float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
+            fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
     // A run the script played part of is the script's success, not the policy's.
     if (!fight.Route.empty() && !fight.Evaluating && !fight.Scripted)
         _scenario.NoteWingRun(fight.BossDead ? 1.0f
@@ -582,6 +591,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fight.Fighting = true;
     TraceWing(env, fight, fight.Fighting || !anyoneAlive);
+    fight.LastMs = env.EpisodeElapsedMs;
+    fight.Level = uint32(data.EpisodeLevel);
     for (uint32 index = 0; index < data.ActiveSeats && !fight.Scripted; ++index)
         fight.Scripted = data.Seats[index].Scripted;
 
