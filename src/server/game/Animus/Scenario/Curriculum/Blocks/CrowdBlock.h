@@ -21,6 +21,9 @@
 
 #include "Block.h"
 
+class GameObject;
+class Player;
+
 namespace Animus::Curriculum
 {
     /// What is on the party past the pack block's PACK_SLOTS enemies, and the pack ahead: a whole dungeon's fights
@@ -84,6 +87,11 @@ namespace Animus::Curriculum
             ACTION_APPROACH_OBJECT = 2,
             ACTION_COUNT        = 3
         };
+
+        /// The item a lock is opened with (LOCK_KEY_ITEM), or 0: the Deadmines' cannon takes the Defias Gunpowder.
+        [[nodiscard]] static uint32 KeyOf(GameObject const* object);
+        /// Whether `bot` can use `object` as it stands: a key it needs is carried.
+        [[nodiscard]] static bool CanUse(Player const* bot, GameObject const* object);
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;

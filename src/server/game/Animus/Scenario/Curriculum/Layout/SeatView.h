@@ -52,6 +52,7 @@ namespace Animus::Curriculum
         uint32 Elites = 0;
         Unit const* Tank = nullptr;                 // the seat the crowd is counted against
         GameObject* Object = nullptr;               // the nearest thing the party can use: a lever, the cannon
+        std::vector<ObjectGuid>* Used = nullptr;    // where a use is recorded, so each thing is used once a run
         std::array<Unit*, CROWD_SLOTS> Units{};     // the next enemies past the pack's slots, fight first
         uint32 Count = 0;
         bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it

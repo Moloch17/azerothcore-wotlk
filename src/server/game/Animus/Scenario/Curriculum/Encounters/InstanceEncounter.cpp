@@ -23,6 +23,7 @@
 #include "CombatRewardScenario.h"
 #include "Creature.h"
 #include "CreatureAI.h"
+#include "CrowdBlock.h"
 #include "DBCStores.h"
 #include "Env.h"
 #include "GameObject.h"
@@ -898,7 +899,7 @@ bool Animus::Curriculum::InstanceEncounter::Hostile(Player const* seat, Creature
 
 bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
 {
-    if (!object || !object->isSpawned() || object->GetGoState() != GO_STATE_READY
+    if (!object || !object->isSpawned() || object->GetGoState() != GO_STATE_READY || object->getLootState() != GO_READY
         || object->HasGameObjectFlag(GameObjectFlags(GO_FLAG_NOT_SELECTABLE | GO_FLAG_LOCKED | GO_FLAG_INTERACT_COND
             | GO_FLAG_IN_USE)))
         return false;
@@ -906,8 +907,11 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
     {
         case GAMEOBJECT_TYPE_BUTTON:
         case GAMEOBJECT_TYPE_GOOBER:
-        case GAMEOBJECT_TYPE_DOOR:
+        case GAMEOBJECT_TYPE_CHEST:
             return true;
+        case GAMEOBJECT_TYPE_DOOR:
+            // A door with a lock is opened by what its lock names (a lever, the cannon), not by a hand on it.
+            return !object->GetGOInfo()->GetLockId();
         default:
             return false;
     }
@@ -1166,7 +1170,7 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Cell::VisitObjects(bot, searcher, OBJECT_SIGHT);
         for (GameObject* object : objects)
         {
-            if (!Usable(object))
+            if (!Usable(object) || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;
             if (std::find(fight.Objects.begin(), fight.Objects.end(), object->GetGUID()) == fight.Objects.end())
                 fight.Objects.push_back(object->GetGUID());
@@ -1274,9 +1278,11 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 /*seat*/
             if (Unit* unit = ObjectAccessor::GetUnit(*view.Bot, guid); unit && crowd.Count < CROWD_SLOTS)
                 crowd.Units[crowd.Count++] = unit;
     }
+    crowd.Used = &fight.Used;
     if (view.Bot)
         for (ObjectGuid const& guid : fight.Objects)
             if (GameObject* object = ObjectAccessor::GetGameObject(*view.Bot, guid); object && Usable(object)
+                && CrowdBlock::CanUse(view.Bot, object)
                 && (!crowd.Object || view.Bot->GetExactDist(object) < view.Bot->GetExactDist(crowd.Object)))
                 crowd.Object = object;
     crowd.HasAhead = fight.HasAhead;

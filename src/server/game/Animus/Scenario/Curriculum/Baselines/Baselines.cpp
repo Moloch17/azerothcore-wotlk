@@ -988,10 +988,14 @@ namespace
             return 0;
         }
 
-        // Between pulls.
+        // Between pulls: raise the dead, heal whoever is actually hurt, then eat and drink. The healer kept its shield
+        // and heal over time up between pulls and never got its mana back, and the pull waited for it (2026-10-01).
         if (std::optional<int32> revive = Revive(row))
             return revive;
-        if (healer)
+        bool hurt = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) < DUNGEON_READY_HEALTH;
+        for (uint32 member = 0; member < GROUP_MEMBERS && !hurt; ++member)
+            hurt = MemberLive(row, member) && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) < DUNGEON_READY_HEALTH;
+        if (healer && hurt)
             if (std::optional<int32> heal = Support(row, layout))
                 return heal;
         if (std::optional<int32> rest = Rest(row))
@@ -1070,7 +1074,6 @@ namespace
                 return use;
             if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_APPROACH_OBJECT))
                 return go;
-            return 0;
         }
 
         // On along the route, on the server's path: smooth, and round the corners.
