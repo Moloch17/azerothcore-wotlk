@@ -558,6 +558,21 @@ namespace Animus::Curriculum
             float Assist = 0.0f;
             uint32 WipesAllowed = 1;
             bool Evaluating = false;
+            /// The fight under way, for the wipe's log line (Instance.WingTrace): when it began, what had been killed
+            /// by then, the most enemies on the party at once and who they were, and each death in order.
+            struct FightTrace
+            {
+                bool InFight = false;
+                uint32 StartMs = 0;
+                uint32 KillsAtStart = 0;
+                uint32 PointAtStart = 0;
+                uint32 PeakEngaged = 0;
+                uint32 PeakElites = 0;
+                uint32 PeakOnTank = 0;
+                std::string PeakEntries;
+                std::string Deaths;
+                std::array<bool, MAX_SEATS> Dead{};
+            } Trace;
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;
@@ -570,6 +585,9 @@ namespace Animus::Curriculum
         /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
         [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
+        /// Instance.WingTrace: follow the fight under way, and log what a wipe ended.
+        void TraceWing(Env& env, EnvInstance& fight, bool fighting);
+        void LogWipe(Env const& env, EnvInstance const& fight) const;
 
         [[nodiscard]] std::vector<BossRow const*> const& Rows(Env const& env) const;
         [[nodiscard]] static CreatureData const* FindSpawn(BossRow const& row);

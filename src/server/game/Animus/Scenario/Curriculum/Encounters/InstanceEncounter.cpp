@@ -564,6 +564,15 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         return;
     }
 
+    if (_scenario.Tuning().Instance.WingTrace)
+    {
+        bool fighting = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
+            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+                fighting = true;
+        TraceWing(env, fight, fighting || !anyoneAlive);
+    }
+
     // A wing: the next point of the route reached by any seat; a wipe stands the party up at the door (until
     // the run's allowance, Instance.WingWipes and more while the support lasts, which ends it), with the trash that
     // killed it still where it was.
@@ -578,6 +587,9 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     if (!anyoneAlive && !fight.BossDead)
     {
         ++fight.Wipes;
+        if (_scenario.Tuning().Instance.WingTrace)
+            LogWipe(env, fight);
+        fight.Trace = EnvInstance::FightTrace();
         if (fight.Wipes >= fight.WipesAllowed)
         {
             fight.Wiped = true;
@@ -597,6 +609,111 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             BotFactory::TeleportWithinMap(owner, data.EpisodeSpawn);
         }
     }
+}
+
+void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fight, bool fighting)
+{
+    EnvInstance::FightTrace& trace = fight.Trace;
+    EnvState const& data = _scenario.Data(env);
+    if (!fighting)
+    {
+        trace.InFight = false;
+        return;
+    }
+    if (!trace.InFight)
+    {
+        trace = EnvInstance::FightTrace();
+        trace.InFight = true;
+        trace.StartMs = env.EpisodeElapsedMs;
+        trace.KillsAtStart = fight.TrashKills;
+        trace.PointAtStart = fight.RouteNext;
+        for (uint32 index = 0; index < data.ActiveSeats; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index))
+                trace.Dead[index] = !bot->IsAlive();
+    }
+
+    // Who is on the party now: every hostile creature within reach of a living seat whose victim is a player.
+    Player* anchor = nullptr;
+    Player* tank = nullptr;
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld())
+        {
+            anchor = anchor ? anchor : bot;
+            if (!tank && AptitudeDemand::HoldsThePull().MetBy(data.Seats[index].Apt))
+                tank = bot;
+        }
+    if (anchor)
+    {
+        constexpr float TRACE_REACH = 60.0f;
+        std::list<Unit*> units;
+        Acore::AnyUnfriendlyUnitInObjectRangeCheck check(anchor, anchor, TRACE_REACH);
+        Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(anchor, units, check);
+        Cell::VisitObjects(anchor, searcher, TRACE_REACH);
+        uint32 engaged = 0;
+        uint32 elites = 0;
+        uint32 onTank = 0;
+        std::map<uint32, uint32> entries;
+        for (Unit* unit : units)
+        {
+            Unit* victim = unit->IsAlive() && !unit->IsPlayer() ? unit->GetVictim() : nullptr;
+            if (!victim || !victim->IsPlayer())
+                continue;
+            ++engaged;
+            onTank += victim == tank ? 1 : 0;
+            if (Creature* creature = unit->ToCreature())
+            {
+                elites += creature->isElite() ? 1 : 0;
+                ++entries[creature->GetEntry()];
+            }
+        }
+        if (engaged > trace.PeakEngaged)
+        {
+            trace.PeakEngaged = engaged;
+            trace.PeakElites = elites;
+            trace.PeakOnTank = onTank;
+            trace.PeakEntries.clear();
+            for (auto const& [entry, count] : entries)
+            {
+                CreatureTemplate const* info = sObjectMgr->GetCreatureTemplate(entry);
+                trace.PeakEntries += Acore::StringFormat("{}{}x{}", trace.PeakEntries.empty() ? "" : ", ", count,
+                    info ? info->Name : std::to_string(entry));
+            }
+        }
+    }
+
+    // Each death in order: role, class, seconds into the fight, its mana then.
+    static char const* const CLASS_NAMES[] = { "?", "warrior", "paladin", "hunter", "rogue", "priest", "dk", "shaman",
+        "mage", "warlock", "?", "druid" };
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+    {
+        Player* bot = _scenario.SeatBot(env, index);
+        if (!bot || bot->IsAlive() || trace.Dead[index])
+            continue;
+        trace.Dead[index] = true;
+        Aptitude const& apt = data.Seats[index].Apt;
+        char const* role = AptitudeDemand::HoldsThePull().MetBy(apt) ? "tank"
+            : AptitudeDemand::KeepsThemUp().MetBy(apt) ? "healer" : "dps";
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        trace.Deaths += Acore::StringFormat("{}{} {} {:.0f}s{}", trace.Deaths.empty() ? "" : ", ", role,
+            bot->getClass() < std::size(CLASS_NAMES) ? CLASS_NAMES[bot->getClass()] : "?",
+            float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
+            maxMana ? Acore::StringFormat(" mana {}%", bot->GetPower(POWER_MANA) * 100 / maxMana) : "");
+    }
+}
+
+void Animus::Curriculum::InstanceEncounter::LogWipe(Env const& env, EnvInstance const& fight) const
+{
+    EnvInstance::FightTrace const& trace = fight.Trace;
+    // The healers' mana when the party went down is in its deaths (each seat's mana as it died).
+    LOG_INFO("module.animus", "Wing wipe: env {} {} assist {:.2f} level {} wipe {}/{} at {:.0f}s, point {}/{} "
+        "(fight began at point {}, lasted {:.0f}s, {} kills in it, {} before) | peak {} on the party ({} elite, {} on "
+        "the tank): {} | deaths: {}",
+        env.Index, fight.Evaluating ? "eval" : "train", fight.Assist, uint32(_scenario.Data(env).EpisodeLevel),
+        fight.Wipes, fight.WipesAllowed, float(env.EpisodeElapsedMs) / 1000.0f, fight.RouteNext, fight.Route.size(),
+        trace.PointAtStart, float(env.EpisodeElapsedMs - trace.StartMs) / 1000.0f,
+        fight.TrashKills - trace.KillsAtStart, trace.KillsAtStart, trace.PeakEngaged, trace.PeakElites,
+        trace.PeakOnTank, trace.PeakEntries.empty() ? "none seen" : trace.PeakEntries,
+        trace.Deaths.empty() ? "none seen" : trace.Deaths);
 }
 
 bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const

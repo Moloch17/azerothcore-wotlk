@@ -266,6 +266,8 @@ namespace Animus::Curriculum
             float WingInstruct = 0.8f;
             /// The instructed healer protects whoever is below this health share.
             float WingInstructHeal = 70.0f;
+            /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
+            uint32 WingTrace = 1;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1105,6 +1107,7 @@ namespace Animus::Curriculum
             f("Instance.WingWipesExtra", tuning.Instance.WingWipesExtra);
             f("Instance.WingInstruct", tuning.Instance.WingInstruct);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
+            f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);
