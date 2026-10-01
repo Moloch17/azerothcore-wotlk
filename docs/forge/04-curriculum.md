@@ -1838,12 +1838,11 @@ the suggestion and never shown it. The weight is 0 in evaluation and in a probe.
 actions: target picks are `pack`, revives and following `party`, pathed moves and object use `crowd`) and `hint_weight`.
 
 **A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
-clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every
-pack in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route
-passes
+clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every pack
+in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route passes
 nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours.
-`wing_cleared_share` is the share of the instance's creatures
-killed. The instructor is the `dungeon` script (Baselines), not `fight`, which charged whatever was nearest:
+`wing_cleared_share` is the share of the instance's creatures killed. The instructor is the `dungeon` script
+(Baselines), not `fight`, which charged whatever was nearest:
 
 - the tank leads along the route, waits until every member is above 70% health (the healer 70% mana) and within 20 yd,
   then pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
