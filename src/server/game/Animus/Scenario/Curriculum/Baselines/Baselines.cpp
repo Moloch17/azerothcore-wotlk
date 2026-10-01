@@ -816,7 +816,6 @@ namespace
     constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
     constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
     constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
-    constexpr float DUNGEON_FAR_YARDS = 40.0f;          // further than this, they walk the route back to the tank
     constexpr float DUNGEON_REST_HEALTH = 0.7f;
     constexpr float DUNGEON_REST_MANA = 0.6f;
 
@@ -1003,8 +1002,9 @@ namespace
 
         if (!tank)
         {
-            // Far behind (risen at the door, or left behind): back along the route to the tank.
-            if (hasLeader && leaderYards > DUNGEON_FAR_YARDS)
+            // Out of the gathering (risen at the door, left behind, or where following the tank does not path): back
+            // along the route to it, which is always walkable.
+            if (hasLeader && leaderYards > DUNGEON_GATHER_YARDS)
             {
                 if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
                     return go;
