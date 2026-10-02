@@ -179,7 +179,9 @@ namespace Animus::Curriculum
             float InterruptHeal = 3.0f;
             float InterruptArea = 2.0f;
             float InterruptLong = 1.5f;
-            float Spacing = 0.03f;
+            /// 0.03 cost a mage about 0.4 a fight against 15 for a kill, and mages spent 60-75% of their duels in melee
+            /// range, dying to elites they let close (2026-10-02, stage4 at 160M); 0.1 puts 15 s in melee at 1.5.
+            float Spacing = 0.1f;
             float MeleeRange = 3.5f;            // the range the approach shaping aims for, melee specs
             float RangedRange = 25.0f;          // ... ranged specs
         } Duel;
@@ -706,8 +708,9 @@ namespace Animus::Curriculum
             float Stall = 0.08f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
             uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's
-            float Spacing = 0.06f;              // pack: per second a ranged spec is hit in melee reach (0.03 left
-                                                // casters in melee 70-80% of pack fights, 2026-09-28)
+            float Spacing = 0.1f;               // pack: per second a ranged spec is hit in melee reach (0.03 left
+                                                // casters in melee 70-80% of pack fights, 2026-09-28; 0.1 with the
+                                                // duel's, 2026-10-02)
             /// A camp (PullSchedule::Camp, the pull drill): per second, for each pack fighting beyond the first; paid
             /// for each pack killed with no other pack in its fight (times the rung's scale); and the grace between
             /// packs, from the last fight, before standing about is charged as Stall (not while eating or drinking).

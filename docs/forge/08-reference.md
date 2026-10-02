@@ -164,7 +164,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.Stall` | 0.08 |
 | | | | `Pulls.StallGraceMs` | 15000 |
 | | | | `Pulls.PreparationRefundMaxMs` | 15000 |
-| | | | `Pulls.Spacing` | 0.06 |
+| | | | `Pulls.Spacing` | 0.1 |
 | | | | `Pulls.SoloGauntletClear` | 5.0 |
 | | | | `Pulls.SoloGauntletFastPull` | 1.0 |
 | | | | `Pulls.SoloGauntletHealthKept` | 0.5 |
@@ -196,7 +196,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Duel.Stall` | 0.08 | | | |
 | `Duel.StallGraceMs` | 15000 | | | |
 | `Duel.PreparationRefundMaxMs` | 15000 | | | |
-| `Duel.Spacing` | 0.03 | | | |
+| `Duel.Spacing` | 0.1 | | | |
 | `Actions.Repeat` | 0.03 | | | |
 | `Actions.RepeatWindowMs` | 10000 | | | |
 | `Actions.RepeatFree` | 3 | | | |

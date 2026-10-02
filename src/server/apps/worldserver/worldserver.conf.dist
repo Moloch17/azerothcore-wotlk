@@ -5969,7 +5969,7 @@ AnimusForge.Curriculum.Duel.InterruptHeal = 3.0
 AnimusForge.Curriculum.Duel.InterruptArea = 2.0
 AnimusForge.Curriculum.Duel.InterruptLong = 1.5
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
-AnimusForge.Curriculum.Duel.Spacing = 0.03
+AnimusForge.Curriculum.Duel.Spacing = 0.1
 #   the range the approach shaping aims for, melee specs
 AnimusForge.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs
@@ -6400,7 +6400,7 @@ AnimusForge.Curriculum.Pulls.StallGraceMs = 15000
 #   seat that prepared once used to earn the full refund on every pull after it
 AnimusForge.Curriculum.Pulls.PreparationRefundMaxMs = 15000
 #   pack: per second a ranged spec is hit by a pack member in melee reach
-AnimusForge.Curriculum.Pulls.Spacing = 0.06
+AnimusForge.Curriculum.Pulls.Spacing = 0.1
 #   camp (the pull drill: two to four packs standing apart): per second, for each pack fighting beyond the first
 AnimusForge.Curriculum.Pulls.CampExtraPack = 0.15
 #   camp: each pack killed with no other pack in its fight (times the rung's scale)
