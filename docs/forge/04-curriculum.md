@@ -1789,8 +1789,8 @@ one at a time, the wipes and the hints with them:
 | 4 | none | 25-28 | 5 | 1.0 |
 | 5, 6 | none | 24-27, 23-26 | 4 | 1.0 |
 | 7, 8 | none | 22-25, 21-24 | 3 | 0.75 |
-| 9, 10 | none | 20-23, 19-22 | 2 | 0.5 |
-| 11 | none | 18-21 | 1 | 0.25 |
+| 9, 10 | none | 20-23, 19-22 | 2 | none |
+| 11 | none | 18-21 | 1 | none |
 | 12 | none | 17-20 | 1 | none |
 
 `Instance.WingProbe` (20%) of training runs are probes: no script, no hints and no instruction, at the rung's level

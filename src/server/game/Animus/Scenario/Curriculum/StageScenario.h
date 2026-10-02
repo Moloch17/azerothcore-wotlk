@@ -247,6 +247,8 @@ namespace Animus::Curriculum
         };
         /// The ladder, from the most support to none: the last rung is the evaluation's own conditions. The script
         /// leaves first, at the top level; then the levels come down one at a time, the wipes and the hints with them.
+        /// No hints from rung 9 (20-23) down: there the hint-guided runs did worse than the probes (0.40 against
+        /// 0.61, 2026-10-02), so the script's habits held the bots back.
         static constexpr std::array<WingRung, 13> WING_RUNGS =
         {{
             { 1.0f, 8, 4, 1.0f },
@@ -258,9 +260,9 @@ namespace Animus::Curriculum
             { 0.0f, 6, 3, 1.0f },
             { 0.0f, 5, 2, 0.75f },
             { 0.0f, 4, 2, 0.75f },
-            { 0.0f, 3, 1, 0.5f },
-            { 0.0f, 2, 1, 0.5f },
-            { 0.0f, 1, 0, 0.25f },
+            { 0.0f, 3, 1, 0.0f },
+            { 0.0f, 2, 1, 0.0f },
+            { 0.0f, 1, 0, 0.0f },
             { 0.0f, 0, 0, 0.0f },
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
