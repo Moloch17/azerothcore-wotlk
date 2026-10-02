@@ -100,6 +100,7 @@ namespace Animus::Curriculum
             float HealthPerGroup = 1.0f;        // a raid pull's health x (seats / 5) x this
             float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
             float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
+            float TankLoose = 0.006f;           // ... charged per enemy on somebody else, per decision
             /// Healers in a party or a raid: per member of its group above 50% health, per decision; the same
             /// charged per member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
@@ -274,7 +275,7 @@ namespace Animus::Curriculum
             uint32 WingTrace = 1;
             /// Per second, for each hostile creature on the party past WingCrowdFree (a pack): the pull that ran into
             /// the next one. The Deadmines' parties had a median of eight on them when they wiped (2026-10-01).
-            float WingCrowd = 0.05f;
+            float WingCrowd = 0.15f;
             uint32 WingCrowdFree = 4;
             /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
             uint32 WingFullClear = 1;
@@ -375,7 +376,7 @@ namespace Animus::Curriculum
             /// terms -- which is what committing to a plan means. Charged for any change of a goal still in progress,
             /// its kind or its target (a goal that ended is replaced free), and raised from 0.03 when the next-run
             /// trial's goals stayed near random (2026-09-30).
-            float Switch = 0.1f;
+            float Switch = 0.15f;
             /// Progress toward the goal held (potential-based, so it cannot be farmed): Progress x (gamma x phi' -
             /// phi) every decision, phi in [-1, 0] per kind -- the yards left to its place (over 60), the named
             /// enemy's health, the seat's own health and mana for Recover and Rest, the friend's health for Protect.
@@ -390,7 +391,7 @@ namespace Animus::Curriculum
             float FightValue = 0.3f;
             float ControlValue = 0.2f;
             float RecoverValue = 1.0f;
-            float ProtectValue = 0.2f;
+            float ProtectValue = 1.0f;          // raised from 0.2: healers chose Protect 1% of the time
             float TravelValue = 0.1f;
             float WorldValue = 0.2f;
             /// The secondary goal (a second slot beside the primary: Fight A and hold B): paid this share of what the
@@ -548,7 +549,7 @@ namespace Animus::Curriculum
             /// pet dealt 1% of their damage. Each press of an action counts the presses of that same action within
             /// the last RepeatWindowMs; past the free ones, each costs Repeat. How often the seat acts overall is not
             /// charged, only the same button again, and movement orders never are: steering is always free.
-            float Repeat = 0.02f;
+            float Repeat = 0.03f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
             /// Steering that does not commit: a turn or a pitch chosen against one chosen within
@@ -1059,6 +1060,7 @@ namespace Animus::Curriculum
             f("Raid.HealthPerGroup", tuning.Raid.HealthPerGroup);
             f("Raid.DamagePerGroup", tuning.Raid.DamagePerGroup);
             f("Raid.TankHold", tuning.Raid.TankHold);
+            f("Raid.TankLoose", tuning.Raid.TankLoose);
             f("Raid.KeepUp", tuning.Raid.KeepUp);
             f("Raid.Output", tuning.Raid.Output);
             f("Raid.Idle", tuning.Raid.Idle);

@@ -813,7 +813,7 @@ namespace
     /// the party to be up and gathered, pulls the nearest pack and takes whatever hits somebody else; everyone else
     /// stays with the tank, attacks the tank's target, and the healer keeps them up. Between pulls everyone eats,
     /// drinks and raises the dead. Reads only the row, like every baseline.
-    constexpr float DUNGEON_PULL_YARDS = 25.0f;         // the tank pulls the pack ahead from this close
+    constexpr float DUNGEON_PULL_YARDS = 28.0f;         // the tank pulls the pack ahead from this close
     constexpr float DUNGEON_READY_HEALTH = 0.7f;        // ... once everybody has this much health
     constexpr float DUNGEON_READY_MANA = 0.7f;          // ... and the healer this much mana
     constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
@@ -943,6 +943,31 @@ namespace
             && !info->HasAura(SPELL_AURA_MOD_CONFUSE);
     }
 
+    /// Threat the spell adds beyond its damage (the server's spell_threat table: Sunder Armor, Revenge, Holy Shield,
+    /// Maul, Lacerate and the rest).
+    bool IsHighThreat(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        if (!info || info->IsPositive())
+            return false;
+        SpellThreatEntry const* threat = sSpellMgr->GetSpellThreatEntry(info->GetFirstRankSpell()->Id);
+        return threat && (threat->flatMod > 0 || threat->pctMod > 1.0f || threat->apPctMod > 0.0f);
+    }
+
+    bool IsCrowdControl(ActionCatalog::Action const& action);
+
+    /// Something to pull with from range: a hostile spell or shot that reaches 20 yd or more and is cast quickly.
+    bool IsRangedPull(ActionCatalog::Action const& action)
+    {
+        SpellInfo const* info = SpellOf(action);
+        if (!info || info->IsPositive() || info->IsAffectingArea() || info->GetMaxRange(false) < 20.0f
+            || info->CalcCastTime() > 2000 || IsCrowdControl(action) || info->HasAura(SPELL_AURA_MOD_FEAR))
+            return false;
+        return info->HasEffect(SPELL_EFFECT_SCHOOL_DAMAGE) || info->HasEffect(SPELL_EFFECT_WEAPON_DAMAGE)
+            || info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_PERIODIC_DAMAGE)
+            || info->DmgClass == SPELL_DAMAGE_CLASS_RANGED;
+    }
+
     bool IsCrowdControl(ActionCatalog::Action const& action)
     {
         SpellInfo const* info = SpellOf(action);
@@ -1049,6 +1074,18 @@ namespace
 
             if (tank)
             {
+                // What it pulled still coming in: back to the party (the encounter points its objective there),
+                // so the fight happens where the party waits and not beside the next pack.
+                bool coming = false;
+                for (uint32 slot = 0; slot < PACK_SLOTS && !coming; ++slot)
+                    coming = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f
+                        && SlotObs(row, slot, PackBlock::SLOT_DISTANCE) * 60.0f > 10.0f;
+                if (coming && row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) == 0.0f)
+                    if (std::optional<int32> back = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+                    {
+                        DungeonReason = "fight: falling back with the pull";
+                        return back;
+                    }
                 // The loose one it just took: taunt it. Several loose, or a crowd: threat on all of them at once.
                 if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f)
                     if (std::optional<int32> taunt = FirstSpell(row, layout, IsTaunt))
@@ -1056,6 +1093,10 @@ namespace
                 if (loose >= 2 || inFight >= 3)
                     if (std::optional<int32> area = FirstSpell(row, layout, IsAreaThreat))
                         return area;
+                // Its threat abilities before plain damage: the tank's damage read like a damage dealer's.
+                if (want >= 0 || SlotOnParty(row, false) >= 0)
+                    if (std::optional<int32> threat = FirstSpell(row, layout, IsHighThreat))
+                        return threat;
             }
             else if (!healer)
             {
@@ -1081,6 +1122,15 @@ namespace
                             return hold;
                         break;
                     }
+                // The tank's pull still on its way in: wait for it to reach the tank.
+                if (want >= 0 && hasLeader && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
+                    && SlotObs(row, uint32(want), PackBlock::SLOT_DISTANCE) * 60.0f > leaderYards + 8.0f)
+                {
+                    DungeonReason = "fight: waiting for the pull to reach the tank";
+                    if (std::optional<int32> halt = Halt(row))
+                        return halt;
+                    return 0;
+                }
                 // About to take it off the tank: hold back a moment.
                 if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
                     && SlotObs(row, uint32(want), PackBlock::SLOT_THREAT_SHARE) >= 0.9f)
@@ -1117,17 +1167,26 @@ namespace
         {
             // Out of the gathering (risen at the door, left behind, or where following the tank does not path): back
             // along the route to it, which is always walkable.
+            bool const moving = row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f;
             if (hasLeader && leaderYards > DUNGEON_GATHER_YARDS)
             {
                 DungeonReason = Acore::StringFormat("walking the route to the tank ({:.0f} yd)", leaderYards);
+                // An order under way is not pressed again (the presses the bots copied were mostly repeats).
+                if (moving)
+                    return 0;
                 if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
                     return go;
-                DungeonReason += ", advance not allowed";
+                // At its place on the route and the tank still far: straight to the tank (stragglers stood here).
+                if (std::optional<int32> go = follow())
+                    return go;
+                DungeonReason += ", nothing to press";
                 return 0;
             }
             if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
             {
                 DungeonReason = Acore::StringFormat("following the tank ({:.0f} yd)", leaderYards);
+                if (moving)
+                    return 0;
                 if (std::optional<int32> go = follow())
                     return go;
                 // The follow order is paced: between its presses it is still walking the path to the tank.
@@ -1197,8 +1256,12 @@ namespace
                     nearest = int32(slot);
             if (nearest >= 0)
             {
+                DungeonReason = "the tank pulls";
                 if (std::optional<int32> select = SelectSlot(row, uint32(nearest)))
                     return select;
+                // From range when it can: one enemy brought back rather than the tank walking into the pack.
+                if (std::optional<int32> shot = FirstSpell(row, layout, IsRangedPull))
+                    return shot;
                 if (std::optional<int32> action = Engage(row, layout))
                     return action;
                 return 0;
@@ -1216,7 +1279,10 @@ namespace
                 return go;
         }
 
-        // On along the route, on the server's path: smooth, and round the corners.
+        // On along the route, on the server's path: smooth, and round the corners; not pressed again while walking.
+        DungeonReason = "the tank advances";
+        if (row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f)
+            return 0;
         if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
             return go;
         return 0;

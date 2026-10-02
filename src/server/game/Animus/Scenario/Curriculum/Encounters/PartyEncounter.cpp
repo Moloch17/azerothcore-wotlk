@@ -446,16 +446,25 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         return;
 
     uint32 onBot = 0;
+    uint32 onOthers = 0;
     bool enemyNear = false;
     for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
         if (Unit* enemy = env.FindTargetUnit(enemySlot); enemy && enemy->IsAlive() && enemy->IsInCombat())
         {
-            onBot += enemy->GetVictim() == bot ? 1 : 0;
+            Unit const* victim = enemy->GetVictim();
+            onBot += victim == bot ? 1 : 0;
+            onOthers += victim && victim != bot && victim->IsPlayer() ? 1 : 0;
             enemyNear = enemyNear || (enemy->IsInMap(bot) && bot->GetExactDist(enemy) <= tuning.IdleReach);
         }
-    // Beside an owner the owner encounter pays the tank for this (Owner.TankHold).
-    if (HoldsThePull(apt) && !_scenario.Arena(env).Owner)
+    // Beside an owner the owner encounter pays the tank for this (Owner.TankHold). The party's tank also pays for
+    // every enemy on somebody else (Raid.TankLoose): holding the pull is its job, and the Deadmines' parties lost
+    // their fights with two of eight enemies on the tank (2026-10-01). A dungeon's drawn tank is the tank.
+    bool const tank = state.DungeonRole == DUNGEON_TANK || (state.DungeonRole == DUNGEON_ANY && HoldsThePull(apt));
+    if (tank && !_scenario.Arena(env).Owner)
+    {
         ledger.Add(RewardTerm::Threat, tuning.TankHold * float(onBot) * scale);
+        ledger.Add(RewardTerm::Threat, -tuning.TankLoose * float(onOthers) * scale);
+    }
 
     // The healer keeps its group up, in a party as in a raid: in the Deadmines a level-20 healer cast about five
     // heals a run and its party wiped at the first packs (2026-09-30).

@@ -1429,6 +1429,20 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
                 tankWalk = std::min<std::size_t>(fight.Seats[index].Walk, last);
         }
     view.Objective = fight.Route[walk];
+    // A pull coming in: the tank's objective is a route point behind it, back where the party waits, so what it pulled
+    // is fought there and not beside the next pack (2026-10-01: eight enemies at once at the mine's entrance, the
+    // packs pulled where they stood). Only while something attacking the tank is still more than PULL_BACK_YARDS out.
+    constexpr float PULL_BACK_YARDS = 10.0f;
+    if (view.Bot && view.Crowd.Tank == view.Bot && fight.Fighting)
+    {
+        bool coming = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !coming; ++slot)
+            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->GetVictim() == view.Bot
+                && enemy->IsInMap(view.Bot) && view.Bot->GetExactDist(enemy) > PULL_BACK_YARDS)
+                coming = true;
+        if (coming)
+            view.Objective = fight.Route[walk > 0 ? walk - 1 : 0];
+    }
     // Behind the party: the route's next point (the party's) is well ahead of the seat's own place -- the tank that
     // rose at the door, walking back to a party that is still deep in.
     view.Crowd.Behind = walk + 2 < last;
