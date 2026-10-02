@@ -134,6 +134,14 @@ namespace Animus::Curriculum
         /// where the ordinary party asks for nothing in particular and the lesson is smeared over whoever
         /// happened to turn up.
         std::vector<AptitudeDemand> SeatAptitudes{};
+        /// A full party of five drawn as a dungeon's is (StageScenario::FitsDungeonRole): a tank, a healer and three
+        /// damage dealers by what their specs are geared for.
+        bool ProperParty = false;
+        /// The role this arena drills (DungeonRole: 1 tank, 2 healer, 3 damage; 0 none): that seat is seat 0 -- the
+        /// one whose class and build climbs the pack ladder -- and its role's terms are weighted Party.DrillWeight.
+        uint8 DrillRole = 0;
+        /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
+        uint32 PackHealthPct = 100;
         /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
         /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
         /// would pay for an agent with nothing to say.
@@ -335,6 +343,12 @@ namespace Animus::Curriculum
         std::vector<Position> FlagBases{};
         /// The lowest level its characters may be (flying needs 60), raising a host's fixed level too.
         uint8 MinLevel = 0;
+        /// A band most of a stage's training characters are drawn in (FocusChance percent of them; the rest at any
+        /// level as usual): the class stages train at the dungeons' levels first, where a kit is small and every
+        /// spell in it matters. 0 = none. Evaluation spreads over every level as before.
+        uint8 FocusLevelFirst = 0;
+        uint8 FocusLevelLast = 0;
+        uint8 FocusChance = 0;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

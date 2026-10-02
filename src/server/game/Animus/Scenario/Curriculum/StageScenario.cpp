@@ -2079,7 +2079,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         // attempted by two or three was lost before it started, and the dungeon stage fielded a full five 40% of the
         // time. Companions in the open world keep the random size (1-4, Party.SizeWeight*).
         bool const instance = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
-        if (arena.Seats == SeatPlan::Party && !instance)
+        bool const proper = (instance && arena.Instance == InstanceLadder::Wing) || arena.ProperParty;
+        if (arena.Seats == SeatPlan::Party && !instance && !arena.ProperParty)
             data.ActiveSeats = RandomPartySize(_tuning.Party);
 
         // Some parties are the classic makeup (somebody to hold the pull, somebody to keep the hurt one up, and no
@@ -2087,7 +2088,13 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         // built for the seats actually in play: a four-entry array left the other MAX_SEATS - 4 zero-filled, which
         // a raid would have shuffled into the group that got them.
         std::array<AptitudeDemand, MAX_SEATS> demands = ClassicDemands(data.ActiveSeats);
-        if (instance || roll_chance_i(_tuning.Party.ClassicChance))
+        // A drill puts the drilled role in seat 0 (its class and build climbs the pack ladder); the classic makeup
+        // has the tank there and the healer in seat 1.
+        if (arena.DrillRole == DUNGEON_HEALER && data.ActiveSeats > 1)
+            std::swap(demands[0], demands[1]);
+        else if (arena.DrillRole == DUNGEON_DAMAGE && data.ActiveSeats > 2)
+            std::swap(demands[0], demands[2]);
+        if (!arena.DrillRole && (instance || proper || roll_chance_i(_tuning.Party.ClassicChance)))
             std::shuffle(demands.begin(), demands.begin() + data.ActiveSeats, RandomEngine::Instance());
         else
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
@@ -2109,15 +2116,19 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
         // A whole dungeon: a tank, a healer and three damage dealers, whichever seats they are (the demands were
         // shuffled), each drawn among the castings that fit its place; the level redraw below keeps to them too.
-        if (instance && arena.Instance == InstanceLadder::Wing)
+        if (proper)
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             {
                 SeatState& s = data.Seats[seat];
                 s.DungeonRole = s.Want.Feature == AptitudeDemand::HoldsThePull().Feature ? DUNGEON_TANK
                     : s.Want.Feature == AptitudeDemand::KeepsThemUp().Feature ? DUNGEON_HEALER : DUNGEON_DAMAGE;
+                // A stage trained wholly in a band (FocusChance 100) draws only castings that can be its level: a death
+                // knight lifted every seat to 55.
+                uint8 const capLevel = _stage.FocusChance >= 100 ? _stage.FocusLevelLast : 0;
                 std::vector<Casting> fits;
                 for (Casting const& casting : Castings(s.Want))
-                    if (FitsDungeonRole(casting, s.DungeonRole))
+                    if (FitsDungeonRole(casting, s.DungeonRole)
+                        && (!capLevel || (casting.L && casting.L->Assets->Kit->MinLevel() <= capLevel)))
                         fits.push_back(casting);
                 if (fits.empty())
                     continue;
@@ -2230,9 +2241,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             keptLevel = c.Level;
         }
 
+    // The stage's focus band (StageDefinition::FocusLevelFirst/Last) for most training characters.
+    bool const focus = !_level && _stage.FocusChance && env.EpisodeSeedIndex == NO_EPISODE_SEED
+        && _stage.FocusLevelLast >= std::max<uint8>(minLevel, _stage.FocusLevelFirst)
+        && irand(0, 99) < int32(_stage.FocusChance);
     uint8 const level = data.EpisodeLevel ? std::clamp<uint8>(data.EpisodeLevel, minLevel, DEFAULT_MAX_LEVEL)
-        : keptLevel ? keptLevel : RandomLevel(minLevel, _level, _tuning.Characters,
-        env.EpisodeSeedIndex, uint32(_layouts.size()));
+        : keptLevel ? keptLevel
+        : focus ? uint8(urand(std::max<uint8>(minLevel, _stage.FocusLevelFirst), _stage.FocusLevelLast))
+        : RandomLevel(minLevel, _level, _tuning.Characters, env.EpisodeSeedIndex, uint32(_layouts.size()));
 
     // The first build opens a new instance (or a phase of the continent); every later one reuses it. An env whose
     // seats were all lost keeps its instance while the map still exists, and opens a new one when it is gone. An

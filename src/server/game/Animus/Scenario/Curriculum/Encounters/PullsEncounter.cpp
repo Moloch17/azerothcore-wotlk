@@ -90,6 +90,21 @@ namespace
 
     static_assert(RAID_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes both rung tables");
 
+    /// A party's drill rungs (a proper party against a single pack, ArenaDefinition::ProperParty): what a group of
+    /// five at the dungeons' levels meets, from a small pack to elites a level above, so holding a pull, keeping a
+    /// group up and killing the tank's target are learned before a dungeon asks for all of them at once.
+    constexpr std::array<PackRung, 6> PARTY_RUNGS =
+    {{
+        { 1, 1, 0, 0, 0 },  // 2
+        { 1, 2, 0, 0, 0 },  // 3
+        { 1, 2, 1, 0, 0 },  // 4 with an elite
+        { 1, 0, 2, 0, 1 },  // 4: two elites and something on the ground
+        { 1, 0, 2, 1, 1 },  // ... a level above
+        { 0, 0, 3, 1, 1 },  // four: three elites a level above, and a hazard caster
+    }};
+
+    static_assert(PARTY_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes the party's rungs too");
+
     /// A planned run's pulls (PullSchedule::Sequence), in order: the same fights every episode, ending on a pack
     /// that cannot be walked into without something saved for it. A seat that spends everything on the first pull
     /// arrives at the last one with nothing, which is the whole point of the stage.
@@ -349,8 +364,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     std::vector<uint32> entries;
     pulls.EliteOrHigher = false;
 
-    // A party faces dungeon-like packs: 2-4 creatures, each sometimes elite, up to 2 levels higher.
-    if (arena.PartyGroup)
+    // A party faces dungeon-like packs: 2-4 creatures, each sometimes elite, up to 2 levels higher. A drill's single
+    // pack climbs the party's rungs instead (below).
+    if (arena.PartyGroup && !SinglePack(env))
     {
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + urand(0, 2)));
         uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
@@ -393,7 +409,8 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
         uint8 const spec = data.Seats[0].Spec;
         DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, spec, MaxRung(env));
-        PackRung const& rung = raid ? RAID_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
+        PackRung const& rung = raid ? RAID_RUNGS[pick.Tier]
+            : arena.PartyGroup ? PARTY_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
         pulls.RungSpec = spec;
@@ -522,6 +539,16 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
             member->UpdateDamagePhysical(BASE_ATTACK);
         }
     }
+
+    // A drill's pack can take longer to kill (ArenaDefinition::PackHealthPct): the healing drill's fights outlast a
+    // mana bar.
+    if (arena.PackHealthPct != 100 && arena.PackHealthPct > 0)
+        for (Creature* member : pack)
+        {
+            member->ApplyStatPctModifier(UNIT_MOD_HEALTH, TOTAL_PCT, float(arena.PackHealthPct) - 100.0f);
+            member->UpdateMaxHealth();
+            member->SetFullHealth();
+        }
 
     // The new pull replaces the old one's creatures; enemy players (ambushers) keep their slots, first.
     std::erase_if(env.Targets, [](ObjectGuid const& guid) { return !guid.IsPlayer(); });

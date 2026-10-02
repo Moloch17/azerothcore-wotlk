@@ -101,6 +101,12 @@ namespace Animus::Curriculum
             float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
             float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
             float TankLoose = 0.006f;           // ... charged per enemy on somebody else, per decision
+            /// A party's damage dealers: their damage on the tank's target times this; and per enemy they have taken
+            /// off the tank, per decision.
+            float TankTarget = 0.3f;
+            float PulledOff = 0.004f;
+            /// A drill's drilled seat (ArenaDefinition::DrillRole): its role's terms times this.
+            float DrillWeight = 3.0f;
             /// Healers in a party or a raid: per member of its group above 50% health, per decision; the same
             /// charged per member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
@@ -1061,6 +1067,9 @@ namespace Animus::Curriculum
             f("Raid.DamagePerGroup", tuning.Raid.DamagePerGroup);
             f("Raid.TankHold", tuning.Raid.TankHold);
             f("Raid.TankLoose", tuning.Raid.TankLoose);
+            f("Raid.TankTarget", tuning.Raid.TankTarget);
+            f("Raid.PulledOff", tuning.Raid.PulledOff);
+            f("Raid.DrillWeight", tuning.Raid.DrillWeight);
             f("Raid.KeepUp", tuning.Raid.KeepUp);
             f("Raid.Output", tuning.Raid.Output);
             f("Raid.Idle", tuning.Raid.Idle);

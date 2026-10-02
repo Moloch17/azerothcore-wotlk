@@ -460,22 +460,40 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // every enemy on somebody else (Raid.TankLoose): holding the pull is its job, and the Deadmines' parties lost
     // their fights with two of eight enemies on the tank (2026-10-01). A dungeon's drawn tank is the tank.
     bool const tank = state.DungeonRole == DUNGEON_TANK || (state.DungeonRole == DUNGEON_ANY && HoldsThePull(apt));
-    if (tank && !_scenario.Arena(env).Owner)
+    bool const healer = state.DungeonRole == DUNGEON_HEALER || (state.DungeonRole == DUNGEON_ANY && Heals(apt));
+    // A drill weights the drilled seat's role terms (ArenaDefinition::DrillRole, seat 0): the lesson is that role's.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    float const drill = seatIndex == 0 && arena.DrillRole && arena.DrillRole == state.DungeonRole
+        ? tuning.DrillWeight : 1.0f;
+    if (tank && !arena.Owner)
     {
-        ledger.Add(RewardTerm::Threat, tuning.TankHold * float(onBot) * scale);
-        ledger.Add(RewardTerm::Threat, -tuning.TankLoose * float(onOthers) * scale);
+        ledger.Add(RewardTerm::Threat, drill * tuning.TankHold * float(onBot) * scale);
+        ledger.Add(RewardTerm::Threat, -drill * tuning.TankLoose * float(onOthers) * scale);
     }
+
+    // A damage dealer of a party with a tank: paid for the damage it puts on the tank's target, charged for each
+    // enemy it has taken off the tank (Raid.TankTarget, Raid.PulledOff). The Deadmines' damage dealers hit whatever
+    // was nearest and died with the enemies on them (2026-10-01).
+    if (!tank && !healer && !raid && !arena.Owner)
+        if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive())
+        {
+            Unit const* tankTarget = partyTank->GetVictim();
+            Unit const* own = bot->GetVictim();
+            if (tankTarget && own == tankTarget)
+                ledger.Add(RewardTerm::DamageDealt, drill * tuning.TankTarget * state.LastStepDamage);
+            ledger.Add(RewardTerm::Threat, -drill * tuning.PulledOff * float(onBot) * scale);
+        }
 
     // The healer keeps its group up, in a party as in a raid: in the Deadmines a level-20 healer cast about five
     // heals a run and its party wiped at the first packs (2026-09-30).
-    if (Heals(apt))
+    if (healer)
     {
         uint32 const first = GroupFirstSeat(seatIndex);
         int32 kept = 0;
         for (uint32 member = first; member < first + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
             if (Player* mate = env.FindBot(member); mate && data.Seats[member].L && mate->IsAlive())
                 kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
-        ledger.Add(RewardTerm::TeammateHealing, tuning.KeepUp * float(kept) * scale);
+        ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * float(kept) * scale);
     }
     else if (raid && !HoldsThePull(apt))
         ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);
