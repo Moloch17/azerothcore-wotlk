@@ -18,6 +18,9 @@ eval:
            serving_share, aimless_presses, combat_dps, dps_scaled, level]
 
 mappo:
+  # The goal head keeps exploring through the party stages: faded to 5% over a stage, its choices locked in early
+  # and the healers never found Protect again once it was made reachable (stage6, 2026-10-02: 2-7% of their goals).
+  goal_entropy_final_fraction: 0.5
   # Imitate the scripted fight's press where the sim suggests one: only with Instance.WingSupport on; off, the sim
   # writes no hint and this does nothing.
   hint_coef: 1.0

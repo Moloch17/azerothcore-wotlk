@@ -16,3 +16,8 @@ eval:
   report: [run_rung, pulls_cleared, clean_kill, wipes, teammates_died, engage_health, engage_mana, tank_hold_share,
            tank_target_share, pulled_off_seconds, low_health_seconds, healing_per_mana, camp_peak_packs,
            camp_clean_packs, director_member_orders, rest_seconds, dps_scaled, level]
+
+mappo:
+  # The goal head keeps exploring through the party stages: faded to 5% over a stage, its choices locked in early
+  # and the healers never found Protect again once it was made reachable (stage6, 2026-10-02: 2-7% of their goals).
+  goal_entropy_final_fraction: 0.5
