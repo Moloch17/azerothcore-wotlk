@@ -1438,7 +1438,8 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
     plan.Dense = std::move(dense);
     plan.Field = true;
     LOG_INFO("module.animus", "{}: the field route to {} ({}) is {} points ({:.0f} yd) from the door, through {} "
-        "packs; {} creatures no seat can walk to are left out", _scenario.Name(), row.Name, row.Entry, plan.Route.size(),
+        "packs; {} creatures no seat can walk to are left out", _scenario.Name(), row.Name, row.Entry,
+        plan.Route.size(),
         walked, packsReached, left);
     return plan;
 }
