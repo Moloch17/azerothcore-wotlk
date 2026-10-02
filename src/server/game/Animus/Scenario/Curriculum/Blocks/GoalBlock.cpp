@@ -218,8 +218,12 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             reached = bot->GetHealthPct() >= 95.0f && mana >= 0.95f;
             break;
         case SeatGoal::Protect:
+            // Back above PROTECT_REACHED_PCT: a friend healed out of danger. At 90 a healer that healed to 70 --
+            // what the overheal charge asks of it -- reached nothing, and parties' healers chose Protect 5% of the
+            // time with 2% of those reached (2026-10-02, stage6). Kept safe while attacked also reaches it
+            // (Goals.ProtectHoldMs, in StageScenario, which keeps the time).
             if (Unit* friendUnit = Encoding::FriendUnit(view, target - GOAL_TARGET_FRIEND_FIRST))
-                reached = friendUnit->IsAlive() && friendUnit->GetHealthPct() >= 90.0f;
+                reached = friendUnit->IsAlive() && friendUnit->GetHealthPct() >= PROTECT_REACHED_PCT;
             break;
         case SeatGoal::TravelTo:
         {

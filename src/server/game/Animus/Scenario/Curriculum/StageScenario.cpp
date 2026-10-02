@@ -3428,6 +3428,16 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         // it stops being true. Without this a goal that is true on choice -- Fight about no one where there is
         // nothing to fight -- was paid at every choice: the first fast pass of stage1_move earned ~14 an episode.
         reached = GoalBlock::Earned(reached, hold.Fresh, hold.SatisfiedAtChoice);
+        // Protect is also reached by keeping its friend above half health while something attacks it, for
+        // Goals.ProtectHoldMs of the goal: a healer that keeps the tank up never lets it fall to be healed back.
+        if (!reached && possible && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Protect && bot
+            && !hold.Friend.IsEmpty())
+            if (Unit const* friendUnit = Encoding::UnitThrough(*bot, hold.Friend); friendUnit && friendUnit->IsAlive()
+                && friendUnit->GetHealthPct() >= 50.0f && !friendUnit->getAttackers().empty())
+            {
+                hold.ProtectSafeMs += DecisionMs();
+                reached = hold.ProtectSafeMs >= _tuning.Goals.ProtectHoldMs;
+            }
         if (reached && !hold.Rewarded)
         {
             // Paid by what it achieved (GoalValue; a secondary at Goals.SecondaryShare), into the reward of the

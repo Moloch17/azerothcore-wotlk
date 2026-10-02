@@ -27,6 +27,9 @@ namespace Animus::Curriculum
 {
     struct SeatView;
 
+    /// A Protect goal's friend is out of danger above this share of health.
+    constexpr float PROTECT_REACHED_PCT = 70.0f;
+
     /// **What a goal can be about, right now** (Component C). No actions: the learner reads these columns to mask
     /// its goal head -- a kind is offered only when there is something for it (an enemy for Fight, a corpse for
     /// Loot, a journal place for TravelTo), a target only when it is there -- and to choose again at once when the

@@ -151,6 +151,7 @@ namespace Animus::Curriculum
         bool HasPlace = false;              // the goal names a place (TravelTo, Gather, Interact): where it is
         Position Place;
         ObjectGuid Friend;                  // the goal names a friend (Protect): who
+        uint32 ProtectSafeMs = 0;           // ... and how long it has been kept above half health while attacked
         bool FromOrder = false;             // set by the director's order, not chosen by the seat (primary only)
     };
 

@@ -425,6 +425,9 @@ namespace Animus::Curriculum
             float ControlValue = 0.2f;
             float RecoverValue = 1.0f;
             float ProtectValue = 1.0f;          // raised from 0.2: healers chose Protect 1% of the time
+            /// Protect is reached by keeping its friend above half health while it is attacked for this long, as well
+            /// as by healing it back above 70%.
+            uint32 ProtectHoldMs = 8000;
             float TravelValue = 0.1f;
             float WorldValue = 0.2f;
             /// The secondary goal (a second slot beside the primary: Fight A and hold B): paid this share of what the
@@ -1257,6 +1260,7 @@ namespace Animus::Curriculum
             f("Goals.ControlValue", tuning.Goals.ControlValue);
             f("Goals.RecoverValue", tuning.Goals.RecoverValue);
             f("Goals.ProtectValue", tuning.Goals.ProtectValue);
+            f("Goals.ProtectHoldMs", tuning.Goals.ProtectHoldMs);
             f("Goals.TravelValue", tuning.Goals.TravelValue);
             f("Goals.WorldValue", tuning.Goals.WorldValue);
             f("Goals.SecondaryShare", tuning.Goals.SecondaryShare);
