@@ -23,6 +23,7 @@
 #include "Position.h"
 #include <array>
 #include <utility>
+#include <optional>
 #include <vector>
 
 class Creature;
@@ -99,6 +100,11 @@ namespace Animus::Curriculum::Opponents
     /// fight is a swimming one for whoever goes in after the other (a creature arena with ArenaDefinition::Water).
     /// The dry spot FindSpawnPoint would give when no water is in reach.
     [[nodiscard]] Position FindSpawnPointInWater(Player* bot, Map* map);
+    /// A spot `minDistance` to `maxDistance` yards on from `from`, on a bearing within `spread` radians of
+    /// `bearing`, on ground near `from`'s height that the bot can walk to: the next pack of a camp
+    /// (PullSchedule::Camp). None when no try finds one.
+    [[nodiscard]] std::optional<Position> FindSpawnPointFrom(Player* bot, Map* map, Position const& from,
+        float bearing, float spread, float minDistance, float maxDistance);
 
     /// Summon `entry` at `pos` and `level`, hostile to players and aggressive, and not regenerating health in a fight
     /// it cannot reach. Returns nullptr on failure.
@@ -106,6 +112,9 @@ namespace Animus::Curriculum::Opponents
 
     /// Summon a pack of `entries` at `level`, clustered around one spawn point, each facing its own way.
     std::vector<Creature*> SpawnPack(Player* bot, Map* map, std::vector<uint32> const& entries, uint8 level);
+    /// ... around `center`.
+    std::vector<Creature*> SpawnPack(Player* bot, Map* map, std::vector<uint32> const& entries, uint8 level,
+        Position const& center);
 }
 
 #endif

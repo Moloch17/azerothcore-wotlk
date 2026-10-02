@@ -21,6 +21,7 @@
 #include "CombatReward.h"
 #include "Creature.h"
 #include "CreatureAI.h"
+#include "EncoderSupport.h"
 #include "Env.h"
 #include "Log.h"
 #include "Map.h"
@@ -105,6 +106,33 @@ namespace
 
     static_assert(PARTY_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes the party's rungs too");
 
+    /// A camp's rungs (PullSchedule::Camp, the pull drill), climbed on their own ladder: more packs, closer together,
+    /// then elites among them and a level more. Each pack is a caster and the rest pack creatures; the elites take a
+    /// pack each from the first. Far enough apart, one pack is pulled at a time by anyone; close, only by a tank that
+    /// pulls back to where the party stands.
+    struct CampRung
+    {
+        uint8 Packs;
+        uint8 Size;         // creatures a pack
+        uint8 Elites;       // in the whole camp
+        uint8 Levels;       // above the seat's
+        float Spacing;      // yards from one pack to the next, at least
+    };
+
+    constexpr std::array<CampRung, 6> CAMP_RUNGS =
+    {{
+        { 2, 2, 0, 0, 30.0f },  // two pairs, well apart
+        { 2, 3, 0, 0, 25.0f },  // two threes
+        { 3, 2, 0, 0, 25.0f },  // three pairs
+        { 3, 2, 1, 0, 20.0f },  // ... closer, one with an elite
+        { 4, 2, 2, 0, 18.0f },  // four pairs, two with an elite
+        { 4, 2, 2, 1, 15.0f },  // ... closer still, a level above
+    }};
+
+    static_assert(CAMP_RUNGS.size() == PACK_RUNGS.size(), "the pack rungs' top (Pulls.MaxTier) caps the camp's too");
+    constexpr float CAMP_SPACING_SPREAD = 5.0f;     // yards a pack may stand past its rung's spacing
+    constexpr float CAMP_BEARING_SPREAD = 1.0f;     // radians a pack may turn off the line from the party to the first
+
     /// A planned run's pulls (PullSchedule::Sequence), in order: the same fights every episode, ending on a pack
     /// that cannot be walked into without something saved for it. A seat that spends everything on the first pull
     /// arrives at the last one with nothing, which is the whole point of the stage.
@@ -119,6 +147,23 @@ namespace
         { 1, 1, 1, 1, 1 },  // 4 with an elite and a hazard, a level above
         { 1, 1, 1, 2, 1 },  // the last stand: an elite pack two levels above, with something on the ground
     }};
+
+    /// A party's planned run (PullSchedule::Sequence with a party of its own, the group stage's corridor): the same
+    /// shape for five seats -- bigger pulls, elites from the third, and a last pull of three elites two levels up,
+    /// the stand-in for a boss and its guards. Its length is SEQUENCE_PULLS', so one run ends either way.
+    constexpr std::array<PackRung, 8> GROUP_PULLS =
+    {{
+        { 1, 2, 0, 0 },     // 3: an opener
+        { 1, 3, 0, 0 },     // 4
+        { 1, 1, 1, 0, 1 },  // 4 with an elite and something on the ground
+        { 1, 2, 0, 0 },     // 3: a breather
+        { 1, 1, 2, 0 },     // 4, two of them elites
+        { 1, 0, 2, 1, 1 },  // 4: two elites and a hazard, a level above
+        { 0, 1, 2, 1, 1 },  // ... again
+        { 1, 0, 3, 2 },     // the last: three elites two levels above, and their caster
+    }};
+
+    static_assert(GROUP_PULLS.size() == SEQUENCE_PULLS.size(), "a run is as long whoever runs it");
 
     /// The pull's creatures leave; enemy players in the slots (ambushers) stay.
     void Despawn(Animus::Env& env)
@@ -169,7 +214,7 @@ namespace
 }
 
 Animus::Curriculum::PullsEncounter::PullsEncounter(StageScenario& scenario, uint32 envs)
-    : Encounter(scenario), _envs(envs), _ladder(scenario, "pack rung")
+    : Encounter(scenario), _envs(envs), _ladder(scenario, "pack rung"), _campLadder(scenario, "camp rung")
 {
     // Load it at startup rather than on the first episode.
     Opponents::OpponentPool::Instance();
@@ -196,13 +241,16 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PullsEncounter::
 
     // Control is paid for a single pack too (Pulls.SinglePackControl), so every pulls stage carries the term.
     terms.push_back(RewardTerm::Control);
+    // A camp charges a second pack in the fight as the dungeon charges a crowd (Pulls.CampExtraPack).
+    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Schedule == PullSchedule::Camp; }))
+        terms.push_back(RewardTerm::Threat);
     return terms;
 }
 
 bool Animus::Curriculum::PullsEncounter::SinglePack(Env const& env) const
 {
     ArenaDefinition const& arena = _scenario.Arena(env);
-    return arena.Schedule == PullSchedule::SinglePack && !arena.Owner;
+    return (arena.Schedule == PullSchedule::SinglePack || arena.Schedule == PullSchedule::Camp) && !arena.Owner;
 }
 
 void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -297,6 +345,14 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         });
     }
 
+    // The pull drill: how many packs were in the fight at once at most, and how many were killed on their own.
+    if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Schedule == PullSchedule::Camp; }))
+    {
+        table.Add("camp_packs", [this](Env const& env, uint32) { return float(_envs[env.Index].CampPacks); });
+        table.Add("camp_peak_packs", [this](Env const& env, uint32) { return float(_envs[env.Index].CampPeak); });
+        table.Add("camp_clean_packs", [this](Env const& env, uint32) { return float(_envs[env.Index].CampClean); });
+    }
+
     if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Owner || arena.PartyGroup; }))
         table.Add("wipes", [this](Env const& env, uint32) { return float(_envs[env.Index].Wipes); });
 }
@@ -364,9 +420,10 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     std::vector<uint32> entries;
     pulls.EliteOrHigher = false;
 
-    // A party faces dungeon-like packs: 2-4 creatures, each sometimes elite, up to 2 levels higher. A drill's single
-    // pack climbs the party's rungs instead (below).
-    if (arena.PartyGroup && !SinglePack(env))
+    // A party's gauntlet faces dungeon-like packs: 2-4 creatures, each sometimes elite, up to 2 levels higher. A
+    // drill's single pack climbs the party's rungs instead, a party's run has its own pulls and a raid its own rungs
+    // (below): this branch took every grouped arena before them, so the raid rungs were never drawn.
+    if (arena.PartyGroup && arena.Seats == SeatPlan::Party && arena.Schedule == PullSchedule::Gauntlet)
     {
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + urand(0, 2)));
         uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
@@ -383,7 +440,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     // A planned run: the same pull for the same position, every episode.
     if (entries.empty() && Sequence(env))
     {
-        PackRung const& planned = SEQUENCE_PULLS[std::min<std::size_t>(pulls.PullsCleared, SEQUENCE_PULLS.size() - 1)];
+        std::size_t const index = std::min<std::size_t>(pulls.PullsCleared, SEQUENCE_PULLS.size() - 1);
+        PackRung const& planned = arena.PartyGroup && arena.Seats == SeatPlan::Party ? GROUP_PULLS[index]
+            : SEQUENCE_PULLS[index];
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + planned.Levels));
         uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
         pulls.EliteOrHigher = planned.Elites || planned.Levels;
@@ -408,13 +467,17 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         bool const raid = arena.Seats == SeatPlan::Raid;
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
         uint8 const spec = data.Seats[0].Spec;
-        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, spec, MaxRung(env));
+        DifficultyLadder::Pick const pick = (Camp(env) ? _campLadder : _ladder).Draw(env, layout, spec, MaxRung(env));
         PackRung const& rung = raid ? RAID_RUNGS[pick.Tier]
             : arena.PartyGroup ? PARTY_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
         pulls.RungSpec = spec;
         pulls.RungCounts = pick.Counts;
+
+        if (Camp(env))
+            return SpawnCamp(env, map, CAMP_RUNGS[pick.Tier].Packs, CAMP_RUNGS[pick.Tier].Size,
+                CAMP_RUNGS[pick.Tier].Elites, CAMP_RUNGS[pick.Tier].Levels, CAMP_RUNGS[pick.Tier].Spacing);
 
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + rung.Levels));
         uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
@@ -562,6 +625,15 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     }
 
     pulls.Linked = roll_chance_i(tuning.LinkedChance);
+    StartPull(env);
+    return true;
+}
+
+void Animus::Curriculum::PullsEncounter::StartPull(Env& env)
+{
+    EnvState& data = _scenario.Data(env);
+    EnvPulls& pulls = _envs[env.Index];
+    CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
     pulls.PullKills = 0;
     pulls.PullStartMs = env.EpisodeElapsedMs;
     pulls.PullEngaged = false;
@@ -590,12 +662,114 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
             pulls.Seats[seat].ReadyMana = ManaFraction(bot);
         }
     }
+}
 
+bool Animus::Curriculum::PullsEncounter::SpawnCamp(Env& env, Map* map, uint32 packs, uint32 size, uint32 elites,
+    uint32 levels, float spacing)
+{
+    EnvState& data = _scenario.Data(env);
+    EnvPulls& pulls = _envs[env.Index];
+    Opponents::OpponentPool const& pool = Opponents::OpponentPool::Instance();
+    Player* lead = _scenario.SeatBot(env, 0);
+    if (!lead)
+        return false;
+
+    packs = std::min<uint32>(packs, CAMP_PACKS);
+    size = std::clamp<uint32>(size, 1, uint32(MAX_TARGETS) / std::max<uint32>(1, packs));
+    uint8 const level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, data.Seats[0].Level + levels));
+    uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
+    pulls.EliteOrHigher = elites || levels;
+
+    // The first pack where a single pack would stand, the rest each on from the one before, roughly away from the
+    // party: a corridor of camps, the next one always further in.
+    Position center = Opponents::FindSpawnPoint(lead, map);
+    float const bearing = lead->GetAbsoluteAngle(&center);
+    std::vector<Creature*> camp;
+    pulls.CampMembers.clear();
+    _scenario.NotifyPullStarting(env);
+    for (uint32 pack = 0; pack < packs; ++pack)
+    {
+        // Nowhere to stand the next pack on from the last: the camp ends there, rather than one pack on another.
+        if (pack)
+        {
+            std::optional<Position> const next = Opponents::FindSpawnPointFrom(lead, map, center, bearing,
+                CAMP_BEARING_SPREAD, spacing, spacing + CAMP_SPACING_SPREAD);
+            if (!next)
+                break;
+            center = *next;
+        }
+
+        std::vector<uint32> entries;
+        if (uint32 const caster = pool.RandomCaster(poolLevel))
+            entries.push_back(caster);
+        if (pack < elites)
+            if (uint32 const elite = pool.RandomElite(poolLevel))
+                entries.push_back(elite);
+        while (entries.size() < size)
+        {
+            uint32 const entry = pool.RandomPackMember(poolLevel);
+            if (!entry)
+                break;
+            entries.push_back(entry);
+        }
+        entries.resize(std::min<std::size_t>(entries.size(), size));
+
+        // Packs are numbered as they stand, so a pack that failed to spawn leaves no gap to count as cleared.
+        uint8 const index = pulls.CampPacks;
+        for (Creature* member : Opponents::SpawnPack(lead, map, entries, level, center))
+        {
+            camp.push_back(member);
+            pulls.CampMembers.emplace_back(member->GetGUID(), index);
+        }
+        if (!pulls.CampMembers.empty() && pulls.CampMembers.back().second == index)
+            ++pulls.CampPacks;
+    }
+    if (camp.empty())
+        return false;
+
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (arena.PackHealthPct != 100 && arena.PackHealthPct > 0)
+        for (Creature* member : camp)
+        {
+            member->ApplyStatPctModifier(UNIT_MOD_HEALTH, TOTAL_PCT, float(arena.PackHealthPct) - 100.0f);
+            member->UpdateMaxHealth();
+            member->SetFullHealth();
+        }
+
+    std::erase_if(env.Targets, [](ObjectGuid const& guid) { return !guid.IsPlayer(); });
+    for (Creature* member : camp)
+        if (env.Targets.size() < MAX_TARGETS)
+            env.Targets.push_back(member->GetGUID());
+    pulls.PackSize = uint32(camp.size());
+    data.OpponentEntry = camp.front()->GetEntry();
+    // A pack is a pack: its members always join one another (UpdateCamp), and no pack is linked to the next.
+    pulls.Linked = false;
+    StartPull(env);
     return true;
 }
 
 void Animus::Curriculum::PullsEncounter::UpdateEnemies(Env& env)
 {
+    // A camp's packs: each pack's members join whichever of them is fighting, and only those.
+    if (Camp(env))
+    {
+        EnvPulls const& pulls = _envs[env.Index];
+        Player* seat = _scenario.SeatBot(env, 0);
+        if (!seat || !seat->IsInWorld())
+            return;
+        std::array<Unit*, CAMP_PACKS> victims{};
+        for (auto const& [guid, pack] : pulls.CampMembers)
+            if (Creature* member = Encoding::CreatureThrough(*seat, guid); member && member->IsAlive()
+                && member->IsInCombat() && !victims[pack])
+                victims[pack] = member->GetVictim();
+        for (auto const& [guid, pack] : pulls.CampMembers)
+            if (Creature* member = Encoding::CreatureThrough(*seat, guid); member && member->IsAlive()
+                && !member->IsInCombat() && victims[pack] && victims[pack]->IsAlive() && member->IsAIEnabled
+                && member->CanCreatureAttack(victims[pack]))
+                member->AI()->AttackStart(victims[pack]);
+        return;
+    }
+
     // Linked pulls: once one member is in combat, the rest of the pack joins in, on whoever the engaged member is
     // fighting.
     if (!_envs[env.Index].Linked)
@@ -860,6 +1034,57 @@ void Animus::Curriculum::PullsEncounter::View(Env const& env, uint32 seat, SeatV
         : 0.0f;
     uint32 const nextPullMs = pulls.NextPullMs - std::min(pulls.NextPullMs, env.EpisodeElapsedMs);
     view.NextPull = Gauntlet(env) && !pullActive ? std::min(1.0f, float(nextPullMs) / NEXT_PULL_SCALE_MS) : 0.0f;
+
+    // A party's drill reports its crowd as a dungeon does (CrowdBlock): what is on the party and on the tank, what is
+    // past the pack's slots, and in a camp the next pack standing -- the tank's way on, the others' the tank.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (!arena.PartyGroup || !SinglePack(env) || !view.Bot)
+        return;
+    CrowdView& crowd = view.Crowd;
+    crowd.Present = true;
+    crowd.Tank = PartyTank(env);
+    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+    {
+        Unit* unit = env.FindTargetUnit(slot);
+        if (!unit || !unit->IsAlive() || !unit->IsInMap(view.Bot))
+            continue;
+        Unit const* victim = unit->GetVictim();
+        if (victim && victim->IsPlayer())
+        {
+            ++crowd.OnParty;
+            crowd.OnTank += victim == crowd.Tank ? 1 : 0;
+            Creature const* creature = unit->ToCreature();
+            crowd.Elites += creature && creature->isElite() ? 1 : 0;
+        }
+        if (slot >= PACK_SLOTS && crowd.Count < CROWD_SLOTS)
+            crowd.Units[crowd.Count++] = unit;
+        // The slots are fight first, then nearest the tank (OrderCamp): the first standing is the next pack.
+        if (Camp(env) && !crowd.HasAhead && !unit->IsInCombat())
+        {
+            crowd.HasAhead = true;
+            crowd.Ahead.Relocate(unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ());
+            auto const member = std::find_if(pulls.CampMembers.begin(), pulls.CampMembers.end(),
+                [unit](auto const& entry) { return entry.first == unit->GetGUID(); });
+            if (member != pulls.CampMembers.end())
+                for (auto const& [guid, pack] : pulls.CampMembers)
+                    if (Creature* other = pack == member->second ? Encoding::CreatureThrough(*view.Bot, guid) : nullptr;
+                        other && other->IsAlive())
+                        ++crowd.AheadSize;
+        }
+    }
+
+    if (!Camp(env))
+        return;
+    if (crowd.Tank == view.Bot && crowd.HasAhead && !pulls.CampFighting)
+    {
+        view.HasObjective = true;
+        view.Objective = crowd.Ahead;
+    }
+    else if (crowd.Tank && crowd.Tank != view.Bot && crowd.Tank->IsInMap(view.Bot))
+    {
+        view.HasObjective = true;
+        view.Objective.Relocate(crowd.Tank->GetPositionX(), crowd.Tank->GetPositionY(), crowd.Tank->GetPositionZ());
+    }
 }
 
 void Animus::Curriculum::PullsEncounter::BeforeRewards(Env& env)
@@ -886,6 +1111,126 @@ void Animus::Curriculum::PullsEncounter::BeforeRewards(Env& env)
     pulls.Kills += pulls.NewKills;
     pulls.PullKills = std::max(pulls.PullKills, dead);
     pulls.PullCleared = HasCreatures(env) && !alive && dead;
+    if (Camp(env))
+        UpdateCamp(env);
+}
+
+void Animus::Curriculum::PullsEncounter::UpdateCamp(Env& env)
+{
+    EnvPulls& pulls = _envs[env.Index];
+    Map* map = env.FindMap();
+    if (!map)
+        return;
+
+    std::array<bool, CAMP_PACKS> fighting{};
+    std::array<bool, CAMP_PACKS> standing{};
+    for (auto const& [guid, pack] : pulls.CampMembers)
+    {
+        Creature* member = map->GetCreature(guid);
+        if (!member || !member->IsAlive())
+            continue;
+        standing[pack] = true;
+        fighting[pack] |= member->IsInCombat();
+    }
+
+    pulls.CampFighting = 0;
+    for (uint32 pack = 0; pack < pulls.CampPacks; ++pack)
+        pulls.CampFighting += fighting[pack] ? 1 : 0;
+    pulls.CampPeak = std::max(pulls.CampPeak, pulls.CampFighting);
+    if (pulls.CampFighting)
+        pulls.CampQuietMs = env.EpisodeElapsedMs;
+
+    for (uint32 pack = 0; pack < pulls.CampPacks; ++pack)
+    {
+        if (fighting[pack] && pulls.CampFighting > 1)
+            pulls.CampMixed[pack] = true;
+        if (!standing[pack] && !pulls.CampCleared[pack])
+        {
+            pulls.CampCleared[pack] = true;
+            // A wipe clears the camp away (Recover): nothing it took was killed.
+            if (!pulls.CampMixed[pack] && !pulls.Wipes)
+            {
+                ++pulls.CampNewClean;
+                ++pulls.CampClean;
+            }
+        }
+    }
+}
+
+void Animus::Curriculum::PullsEncounter::OrderCamp(Env& env)
+{
+    Player* tank = PartyTank(env);
+    Player* from = tank ? tank : _scenario.SeatBot(env, 0);
+    if (!from || !from->IsInWorld())
+        return;
+
+    // Each slot's rank: fighting, then standing, then dead; nearer first within each.
+    struct Ranked
+    {
+        uint32 Slot;
+        uint32 Group;
+        float Distance;
+    };
+    std::vector<Ranked> ranked;
+    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+    {
+        Unit* unit = env.FindTargetUnit(slot);
+        bool const alive = unit && unit->IsAlive() && unit->IsInMap(from);
+        ranked.push_back({ slot, !alive ? 2u : unit->IsInCombat() ? 0u : 1u,
+            alive ? from->GetExactDist(unit) : 0.0f });
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](Ranked const& a, Ranked const& b)
+    {
+        return a.Group != b.Group ? a.Group < b.Group : a.Distance < b.Distance;
+    });
+
+    bool moved = false;
+    for (uint32 slot = 0; slot < ranked.size(); ++slot)
+        moved |= ranked[slot].Slot != slot;
+    if (!moved)
+        return;
+
+    // Old slot to new, for everything kept per slot.
+    std::array<uint32, MAX_TARGETS> to{};
+    std::vector<ObjectGuid> targets(env.Targets.size());
+    for (uint32 slot = 0; slot < ranked.size(); ++slot)
+    {
+        targets[slot] = env.Targets[ranked[slot].Slot];
+        if (ranked[slot].Slot < MAX_TARGETS)
+            to[ranked[slot].Slot] = slot;
+    }
+    env.Targets = std::move(targets);
+
+    EnvState& data = _scenario.Data(env);
+    EnvPulls& pulls = _envs[env.Index];
+    for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
+    {
+        if (data.Seats[seat].TargetSlot < ranked.size() && data.Seats[seat].TargetSlot < MAX_TARGETS)
+            data.Seats[seat].TargetSlot = to[data.Seats[seat].TargetSlot];
+        SeatPull& pull = pulls.Seats[seat];
+        std::array<uint64, MAX_TARGETS> damage{};
+        std::array<uint32, MAX_TARGETS> freeMs{};
+        for (uint32 slot = 0; slot < ranked.size() && slot < MAX_TARGETS; ++slot)
+            if (to[slot] < MAX_TARGETS)
+            {
+                damage[to[slot]] = pull.SlotDamage[slot];
+                freeMs[to[slot]] = pull.SlotFreeMs[slot];
+            }
+        pull.SlotDamage = damage;
+        pull.SlotFreeMs = freeMs;
+    }
+}
+
+Player* Animus::Curriculum::PullsEncounter::PartyTank(Env const& env) const
+{
+    EnvState const& data = _scenario.Data(env);
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        if (data.Seats[seat].DungeonRole == DUNGEON_TANK)
+        {
+            Player* bot = _scenario.SeatBot(env, seat);
+            return bot && bot->IsAlive() && bot->IsInWorld() ? bot : nullptr;
+        }
+    return nullptr;
 }
 
 void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
@@ -907,6 +1252,13 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     float pullLeft = 0.0f;
     Unit* nearest = nullptr;
     bool fighting = false;
+    // A camp's approach is to what is fighting while anything is: closing on the nearest standing pack was paying the
+    // seats to pull the next one into the fight.
+    bool const camp = Camp(env);
+    bool const campFight = camp && pulls.CampFighting > 0;
+    // ... and between fights only the tank closes on the next pack: the others' way on is the tank (View).
+    Player const* tank = camp ? PartyTank(env) : nullptr;
+    bool const campFollow = camp && !campFight && tank && tank != bot;
     for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
     {
         Unit* enemy = env.FindTargetUnit(slot);
@@ -914,6 +1266,12 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             continue;
 
         fighting |= !enemy->IsPlayer() && (!enemy->IsAlive() || enemy->IsInCombat());
+        if (((campFight && !enemy->IsInCombat()) || campFollow) && enemy->IsAlive())
+        {
+            pullHealth += float(enemy->GetMaxHealth());
+            pullLeft += float(enemy->GetHealth());
+            continue;
+        }
 
         // The pull is its creatures; an ambusher is paid for by the ambush, but still a place to close in on.
         if (!enemy->IsPlayer())
@@ -1075,7 +1433,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
 
         // A single pack lost in overtime: the rest of the overtime too, which timing out would have cost.
         if (SinglePack(env) && !tally.Killed && pulls.PullEngaged
-            && env.EpisodeElapsedMs > pulls.PullEngageMs + tuning.OvertimeGraceMs
+            && env.EpisodeElapsedMs > pulls.PullEngageMs + tuning.OvertimeGraceMs * std::max<uint32>(1, pulls.CampPacks)
             && env.EpisodeLengthMs > env.EpisodeElapsedMs)
             ledger.Add(RewardTerm::Timeout,
                 -tuning.Overtime * float(env.EpisodeLengthMs - env.EpisodeElapsedMs) / 1000.0f / tierScale);
@@ -1106,12 +1464,26 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!pulls.PullEngaged && env.EpisodeElapsedMs > graceMs)
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
+        // A camp: standing about between packs past the rest allowed, more than one pack in the fight, and each pack
+        // killed on its own.
+        if (camp)
+        {
+            bool const resting = bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+            if (pulls.PullEngaged && !pulls.CampFighting && !resting
+                && env.EpisodeElapsedMs > pulls.CampQuietMs + tuning.CampRestMs)
+                ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
+            if (pulls.CampFighting > 1)
+                ledger.Add(RewardTerm::Threat, -tuning.CampExtraPack * float(pulls.CampFighting - 1) * seconds);
+            if (pulls.CampNewClean)
+                ledger.Add(RewardTerm::Clear, tuning.CampCleanPack * tierScale * float(pulls.CampNewClean));
+        }
+
         if (pulls.PullEngaged)
             ControlPreventedTerm(env, seat, pull, bot, step, ledger);
 
         // Time spent holding an add extends the grace, up to Pulls.ControlGraceMaxMs: control lengthens a fight on
         // purpose, and charging it as dragging one out is what left crowd control paying less than it cost.
-        uint32 const overtimeGraceMs = tuning.OvertimeGraceMs
+        uint32 const overtimeGraceMs = tuning.OvertimeGraceMs * (camp ? std::max<uint32>(1, pulls.CampPacks) : 1)
             + std::min(pull.ControlledMs, tuning.ControlGraceMaxMs);
         if (pulls.PullEngaged && env.EpisodeElapsedMs > pulls.PullEngageMs + overtimeGraceMs)
             ledger.Add(RewardTerm::Timeout, -tuning.Overtime * seconds / tierScale);
@@ -1141,7 +1513,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (seatIndex == 0 && pulls.RungCounts && !pulls.RungRecorded && (tally.Killed || tally.Died || tally.TimedOut))
     {
         pulls.RungRecorded = true;
-        _ladder.Record(pulls.RungLayout, pulls.RungSpec, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
+        (Camp(env) ? _campLadder : _ladder).Record(pulls.RungLayout, pulls.RungSpec, pulls.Rung,
+            tally.Killed && !tally.Died, MaxRung(env));
     }
 }
 
@@ -1366,6 +1739,11 @@ uint32 Animus::Curriculum::PullsEncounter::MaxRung(Env const& env) const
 void Animus::Curriculum::PullsEncounter::AfterRewards(Env& env)
 {
     EnvPulls& pulls = _envs[env.Index];
+    if (Camp(env))
+    {
+        pulls.CampNewClean = 0;
+        OrderCamp(env);
+    }
     if (!pulls.PullCleared || !Gauntlet(env))
         return;
 
@@ -1419,13 +1797,15 @@ bool Animus::Curriculum::PullsEncounter::IsTerminal(Env const& env) const
     if (_scenario.Arena(env).PartyGroup)
     {
         EnvPulls const& pulls = _envs[env.Index];
-        if (pulls.Wipes)
+        if (pulls.Wipes > (Sequence(env) ? _scenario.Arena(env).WipesAllowed : 0))
             return true;
         if (Sequence(env))
             return pulls.PullsCleared >= SEQUENCE_PULLS.size();
         if (Gauntlet(env))
             return false;
-        return pulls.PullsCleared > 0 || TimeIsUp(env);
+        // A party's single pack or camp ends on its clear: nothing despawns it, so the clear was paid again every
+        // decision until the clock ran out.
+        return pulls.PullCleared || pulls.PullsCleared > 0 || TimeIsUp(env);
     }
 
     bool const dead = _scenario.DeadForGood(env, 0);

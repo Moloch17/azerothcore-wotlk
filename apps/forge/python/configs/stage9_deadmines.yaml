@@ -1,9 +1,9 @@
-# The parties phase: one real dungeon, the Deadmines from its door to VanCleef, run by five learned seats of its own
-# level range under a learned director. Every run is a fresh instance; a wipe ends it (2026-09-30: only this one
-# dungeon, only characters of its level).
+# Stage 9: the Deadmines from its door to VanCleef, run by five learned seats of its own level range under a learned
+# director -- the goal's own dungeon, after Ragefire Chasm. Every run is a fresh instance; the wipes to spare come
+# with the ladder's rung.
 
-extends: stage5_pack.yaml
-run_name: stage6_party
+extends: stage8_ragefire.yaml
+run_name: stage9_deadmines
 
 # No end: the run trains until it is stopped by hand (2026-10-01, the user watches the stats). The budget is a ceiling
 # no run reaches, and convergence neither ends the stage nor takes a class out of the draw.

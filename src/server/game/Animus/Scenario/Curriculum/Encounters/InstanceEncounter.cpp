@@ -226,7 +226,10 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     SeatState const& seat = data.Seats[0];
     fight.Layout = seat.L ? seat.L->Index : 0;
     fight.Spec = seat.Spec;
-    DifficultyLadder::Pick const pick = _ladder.Draw(env, fight.Layout, fight.Spec, uint32(rows.size()) - 1);
+    // An arena pinned to one row (ArenaDefinition::InstanceRow) runs it every time, and its outcome moves no rung.
+    int8 const pinned = _scenario.Arena(env).InstanceRow;
+    DifficultyLadder::Pick const pick = pinned >= 0 ? DifficultyLadder::Pick{ uint32(pinned), false }
+        : _ladder.Draw(env, fight.Layout, fight.Spec, uint32(rows.size()) - 1);
     fight.Tier = std::min<uint32>(pick.Tier, uint32(rows.size()) - 1);
     fight.Counts = pick.Counts;
     fight.Row = rows[fight.Tier];
@@ -249,8 +252,11 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         StageScenario::WingRung const& rung = StageScenario::WING_RUNGS[fight.Rung];
         fight.Probe = !env.Evaluating && frand(0.0f, 1.0f) < tuning.WingProbe;
         fight.WipesAllowed = tuning.WingWipes + rung.ExtraWipes;
-        data.WingScript = env.Evaluating || fight.Probe ? 0.0f : rung.Script;
-        data.WingHint = env.Evaluating || fight.Probe ? 0.0f : rung.Hint;
+        // The script's seats and hints are a support switched on by hand (Instance.WingSupport): off, the rungs are
+        // the levels and the wipes alone.
+        bool const supported = tuning.WingSupport && !env.Evaluating && !fight.Probe;
+        data.WingScript = supported ? rung.Script : 0.0f;
+        data.WingHint = supported ? rung.Hint : 0.0f;
         auto const [low, high] = DungeonLevels(*fight.Row);
         data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + rung.Lift, DEFAULT_MAX_LEVEL));
     }

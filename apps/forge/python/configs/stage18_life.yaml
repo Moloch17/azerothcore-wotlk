@@ -7,7 +7,7 @@
 # 100M, with the quest weighted up: quest was the worst life stage of the second run.
 
 extends: stage5_pack.yaml
-run_name: stage15_life
+run_name: stage18_life
 
 total_env_steps: 100000000
 

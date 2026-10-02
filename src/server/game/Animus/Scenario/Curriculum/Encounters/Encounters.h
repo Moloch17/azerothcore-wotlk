@@ -234,6 +234,8 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Controlled(Unit const* enemy);
 
     private:
+        static constexpr uint32 CAMP_PACKS = 4;     // most packs a camp stands (two creatures each fill MAX_TARGETS)
+
         struct SeatPull
         {
             uint32 Interrupts = 0;
@@ -304,7 +306,31 @@ namespace Animus::Curriculum
             bool OwnerDied = false;             // owner stages: the owner died this episode (it stands up again)
             bool AwaitingRevive = false;        // owner stages: someone dead waits for a resurrection (Recover)
             std::array<SeatPull, MAX_SEATS> Seats;
+            // A camp's packs (PullSchedule::Camp): which pack each creature stands with, and how each was fought.
+            std::vector<std::pair<ObjectGuid, uint8>> CampMembers;
+            uint8 CampPacks = 0;
+            std::array<bool, CAMP_PACKS> CampMixed{};       // ... in a fight beside another pack at some point
+            std::array<bool, CAMP_PACKS> CampCleared{};
+            uint32 CampNewClean = 0;            // packs killed on their own since the last decision
+            uint32 CampFighting = 0;            // packs in the fight this decision
+            uint32 CampPeak = 0;                // ... and the most at once this episode
+            uint32 CampClean = 0;               // packs killed on their own this episode
+            uint32 CampQuietMs = 0;             // episode time nothing of the camp was last in a fight
         };
+
+        /// A camp of packs (PullSchedule::Camp): the pull drill.
+        [[nodiscard]] bool Camp(Env const& env) const
+        {
+            return _scenario.Arena(env).Schedule == PullSchedule::Camp;
+        }
+
+        /// Tally a camp after the step: which packs are fighting, which fought beside another, which were killed on
+        /// their own.
+        void UpdateCamp(Env& env);
+        /// Order a camp's slots for the next observation: what is fighting first, then the nearest to the tank, the
+        /// dead last, with the seats' selections and per-slot tallies moved along. After the rewards, which read
+        /// this step's per-slot stats in the order they were made in, and before the seats observe.
+        void OrderCamp(Env& env);
 
         /// Whether the env's episode is pull after pull (else a single pack).
         [[nodiscard]] bool Gauntlet(Env const& env) const
@@ -372,12 +398,20 @@ namespace Animus::Curriculum
         /// The top rung this env's arena may draw: its pin when it has one, else Pulls.MaxTier.
         [[nodiscard]] uint32 MaxRung(Env const& env) const;
         bool SpawnPull(Env& env, Map* map);
+        /// A camp of `packs` packs of `size`, `elites` of them with an elite, `levels` above the seat, each `spacing`
+        /// yards or more on from the one before (PullSchedule::Camp).
+        bool SpawnCamp(Env& env, Map* map, uint32 packs, uint32 size, uint32 elites, uint32 levels, float spacing);
+        /// A pull is up: its clock, its arrival, and the seats' per-pull tallies start again.
+        void StartPull(Env& env);
+        /// The seat drawn as the party's tank (StageState's DungeonRole) while it is up; nullptr without one.
+        [[nodiscard]] Player* PartyTank(Env const& env) const;
         /// The field is empty: schedule the next pull and restart the seats' target selection.
         void EndPull(Env& env, EnvPulls& pulls);
         void Recover(Env& env);
 
         std::vector<EnvPulls> _envs;
         DifficultyLadder _ladder;
+        DifficultyLadder _campLadder;       // a camp's rungs are a different ladder from a pack's
     };
 
     /// A player of a random class and role near the seats' level, whom the seats fight for (companion and party
@@ -466,6 +500,14 @@ namespace Animus::Curriculum
             std::array<bool, MAX_SEATS> TeammateDeathSeen{};
             uint64 ActiveMs = 0;                // the seat last dealt damage or healed (Raid.Idle)
             uint32 IdleMs = 0;                  // in a fight with an enemy in reach and nothing done (Raid.Idle)
+            // The roles' readings (party, no owner): the tank's enemies held against those on the party, in
+            // enemy-decisions; a damage dealer's damage on the tank's target against all it dealt, and its time with
+            // an enemy taken off the tank.
+            uint64 EnemiesHeld = 0;
+            uint64 EnemiesOnParty = 0;
+            uint64 TankTargetDamage = 0;
+            uint64 DamageDealt = 0;
+            uint32 PulledOffMs = 0;
         };
 
         struct EnvParty

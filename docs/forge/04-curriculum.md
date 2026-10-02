@@ -1,7 +1,7 @@
 # 4. The curriculum
 
 The curriculum is the set of scenarios the policies train on. It lives in animus-lib under
-`src/Scenario/Curriculum/`. **Eighteen stages in five phases** -- movement, classes, parties and raids, PvP, and
+`src/Scenario/Curriculum/`. **Twenty-one stages in five phases** -- movement, classes, parties and raids, PvP, and
 life in the world -- and a last stage that replays them all and ships. Every stage is in the default queue, the raids included. No stage
 has a pass gate: each ends when its convergence signals say so (see "Budgets" below), and the queue moves on.
 
@@ -12,7 +12,7 @@ threat or interrupts helps the others. A class policy plays every build its clas
 A stage names the one it `Extends`, and its networks are seeded from that stage's best checkpoint block by block:
 blocks it keeps carry over, blocks it drops are left behind, blocks it adds start from nothing -- unless a stage it
 `Merges` has them. The chain is one line, and the numbers are the training order, so `forge start` with no
-arguments walks the whole thing from stage 1 to stage 18 and never reaches a stage before the stage it seeds from.
+arguments walks the whole thing from stage 1 to stage 21 and never reaches a stage before the stage it seeds from.
 A stage none of the run's classes can play (the stealth drill in a run without rogues or druids) is skipped, and the
 stage after it seeds from the one before.
 
@@ -22,21 +22,23 @@ movement   stage1_move              every ground on foot: open, broken, water, r
 classes       └─ stage3_rotation    the kit against dummies: still, moving, hitting back, bleeding
                  └─ stage4_duel     something that fights back (and a lake)
                     └─ stage5_pack  (+ merges stage3_rotation) a pack, fire underfoot in a third
-parties                └─ stage6_party       a companion; a party under a director (tanking, triage);
-                          │                    dungeon bosses, and whole wings from the door
-                          └─ stage7_raid_pulls   forty seats
-                             └─ stage8_raids     ten, twenty-five and forty, in their raids
-pvp                             └─ stage9_duel_pvp     self-play one-on-one
-                                   └─ stage10_escape    evade and hide
-                                      └─ stage11_stealth   (restricted: only classes that can)
-                                         └─ stage12_arena  (+ merges stage8_raids) 2v2 3v3 5v5
-                                            └─ stage13_flag      (+ merges stage2_travel)
-                                               └─ stage14_warsong (+ merges stage8_raids)
-life                                              └─ stage15_life   (+ merges stage2_travel, stage8_raids)
+parties                └─ stage6_roles     a proper party drilling one role a fight: hold, heal, damage, pull
+                          └─ stage7_group  the party under a director: a corridor of pulls, camps
+                             └─ stage8_ragefire    Ragefire Chasm from the door to Bazzalan
+                                └─ stage9_deadmines   the Deadmines from the door to VanCleef
+                                   └─ stage10_raid_pulls   forty seats
+                                      └─ stage11_raids     ten, twenty-five and forty, in their raids
+pvp                                      └─ stage12_duel_pvp     self-play one-on-one
+                                   └─ stage13_escape    evade and hide
+                                      └─ stage14_stealth   (restricted: only classes that can)
+                                         └─ stage15_arena  (+ merges stage11_raids) 2v2 3v3 5v5
+                                            └─ stage16_flag      (+ merges stage2_travel)
+                                               └─ stage17_warsong (+ merges stage11_raids)
+life                                              └─ stage18_life   (+ merges stage2_travel, stage11_raids)
                                                      │                quests, herbs and ore, a town
-                                                     └─ stage16_world_group (+ merges stage8_raids)
-                                                        └─ stage17_world_shared (+ merges stage12_arena)
-ship                                                       └─ stage18_ship  (+ 3 merges) every phase
+                                                     └─ stage19_world_group (+ merges stage11_raids)
+                                                        └─ stage20_world_shared (+ merges stage15_arena)
+ship                                                       └─ stage21_ship  (+ 3 merges) every phase
 ```
 
 **Five phases: solo, party, PvP, then life.** A class learns to walk before it fights, to fight alone before it
@@ -62,15 +64,15 @@ best checkpoints of `pvp`, `hide`, `tanking`, `triage` and `dungeon` were their 
 stayed flat: a later stage overwrites an earlier one. So the drills are weighted arenas of the stage they serve
 (`ArenaDefinition::Weight`): the terrains of the movement root, the hazard pulls of the pack, tanking and triage in
 the party, evade and hide in the escape stage, the objective drills of the life stage. The 33 stages of the old
-tree are 18 now.
+tree are 21 now (2026-10-02: the parties phase became roles, group, Ragefire, the Deadmines).
 
-**The ship stage** (`stage18_ship`) extends `stage17_world_shared` (the life phase's last) and merges the last
-stage of each earlier phase that the chain does not run through for its blocks (`stage2_travel`, `stage8_raids`)
-and `stage12_arena` (the context block). Its sixteen arenas are
+**The ship stage** (`stage21_ship`) extends `stage20_world_shared` (the life phase's last) and merges the last
+stage of each earlier phase that the chain does not run through for its blocks (`stage2_travel`, `stage11_raids`)
+and `stage15_arena` (the context block). Its sixteen arenas are
 each phase's representatives, and its evaluation reports per phase (`eval.phases`): the gate is each phase within
 noise of its own stage.
 
-> **One stage is restricted.** `stage11_stealth` is played by the classes whose own kit carries a stealth aura --
+> **One stage is restricted.** `stage14_stealth` is played by the classes whose own kit carries a stealth aura --
 > rogue and druid -- because closing on someone unseen is a thing only a real stealth aura can do. In a run of all
 > ten classes its checkpoint holds two of the ten layouts. The check lives in `animus.bootstrap`, where the run's
 > actual layouts are known: a layout the checkpoint lacks is refused, loudly. On the automatic chain the partial
@@ -92,19 +94,22 @@ map of its own (`ArenaDefinition::MapId`), which is how one stage mixes Kalimdor
 | `stage3_rotation` | stage2_travel | Solo | + pet, pack | **The kit, nothing fighting back** (`Opposition::Dummy`): a dummy standing still, dummies wandering with more to switch to, one that hits back and can be killed, and damage landing on the seat while it works. Paid for output against the dummy's own health, mana kept, and health kept |
 | `stage4_duel` | stage3_rotation | Solo | (−pack) | **Something that fights back.** A same-level creature out of aggro range: close in and kill it fast, taking little damage; a quarter in a lake |
 | `stage5_pack` | stage4_duel (+ stage3_rotation) | Solo | + pack, gauntlet, support (−travel) | A pack of 2-4, casters included, usually linked: targets, interrupts, crowd control. A third have a hazard caster (`hazards`): fire underfoot, under a pack. Heals, shields, food and drink start here |
-| `stage6_party` | stage5_pack | Party (5) | + companion, party, order | **One real dungeon.** The Deadmines from its door to VanCleef, run by five learned seats of the dungeon's level range (the dungeon finder's target range; only castings that can be that level are drawn) under a learned **director**. Every run opens a fresh instance with every creature alive; a wipe ends the run |
-| `stage7_raid_pulls` | stage6_party | Raid | same | Forty seats in eight groups under one director: a single elite and its adds, and a run of raid pulls. Its own env count |
-| `stage8_raids` | stage7_raid_pulls | Raid | same | The real raids: Karazhan and Naxxramas at ten, Naxxramas at twenty-five, Molten Core, Blackwing Lair and AQ40 at forty, weighted 4:2:1 by cost; a ten-seat single pack as the control |
-| `stage9_duel_pvp` | stage8_raids | Mirror | + pvp | **Against people.** Self-play one-on-one: the far side is the live policy or a frozen earlier checkpoint (the cast league) |
-| `stage10_escape` | stage9_duel_pvp | Solo | same | A scripted enemy player from ten below to ten above: break away and live to the end (`evade`), or get out of sight and stay there (`hide`). Durnholde Keep and the Southshore farms |
-| `stage11_stealth` | stage10_escape | Solo | same | **Restricted** to rogue and druid: close on a stronger enemy unseen, hold inside strike range, and open from it |
-| `stage12_arena` | stage11_stealth (+ stage8_raids) | Teams (2, 3, 5) | + pack, context, hostiles, support, order | Arena teams of two, three and five a side under a **director**: told who to kill, whose turn it is, and where to go |
-| `stage13_flag` | stage12_arena (+ stage2_travel) | Mirror | + travel, flag | Capture the flag one-on-one: bases 100-180 yd apart, first to three captures. Level 20+ |
-| `stage14_warsong` | stage13_flag (+ stage8_raids) | Teams (10) | + party, order | Ten against ten for the flag on a real Warsong Gulch, each side directed |
-| `stage15_life` | stage14_warsong (+ stage2_travel, stage8_raids) | Solo | + pack, gauntlet, support, world, death (−pvp, −flag, −party, −order) | **Life, alone.** A chain of 1-3 quests of the level band (15-20, 35-40, 58-60, and Northrend's 70-75), typed objectives and the journal, deaths run back to the corpse (9); a field of herbs and ore (3); a town to sell, repair, restock and dress in (3); four objective drills -- a kill, a collection from creatures, an object used, a place reached -- with the quest taken and the seat within reach, 120 s, weighted 3 → 1 over the stage. In training a quest item's source rolls its loot again until the item drops (`Life.DropRerolls`); quest credit is `Life.QuestCredit` per objective; a complete quest not handed in costs `Life.CompleteHeld` a decision |
-| `stage16_world_group` | stage15_life (+ stage8_raids) | Party | + party, order | **A group in the world**: two to four seats and a director on a quest chain, the journal shared, kill and loot credit the group's |
-| `stage17_world_shared` | stage16_world_group (+ stage12_arena) | Teams (2) + 2 lone | + pvp, hostiles | Two directed pairs and two solos questing in one zone: claims, poaching charged (`Life.Poach`), and in a quarter (`world_gank`) hostile players who gank them |
-| `stage18_ship` | stage17_world_shared (+ 3 merges) | up to Raid (10) | + companion, context | **Every phase at once, and the stage that ships**: trip, flight, water; duel, pack, quest, town; companion, party, dungeon, a ten-seat raid; one-on-one, 2v2, escape, the shared world; an owner ganked mid-fight |
+| `stage6_roles` | stage5_pack | Party (5) | + companion, party, order, crowd, hint | **The roles, one drilled a fight**, by a proper party (a tank, a healer, three damage dealers by gear) at 15-30. `tank_hold`: hold a pack. `heal_keep`: keep the party up through a pack of twice its health. `damage_discipline`: kill the tank's target without taking it (`Raid.TankTarget`, `Raid.PulledOff`). `pull`: a camp of 2-4 packs standing apart (`PullSchedule::Camp`), pulled one at a time (`Pulls.CampCleanPack`, `Pulls.CampExtraPack`). The drilled role is seat 0 and weighs `Raid.DrillWeight`; each drill climbs its own rungs |
+| `stage7_group` | stage6_roles | Party (5) | same | **The group** under a learned director: a corridor of eight pulls (`GROUP_PULLS`: trash, elites, three elites two levels up) with two wipes to stand up from (`WipesAllowed`), and camps |
+| `stage8_ragefire` | stage7_group | Party (5) | same | **Ragefire Chasm** from its door to Bazzalan, by five seats of its level range under a director, on the whole dungeon's ladder (4.11, `stage9_deadmines`). The script's seats and hints only with `Instance.WingSupport` |
+| `stage9_deadmines` | stage8_ragefire | Party (5) | same | **The Deadmines** from its door to VanCleef, the same way: the goal's own dungeon. Every run opens a fresh instance with every creature alive. No end: trained until it is stopped by hand |
+| `stage10_raid_pulls` | stage9_deadmines | Raid | same | Forty seats in eight groups under one director: a single elite and its adds, and a run of raid pulls. Its own env count |
+| `stage11_raids` | stage10_raid_pulls | Raid | same | The real raids: Karazhan and Naxxramas at ten, Naxxramas at twenty-five, Molten Core, Blackwing Lair and AQ40 at forty, weighted 4:2:1 by cost; a ten-seat single pack as the control |
+| `stage12_duel_pvp` | stage11_raids | Mirror | + pvp | **Against people.** Self-play one-on-one: the far side is the live policy or a frozen earlier checkpoint (the cast league) |
+| `stage13_escape` | stage12_duel_pvp | Solo | same | A scripted enemy player from ten below to ten above: break away and live to the end (`evade`), or get out of sight and stay there (`hide`). Durnholde Keep and the Southshore farms |
+| `stage14_stealth` | stage13_escape | Solo | same | **Restricted** to rogue and druid: close on a stronger enemy unseen, hold inside strike range, and open from it |
+| `stage15_arena` | stage14_stealth (+ stage11_raids) | Teams (2, 3, 5) | + pack, context, hostiles, support, order | Arena teams of two, three and five a side under a **director**: told who to kill, whose turn it is, and where to go |
+| `stage16_flag` | stage15_arena (+ stage2_travel) | Mirror | + travel, flag | Capture the flag one-on-one: bases 100-180 yd apart, first to three captures. Level 20+ |
+| `stage17_warsong` | stage16_flag (+ stage11_raids) | Teams (10) | + party, order | Ten against ten for the flag on a real Warsong Gulch, each side directed |
+| `stage18_life` | stage17_warsong (+ stage2_travel, stage11_raids) | Solo | + pack, gauntlet, support, world, death (−pvp, −flag, −party, −order) | **Life, alone.** A chain of 1-3 quests of the level band (15-20, 35-40, 58-60, and Northrend's 70-75), typed objectives and the journal, deaths run back to the corpse (9); a field of herbs and ore (3); a town to sell, repair, restock and dress in (3); four objective drills -- a kill, a collection from creatures, an object used, a place reached -- with the quest taken and the seat within reach, 120 s, weighted 3 → 1 over the stage. In training a quest item's source rolls its loot again until the item drops (`Life.DropRerolls`); quest credit is `Life.QuestCredit` per objective; a complete quest not handed in costs `Life.CompleteHeld` a decision |
+| `stage19_world_group` | stage18_life (+ stage11_raids) | Party | + party, order | **A group in the world**: two to four seats and a director on a quest chain, the journal shared, kill and loot credit the group's |
+| `stage20_world_shared` | stage19_world_group (+ stage15_arena) | Teams (2) + 2 lone | + pvp, hostiles | Two directed pairs and two solos questing in one zone: claims, poaching charged (`Life.Poach`), and in a quarter (`world_gank`) hostile players who gank them |
+| `stage21_ship` | stage20_world_shared (+ 3 merges) | up to Raid (10) | + companion, context | **Every phase at once, and the stage that ships**: trip, flight, water; duel, pack, quest, town; companion, party, dungeon, a ten-seat raid; one-on-one, 2v2, escape, the shared world; an owner ganked mid-fight |
 
 ### Two chains called "extends"
 
@@ -123,13 +128,13 @@ They diverge wherever a stage should inherit one stage's weights and another's h
 | Stage | Seeds from (`Stages.cpp`) | Inherits config from (YAML `extends:`) |
 |---|---|---|
 | `stage3_rotation` | stage2_travel | stage4_duel |
-| `stage9_duel_pvp` | stage8_raids | stage4_duel |
-| `stage12_arena` | stage11_stealth (+ stage8_raids) | stage9_duel_pvp |
-| `stage13_flag` | stage12_arena (+ stage2_travel) | stage9_duel_pvp |
-| `stage15_life` | stage14_warsong (+ 2 merges) | stage5_pack |
-| `stage16_world_group` | stage15_life (+ stage8_raids) | stage6_party |
-| `stage17_world_shared` | stage16_world_group (+ stage12_arena) | stage16_world_group |
-| `stage18_ship` | stage17_world_shared (+ 3 merges) | stage6_party |
+| `stage12_duel_pvp` | stage11_raids | stage4_duel |
+| `stage15_arena` | stage14_stealth (+ stage11_raids) | stage12_duel_pvp |
+| `stage16_flag` | stage15_arena (+ stage2_travel) | stage12_duel_pvp |
+| `stage18_life` | stage17_warsong (+ 2 merges) | stage5_pack |
+| `stage19_world_group` | stage18_life (+ stage11_raids) | stage9_deadmines |
+| `stage20_world_shared` | stage19_world_group (+ stage15_arena) | stage19_world_group |
+| `stage21_ship` | stage20_world_shared (+ 3 merges) | stage9_deadmines |
 
 `stage4_duel.yaml` is the file every other config inherits its hyperparameters from. If you change one chain,
 decide what the other should do rather than assuming it follows.
@@ -147,18 +152,20 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
 | `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_party` | 1000000M | 40M | 64 |
-| `stage7_raid_pulls` | 50M | 10M | 64 | `stage8_raids` | 100M | 10M | 128 |
-| `stage9_duel_pvp` | 50M | 10M | 2048 | `stage10_escape` | 50M | 10M | 2048 |
-| `stage11_stealth` | 50M | 10M | 2048 | `stage12_arena` | 50M | 10M | 512 |
-| `stage13_flag` | 50M | 10M | 2048 | `stage14_warsong` | 50M | 10M | 128 |
-| `stage15_life` | 100M | 10M | 1024 | `stage16_world_group` | 50M | 10M | 128 |
-| `stage17_world_shared` | 50M | 10M | 128 | `stage18_ship` | 100M | 20M | 256 |
+| `stage5_pack` | 50M | 10M | 2048 | `stage6_roles` | 400M | 20M | 64 |
+| `stage7_group` | 400M | 20M | 64 | `stage8_ragefire` | 1500M | 40M | 64 |
+| `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 50M | 10M | 64 |
+| `stage11_raids` | 100M | 10M | 128 | | | | |
+| `stage12_duel_pvp` | 50M | 10M | 2048 | `stage13_escape` | 50M | 10M | 2048 |
+| `stage14_stealth` | 50M | 10M | 2048 | `stage15_arena` | 50M | 10M | 512 |
+| `stage16_flag` | 50M | 10M | 2048 | `stage17_warsong` | 50M | 10M | 128 |
+| `stage18_life` | 100M | 10M | 1024 | `stage19_world_group` | 50M | 10M | 128 |
+| `stage20_world_shared` | 50M | 10M | 128 | `stage21_ship` | 100M | 20M | 256 |
 
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128), except the raid stages, which set their own
-(`AnimusForge.Stage.<name>.Envs`: 8 for `stage7_raid_pulls`, 16 for `stage8_raids`). The queue's ceiling is
-**1,050M** plus `stage6_party`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
+(`AnimusForge.Stage.<name>.Envs`: 8 for `stage10_raid_pulls`, 16 for `stage11_raids`). The queue's ceiling is
+**3,350M** plus `stage9_deadmines`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
 and convergence does not end it), with more of it on the stages that were still rising at their budgets in the second run (the movement
 root, life, the party, the raids and the ship stage at 100-200M; the rest 50M). A per-class build
 trains the movement phase once for every class, and each class's line from `stage3_rotation` (a
@@ -197,8 +204,8 @@ builds across three jobs; a mage has 84 and three builds that all do the same th
 ```
 shared/runs/     stage1_move  stage2_travel         Classes = ""     (all ten)
                                     │
-druid/runs/                         ├─ stage3_rotation ... stage15_life ...
-warrior/runs/                       ├─ stage3_rotation ... stage15_life ...
+druid/runs/                         ├─ stage3_rotation ... stage18_life ...
+warrior/runs/                       ├─ stage3_rotation ... stage18_life ...
 ...                                 └─ ...                          Classes = "<one>"
 ```
 
@@ -269,7 +276,7 @@ A stage is one `StageDefinition` entry in `Stages/Stages.cpp`:
 
 ```cpp
 stages.push_back({
-    .Name = "stage6_party",              // scenario name
+    .Name = "stage9_deadmines",              // scenario name
     .Suffix = "_party",                  // model names: warrior_party
     .Extends = "stage5_pack",        // seeds from it (the trunk)
     .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
@@ -321,9 +328,9 @@ on the presence of a seed, because a replayed evaluation is a *training* episode
 
 | Map | Training ground | Control ground -- scoring only |
 |---|---|---|
-| Kalimdor (`stage1_move`, `stage2_travel`, `stage4_duel`, `stage13_flag`) | The Barrens, Northern Barrens, Durotar, Mulgore, Dustwallow Marsh (26 points) | Northern highlands, Eastern high ground, Mid-east plains (10 points) |
+| Kalimdor (`stage1_move`, `stage2_travel`, `stage4_duel`, `stage16_flag`) | The Barrens, Northern Barrens, Durotar, Mulgore, Dustwallow Marsh (26 points) | Northern highlands, Eastern high ground, Mid-east plains (10 points) |
 | Outland (`stage2_travel`) | Hellfire Peninsula, Zangarmarsh, Shadowmoon Valley, Terokkar Forest (8 points) | Eversong Woods, Azuremyst Isle, Bloodmyst Isle (6 points) -- other continents on the same map |
-| Map 560 (`stage10_escape`, `stage10_escape`, `stage11_stealth`) | The southern approaches (6 points) | The northern farmland (4 points) |
+| Map 560 (`stage13_escape`, `stage13_escape`, `stage14_stealth`) | The southern approaches (6 points) | The northern farmland (4 points) |
 | `stage1_move`'s water arena | Six banks of the Dustwallow pond | Its two far banks |
 
 Kalimdor's control ground was chosen by measured distance from water -- 1,500 to 5,000 yards from the nearest
@@ -333,7 +340,7 @@ that is wet where training is dry measures the coastline, not the policy.
 
 Two of the sets are deliberately weaker than the rest and say so: map 560 is one small instance, so its split is by
 district rather than by region, and the water arena's control is the far side of the same pond, because of four
-bodies of water measured only that one had a detour worth avoiding. `stage14_warsong` has no control ground at all
+bodies of water measured only that one had a detour worth avoiding. `stage17_warsong` has no control ground at all
 -- its three points are a battleground's own spawn rooms -- and neither do the combat stages after `stage4_duel`,
 which still run at the host's single spawn inside a per-env instance.
 
@@ -485,8 +492,8 @@ party's tank; the enemy player and whether it is a learned seat. Encounters fill
 - The character features (level, race, spec, talents) are always written, alive or dead.
 - **A dead bot** sees only the duel block's dead features (whether it can resurrect itself), and its only possible
   action is the self-resurrect action.
-- **Death runs on** (`ArenaDefinition::DeathRuns`: the open-world quest arenas of `stage15_life`,
-  `stage16_world_group`, `stage17_world_shared` and `stage18_ship`, which carry the death block): a dead bot also sees
+- **Death runs on** (`ArenaDefinition::DeathRuns`: the open-world quest arenas of `stage18_life`,
+  `stage19_world_group`, `stage20_world_shared` and `stage21_ship`, which carry the death block): a dead bot also sees
   the death block and the goal block. It can release its spirit (to the nearest graveyard on the map), run its ghost
   back to the corpse, rise there once in reach and the reclaim delay is over, take the spirit healer's resurrection at
   the graveyard (with its sickness), or accept a friend's resurrection -- which the sim takes only when the seat
@@ -589,7 +596,7 @@ The same function builds training seats and live companions, so a model gets in 
 
 ### Raid stages
 
-`stage7_raid_pulls` and `stage7_raid_pulls` train `MAX_SEATS` learned seats as `RAID_GROUPS` groups of
+`stage10_raid_pulls` and `stage10_raid_pulls` train `MAX_SEATS` learned seats as `RAID_GROUPS` groups of
 `GROUP_SEATS` (`SeatPlan::Raid`), each group with its own tank and healer. The first is one elite and its adds, won
 or lost as the single pack is; the second is pull after pull with recovery between, which is what a wing of a raid
 instance is before its boss.
@@ -601,7 +608,7 @@ coordination against a fight that punishes standing in the wrong place.
 
 Neither stage is in the default queue, and **neither is runnable at the usual env count**: forty seats an env is
 forty bots an env, so `AnimusForge.Envs` has to come down roughly in proportion (a few dozen envs, not 128) before
-starting one. Train by name: `forge start stage7_raid_pulls`.
+starting one. Train by name: `forge start stage10_raid_pulls`.
 
 ### What an enemy is doing
 
@@ -1382,8 +1389,8 @@ stage is `episode_info` in its `stage.json`.
 
 Most of the old stages are arenas of a stage now (see the table at the head of this chapter), and each section below
 describes the situation it is about under the stage that trains it. Two stages are new: `stage3_rotation` (the kit
-against dummies, `DummyEncounter`) and `stage18_ship` (every phase at once); `stage16_world_group` and
-`stage17_world_shared` are described in the design reference (Component F).
+against dummies, `DummyEncounter`) and `stage21_ship` (every phase at once); `stage19_world_group` and
+`stage20_world_shared` are described in the design reference (Component F).
 
 In the order `forge start` trains them, which is their number. Each seeds from the stage above it in the tree (4. head).
 
@@ -1594,10 +1601,10 @@ used as a rest. It is won by clearing the last pull alive; the 900 s clock runni
 and `pulls_cleared` (out of 8) is how far. `PullSchedule::Sequence` builds it; `eval.trace_episodes: 4` records four
 whole runs decision by decision, which is how a plan is read.
 
-It is on the trunk: `stage6_party` seeds from it, so the plan it learns is carried into the companion and party
+It is on the trunk: `stage9_deadmines` seeds from it, so the plan it learns is carried into the companion and party
 arenas rather than being a dead end beside them.
 
-### `stage9_duel_pvp`
+### `stage12_duel_pvp`
 
 The PvP branch. It extends the endurance run and keeps only core, move, duel and pet, adding pvp; the pack,
 gauntlet, companion and party blocks are not in its layouts, so the PvP line trains straight off the PvE one.
@@ -1608,7 +1615,7 @@ cast league, never a script. A policy's score against itself does not track prog
 is `fight` against `fight` on the same seeds. Config: gamma 0.999 and lambda 0.995, as a fight turns on what
 happened tens of seconds before (a stealthy approach, a trinket baited out). Budget 60M.
 
-### `stage10_escape`: the `evade` arena
+### `stage13_escape`: the `evade` arena
 
 **Drill.** A scripted enemy player **from ten levels below to ten above** the seat, drawn each episode
 (`ArenaDefinition::OpponentLevelRange`), for 120 s. Everything up to here rewards winning the fight in front of it,
@@ -1638,7 +1645,7 @@ lesson is recognising a losing fight and leaving it, not obeying a rule that say
 
 The `fight` baseline is a poor yardstick here on purpose: it is a policy trained to win fights that are not winnable,
 so surviving is a new axis rather than a better version of the old one, and the columns above are read against the
-baseline's measured values rather than its score. `stage10_escape` seeds from this stage, so every class carries the
+baseline's measured values rather than its score. `stage13_escape` seeds from this stage, so every class carries the
 lesson on.
 
 **Two things had to be true before any of this could work, and neither was.**
@@ -1661,7 +1668,7 @@ the world database.
 which is smaller than the outer cover rings `FindCover` uses (8, 16 and 26 yd), so breaking line of sight at 16
 or 26 yd genuinely escapes.
 
-### `stage10_escape`: the `hide` arena
+### `stage13_escape`: the `hide` arena
 
 **Drill.** The same fight, from ten levels below to ten above (a fixed six up until 2026-09-28), for **every class
 and every race**. The lesson
@@ -1706,7 +1713,7 @@ Racials stay fully available everywhere, here and in every other stage: the acti
 Will of the Forsaken, Blood Fury, Escape Artist and the rest, and `Encoding::IsSpellActionAllowed` masks each
 by `HasActiveSpell`, so the race that actually rolled is the one whose racials are offered.
 
-### `stage11_stealth`
+### `stage14_stealth`
 
 **Drill, merged forward.** The one stage in the curriculum restricted to a subset of classes, and the reason
 the restriction is worth its cost.
@@ -1769,9 +1776,56 @@ would have to shift out of its role, stalk, and shift back. It may learn that an
 there is no per-layout floor on `stalked_into_range`: one layout that cannot reach it would halt the whole
 queue. `survived` is the per-layout check instead, and it only says no layout collapsed.
 
-### `stage6_party`
+### `stage6_roles`
 
-The parties phase is one real dungeon (2026-09-30): the Deadmines from its door to VanCleef, run by five learned seats
+The roles before the dungeon (2026-10-02, the Deadmines curriculum). The Deadmines alone sat at about 10% cleared for
+hours: its parties lost their fights with eight enemies on them, two on the tank, the healer dry -- role failures, not
+class failures, and no stage before it taught a role. So each role is drilled where its feedback is seconds away, by
+a **proper party** (`ArenaDefinition::ProperParty`: a tank, a healer and three damage dealers drawn by gear, as the
+dungeon draws them) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only castings that can be that level).
+
+| Arena | Drilled (`DrillRole`) | What it pays | What it charges |
+|---|---|---|---|
+| `tank_hold` | tank | each enemy on it (`Raid.TankHold`) | each enemy on anybody else (`Raid.TankLoose`) |
+| `heal_keep` | healer | each member above 50% (`Raid.KeepUp`); the pack has twice its health (`PackHealthPct` 200), so the fight outlasts a mana bar | each member below 35% |
+| `damage_discipline` | a damage dealer | damage on the tank's target (`Raid.TankTarget`) | each enemy it has taken off the tank (`Raid.PulledOff`) |
+| `pull` | tank | each pack of a camp killed with no other pack in its fight (`Pulls.CampCleanPack`) | each pack in the fight past the first, by the second (`Pulls.CampExtraPack`); standing about past `Pulls.CampRestMs` between packs |
+
+The drilled seat is seat 0 and its role's terms weigh `Raid.DrillWeight` (3); the others earn their own role's, so
+every arena trains every role a little. The single packs climb `PARTY_RUNGS` (2 creatures up to three elites a level
+above) and the camp `CAMP_RUNGS` (two pairs 30 yd apart up to four pairs 15 yd apart with elites, a level above),
+each on its own ladder per class and build, as the pack stage's do. A party's single pack ends on its clear (it used
+to run to the clock, paying the clear every decision).
+
+**A camp** (`PullSchedule::Camp`) stands its packs one on from the next, away from the party: a corridor. Every
+creature is in the enemy slots (up to `MAX_TARGETS`), ordered for each observation fight first, then nearest the tank,
+the dead last (the seats' selections and per-slot tallies move with them); a pack's members join each other and no
+other pack. The crowd block reads it as it reads a dungeon: what is on the party and on the tank, what is past the
+pack's slots, and the next pack standing -- the tank's way on (`advance`), the others' the tank. Between fights only
+the tank is paid to close on the next pack.
+
+Read: `tank_hold_share` (the tank's share of the party's enemies), `tank_target_share` and `pulled_off_seconds` (a
+damage dealer's), `low_health_seconds`, `healing_per_mana` and `overheal_share` (the healer's), `camp_peak_packs` and
+`camp_clean_packs` (the pull's).
+
+### `stage7_group`
+
+The whole party under a learned director, on a **corridor** of eight pulls (`PullSchedule::Sequence` with a party:
+`GROUP_PULLS`, trash, then elites, then three elites two levels up), food and drink to rest on between, and two wipes
+it can stand up from (`ArenaDefinition::WipesAllowed`: the party stands up, the pull that wiped it comes again, the
+pulls cleared stay cleared); and camps. Read `pulls_cleared`, `wipes`, `engage_health`/`engage_mana` and the roles'
+columns in a mixed fight.
+
+### `stage8_ragefire`
+
+Ragefire Chasm from its door to Bazzalan (row 0 of the whole dungeons, `ArenaDefinition::InstanceRow`), past
+Oggleflint, Taragaman and Jergosh: the Deadmines' skills at a lower price. The same ladder as the Deadmines' below, its
+own rung. Its route is checked by the `Wing stuck` trace lines on its first runs: as a boss rung it had no path from
+the door.
+
+### `stage9_deadmines`
+
+The Deadmines (row 1, 2026-10-02: after Ragefire; 2026-09-30: the whole parties phase): the Deadmines from its door to VanCleef, run by five learned seats
 of its level range under a learned director. Each run opens a fresh instance, so every creature is alive and every
 boss's script at its start, and a wipe ends the run (`Instance.WingWipes` 1). Only castings that can be the level are
 drawn for its seats. The companion arena, the synthetic party pulls and the tanking and triage drills are gone from
@@ -1780,7 +1834,8 @@ the stage; the companion block stays in its layout for the stages built on it.
 **A support ladder the policy earns its way down** (2026-10-01: "taper off only based on the progress made by the
 learner"). Training runs are on a rung of `StageScenario::WING_RUNGS`; each rung fixes the dungeon script's share of
 seats, the levels above the dungeon's range, the wipes to spare (with their kills kept, the party stood up at the door)
-and the weight of the hints every seat imitates. The script leaves first, at the top level; then the levels come down
+and the weight of the hints every seat imitates. **The script's seats and hints are a support, off by default** (2026-10-02: `Instance.WingSupport` 0): off, the rungs
+lift the level and spare wipes only, and every run learns from its own rewards. The script leaves first, at the top level; then the levels come down
 one at a time, the wipes and the hints with them:
 
 | Rung | Script plays | Levels | Wipes | Hints |
@@ -1878,7 +1933,7 @@ What to read: `clean_kill` -- the win above, with the seat never dead -- overall
 rest. The party run's measured values (owner dead in 66% of episodes at 100M steps against the scripted baseline's
 92%) are the numbers to read a new run against.
 
-### `stage6_party`
+### `stage9_deadmines`
 
 Adds the party block. One to four learned seats (like a player bringing one to four companions) plus the owner form a
 sim group. Every seat plays the same policy and sees the other three. An empty seat has no character and only the
@@ -1888,21 +1943,21 @@ episodes at 96 envs kept the host evaluating back to back), a party-focused repo
 `pulls_cleared` and `low_health_seconds`; the 120M run's best (the owner dead in 66% of episodes against the scripted
 baseline's 92%, 5.96 pulls cleared) is the number to read a new run against.
 
-### `stage6_party`: the `tanking` arena
+### `stage9_deadmines`: the `tanking` arena
 
 **Drill.** Stage 17's party, with seat 0 always the tank (`ArenaDefinition::SeatAptitudes`). The ordinary party
 draws every role, so the tanking lesson is smeared over whoever happened to play it; here the episode is about
 holding what the pull brings and keeping it off the others. `threat_share` is the column that says whether it
-happened. On the trunk: `stage6_party` seeds from it.
+happened. On the trunk: `stage9_deadmines` seeds from it.
 
-### `stage6_party`: the `triage` arena
+### `stage9_deadmines`: the `triage` arena
 
 **Drill.** The same party with seat 0 always the healer: keep the hurt one up, and spend mana to do it. A
 forced-healer stage will find any fault in the resurrection path faster than anything else in the curriculum --
 it found the farmable revive described in 4.6, where reviving a teammate paid more than keeping it alive. On
-the trunk: `stage7_raid_pulls` seeds from it.
+the trunk: `stage10_raid_pulls` seeds from it.
 
-### `stage15_life`: the `quest` arena
+### `stage18_life`: the `quest` arena
 
 Life outside the fight begins, and it is learned in the sim rather than scripted for the live module. One seat, a
 quest of its level band -- 15-20, 35-40 or 58-60; the rung is the band, drawn on the difficulty ladder like a pull
@@ -1933,7 +1988,7 @@ step cost, and progress toward the waypoint. The `life` baseline uses what is in
 (the `fight` baseline's play), and walks to the next thing. What to read: `quest_turned_in`, `quest_progress`,
 `quest_kills`, `corpses_looted`, `wasted_presses`, `died`, per `quest_band`.
 
-### `stage15_life`: the `gather` arena
+### `stage18_life`: the `gather` arena
 
 A field of the band's herb and ore nodes, with the zone's own creatures among them (`GatherEncounter`). The
 grounds are the densest 400-yard cells of node spawns per zone, measured from the world database (the Barrens,
@@ -1946,7 +2001,7 @@ INTERACT once looted. Rewards: each node gathered (times the tier scale), each s
 toward the nearest node the seat can open. There is no winning a field: the clock ends it, and gathering every
 node early counts as a win. Read `nodes_gathered` against `nodes_spawned`, `skill_ups`, `skinned`, `died`.
 
-### `stage15_life`: the `town` arena
+### `stage18_life`: the `town` arena
 
 A town of the seat's side, its traders copied into the phase around the inn (`TownEncounter`; the Crossroads and
 Goldshire, Camp Taurajo, Menethil and neutral Ratchet, the capitals). The seat arrives with a purse for its level,
@@ -1962,7 +2017,7 @@ and `SummonGameObject` with the env's phase, `Player::SendLoot` and `StoreLootIt
 the profession casts -- and the state they make lives on the bot in memory, as everything a sim bot does already
 does (no save runs after creation). The registry stays deferred until a stage needs a system the forge dropped.
 
-### The dungeon arenas of `stage6_party`
+### The dungeon arenas of `stage9_deadmines`
 
 The first real instance. A party of four learned seats and their cast owner against a dungeon's own scripted
 bosses, in the dungeon (`InstanceEncounter`): the rungs are the bosses of five dungeons across the level bands --
@@ -1987,7 +2042,7 @@ at the boss's scale; Kill and HealthKept to every seat when it dies; Death once 
 boss's health a lost fight took off it, so a fight has a gradient before its first kill. Read `boss_killed`,
 `boss_health_left`, `wiped`, `evaded` and `boss_rung` per rung.
 
-### `stage13_flag`
+### `stage16_flag`
 
 Warsong Gulch's rules between two learned seats (4.5), extending the arena and merging travel: the fight, and mounting
 between bases 100-180 yd apart, with a carrier kept on foot. Blocks: core, duel, pet, pvp, travel, flag. 300 s
@@ -1995,7 +2050,7 @@ episodes, first to three captures. As in the arena, evaluation plays the second 
 flags on a mount). Config: gamma 0.999 and lambda 0.99, budget 40M. What to read: `flag_pickups`, `flag_captures`
 and `won` against `fight`.
 
-### `stage14_warsong`
+### `stage17_warsong`
 
 Warsong Gulch at its proper size: ten a side, both sides learned, on a real battleground instance. The flag
 rules are stage 24's; what is new is that a side is ten seats and a group, so the objective has to be shared --
@@ -2005,7 +2060,7 @@ party block on top of the flag line.
 The instance logs `GetBGObject: gameobject (type: 10) not found` repeatedly. That is pre-existing core noise,
 not a stage fault.
 
-### `stage12_arena` (it was two a side only)
+### `stage15_arena` (it was two a side only)
 
 Two against two under a **director**: one more agent a side, choosing the team's posture, the enemy it
 concentrates on, the shape it takes, whose turn the next duty is, and -- since the place channel landed -- where
@@ -2019,10 +2074,10 @@ Blocks: core, duel, pack, pet, pvp, context, hostiles, support, order. Its arena
 comparison between the two has not been run**, and 4.12 says why it should be before more budget goes into the
 learned one.
 
-### `stage18_ship` (it replaces the crossroads)
+### `stage21_ship` (it replaces the crossroads)
 
-Every phase joins. It extends `stage17_world_shared` (the trunk, the PvP and world blocks) and merges the last stage of
-each earlier phase -- `stage2_travel`, `stage15_life`, `stage8_raids` -- and `stage12_arena` for the context block. It
+Every phase joins. It extends `stage20_world_shared` (the trunk, the PvP and world blocks) and merges the last stage of
+each earlier phase -- `stage2_travel`, `stage18_life`, `stage11_raids` -- and `stage15_arena` for the context block. It
 is the last stage in the queue, and the one whose checkpoint is what ships. Its sixteen arenas are each phase's
 representatives (`Stages.cpp` says which were left out and why); a ten-seat raid makes it a ten-seat stage, and arenas
 on other maps than the host's set their own (`ArenaDefinition::MapId`).
@@ -2038,7 +2093,7 @@ Learner: distilled with `teachers: auto` (each arena is taught by the first pare
 every 50M steps. 256 evaluation episodes every 20M steps, reported per phase as well as per arena (`eval.phases`):
 the gate is each phase within noise of its own stage's last evaluation. Budget 100M.
 
-### `stage8_raids`: the `raid10`, `raid25` and `raid40` arenas
+### `stage11_raids`: the `raid10`, `raid25` and `raid40` arenas
 
 The real raids, each seeded from the one before and all from the dungeon: ten seats in Karazhan and Naxxramas,
 twenty-five in Naxxramas, forty in Molten Core, Blackwing Lair and the Temple of Ahn'Qiraj (Naxxramas has no
@@ -2052,18 +2107,18 @@ What to watch in the first runs: a boss whose room the path enters from a side d
 on the wrong side of a trigger; `EngageOverride` is the per-boss answer), enrage timers on the wall clock at a high
 time scale, and the cost of forty players in one map update, which `forge bench` at those env counts will say.
 
-### `stage7_raid_pulls`: the `raid_single` arena
+### `stage10_raid_pulls`: the `raid_single` arena
 
 A raid of eight groups of five against one elite and its adds, won or lost as the single pack is. What is new
 is the size: forty learned seats in one episode, every one playing the same policy and seeing the others in its
 group. Nothing about the fight is new -- the party stages taught it -- so what is being trained is a policy that
 does not fall apart when the group it is in is one of eight.
 
-### `stage7_raid_pulls`: the `raid_gauntlet` arena
+### `stage10_raid_pulls`: the `raid_gauntlet` arena
 
 The raid clearing pull after pull, recovering between them, over 600 s. Everything the PvE line taught -- the
 duel, the pack, the hazard, the gauntlet's recovery, the companion, the party's roles, the raid's size -- is in one
-episode. Nothing seeds from it: `stage18_ship` extends `stage6_party`, and the raids are the yardstick for
+episode. Nothing seeds from it: `stage21_ship` extends `stage9_deadmines`, and the raids are the yardstick for
 a policy that has to hold together at forty.
 
 ## 4.12 Team play and the director
@@ -2242,5 +2297,5 @@ the time by construction.
 through a compliance reward, a slower clock and a clean channel. The seats improve (evaluation 6.6-6.9 to
 8.3-8.8 in every run) but that is them learning two on two, and it happens just as much without a director.
 The open question is whether a director is worth anything at two a side at all, which the scripted director
-answers directly: run `stage12_arena` with `DirectorLearned` off and compare. If a perfect caller does not
+answers directly: run `stage15_arena` with `DirectorLearned` off and compare. If a perfect caller does not
 beat the undirected arena, there is nothing at this stage for a learned one to find.

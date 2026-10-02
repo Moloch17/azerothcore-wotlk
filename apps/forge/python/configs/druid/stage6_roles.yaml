@@ -1,0 +1,15 @@
+# The bear's and the restoration druid's drills, which are arenas of the roles stage (tank_hold and heal_keep).
+#
+# The drilled seat is drawn by gear for its role (ArenaDefinition::DrillRole, StageScenario::FitsDungeonRole), which
+# in a druid-only run means a bear holds the pull and a restoration druid keeps the party up; threat_share and
+# threat_on_teammates are outcomes, what the pull did, not what the seat pressed. Restoration's healing is mostly over
+# time rather than on demand, and it has to shift out of a form to cast at all, so overhealing and healing per mana
+# read differently for it than for a paladin.
+
+extends: ../stage6_roles.yaml
+run_name: stage6_roles
+
+eval:
+  report: [tank_hold_share, threat_on_teammates, teammate_damage_taken, low_health_seconds, overheal_share,
+           healing_per_mana, hot_healing_share, tank_target_share, pulled_off_seconds, camp_peak_packs,
+           camp_clean_packs, wipes]

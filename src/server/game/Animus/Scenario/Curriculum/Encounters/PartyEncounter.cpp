@@ -67,6 +67,24 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].Seats[seat].IdleMs) / 1000.0f;
     });
+
+    // The roles' readings (the Deadmines curriculum's phase B): a tank's share of the party's enemies held, and a
+    // damage dealer's share of its damage on the tank's target and its seconds with an enemy pulled off the tank.
+    // Zero for the seats whose role it is not.
+    table.Add("tank_hold_share", [this](Env const& env, uint32 seat)
+    {
+        SeatParty const& party = _envs[env.Index].Seats[seat];
+        return party.EnemiesOnParty ? float(party.EnemiesHeld) / float(party.EnemiesOnParty) : 0.0f;
+    });
+    table.Add("tank_target_share", [this](Env const& env, uint32 seat)
+    {
+        SeatParty const& party = _envs[env.Index].Seats[seat];
+        return party.DamageDealt ? float(party.TankTargetDamage) / float(party.DamageDealt) : 0.0f;
+    });
+    table.Add("pulled_off_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Seats[seat].PulledOffMs) / 1000.0f;
+    });
 }
 
 void Animus::Curriculum::PartyEncounter::ResetEpisode(Env& env)
@@ -467,6 +485,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         ? tuning.DrillWeight : 1.0f;
     if (tank && !arena.Owner)
     {
+        seat.EnemiesHeld += onBot;
+        seat.EnemiesOnParty += onBot + onOthers;
         ledger.Add(RewardTerm::Threat, drill * tuning.TankHold * float(onBot) * scale);
         ledger.Add(RewardTerm::Threat, -drill * tuning.TankLoose * float(onOthers) * scale);
     }
@@ -479,8 +499,14 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         {
             Unit const* tankTarget = partyTank->GetVictim();
             Unit const* own = bot->GetVictim();
+            seat.DamageDealt += step.Damage;
             if (tankTarget && own == tankTarget)
+            {
+                seat.TankTargetDamage += step.Damage;
                 ledger.Add(RewardTerm::DamageDealt, drill * tuning.TankTarget * state.LastStepDamage);
+            }
+            if (onBot)
+                seat.PulledOffMs += _scenario.DecisionMs();
             ledger.Add(RewardTerm::Threat, -drill * tuning.PulledOff * float(onBot) * scale);
         }
 

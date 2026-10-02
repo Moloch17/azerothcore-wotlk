@@ -274,6 +274,10 @@ namespace Animus::Curriculum
             float WingRungTarget = 0.6f;
             float WingRungFallback = 0.5f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
+            /// The dungeon script's seats and hints on the ladder's rungs (WingRung::Script, ::Hint): a support, off by
+            /// default, switched on when a rung has not stepped for a long stretch. Off, the rungs lift the level and
+            /// spare wipes only, and every run learns from its own rewards.
+            uint32 WingSupport = 0;
             uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
             /// The instructed healer protects whoever is below this health share.
             float WingInstructHeal = 70.0f;
@@ -704,6 +708,12 @@ namespace Animus::Curriculum
             uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's
             float Spacing = 0.06f;              // pack: per second a ranged spec is hit in melee reach (0.03 left
                                                 // casters in melee 70-80% of pack fights, 2026-09-28)
+            /// A camp (PullSchedule::Camp, the pull drill): per second, for each pack fighting beyond the first; paid
+            /// for each pack killed with no other pack in its fight (times the rung's scale); and the grace between
+            /// packs, from the last fight, before standing about is charged as Stall (not while eating or drinking).
+            float CampExtraPack = 0.15f;
+            float CampCleanPack = 2.0f;
+            uint32 CampRestMs = 25000;
             /// A gauntlet alone (no owner) is won by lasting: pull after pull until the episode ends, and a death ends
             /// it with every pull left unfought. Clear 2 + FastPull 2 and HealthKept 2 had each pull worth up to 6
             /// against a death at 5, so a seat could trade its life for a fast pull. As the single pack: the clear
@@ -1134,6 +1144,7 @@ namespace Animus::Curriculum
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
+            f("Instance.WingSupport", tuning.Instance.WingSupport);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
             f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
@@ -1298,6 +1309,9 @@ namespace Animus::Curriculum
             f("Pulls.StallGraceMs", tuning.Pulls.StallGraceMs);
             f("Pulls.PreparationRefundMaxMs", tuning.Pulls.PreparationRefundMaxMs);
             f("Pulls.Spacing", tuning.Pulls.Spacing);
+            f("Pulls.CampExtraPack", tuning.Pulls.CampExtraPack);
+            f("Pulls.CampCleanPack", tuning.Pulls.CampCleanPack);
+            f("Pulls.CampRestMs", tuning.Pulls.CampRestMs);
             f("Pulls.SoloGauntletClear", tuning.Pulls.SoloGauntletClear);
             f("Pulls.SoloGauntletFastPull", tuning.Pulls.SoloGauntletFastPull);
             f("Pulls.SoloGauntletHealthKept", tuning.Pulls.SoloGauntletHealthKept);

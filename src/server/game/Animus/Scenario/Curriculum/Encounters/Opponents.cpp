@@ -322,6 +322,28 @@ Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map, fl
     return pos;
 }
 
+std::optional<Position> Animus::Curriculum::Opponents::FindSpawnPointFrom(Player* bot, Map* map, Position const& from,
+    float bearing, float spread, float minDistance, float maxDistance)
+{
+    for (uint32 attempt = 0; attempt < SPAWN_ATTEMPTS; ++attempt)
+    {
+        float const angle = bearing + frand(-spread, spread);
+        float const distance = frand(minDistance, maxDistance);
+        Position pos(from.GetPositionX() + distance * std::cos(angle), from.GetPositionY() + distance * std::sin(angle),
+            from.GetPositionZ(), frand(0.0f, 2.0f * float(M_PI)));
+
+        float const ground = map->GetHeight(pos.GetPositionX(), pos.GetPositionY(), from.GetPositionZ() + 5.0f);
+        if (ground <= INVALID_HEIGHT || std::fabs(ground - from.GetPositionZ()) >= MAX_HEIGHT_DIFFERENCE)
+            continue;
+
+        pos.m_positionZ = ground;
+        if (Walkable(bot, pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ()))
+            return pos;
+    }
+
+    return std::nullopt;
+}
+
 Position Animus::Curriculum::Opponents::FindSpawnPointInWater(Player* bot, Map* map)
 {
     constexpr float BODY_HEIGHT = 2.0f;
@@ -385,8 +407,12 @@ Creature* Animus::Curriculum::Opponents::SummonOpponent(Player* bot, Map* map, u
 std::vector<Creature*> Animus::Curriculum::Opponents::SpawnPack(Player* bot, Map* map,
     std::vector<uint32> const& entries, uint8 level)
 {
-    Position const center = FindSpawnPoint(bot, map);
+    return SpawnPack(bot, map, entries, level, FindSpawnPoint(bot, map));
+}
 
+std::vector<Creature*> Animus::Curriculum::Opponents::SpawnPack(Player* bot, Map* map,
+    std::vector<uint32> const& entries, uint8 level, Position const& center)
+{
     std::vector<Creature*> pack;
     for (uint32 i = 0; i < entries.size(); ++i)
     {

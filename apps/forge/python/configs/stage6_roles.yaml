@@ -1,0 +1,18 @@
+# Stage 6: the roles (2026-10-02, the Deadmines curriculum). A proper party of five at 15-30, one role drilled a
+# fight: the tank holding a pack (tank_hold), the healer keeping the party up through a fight longer than its mana
+# bar (heal_keep), a damage dealer killing the tank's target without taking it (damage_discipline), and the tank
+# pulling a camp one pack at a time (pull). The drilled seat's role terms weigh Raid.DrillWeight; each drill climbs
+# its own rungs on the probes' wins. Ends on convergence; the budget is a ceiling.
+
+extends: stage5_pack.yaml
+run_name: stage6_roles
+
+total_env_steps: 400000000
+
+eval:
+  every_env_steps: 20000000
+  episodes: 64
+  report: [clean_kill, died, wipes, kills, difficulty, tank_hold_share, threat_on_teammates, teammate_damage_taken,
+           low_health_seconds, overheal_share, healing_per_mana, teammates_died, tank_target_share,
+           pulled_off_seconds, interrupts, control_seconds, camp_packs, camp_peak_packs, camp_clean_packs,
+           dps_scaled, level]

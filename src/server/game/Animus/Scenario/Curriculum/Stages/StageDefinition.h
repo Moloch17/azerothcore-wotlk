@@ -85,6 +85,9 @@ namespace Animus::Curriculum
         SinglePack,     // one pack; the episode ends when it is cleared
         Gauntlet,       // pull after pull with a break between, until the episode ends
         Sequence,       // a known run of pulls in a fixed order, the same every episode, won by clearing the last
+        /// A camp: two to four packs standing at once, apart (the pull drill). Won by killing them all; a pack fought
+        /// beside another is charged, a pack killed on its own is paid. A single pack's ladder and terms otherwise.
+        Camp,
     };
 
     /// Most arenas a stage can mix (the critic state has one column per arena).
@@ -123,6 +126,9 @@ namespace Animus::Curriculum
         /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
         /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
         InstanceLadder Instance = InstanceLadder::None;
+        /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); -1 = the class's own
+        /// rung on the ladder.
+        int8 InstanceRow = -1;
         /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
         uint32 RaidSeats = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
@@ -138,10 +144,13 @@ namespace Animus::Curriculum
         /// damage dealers by what their specs are geared for.
         bool ProperParty = false;
         /// The role this arena drills (DungeonRole: 1 tank, 2 healer, 3 damage; 0 none): that seat is seat 0 -- the
-        /// one whose class and build climbs the pack ladder -- and its role's terms are weighted Party.DrillWeight.
+        /// one whose class and build climbs the pack ladder -- and its role's terms are weighted Raid.DrillWeight.
         uint8 DrillRole = 0;
         /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
         uint32 PackHealthPct = 100;
+        /// A party's run of pulls (PullSchedule::Sequence): wipes it may come back from. The party stands up, and the
+        /// pull that wiped it comes again; the pulls cleared stay cleared. 0 = the first wipe ends it.
+        uint32 WipesAllowed = 0;
         /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
         /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
         /// would pay for an agent with nothing to say.

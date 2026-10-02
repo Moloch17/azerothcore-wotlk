@@ -1,0 +1,23 @@
+# Stage 8: Ragefire Chasm from its door to Bazzalan, run by five learned seats of its own level range under a learned
+# director (2026-10-02, the Deadmines curriculum): the Deadmines' skills at a lower price -- shorter, smaller packs,
+# simpler pulls. Every run is a fresh instance. The whole dungeon's ladder (levels above the range coming down, wipes
+# to spare with them) steps on the probes; the dungeon script's seats and hints stay off unless Instance.WingSupport
+# turns them on. Ends on convergence; the budget is a ceiling.
+
+extends: stage7_group.yaml
+run_name: stage8_ragefire
+
+total_env_steps: 1500000000
+
+eval:
+  every_env_steps: 40000000
+  episodes: 64
+  report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, wing_rung, wing_probe,
+           wing_cleared_share, wing_crowd_seconds, wing_level, teammates_died, teammate_healing, tank_hold_share,
+           tank_target_share, pulled_off_seconds, idle_seconds_in_combat, director_member_orders, goals_reached,
+           serving_share, aimless_presses, combat_dps, dps_scaled, level]
+
+mappo:
+  # Imitate the scripted fight's press where the sim suggests one: only with Instance.WingSupport on; off, the sim
+  # writes no hint and this does nothing.
+  hint_coef: 1.0

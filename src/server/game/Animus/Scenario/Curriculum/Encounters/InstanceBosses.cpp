@@ -131,10 +131,16 @@ namespace
     /// it stays, and the party starts at the door. The seats' level is the dungeon's.
     ///
     /// One dungeon to begin with (2026-09-30): the Deadmines, the whole of it to VanCleef, six scripted bosses, and
-    /// a navmesh path from the door to the last. Ragefire Chasm had no path from its door to its bosses (the party
-    /// was stood in front of them instead). The Scarlet Monastery wings (Graveyard to Thalnos, entrance 45; Library
+    /// a navmesh path from the door to the last. Ragefire Chasm had no path from its door to its bosses as a boss
+    /// rung (the party was stood in front of them instead): its wing's route is checked by the trace lines. The Scarlet Monastery wings (Graveyard to Thalnos, entrance 45; Library
     /// to Doan, 614; Armory to Herod, 612) and Utgarde Keep to Ingvar (DataId 2) come back once this one is learned.
+    ///
+    /// Ragefire Chasm came back first (2026-10-02, the Deadmines curriculum), as its own stage before the Deadmines':
+    /// row 0, the door to Bazzalan, past Oggleflint, Taragaman and Jergosh. Each stage pins its row
+    /// (ArenaDefinition::InstanceRow).
     std::vector<Animus::Curriculum::BossRow> const WING = {
+        { .MapId = 389, .Entry = 11519, .Level = 16, .Difficulty = 0, .Trash = true,
+            .Name = "Ragefire Chasm to Bazzalan" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = 0, .Trash = true,
             .Name = "the Deadmines to Edwin VanCleef" },
     };
