@@ -6,7 +6,7 @@
 extends: stage9_deadmines.yaml
 run_name: stage10_raid_pulls
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   every_env_steps: 10000000

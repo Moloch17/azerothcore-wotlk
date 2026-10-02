@@ -6,7 +6,7 @@
 extends: stage12_duel_pvp.yaml
 run_name: stage15_arena
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 rollout_length: 256
 
 mappo:

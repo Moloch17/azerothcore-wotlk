@@ -5,7 +5,7 @@
 extends: stage13_escape.yaml
 run_name: stage14_stealth
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   report: [stalk_seconds, stalk_longest_seconds, stalked_into_range, closest_stealthed, stalk_approaches,

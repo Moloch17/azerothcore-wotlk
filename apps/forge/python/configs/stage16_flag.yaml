@@ -6,7 +6,7 @@
 extends: stage12_duel_pvp.yaml
 run_name: stage16_flag
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   report: [match_won, flag_captures, flag_pickups, flag_returns, carrier_kills, flag_deaths, mounted_fraction]

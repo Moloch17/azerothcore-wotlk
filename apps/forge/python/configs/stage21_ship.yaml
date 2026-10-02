@@ -13,7 +13,7 @@
 extends: stage9_deadmines.yaml
 run_name: stage21_ship
 
-total_env_steps: 100000000
+total_env_steps: 250000000
 
 mappo:
   gamma: 0.999

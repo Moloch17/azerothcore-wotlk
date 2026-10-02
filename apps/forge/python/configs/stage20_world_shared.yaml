@@ -7,7 +7,7 @@
 extends: stage19_world_group.yaml
 run_name: stage20_world_shared
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   every_env_steps: 10000000

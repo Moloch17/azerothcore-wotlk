@@ -5,7 +5,7 @@
 extends: stage16_flag.yaml
 run_name: stage17_warsong
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   episodes: 128

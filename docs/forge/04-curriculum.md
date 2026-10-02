@@ -150,24 +150,23 @@ stage trains its whole budget).
 
 | Stage | Budget | Eval every | Episodes | Stage | Budget | Eval every | Episodes |
 |---|---|---|---|---|---|---|---|
-| `stage1_move` | 100M | 5M | 2048 | `stage2_travel` | 50M | 5M | 2048 |
-| `stage3_rotation` | 50M | 5M | 2048 | `stage4_duel` | 50M | 10M | 2048 |
-| `stage5_pack` | 50M | 10M | 2048 | `stage6_roles` | 400M | 20M | 64 |
+| `stage1_move` | 250M | 5M | 2048 | `stage2_travel` | 250M | 5M | 2048 |
+| `stage3_rotation` | 250M | 5M | 2048 | `stage4_duel` | 250M | 10M | 2048 |
+| `stage5_pack` | 250M | 10M | 2048 | `stage6_roles` | 400M | 20M | 64 |
 | `stage7_group` | 400M | 20M | 64 | `stage8_ragefire` | 1500M | 40M | 64 |
-| `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 50M | 10M | 64 |
-| `stage11_raids` | 100M | 10M | 128 | | | | |
-| `stage12_duel_pvp` | 50M | 10M | 2048 | `stage13_escape` | 50M | 10M | 2048 |
-| `stage14_stealth` | 50M | 10M | 2048 | `stage15_arena` | 50M | 10M | 512 |
-| `stage16_flag` | 50M | 10M | 2048 | `stage17_warsong` | 50M | 10M | 128 |
-| `stage18_life` | 100M | 10M | 1024 | `stage19_world_group` | 50M | 10M | 128 |
-| `stage20_world_shared` | 50M | 10M | 128 | `stage21_ship` | 100M | 20M | 256 |
+| `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 250M | 10M | 64 |
+| `stage11_raids` | 250M | 10M | 128 | | | | |
+| `stage12_duel_pvp` | 250M | 10M | 2048 | `stage13_escape` | 250M | 10M | 2048 |
+| `stage14_stealth` | 250M | 10M | 2048 | `stage15_arena` | 250M | 10M | 512 |
+| `stage16_flag` | 250M | 10M | 2048 | `stage17_warsong` | 250M | 10M | 128 |
+| `stage18_life` | 250M | 10M | 1024 | `stage19_world_group` | 250M | 10M | 128 |
+| `stage20_world_shared` | 250M | 10M | 128 | `stage21_ship` | 250M | 20M | 256 |
 
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128), except the raid stages, which set their own
 (`AnimusForge.Stage.<name>.Envs`: 8 for `stage10_raid_pulls`, 16 for `stage11_raids`). The queue's ceiling is
-**3,350M** plus `stage9_deadmines`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
-and convergence does not end it), with more of it on the stages that were still rising at their budgets in the second run (the movement
-root, life, the party, the raids and the ship stage at 100-200M; the rest 50M). A per-class build
+**6,550M** plus `stage9_deadmines`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
+and convergence does not end it), every stage at least 250M (2026-10-02), the party drills 400M and Ragefire 1,500M. A per-class build
 trains the movement phase once for every class, and each class's line from `stage3_rotation` (a
 `configs/<class>/stage3_rotation.yaml` names the shared travel checkpoint; `{shared_runs}` in a path is the shared
 root's run directory beside the class's own).

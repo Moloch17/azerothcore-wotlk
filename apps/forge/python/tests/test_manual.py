@@ -97,7 +97,7 @@ def test_the_queue_total_is_what_the_manual_says():
     # Every stage is in the default queue, the raids included (they run at their own env count).
     # stage9_deadmines has no end (a budget no run reaches): the manual states the rest.
     queue = sum(v["total_env_steps"] for v in rows.values() if v["total_env_steps"] < 1_000_000_000_000)
-    assert queue == 3_350_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 3,350M"
+    assert queue == 6_550_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 6,550M"
     assert len(rows) == 21
 
 

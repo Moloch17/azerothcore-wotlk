@@ -9,7 +9,7 @@
 extends: stage1_move.yaml
 run_name: stage2_travel
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 rollout_length: 256
 
 mappo:

@@ -9,7 +9,7 @@
 extends: stage5_pack.yaml
 run_name: stage18_life
 
-total_env_steps: 100000000
+total_env_steps: 250000000
 
 eval:
   every_env_steps: 10000000

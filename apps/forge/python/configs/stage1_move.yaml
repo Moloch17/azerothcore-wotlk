@@ -12,7 +12,7 @@
 extends: stage4_duel.yaml
 run_name: stage1_move
 
-total_env_steps: 100000000
+total_env_steps: 250000000
 
 mappo:
   # The trips are the whole lesson; a floor on exploration keeps a seat from settling on "hold forward" over ground

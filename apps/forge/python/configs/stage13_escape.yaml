@@ -5,7 +5,7 @@
 extends: stage12_duel_pvp.yaml
 run_name: stage13_escape
 
-total_env_steps: 50000000
+total_env_steps: 250000000
 
 eval:
   report: [survived, escaped, contact_breaks, line_of_sight_breaks, unseen_seconds, unseen_longest_seconds, re_hides,
