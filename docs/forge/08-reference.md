@@ -181,7 +181,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | | | | `Pulls.NextPullShrinkMs` | 1000 |
 | | | | `Pulls.NextPullFloorMs` | 4000 |
 | `Goals.Reached` | 0.05 | | | |
-| `Goals.Switch` | 0.1 | | | |
+| `Goals.Switch` | 0.15 | | | |
 | `Order.Focus` | 0.001 | | | |
 | `Pulls.GauntletDenseScale` | 0.5 | | | |
 | `Support.SelfHealing` | 0.5 | | | |
@@ -197,7 +197,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Duel.StallGraceMs` | 15000 | | | |
 | `Duel.PreparationRefundMaxMs` | 15000 | | | |
 | `Duel.Spacing` | 0.03 | | | |
-| `Actions.Repeat` | 0.02 | | | |
+| `Actions.Repeat` | 0.03 | | | |
 | `Actions.RepeatWindowMs` | 10000 | | | |
 | `Actions.RepeatFree` | 3 | | | |
 | `Actions.Jitter` | 0.05 | | | |
