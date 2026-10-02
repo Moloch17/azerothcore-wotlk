@@ -449,6 +449,22 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     RewardRole(env, seatIndex, bot, ledger, raid);
 }
 
+bool Animus::Curriculum::PartyEncounter::InTankingStance(Player const* bot)
+{
+    constexpr uint32 SPELL_RIGHTEOUS_FURY = 25780;
+    constexpr uint32 SPELL_FROST_PRESENCE = 48263;
+    switch (bot->GetShapeshiftForm())
+    {
+        case FORM_DEFENSIVESTANCE:
+        case FORM_BEAR:
+        case FORM_DIREBEAR:
+            return true;
+        default:
+            break;
+    }
+    return bot->HasAura(SPELL_RIGHTEOUS_FURY) || bot->HasAura(SPELL_FROST_PRESENCE);
+}
+
 void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger,
     bool raid)
 {
@@ -484,6 +500,10 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     ArenaDefinition const& arena = _scenario.Arena(env);
     float const drill = seatIndex == 0 && arena.DrillRole && arena.DrillRole == state.DungeonRole
         ? tuning.DrillWeight : 1.0f;
+    // The tank in its tanking stance, form or aura while it fights: what a protection warrior, a bear or a paladin with
+    // Righteous Fury takes far less from, and holds a pull with.
+    if (tank && !arena.Owner && bot->IsInCombat() && InTankingStance(bot))
+        ledger.Add(RewardTerm::Threat, drill * tuning.TankStance * scale);
     if (tank && !arena.Owner)
     {
         seat.EnemiesHeld += onBot;
@@ -521,6 +541,15 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             if (Player* mate = env.FindBot(member); mate && data.Seats[member].L && mate->IsAlive())
                 kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
         ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * float(kept) * scale);
+
+        // Healing that landed on no missing health: what it cast, less what it healed on itself, its allies and the
+        // other seats.
+        uint64 effective = step.SelfHealing + step.AllyHealing;
+        for (uint64 healed : step.AgentHealingBy)
+            effective += healed;
+        if (step.HealingRaw > effective)
+            ledger.Add(RewardTerm::TeammateHealing, -drill * tuning.Overheal * float(step.HealingRaw - effective)
+                / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
     else if (raid && !HoldsThePull(apt))
         ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);

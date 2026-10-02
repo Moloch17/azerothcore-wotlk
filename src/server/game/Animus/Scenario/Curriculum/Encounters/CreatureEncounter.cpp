@@ -202,7 +202,7 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
 
         // Shooting from range, and a pet holding the opponent.
         CombatReward::RangedAndPet(bot, seatState, env.StepStats[seat], opponent,
-            float(std::max<uint32>(1, opponent->GetMaxHealth())), meleed, tuning, decisionMs, ledger);
+            float(std::max<uint32>(1, opponent->GetMaxHealth())), meleed, true, tuning, decisionMs, ledger);
     }
 
     // The outcome, once: a kill without a death is a win, a death or the clock a loss.

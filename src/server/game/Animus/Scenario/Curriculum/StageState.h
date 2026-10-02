@@ -47,6 +47,7 @@ namespace Animus::Curriculum
     struct CombatTally
     {
         uint64 DamageTaken = 0;
+        float PetTankPaid = 0.0f;               // Duel.PetTank paid this episode, up to Duel.PetTankMax
         float LastDistance = -1.0f;             // approach shaping: excess distance at the last reward; < 0 = none yet
         bool Killed = false;                    // its opponent died (pack: the pull was cleared)
         uint32 KillTimeMs = 0;

@@ -5910,6 +5910,11 @@ AnimusForge.Curriculum.Raid.PulledOff = 0.004
 AnimusForge.Curriculum.Raid.DrillWeight = 3.0
 #   healers (party and raid): per group member above 50% health per decision, the same charged per member below 35%
 AnimusForge.Curriculum.Raid.KeepUp = 0.0002
+#   healers, party and raid: healing cast that landed on nobody's missing health, as a share of the healer's health
+AnimusForge.Curriculum.Raid.Overheal = 1.0
+#   tanks, party and raid: per decision in a fight in the spec's tanking stance, form or aura (Defensive Stance, Bear
+#   Form, Righteous Fury, Frost Presence)
+AnimusForge.Curriculum.Raid.TankStance = 0.001
 #   raid damage dealers: own damage as a share of the level's damage scale, times this
 AnimusForge.Curriculum.Raid.Output = 0.5
 #   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
@@ -5979,6 +5984,9 @@ AnimusForge.Curriculum.Duel.ShotPaused = 0.05
 #   duel and pack, any class with a pet: the damage the pet takes, as a share of the seat's own health (a pet holding
 #   enemies off its owner)
 AnimusForge.Curriculum.Duel.PetTank = 0.5
+#   ... at most this an episode (healing the pet while it soaks would farm it); never in a party's or raid's arena,
+#   where a pet holding enemies takes them off the tank
+AnimusForge.Curriculum.Duel.PetTankMax = 1.5
 #   the range the approach shaping aims for, melee specs
 AnimusForge.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs

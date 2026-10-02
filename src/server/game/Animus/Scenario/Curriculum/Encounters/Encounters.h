@@ -546,6 +546,9 @@ namespace Animus::Curriculum
         /// The first seat of the group `seat` is in: a party is one group, a raid is RAID_GROUPS of them.
         [[nodiscard]] static uint32 GroupFirstSeat(uint32 seat) { return seat / GROUP_SEATS * GROUP_SEATS; }
         void Disband(Env& env);
+        /// In the spec's tanking stance, form or aura: Defensive Stance, Bear or Dire Bear Form, Righteous Fury, Frost
+        /// Presence.
+        [[nodiscard]] static bool InTankingStance(Player const* bot);
         /// Each role paid for its own part, and idling charged (Raid.*).
         void RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger, bool raid);
 

@@ -246,17 +246,23 @@ void Animus::Curriculum::CombatReward::Style(Player const* bot, Unit const* targ
     tally.WasSnared = snared;
 }
 
-void Animus::Curriculum::CombatReward::RangedAndPet(Player* bot, SeatState const& seat, AgentStats const& step,
-    Unit const* target, float enemyHealth, bool meleed, CurriculumTuning::DuelTuning const& tuning, uint32 decisionMs,
-    RewardLedger& ledger)
+void Animus::Curriculum::CombatReward::RangedAndPet(Player* bot, SeatState& seat, AgentStats const& step,
+    Unit const* target, float enemyHealth, bool meleed, bool petTank, CurriculumTuning::DuelTuning const& tuning,
+    uint32 decisionMs, RewardLedger& ledger)
 {
     if (!bot || !bot->IsAlive())
         return;
 
     // The pet's blows taken, against the owner's health: what it held off the seat. Every pet class, a hunter's too.
-    if (step.PetDamageTaken)
-        ledger.Add(RewardTerm::PetTank,
+    // Capped per episode (Duel.PetTankMax), or healing the pet while it soaks would be a way to farm it; and only
+    // alone -- beside a party's tank a pet holding enemies is a pet taking them off the tank.
+    if (petTank && step.PetDamageTaken && seat.Combat.PetTankPaid < tuning.PetTankMax)
+    {
+        float const pay = std::min(tuning.PetTankMax - seat.Combat.PetTankPaid,
             tuning.PetTank * float(step.PetDamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())));
+        seat.Combat.PetTankPaid += pay;
+        ledger.Add(RewardTerm::PetTank, pay);
+    }
 
     // A spec that fights with a ranged weapon (the hunter's): its shots from range, and its shooting stopped by moving
     // when nothing made it move. Casters' wands are left alone -- paying for a wand would teach a mage to wand.

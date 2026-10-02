@@ -1492,8 +1492,9 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         for (uint32 slot = 0; slot < env.Targets.size() && !meleed; ++slot)
             if (Unit* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
                 meleed = enemy->GetVictim() == bot && enemy->IsWithinMeleeRange(bot);
+        ArenaDefinition const& arena = _scenario.Arena(env);
         CombatReward::RangedAndPet(bot, seat, step, env.FindTargetUnit(seat.TargetSlot), pullHealth, meleed,
-            _scenario.Tuning().Duel, _scenario.DecisionMs(), ledger);
+            !arena.PartyGroup && !arena.Owner, _scenario.Tuning().Duel, _scenario.DecisionMs(), ledger);
     }
     CombatReward::Approach(bot, nearest && bot->IsAlive() ? nearest : nullptr,
         CombatReward::DesiredRange(seat, _scenario.Tuning().Duel), dense * tuning.Approach, tally, ledger);

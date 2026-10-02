@@ -111,6 +111,14 @@ namespace Animus::Curriculum
             /// charged per member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
             float KeepUp = 0.0002f;
+            /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share of
+            /// their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
+            /// (2026-10-02, stage6 at 41M): healing late, big, and on the full.
+            float Overheal = 1.0f;
+            /// Tanks in a party or a raid, per decision in a fight: in the spec's tanking stance, form or aura
+            /// (Defensive Stance, Bear Form, Righteous Fury, Frost Presence). Warrior tanks finished 27 of 38 drill
+            /// fights in Battle Stance (stage6 at 41M).
+            float TankStance = 0.001f;
             /// Damage dealers in a raid: their own damage as a share of the level's damage scale, times this.
             float Output = 0.5f;
             /// Party and raid: per decision in a fight with an enemy in reach, once nothing the seat did served or
@@ -194,6 +202,7 @@ namespace Animus::Curriculum
             /// owner (a Voidwalker, a hunter's pet). Warlocks lost two packs in three with their pets doing a sixth
             /// of their damage and none of the holding (2026-10-02, stage5 at 60M).
             float PetTank = 0.5f;
+            float PetTankMax = 1.5f;            // ... at most this an episode
             float MeleeRange = 3.5f;            // the range the approach shaping aims for, melee specs
             float RangedRange = 25.0f;          // ... ranged specs
         } Duel;
@@ -1096,6 +1105,8 @@ namespace Animus::Curriculum
             f("Raid.PulledOff", tuning.Raid.PulledOff);
             f("Raid.DrillWeight", tuning.Raid.DrillWeight);
             f("Raid.KeepUp", tuning.Raid.KeepUp);
+            f("Raid.Overheal", tuning.Raid.Overheal);
+            f("Raid.TankStance", tuning.Raid.TankStance);
             f("Raid.Output", tuning.Raid.Output);
             f("Raid.Idle", tuning.Raid.Idle);
             f("Raid.IdleMs", tuning.Raid.IdleMs);
@@ -1124,6 +1135,7 @@ namespace Animus::Curriculum
             f("Duel.ShotAtRange", tuning.Duel.ShotAtRange);
             f("Duel.ShotPaused", tuning.Duel.ShotPaused);
             f("Duel.PetTank", tuning.Duel.PetTank);
+            f("Duel.PetTankMax", tuning.Duel.PetTankMax);
             f("Duel.MeleeRange", tuning.Duel.MeleeRange);
             f("Duel.RangedRange", tuning.Duel.RangedRange);
 
