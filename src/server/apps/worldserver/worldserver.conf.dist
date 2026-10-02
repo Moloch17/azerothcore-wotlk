@@ -5970,6 +5970,15 @@ AnimusForge.Curriculum.Duel.InterruptArea = 2.0
 AnimusForge.Curriculum.Duel.InterruptLong = 1.5
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 AnimusForge.Curriculum.Duel.Spacing = 0.1
+#   duel and pack, a spec fighting with a ranged weapon (the hunter's): its shots landed while nothing hits it in
+#   melee reach, as a share of the fight's enemy health, on top of DamageDealt
+AnimusForge.Curriculum.Duel.ShotAtRange = 1.0
+#   duel and pack: per second that spec moves with Auto Shot running while its target is alive and within 35 yd,
+#   nothing hits it in melee reach and nothing on the ground hurts it (moving stops the shots)
+AnimusForge.Curriculum.Duel.ShotPaused = 0.05
+#   duel and pack, any class with a pet: the damage the pet takes, as a share of the seat's own health (a pet holding
+#   enemies off its owner)
+AnimusForge.Curriculum.Duel.PetTank = 0.5
 #   the range the approach shaping aims for, melee specs
 AnimusForge.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs

@@ -182,6 +182,18 @@ namespace Animus::Curriculum
             /// 0.03 cost a mage about 0.4 a fight against 15 for a kill, and mages spent 60-75% of their duels in melee
             /// range, dying to elites they let close (2026-10-02, stage4 at 160M); 0.1 puts 15 s in melee at 1.5.
             float Spacing = 0.1f;
+            /// A ranged spec's shots (Auto Shot, Steady Shot, a wand) landed while nothing hits it in melee reach, as a
+            /// share of the fight's enemy health, on top of DamageDealt: shooting from range is worth more than the
+            /// same damage in melee. Duel and pack. Hunters let packs close and fought half of each pull in melee
+            /// (2026-10-02, stage5 at 60M): Spacing alone was outweighed by finishing sooner.
+            float ShotAtRange = 1.0f;
+            /// Per second a seat with Auto Shot (or Shoot) running moves while its target is alive and in range and
+            /// nothing hits it in melee reach and nothing on the ground hurts it: moving stops the shots.
+            float ShotPaused = 0.05f;
+            /// The damage the seat's pet takes, as a share of the seat's own health: a pet holding enemies off its
+            /// owner (a Voidwalker, a hunter's pet). Warlocks lost two packs in three with their pets doing a sixth
+            /// of their damage and none of the holding (2026-10-02, stage5 at 60M).
+            float PetTank = 0.5f;
             float MeleeRange = 3.5f;            // the range the approach shaping aims for, melee specs
             float RangedRange = 25.0f;          // ... ranged specs
         } Duel;
@@ -1109,6 +1121,9 @@ namespace Animus::Curriculum
             f("Duel.InterruptArea", tuning.Duel.InterruptArea);
             f("Duel.InterruptLong", tuning.Duel.InterruptLong);
             f("Duel.Spacing", tuning.Duel.Spacing);
+            f("Duel.ShotAtRange", tuning.Duel.ShotAtRange);
+            f("Duel.ShotPaused", tuning.Duel.ShotPaused);
+            f("Duel.PetTank", tuning.Duel.PetTank);
             f("Duel.MeleeRange", tuning.Duel.MeleeRange);
             f("Duel.RangedRange", tuning.Duel.RangedRange);
 

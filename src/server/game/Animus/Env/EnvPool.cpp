@@ -538,6 +538,11 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     if (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT)
         return;
 
+    // Damage an agent's pet or guardian takes: what it held off its owner.
+    if (ObjectGuid const owner = victim->GetCharmerOrOwnerGUID(); !owner.IsEmpty() && !victim->IsPlayer())
+        if (auto const master = _agents.find(owner); master != _agents.end())
+            _envs[master->second.Env].StepStats[master->second.Agent].PetDamageTaken += damage;
+
     // Damage an agent takes. The victim is the agent itself (pets absorb their own damage).
     auto const hit = _agents.find(victim->GetGUID());
     if (hit != _agents.end())

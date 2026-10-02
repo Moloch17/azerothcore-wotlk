@@ -80,6 +80,13 @@ namespace Animus::Curriculum
         /// the time. Counted for whatever the seat is fighting, so a pack's target counts as a duel's opponent does.
         void Style(Player const* bot, Unit const* target, uint32 decisionMs, CombatTally& tally);
 
+        /// A ranged spec's shooting and a pet's tanking (Duel.ShotAtRange, Duel.ShotPaused, Duel.PetTank), in the duel
+        /// and the pack. `enemyHealth` is what the fight's damage is a fraction of (the opponent's, the pull's);
+        /// `meleed` whether an enemy is hitting the seat in melee reach; `target` what the seat is fighting.
+        void RangedAndPet(Player* bot, SeatState const& seat, AgentStats const& step, Unit const* target,
+            float enemyHealth, bool meleed, CurriculumTuning::DuelTuning const& tuning, uint32 decisionMs,
+            RewardLedger& ledger);
+
         /// The fraction of the episode length not yet spent since `sinceMs`. The fast kill and clear bonuses count
         /// from the engagement, so the approach, stealth and preparation before it cost nothing but the discount.
         [[nodiscard]] float TimeLeftSince(Env const& env, uint32 sinceMs);

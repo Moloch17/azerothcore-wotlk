@@ -269,6 +269,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PullsEncounter::
 
     // Control is paid for a single pack too (Pulls.SinglePackControl), so every pulls stage carries the term.
     terms.push_back(RewardTerm::Control);
+    terms.push_back(RewardTerm::Ranged);
+    terms.push_back(RewardTerm::PetTank);
     // A camp charges a second pack in the fight as the dungeon charges a crowd (Pulls.CampExtraPack).
     if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Schedule == PullSchedule::Camp; }))
         terms.push_back(RewardTerm::Threat);
@@ -1481,6 +1483,18 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         -dense * (Gauntlet(env) ? tuning.GauntletDamageTaken : tuning.DamageTaken) * seat.LastStepDamageTaken);
 
     CombatReward::Casting(bot, step, tally, _scenario.Tuning().Casting, ledger);
+
+    // Shooting from range, and a pet holding enemies off its owner (Duel.ShotAtRange, ShotPaused, PetTank), as in the
+    // duel.
+    if (pullHealth > 0.0f)
+    {
+        bool meleed = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !meleed; ++slot)
+            if (Unit* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
+                meleed = enemy->GetVictim() == bot && enemy->IsWithinMeleeRange(bot);
+        CombatReward::RangedAndPet(bot, seat, step, env.FindTargetUnit(seat.TargetSlot), pullHealth, meleed,
+            _scenario.Tuning().Duel, _scenario.DecisionMs(), ledger);
+    }
     CombatReward::Approach(bot, nearest && bot->IsAlive() ? nearest : nullptr,
         CombatReward::DesiredRange(seat, _scenario.Tuning().Duel), dense * tuning.Approach, tally, ledger);
 

@@ -109,6 +109,10 @@ namespace Animus::Curriculum
         DeathRun,
         /// Every second an engaged enemy lives (Output.Clock): what makes killing faster pay.
         CombatClock,
+        /// A ranged spec shooting from range, and its shooting stopped by moving when nothing made it move (Duel.Shot*).
+        Ranged,
+        /// A pet taking the enemies' blows instead of its owner (Duel.PetTank).
+        PetTank,
         Count
     };
 

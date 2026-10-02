@@ -41,6 +41,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CreatureEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing,
+        RewardTerm::Ranged, RewardTerm::PetTank,
         RewardTerm::Readiness, RewardTerm::Interrupt };
 }
 
@@ -194,9 +195,14 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
         // A ranged spec with the opponent hitting it in melee.
+        bool const meleed = opponent->GetVictim() == bot && opponent->IsWithinMeleeRange(bot);
         if (bot->IsAlive() && seatState.L && seatState.L->Profile->Specs[seatState.Spec].Range != RangeBand::Melee
-            && opponent->GetVictim() == bot && opponent->IsWithinMeleeRange(bot))
+            && meleed)
             ledger.Add(RewardTerm::Spacing, -tuning.Spacing * seconds);
+
+        // Shooting from range, and a pet holding the opponent.
+        CombatReward::RangedAndPet(bot, seatState, env.StepStats[seat], opponent,
+            float(std::max<uint32>(1, opponent->GetMaxHealth())), meleed, tuning, decisionMs, ledger);
     }
 
     // The outcome, once: a kill without a death is a win, a death or the clock a loss.

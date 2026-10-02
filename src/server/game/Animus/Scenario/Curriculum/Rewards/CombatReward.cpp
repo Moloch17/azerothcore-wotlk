@@ -90,6 +90,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Timeout:               return "timeout";
         case RewardTerm::Stall:                 return "stall";
         case RewardTerm::Spacing:               return "spacing";
+        case RewardTerm::Ranged:                return "ranged";
+        case RewardTerm::PetTank:               return "pet_tank";
         case RewardTerm::Readiness:             return "readiness";
         case RewardTerm::Control:               return "control";
         case RewardTerm::SelfHealing:           return "self_healing";
@@ -242,4 +244,29 @@ void Animus::Curriculum::CombatReward::Style(Player const* bot, Unit const* targ
         ++tally.SnaresApplied;
     tally.WasRooted = rooted;
     tally.WasSnared = snared;
+}
+
+void Animus::Curriculum::CombatReward::RangedAndPet(Player* bot, SeatState const& seat, AgentStats const& step,
+    Unit const* target, float enemyHealth, bool meleed, CurriculumTuning::DuelTuning const& tuning, uint32 decisionMs,
+    RewardLedger& ledger)
+{
+    if (!bot || !bot->IsAlive())
+        return;
+
+    // The pet's blows taken, against the owner's health: what it held off the seat. Every pet class, a hunter's too.
+    if (step.PetDamageTaken)
+        ledger.Add(RewardTerm::PetTank,
+            tuning.PetTank * float(step.PetDamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())));
+
+    // A spec that fights with a ranged weapon (the hunter's): its shots from range, and its shooting stopped by moving
+    // when nothing made it move. Casters' wands are left alone -- paying for a wand would teach a mage to wand.
+    if (!seat.L || seat.Spec >= seat.L->Profile->Specs.size()
+        || seat.L->Profile->Specs[seat.Spec].Stats != StatProfile::Ranged)
+        return;
+    if (!meleed && step.ShotDamage && enemyHealth > 0.0f)
+        ledger.Add(RewardTerm::Ranged, tuning.ShotAtRange * float(step.ShotDamage) / enemyHealth);
+    constexpr float SHOT_RANGE = 35.0f;
+    if (bot->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL) && bot->isMoving() && !meleed && !step.HazardDamage && target
+        && target->IsAlive() && target->IsInMap(bot) && bot->GetExactDist(target) <= SHOT_RANGE)
+        ledger.Add(RewardTerm::Ranged, -tuning.ShotPaused * float(decisionMs) / 1000.0f);
 }
