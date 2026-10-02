@@ -148,9 +148,6 @@ namespace Animus::Curriculum
         uint8 DrillRole = 0;
         /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
         uint32 PackHealthPct = 100;
-        /// A party's run of pulls (PullSchedule::Sequence): wipes it may come back from. The party stands up, and the
-        /// pull that wiped it comes again; the pulls cleared stay cleared. 0 = the first wipe ends it.
-        uint32 WipesAllowed = 0;
         /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
         /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
         /// would pay for an agent with nothing to say.

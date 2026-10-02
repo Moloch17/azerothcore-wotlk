@@ -1,7 +1,7 @@
 # Stage 7: the group (2026-10-02, the Deadmines curriculum). The proper party under a learned director, on a corridor
-# of eight pulls laid out as a dungeon's are -- trash, then elites, then three elites two levels up -- with food and
-# drink to rest on between them and two wipes to stand up from; and camps to pull through. Ends on convergence; the
-# budget is a ceiling.
+# of pulls laid out as a dungeon's are -- trash, then elites, then three elites two levels up -- with food and drink to
+# rest on between them, on its own ladder (three pulls and three wipes to spare up to eight and one); and camps.
+# Ends on convergence; the budget is a ceiling.
 
 extends: stage6_roles.yaml
 run_name: stage7_group
@@ -11,6 +11,6 @@ total_env_steps: 400000000
 eval:
   every_env_steps: 20000000
   episodes: 64
-  report: [pulls_cleared, clean_kill, wipes, teammates_died, engage_health, engage_mana, tank_hold_share,
+  report: [run_rung, pulls_cleared, clean_kill, wipes, teammates_died, engage_health, engage_mana, tank_hold_share,
            tank_target_share, pulled_off_seconds, low_health_seconds, healing_per_mana, camp_peak_packs,
            camp_clean_packs, director_member_orders, rest_seconds, dps_scaled, level]

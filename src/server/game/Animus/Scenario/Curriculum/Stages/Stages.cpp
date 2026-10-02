@@ -582,18 +582,19 @@ namespace
 
         // The group: the whole party under a learned director, on a corridor of pulls laid out as a dungeon's are
         // (PullSchedule::Sequence, GROUP_PULLS: trash, then elites, then three elites two levels up), with food and
-        // drink to rest on between them and two wipes it can stand up from; and camps to pull through.
+        // drink to rest on between them; its rungs (GROUP_RUNGS) go from three pulls with three wipes to stand up
+        // from to eight with one, two levels up. And camps to pull through.
         stages.push_back({
             .Name = "stage7_group",
             .Suffix = "_group",
             .Extends = "stage6_roles",
-            .Summary = "a proper party under a director: a corridor of eight pulls with two wipes to spare, and camps",
+            .Summary = "a proper party under a director: a corridor of up to eight pulls, wipes to spare, and camps",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Crowd, Hint,
                 Goal },
             .Arenas = {
                 { .Name = "corridor", .Weight = 2, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Sequence, .PartyGroup = true, .EpisodeSeconds = 900,
-                    .ProperParty = true, .WipesAllowed = 2, .Directed = true, .DirectorLearned = true },
+                    .ProperParty = true, .Directed = true, .DirectorLearned = true },
                 { .Name = "camp", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                     .Schedule = PullSchedule::Camp, .PartyGroup = true, .EpisodeSeconds = 360,
                     .ProperParty = true, .Directed = true, .DirectorLearned = true },
@@ -1045,8 +1046,6 @@ namespace
             return "a camp is a proper party's pull drill, read through the crowd block";
         if (arena.PackHealthPct != 100 && (!pulls || arena.PackHealthPct == 0))
             return "pack health is a percentage of a pull's creatures' own";
-        if (arena.WipesAllowed && (arena.Schedule != PullSchedule::Sequence || !arena.PartyGroup))
-            return "wipes to spare are a party's run of pulls'";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
         if (arena.OwnerCast && !arena.Owner)

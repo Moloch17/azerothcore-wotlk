@@ -95,7 +95,7 @@ map of its own (`ArenaDefinition::MapId`), which is how one stage mixes Kalimdor
 | `stage4_duel` | stage3_rotation | Solo | (−pack) | **Something that fights back.** A same-level creature out of aggro range: close in and kill it fast, taking little damage; a quarter in a lake |
 | `stage5_pack` | stage4_duel (+ stage3_rotation) | Solo | + pack, gauntlet, support (−travel) | A pack of 2-4, casters included, usually linked: targets, interrupts, crowd control. A third have a hazard caster (`hazards`): fire underfoot, under a pack. Heals, shields, food and drink start here |
 | `stage6_roles` | stage5_pack | Party (5) | + companion, party, order, crowd, hint | **The roles, one drilled a fight**, by a proper party (a tank, a healer, three damage dealers by gear) at 15-30. `tank_hold`: hold a pack. `heal_keep`: keep the party up through a pack of twice its health. `damage_discipline`: kill the tank's target without taking it (`Raid.TankTarget`, `Raid.PulledOff`). `pull`: a camp of 2-4 packs standing apart (`PullSchedule::Camp`), pulled one at a time (`Pulls.CampCleanPack`, `Pulls.CampExtraPack`). The drilled role is seat 0 and weighs `Raid.DrillWeight`; each drill climbs its own rungs |
-| `stage7_group` | stage6_roles | Party (5) | same | **The group** under a learned director: a corridor of eight pulls (`GROUP_PULLS`: trash, elites, three elites two levels up) with two wipes to stand up from (`WipesAllowed`), and camps |
+| `stage7_group` | stage6_roles | Party (5) | same | **The group** under a learned director: a corridor of pulls (`GROUP_PULLS`: trash, elites, three elites two levels up) on its own ladder (`GROUP_RUNGS`: three pulls with three wipes to stand up from, up to eight with one, two levels up), and camps |
 | `stage8_ragefire` | stage7_group | Party (5) | same | **Ragefire Chasm** from its door to Bazzalan, by five seats of its level range under a director, on the whole dungeon's ladder (4.11, `stage9_deadmines`). The script's seats and hints only with `Instance.WingSupport` |
 | `stage9_deadmines` | stage8_ragefire | Party (5) | same | **The Deadmines** from its door to VanCleef, the same way: the goal's own dungeon. Every run opens a fresh instance with every creature alive. No end: trained until it is stopped by hand |
 | `stage10_raid_pulls` | stage9_deadmines | Raid | same | Forty seats in eight groups under one director: a single elite and its adds, and a run of raid pulls. Its own env count |
@@ -1792,7 +1792,8 @@ dungeon draws them) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only ca
 
 The drilled seat is seat 0 and its role's terms weigh `Raid.DrillWeight` (3); the others earn their own role's, so
 every arena trains every role a little. The single packs climb `PARTY_RUNGS` (2 creatures up to three elites a level
-above) and the camp `CAMP_RUNGS` (two pairs 30 yd apart up to four pairs 15 yd apart with elites, a level above),
+above) and the camp `CAMP_RUNGS` (two pairs 30 yd apart up to three pairs 15 yd apart with elites, two of them one pull
+(linked), and a patrolling pair walking the camp, a level above),
 each on its own ladder per class and build, as the pack stage's do. A party's single pack ends on its clear (it used
 to run to the clock, paying the clear every decision).
 
@@ -1809,11 +1810,13 @@ damage dealer's), `low_health_seconds`, `healing_per_mana` and `overheal_share` 
 
 ### `stage7_group`
 
-The whole party under a learned director, on a **corridor** of eight pulls (`PullSchedule::Sequence` with a party:
-`GROUP_PULLS`, trash, then elites, then three elites two levels up), food and drink to rest on between, and two wipes
-it can stand up from (`ArenaDefinition::WipesAllowed`: the party stands up, the pull that wiped it comes again, the
-pulls cleared stay cleared); and camps. Read `pulls_cleared`, `wipes`, `engage_health`/`engage_mana` and the roles'
-columns in a mixed fight.
+The whole party under a learned director, on a **corridor** of pulls (`PullSchedule::Sequence` with a party:
+`GROUP_PULLS`, trash, then elites, then three elites two levels up), food and drink to rest on between, and wipes it
+can stand up from (the party stands up, the pull that wiped it comes again, the pulls cleared stay cleared); and
+camps. The run climbs its own ladder per class and build of seat 0 (`GROUP_RUNGS`): three pulls with three wipes to
+spare, then five, six and eight pulls with fewer, then eight with one, a level and two levels up. A shorter run takes
+`GROUP_PULLS` spread over its length, so it still opens on trash and ends on the elites. Read `run_rung`,
+`pulls_cleared`, `wipes`, `engage_health`/`engage_mana` and the roles' columns in a mixed fight.
 
 ### `stage8_ragefire`
 

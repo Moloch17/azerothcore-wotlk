@@ -316,7 +316,30 @@ namespace Animus::Curriculum
             uint32 CampPeak = 0;                // ... and the most at once this episode
             uint32 CampClean = 0;               // packs killed on their own this episode
             uint32 CampQuietMs = 0;             // episode time nothing of the camp was last in a fight
+            int8 PatrolPack = -1;               // the camp's patrol, as a pack number; -1 without one ...
+            Position PatrolA;                   // ... walking between its first pack and its last
+            Position PatrolB;
+            bool PatrolToB = false;
+            // A party's run (GroupRun): its rung on the run ladder and what the rung gave it.
+            uint32 RunRung = 0;
+            uint32 RunLength = 0;               // pulls; 0 = the whole planned run
+            uint32 RunWipes = 0;                // wipes it may stand up from
+            uint32 RunLevels = 0;               // above the seat's, on every pull
+            bool RunCounts = false;
+            bool RunRecorded = false;
         };
+
+        /// A party's planned run (PullSchedule::Sequence with a party of its own): the group stage's corridor, on
+        /// its own ladder.
+        [[nodiscard]] bool GroupRun(Env const& env) const
+        {
+            ArenaDefinition const& arena = _scenario.Arena(env);
+            return arena.Schedule == PullSchedule::Sequence && arena.PartyGroup && arena.Seats == SeatPlan::Party;
+        }
+        /// The pulls in this env's planned run.
+        [[nodiscard]] uint32 RunLength(Env const& env) const;
+        /// A party's run ended: won (every pull cleared) or lost; it moves the run ladder once.
+        void RecordRun(Env& env, bool won);
 
         /// A camp of packs (PullSchedule::Camp): the pull drill.
         [[nodiscard]] bool Camp(Env const& env) const
@@ -399,8 +422,10 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 MaxRung(Env const& env) const;
         bool SpawnPull(Env& env, Map* map);
         /// A camp of `packs` packs of `size`, `elites` of them with an elite, `levels` above the seat, each `spacing`
-        /// yards or more on from the one before (PullSchedule::Camp).
-        bool SpawnCamp(Env& env, Map* map, uint32 packs, uint32 size, uint32 elites, uint32 levels, float spacing);
+        /// yards or more on from the one before (PullSchedule::Camp); `linked`, the second and third are one pull;
+        /// `patrol`, a pair more walks from the first to the last and back.
+        bool SpawnCamp(Env& env, Map* map, uint32 packs, uint32 size, uint32 elites, uint32 levels, float spacing,
+            bool linked, bool patrol);
         /// A pull is up: its clock, its arrival, and the seats' per-pull tallies start again.
         void StartPull(Env& env);
         /// The seat drawn as the party's tank (StageState's DungeonRole) while it is up; nullptr without one.
@@ -412,6 +437,7 @@ namespace Animus::Curriculum
         std::vector<EnvPulls> _envs;
         DifficultyLadder _ladder;
         DifficultyLadder _campLadder;       // a camp's rungs are a different ladder from a pack's
+        DifficultyLadder _groupLadder;      // ... and a party's run another
     };
 
     /// A player of a random class and role near the seats' level, whom the seats fight for (companion and party
