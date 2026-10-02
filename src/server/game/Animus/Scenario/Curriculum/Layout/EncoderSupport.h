@@ -138,6 +138,9 @@ namespace Animus::Curriculum::Encoding
     [[nodiscard]] SpellInfo const* CancellableForm(Player const* bot);
 
     [[nodiscard]] bool IsCrowdControlled(Unit const* unit);
+    /// Whether `unit` is held by crowd control that `by` (or its pet, guardian or totem) put on it: a stun, fear,
+    /// incapacitate, sleep, root, silence or transform cast by someone else does not count.
+    [[nodiscard]] bool CrowdControlledBy(Unit const* unit, Unit const* by);
 
     /// The hostile ground effects the unit is standing in (persistent area auras: a fire pool, a poison cloud, a
     /// consecration), counted, with the one it is deepest inside. Read from the unit's own aura list -- a ground

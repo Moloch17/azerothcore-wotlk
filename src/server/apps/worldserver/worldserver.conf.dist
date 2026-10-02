@@ -6184,7 +6184,7 @@ AnimusForge.Curriculum.Goals.RecoverValue = 1.0
 AnimusForge.Curriculum.Goals.ProtectValue = 1.0
 #   Protect is also reached by keeping its friend above half health while it is attacked for this long (ms), as
 #   well as by healing it back above 70%
-AnimusForge.Curriculum.Goals.ProtectHoldMs = 8000
+AnimusForge.Curriculum.Goals.ProtectHoldMs = 5000
 AnimusForge.Curriculum.Goals.TravelValue = 0.1
 AnimusForge.Curriculum.Goals.WorldValue = 0.2
 #   the secondary goal held beside the primary: paid this share of what the primary would be (reaching it, closing

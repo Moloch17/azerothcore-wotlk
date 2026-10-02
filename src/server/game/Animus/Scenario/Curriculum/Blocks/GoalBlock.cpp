@@ -208,8 +208,11 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
                 reached = !enemy->IsAlive();
             break;
         case SeatGoal::Control:
+            // By the seat's own crowd control: in a party somebody's stun or fear held the named enemy most of the
+            // time, and Control became the goal heads' favourite free completion (half of all goals, 2026-10-02,
+            // stage7).
             if (Unit* enemy = enemyAt(target - GOAL_TARGET_ENEMY_FIRST))
-                reached = enemy->IsAlive() && Encoding::IsCrowdControlled(enemy);
+                reached = enemy->IsAlive() && Encoding::CrowdControlledBy(enemy, bot);
             break;
         case SeatGoal::Recover:
             reached = bot->GetHealthPct() >= 90.0f && mana >= 0.8f;

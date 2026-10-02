@@ -689,6 +689,27 @@ namespace Animus::Curriculum::Encoding
             || unit->HasAuraType(SPELL_AURA_MOD_PACIFY_SILENCE) || unit->HasAuraType(SPELL_AURA_TRANSFORM);
     }
 
+    bool CrowdControlledBy(Unit const* unit, Unit const* by)
+    {
+        if (!unit || !by || !IsCrowdControlled(unit))
+            return false;
+        constexpr std::array<AuraType, 8> CONTROL_AURAS = { SPELL_AURA_MOD_STUN, SPELL_AURA_MOD_FEAR,
+            SPELL_AURA_MOD_CONFUSE, SPELL_AURA_MOD_ROOT, SPELL_AURA_MOD_SILENCE, SPELL_AURA_MOD_PACIFY_SILENCE,
+            SPELL_AURA_TRANSFORM, SPELL_AURA_MOD_PACIFY };
+        ObjectGuid const seat = by->GetGUID();
+        for (AuraType const type : CONTROL_AURAS)
+            for (AuraEffect const* effect : unit->GetAuraEffectsByType(type))
+            {
+                ObjectGuid const caster = effect->GetCasterGUID();
+                if (caster == seat)
+                    return true;
+                if (Unit const* source = caster.IsEmpty() ? nullptr : ObjectAccessor::GetUnit(*unit, caster);
+                    source && source->GetCharmerOrOwnerGUID() == seat)
+                    return true;
+            }
+        return false;
+    }
+
     void WriteOpponentType(Unit const* unit, float* out)
     {
         uint32 const type = unit->IsPlayer() ? CREATURE_TYPE_HUMANOID : unit->GetCreatureType();
