@@ -152,8 +152,8 @@ stage trains its whole budget).
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 250M | 5M | 2048 | `stage2_travel` | 250M | 5M | 2048 |
 | `stage3_rotation` | 250M | 5M | 2048 | `stage4_duel` | 250M | 10M | 2048 |
-| `stage5_pack` | 250M | 10M | 2048 | `stage6_roles` | 400M | 20M | 64 |
-| `stage7_group` | 400M | 20M | 64 | `stage8_ragefire` | 1500M | 40M | 64 |
+| `stage5_pack` | 250M | 10M | 2048 | `stage6_roles` | 400M | 20M | 384 |
+| `stage7_group` | 400M | 20M | 384 | `stage8_ragefire` | 1500M | 40M | 64 |
 | `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 250M | 10M | 64 |
 | `stage11_raids` | 250M | 10M | 128 | | | | |
 | `stage12_duel_pvp` | 250M | 10M | 2048 | `stage13_escape` | 250M | 10M | 2048 |
