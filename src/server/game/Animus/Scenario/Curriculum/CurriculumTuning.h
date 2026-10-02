@@ -111,8 +111,8 @@ namespace Animus::Curriculum
             /// charged per member below 35%. Per 50 ms of tuning (DecisionScale): four members kept up over a 300 s fight pay
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
             float KeepUp = 0.0002f;
-            /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share of
-            /// their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
+            /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share
+            /// of their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
             /// (2026-10-02, stage6 at 41M): healing late, big, and on the full.
             float Overheal = 1.0f;
             /// Tanks in a party or a raid, per decision in a fight: in the spec's tanking stance, form or aura
