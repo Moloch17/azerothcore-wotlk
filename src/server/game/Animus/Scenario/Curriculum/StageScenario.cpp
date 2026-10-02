@@ -2126,7 +2126,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                 // knight lifted every seat to 55.
                 uint8 const capLevel = _stage.FocusChance >= 100 ? _stage.FocusLevelLast : 0;
                 std::vector<Casting> fits;
-                for (Casting const& casting : Castings(s.Want))
+                // By spec alone: a demand's measured aptitude never let a bear druid hold the pull, so no party drew
+                // one (2026-10-02, stage6: 1,920 seats, no feral bear).
+                for (Casting const& casting : Castings(AptitudeDemand::Anything()))
                     if (FitsDungeonRole(casting, s.DungeonRole)
                         && (!capLevel || (casting.L && casting.L->Assets->Kit->MinLevel() <= capLevel)))
                         fits.push_back(casting);
@@ -2185,7 +2187,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             if (!s.L || s.L->Assets->Kit->MinLevel() <= data.EpisodeLevel)
                 continue;
             std::vector<Casting> fits;
-            for (Casting const& casting : Castings(s.Want))
+            AptitudeDemand const demand = s.DungeonRole != DUNGEON_ANY ? AptitudeDemand::Anything() : s.Want;
+            for (Casting const& casting : Castings(demand))
                 if (casting.L && casting.L->Assets->Kit->MinLevel() <= data.EpisodeLevel
                     && FitsDungeonRole(casting, s.DungeonRole))
                     fits.push_back(casting);

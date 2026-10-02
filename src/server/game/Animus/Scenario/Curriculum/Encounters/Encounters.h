@@ -341,6 +341,14 @@ namespace Animus::Curriculum
         /// A party's run ended: won (every pull cleared) or lost; it moves the run ladder once.
         void RecordRun(Env& env, bool won);
 
+        /// A proper party's single pack (the roles stage's tank, healer and damage drills): up to MAX_TARGETS
+        /// creatures, ordered as a camp's.
+        [[nodiscard]] bool PartyDrill(Env const& env) const
+        {
+            ArenaDefinition const& arena = _scenario.Arena(env);
+            return arena.ProperParty && arena.Schedule == PullSchedule::SinglePack;
+        }
+
         /// A camp of packs (PullSchedule::Camp): the pull drill.
         [[nodiscard]] bool Camp(Env const& env) const
         {

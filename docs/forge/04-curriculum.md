@@ -1781,7 +1781,7 @@ The roles before the dungeon (2026-10-02, the Deadmines curriculum). The Deadmin
 hours: its parties lost their fights with eight enemies on them, two on the tank, the healer dry -- role failures, not
 class failures, and no stage before it taught a role. So each role is drilled where its feedback is seconds away, by
 a **proper party** (`ArenaDefinition::ProperParty`: a tank, a healer and three damage dealers drawn by gear, as the
-dungeon draws them) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only castings that can be that level).
+dungeon draws them, by spec alone) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only castings that can be that level).
 
 | Arena | Drilled (`DrillRole`) | What it pays | What it charges |
 |---|---|---|---|
@@ -1791,8 +1791,8 @@ dungeon draws them) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only ca
 | `pull` | tank | each pack of a camp killed with no other pack in its fight (`Pulls.CampCleanPack`) | each pack in the fight past the first, by the second (`Pulls.CampExtraPack`); standing about past `Pulls.CampRestMs` between packs |
 
 The drilled seat is seat 0 and its role's terms weigh `Raid.DrillWeight` (3); the others earn their own role's, so
-every arena trains every role a little. The single packs climb `PARTY_RUNGS` (2 creatures up to three elites a level
-above) and the camp `CAMP_RUNGS` (two pairs 30 yd apart up to three pairs 15 yd apart with elites, two of them one pull
+every arena trains every role a little. The single packs climb `PARTY_RUNGS` (3 creatures up to eight, four of them
+elites two levels above; past the pack's four slots the crowd block reads them) and the camp `CAMP_RUNGS` (two pairs 30 yd apart up to three pairs 15 yd apart with elites, two of them one pull
 (linked), and a patrolling pair walking the camp, a level above),
 each on its own ladder per class and build, as the pack stage's do. A party's single pack ends on its clear (it used
 to run to the clock, paying the clear every decision).

@@ -92,16 +92,19 @@ namespace
     static_assert(RAID_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes both rung tables");
 
     /// A party's drill rungs (a proper party against a single pack, ArenaDefinition::ProperParty): what a group of
-    /// five at the dungeons' levels meets, from a small pack to elites a level above, so holding a pull, keeping a
-    /// group up and killing the tank's target are learned before a dungeon asks for all of them at once.
+    /// five at the dungeons' levels meets, from a small pack to a crowd of elites, so holding a pull, keeping a group
+    /// up and killing the tank's target are learned before a dungeon asks for all of them at once. Up to MAX_TARGETS:
+    /// four creatures, three of them elite, never threatened five seats (2026-10-02, stage6: the top rung of
+    /// tank_hold and pull cleared 100%), and the Deadmines puts six to eleven on a party. Past the pack's four slots
+    /// the crowd block reads them, as it reads a dungeon's.
     constexpr std::array<PackRung, 6> PARTY_RUNGS =
     {{
-        { 1, 1, 0, 0, 0 },  // 2
         { 1, 2, 0, 0, 0 },  // 3
-        { 1, 2, 1, 0, 0 },  // 4 with an elite
-        { 1, 0, 2, 0, 1 },  // 4: two elites and something on the ground
-        { 1, 0, 2, 1, 1 },  // ... a level above
-        { 0, 0, 3, 1, 1 },  // four: three elites a level above, and a hazard caster
+        { 1, 3, 1, 0, 0 },  // 5 with an elite
+        { 1, 3, 2, 0, 1 },  // 7: two elites and something on the ground
+        { 1, 2, 3, 1, 1 },  // 7: three elites a level above
+        { 1, 3, 3, 1, 1 },  // 8
+        { 1, 2, 4, 2, 1 },  // 8: four elites two levels above
     }};
 
     static_assert(PARTY_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes the party's rungs too");
@@ -643,8 +646,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         if (uint32 const entry = pool.RandomHazardCaster(uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL))))
             entries.back() = entry;
 
-    // Ambushers keep their enemy slots: the pull takes what is left.
-    uint32 const room = PACK_SLOTS - std::min(PACK_SLOTS, arena.Ambushers);
+    // Ambushers keep their enemy slots: the pull takes what is left. A party's drill fills every target slot.
+    uint32 const slots = PartyDrill(env) ? uint32(MAX_TARGETS) : PACK_SLOTS;
+    uint32 const room = slots - std::min(slots, arena.Ambushers);
     if (entries.size() > room)
         entries.resize(room);
     if (entries.empty())
@@ -1893,10 +1897,10 @@ void Animus::Curriculum::PullsEncounter::AfterRewards(Env& env)
 {
     EnvPulls& pulls = _envs[env.Index];
     if (Camp(env))
-    {
         pulls.CampNewClean = 0;
+    // More creatures than the pack's slots: the fight first, nearest the tank, so the slots hold what matters.
+    if (Camp(env) || PartyDrill(env))
         OrderCamp(env);
-    }
     if (!pulls.PullCleared || !Gauntlet(env))
         return;
 
