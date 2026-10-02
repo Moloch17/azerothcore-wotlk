@@ -359,6 +359,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
     Aptitude const& apt = data.Seats[seatIndex].Apt;
+    float const healShare = HealShare(data.Seats[seatIndex]);
 
     // Taking aggro while a teammate is there to hold it (Party.PulledThreat): the enemies on a damage dealer or a
     // healer are the tank's to take, and the seat that draws them is the one to charge.
@@ -420,7 +421,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                 * weight * float(taken) / health);
 
         if (Heals(apt))
-            ledger.Add(RewardTerm::TeammateHealing, tuning.TeammateHealing * float(healed) / health);
+            ledger.Add(RewardTerm::TeammateHealing, healShare * tuning.TeammateHealing * float(healed) / health);
 
         if (!HoldsThePull(teammateApt) && teammate->IsAlive())
         {
@@ -447,6 +448,17 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     }
 
     RewardRole(env, seatIndex, bot, ledger, raid);
+}
+
+float Animus::Curriculum::PartyEncounter::HealShare(SeatState const& seat) const
+{
+    int32 const primary = seat.Holds[0].Goal;
+    int32 const secondary = seat.Holds[1].Goal;
+    if (primary == NO_GOAL && secondary == NO_GOAL)
+        return 1.0f;
+    bool const protecting = (primary != NO_GOAL && SeatGoal(GoalKindOf(primary)) == SeatGoal::Protect)
+        || (secondary != NO_GOAL && SeatGoal(GoalKindOf(secondary)) == SeatGoal::Protect);
+    return protecting ? 1.0f : _scenario.Tuning().Party.HealOffGoal;
 }
 
 bool Animus::Curriculum::PartyEncounter::InTankingStance(Player const* bot)
@@ -540,7 +552,10 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         for (uint32 member = first; member < first + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
             if (Player* mate = env.FindBot(member); mate && data.Seats[member].L && mate->IsAlive())
                 kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
-        ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * float(kept) * scale);
+        // Members kept above half pay at the protecting share (Party.HealOffGoal); those let fall below 35% are
+        // charged in full whatever the goal.
+        float const keptPay = kept > 0 ? HealShare(state) * float(kept) : float(kept);
+        ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * keptPay * scale);
 
         // Healing that landed on no missing health: what it cast, less what it healed on itself, its allies and the
         // other seats.

@@ -126,9 +126,13 @@ namespace Animus::Curriculum
     public:
         void Add(RewardTerm term, float value)
         {
+            value *= _scale[std::size_t(term)];
             _step += value;
             _episode[std::size_t(term)] += value;
         }
+        /// What this seat is paid of a term, whichever encounter adds it: 0 for a party healer's damage, a share
+        /// for a party tank's. 1 unless set.
+        void Scale(RewardTerm term, float factor) { _scale[std::size_t(term)] = factor; }
 
         /// A term paid into a decision whose total has already been taken (StageScenario pays a goal reached, seen
         /// at the observation, into the reward row of the decision that reached it): the episode's sums only.
@@ -155,6 +159,13 @@ namespace Animus::Curriculum
 
     private:
         std::array<float, REWARD_TERM_COUNT> _episode{};
+        std::array<float, REWARD_TERM_COUNT> _scale = MakeOnes();
+        static std::array<float, REWARD_TERM_COUNT> MakeOnes()
+        {
+            std::array<float, REWARD_TERM_COUNT> ones;
+            ones.fill(1.0f);
+            return ones;
+        }
         float _step = 0.0f;
     };
 }

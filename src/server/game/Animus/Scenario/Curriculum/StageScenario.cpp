@@ -3447,7 +3447,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             hold.Rewarded = true;
             ++seat.GoalsReached;
             ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
-            float const value = GoalValue(hold, bot) * (slot ? _tuning.Goals.SecondaryShare : 1.0f);
+            float const value = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight ? 0.0f
+                : GoalValue(hold, bot) * (slot ? _tuning.Goals.SecondaryShare : 1.0f);
             seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
             if (float* reward = Data(env).StepReward)
                 reward[seatIndex] += value;
@@ -4675,6 +4676,18 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
         seat.LowHealthMs += _decisionMs;
 }
 
+bool Animus::Curriculum::StageScenario::GroupHealer(Env const& env, SeatState const& seat) const
+{
+    return Arena(env).PartyGroup && seat.L && seat.Spec < seat.L->Profile->Specs.size()
+        && seat.L->Profile->Specs[seat.Spec].Stats == StatProfile::Healer;
+}
+
+bool Animus::Curriculum::StageScenario::GroupTank(Env const& env, SeatState const& seat) const
+{
+    return Arena(env).PartyGroup && seat.L && seat.Spec < seat.L->Profile->Specs.size()
+        && seat.L->Profile->Specs[seat.Spec].Stats == StatProfile::Tank;
+}
+
 float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 {
     SeatState& seat = Data(env).Seats[seatIndex];
@@ -4683,6 +4696,13 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     Player* bot = env.FindBot(seatIndex);
     seat.LastStepDamage = float(env.StepStats[seatIndex].Damage) / seat.DamageScale;
+
+    // A group's healer heals and only heals: none of the damage it deals is paid, whichever encounter pays damage
+    // (2026-10-02: "The healer role should ideally not be rewarded for any damage whatever. Their job is to heal and
+    // heal only"). A group's tank is paid for holding the enemies far more than for hitting them: its damage at
+    // Party.TankDamageShare. The group's kills, clears and wipes are still theirs, as every seat's are.
+    seat.Rewards.Scale(RewardTerm::DamageDealt, GroupHealer(env, seat) ? 0.0f
+        : GroupTank(env, seat) ? _tuning.Party.TankDamageShare : 1.0f);
 
     // Who this seat is actually fighting, asked of the encounters once a decision and remembered for the const
     // readers. It is the other seat in self-play, which no target slot holds.
@@ -4799,7 +4819,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         if (hold.Goal == NO_GOAL || !hold.PotentialReady || hold.Ended)
             continue;
         float const potential = GoalPotential(env, seat, hold, bot, target);
-        float const paid = _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
+        // A healer's Fight goal is damage by another name: none of it is paid.
+        bool const unpaid = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight;
+        float const paid = unpaid ? 0.0f : _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
             * (_tuning.Goals.ProgressGamma * potential - hold.Potential);
         seat.Rewards.Add(RewardTerm::GoalProgress, paid);
         hold.Potential = potential;

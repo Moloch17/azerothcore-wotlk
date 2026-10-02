@@ -557,6 +557,9 @@ namespace Animus::Curriculum
         /// In the spec's tanking stance, form or aura: Defensive Stance, Bear or Dire Bear Form, Righteous Fury, Frost
         /// Presence.
         [[nodiscard]] static bool InTankingStance(Player const* bot);
+        /// What a healer's keeping-up pay is worth now: in full under a Protect goal (or with no goal), else
+        /// Party.HealOffGoal of it.
+        [[nodiscard]] float HealShare(SeatState const& seat) const;
         /// Each role paid for its own part, and idling charged (Raid.*).
         void RewardRole(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger, bool raid);
 

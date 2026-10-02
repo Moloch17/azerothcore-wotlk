@@ -341,6 +341,9 @@ namespace Animus::Curriculum
         /// a damage dealer neither -- a retribution paladin or an enhancement shaman, whose heals did not make
         /// them the healer, and parties of three healers or two tanks were drawn by the looser makeup (2026-10-01).
         [[nodiscard]] static bool FitsDungeonRole(Casting const& casting, uint8 role);
+        /// A seat of a party or raid of its own whose spec is a healer's, or a tank's: what its damage is paid.
+        [[nodiscard]] bool GroupHealer(Env const& env, SeatState const& seat) const;
+        [[nodiscard]] bool GroupTank(Env const& env, SeatState const& seat) const;
 
         /// The class and build `seat` plays this episode. An evaluation episode takes both from its seed index, so
         /// the seeds spread evenly over the (class, spec) pairs -- one model per class, but a paladin's healing

@@ -126,7 +126,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Party.TankLoseTeammate` | 0.02 | | `Pulls.OwnerPullsChance` | 30 |
 | `Party.TeammateDeath` | 3.0 | | `Pulls.RecoverFraction` | 0.5 |
 | `Raid.HealthPerGroup` | 1.0 | | `Raid.DamagePerGroup` | 0.15 |
-| `Raid.TankHold` | 0.006 | | `Raid.KeepUp` | 0.0002 |
+| `Raid.TankHold` | 0.015 | | `Raid.KeepUp` | 0.0002 |
 | `Raid.Output` | 0.5 | | `Raid.Idle` | 0.001 |
 | `Raid.IdleMs` | 4000 | | `Raid.IdleReach` | 40.0 |
 | `Duel.DamageDealt` | 2.0 | | `Pulls.DamageDealt` | 2.0 |

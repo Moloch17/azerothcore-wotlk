@@ -5885,6 +5885,11 @@ AnimusForge.Curriculum.Party.TeammateDamageTakenDps = 0.5
 AnimusForge.Curriculum.Party.TeammateDamageTakenProtector = 1.0
 #   healers: effective healing, fraction of its health
 AnimusForge.Curriculum.Party.TeammateHealing = 2.0
+#   healers: what keeping the others up pays (TeammateHealing, Raid.KeepUp above half) while no Protect goal is
+#   held, as a share of the full; 1 pays it whatever the goal
+AnimusForge.Curriculum.Party.HealOffGoal = 0.25
+#   a party's or raid's tank: its damage dealt, as a share of a damage dealer's pay for it (a healer's is never paid)
+AnimusForge.Curriculum.Party.TankDamageShare = 0.25
 #   tanks: per enemy on a non-tank teammate, per decision
 AnimusForge.Curriculum.Party.TankLoseTeammate = 0.02
 #   damage dealers and healers beside a living teammate that holds the pull: per enemy on the seat, per decision --
@@ -5900,7 +5905,7 @@ AnimusForge.Curriculum.Party.TeammateDeath = 3.0
 AnimusForge.Curriculum.Raid.HealthPerGroup = 1.0
 AnimusForge.Curriculum.Raid.DamagePerGroup = 0.15
 #   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
-AnimusForge.Curriculum.Raid.TankHold = 0.006
+AnimusForge.Curriculum.Raid.TankHold = 0.015
 #   the party's tank is charged per enemy on somebody else, per decision
 AnimusForge.Curriculum.Raid.TankLoose = 0.006
 #   a party's damage dealers: their damage on the tank's target times TankTarget, and PulledOff per enemy they took

@@ -84,6 +84,14 @@ namespace Animus::Curriculum
             float TeammateDamageTakenDps = 0.5f;        // damage dealers: a non-tank teammate's damage taken
             float TeammateDamageTakenProtector = 1.0f;  // tanks and healers
             float TeammateHealing = 2.0f;               // healers: effective healing, fraction of its health
+            /// A healer's pay for keeping the others up (TeammateHealing, Raid.KeepUp's above-half share) while it
+            /// holds no Protect goal, as a share of the full: protecting is how healing pays. Party healers chose
+            /// Protect 2% of the time through the group stage, healing anyway on the pay a Fight goal also earned
+            /// (2026-10-02). 1 pays it whatever the goal; a seat with no goal held is paid in full.
+            float HealOffGoal = 0.25f;
+            /// A party's or raid's tank: its damage dealt, as a share of what a damage dealer is paid for it. Holding
+            /// the enemies (Raid.TankHold) is the tank's pay; hitting them is the damage dealers'.
+            float TankDamageShare = 0.25f;
             float TankLoseTeammate = 0.02f;             // tanks: per enemy on a non-tank teammate, per decision
             /// Damage dealers and healers beside a living teammate that holds the pull: per enemy on the seat, per
             /// decision. Only the tank was charged when enemies reached the others, so in a party nobody else was
@@ -99,7 +107,9 @@ namespace Animus::Curriculum
         {
             float HealthPerGroup = 1.0f;        // a raid pull's health x (seats / 5) x this
             float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
-            float TankHold = 0.006f;            // tanks, party and raid: per enemy on the tank, per decision
+            /// Tanks, party and raid: per enemy on the tank, per decision. 0.006 was drowned by the charges for loose
+            /// enemies: Ragefire's tanks netted -9.6 a run on the threat term (2026-10-02).
+            float TankHold = 0.015f;
             float TankLoose = 0.006f;           // ... charged per enemy on somebody else, per decision
             /// A party's damage dealers: their damage on the tank's target times this; and per enemy they have taken
             /// off the tank, per decision.
@@ -1098,6 +1108,8 @@ namespace Animus::Curriculum
             f("Party.TeammateDamageTakenDps", tuning.Party.TeammateDamageTakenDps);
             f("Party.TeammateDamageTakenProtector", tuning.Party.TeammateDamageTakenProtector);
             f("Party.TeammateHealing", tuning.Party.TeammateHealing);
+            f("Party.HealOffGoal", tuning.Party.HealOffGoal);
+            f("Party.TankDamageShare", tuning.Party.TankDamageShare);
             f("Party.TankLoseTeammate", tuning.Party.TankLoseTeammate);
             f("Party.PulledThreat", tuning.Party.PulledThreat);
             f("Party.TeammateDeath", tuning.Party.TeammateDeath);
