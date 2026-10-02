@@ -59,6 +59,10 @@ namespace Animus::Curriculum
         bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it
         Position Ahead;
         uint32 AheadSize = 0;
+        /// A few yards on along the dungeon's field route towards the seat's objective: where the advance action
+        /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
+        bool HasStep = false;
+        Position Step;
     };
 
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life

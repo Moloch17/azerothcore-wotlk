@@ -133,7 +133,16 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
         return;
     if (local == ACTION_ADVANCE)
     {
-        if (view.HasObjective)
+        // Along the dungeon's field route a few yards at a time, straight: it is ground the seat can walk, where the
+        // server's navmesh may not join it (a drop into a cavern). Off the route, the server's path.
+        if (view.Crowd.HasStep)
+        {
+            bot->GetMotionMaster()->Clear();
+            bot->GetMotionMaster()->MovePoint(ADVANCE_POINT_ID, view.Crowd.Step.GetPositionX(),
+                view.Crowd.Step.GetPositionY(), view.Crowd.Step.GetPositionZ(), FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
+                false);
+        }
+        else if (view.HasObjective)
             Encoding::MoveTo(bot, ADVANCE_POINT_ID, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
                 view.Objective.GetPositionZ());
         return;

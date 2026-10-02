@@ -600,6 +600,7 @@ namespace Animus::Curriculum
             bool PotentialReady = false;
             uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
+            mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
             uint32 FoodItem = 0;                // what it eats and drinks between pulls (Instance.WingSupplies)
             uint32 DrinkItem = 0;
         };
@@ -628,6 +629,10 @@ namespace Animus::Curriculum
             /// trash killed, the wipes, and the creatures watched for dying.
             std::vector<Position> Route;
             std::vector<float> RouteRemain;     // per route point: yards along the route from it to the end
+            /// The route a yard at a time, as the layered field walks it (FieldRoute), and the yard of each route
+            /// point: what the crowd block's advance steps along. Empty when the route is the navmesh's.
+            std::vector<Position> Dense;
+            std::vector<uint32> RouteDense;
             uint32 RouteNext = 0;
             uint32 TrashKills = 0;
             uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)
@@ -694,8 +699,23 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
         /// A lever, a button, a goober (the Deadmines' cannon) or a closed door, spawned, ready and not locked.
         [[nodiscard]] static bool Usable(GameObject const* object);
-        /// The door-to-boss path as points every Instance.WingWaypointYards (the last one the boss), once per boss.
-        [[nodiscard]] std::vector<Position> WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
+        /// A whole dungeon's way through: its route points every Instance.WingWaypointYards (the last one the boss),
+        /// the field route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
+        struct WingPlan
+        {
+            std::vector<Position> Route;
+            std::vector<Position> Dense;
+            std::vector<uint32> RouteDense;
+            std::vector<ObjectGuid::LowType> Reachable;     // sorted; empty with a navmesh route: every creature
+            bool Field = false;
+        };
+        /// The door-to-boss plan, once per boss: over the layered field where it covers the dungeon (FieldRoute),
+        /// else the server's navmesh as before.
+        [[nodiscard]] WingPlan WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
+        /// The plan over the layered field, from the door (`seat`) through `bosses` in order (the last one last);
+        /// WingPlan::Field false when the field cannot walk that far.
+        [[nodiscard]] WingPlan FieldWingRoute(Env const& env, Map* map, Player* seat, Creature* boss,
+            std::vector<Position> const& bosses) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);
         /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
         [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);

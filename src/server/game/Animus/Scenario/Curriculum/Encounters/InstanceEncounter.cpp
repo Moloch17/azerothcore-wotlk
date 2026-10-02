@@ -18,6 +18,7 @@
 
 #include "Encounters.h"
 #include "BotFactory.h"
+#include "FieldRoute.h"
 #include "CellImpl.h"
 #include "CombatReward.h"
 #include "CombatRewardScenario.h"
@@ -461,10 +462,19 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     // A whole wing: the party stays at the door with the trash alive, and the route to the boss is its objective.
     if (Wing(env))
     {
-        fight.Route = WingRoute(env, map, seat, boss);
+        WingPlan const plan = WingRoute(env, map, seat, boss);
+        fight.Route = plan.Route;
+        fight.Dense = plan.Dense;
+        fight.RouteDense = plan.RouteDense;
+        for (SeatInstance& seatState : fight.Seats)
+            seatState.DenseAt = 0;
+        // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
+        // and the bosses; every hostile one with the navmesh's.
         fight.HostileTotal = 0;
         for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
-            fight.HostileTotal += Hostile(seat, creature) ? 1 : 0;
+            if (Hostile(seat, creature) && (!plan.Field || creature->IsDungeonBoss() || creature->isWorldBoss()
+                || std::binary_search(plan.Reachable.begin(), plan.Reachable.end(), spawnId)))
+                ++fight.HostileTotal;
         fight.RouteRemain.assign(fight.Route.size(), 0.0f);
         for (std::size_t i = fight.Route.size(); i-- > 1;)
             fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
@@ -1054,10 +1064,10 @@ std::pair<uint32, uint32> Animus::Curriculum::InstanceEncounter::DungeonLevels(B
     return { row.Level, row.Level };
 }
 
-std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const& env, Map* map, Player* seat,
-    Creature* boss) const
+Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEncounter::WingRoute(Env const& env,
+    Map* map, Player* seat, Creature* boss) const
 {
-    static std::map<EngageKey, std::vector<Position>> routes;
+    static std::map<EngageKey, WingPlan> routes;
     static std::mutex routesLock;
     BossRow const& row = *_envs[env.Index].Row;
     EngageKey const key{ row.MapId, row.Entry };
@@ -1091,6 +1101,20 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
             bosses.erase(nearest);
         }
         stops.push_back(last);
+    }
+
+    // Over the layered field where it holds the dungeon: the way the seats themselves can walk (FieldRoute).
+    if (FieldRoute::Covers(row.MapId, seat->GetPositionX(), seat->GetPositionY()))
+    {
+        WingPlan plan = FieldWingRoute(env, map, seat, boss, stops);
+        if (plan.Field)
+        {
+            std::lock_guard<std::mutex> guard(routesLock);
+            routes[key] = plan;
+            return plan;
+        }
+        LOG_WARN("module.animus", "{}: {}: the layered field has no way from the door through the bosses; the "
+            "navmesh's route instead", _scenario.Name(), row.Name);
     }
 
     // The server's path stop to stop, leg by leg as EngagePoint walks it; where the navmesh does not join two
@@ -1259,9 +1283,164 @@ std::vector<Position> Animus::Curriculum::InstanceEncounter::WingRoute(Env const
     LOG_INFO("module.animus", "{}: the route to {} ({}) is {} points from the door", _scenario.Name(), row.Name,
         row.Entry, route.size());
 
+    WingPlan plan;
+    plan.Route = route;
     std::lock_guard<std::mutex> guard(routesLock);
-    routes[key] = route;
-    return route;
+    routes[key] = plan;
+    return plan;
+}
+
+Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEncounter::FieldWingRoute(Env const& env,
+    Map* map, Player* seat, Creature* boss, std::vector<Position> const& bosses) const
+{
+    BossRow const& row = *_envs[env.Index].Row;
+    uint32 const mapId = row.MapId;
+    WingPlan plan;
+    Position const door(seat->GetPositionX(), seat->GetPositionY(), seat->GetPositionZ());
+
+    // The yards from `from` through each of `stops`, appended to `dense`; false at the first leg the field cannot
+    // walk.
+    auto const walk = [&](Position from, std::vector<Position> const& stops, std::vector<Position>& dense,
+        bool log) -> bool
+    {
+        if (dense.empty())
+            dense.push_back(from);
+        for (Position const& stop : stops)
+        {
+            std::vector<Position> leg;
+            if (!FieldRoute::Plan(mapId, from, stop, leg))
+            {
+                if (log)
+                    LOG_WARN("module.animus", "{}: {} field route: no way from ({:.0f} {:.0f} {:.0f}) to "
+                        "({:.0f} {:.0f} {:.0f})", _scenario.Name(), row.Name, from.GetPositionX(), from.GetPositionY(),
+                        from.GetPositionZ(), stop.GetPositionX(), stop.GetPositionY(), stop.GetPositionZ());
+                return false;
+            }
+            dense.insert(dense.end(), leg.begin() + 1, leg.end());
+            from = leg.back();
+        }
+        return true;
+    };
+
+    // The spine: the door, then the bosses in the order the dungeon opens up, the way the field walks it.
+    std::vector<Position> spine;
+    if (!walk(door, bosses, spine, true))
+        return plan;
+
+    // Every pack a seat can walk to from the spine (Instance.WingFullClear), at the spine's yard nearest it, in that
+    // order. A pack the field cannot reach -- down a drop too far to take, in lava, behind rock -- is not on the
+    // route and not in the dungeon's count: Ragefire's lower cavern and its molten elementals put the old route's
+    // targets where no path went (2026-10-02).
+    std::vector<Position> stops;
+    uint32 left = 0;
+    uint32 packsReached = 0;
+    if (_scenario.Tuning().Instance.WingFullClear)
+    {
+        constexpr float PACK_REACH = 15.0f;
+        std::vector<Creature const*> hostiles;
+        for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+            if (creature && creature != boss && Hostile(seat, creature))
+                hostiles.push_back(creature);
+        std::vector<std::pair<std::size_t, Position>> packs;
+        while (!hostiles.empty())
+        {
+            Creature const* first = hostiles.front();
+            std::vector<Creature const*> members;
+            for (auto it = hostiles.begin(); it != hostiles.end();)
+                if ((*it)->GetHomePosition().GetExactDist(&first->GetHomePosition()) <= PACK_REACH)
+                {
+                    members.push_back(*it);
+                    it = hostiles.erase(it);
+                }
+                else
+                    ++it;
+            // The member nearest the spine stands where the pack is fought from, on its own floor.
+            std::size_t along = 0;
+            float nearest = std::numeric_limits<float>::max();
+            Creature const* closest = members.front();
+            for (Creature const* member : members)
+                for (std::size_t i = 0; i < spine.size(); ++i)
+                    if (float const d = member->GetHomePosition().GetExactDist(&spine[i]); d < nearest)
+                    {
+                        nearest = d;
+                        along = i;
+                        closest = member;
+                    }
+            Position const at = closest->GetHomePosition();
+            std::vector<Position> leg;
+            if (!FieldRoute::Plan(mapId, spine[along], at, leg, 400000))
+            {
+                left += uint32(members.size());
+                continue;
+            }
+            ++packsReached;
+            for (Creature const* member : members)
+                plan.Reachable.push_back(member->GetSpawnId());
+            packs.emplace_back(along, Position(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ()));
+        }
+        std::stable_sort(packs.begin(), packs.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        for (auto const& [along, at] : packs)
+            stops.push_back(at);
+    }
+    {
+        // The bosses in their place among the packs, by where the spine passes them, and the last one last.
+        std::vector<std::pair<std::size_t, Position>> ordered;
+        auto const alongSpine = [&spine](Position const& p)
+        {
+            std::size_t at = 0;
+            float nearest = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < spine.size(); ++i)
+                if (float const d = p.GetExactDist(&spine[i]); d < nearest)
+                {
+                    nearest = d;
+                    at = i;
+                }
+            return at;
+        };
+        for (Position const& stop : stops)
+            ordered.emplace_back(alongSpine(stop), stop);
+        for (std::size_t i = 0; i + 1 < bosses.size(); ++i)
+            ordered.emplace_back(alongSpine(bosses[i]), bosses[i]);
+        std::stable_sort(ordered.begin(), ordered.end(),
+            [](auto const& a, auto const& b) { return a.first < b.first; });
+        stops.clear();
+        for (auto const& [along, stop] : ordered)
+            stops.push_back(stop);
+        stops.push_back(bosses.back());
+    }
+    std::sort(plan.Reachable.begin(), plan.Reachable.end());
+
+    std::vector<Position> dense;
+    if (!walk(door, stops, dense, true))
+    {
+        // A pack reached from the spine but not in this order: the spine alone, which the field walks.
+        dense = spine;
+        LOG_WARN("module.animus", "{}: {} field route: the packs in order could not all be walked; the bosses' way "
+            "alone", _scenario.Name(), row.Name);
+    }
+
+    // A route point every WingWaypointYards along it, the last boss's own position last; each point's yard.
+    float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
+    float walked = 0.0f;
+    float next = spacing;
+    for (std::size_t i = 1; i < dense.size(); ++i)
+    {
+        walked += dense[i - 1].GetExactDist(&dense[i]);
+        if (walked >= next)
+        {
+            plan.Route.push_back(dense[i]);
+            plan.RouteDense.push_back(uint32(i));
+            next += spacing;
+        }
+    }
+    plan.Route.emplace_back(boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ());
+    plan.RouteDense.push_back(uint32(dense.size() - 1));
+    plan.Dense = std::move(dense);
+    plan.Field = true;
+    LOG_INFO("module.animus", "{}: the field route to {} ({}) is {} points ({:.0f} yd) from the door, through {} "
+        "packs; {} creatures no seat can walk to are left out", _scenario.Name(), row.Name, row.Entry, plan.Route.size(),
+        walked, packsReached, left);
+    return plan;
 }
 
 void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInstance& fight)
@@ -1455,6 +1634,43 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
     Unit const* tank = view.Crowd.Tank;
     if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot) && walk >= tankWalk)
         view.Objective.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+
+    // Where the advance action steps: a few yards on along the field route towards the objective, from the yard
+    // of it the seat stands on. Off the route, nothing: the server's path to the objective is the way back to it.
+    if (view.Bot && seat < fight.Seats.size() && !fight.Dense.empty() && fight.RouteDense.size() == fight.Route.size())
+    {
+        constexpr int32 STEP_YARDS = 6;
+        constexpr float ON_ROUTE = 6.0f;
+        auto const nearestYard = [&fight](Position const& at, uint32 hint)
+        {
+            std::size_t const size = fight.Dense.size();
+            auto const search = [&](std::size_t first, std::size_t last)
+            {
+                std::pair<uint32, float> best{ uint32(first), std::numeric_limits<float>::max() };
+                for (std::size_t i = first; i < last; ++i)
+                    if (float const d = at.GetExactDist(&fight.Dense[i]); d < best.second)
+                        best = { uint32(i), d };
+                return best;
+            };
+            std::size_t const from = hint > 60 ? hint - 60 : 0;
+            std::pair<uint32, float> best = search(from, std::min(size, std::size_t(hint) + 120));
+            if (best.second > ON_ROUTE * 2.0f)
+                best = search(0, size);
+            return best;
+        };
+        SeatInstance const& own = fight.Seats[seat];
+        auto const [yard, off] = nearestYard(Position(view.Bot->GetPositionX(), view.Bot->GetPositionY(),
+            view.Bot->GetPositionZ()), own.DenseAt);
+        own.DenseAt = yard;
+        uint32 const hint = fight.RouteDense[std::min<std::size_t>(walk, fight.RouteDense.size() - 1)];
+        uint32 const target = nearestYard(view.Objective, hint).first;
+        if (off <= ON_ROUTE && target != yard)
+        {
+            int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
+            view.Crowd.HasStep = true;
+            view.Crowd.Step = fight.Dense[std::size_t(int32(yard) + delta)];
+        }
+    }
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,
