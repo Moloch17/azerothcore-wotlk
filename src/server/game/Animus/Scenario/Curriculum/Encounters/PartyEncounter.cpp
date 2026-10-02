@@ -166,10 +166,11 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
     Player* owner = _scenario.Owner(env);
     bool const raid = _scenario.Arena(env).Seats == SeatPlan::Raid;
     // A group questing in the world has no owner: its first seat leads, as a raid's does. So does a group running a
-    // dungeon, which is five learned seats.
+    // dungeon, which is five learned seats, and a proper party drilling against pulls.
     bool const questing = _scenario.Arena(env).Against == Opposition::Quest;
     bool const dungeon = _scenario.Arena(env).Against == Opposition::Instance && !_scenario.Arena(env).Owner;
-    if (!owner && !raid && !questing && !dungeon)
+    bool const drill = _scenario.Arena(env).ProperParty && !_scenario.Arena(env).Owner;
+    if (!owner && !raid && !questing && !dungeon && !drill)
     {
         // The party stage always has an owner; it has to be built first (see the build order in StageScenario).
         LOG_ERROR("module.animus", "{}: env {} builds its party group before its owner", _scenario.Name(), env.Index);
