@@ -1,0 +1,1 @@
+In the dev container: `.venv/bin/python prep.py <dir>` then `python3 run.py <dir> [Model source dir]` (default: the module as built) — mod-animus's MlpPolicy against the learner's golden logits; exits non-zero on any error over the tolerance.

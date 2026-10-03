@@ -1,6 +1,27 @@
 --- a/animus-lib/src/runtime/Model/MlpPolicy.h
 +++ b/animus-lib/src/runtime/Model/MlpPolicy.h
-@@ -180,6 +180,29 @@
+@@ -78,6 +78,10 @@
+         /// and is updated; without one the policy decides as if every decision were its first.
+         int32 Decide(float const* obs, uint8 const* mask, State* state = nullptr);
+ 
++        /// The logits Decide chooses from, every action's, into `out` [NumActions]; `state` steps as Decide steps it.
++        /// False when no model is loaded. For checking the reader against the learner (the golden vectors).
++        bool Logits(float const* obs, float* out, State* state = nullptr);
++
+         /// Whether the model carries a memory or goals, so its caller must keep a State per seat.
+         [[nodiscard]] bool HasMemory() const { return _recurrentSize != 0; }
+         [[nodiscard]] uint32 GoalCount() const { return _goalCount; }       // kinds; 0 without goals
+@@ -88,6 +92,9 @@
+         [[nodiscard]] int32 SecondaryOf(State const& state) const;
+ 
+     private:
++        /// One decision's forward pass: the logits (in scratch, valid until the next call), or nullptr unloaded.
++        float const* Forward(float const* obs, State* state);
++
+         struct Layer
+         {
+             uint32 In = 0;
+@@ -180,6 +187,29 @@
          std::vector<Pointer> _pointers;
          std::vector<float> _memberCodes, _enemyCodes, _pooled, _setExtra, _query, _setHidden;   // scratch
  
@@ -165,7 +186,54 @@
      _obsDim = 0;
      _numAgents = 0;
      _numActions = 0;
-@@ -617,6 +704,67 @@
+@@ -554,9 +641,45 @@
+ 
+ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* state)
+ {
+-    if (_layers.empty())
++    float const* logits = Forward(obs, state);
++    if (!logits)
+         return 0;
+ 
++    int32 best = 0;
++    float bestLogit = -std::numeric_limits<float>::infinity();
++    bool anyAllowed = false;
++
++    for (uint32 action = 0; action < _numActions; ++action)
++    {
++        if (!mask[action])
++            continue;
++
++        if (!anyAllowed || logits[action] > bestLogit)
++        {
++            best = int32(action);
++            bestLogit = logits[action];
++            anyAllowed = true;
++        }
++    }
++
++    return anyAllowed ? best : 0;
++}
++
++bool Animus::MlpPolicy::Logits(float const* obs, float* out, State* state)
++{
++    float const* logits = Forward(obs, state);
++    if (!logits)
++        return false;
++
++    std::copy(logits, logits + _numActions, out);
++    return true;
++}
++
++float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
++{
++    if (_layers.empty())
++        return nullptr;
++
+     // Input: observation, then the one-hot id of agent 0.
+     float* in = _scratchA.data();
+     float* out = _scratchB.data();
+@@ -617,6 +740,67 @@
          }
      }
  
@@ -233,7 +301,7 @@
      // Every layer but the action head, which reads the features the memory and the goal are applied to.
      std::size_t const trunkLayers = _layers.size() - 1;
      for (std::size_t index = 0; index < trunkLayers; ++index)
-@@ -630,6 +778,8 @@
+@@ -630,6 +814,8 @@
                  sum += weights[col] * in[col];
              if (_sets && index == 0)
                  sum += _setExtra[row];
@@ -242,14 +310,30 @@
  
              out[row] = std::tanh(sum);
          }
-@@ -942,6 +1092,26 @@
-                 out[pointer.First + slot] = score;
+@@ -943,26 +1129,29 @@
              }
          }
-+
+ 
+-        std::swap(in, out);
+-    }
+-
+-    // `in` now holds the logits.
+-    int32 best = 0;
+-    float bestLogit = -std::numeric_limits<float>::infinity();
+-    bool anyAllowed = false;
+-
+-    for (uint32 action = 0; action < _numActions; ++action)
+-    {
+-        if (!mask[action])
+-            continue;
+-
+-        if (!anyAllowed || in[action] > bestLogit)
 +        // A seat layout's slot-naming actions, the same way, after the director's.
 +        for (SeatPointer const& pointer : _seatPointers)
-+        {
+         {
+-            best = int32(action);
+-            bestLogit = in[action];
+-            anyAllowed = true;
 +            for (uint32 row = 0; row < _seatEmbed; ++row)
 +            {
 +                float sum = pointer.Bias[row];
@@ -265,7 +349,12 @@
 +                    score += codes[std::size_t(slot) * _seatEmbed + row] * _query[row];
 +                out[pointer.First + slot] = score;
 +            }
-+        }
- 
-         std::swap(in, out);
+         }
++
++        std::swap(in, out);
      }
+ 
+-    return anyAllowed ? best : 0;
++    // `in` now holds the logits.
++    return in;
+ }
