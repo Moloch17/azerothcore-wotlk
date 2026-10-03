@@ -102,8 +102,8 @@ class Spec:
     def step_layout(self, envs: int | None = None, ended: int | None = None,
                     device: bool = False) -> list[tuple[str, np.dtype, tuple[int, ...]]]:
         """STEP payload arrays after the header, in wire order: (name, dtype, shape), for `envs` envs (all of them by
-        default; a half-batch STEP carries one group's). final_obs and final_state carry only the `ended` envs whose
-        done is set, in env order (every env's by default: the largest a STEP can be) -- protocol 14; the others'
+        default; a half-batch STEP carries one group's). final_obs, final_state and (protocol 18) episode_info carry
+        only the `ended` envs whose done is set, in env order (every env's by default: the largest a STEP can be) -- protocol 14; the others'
         would be ~half of every STEP for rows nobody reads. With `device` (protocol 15) obs, state and mask are in the
         sim's device buffers instead, and not in the STEP."""
         e, a = self.num_envs if envs is None else envs, self.agents_per_env
@@ -120,7 +120,7 @@ class Spec:
             ("terminated", u8, (e,)),
             ("final_obs", f32, (d, a, self.obs_dim)),
             ("final_state", f32, (d, self.state_dim)),
-            ("episode_info", f32, (e, a, self.episode_info_dim)),
+            ("episode_info", f32, (d, a, self.episode_info_dim)),
             ("episode_seed", u32, (e,)),
         ]
         return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
@@ -219,8 +219,9 @@ def decode_spec(payload: bytes) -> Spec:
     )
 
 
-# Carried for the ended envs only (Spec.step_layout); the decoder gives them back full-sized, zero elsewhere.
-ENDED_ONLY = ("final_obs", "final_state")
+# Carried for the ended envs only (Spec.step_layout); the decoder gives them back full-sized, zero elsewhere. Episode
+# info from protocol 18: every reader looks only where done is set.
+ENDED_ONLY = ("final_obs", "final_state", "episode_info")
 
 
 def encode_step(spec: Spec, step: Step) -> bytes:

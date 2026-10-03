@@ -428,6 +428,7 @@ namespace AnimusForge
         std::vector<RankDevice> _rankDevices;
         std::vector<float> _endedObs;
         std::vector<float> _endedState;
+        std::vector<float> _endedInfo;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
         uint32 _progressInterval = 0;
 

@@ -2419,7 +2419,8 @@ bool AnimusForge::Forge::SendStep(uint32 group)
             return Chunk{ vec.data() + std::size_t(begin) * perEnv, std::size_t(count) * perEnv * sizeof(vec[0]) };
         };
 
-        // The ended envs' last observation and state, gathered: a few rows a decision, where every row went before.
+        // The ended envs' last observation, state and episode info, gathered: a few rows a decision, where every row
+        // went before (episode info alone was ~360 floats per agent of every env, read only where done).
         auto ended = [this, begin, count, envs](std::vector<float> const& vec, std::vector<float>& rows)
         {
             std::size_t const perEnv = vec.size() / envs;
@@ -2450,7 +2451,7 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 chunk(_pool->Terminated),
                 ended(_pool->FinalObs, _endedObs),
                 ended(_pool->FinalState, _endedState),
-                chunk(_pool->EpisodeInfo),
+                ended(_pool->EpisodeInfo, _endedInfo),
                 chunk(_pool->EpisodeSeed),
             }))
             return false;

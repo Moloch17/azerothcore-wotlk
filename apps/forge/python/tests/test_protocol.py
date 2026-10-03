@@ -284,3 +284,19 @@ def test_a_sim_speaking_another_protocol_is_refused(tmp_path):
         ForgeEnv(path, connect_timeout=5.0)
     server.join(timeout=5)
     listener.close()
+
+
+def test_episode_info_travels_for_the_ended_envs_only():
+    """Protocol 18: a STEP with 2 of 8 envs done carries those two envs' info rows, exactly, and nothing for the
+    other six -- which come back as zeros, where no reader looks."""
+    spec = dataclasses.replace(SPEC, num_envs=8)
+    step = make_step(5, np.random.default_rng(11), spec)
+    step.done[:] = False
+    step.done[[2, 6]] = True
+    payload = p.encode_step(spec, step)
+    assert len(payload) == spec.step_payload_size(ended=2)
+    assert spec.step_payload_size(ended=2) < spec.step_payload_size()
+    decoded = p.decode_step(spec, payload)
+    np.testing.assert_array_equal(decoded.episode_info[[2, 6]], step.episode_info[[2, 6]])
+    assert not decoded.episode_info[[0, 1, 3, 4, 5, 7]].any()
+    assert "episode_info" in p.ENDED_ONLY and p.PROTOCOL_VERSION == 18

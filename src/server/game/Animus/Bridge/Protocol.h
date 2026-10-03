@@ -45,7 +45,8 @@
  *                              f32 final_obs[D*A*O]   last obs of each ended episode: only the D envs
  *                                                     whose done is 1, in env order
  *                              f32 final_state[D*S]   last state of each ended episode, the same D envs
- *                              f32 episode_info[E*A*K] per agent totals for the ended episode (valid if done)
+ *                              f32 episode_info[D*A*K] per agent totals of each ended episode, the same D
+ *                                                     envs (protocol 18; every env's before)
  *                              u32 episode_seed[E]    evaluation seed index of the ended episode (valid if
  *                                                     done); NO_EPISODE_SEED for a training episode
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
@@ -113,7 +114,8 @@ namespace AnimusForge
     // 17: ACT carries two goals per agent, primary then secondary (GOAL_SLOTS_ON_WIRE), where it carried one; and
     // the goal space has a twelfth kind (Resurrect). The learner keeps the queue behind them itself.
     // 18: PROGRESS carries the shaping scale after the progress (ProgressMsg): a sim that took the old four bytes
-    // would never fade its shaping, and nothing would say so.
+    // would never fade its shaping, and nothing would say so. And STEP's episode_info carries only the envs whose
+    // done is set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage.
     constexpr uint32 PROTOCOL_VERSION = 18;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
