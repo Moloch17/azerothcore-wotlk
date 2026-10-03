@@ -341,12 +341,6 @@ def _carry_sequence(cell: nn.GRUCell, size: int, encoded: torch.Tensor, memory: 
     steps, rows = encoded.shape[0], encoded.shape[1]
     if not encoded.is_cuda or steps == 0:
         return _carry_sequence_loop(cell, size, encoded, carried, dones)
-    # In full precision whatever the update runs in (mappo.update_precision): under autocast the fused call below
-    # is not the library's fused GRU but a cell per step, and the memory is what errors would compound through.
-    if torch.is_autocast_enabled():
-        with torch.autocast("cuda", enabled=False):
-            return _carry_sequence(cell, size, encoded.float(), memory.float(), dones)
-
     piece_row, piece_start, piece_length, piece_of, position_of = _pieces(dones)
     device = encoded.device
     longest = int(piece_length.max())
@@ -914,7 +908,7 @@ class LayoutActor(nn.Module):
         width = self.adapters[0].out_features
         hidden = obs.new_zeros(obs.shape[0], width)
         for index, rows in groups:
-            # Cast on the way in: under autocast (mappo.update_precision) the adapters answer in half precision.
+            # Cast on the way in: the rows' dtype is the adapters', the zeros' the observation's.
             hidden[rows] = self.adapters[index](self.norms[index](obs[rows, : self.obs_dims[index]])).to(
                 hidden.dtype)
         if extra is not None:

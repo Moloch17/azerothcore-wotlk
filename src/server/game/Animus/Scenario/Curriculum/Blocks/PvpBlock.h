@@ -66,7 +66,6 @@ namespace Animus::Curriculum
         /// The diminishing return categories a player plays around, in feature order.
         static constexpr uint32 DR_GROUP_COUNT = 8;
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Pvp; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
     };

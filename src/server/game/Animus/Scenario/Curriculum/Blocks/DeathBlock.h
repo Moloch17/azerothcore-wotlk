@@ -71,7 +71,6 @@ namespace Animus::Curriculum
         /// The spirit healer is taken within this of the nearest graveyard.
         static constexpr float SPIRIT_HEALER_RANGE = 30.0f;
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Death; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;

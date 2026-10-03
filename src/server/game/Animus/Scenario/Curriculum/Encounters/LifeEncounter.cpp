@@ -237,12 +237,6 @@ void Animus::Curriculum::LifeEncounter::BeforeLevel(Env& env)
     }
 }
 
-Animus::Curriculum::LifeWorld::Side Animus::Curriculum::LifeEncounter::SideOfSeat(Env const& env) const
-{
-    Player const* bot = _scenario.SeatBot(env, 0);
-    return bot ? LifeWorld::SideOf(bot->GetTeamId()) : _envs[env.Index].Side;
-}
-
 void Animus::Curriculum::LifeEncounter::SetWaypoint(EnvLife& life, uint8 kind, Position const& where, uint32 group)
 {
     Waypoint& way = life.Ways[std::min<uint32>(group, LIFE_GROUPS - 1)];

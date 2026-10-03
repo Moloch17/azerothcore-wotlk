@@ -158,7 +158,6 @@ namespace Animus::Curriculum
         [[nodiscard]] bool TimeIsUp(Env const& env) const;
         /// Every seat of the episode has died (with one seat, that it has).
         [[nodiscard]] bool AllDead(Env const& env) const;
-        [[nodiscard]] LifeWorld::Side SideOfSeat(Env const& env) const;
 
         std::vector<EnvLife> _envs;
         DifficultyLadder _ladder;

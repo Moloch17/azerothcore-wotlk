@@ -68,7 +68,6 @@ namespace Animus::Curriculum
         [[nodiscard]] bool Has(BlockId block) const { return (_blockMask >> uint32(block)) & 1; }
         [[nodiscard]] BlockSlice const& Slice(BlockId block) const { return Slices[std::size_t(block)]; }
         [[nodiscard]] ActionCatalog const& Catalog() const { return *Assets->Catalog; }
-        [[nodiscard]] uint8 PlayerClass() const { return Profile ? Profile->Class : 0; }
 
         /// The block whose actions contain `action`, if any.
         [[nodiscard]] std::optional<BlockId> BlockOfAction(uint32 action) const;

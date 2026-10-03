@@ -102,7 +102,6 @@ namespace Animus::Curriculum
             ACTION_COUNT
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Pet; }
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

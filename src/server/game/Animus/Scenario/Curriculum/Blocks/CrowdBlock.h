@@ -114,7 +114,6 @@ namespace Animus::Curriculum
         /// Whether `bot` can use `object` as it stands: a key it needs is carried.
         [[nodiscard]] static bool CanUse(Player const* bot, GameObject const* object);
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

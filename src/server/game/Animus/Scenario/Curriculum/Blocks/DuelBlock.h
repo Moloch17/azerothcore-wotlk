@@ -154,7 +154,6 @@ namespace Animus::Curriculum
             ACTION_COUNT_WITHOUT_STABLE = 10
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Duel; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;

@@ -67,35 +67,6 @@ def test_merge_seeds_only_blocks_the_base_lacks():
                                base.actor.state_dict()["trunk.layers.0.weight"])
 
 
-def test_trainer_update_adds_the_auxiliary_loss():
-    torch.manual_seed(0)
-    from animus.mappo.buffer import RolloutBuffer
-
-    config = MappoConfig(hidden=(8,), epochs=1, minibatches=1)
-    trainer = MappoTrainer([(3, 2)], 5, config)
-    buffer = RolloutBuffer(4, 2, 1, 3, 5, 2)
-    for _ in range(4):
-        obs = torch.randn(2, 1, 3).numpy()
-        state = torch.zeros(2, 5).numpy()
-        mask = torch.ones(2, 1, 2, dtype=torch.bool).numpy()
-        layout = torch.zeros(2, 1, dtype=torch.long).numpy()
-        actions, log_probs = trainer.act(obs, mask, layout)
-        buffer.add_decision(obs, state, mask, layout, actions, log_probs, trainer.value(state, obs, layout))
-        buffer.add_outcome(torch.ones(2, 1).numpy(), torch.zeros(2, dtype=torch.bool).numpy(),
-                           torch.zeros(2, dtype=torch.bool).numpy(), torch.zeros(2, 1).numpy())
-    buffer.finish(torch.zeros(2, 1).numpy(), 0.99, 0.95)
-
-    calls = []
-
-    def auxiliary(data, idx, dist):
-        calls.append(len(idx))
-        return dist.logits.sum() * 0.0, {"distill_kl": 0.5}
-
-    stats = trainer.update(buffer, auxiliary)
-    assert calls == [8] and stats["distill_kl"] == pytest.approx(0.5)
-    assert "distill_kl" not in trainer.update(buffer)
-
-
 def test_teacher_equal_to_the_policy_has_zero_kl_and_block_moves_are_mapped():
     torch.manual_seed(0)
     config = MappoConfig(hidden=(16, 16))

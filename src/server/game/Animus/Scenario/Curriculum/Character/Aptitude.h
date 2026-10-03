@@ -125,10 +125,6 @@ namespace Animus::Curriculum
         /// The six-number view of this aptitude, written into `out`.
         void WriteBrief(float* out) const;
 
-        /// How far this build answers a demand for one feature, which is what composition asks instead of asking a
-        /// role. Composition wants "somebody who can hold this pull", and that is a number, not a category.
-        [[nodiscard]] float Answers(uint32 feature) const { return (*this)[feature]; }
-
         /// Read a character. `build` supplies the talent ranks and tree split; `bot`, when there is one, restricts
         /// every question to the spells that character actually knows and supplies its gear.
         [[nodiscard]] static Aptitude Of(ClassAssets const& assets, TalentBuilder::Build const& build,

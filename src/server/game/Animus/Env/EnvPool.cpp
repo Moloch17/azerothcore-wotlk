@@ -713,7 +713,6 @@ void Animus::EnvPool::ResetEnv(Env& env)
         resume = rand32() | 1;
         rand_seed(seedFor(_replaySeedBase, index));
         buildSeed = index;
-        ++_replayed;
     }
     seedLock.unlock();
 

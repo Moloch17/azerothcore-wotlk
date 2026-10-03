@@ -56,7 +56,6 @@ namespace Animus::Curriculum
             OBS_COUNT                   = OBS_ACHIEVED_TARGET_FIRST + GOAL_TARGETS
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Goal; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
 

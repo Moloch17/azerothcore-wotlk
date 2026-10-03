@@ -423,7 +423,6 @@ namespace Animus::Curriculum
         /// WaterBreath.Timer), not seconds under over a guessed minute: the old sixty was a third of the real
         /// breath, so the feature saturated with two thirds of the air still to come.
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Move; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         /// What the navmesh senses read standing at one point, as a table, for a console to print.

@@ -95,7 +95,6 @@ bool AnimusForge::ChildProcess::Start(std::vector<std::string> args, std::string
     _logFile = logFile;
     _exited = false;
     _exitedCleanly = false;
-    _exitCode = -1;
     _stopping = false;
     _startedAt = std::chrono::steady_clock::now();
     return true;
@@ -157,7 +156,6 @@ void AnimusForge::ChildProcess::ReportExit(int status)
 {
     _exited = true;
     _exitedCleanly = WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    _exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 
     if (_exitedCleanly)
         LOG_DEBUG("module.animus", "{} (pid {}) finished; output in {}", _name, _pid, _logFile);

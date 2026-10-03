@@ -41,7 +41,6 @@ namespace Animus
         /// The pool being fed, set on the world thread between map updates (a plan starting or ending). Null while
         /// nothing runs: every hook below returns at once.
         void SetActivePool(EnvPool* pool);
-        [[nodiscard]] EnvPool* ActivePool();
 
         void Damage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType type, SpellInfo const* spell);
         void HealCast(Unit* healer, Unit* receiver, uint32 heal);

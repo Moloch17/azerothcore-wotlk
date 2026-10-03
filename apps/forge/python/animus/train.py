@@ -579,6 +579,9 @@ class TrainingRun:
             )
 
         self.evaluating = config.eval.every_env_steps > 0
+        if config.mappo.recurrent_size <= 0:
+            raise ValueError(f"mappo.recurrent_size: expected the recurrent actor's memory width (> 0; stage4_duel "
+                             f"sets 128), got {config.mappo.recurrent_size!r} -- the flat update was removed")
         self.controller = ConvergenceController(config, [layout.name for layout in spec.layouts])
         self.tracker = self.controller.tracker
         # What the evaluations are scored on (EvalResult.score_column): eval.score's column where the sim writes it,

@@ -63,7 +63,6 @@ namespace Animus::Curriculum
             OBS_COUNT
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Order; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
     };

@@ -66,7 +66,6 @@ namespace Animus::Curriculum
             ACTION_REVIVE_FIRST         = 3     // one per revive
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Companion; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

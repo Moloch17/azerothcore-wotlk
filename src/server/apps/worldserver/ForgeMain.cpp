@@ -281,17 +281,9 @@ namespace
         bool const halfBatch = sConfigMgr->GetOption<bool>("AnimusForge.HalfBatch", false) && ticksPerDecision == 1;
         uint32 const tickMs = std::max<uint32>(1, decisionMs / ticksPerDecision / (halfBatch ? 2 : 1));
 
-        // 0 runs until stopped; otherwise stop after this many ticks (batch runs).
-        constexpr uint64 maxTicks = 0;
-
-        if (maxTicks)
-            LOG_INFO("server.worldserver", "Sim loop: stopping after {} ticks", maxTicks);
-
         LoginDatabase.WarnAboutSyncQueries(true);
         CharacterDatabase.WarnAboutSyncQueries(true);
         WorldDatabase.WarnAboutSyncQueries(true);
-
-        uint64 ticks = 0;
 
         while (!World::IsStopped())
         {
@@ -300,12 +292,6 @@ namespace
             // Fixed diff, never wall clock: the sim advances in deterministic steps and runs
             // as fast as the CPU allows.
             sWorld->Update(tickMs);
-
-            if (maxTicks && ++ticks >= maxTicks)
-            {
-                LOG_INFO("server.worldserver", "Sim reached the tick limit ({}), stopping...", maxTicks);
-                World::StopNow(SHUTDOWN_EXIT_CODE);
-            }
         }
 
         LoginDatabase.WarnAboutSyncQueries(false);

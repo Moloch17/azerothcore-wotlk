@@ -83,14 +83,6 @@ Animus::Curriculum::LifeWorld::Band const& Animus::Curriculum::LifeWorld::BandAt
     return BANDS[std::min<uint32>(index, BAND_COUNT - 1)];
 }
 
-uint32 Animus::Curriculum::LifeWorld::BandOf(uint8 level)
-{
-    for (uint32 band = 0; band < BAND_COUNT; ++band)
-        if (level <= BANDS[band].Max)
-            return band;
-    return BAND_COUNT - 1;
-}
-
 Animus::Curriculum::LifeWorld::Side Animus::Curriculum::LifeWorld::SideOf(TeamId team)
 {
     return team == TEAM_ALLIANCE ? Side::Alliance : team == TEAM_HORDE ? Side::Horde : Side::Any;

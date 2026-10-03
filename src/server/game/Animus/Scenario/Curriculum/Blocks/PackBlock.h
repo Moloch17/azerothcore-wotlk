@@ -78,7 +78,6 @@ namespace Animus::Curriculum
             ACTION_COUNT                = PACK_SLOTS + 1
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Pack; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

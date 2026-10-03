@@ -53,9 +53,6 @@ namespace AnimusForge
         /// The last started child has exited with status 0.
         [[nodiscard]] bool FinishedCleanly() const { return _pid <= 0 && _exited && _exitedCleanly; }
 
-        /// The exit code of the last started child, once it has exited normally; -1 otherwise.
-        [[nodiscard]] int ExitCode() const { return _pid <= 0 && _exited ? _exitCode : -1; }
-
         /// The last started child has exited some other way (and was not stopped on purpose).
         [[nodiscard]] bool FailedUnexpectedly() const { return _pid <= 0 && _exited && !_exitedCleanly && !_stopping; }
 
@@ -77,7 +74,6 @@ namespace AnimusForge
         pid_t _pid = -1;
         bool _exited = false;
         bool _exitedCleanly = false;
-        int _exitCode = -1;
         bool _stopping = false;
         std::string _logFile;
         std::chrono::steady_clock::time_point _startedAt;

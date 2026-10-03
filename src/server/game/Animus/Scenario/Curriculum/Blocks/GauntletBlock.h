@@ -55,7 +55,6 @@ namespace Animus::Curriculum
             ACTION_COUNT                = 3     // the sustain spells are core actions, cast on the bot itself
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Gauntlet; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

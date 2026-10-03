@@ -183,17 +183,11 @@ namespace Animus::Curriculum
         /// to another point, always before the encounters build: the objective is placed from where the seat
         /// ends up, so scattering afterwards would measure the trip from somewhere the seat is not.
         void ScatterSeats(Env const& env, Map* map) const;
-        /// Whether the envs share a continent (each in its own phase) rather than each having an instance.
-        [[nodiscard]] bool OnContinent() const { return _continent; }
         /// Phase bits a map has to give an env: all but phase 1, which is the world's own.
         static constexpr uint32 ENV_PHASE_BITS = 31;
 
         /// The phase of the env's seats and everything they meet on a continent.
         [[nodiscard]] static uint32 EnvPhase(Env const& env);
-        /// Envs a continent replica holds: at most the 31 phase bits a map has, and fewer when the stage asks
-        /// for more replicas than that. Envs are dealt out in blocks of this size, so the envs on one replica
-        /// are consecutive and EnvPhase (index modulo 31) gives each of them a bit of its own.
-        [[nodiscard]] uint32 EnvsPerReplica() const { return _envsPerReplica; }
         /// The continent replica this env belongs on (MapMgr::CreateContinentReplica), 0 being the base map.
         [[nodiscard]] uint32 ReplicaOf(Env const& env) const;
         [[nodiscard]] uint32 SpawnMapId() const { return _spawnMapId; }
@@ -201,10 +195,7 @@ namespace Animus::Curriculum
         /// stage's.
         [[nodiscard]] uint32 EpisodeMapId(Env const& env) const;
         [[nodiscard]] uint32 SeatCount() const { return _seatCount; }
-        /// Whether some arena of the stage plays its owner as an agent (ArenaDefinition::OwnerCast): one more row
-        /// on the wire, after the seats and the directors, in every episode of the stage.
-        [[nodiscard]] bool HasCastOwner() const { return _castOwner; }
-        /// The owner's agent index (valid when HasCastOwner).
+        /// The owner's agent index (valid when a cast owner plays).
         [[nodiscard]] uint32 OwnerAgent() const { return _seatCount + (HasDirectors() ? TEAM_COUNT : 0); }
         /// Whether this episode's owner is played through its row: a cast-owner arena, not an evaluation, and
         /// not one of the episodes Owner.CastScriptedShare keeps scripted.
@@ -437,9 +428,10 @@ namespace Animus::Curriculum
     static void TrackMotion(Env const& env, SeatState& seat, Player const* bot, Unit const* target);
 
     void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
-        /// The per-decision bookkeeping SeatReward does before any encounter's terms (damage dealt and taken,
-        /// the current target, support), for a row that is observed but not paid: the cast owner's.
-        void TrackSeatStep(Env& env, uint32 seatIndex, Player* bot);
+        /// The per-decision bookkeeping before any encounter's terms (damage dealt and taken, the current target,
+        /// support): SeatReward's first step, and all a row that is observed but not paid gets (the cast owner's).
+        /// Returns the current target it resolved, or null.
+        Unit* TrackSeatStep(Env& env, uint32 seatIndex, Player* bot);
         void WriteState(Env const& env, float* state) const;
 
         StageDefinition const& _stage;

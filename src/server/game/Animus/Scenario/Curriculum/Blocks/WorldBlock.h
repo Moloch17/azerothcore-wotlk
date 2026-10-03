@@ -118,7 +118,6 @@ namespace Animus::Curriculum
         /// How far a thing is reported out to: the distance feature saturates here.
         static constexpr float RANGE = 100.0f;
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::World; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 

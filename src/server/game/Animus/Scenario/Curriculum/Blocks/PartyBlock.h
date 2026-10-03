@@ -86,7 +86,6 @@ namespace Animus::Curriculum
             ACTION_REVIVE_FIRST         = 1 + 2 * PARTY_MEMBERS     // + member * revives + revive
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Party; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;

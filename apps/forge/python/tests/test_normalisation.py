@@ -1,8 +1,5 @@
-"""When the observation normalisers are allowed to move, on the flat update path.
-
-The recurrent path's counterpart is in test_recurrent.py; the two paths must agree, because every configured stage
-sets `recurrent_size` and so takes the recurrent one, while the flat one is what the tests mostly exercise.
-"""
+"""When the observation normalisers are allowed to move during the (recurrent) update, and how the rollout copies
+carry them."""
 
 import pytest
 import torch
@@ -30,32 +27,26 @@ def test_the_rollout_is_scored_through_the_statistics_it_acted_through():
     made the ratio something other than 1 at epoch 0 -- a shift in the statistics read as a change in the policy.
     """
     torch.manual_seed(0)
-    trainer = MappoTrainer([(3, 2)], 5, MappoConfig(hidden=(8,), epochs=1, minibatches=1,
+    trainer = MappoTrainer([(3, 2)], 5, MappoConfig(hidden=(8,), recurrent_size=4, epochs=1, minibatches=1,
                                                    normalise_observations=True))
-    buffer = RolloutBuffer(4, 2, 1, 3, 5, 2)
+    buffer = RolloutBuffer(4, 2, 1, 3, 5, 2, 0, trainer.recurrent_size)
     rollout(trainer, buffer)
 
-    # The auxiliary runs inside the minibatch, just after the forward, so it can say what the statistics were
-    # when the ratio was taken. approx_kl is second order in the log ratio and stays near zero even when the two
-    # views disagree, so it corroborates rather than decides.
-    seen = []
-
-    def watch(data, idx, dist):
-        seen.append(float(trainer.actor.norms[0].count))
-        return None
-
-    stats = trainer.update(buffer, auxiliary=watch)
-    assert seen and seen[0] == 0.0
+    # One epoch of one minibatch: the update's only forward is the first, so a ratio other than 1 -- a fold that
+    # moved the statistics before it -- shows as approx_kl, and the statistics are only folded in after it.
+    assert float(trainer.actor.norms[0].count) == 0.0
+    stats = trainer.update(buffer)
     assert stats["approx_kl"] == pytest.approx(0.0, abs=1e-6)
+    assert float(trainer.actor.norms[0].count) == 8
 
 
 def test_the_statistics_still_move_and_reach_the_rollout_copies():
     """Deferring the fold must not skip it: the normalisers still describe the rollout afterwards, and the copies
     the next rollout acts through carry the same numbers."""
     torch.manual_seed(0)
-    trainer = MappoTrainer([(3, 2)], 5, MappoConfig(hidden=(8,), epochs=1, minibatches=1,
+    trainer = MappoTrainer([(3, 2)], 5, MappoConfig(hidden=(8,), recurrent_size=4, epochs=1, minibatches=1,
                                                    normalise_observations=True))
-    buffer = RolloutBuffer(4, 2, 1, 3, 5, 2)
+    buffer = RolloutBuffer(4, 2, 1, 3, 5, 2, 0, trainer.recurrent_size)
     rollout(trainer, buffer)
     trainer.update(buffer)
 

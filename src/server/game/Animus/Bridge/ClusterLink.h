@@ -91,8 +91,6 @@ namespace AnimusForge
         /// Accept, register, read and reconnect: cheap, called every tick and while the world thread waits.
         void Poll();
 
-        /// Host: the registered workers' sims, as the learner reaches them ("tcp://address:port").
-        [[nodiscard]] std::vector<std::string> WorkerSims() const;
         /// Host: an order to every worker.
         void Broadcast(std::string const& line);
         /// Host: an order to the worker whose sim is `sim`.

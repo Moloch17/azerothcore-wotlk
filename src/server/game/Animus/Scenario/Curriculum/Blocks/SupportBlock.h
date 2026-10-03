@@ -68,7 +68,6 @@ namespace Animus::Curriculum
             ACTION_COUNT                = FRIEND_SLOTS
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Support; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

@@ -99,10 +99,6 @@ namespace Animus
         /// Close whichever decisions are open.
         void FinishCollect();
 
-        /// Whether a decision is open: BeginDecision ran and FinishCollect has not. A host that abandons
-        /// a decision (a pause, a learner that reconnects) still has to close it.
-        [[nodiscard]] bool DecisionOpen() const { return _decisionOpen[0] || _decisionOpen[1]; }
-
         /// Fill Actions from a local policy ("random" or a scenario scripted policy): every agent's, or only the
         /// opponent seats' (Scenario::IsOpponentSeat), keeping the other actions. Only envs [begin, begin + count).
         bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false, uint32 begin = 0,
@@ -116,7 +112,6 @@ namespace Animus
         /// the next reset; call ResetAll to start every env on it.
         void SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
             bool opponentsOnly = false, uint32 firstSeed = 0);
-        [[nodiscard]] bool IsEvaluating() const { return _evaluating; }
         /// Data-parallel learners each play their own run of an evaluation's seeds on their own envs: after
         /// SetEvaluation, `runs[r]` = (first seed index, episodes) for the envs whose `rangeOfEnv` entry is r.
         void SetEvaluationRuns(std::vector<std::pair<uint32, uint32>> const& runs, std::vector<uint32> rangeOfEnv);
@@ -134,7 +129,6 @@ namespace Animus
         /// before; no seeds or a fraction of 0 stops it. Evaluation episodes are never replays, and a replay reports
         /// as a training episode (NO_EPISODE_SEED).
         void SetReplay(uint32 seedBase, float fraction, std::vector<uint32> seeds);
-        [[nodiscard]] uint64 ReplayedEpisodes() const { return _replayed; }
 
         [[nodiscard]] std::string const& EvalBaseline() const { return _evalBaseline; }
         [[nodiscard]] bool EvalOpponentsOnly() const { return _evalOpponentsOnly; }
@@ -158,10 +152,8 @@ namespace Animus
         void RecordCastCompleted(Unit const* caster, Spell* spell);
         void RecordCastCancelled(Unit const* caster, Spell* spell, bool bySelf);
 
-        [[nodiscard]] Scenario const& GetScenario() const { return _scenario; }
         [[nodiscard]] ScenarioSpec const& Spec() const { return _spec; }
         [[nodiscard]] uint32 NumEnvs() const { return static_cast<uint32>(_envs.size()); }
-        [[nodiscard]] Env const& GetEnv(uint32 index) const { return _envs[index]; }
 
         /// Episodes finished by every env since Setup.
         [[nodiscard]] uint64 CompletedEpisodes() const;
@@ -343,7 +335,6 @@ namespace Animus
         uint32 _replaySeedBase = 0;
         float _replayFraction = 0.0f;
         std::vector<uint32> _replaySeeds;
-        uint64 _replayed = 0;                   // training resets that rebuilt a replay seed
 
         CollectTiming _collect;
 

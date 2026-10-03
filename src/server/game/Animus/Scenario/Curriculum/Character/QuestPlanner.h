@@ -98,8 +98,6 @@ namespace Animus::Curriculum
         /// The plan of `quest`, or null for a quest id the database does not have.
         [[nodiscard]] QuestPlan const* Plan(uint32 quest) const;
         [[nodiscard]] std::size_t Size() const { return _plans.size(); }
-        /// How many supported quests have an objective of each kind, and why the others are not (for the log).
-        [[nodiscard]] std::array<uint32, OBJECTIVE_KIND_COUNT> const& KindCounts() const { return _kindCounts; }
 
         /// How much of an objective `player` has done, 0 to 1 (1 once the quest is complete or rewarded).
         [[nodiscard]] static float Progress(Player const* player, QuestPlan const& plan, uint32 objective);

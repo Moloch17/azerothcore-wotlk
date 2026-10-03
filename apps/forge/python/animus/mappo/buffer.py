@@ -11,7 +11,6 @@ from __future__ import annotations
 import numpy as np
 
 # Kept where the sim put them when it put them on the device.
-DEVICE_FIELDS = ("obs", "state", "mask")
 
 
 def compute_gae(
@@ -378,47 +377,9 @@ class RolloutBuffer:
     def reset(self) -> None:
         self.cursor = 0
 
-    def flat(self) -> dict[str, np.ndarray]:
-        """Every valid per-agent sample flattened to [n, ...] (n = valid rows of T*E*A). State is repeated per agent.
-
-        Seats without a character (``valid`` False) are left out: they only have the no-op and earn nothing, so as
-        samples they would only dilute the advantages, the entropy and the value targets."""
-        steps, envs, agents = self.actions.shape
-        keep = self.samples.reshape(-1)
-        # Boolean indexing copies, so torch gets writable arrays.
-        if isinstance(self.state, np.ndarray):
-            state = np.broadcast_to(self.state[:, :, None, :], (steps, envs, agents, self.state.shape[-1]))
-        else:
-            state = self.state[:, :, None, :].expand(steps, envs, agents, self.state.shape[-1])
-
-        def kept(array, width: int):
-            rows = array.reshape(-1, width)
-            if isinstance(rows, np.ndarray):
-                return rows[keep]
-            import torch
-
-            return rows[torch.as_tensor(keep, device=rows.device)]
-
-        return {
-            "obs": kept(self.obs, self.obs.shape[-1]),
-            "state": kept(state, self.state.shape[-1]),
-            "layout": self.layout.reshape(-1)[keep],
-            "mask": kept(self.mask, self.mask.shape[-1]),
-            "actions": self.actions.reshape(-1)[keep],
-            "log_probs": self.log_probs.reshape(-1)[keep],
-            "values": self.values.reshape(-1)[keep],
-            "advantages": self.advantages.reshape(-1)[keep],
-            "returns": self.returns.reshape(-1)[keep],
-            **({"foresight_targets": self.foresight_targets.reshape(-1, self.foresight)[keep],
-                "foresight_valid": self.foresight_valid.reshape(-1, self.foresight)[keep]} if self.foresight else {}),
-            **({"goal": self.goal.reshape(-1)[keep],
-                "goal_log_probs": self.goal_log_probs.reshape(-1)[keep],
-                "goal_chosen": self.goal_chosen.reshape(-1)[keep]} if self.goals else {}),
-        }
-
     def sequences(self) -> dict[str, np.ndarray]:
         """The rollout as it happened, [T, E, A, ...]: what a recurrent update replays in order. `valid` marks the
-        rows that are samples, as flat() does, and `dones` [T, E] say where a memory is cleared."""
+        rows that are samples (a seat without a character is none), and `dones` [T, E] say where a memory is cleared."""
         return {
             "obs": self.obs,
             "state": self.state,

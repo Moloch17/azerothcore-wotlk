@@ -94,13 +94,6 @@ class MappoConfig:
     # the actor and critic, their inputs' uploads and their results' downloads replayed as one launch, instead of
     # issued one by one from Python. The same computation; off (or off the GPU, or with a slow layout) it runs eager.
     rollout_graphs: bool = True
-    # The PPO update's arithmetic: "fp32", or "bf16" -- the networks' products under torch.autocast (the weights,
-    # the optimiser and the GRU's memory stay in full precision; the losses are computed in fp32 as autocast does).
-    # On stage4_duel's update (RDNA3) bf16 took the update from 0.58 to 0.47 s and the stage from 39,181 to 44,655
-    # env steps/s -- and learned worse: fine-tuning from best.pt for 12 minutes, its seeded evaluations were 10.35 and
-    # 13.41 at 10M and 20M steps against fp32's 14.20 and 15.36 (standard errors ~0.25), with entropy and approx_kl
-    # falling faster. So fp32 it is, unless a stage measures otherwise.
-    update_precision: str = "fp32"
     # How data-parallel learners (animus.parallel) keep one policy. "gradients": every optimizer step's gradients are
     # averaged over the ranks, so they train as one learner on the pool -- the right thing on one machine, and ~8
     # Gbit/s a link for stage4_duel's 5.8M parameters across machines. "weights": each rank trains on its own envs
@@ -1140,12 +1133,6 @@ class MappoTrainer:
                    else None),
         )
 
-    def _memory_tensor(self, memory: np.ndarray | None, rows: int) -> torch.Tensor:
-        """The memory to carry in, as the actor wants it: cleared when the caller has none."""
-        if memory is None:
-            return torch.zeros((rows, self.recurrent_size), device=self.rollout_device)
-        return self._tensor(memory).reshape(rows, self.recurrent_size)
-
     @torch.no_grad()
     def value(self, state: np.ndarray, obs: np.ndarray, layout: np.ndarray,
               goal: np.ndarray | None = None, memory: np.ndarray | None = None) -> np.ndarray:
@@ -1408,16 +1395,9 @@ class MappoTrainer:
         loss: it returns (loss, {stat: value}) or None (see animus.distill)."""
         if self.config.hindsight_coef > 0.0:
             self.hindsight_targets(buffer)
-        precision = self.config.update_precision
-        if precision not in ("fp32", "bf16"):
-            raise ValueError(f"mappo.update_precision is {precision!r}: fp32 or bf16")
         if self.config.rank_sync not in ("gradients", "weights", "async"):
             raise ValueError(f"mappo.rank_sync is {self.config.rank_sync!r}: gradients, weights or async")
-        if precision == "bf16" and self.train_device.type == "cuda":
-            with torch.autocast("cuda", dtype=torch.bfloat16):
-                stats = self._update(buffer, auxiliary, sync)
-        else:
-            stats = self._update(buffer, auxiliary, sync)
+        stats = self._update(buffer, auxiliary, sync)
         # The two-clock seat's goals, on their own clock and optimizer (after the fast update, whose features the
         # slow loop reads detached). In full precision: it is small, and its value head is on the rewards' scale.
         if self.slow_goal_size:
@@ -1440,193 +1420,16 @@ class MappoTrainer:
         return stats
 
     def _update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
-        if self.recurrent_size:
-            if auxiliary is not None and not hasattr(auxiliary, "sequence_loss"):
-                raise ValueError("a recurrent actor needs a sequence-aware auxiliary loss (animus.distill.Distiller): "
-                                 "its rows are replayed in order, so a per-minibatch hook cannot carry the teachers' "
-                                 "memories")
-            return self._update_recurrent(buffer, auxiliary, sync)
-
-        cfg = self.config
-        started = time.perf_counter()
-        stats = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "clip_frac": 0.0, "approx_kl": 0.0,
-                 "actor_grad_norm": 0.0, "critic_grad_norm": 0.0}
-        if self.goal_count:
-            stats["goal_entropy"] = 0.0
-        foresight = self.foresight_outputs > 0 and buffer.foresight >= self.foresight_outputs
-        if foresight:
-            stats["foresight_loss"] = 0.0
-        data = {k: torch.as_tensor(v, device=self.train_device) for k, v in buffer.flat().items()}
-        if data["actions"].shape[0] == 0 and not self.ranks.active:
-            return stats  # no seat had a character this rollout: nothing to learn from
-
-        data["advantages"] = self._normalise_advantages(data["advantages"], data["layout"])
-
-        if self.value_norm is not None:
-            self.value_norm.update(data["returns"], self.ranks)
-            data["returns_target"] = self.value_norm.normalize(data["returns"])
-            data["old_values"] = self.value_norm.normalize(data["values"])
-        else:
-            data["returns_target"] = data["returns"]
-            data["old_values"] = data["values"]
-
-        # How much of the returns' spread the critic already accounts for, on the values it produced during the
-        # rollout. value_loss is reported in normalised space and shrinks with the normaliser, so it cannot say
-        # whether the critic actually fits; this can. 0 = no better than predicting the mean, 1 = perfect.
-        returns, values = data["returns"], data["values"]
-        variance = returns.var()
-        explained = 1.0 - (returns - values).var() / variance if float(variance) > 0.0 else torch.zeros(())
-
-        samples = data["actions"].shape[0]
-        # Even splits: `samples // minibatches` with a fixed stride leaves a remainder minibatch, which is a full
-        # optimizer step on a fragment of the rollout.
-        splits = max(1, min(cfg.minibatches, samples))
-        auxiliary_stats: dict[str, float] = {}
-        auxiliary_updates = 0
-        updates = 0
-
-        # Summed on the device and read once at the end: a .item() per statistic per minibatch is a pipeline stall
-        # per statistic per minibatch.
-        totals = {name: torch.zeros((), device=self.train_device) for name in stats}
-        layout_totals: dict = {}
-        epochs_run = 0
-
-        for _ in range(cfg.epochs):
-            epoch_kl = torch.zeros((), device=self.train_device)
-            epoch_updates = 0
-            order = torch.randperm(samples, device=self.train_device)
-            for idx in torch.tensor_split(order, splits):
-                obs, layout = data["obs"][idx], data["layout"][idx]
-
-                features = self.actor.features(obs, layout)
-                goal = data["goal"][idx] if self.goal_count else None
-                dist = self.actor.action_distribution(features, layout, data["mask"][idx], goal, obs=obs)
-                predictions = (self.actor.foresight(features) if foresight else None)
-                log_probs = dist.log_prob(data["actions"][idx])
-                action_entropy = dist.entropy().mean()
-                entropy = action_entropy
-                if self.goal_count and not self.slow_goal_size:
-                    # Choosing a goal is part of the decision that chose it: its log probability joins the action's,
-                    # and its entropy is kept up on those decisions too. The goal term is averaged over every row,
-                    # not only the rows that chose a goal, so a head consulted once in goal_every_decisions is worth
-                    # that share of the bonus rather than as much as the action head on every decision.
-                    goals = self.actor.goal_distribution(features, obs, layout)
-                    chosen = data["goal_chosen"][idx].float()
-                    log_probs = log_probs + goals.log_prob(goal) * chosen
-                    goal_entropy = (goals.entropy() * chosen).sum()
-                    entropy = entropy + self.goal_entropy_factor * goal_entropy / max(1, chosen.numel())
-                    goal_entropy = goal_entropy.detach() / chosen.sum().clamp(min=1.0)
-                    data_log_probs = data["log_probs"][idx] + data["goal_log_probs"][idx] * chosen
-                else:
-                    data_log_probs = data["log_probs"][idx]
-                log_ratio = log_probs - data_log_probs
-                ratio = log_ratio.exp()
-
-                adv = data["advantages"][idx]
-                policy_loss = -torch.min(ratio * adv, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * adv).mean()
-
-                actor_loss = policy_loss - self.entropy_coef * entropy
-                hint_loss = self._hint_loss(dist, obs, layout, torch.ones_like(layout, dtype=torch.bool),
-                                            auxiliary_stats)
-                if hint_loss is not None:
-                    actor_loss = actor_loss + hint_loss
-                if foresight:
-                    # Huber on the discounted returns, which are on the rewards' scale and have outliers; squared
-                    # error on the share of the episode left, which is already 0 to 1. Steps whose episode does not
-                    # end inside the rollout have no share to learn, and are left out.
-                    targets, valid = data["foresight_targets"][idx], data["foresight_valid"][idx]
-                    horizons = len(cfg.foresight_horizons_seconds)
-                    errors = torch.cat([
-                        nn.functional.smooth_l1_loss(predictions[:, :horizons], targets[:, :horizons],
-                                                     reduction="none"),
-                        (predictions[:, horizons:] - targets[:, horizons:]) ** 2,
-                    ], dim=-1)
-                    counted = valid.float()
-                    foresight_loss = (errors * counted).sum() / counted.sum().clamp(min=1.0)
-                    actor_loss = actor_loss + cfg.foresight_coef * foresight_loss
-                    totals["foresight_loss"] += foresight_loss.detach()
-                if auxiliary is not None and (extra := auxiliary(data, idx, dist)) is not None:
-                    loss, extra_stats = extra
-                    actor_loss = actor_loss + loss
-                    for key, value in extra_stats.items():
-                        auxiliary_stats[key] = auxiliary_stats.get(key, 0.0) + value
-                    auxiliary_updates += 1
-
-                self.actor_opt.zero_grad()
-                actor_loss.backward()
-                if cfg.rank_sync == "gradients":
-                    self.ranks.average_gradients(self.actor.parameters())
-                actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
-                self.actor_opt.step()
-
-                values = self.critic(data["state"][idx], obs, layout, goal)
-                old_values = data["old_values"][idx]
-                target = data["returns_target"][idx]
-                clipped = old_values + (values - old_values).clamp(-cfg.value_clip, cfg.value_clip)
-                value_loss = torch.max((values - target) ** 2, (clipped - target) ** 2).mean()
-
-                self.critic_opt.zero_grad()
-                (cfg.value_coef * value_loss).backward()
-                if cfg.rank_sync == "gradients":
-                    self.ranks.average_gradients(self.critic.parameters())
-                critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
-                self.critic_opt.step()
-
-                with torch.no_grad():
-                    self._layout_totals(layout_totals, layout, dist.entropy(), (ratio - 1) - log_ratio)
-                    totals["policy_loss"] += policy_loss.detach()
-                    totals["value_loss"] += value_loss.detach()
-                    # Reported on its own: the entropy floor compares this with ln(allowed actions), and folding
-                    # the goal head's entropy in would hide a collapsing action policy.
-                    totals["entropy"] += action_entropy.detach()
-                    if self.goal_count and not self.slow_goal_size:
-                        totals["goal_entropy"] += goal_entropy
-                    totals["clip_frac"] += ((ratio - 1).abs() > cfg.clip).float().mean()
-                    totals["approx_kl"] += ((ratio - 1) - log_ratio).mean()
-                    totals["actor_grad_norm"] += actor_grad
-                    totals["critic_grad_norm"] += critic_grad
-                    epoch_kl += ((ratio - 1) - log_ratio).mean()
-                updates += 1
-                epoch_updates += 1
-
-            epochs_run += 1
-            # One read per epoch, not per minibatch: enough to stop before the next epoch pulls the policy
-            # further from the rollout that justified it.
-            # Every rank stops on the same epoch: on the ranks' mean KL, not its own.
-            if cfg.target_kl > 0.0 and epoch_updates \
-                    and float(self.ranks.mean(epoch_kl)) / epoch_updates > EPOCH_KL_TOLERANCE * cfg.target_kl:
-                break
-
-        # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are
-        # the denominator of every PPO ratio in the loop above. Advancing them first makes the ratio something
-        # other than 1 at epoch 0 -- a normaliser shift read as a policy change. Updating here and syncing the
-        # rollout copies below keeps the acting and training views of a feature identical, one rollout apart.
-        if cfg.normalise_observations:
-            update_norms(self.actor.norms, data["obs"], data["layout"], self.actor.obs_dims, self.ranks)
-            update_norms(self.critic.norms, data["obs"], data["layout"], self.critic.obs_dims, self.ranks)
-            self.critic.state_norm.update(data["state"], self.ranks)
-
-        if sync:
-            self._sync_rollout()
-        self._finish_layout_stats(layout_totals)
-        stats = {name: float(total) for name, total in totals.items()}
-        result = {k: v / max(1, updates) for k, v in stats.items()}
-        result["explained_variance"] = float(explained)
-        result["epochs_run"] = float(epochs_run)
-        result.update(self._goal_stats(data))
-        if "hint_n" in auxiliary_stats:
-            count = max(auxiliary_stats.pop("hint_n"), 1.0)
-            for name in ("hint_loss", "hint_match", "hint_weight"):
-                result[name] = auxiliary_stats.pop(name, 0.0) / count
-        for key in [k for k in auxiliary_stats if k.startswith("hint_all_")]:
-            name = key[len("hint_all_"):]
-            total = max(auxiliary_stats.pop(key), 1.0)
-            result[f"hint_match_{name}"] = auxiliary_stats.pop(f"hint_ok_{name}", 0.0) / total
-        result.update({k: v / auxiliary_updates for k, v in auxiliary_stats.items()})
-        # What the update itself cost. With overlap_updates the run's own timer measures the wait for this to
-        # finish, not the work, so without this the work is invisible.
-        result["update_compute_seconds"] = time.perf_counter() - started
-        return result
+        # The update replays the rollout in order through the actor's GRU; every stage has one (a training run refuses
+        # a config without), and the flat update that took the rows in any order was removed 2026-10-03.
+        if not self.recurrent_size:
+            raise ValueError("mappo.recurrent_size is 0: the PPO update needs the recurrent actor (the flat update "
+                             "was removed)")
+        if auxiliary is not None and not hasattr(auxiliary, "sequence_loss"):
+            raise ValueError("a recurrent actor needs a sequence-aware auxiliary loss (animus.distill.Distiller): "
+                             "its rows are replayed in order, so a per-minibatch hook cannot carry the teachers' "
+                             "memories")
+        return self._update_recurrent(buffer, auxiliary, sync)
 
     def _normalise_advantages(self, advantages: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
         """Centre and scale the advantages, within each layout when there are enough rows of it.

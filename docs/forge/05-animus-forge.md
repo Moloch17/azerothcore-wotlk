@@ -190,7 +190,7 @@ The protocol's byte layout is in [chapter 8](08-reference.md#83-wire-protocol-ve
 - `Start(args, workDir, logFile)`: `fork` and `exec`, `args[0]` looked up on `PATH`, stdout and stderr appended to
   the log.
 - `Poll()`: reap without blocking and log how the process ended, once.
-- `FinishedCleanly()` (exit 0), `ExitCode()`, `FailedUnexpectedly()` (exited otherwise and wasn't stopped on purpose).
+- `FinishedCleanly()` (exit 0), `FailedUnexpectedly()` (exited otherwise and wasn't stopped on purpose).
 - `ExpectExit()` marks a coming exit as intentional, so it is logged as stopped rather than failed.
 - `Stop(grace)`: wait `grace` for a voluntary exit, then send SIGINT (Python saves on `KeyboardInterrupt`), wait
   `grace`, then SIGKILL. The worst case is 3 x `grace`.

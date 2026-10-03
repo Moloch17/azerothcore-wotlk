@@ -39,7 +39,6 @@ namespace Animus::Curriculum
             SLOT_FEATURES               = 14
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Hostiles; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

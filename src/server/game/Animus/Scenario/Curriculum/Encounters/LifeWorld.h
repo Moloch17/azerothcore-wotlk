@@ -58,7 +58,6 @@ namespace Animus::Curriculum::LifeWorld
 
     constexpr uint32 BAND_COUNT = 4;
     [[nodiscard]] Band const& BandAt(uint32 index);
-    [[nodiscard]] uint32 BandOf(uint8 level);
 
     /// Which side a thing is for: quests are often one side's, and a town always is.
     enum class Side : uint8 { Any, Alliance, Horde };

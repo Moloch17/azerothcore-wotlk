@@ -115,7 +115,6 @@ namespace Animus::Curriculum
     };
 
     constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);
-    [[nodiscard]] std::string_view OrderKindName(OrderKind kind);
 
     /// Who an order came to: the whole side, the member's group, or the member by name. A raid director's order to
     /// one member outranks its order to the member's group, which outranks the side's.
@@ -307,8 +306,6 @@ namespace Animus::Curriculum
     {
     public:
         virtual ~Block() = default;
-
-        [[nodiscard]] virtual BlockId Id() const = 0;
 
         /// The features and actions the block adds to `layout` (profile, assets and ally heals are set).
         [[nodiscard]] virtual BlockSize Size(Layout const& layout) const = 0;

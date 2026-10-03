@@ -371,15 +371,6 @@ void AnimusForge::ClusterLink::Poll()
     }
 }
 
-std::vector<std::string> AnimusForge::ClusterLink::WorkerSims() const
-{
-    std::vector<std::string> sims;
-    for (Peer const& worker : _workers)
-        if (!worker.Sim.empty())
-            sims.push_back(worker.Sim);
-    return sims;
-}
-
 void AnimusForge::ClusterLink::Broadcast(std::string const& line)
 {
     for (Peer& worker : _workers)

@@ -91,8 +91,7 @@ namespace Animus::Curriculum
         /// What seat `seat`'s actions aim at, when this encounter decides it. True if it did (target may be null).
         virtual bool SelectTarget(Env const& /*env*/, uint32 /*seat*/, Unit*& /*target*/) { return false; }
 
-        /// Before a seat's action is applied, and after, with what it did.
-        virtual void BeforeSeatAction(Env& /*env*/, uint32 /*seat*/, Unit* /*target*/) { }
+        /// After a seat's action is applied, with what it did.
         virtual void OnSeatAction(Env& /*env*/, uint32 /*seat*/, SeatActionResult const& /*result*/) { }
 
         /// Fill the parts of a seat's view this encounter knows.

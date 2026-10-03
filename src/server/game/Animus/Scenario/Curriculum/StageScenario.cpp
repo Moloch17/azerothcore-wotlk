@@ -3092,9 +3092,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     if (!target && !SeatEncoder::ActsWithoutTarget(*seat.L))
         return;
 
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->BeforeSeatAction(env, seatIndex, target);
-
     TrackTarget(env, seat, bot, target);
 
     // A paced action is masked, so only a policy that ignores the mask gets here with one: it does nothing.
@@ -4550,11 +4547,11 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         encounter->AfterRewards(env);
 }
 
-void Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex, Player* bot)
+Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex, Player* bot)
 {
     SeatState& seat = Data(env).Seats[seatIndex];
     if (!seat.L)
-        return;
+        return nullptr;
 
     seat.LastStepDamage = float(env.StepStats[seatIndex].Damage) / seat.DamageScale;
     Unit* target = CurrentTarget(env, seatIndex);
@@ -4564,6 +4561,7 @@ void Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex
     seat.LastStepSelfDamage = bot
         ? float(env.StepStats[seatIndex].SelfDamage) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
     TrackSupport(env, seatIndex, bot);
+    return target;
 }
 
 /// The nearest ground effect the seat is not in yet, so it can be walked around rather than only walked out of.
@@ -4768,7 +4766,6 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         return 0.0f;        // an empty party seat
 
     Player* bot = env.FindBot(seatIndex);
-    seat.LastStepDamage = float(env.StepStats[seatIndex].Damage) / seat.DamageScale;
 
     // A group's healer heals and only heals: none of the damage it deals is paid, whichever encounter pays damage
     // (2026-10-02: "The healer role should ideally not be rewarded for any damage whatever. Their job is to heal and
@@ -4777,19 +4774,11 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     seat.Rewards.Scale(RewardTerm::DamageDealt, GroupHealer(env, seat) ? 0.0f
         : GroupTank(env, seat) ? _tuning.Party.TankDamageShare : 1.0f);
 
-    // Who this seat is actually fighting, asked of the encounters once a decision and remembered for the const
-    // readers. It is the other seat in self-play, which no target slot holds.
-    Unit* target = CurrentTarget(env, seatIndex);
-    seat.CurrentTargetGuid = target ? target->GetGUID() : ObjectGuid::Empty;
-
-    // Before any encounter's reward: several read it (the pulls' and duel's damage taken, the owner's tank refund).
-    seat.LastStepDamageTaken = bot
-        ? float(env.StepStats[seatIndex].DamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
-    seat.LastStepSelfDamage = bot
-        ? float(env.StepStats[seatIndex].SelfDamage) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
-
-    // Also before the encounters: the owner's and teammates' rewards read what the seat's absorbs soaked on them.
-    TrackSupport(env, seatIndex, bot);
+    // Before any encounter's reward, which read them: the step's damage dealt and taken (the pulls' and duel's damage
+    // taken, the owner's tank refund), who this seat is actually fighting (asked of the encounters once a decision
+    // and remembered for the const readers; the other seat in self-play, which no target slot holds), and what its
+    // absorbs soaked on the owner and teammates.
+    Unit* target = TrackSeatStep(env, seatIndex, bot);
 
     // Standing in something, and what it cost. The damage is charged on top of DamageTaken: taking a hit that could
     // have been walked out of is worse than taking one that could not, and this is the only term that pays a seat

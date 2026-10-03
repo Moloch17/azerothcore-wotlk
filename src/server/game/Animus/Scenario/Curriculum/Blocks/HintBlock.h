@@ -39,7 +39,6 @@ namespace Animus::Curriculum
             OBS_COUNT   = 3
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Hint; }
         [[nodiscard]] BlockSize Size(Layout const& /*layout*/) const override { return { OBS_COUNT, 0 }; }
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& /*view*/, float* /*obs*/, uint8* /*mask*/) const override { }

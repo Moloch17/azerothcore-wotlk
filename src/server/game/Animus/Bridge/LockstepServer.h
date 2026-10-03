@@ -56,7 +56,6 @@ namespace AnimusForge
         /// (data-parallel learners each own a share of the pool), or the world stops. `onIdle` runs every poll
         /// interval while waiting; returning false stops waiting (and AcceptClients returns false).
         bool AcceptClients(uint32 ranks, std::function<bool()> const& onIdle = {});
-        bool AcceptClient(std::function<bool()> const& onIdle = {}) { return AcceptClients(1, onIdle); }
         /// Drop every client: a data-parallel job with a rank gone cannot go on.
         void DropClient();
         [[nodiscard]] bool HasClient() const { return _client >= 0; }

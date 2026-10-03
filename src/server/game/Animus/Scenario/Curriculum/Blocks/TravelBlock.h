@@ -95,7 +95,6 @@ namespace Animus::Curriculum
         /// air, which is this block's subject, not about steering.
         static constexpr float MAX_ALTITUDE = 150.0f;
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Travel; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 

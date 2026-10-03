@@ -70,7 +70,6 @@ namespace Animus::Curriculum
         /// How far ahead the owner's position is extrapolated.
         static constexpr float OWNER_AHEAD_SECONDS = 1.5f;
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Forecast; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
     };

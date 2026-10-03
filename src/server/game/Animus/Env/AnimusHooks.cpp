@@ -39,11 +39,6 @@ namespace Animus::Hooks
         ActivePoolPtr.store(pool, std::memory_order_release);
     }
 
-    EnvPool* ActivePool()
-    {
-        return Pool();
-    }
-
     void Damage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType type, SpellInfo const* spell)
     {
         if (EnvPool* pool = Pool())

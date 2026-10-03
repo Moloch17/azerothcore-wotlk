@@ -451,7 +451,7 @@ every `Reset` calls `Rebuild`:
    the seat that cast it is credited once the ally is actually alive (`StepRevivedAlly`, `Revives`) -- see the
    note below,
 3. for each seat with a living bot: `CurrentTarget` (the first encounter whose `SelectTarget` answers, else target 0),
-   `BeforeSeatAction` on every encounter, build the `SeatView`, `SeatEncoder::Apply`, fold the result into the seat's
+   build the `SeatView`, `SeatEncoder::Apply`, fold the result into the seat's
    totals, `OnSeatAction` on every encounter, and summon a called hunter beast.
 
 > **Why accepting a resurrection needs bookkeeping.** A client answers an offer once, with one
@@ -879,7 +879,7 @@ living enemy becomes the selection.
 
 An `Encounter` owns one part of what an env contains besides the seats. It keeps its own per-env state and has hooks
 for each phase: `RewardTerms`, `AddEpisodeInfo`, `ResetEpisode`, `BeforeRebuild`, `Build`, `UpdateEnemies`, `Update`,
-`SelectTarget`, `BeforeSeatAction`, `OnSeatAction`, `View`, `BeforeRewards`, `Reward`, `AfterRewards`, `WriteState`,
+`SelectTarget`, `OnSeatAction`, `View`, `BeforeRewards`, `Reward`, `AfterRewards`, `WriteState`,
 `IsTerminal`, `OnRecovered`, `OnPullStarting`, `Deactivate`, `Teardown`.
 
 **`CreatureEncounter`** (`Opposition::Creature`). It spawns a random creature whose natural level range covers the
