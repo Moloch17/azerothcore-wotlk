@@ -89,8 +89,11 @@ namespace FieldRouteSearch
         Lhf::Grid const* grid = grids.At(x, y);
         if (!grid || !grid->Side)
             return {};
-        int32 const column = int32(std::lround((x - grid->MinX) / grid->Cell));
-        int32 const row = int32(std::lround((y - grid->MinY) / grid->Cell));
+        // The cell holding the point: MinX is the first cell's centre, half a cell in from the grid's edge. Rounding
+        // half away from zero (lround) put x = 0 one cell before a grid's first, so the line along every grid's edge
+        // read as rock: Ragefire's door is on one side of x = 0 and the dungeon on the other.
+        int32 const column = int32(std::floor((x - grid->MinX) / grid->Cell + 0.5f));
+        int32 const row = int32(std::floor((y - grid->MinY) / grid->Cell + 0.5f));
         if (column < 0 || row < 0 || column >= int32(grid->Side) || row >= int32(grid->Side))
             return {};
         uint32 const cell = uint32(row) * grid->Side + uint32(column);
