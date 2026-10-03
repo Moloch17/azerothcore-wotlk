@@ -126,6 +126,9 @@ namespace Animus::Curriculum
         bool HasEnder = false;
         Position EnderAt;
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
+        /// The places are a dungeon's way on (InstanceEncounter::View: the route's next points and the tank), not
+        /// places something wanted was found: TravelTo takes them, Gather does not.
+        bool RoutePlaces = false;
         uint8 ChainIndex = 0;                       // quests of the chain turned in
         uint8 ChainLength = 0;
         bool HasAssignment = false;                 // the area the coordinator gave the seat's group

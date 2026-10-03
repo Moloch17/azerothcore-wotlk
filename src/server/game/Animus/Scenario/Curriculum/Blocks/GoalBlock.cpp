@@ -111,7 +111,8 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
     kinds[uint32(SeatGoal::Loot)] = world.Active && world.Corpse;
-    kinds[uint32(SeatGoal::Gather)] = world.Active && ((world.Node && world.NodeOpenable) || found);
+    kinds[uint32(SeatGoal::Gather)] = world.Active && ((world.Node && world.NodeOpenable)
+        || (found && !world.RoutePlaces));
     kinds[uint32(SeatGoal::Interact)] = world.Active && (world.HasGiver || world.HasEnder || world.QuestObject
         || world.ItemTarget || world.QuestVendor || targets[GOAL_TARGET_OBJECTIVE_FIRST]
         || targets[GOAL_TARGET_OBJECTIVE_FIRST + 1] || targets[GOAL_TARGET_OBJECTIVE_FIRST + 2]

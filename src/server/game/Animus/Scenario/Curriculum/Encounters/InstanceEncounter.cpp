@@ -2129,6 +2129,32 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         objectiveYard = tankIndex >= 0 ? int32(fight.Seats[std::size_t(tankIndex)].DenseAt) : -1;
     }
 
+    // The dungeon's progress in the goal head's own words (peak-play W3): TravelTo about the route's next points
+    // ahead of the party (places 0..6: the next pack, the one after) and, for a seat other than the tank, about the
+    // tank itself (place 7: regroup), with the seat's own objective kept in the assignment slot it had before. The
+    // slow loop chooses among them and is credited by what the run achieves; nothing here pays for choosing them.
+    // Not over a journal a life encounter already keeps.
+    WorldView& world = view.World;
+    if (!world.Active)
+    {
+        world.Active = true;
+        world.RoutePlaces = true;
+        world.HasAssignment = true;
+        world.Assignment = view.Objective;
+        uint32 place = 0;
+        for (std::size_t point = last; point < fight.Route.size() && place + 1 < WorldView::JOURNAL_PLACES; ++point)
+        {
+            world.Places[place].Present = true;
+            world.Places[place++].Where = fight.Route[point];
+        }
+        if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot))
+        {
+            WorldView::JournalPlace& regroup = world.Places[WorldView::JOURNAL_PLACES - 1];
+            regroup.Present = true;
+            regroup.Where.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+        }
+    }
+
     // Where the advance action steps: a few yards on along the field route towards the objective, from the yard
     // of it the seat stands on. Off the route, nothing: the server's path to the objective is the way back to it.
     if (view.Bot && seat < fight.Seats.size() && !fight.Dense.empty() && fight.RouteDense.size() == fight.Route.size())
