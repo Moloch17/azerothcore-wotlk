@@ -163,26 +163,26 @@ namespace
     }
 
     /// ComputeAbilities, once per pet per world tick: the observation and the action of a decision (no tick between
-    /// them) read the same list, which walks and classifies every spell the pet has. Per map thread; a pet seen at
-    /// another tick is computed again.
+    /// them) read the same list, which walks and classifies every spell the pet has. Per map thread.
+    ///
+    /// References stay valid until the game clock advances: the cache is emptied only when a call sees a new tick,
+    /// before it looks anything up, so a caller holding a list (PetBlock::BeforeApply holds one across Apply, which
+    /// asks again) can never have it freed under it by a nested call in the same tick, and the cache holds at most
+    /// one tick's pets. A fresh pet's new GUID is just a new key until the clock moves on.
     std::vector<Ability> const& Abilities(Creature* pet)
     {
-        struct Cached
-        {
-            Milliseconds At{ -1 };
-            std::vector<Ability> List;
-        };
-        thread_local std::unordered_map<ObjectGuid, Cached> cache;
+        thread_local Milliseconds tick{ -1 };
+        thread_local std::unordered_map<ObjectGuid, std::vector<Ability>> cache;
         Milliseconds const now = GameTime::GetGameTimeMS();
-        if (cache.size() > 512)
-            cache.clear();
-        Cached& entry = cache[pet->GetGUID()];
-        if (entry.At != now)
+        if (now != tick)
         {
-            entry.List = ComputeAbilities(pet);
-            entry.At = now;
+            cache.clear();
+            tick = now;
         }
-        return entry.List;
+        auto [entry, added] = cache.try_emplace(pet->GetGUID());
+        if (added)
+            entry->second = ComputeAbilities(pet);
+        return entry->second;
     }
 
     /// The unit an ability aims at: an enemy spell at the bot's target, a helpful one at the pet itself.
