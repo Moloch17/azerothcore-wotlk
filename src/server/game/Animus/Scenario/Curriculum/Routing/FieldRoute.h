@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include "Position.h"
+#include <string>
 #include <vector>
 
 namespace Animus::Curriculum::FieldRoute
@@ -48,6 +49,10 @@ namespace Animus::Curriculum::FieldRoute
 
     /// Whether the field holds the ground at (x, y) on `mapId`: a route can be planned there at all.
     [[nodiscard]] bool Covers(uint32 mapId, float x, float y);
+
+    /// What Plan would say, for a console: the start's floors, whether one was taken, the cells expanded, and how
+    /// near the goal the search came and where.
+    [[nodiscard]] std::string Report(uint32 mapId, Position const& from, Position const& to);
 }
 
 #endif

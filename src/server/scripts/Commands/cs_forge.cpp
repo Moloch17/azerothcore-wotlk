@@ -30,6 +30,7 @@
 #include <chrono>
 #include <filesystem>
 #include <set>
+#include "FieldRoute.h"
 #include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
@@ -91,6 +92,7 @@ namespace
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
                 { "rays",      HandleRays,      SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
+                { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
                 { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
                 { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
@@ -624,6 +626,17 @@ namespace
         /// episode fails, was there ever a way? PathGenerator says PATHFIND_NORMAL when it has not pathfound at
         /// all, so "reachable" has meant less than it reads. This plans with the planner's own query -- a large
         /// node pool, no 74-point cap -- and says plainly whether the way arrives or stops short.
+        /// Plan a way over the layered field (FieldRoute), the ground the seats walk by, between two points: what a
+        /// dungeon's route is built from. Its fields must be baked (`forge fieldstage`).
+        static bool HandleFieldRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
+            float toX, float toY, float toZ)
+        {
+            Position const from(fromX, fromY, fromZ, 0.0f);
+            Position const to(toX, toY, toZ, 0.0f);
+            handler->SendSysMessage(Animus::Curriculum::FieldRoute::Report(mapId, from, to));
+            return true;
+        }
+
         static bool HandleRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
             float toX, float toY, float toZ)
         {

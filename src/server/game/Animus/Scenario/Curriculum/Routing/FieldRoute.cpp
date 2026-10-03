@@ -24,7 +24,9 @@
 #include <map>
 #include <memory>
 #include <queue>
+#include <limits>
 #include <unordered_map>
+#include "StringFormat.h"
 
 // Named, not anonymous: the build compiles the forge's files several to a unit, and LayeredField.cpp's own helpers
 // (Column, Open, ...) would meet these there.
@@ -149,20 +151,71 @@ bool Animus::Curriculum::FieldRoute::Covers(uint32 mapId, float x, float y)
     return ColumnAt(grids, x, y).Begin != nullptr;
 }
 
+namespace FieldRouteSearch
+{
+    struct Diagnosis
+    {
+        bool Enabled = false;
+        bool Start = false;
+        std::string StartFloors;
+        uint32 Expanded = 0;
+        float Closest = 0.0f;
+        Position At;
+    };
+
+    bool Search(uint32 mapId, Position const& from, Position const& to, std::vector<Position>& out,
+        uint32 maxNodes, Diagnosis* diagnosis);
+}
+
 bool Animus::Curriculum::FieldRoute::Plan(uint32 mapId, Position const& from, Position const& to,
     std::vector<Position>& out, uint32 maxNodes)
 {
-    using namespace FieldRouteSearch;
+    return FieldRouteSearch::Search(mapId, from, to, out, maxNodes, nullptr);
+}
+
+std::string Animus::Curriculum::FieldRoute::Report(uint32 mapId, Position const& from, Position const& to)
+{
+    std::vector<Position> out;
+    FieldRouteSearch::Diagnosis diagnosis;
+    bool const found = FieldRouteSearch::Search(mapId, from, to, out, 4000000, &diagnosis);
+    float length = 0.0f;
+    for (std::size_t i = 1; i < out.size(); ++i)
+        length += out[i - 1].GetExactDist(&out[i]);
+    return Acore::StringFormat("field store {}; start floors [{}]; start {}; {} cells expanded; {}; closest {:.1f} yd "
+        "at ({:.1f} {:.1f} {:.1f})", diagnosis.Enabled ? "enabled" : "DISABLED", diagnosis.StartFloors,
+        diagnosis.Start ? "taken" : "NONE", diagnosis.Expanded,
+        found ? Acore::StringFormat("ARRIVED, {} yards walked, {:.0f} yd long", out.size(), length) : "NO WAY",
+        diagnosis.Closest, diagnosis.At.GetPositionX(), diagnosis.At.GetPositionY(), diagnosis.At.GetPositionZ());
+}
+
+bool FieldRouteSearch::Search(uint32 mapId, Position const& from, Position const& to, std::vector<Position>& out,
+    uint32 maxNodes, Diagnosis* diagnosis)
+{
     out.clear();
+    if (diagnosis)
+        diagnosis->Enabled = Lhf::Store::Enabled();
     if (!Lhf::Store::Enabled())
         return false;
     Grids grids;
     grids.MapId = mapId;
 
+    if (diagnosis)
+    {
+        Column const column = ColumnAt(grids, from.GetPositionX(), from.GetPositionY());
+        for (Lhf::Interval const* floor = column.Begin; floor != column.End; ++floor)
+            diagnosis->StartFloors += Acore::StringFormat("{}{:.1f}/{:.1f}/{}{}", diagnosis->StartFloors.empty()
+                ? "" : " ", floor->Floor(), std::min(999.0f, floor->Headroom()), uint32(floor->NavFlags()),
+                Standable(*floor) ? "" : "x");
+    }
     uint32 startFloor = 0;
     float startZ = 0.0f;
     if (!FloorNear(grids, from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(), startFloor, startZ))
         return false;
+    if (diagnosis)
+    {
+        diagnosis->Start = true;
+        diagnosis->Closest = std::numeric_limits<float>::max();
+    }
 
     // The lattice is whole yards from the origin; the field's cells are a yard too, so each lattice point reads its
     // own cell.
@@ -199,6 +252,16 @@ bool Animus::Curriculum::FieldRoute::Plan(uint32 mapId, Position const& from, Po
             continue;
         current.Closed = true;
         ++expanded;
+        if (diagnosis)
+        {
+            diagnosis->Expanded = expanded;
+            float const near = heuristic(float(current.At.X), float(current.At.Y), current.Z);
+            if (near < diagnosis->Closest)
+            {
+                diagnosis->Closest = near;
+                diagnosis->At.Relocate(float(current.At.X), float(current.At.Y), current.Z);
+            }
+        }
 
         float const cx = float(current.At.X);
         float const cy = float(current.At.Y);
