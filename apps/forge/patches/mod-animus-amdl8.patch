@@ -1,0 +1,271 @@
+--- a/animus-lib/src/runtime/Model/MlpPolicy.h
++++ b/animus-lib/src/runtime/Model/MlpPolicy.h
+@@ -180,6 +180,29 @@
+         std::vector<Pointer> _pointers;
+         std::vector<float> _memberCodes, _enemyCodes, _pooled, _setExtra, _query, _setHidden;   // scratch
+ 
++        /// A seat layout's entities as sets (format 8; the learner's EntitySets): per set a slot gathered from its
++        /// segments of the observation, one encoder per set, the present slots pooled (mean and max) onto the first
++        /// layer, and pointer heads scoring the actions that name a slot. None in a version 7 model.
++        struct SeatSet
++        {
++            uint32 Slots = 0, Width = 0, Present = 0, PresentStride = 0;
++            std::vector<std::pair<uint32, uint32>> Segments;     // (first column of slot 0, columns a slot)
++            std::vector<float> W1, B1, W2, B2;
++        };
++        struct SeatPointer
++        {
++            uint32 First = 0;
++            uint32 Set = 0;
++            std::vector<float> Weight, Bias;
++        };
++        bool _seatSets = false;
++        uint32 _seatEmbed = 0;
++        std::vector<SeatSet> _seatSetList;
++        std::vector<float> _seatPoolWeight, _seatPoolBias;
++        std::vector<SeatPointer> _seatPointers;
++        std::vector<std::vector<float>> _seatCodes;              // scratch: per set [slots * embed]
++        std::vector<float> _seatPooled, _seatExtra, _seatRaw;    // scratch
++
+         std::vector<float> _scratchA;
+         std::vector<float> _scratchB;
+         std::vector<float> _gates;        // the GRU's input part
+--- a/animus-lib/src/runtime/Model/MlpPolicy.cpp
++++ b/animus-lib/src/runtime/Model/MlpPolicy.cpp
+@@ -29,7 +29,9 @@
+ namespace
+ {
+     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
+-    constexpr uint32 AMDL_VERSION = 7;
++    constexpr uint32 AMDL_VERSION = 8;
++    /// The oldest format still read: a version 7 model is a version 8 one without the seat sets.
++    constexpr uint32 AMDL_OLDEST_VERSION = 7;
+ 
+     /// Guards against a corrupt header asking for gigabytes.
+     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
+@@ -102,9 +104,10 @@
+         return false;
+     }
+ 
+-    if (!reader.Read(version) || version != AMDL_VERSION)
++    if (!reader.Read(version) || version < AMDL_OLDEST_VERSION || version > AMDL_VERSION)
+     {
+-        error = Acore::StringFormat("{} has model version {}, expected {}", path, version, AMDL_VERSION);
++        error = Acore::StringFormat("{} has model version {}, expected {} to {}", path, version, AMDL_OLDEST_VERSION,
++            AMDL_VERSION);
+         return false;
+     }
+ 
+@@ -373,6 +376,64 @@
+         }
+     }
+ 
++    // A seat layout's sets (version 8).
++    uint8 hasSeatSets = 0;
++    uint32 seatEmbed = 0;
++    std::vector<SeatSet> seatSets;
++    std::vector<float> seatPoolWeight, seatPoolBias;
++    std::vector<SeatPointer> seatPointers;
++    if (version >= 8 && !reader.Read(hasSeatSets))
++    {
++        error = Acore::StringFormat("{} is truncated before its seat sets", path);
++        return false;
++    }
++    if (hasSeatSets)
++    {
++        uint32 count = 0;
++        bool ok = reader.Read(seatEmbed) && seatEmbed > 0 && seatEmbed <= MAX_LAYER_WIDTH && reader.Read(count)
++            && count > 0 && count <= 8;
++        for (uint32 i = 0; ok && i < count; ++i)
++        {
++            SeatSet set;
++            uint32 segments = 0;
++            ok = reader.Read(set.Slots) && reader.Read(set.Width) && reader.Read(set.Present)
++                && reader.Read(set.PresentStride) && reader.Read(segments) && set.Slots > 0 && set.Slots <= 64
++                && set.Width > 0 && set.Width <= MAX_LAYER_WIDTH && segments > 0 && segments <= 4
++                && set.Present + (set.Slots - 1) * set.PresentStride < obsDim;
++            uint32 width = 0;
++            for (uint32 s = 0; ok && s < segments; ++s)
++            {
++                uint32 first = 0, stride = 0;
++                ok = reader.Read(first) && reader.Read(stride) && stride > 0 && first + set.Slots * stride <= obsDim;
++                width += stride;
++                set.Segments.emplace_back(first, stride);
++            }
++            ok = ok && width == set.Width && reader.ReadFloats(set.W1, std::size_t(seatEmbed) * set.Width)
++                && reader.ReadFloats(set.B1, seatEmbed) && reader.ReadFloats(set.W2, std::size_t(seatEmbed) * seatEmbed)
++                && reader.ReadFloats(set.B2, seatEmbed);
++            seatSets.push_back(std::move(set));
++        }
++        uint32 const adapterOut = layers.front().Out;
++        ok = ok && reader.ReadFloats(seatPoolWeight, std::size_t(adapterOut) * 2 * seatEmbed * count)
++            && reader.ReadFloats(seatPoolBias, adapterOut);
++        uint32 pointerCount = 0;
++        ok = ok && reader.Read(pointerCount) && pointerCount <= 16;
++        for (uint32 i = 0; ok && i < pointerCount; ++i)
++        {
++            SeatPointer pointer;
++            ok = reader.Read(pointer.First) && reader.Read(pointer.Set) && pointer.Set < count
++                && reader.ReadFloats(pointer.Weight, std::size_t(seatEmbed) * featureWidth)
++                && reader.ReadFloats(pointer.Bias, seatEmbed)
++                && pointer.First + seatSets[pointer.Set].Slots <= numActions;
++            seatPointers.push_back(std::move(pointer));
++        }
++        if (!ok)
++        {
++            error = Acore::StringFormat("{} is truncated or inconsistent in its seat sets", path);
++            return false;
++        }
++    }
++
+     if (!reader.AtEnd())
+     {
+         error = Acore::StringFormat("{} has trailing data", path);
+@@ -438,8 +499,24 @@
+     _enemyCodes.assign(std::size_t(_enemies.Slots) * embed, 0.0f);
+     _pooled.assign(std::size_t(4) * embed, 0.0f);
+     _setExtra.assign(_sets ? _layers.front().Out : 0, 0.0f);
+-    _query.assign(embed, 0.0f);
+-    _setHidden.assign(embed, 0.0f);
++    _query.assign(std::max(embed, seatEmbed), 0.0f);
++    _setHidden.assign(std::max(embed, seatEmbed), 0.0f);
++    _seatSets = hasSeatSets != 0;
++    _seatEmbed = seatEmbed;
++    _seatSetList = std::move(seatSets);
++    _seatPoolWeight = std::move(seatPoolWeight);
++    _seatPoolBias = std::move(seatPoolBias);
++    _seatPointers = std::move(seatPointers);
++    _seatCodes.clear();
++    uint32 seatWidest = 0;
++    for (SeatSet const& set : _seatSetList)
++    {
++        _seatCodes.emplace_back(std::size_t(set.Slots) * seatEmbed, 0.0f);
++        seatWidest = std::max(seatWidest, set.Width);
++    }
++    _seatPooled.assign(std::size_t(2) * seatEmbed * _seatSetList.size(), 0.0f);
++    _seatExtra.assign(_seatSets ? _layers.front().Out : 0, 0.0f);
++    _seatRaw.assign(seatWidest, 0.0f);
+     _slowHiddenGates.assign(std::size_t(3) * slowSize, 0.0f);
+     _slowOut.assign(slowSize, 0.0f);
+     widest = std::max(widest, recurrentSize);
+@@ -504,6 +581,16 @@
+     _poolWeight.clear();
+     _poolBias.clear();
+     _pointers.clear();
++    _seatSets = false;
++    _seatEmbed = 0;
++    _seatSetList.clear();
++    _seatPoolWeight.clear();
++    _seatPoolBias.clear();
++    _seatPointers.clear();
++    _seatCodes.clear();
++    _seatPooled.clear();
++    _seatExtra.clear();
++    _seatRaw.clear();
+     _obsDim = 0;
+     _numAgents = 0;
+     _numActions = 0;
+@@ -617,6 +704,67 @@
+         }
+     }
+ 
++    // A seat layout's sets: every slot gathered from its segments through its set's encoder, the present ones pooled
++    // (mean and max; nothing present pools to zero) onto the first layer, as the learner's EntitySets does.
++    if (_seatSets)
++    {
++        uint32 const embed = _seatEmbed;
++        for (std::size_t index = 0; index < _seatSetList.size(); ++index)
++        {
++            SeatSet const& set = _seatSetList[index];
++            float* meanOut = _seatPooled.data() + 2 * embed * index;
++            float* maxOut = meanOut + embed;
++            std::fill(meanOut, meanOut + embed, 0.0f);
++            std::fill(maxOut, maxOut + embed, -1.0f);
++            uint32 present = 0;
++            for (uint32 slot = 0; slot < set.Slots; ++slot)
++            {
++                uint32 at = 0;
++                for (auto const& [first, stride] : set.Segments)
++                    for (uint32 col = 0; col < stride; ++col)
++                        _seatRaw[at++] = obs[first + slot * stride + col];
++                float* code = _seatCodes[index].data() + std::size_t(slot) * embed;
++                for (uint32 row = 0; row < embed; ++row)
++                {
++                    float sum = set.B1[row];
++                    for (uint32 col = 0; col < set.Width; ++col)
++                        sum += set.W1[std::size_t(row) * set.Width + col] * _seatRaw[col];
++                    _setHidden[row] = std::tanh(sum);
++                }
++                for (uint32 row = 0; row < embed; ++row)
++                {
++                    float sum = set.B2[row];
++                    for (uint32 col = 0; col < embed; ++col)
++                        sum += set.W2[std::size_t(row) * embed + col] * _setHidden[col];
++                    code[row] = std::tanh(sum);
++                }
++                if (obs[set.Present + slot * set.PresentStride] > 0.5f)
++                {
++                    ++present;
++                    for (uint32 row = 0; row < embed; ++row)
++                    {
++                        meanOut[row] += code[row];
++                        maxOut[row] = std::max(maxOut[row], code[row]);
++                    }
++                }
++            }
++            for (uint32 row = 0; row < embed; ++row)
++            {
++                meanOut[row] /= float(std::max<uint32>(1, present));
++                if (!present)
++                    maxOut[row] = 0.0f;
++            }
++        }
++        std::size_t const pooledWidth = _seatPooled.size();
++        for (uint32 row = 0; row < _seatExtra.size(); ++row)
++        {
++            float sum = _seatPoolBias[row];
++            for (std::size_t col = 0; col < pooledWidth; ++col)
++                sum += _seatPoolWeight[std::size_t(row) * pooledWidth + col] * _seatPooled[col];
++            _seatExtra[row] = sum;
++        }
++    }
++
+     // Every layer but the action head, which reads the features the memory and the goal are applied to.
+     std::size_t const trunkLayers = _layers.size() - 1;
+     for (std::size_t index = 0; index < trunkLayers; ++index)
+@@ -630,6 +778,8 @@
+                 sum += weights[col] * in[col];
+             if (_sets && index == 0)
+                 sum += _setExtra[row];
++            if (_seatSets && index == 0)
++                sum += _seatExtra[row];
+ 
+             out[row] = std::tanh(sum);
+         }
+@@ -942,6 +1092,26 @@
+                 out[pointer.First + slot] = score;
+             }
+         }
++
++        // A seat layout's slot-naming actions, the same way, after the director's.
++        for (SeatPointer const& pointer : _seatPointers)
++        {
++            for (uint32 row = 0; row < _seatEmbed; ++row)
++            {
++                float sum = pointer.Bias[row];
++                for (uint32 col = 0; col < head.In; ++col)
++                    sum += pointer.Weight[std::size_t(row) * head.In + col] * in[col];
++                _query[row] = sum;
++            }
++            std::vector<float> const& codes = _seatCodes[pointer.Set];
++            for (uint32 slot = 0; slot < _seatSetList[pointer.Set].Slots; ++slot)
++            {
++                float score = 0.0f;
++                for (uint32 row = 0; row < _seatEmbed; ++row)
++                    score += codes[std::size_t(slot) * _seatEmbed + row] * _query[row];
++                out[pointer.First + slot] = score;
++            }
++        }
+ 
+         std::swap(in, out);
+     }
