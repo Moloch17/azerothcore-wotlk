@@ -26,8 +26,8 @@
 
 namespace Animus::Curriculum::FieldRoute
 {
-    /// The most a seat climbs from one yard of floor to the next (a slope, a stair); the move block's step.
-    constexpr float MAX_CLIMB = 2.5f;
+    /// The steepest a seat walks, up or down: yards of height per yard across (about 50 degrees).
+    constexpr float MAX_SLOPE = 1.2f;
     /// The most a seat drops off a ledge onto the floor below. A player drops further, but past this the fall
     /// starts to hurt, and a route is the way a party walks, not the way it survives.
     constexpr float MAX_DROP = 8.0f;
@@ -35,12 +35,11 @@ namespace Animus::Curriculum::FieldRoute
     constexpr float MIN_HEADROOM = 2.0f;
 
     /// **A way through the world as a seat walks it, from the layered field** (LayeredField::Store): yard by yard
-    /// over the floors the field holds, a climb of up to MAX_CLIMB or a drop of up to MAX_DROP from one cell to the
-    /// next, with room to stand; burning ground (magma, slime) at a cost, as a player wades through it. It is the
-    /// bots' own picture of the ground -- what their move block steers by -- so it goes where they can go, which the
-    /// server's navmesh does not: Ragefire Chasm's mesh has no link down into its lower cavern, which a player walks
-    /// off a ledge into and out of through the lava, and the parties stood at the top of the drop for the rest of
-    /// the run (2026-10-02).
+    /// over every floor the field holds with room to stand -- the navmesh's and the cave floor it leaves out -- no
+    /// steeper than MAX_SLOPE up or down, and off a ledge onto the navmesh's ground up to MAX_DROP; never on burning
+    /// ground. It is the bots' own picture of the ground, what their move block steers by. The server's navmesh does
+    /// not join Ragefire Chasm's caverns where a player walks between them, and the parties stood at the gaps for the
+    /// rest of the run (2026-10-02/03).
     ///
     /// `out` is the cells walked, one a yard, `from` first and the cell reaching `to` last. False when the field
     /// does not hold the ground (no field for a grid) or no way is found within `maxNodes` expanded cells; `out`

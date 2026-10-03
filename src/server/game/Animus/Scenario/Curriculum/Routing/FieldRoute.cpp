@@ -43,8 +43,8 @@ namespace FieldRouteSearch
     /// file's needs.
     constexpr uint8 LIQUID_MAGMA = 0x04;
     constexpr uint8 LIQUID_SLIME = 0x08;
-    /// A yard of burning ground costs as many of dry: a dry way round is taken when there is one at all near.
-    constexpr float BURNING_COST = 6.0f;
+    /// A yard off the navmesh costs a little more than one on it: the mesh's ground is preferred where both go.
+    constexpr float OFF_MESH_COST = 0.3f;
     /// A drop costs a little more than the yard it crosses, so a ramp beside a ledge is taken when there is one.
     constexpr float DROP_COST = 0.5f;
 
@@ -102,23 +102,25 @@ namespace FieldRouteSearch
         return { grid->Intervals.data() + grid->First[cell], grid->Intervals.data() + grid->First[cell + 1] };
     }
 
-    /// Ground a seat walks on: the navmesh's floors (ground, water, and magma and slime at their cost), with room to
-    /// stand. A floor merely open to the sky is the top of the rock in a cave: allowed, the route to Oggleflint
-    /// climbed onto Ragefire's rock and came down its cliff as a chain of 8 yd "drops", and the parties stood at the
-    /// door rather than follow it (2026-10-03).
-    bool Standable(Lhf::Interval const& floor)
-    {
-        return floor.Headroom() >= MIN_HEADROOM && floor.NavFlags() != 0;
-    }
-
-    /// Ground that burns: magma or slime underfoot. A player wades through it and takes the damage -- Ragefire
-    /// Chasm's lower cavern is left through its lava lake (2026-10-02) -- so it is walkable, at BURNING_COST a yard.
+    /// Ground that burns: magma or slime underfoot. Never walked: every leg of Ragefire Chasm has a dry way, as a
+    /// player walks it, once the cave floor the navmesh leaves out is counted.
     bool Burning(Lhf::Interval const& floor)
     {
         return (floor.NavFlags() & (NAV_MAGMA | NAV_SLIME))
             || (floor.HasLiquid() && (floor.LiquidFlags & (LIQUID_MAGMA | LIQUID_SLIME))
                 && floor.Liquid() > floor.Floor());
     }
+
+    /// Ground a seat stands on: any floor with room to stand, not burning. The navmesh leaves real cave floor out --
+    /// Oggleflint's cavern read as a sealed pocket on its floors alone, with 8.5 yd of open cave beside it -- and a
+    /// cave's floors are under its roof, so "open to the sky" says nothing there. What keeps the route off the top of
+    /// the rock is the slope (MAX_SLOPE) and the drops (onto the navmesh only), not which floors count: allowed onto
+    /// the rock, the route to Oggleflint came down a cliff as a chain of 8 yd drops (2026-10-03).
+    bool Standable(Lhf::Interval const& floor)
+    {
+        return floor.Headroom() >= MIN_HEADROOM && !Burning(floor);
+    }
+
 
     /// The standable floor of the column at (x, y) nearest `z`, within SNAP; false without one.
     bool FloorNear(Grids& grids, float x, float y, float z, uint32& index, float& height)
@@ -300,11 +302,14 @@ bool FieldRouteSearch::Search(uint32 mapId, Position const& from, Position const
             {
                 if (!Standable(*floor))
                     continue;
+                // Up and down no steeper than a seat walks (MAX_SLOPE a yard across); further down only off a ledge
+                // onto the navmesh's ground, up to MAX_DROP.
                 float const rise = floor->Floor() - z;
-                if (rise > MAX_CLIMB || rise < -MAX_DROP)
+                float const slope = MAX_SLOPE * across;
+                if (rise > slope || (-rise > slope && (-rise > MAX_DROP || floor->NavFlags() == 0)))
                     continue;
-                float const cost = across * (Burning(*floor) ? BURNING_COST : 1.0f)
-                    + (rise < -MAX_CLIMB ? DROP_COST + (-rise - MAX_CLIMB) * 0.1f : 0.0f)
+                float const cost = across + (floor->NavFlags() == 0 ? OFF_MESH_COST : 0.0f)
+                    + (-rise > slope ? DROP_COST + (-rise - slope) * 0.1f : 0.0f)
                     + std::fabs(rise) * 0.1f;
                 uint64 const id = Key(nx, ny, index);
                 auto [visit, inserted] = visits.try_emplace(id);
