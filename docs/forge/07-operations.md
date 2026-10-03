@@ -178,7 +178,8 @@ is an `AC_` environment variable there (`AnimusForge.Queue` is `AC_ANIMUS_FORGE_
 conf file). It starts
 `ANIMUS_FORGE_PARALLEL` (2) of them, watches for the last stage's `finished.json`, stops a finished class's server
 and starts the next; Ctrl+C leaves the running ones training and `run` again resumes the schedule. Each instance's
-TensorBoard and dashboard are on the base ports plus ten per instance. One instance is addressed by name:
+TensorBoard is on http://localhost:16006 plus ten per instance (16016, 16026, ...: `FORGE_TENSORBOARD_PORT`,
+the same number inside the container and on the host's loopback). One instance is addressed by name:
 
 ```
 ANIMUS_FORGE_INSTANCE=druid modules/mod-animus-forge/tools/forge_classes.py attach     # the console; Ctrl+P Ctrl+Q detaches
@@ -203,28 +204,18 @@ directory and the shared root is a sibling of it.
 |---|---|
 | `forge status` | The live report: rates, ETAs, evaluation scores against baseline, warnings |
 | `forge progress 600` | The same report every 10 minutes |
-| The dashboard at http://localhost:18800 | One page: the conf the run is using (and what differs from the dist default), steps, rate, ETA, evaluations against baseline, the training curves, and the last evaluation per class. It shows `forge fast` runs as well as real ones, and picks each stage's curves out of its own metrics.csv rather than plotting a fixed list. Started by the worldserver container, refreshes every 5 s. With `SOAP.Enabled` and an `etc/animus-dashboard.auth` holding `user:password` for an account with SEC_ADMINISTRATOR, it also gets pause/resume/skip/cancel and the seeding choice below; without them it is read-only |
-| `<OutputDir>/runs/<stage>/layouts.csv` | Per (class, role), **every update**: what each pair is doing in the training episodes themselves (sampled actions, each at its own ladder difficulty). The `layout` column is the class and `role` its own, so a paladin appears twice. metrics.csv averages them all together and the evaluation tables come only every `eval.every_env_steps`; this is the live view, and the dashboard shows it as "Class and role, right now". Read behaviour from it, not scores -- the gates stay on the evaluations |
-| TensorBoard at http://localhost:16006 | `episode_*`, losses, entropy, `eval/*`, `eval_<band>/*`, `eval_arena_<arena>/*` |
+| `<OutputDir>/runs/<stage>/layouts.csv` | Per (class, role), **every update**: what each pair is doing in the training episodes themselves (sampled actions, each at its own ladder difficulty). The `layout` column is the class and `role` its own, so a paladin appears twice. metrics.csv averages them all together and the evaluation tables come only every `eval.every_env_steps`; this is the live view. Read behaviour from it, not scores -- the gates stay on the evaluations |
+| TensorBoard at http://localhost:16006 | `episode_*`, losses, entropy, `eval/*`, `eval_<band>/*`, `eval_arena_<arena>/*`, for the runs in `<OutputDir>/runs` (archived runs are in `<OutputDir>/archive`, which it does not read). The same URL with or without host networking; the container log says it at start (`TensorBoard: http://localhost:16006 (logdir ...)`) |
 | `env/dist/logs/animus-learner.log` | Everything the learner prints, including evaluation tables per level band, class and arena |
 | `<OutputDir>/runs/<stage>/eval.csv`, `eval.jsonl` | Every evaluation, with full tables |
 
-#### Turning the dashboard's controls on
+#### Console commands without a terminal (SOAP)
 
-The page is read-only until it has somewhere to send a command and an account to send it as. Both are off by
-default, so a rig that does not ask for them keeps the property the rest of the fork relies on -- the sim opens no
-network listener.
-
-1. `SOAP.Enabled = 1` in `env/dist/etc/worldserver.conf`. `ForgeMain.cpp` starts the thread when it is set;
-   upstream's `Main.cpp` is not compiled here, so the key did nothing at all before that.
-2. An account with `SEC_ADMINISTRATOR`, from the console: `account create <name> <password>` (16 characters at
-   most -- a client limit the console enforces) then `account set gmlevel <name> 3 -1`.
-3. `env/dist/etc/animus-dashboard.auth` holding `<name>:<password>`, mode 600. The launcher passes it as
-   `--soap-auth` when it exists and says nothing when it does not.
-
-Restart the worldserver and the page gains pause, resume, skip and cancel. They run the same handler and the same
-`SEC_ADMINISTRATOR` check a typed console command does, so they grant no authority the console does not already
-have; the page sends a command *name* from a fixed list, never a command string.
+`SOAP.Enabled = 1` in `env/dist/etc/worldserver.conf` makes `ForgeMain.cpp` start upstream's SOAP listener on
+`SOAP.IP:SOAP.Port` (127.0.0.1:7878 by default), for a script that drives the forge without attaching to the
+console. It runs the same handler and the same `SEC_ADMINISTRATOR` check as a typed command, so it needs an account
+with that level (`account create <name> <password>`, then `account set gmlevel <name> 3 -1`) and grants nothing the
+console does not. Off by default, so the sim opens no network listener unless asked.
 
 **Which checkpoint the next stage starts from.** `latest.pt`, by default (`seed_from`).
 
@@ -239,12 +230,8 @@ handed stage 3 a network that had learned nothing of stage 2.
 What `best` buys is protection from a late regression: an entropy collapse or a bad restart near the end of a
 stage is carried by `latest.pt` and not by `best.pt`. On a real run the two are close, since convergence ends a
 stage when it stops improving and `latest` is then near-best by construction; it is short runs where they
-diverge. For a long build where that protection is worth more than the freshness, set `seed_from: best`.
-
-The dashboard's "Seeding the next stage" panel says which file the next stage would take and how far behind
-`best.pt` is, and lets you pick either or fall back to the default. Picking one writes a one-word `seed_from` file
-in the run directory, which `animus.train.seed_preference` reads; it applies to merge parents as well as the base,
-and a run's own file wins over the config.
+diverge. For a long build where that protection is worth more than the freshness, set `seed_from: best` in the
+learner config of the stage that seeds from it; it applies to merge parents as well as the base.
 
 | `<OutputDir>/runs/<stage>/stage.jsonl` | Restart, advance and halt decisions with their gates |
 | `forge scenarios` | Every stage's run: finished and why, checkpoints, steps, best score |

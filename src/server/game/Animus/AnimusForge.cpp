@@ -932,8 +932,8 @@ void AnimusForge::Forge::WarnSeedOrder(ForgeConfig const& config, std::vector<st
                 // It will be seeded from. Worth saying only that the run never finished (it was cancelled), which
                 // is a reason to read this stage's scores carefully and not a reason to retrain anything.
                 //
-                // It does not say which checkpoint: that is the learner's to decide (TrainConfig.seed_from, and
-                // the run's own seed_from file), and it said "best" here while the learner took latest.pt.
+                // It does not say which checkpoint: that is the learner's to decide (TrainConfig.seed_from), and
+                // it said "best" here while the learner took latest.pt.
                 if (!RunAdvanced(config, parent))
                     out(Acore::StringFormat("  {} seeds from {}, whose run did not finish (it was cancelled).",
                         stage->Name, parent));

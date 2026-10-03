@@ -332,11 +332,8 @@ class TrainConfig:
     # What "best" buys, and what this gives up: best.pt cannot carry a late regression. A stage that destabilises
     # near its end -- an entropy collapse, a bad restart -- passes that on under "latest" and would not under
     # "best". On a real run the two are close anyway, since convergence stops a stage when it stops improving, so
-    # latest is near-best by construction; it is short runs where they diverge. Set "best" here, or per run
-    # through the `seed_from` file, for a long build where the protection is worth more than the freshness.
-    #
-    # A parent run that carries its own `seed_from` file overrides this for itself
-    # (animus.train.seed_preference); the dashboard writes that file.
+    # latest is near-best by construction; it is short runs where they diverge. Set "best" here for a long build
+    # where the protection is worth more than the freshness.
     seed_from: str = "latest"
     # A merge stage's further parents (stage.json merges), seeding the blocks only they have after init_from: "auto"
     # takes each merged stage's best.pt (else latest.pt); a list names checkpoints; empty = none.

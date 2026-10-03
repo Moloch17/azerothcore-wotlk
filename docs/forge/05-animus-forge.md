@@ -218,7 +218,7 @@ from an in-game administrator's chat.
 | `forge help` | The command list |
 | `forge status` | The progress report while something runs. When idle, the settings and the last plan's outcome. Also shows a running export and pending requests |
 | `forge scenarios` | Every scenario with its run: finished and why, resumable checkpoint, steps, best score; exported model count |
-| `forge start [scenario ...]` | Refused unless idle. Without names: `AnimusForge.Queue` (every default-queue stage when empty), leaving out stages whose `finished.json` says `"advanced": true` (`Queue.SkipFinished`). Named scenarios are never skipped. Warns about stages listed before their parents, or whose parents have no finished run. Every scenario trains from scratch, and the learner archives an earlier run to `runs/_archive/<scenario>-<time>/` |
+| `forge start [scenario ...]` | Refused unless idle. Without names: `AnimusForge.Queue` (every default-queue stage when empty), leaving out stages whose `finished.json` says `"advanced": true` (`Queue.SkipFinished`). Named scenarios are never skipped. Warns about stages listed before their parents, or whose parents have no finished run. Every scenario trains from scratch, and the learner archives an earlier run to `archive/<scenario>-<time>/` |
 | `forge fast [scenario ...]` | Like `start` with the fast profile (5.8). Without names: `Fast.Queue`, or every curriculum stage in order when it is empty, each trained again from scratch (nothing is skipped) |
 | `forge resume [scenario ...]` | **Paused:** continue. **Waiting on a crashed learner:** restart it with `--resume`. **Idle, with names:** a new plan whose first entry resumes from `runs/<first>/latest.pt` and the rest train from scratch. **Idle, without names:** the last plan, from the entry where it stopped (resuming it). Refused if the policy isn't remote or there is no `latest.pt` |
 | `forge pause` | Freeze after the current decision |
@@ -229,7 +229,7 @@ from an in-game administrator's chat.
 | `forge talents <class_role> [spec] [points] [plan]` | Print the talent build the curriculum would give that class (which talents, in which tree, at how many ranks). `points` defaults to a level 80 character's, `plan` is `standard`, `noisy` or `random` |
 | `forge bench [scenario]` | Time the sim at every `AnimusForge.Bench.Threads` x `Envs` pair, then the fastest few with the learner; `forge bench apply` writes the winner into the configs |
 | `forge export [scenario] [best\|latest]` | Background `python -m animus.export` of `best.pt` (else `latest.pt`) of the scenario (default: the current or last one) into `ModelDir`, with the layout manifests. Output in `animus-export.log`. One export at a time. Works while training |
-| `forge clean archive \| scenario <s> \| exports \| fast \| logs \| all` | Delete `runs/_archive/`, one run, exported models and manifests, the fast output, the learner and export logs, or everything (idle only). Each refuses while it would delete something in use, and lists every removal with its size |
+| `forge clean archive \| scenario <s> \| exports \| fast \| logs \| all` | Delete `archive/` (beside `runs/`) and the old `runs/_archive/` (before 2026-10-03), one run, exported models and manifests, the fast output, the learner and export logs, or everything (idle only). Each refuses while it would delete something in use, and lists every removal with its size |
 | `forge progress [seconds\|off]` | Show or set the periodic report interval |
 
 ## 5.8 The fast profile (`forge fast`)
@@ -363,7 +363,7 @@ The sim's command-line arguments override `socket`, `run_name`, `runs_dir` and `
 `TrainingRun.__init__`:
 
 1. Seed Python, numpy and torch.
-2. Without `--resume`, archive whatever `runs/<run>/` holds to `runs/_archive/<run>-<time>/`. With `--resume`, find
+2. Without `--resume`, archive whatever `runs/<run>/` holds to `archive/<run>-<time>/`, beside `runs/`. With `--resume`, find
    `latest.pt` (or exit) and delete a stale `finished.json`.
 3. Write `config.yaml`. Connect to the socket and receive the `SPEC`. Write `spec.json`.
 4. Load `<layouts_dir>/<scenario>/stage.json` (the sim writes it before accepting a learner) and copy it into the run.

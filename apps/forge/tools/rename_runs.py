@@ -7,10 +7,11 @@ and the move of their runs are one change, and this is the half that touches dis
 
     tools/rename_runs.py <animus-forge dir> [--apply]
 
-Walks every `runs/` under it (`shared/runs`, `druid/runs`, `bench/runs`, ...), including `_archive/<name>-<date>`
-and `_finetune/<name>`, and prints what would move; `--apply` moves it. Idempotent: a directory already at its new
-name is left alone, and one whose new name is taken is reported and skipped. Runs of stages that were folded away
-(`stage1d_glide`, `stage1f_breathe`) or dropped (`stage9_pvp`, `mix_duel_pvp`) go to `_archive/` with a date.
+Walks every `runs/` under it (`shared/runs`, `druid/runs`, `bench/runs`, ...), including the archive beside it
+(`archive/<name>-<date>`; `runs/_archive/` before 2026-10-03) and `_finetune/<name>`, and prints what would move;
+`--apply` moves it. Idempotent: a directory already at its new name is left alone, and one whose new name is taken
+is reported and skipped. Runs of stages that were folded away (`stage1d_glide`, `stage1f_breathe`) or dropped
+(`stage9_pvp`, `mix_duel_pvp`) go to `archive/` with a date.
 """
 
 import datetime as dt
@@ -68,16 +69,17 @@ def moves(root: Path):
             if entry.name in TABLE:
                 yield entry, runs / TABLE[entry.name]
             elif entry.name in GONE:
-                yield entry, runs / "_archive" / f"{entry.name}-{stamp}"
-        for sub in ("_archive", "_finetune"):
-            if not (runs / sub).is_dir():
+                yield entry, runs.parent / "archive" / f"{entry.name}-{stamp}"
+        # Archived runs: beside runs/ (archive/, animus.runs) and, from before 2026-10-03, inside it (_archive/).
+        for folder in (runs.parent / "archive", runs / "_archive", runs / "_finetune"):
+            if not folder.is_dir():
                 continue
-            for entry in sorted((runs / sub).iterdir()):
+            for entry in sorted(folder.iterdir()):
                 if not entry.is_dir():
                     continue
                 stem, dash, date = entry.name.partition("-")
                 if stem in TABLE:
-                    yield entry, runs / sub / f"{TABLE[stem]}{dash}{date}"
+                    yield entry, folder / f"{TABLE[stem]}{dash}{date}"
 
 
 def main(argv: list[str]) -> int:

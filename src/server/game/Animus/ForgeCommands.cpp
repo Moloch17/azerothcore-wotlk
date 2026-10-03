@@ -44,7 +44,11 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    constexpr char const* ARCHIVE_DIR = "_archive";
+    /// Earlier runs, moved aside by a fresh start (animus.runs.archive_run): <OutputDir>/archive, beside runs/ so
+    /// TensorBoard (which reads runs/) does not load them. runs/_archive is where they went before 2026-10-03; it is
+    /// still never a run name and `forge clean archive` still clears it.
+    constexpr char const* ARCHIVE_DIR = "archive";
+    constexpr char const* LEGACY_ARCHIVE_DIR = "_archive";
     constexpr char const* EXPORT_LOG = "animus-export.log";
 
     /// How many of its last points a `noisy` build improvises, when the command asks for one. The curriculum
@@ -214,7 +218,7 @@ namespace
     /// A run name is one plain path component: no separators, no "." or "..", not the archive.
     bool IsRunName(std::string const& name)
     {
-        return !name.empty() && name != "." && name != ".." && name != ARCHIVE_DIR
+        return !name.empty() && name != "." && name != ".." && name != LEGACY_ARCHIVE_DIR
             && name.find_first_of("/\\") == std::string::npos;
     }
 
@@ -464,7 +468,7 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
     out(Acore::StringFormat("Starting {} with policy {}.", Join(scenarios), _config.Policy));
     WarnSeedOrder(_config, scenarios, out);
     if (_config.IsRemote())
-        out("  Each scenario trains from scratch: an earlier run in runs/<scenario>/ is moved to runs/_archive/.");
+        out("  Each scenario trains from scratch: an earlier run in runs/<scenario>/ is moved to archive/.");
 
     return true;
 }
@@ -1130,7 +1134,7 @@ bool AnimusForge::Forge::CommandClean(std::string const& target, std::string con
             return false;
         }
 
-        return RemovePath(runs / ARCHIVE_DIR, out);
+        return RemovePath(runs.parent_path() / ARCHIVE_DIR, out) && RemovePath(runs / LEGACY_ARCHIVE_DIR, out);
     };
 
     auto const cleanExports = [&]()

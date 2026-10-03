@@ -89,8 +89,8 @@ CMake: `ANIMUS_MODELS_INSTALL_DIR` (default `<install prefix>/data/animus`).
 | `ANIMUS_TORCH_INDEX_URL` | empty (PyPI) | torch wheel index for the venv (ROCm: `https://download.pytorch.org/whl/rocm6.4`, CPU: `https://download.pytorch.org/whl/cpu`) |
 | `ANIMUS_FORGE_OUTPUT_DIR` | `/azerothcore/var/animus-forge` | Becomes `AC_ANIMUS_FORGE_OUTPUT_DIR` |
 | `DOCKER_DB_EXTERNAL_PORT` | `13306` | MySQL on `127.0.0.1` |
-| `DOCKER_TENSORBOARD_EXTERNAL_PORT` | `16006` | TensorBoard on `127.0.0.1` |
-| `DOCKER_DASHBOARD_EXTERNAL_PORT` | `18800` | The forge dashboard on `127.0.0.1` (`python/animus/dashboard.py`) |
+| `DOCKER_TENSORBOARD_EXTERNAL_PORT` | `16006` | TensorBoard on `127.0.0.1` (bridge networking: the host port the container's 16006 is published on) |
+| `FORGE_TENSORBOARD_PORT` | `16006` | The port TensorBoard binds in the container, which is the host's port on host networking (`docker-compose.cluster.yml`); `forge_classes.py` gives instance i 16006 + 10 (i + 1) |
 | `DOCKER_DB_ROOT_PASSWORD` | `password` | MySQL root password |
 | `CCUSTOMOPTIONS` | (override) | Extra CMake options, for example `-DMODULE_MOD-ANIMUS=disabled` |
 
@@ -478,13 +478,13 @@ A flat object rewritten after every update and evaluation. Fields include:
 | `checkpoint_<update>.pt` | Every `checkpoint_every` | Newest `keep_checkpoints` kept |
 | `latest.pt` | Checkpoints and finish | Resume point |
 | `best.pt` | Each new best evaluation | Seed for later stages, export default |
-| `layouts.csv` | Every `log_every` updates | Per class and build, what each is doing in the training episodes of that update (sampled actions, own ladder difficulty), and the class's convergence signals: `entropy`, `approx_kl`, `allowed_actions`, `lr_scale`, `frozen`. The dashboard's "Class and build, right now" |
-| `seed_from` | When chosen | One word, `best` or `latest`: which of this run's checkpoints seeds the stage after it (`animus.train.seed_preference`). Absent unless something wrote it, usually the dashboard's "Seeding the next stage" panel. See 7 |
+| `layouts.csv` | Every `log_every` updates | Per class and build, what each is doing in the training episodes of that update (sampled actions, own ladder difficulty), and the class's convergence signals: `entropy`, `approx_kl`, `allowed_actions`, `lr_scale`, `frozen`. |
 | `finished.json` | When the stage is decided | See 8.4 |
 
 Other locations:
 
-- `<OutputDir>/runs/_archive/<scenario>-<time>/`: earlier runs moved aside by a fresh start
+- `<OutputDir>/archive/<scenario>-<time>/`: earlier runs moved aside by a fresh start, beside `runs/` so
+  TensorBoard does not load them (`runs/_archive/` before 2026-10-03; `forge clean archive` clears both)
 - `<OutputDir>/layouts/<stage>/`: manifests and `stage.json`
 - `<OutputDir>/fast/{runs,layouts,models}/`: fast test runs
 - `<LogsDir>/animus-learner.log`, `<LogsDir>/animus-export.log`

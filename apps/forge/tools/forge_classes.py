@@ -49,8 +49,8 @@ OUTPUT_ROOT = "/azerothcore/var/animus-forge"       # inside the container; var/
 INSTANCES = Path("env/instances")
 COMPOSE = Path("docker-compose.yml")
 OVERRIDE = Path("docker-compose.override.yml")   # the local one, gitignored: GPU devices, torch index, .env values
-# Host ports for an instance's TensorBoard and dashboard: the base service has 16006/18800; instance i takes +10*i.
-PORT_BASE = 16006, 18800
+# An instance's TensorBoard port: the base service has 16006; instance i takes 16006 + 10 * (i + 1).
+TENSORBOARD_PORT = 16006
 PORT_STEP = 10
 POLL_SECONDS = 60
 
@@ -100,6 +100,7 @@ def write_instance(name: str, classes: str, queue: tuple[str, ...], index: int, 
     # number that run at once. forge bench at that setting says whether the split is right.
     map_threads = max(2, (cores * 3 // 4) // parallel)
     torch_threads = max(1, (cores // 4) // parallel)
+    port = TENSORBOARD_PORT + PORT_STEP * (index + 1)
 
     svc = copy.deepcopy(base_service())
     svc["container_name"] = f"ac-animus-forge-worldserver-{name}"
@@ -113,16 +114,14 @@ def write_instance(name: str, classes: str, queue: tuple[str, ...], index: int, 
         # The cores are shared between the instances: each gets a share of the map-update and torch threads.
         "AC_MAP_UPDATE_THREADS": str(map_threads),
         "AC_ANIMUS_FORGE_LEARNER_TORCH_THREADS": str(torch_threads),
+        # The instance's TensorBoard binds its own port (forge-worldserver.sh), the same number inside and out.
+        "FORGE_TENSORBOARD_PORT": str(port),
     })
     svc["environment"] = environment
-    # Host ports for the instance's TensorBoard and dashboard; nothing else is published (the base server has the
-    # world and SOAP ports, and a training server takes no clients).
-    svc["ports"] = [
-        {"mode": "ingress", "host_ip": "127.0.0.1", "target": 6006,
-         "published": str(PORT_BASE[0] + PORT_STEP * (index + 1)), "protocol": "tcp"},
-        {"mode": "ingress", "host_ip": "127.0.0.1", "target": 8800,
-         "published": str(PORT_BASE[1] + PORT_STEP * (index + 1)), "protocol": "tcp"},
-    ]
+    # Its TensorBoard is the only port published, to the loopback address on the number it binds: on host networking
+    # the mapping is ignored and the bind is the host's port, so the URL is the same either way.
+    svc["ports"] = [{"mode": "ingress", "host_ip": "127.0.0.1", "target": port, "published": str(port),
+                     "protocol": "tcp"}]
     document = {"x-animus": NOTE.format(file=path, service=service(name), name=name), "services": {service(name): svc}}
 
     INSTANCES.mkdir(parents=True, exist_ok=True)

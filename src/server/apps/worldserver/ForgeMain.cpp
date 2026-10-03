@@ -478,8 +478,8 @@ int main(int argc, char** argv)
     // that blocks the world thread (waiting on a learner) runs the queue itself meanwhile. End of input
     // stops the server, so the console only starts when stdin is a terminal: a server started without
     // one (a detached container without stdin, a batch job) keeps running.
-    // SOAP: the console's commands over HTTP, for a caller that has no terminal -- the dashboard's stage
-    // controls are the reason it exists. Same handler and the same SEC_ADMINISTRATOR check as a typed
+    // SOAP: the console's commands over HTTP, for a caller that has no terminal (a script driving the forge
+    // without attaching to the console). Same handler and the same SEC_ADMINISTRATOR check as a typed
     // command, so it adds no authority the console does not already have. Off unless SOAP.Enabled is set,
     // which keeps "the sim opens no listener" true for every run that does not ask for one. The thread
     // polls World::IsStopped and returns on shutdown; joined below with the console's.

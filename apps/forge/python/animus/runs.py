@@ -1,7 +1,8 @@
 """Run directories.
 
 A learner trains from scratch by default. When it starts, whatever its run directory holds from an earlier run is
-moved to ``<runs_dir>/_archive/<run>-<time>/`` (nothing is deleted). While it trains, only the newest numbered
+moved to ``<output_dir>/archive/<run>-<time>/`` (nothing is deleted): beside ``runs/`` rather than inside it, so
+TensorBoard, which reads ``runs/``, loads the live runs and not every run ever archived. While it trains, only the newest numbered
 checkpoints are kept (latest.pt and best.pt are separate files and always stay).
 
 ``--resume`` (the sim's ``forge resume``) is the one exception: it continues the run in place from its
@@ -13,7 +14,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-ARCHIVE_DIR = "_archive"
+ARCHIVE_DIR = "archive"           # a sibling of runs/ (<OutputDir>/archive); runs/_archive before 2026-10-03
 CHECKPOINT_GLOB = "checkpoint_*.pt"
 LATEST_CHECKPOINT = "latest.pt"
 FINISHED_FILE = "finished.json"
@@ -40,7 +41,7 @@ def archive_run(run_dir: Path) -> Path | None:
     """Move an earlier run out of ``run_dir`` and leave it empty; returns where it went, if there was one."""
     archived = None
     if run_dir.exists() and any(run_dir.iterdir()):
-        archive = run_dir.parent / ARCHIVE_DIR
+        archive = run_dir.parent.parent / ARCHIVE_DIR
         archive.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         archived = archive / f"{run_dir.name}-{stamp}"

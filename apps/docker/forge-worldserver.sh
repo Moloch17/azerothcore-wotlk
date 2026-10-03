@@ -6,7 +6,7 @@
 #   1. build and install the worldserver if env/dist/bin has none yet, or once when ./forge.sh --build asked for it
 #   2. put back missing config files: any .conf from its .dist
 #   3. install whatever the forge learner's Python venv is missing (animus-venv.sh)
-#   4. start TensorBoard in the background
+#   4. start TensorBoard in the background, on http://localhost:${FORGE_TENSORBOARD_PORT:-16006}
 #   5. exec the worldserver, which starts the learner itself (AnimusForge.Learner.AutoStart)
 
 set -euo pipefail
@@ -70,42 +70,25 @@ done
 bash "$ROOT/apps/docker/animus-venv.sh"
 
 if [[ -x "$VENV/bin/tensorboard" ]]; then
-    # The runs of AnimusForge.OutputDir (set by docker-compose.yml), else the module's python/ directory.
+    # The runs of AnimusForge.OutputDir (set by docker-compose.yml), else the module's python/ directory. Earlier
+    # runs are archived beside runs/ (<OutputDir>/archive), not inside it, so TensorBoard reads the live ones only.
     RUNS="${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs"
     mkdir -p "$RUNS"
-    # Every interface inside the container's own network (published to the host's loopback); on host networking
-    # (docker-compose.cluster.yml) FORGE_LOCAL_ONLY keeps it on loopback rather than the LAN.
+    # One port inside and outside the container, so the URL is the same in both networking modes: on the bridge
+    # network docker-compose.yml publishes it to the host's loopback on the same number, and on host networking
+    # (docker-compose.cluster.yml) this bind is the host's port. FORGE_LOCAL_ONLY keeps a host-network bind on
+    # loopback rather than the LAN; a bridge bind has to take every interface for the published port to reach it.
+    TENSORBOARD_PORT="${FORGE_TENSORBOARD_PORT:-16006}"
     if [[ -n "${FORGE_LOCAL_ONLY:-}" ]]; then
         tensorboard_bind=(--host 127.0.0.1)
     else
         tensorboard_bind=(--bind_all)
     fi
-    "$VENV/bin/tensorboard" --logdir "$RUNS" "${tensorboard_bind[@]}" --port 6006 > "$LOGS/tensorboard.log" 2>&1 &
+    "$VENV/bin/tensorboard" --logdir "$RUNS" "${tensorboard_bind[@]}" --port "$TENSORBOARD_PORT" \
+        > "$LOGS/tensorboard.log" 2>&1 &
+    echo "TensorBoard: http://localhost:$TENSORBOARD_PORT (logdir $RUNS)"
 else
     echo "TensorBoard is not installed in $VENV; skipping it."
-fi
-
-# The forge dashboard (http://localhost:18800): the run's config and its live progress in one page. Standard library
-# only, so it runs on the image's python rather than the learner's venv, and it reads the run files without touching
-# the sim -- a crash or a restart of it costs nothing.
-DASHBOARD="$ROOT/apps/forge/python/animus/dashboard.py"
-# The page's stage controls (pause, resume, skip, cancel) go to the sim over SOAP and need an account to do it
-# as. They exist only when this file does: `user:password` for an account with SEC_ADMINISTRATOR, alongside
-# SOAP.Enabled in worldserver.conf. Absent -- which is the default -- the dashboard is read-only, exactly as it
-# was before the controls existed. It is a file rather than an argument because argv is in every ps listing.
-# The `+` expansion is what keeps `set -u` quiet when the array is empty, which is the normal case.
-DASHBOARD_AUTH="$CONF/animus-dashboard.auth"
-if [[ -f "$DASHBOARD" ]]; then
-    dashboard_soap=()
-    if [[ -r "$DASHBOARD_AUTH" ]]; then
-        dashboard_soap=(--soap-auth "$DASHBOARD_AUTH")
-    fi
-    dashboard_host=0.0.0.0
-    [[ -n "${FORGE_LOCAL_ONLY:-}" ]] && dashboard_host=127.0.0.1
-    python3 "$DASHBOARD" --host "$dashboard_host" --port 8800 \
-        --runs "${AC_ANIMUS_FORGE_OUTPUT_DIR:-$LEARNER}/runs" \
-        --conf "$CONF/worldserver.conf" \
-        ${dashboard_soap[@]+"${dashboard_soap[@]}"} > "$LOGS/dashboard.log" 2>&1 &
 fi
 
 cd "$BIN"

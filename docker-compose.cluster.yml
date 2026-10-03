@@ -20,6 +20,6 @@ services:
       AC_LOGIN_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_world"
       AC_CHARACTER_DATABASE_INFO: "127.0.0.1;${DOCKER_DB_EXTERNAL_PORT:-13306};root;${DOCKER_DB_ROOT_PASSWORD:-password};acore_characters"
-      # TensorBoard (6006) and the dashboard (8800) stay on this machine's loopback, as they are without host
-      # networking.
+      # TensorBoard (http://localhost:16006, FORGE_TENSORBOARD_PORT) stays on this machine's loopback, as it is
+      # without host networking.
       FORGE_LOCAL_ONLY: "1"

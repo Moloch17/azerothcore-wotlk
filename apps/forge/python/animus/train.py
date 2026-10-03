@@ -258,31 +258,13 @@ class EvalLog:
             }) + "\n")
 
 
-SEED_MARKER = "seed_from"
-
-
-def seed_preference(run_dir: Path, default: str = "latest") -> str:
-    """Which of a finished run's checkpoints should seed the stage after it: "best" or "latest".
-
-    A run can carry the answer itself, in a one-word `seed_from` file beside its checkpoints -- which is what the
-    dashboard writes when you pick one. It is per run rather than per queue because the reason to want `latest` is
-    usually about one stage: best.pt is only rewritten by an evaluation that clears the convergence margin, so a
-    stage whose later evaluations scored better without clearing it has a best.pt that is genuinely behind its
-    latest.pt, and seeding the next stage from `best` there throws that training away."""
-    try:
-        choice = (run_dir / SEED_MARKER).read_text().strip().lower()
-    except OSError:
-        return default
-    return choice if choice in ("best", "latest") else default
-
-
-def init_from_checkpoint(path: str, default: str = "latest") -> Path | None:
-    """The seed checkpoint a candidate path resolves to, honouring the run's own `seed_from` choice.
+def init_from_checkpoint(path: str, prefer: str = "latest") -> Path | None:
+    """The seed checkpoint a candidate path resolves to: `prefer` ("best" or "latest", TrainConfig.seed_from) of the
+    run's two, whichever name the path gives.
 
     Either name falls back to the other, so a run that has only ever written one of them still seeds."""
     candidate = Path(path)
     if candidate.name in ("best.pt", "latest.pt"):
-        prefer = seed_preference(candidate.parent, default)
         for name in (["latest.pt", "best.pt"] if prefer == "latest" else ["best.pt", "latest.pt"]):
             if (found := candidate.parent / name).exists():
                 return found
@@ -818,12 +800,12 @@ class TrainingRun:
             self.distiller = Distiller(self.stage, {arena: teacher for arena in arena_names(self.stage)})
             print(f"{', '.join(spec.layouts[i].name for i in teacher.layouts)} taught by {nearest_path} on every "
                   f"arena (a restricted stage merged forward)", flush=True)
-        # The parents and named teachers, with what decides how each is read: a run's seed_from choice and its
-        # stage.json (load_parent's block positions).
+        # The parents and named teachers, with what decides how each is read: its stage.json (load_parent's block
+        # positions).
         named = [init_from_checkpoint(candidate) for candidate in config.named_teachers().values()]
         for path in (base_path, *merge_paths, *named, *(p for p, _ in restricted)):
             if path is not None:
-                self.shared_files += [Path(path), Path(path).parent / "seed_from", Path(path).parent / STAGE_FILE]
+                self.shared_files += [Path(path), Path(path).parent / STAGE_FILE]
 
         # Frozen checkpoints in the seats a script used to play (animus.cast): the far side of self-play arenas,
         # from the parent the networks seeded from and this run's own league, and any agent the stage declares.
