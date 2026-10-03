@@ -39,23 +39,32 @@ def test_the_ladder_steps_down_only_on_a_settled_plateau(case, scores, settled, 
     assert _play(_fade(), scores, settled, anneal_at) == pytest.approx(expected), case
 
 
-def test_a_regression_steps_back_up_waits_and_is_held_after_give_up():
-    fade = _fade()
-    assert _play(fade, [5, 5]) == [1, 1]
-    assert fade.observe(5, 0.1, 30) and fade.scale == 0.5           # plateau: down to 0.5, step score 5
-    # Within regress_z (2 x sqrt(0.1^2 + 0.1^2) = 0.28) of the step: stays.
-    assert fade.observe(4.8, 0.1, 50) is None and fade.scale == 0.5
-    message = fade.observe(4.0, 0.1, 60)                           # 1.0 below: back up
-    assert fade.scale == 1.0 and "steps back up" in message and "x0.5 -> x1" in message
-    assert fade.falls == {0: 1} and not fade.held and not fade.settled
-    # The wait: no step for `window` evaluations, however flat.
-    assert fade.observe(5, 0.1, 70) is None and fade.scale == 1.0
-    fade.observe(5, 0.1, 80)
-    fade.observe(5, 0.1, 90)
-    assert fade.scale == 0.5                                        # tried again
-    fade.observe(3.0, 0.1, 100)                                     # and fell again: held at full shaping
-    assert fade.scale == 1.0 and fade.held and fade.settled
-    assert _play(fade, [5] * 6) == [1] * 6                          # held means held
+def test_a_regression_steps_back_up_on_the_window_mean_waits_and_is_held_after_give_up():
+    """Regression is read off the mean of the rung's last `window` scores, and only once it has that many: a single
+    noisy evaluation (a ~2% false alarm per evaluation at regress_z 2) must not undo a step, nor the dip right after
+    one, but a sustained drop must."""
+    fade = _fade(window=4)
+    assert _play(fade, [5] * 4) == [1] * 4
+    assert fade.observe(5, 0.1, 50) and fade.scale == 0.5           # plateau: down to 0.5, step score 5 +/- 0.1
+    # One evaluation 3 standard errors low among good ones -- the old single-score test stepped back on it.
+    for steps, score in ((60, 5.0), (70, 4.7), (80, 5.0), (90, 5.0), (100, 5.0)):
+        assert fade.observe(score, 0.1, steps) is None and fade.scale == 0.5
+    # A sustained drop: nothing fires within the first window after the step; it does once the window's mean is low.
+    fresh = _fade(window=4)
+    _play(fresh, [5] * 5)
+    assert fresh.scale == 0.5
+    for steps in (60, 70, 80):
+        assert fresh.observe(4.5, 0.1, steps) is None and fresh.scale == 0.5
+    message = fresh.observe(4.5, 0.1, 90)
+    assert fresh.scale == 1.0 and "steps back up" in message and "x0.5 -> x1" in message
+    assert "over the last 4 evaluations" in message
+    assert fresh.falls == {0: 1} and not fresh.held and not fresh.settled
+    # The wait: a full window at the rung before it may step again, however flat.
+    assert _play(fresh, [5] * 4) == [1] * 4
+    assert fresh.observe(5, 0.1, 200) and fresh.scale == 0.5        # tried again
+    _play(fresh, [4.5] * 4)                                         # and fell again: held at full shaping
+    assert fresh.scale == 1.0 and fresh.held and fresh.settled
+    assert _play(fresh, [5] * 8) == [1] * 8                          # held means held
 
     # Disabled, it is never anything but 1, whatever the scores do.
     off = _fade(enabled=False)

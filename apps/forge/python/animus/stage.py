@@ -163,16 +163,25 @@ class ShapingFade:
         self.evals_at_rung += 1
         waited = self.evals_at_rung
 
-        if self.step_score is not None and self.rung > 0:
-            noise = self.regress_z * (stderr ** 2 + self.step_stderr ** 2) ** 0.5
-            if score < self.step_score - noise:
+        # A regression is read off the rung's last `window` scores, once it has that many: one noisy evaluation at
+        # regress_z 2 is a ~2% false alarm, which over a rung of dozens of evaluations would hold the ladder short of
+        # the outcome alone after give_up falls; and the first evaluations after a step carry the dip the step
+        # causes, which the policy has not yet had time to adapt to.
+        if self.step_score is not None and self.rung > 0 and waited >= self.window:
+            recent = self.tracker.history[-self.window:]
+            mean = sum(point[1] for point in recent) / len(recent)
+            mean_stderr = sum(point[2] ** 2 for point in recent) ** 0.5 / len(recent)
+            noise = self.regress_z * (mean_stderr ** 2 + self.step_stderr ** 2) ** 0.5
+            if mean < self.step_score - noise:
+                score, stderr = mean, mean_stderr
                 before, reference, reference_stderr = self.scale, self.step_score, self.step_stderr
                 self.rung -= 1
                 self.falls[self.rung] = self.falls.get(self.rung, 0) + 1
                 self._moved()
                 self.step_score = None
                 return (f"the shaping ladder steps back up, x{before:g} -> x{self.scale:g}: outcome score "
-                        f"{score:.4g} +/- {stderr:.2g} against {reference:.4g} +/- {reference_stderr:.2g} at the step "
+                        f"{score:.4g} +/- {stderr:.2g} over the last {len(recent)} evaluations against "
+                        f"{reference:.4g} +/- {reference_stderr:.2g} at the step "
                         f"(more than {self.regress_z:g} standard errors below) after {waited} evaluations"
                         + (f"; held here after {self.falls[self.rung]} falls" if self.held else ""))
 

@@ -116,6 +116,9 @@ namespace Animus::Curriculum
         /// A pull drill's pack killed alone (Instance.PullClean): paid as Kill until 2026-10-03, which put a drill's
         /// lesson in the same column as the dungeon's kills.
         PullClean,
+        /// A director replacing or churning its side's orders (Director.OrderChange, Director.OrderChurn): charged to
+        /// the director's own row, outside any seat's. A term since 2026-10-03, so it fades with the rest of shaping.
+        OrderChurn,
         Count
     };
 
@@ -224,6 +227,7 @@ namespace Animus::Curriculum
             case RewardTerm::Ranged:
             case RewardTerm::PetTank:
             case RewardTerm::PullClean:
+            case RewardTerm::OrderChurn:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;

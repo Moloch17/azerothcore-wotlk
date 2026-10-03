@@ -144,7 +144,8 @@ services:
       # TensorBoard for the learner's runs on http://localhost:16006, published to the loopback address only. The
       # container binds the same number (FORGE_TENSORBOARD_PORT in forge-worldserver.sh), so the URL does not change
       # on host networking (docker-compose.cluster.yml), where there is no mapping and the bind is the host's port.
-      # The forge sim itself opens no network listener (no world socket, SOAP or remote access).
+      # The forge sim itself opens no network listener by default (no world socket or remote access; SOAP only
+      # when SOAP.Enabled is set, on 127.0.0.1:7878).
       - "127.0.0.1:${DOCKER_TENSORBOARD_EXTERNAL_PORT:-16006}:16006"
     volumes:
       - ${DOCKER_VOL_ROOT:-.}:/azerothcore:cached

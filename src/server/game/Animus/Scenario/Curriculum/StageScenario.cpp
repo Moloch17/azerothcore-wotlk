@@ -594,6 +594,15 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             return Data(env).Seats[seat].Rewards.Episode(RewardTerm::DeathRun);
         });
 
+    if (HasDirectors())
+        _info.Add("reward_" + std::string(RewardTermName(RewardTerm::OrderChurn)), [this](Env const& env, uint32 agent)
+        {
+            for (uint32 side = 0; side < TEAM_COUNT; ++side)
+                if (DirectorAgent(side) == agent)
+                    return Data(env).DirectorRewards[side].Episode(RewardTerm::OrderChurn);
+            return 0.0f;
+        });
+
     // The episode's score (RewardLedger::Score): its Outcome and Cost terms as tuned, before the rung's tier and the
     // role's scale. Evaluation, best.pt and the league are judged on it rather than on the return, so shaping can be
     // turned down without the yardstick moving with it. A director's is its side's mean, as its reward is.
@@ -2058,6 +2067,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // A new episode starts from clean totals, in every encounter: those this arena does not use report 0.
     for (SeatState& seat : data.Seats)
         seat.ResetEpisode();
+    for (RewardLedger& director : data.DirectorRewards)
+        director.ResetEpisode();
     // No resurrection offer is in flight into a new episode, and the clock it was taken on has restarted.
     data.ResurrectBy.fill(NO_SEAT);
     data.ResurrectMs.fill(0);
@@ -4516,8 +4527,14 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
                 ++seats;
             }
 
-        reward[_seatCount + side] = (seats ? total / float(seats) : 0.0f)
-            - (_director && DirectorsActive(env) ? _director->OrderCost(env, side) : 0.0f);
+        // Its own charge for changing orders is shaping like any other, paid through its own ledger at the same
+        // scale, so it fades with the seats' and has a column.
+        RewardLedger& own = Data(env).DirectorRewards[side];
+        own.SetShaping(shaping);
+        float const churn = _director && DirectorsActive(env)
+            ? own.Add(RewardTerm::OrderChurn, -_director->OrderCost(env, side)) : 0.0f;
+        own.TakeStep();
+        reward[_seatCount + side] = (seats ? total / float(seats) : 0.0f) + churn;
     }
 
     // The owner's row is observed and acted on but never paid: it is a frozen checkpoint's, not a learner's.

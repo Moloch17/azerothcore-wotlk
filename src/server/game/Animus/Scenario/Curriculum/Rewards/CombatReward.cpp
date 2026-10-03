@@ -125,6 +125,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::DeathRun:              return "death_run";
         case RewardTerm::CombatClock:           return "combat_clock";
         case RewardTerm::PullClean:             return "pull_clean";
+        case RewardTerm::OrderChurn:            return "order_churn";
         case RewardTerm::Count:                 break;
     }
 
