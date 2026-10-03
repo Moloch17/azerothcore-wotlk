@@ -153,7 +153,7 @@ stage trains its whole budget).
 | `stage1_move` | 250M | 5M | 2048 | `stage2_travel` | 250M | 5M | 2048 |
 | `stage3_rotation` | 250M | 5M | 2048 | `stage4_duel` | 250M | 10M | 2048 |
 | `stage5_pack` | 250M | 10M | 2048 | `stage6_roles` | 400M | 20M | 384 |
-| `stage7_group` | 400M | 20M | 384 | `stage8_ragefire` | 1500M | 40M | 64 |
+| `stage7_group` | 400M | 20M | 384 | `stage8_ragefire` | 3000M | 40M | 64 |
 | `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 250M | 10M | 64 |
 | `stage11_raids` | 250M | 10M | 128 | | | | |
 | `stage12_duel_pvp` | 250M | 10M | 2048 | `stage13_escape` | 250M | 10M | 2048 |
@@ -165,8 +165,8 @@ stage trains its whole budget).
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128), except the raid stages, which set their own
 (`AnimusForge.Stage.<name>.Envs`: 8 for `stage10_raid_pulls`, 16 for `stage11_raids`). The queue's ceiling is
-**6,550M** plus `stage9_deadmines`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
-and convergence does not end it), every stage at least 250M (2026-10-02), the party drills 400M and Ragefire 1,500M. A per-class build
+**8,050M** plus `stage9_deadmines`, which has no end: it trains until it is stopped by hand (its budget is 1,000,000M
+and convergence does not end it), every stage at least 250M (2026-10-02), the party drills 400M and Ragefire 3,000M. A per-class build
 trains the movement phase once for every class, and each class's line from `stage3_rotation` (a
 `configs/<class>/stage3_rotation.yaml` names the shared travel checkpoint; `{shared_runs}` in a path is the shared
 root's run directory beside the class's own).

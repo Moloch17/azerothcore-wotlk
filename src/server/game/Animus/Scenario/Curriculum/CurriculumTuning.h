@@ -294,6 +294,12 @@ namespace Animus::Curriculum
             /// door has to cost more than fighting through the dungeon badly.
             float WingStall = 0.1f;
             uint32 WingStallGraceMs = 60000;
+            /// The stall charge on every seat but the tank, as a share of the tank's: the tank decides when to move on.
+            float WingStallOthers = 0.2f;
+            /// Paid to the tank for each fight started with every living seat at WingReadyShare of its health and
+            /// mana: pulling when the party is ready, not standing in front of the pack.
+            float WingEngage = 1.0f;
+            float WingReadyShare = 0.8f;
             float WingTimeout = 30.0f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
             /// The support ladder (StageScenario::WING_RUNGS): each rung fixes the dungeon script's share of seats,
@@ -1183,6 +1189,9 @@ namespace Animus::Curriculum
             f("Instance.WingWipe", tuning.Instance.WingWipe);
             f("Instance.WingWipes", tuning.Instance.WingWipes);
             f("Instance.WingStall", tuning.Instance.WingStall);
+            f("Instance.WingStallOthers", tuning.Instance.WingStallOthers);
+            f("Instance.WingEngage", tuning.Instance.WingEngage);
+            f("Instance.WingReadyShare", tuning.Instance.WingReadyShare);
             f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
             f("Instance.WingTimeout", tuning.Instance.WingTimeout);
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);

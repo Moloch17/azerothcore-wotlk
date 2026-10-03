@@ -603,6 +603,7 @@ namespace Animus::Curriculum
             bool PotentialReady = false;
             uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
+            uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (the tank)
             mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
             /// Off the route out of a fight -- fallen into a cavern, kited away -- its own field way back to it,
             /// planned at DetourMs and again every DETOUR_REPLAN_MS.
@@ -672,6 +673,9 @@ namespace Animus::Curriculum
             } Trace;
             /// The party is in a fight this decision, and how many hostile creatures are on it.
             bool Fighting = false;
+            /// Fights the party started ready -- every living seat at Instance.WingReadyShare of its health and mana --
+            /// which the tank is paid for (Instance.WingEngage).
+            uint32 ReadyEngages = 0;
             uint32 OnParty = 0;
             float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
             uint32 HostileTotal = 0;            // the instance's creatures a full clear kills, at the start

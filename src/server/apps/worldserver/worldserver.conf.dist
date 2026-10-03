@@ -6067,6 +6067,13 @@ AnimusForge.Curriculum.Instance.WingWipes = 1
 #   clock's cost for the share of the route left (over the tier scale)
 AnimusForge.Curriculum.Instance.WingStall = 0.1
 AnimusForge.Curriculum.Instance.WingStallGraceMs = 60000
+#   whole dungeons: the stall charge on every seat but the tank, as a share of the tank's (the tank decides when to
+#   move on)
+AnimusForge.Curriculum.Instance.WingStallOthers = 0.2
+#   whole dungeons: paid to the tank for each fight started with every living seat at WingReadyShare of its health
+#   and mana
+AnimusForge.Curriculum.Instance.WingEngage = 1.0
+AnimusForge.Curriculum.Instance.WingReadyShare = 0.8
 AnimusForge.Curriculum.Instance.WingTimeout = 30.0
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   the support ladder: each rung fixes the dungeon script's share of seats, the level lift, the wipes to spare and the

@@ -7,7 +7,7 @@
 extends: stage7_group.yaml
 run_name: stage8_ragefire
 
-total_env_steps: 1500000000
+total_env_steps: 3000000000
 
 eval:
   every_env_steps: 40000000

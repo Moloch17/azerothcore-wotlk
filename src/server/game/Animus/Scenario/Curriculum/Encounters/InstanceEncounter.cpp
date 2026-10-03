@@ -632,10 +632,27 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     }
 
     // Whether the party is in a fight, and how many are on it (Instance.WingCrowd), followed for the wipe's line too.
+    bool const wasFighting = fight.Fighting;
     fight.Fighting = false;
     for (uint32 slot = 0; slot < env.Targets.size() && !fight.Fighting; ++slot)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fight.Fighting = true;
+    // A fight started with the party ready (Instance.WingEngage, paid to the tank): the parties stood in front of the
+    // next pack, rested and whole, for minutes on end (2026-10-03) -- pulling it is the tank's call to make.
+    if (fight.Fighting && !wasFighting)
+    {
+        float const ready = _scenario.Tuning().Instance.WingReadyShare;
+        bool allReady = true;
+        for (uint32 index = 0; index < data.ActiveSeats && allReady; ++index)
+            if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive())
+            {
+                uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+                allReady = bot->GetHealthPct() >= ready * 100.0f
+                    && (!maxMana || float(bot->GetPower(POWER_MANA)) >= ready * float(maxMana));
+            }
+        if (allReady)
+            ++fight.ReadyEngages;
+    }
     TraceWing(env, fight, fight.Fighting || !anyoneAlive);
     fight.LastMs = env.EpisodeElapsedMs;
     fight.Level = uint32(data.EpisodeLevel);
@@ -1755,8 +1772,17 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
             fight.ProgressMs = env.EpisodeElapsedMs;
         }
     }
+    // The tank decides when the party moves on, so standing about is its to pay, the others' at WingStallOthers of it:
+    // charged alike, -177 a run swamped every seat's own role terms (a healer's healing paid 8.5), 2026-10-03.
+    bool const tankSeat = _scenario.Data(env).Seats[seatIndex].DungeonRole == DUNGEON_TANK;
     if (env.EpisodeElapsedMs > fight.ProgressMs + tuning.WingStallGraceMs)
-        ledger.Add(RewardTerm::Stall, -tuning.WingStall * float(_scenario.DecisionMs()) / 1000.0f);
+        ledger.Add(RewardTerm::Stall, -tuning.WingStall * (tankSeat ? 1.0f : tuning.WingStallOthers)
+            * float(_scenario.DecisionMs()) / 1000.0f);
+    if (tankSeat && fight.ReadyEngages > paid.EngagesPaid)
+    {
+        ledger.Add(RewardTerm::Threat, tuning.WingEngage * tierScale * float(fight.ReadyEngages - paid.EngagesPaid));
+        paid.EngagesPaid = fight.ReadyEngages;
+    }
     // More on the party than a pack (Instance.WingCrowd, past WingCrowdFree): a pull that ran into the next.
     if (fight.OnParty > tuning.WingCrowdFree)
         ledger.Add(RewardTerm::Threat, -tuning.WingCrowd * float(fight.OnParty - tuning.WingCrowdFree)
