@@ -190,8 +190,8 @@ void Animus::Curriculum::GatherEncounter::RewardMore(Env& env, EnvLife& /*life*/
 
     if (gather.NodesGathered > gather.NodesPaid)
     {
-        ledger.Add(RewardTerm::GatherNode, tuning.GatherNode * float(gather.NodesGathered - gather.NodesPaid)
-            * tierScale);
+        ledger.Add(RewardTerm::GatherNode, tuning.GatherNode * float(gather.NodesGathered - gather.NodesPaid),
+            tierScale);
         gather.NodesPaid = gather.NodesGathered;
     }
     if (gather.SkillUps > gather.SkillUpsPaid)

@@ -405,7 +405,7 @@ void Animus::Curriculum::LifeEncounter::Reward(Env& env, uint32 seatIndex, Playe
     {
         mine.Died = true;
         if (!mine.DeathPaid || _scenario.Arena(env).DeathRuns)
-            ledger.Add(RewardTerm::Death, -tuning.Death / TierScale(env));
+            ledger.Add(RewardTerm::Death, -tuning.Death, 1.0f / TierScale(env));
         mine.DeathPaid = true;
     }
     mine.DeadNow = dead;

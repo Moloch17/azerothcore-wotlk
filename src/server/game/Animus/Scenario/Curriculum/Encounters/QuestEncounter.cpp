@@ -826,7 +826,7 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
         }
     }
     for (; pay.TurnInsPaid < quest.TurnedInCount; ++pay.TurnInsPaid)
-        ledger.Add(RewardTerm::QuestTurnIn, tuning.QuestTurnIn * tierScale);
+        ledger.Add(RewardTerm::QuestTurnIn, tuning.QuestTurnIn, tierScale);
     // A finished quest carried about instead of handed in.
     if (quest.Accepted && quest.Complete && !quest.TurnedIn)
         ledger.Add(RewardTerm::Stall, -tuning.CompleteHeld * _scenario.DecisionScale());
@@ -836,7 +836,7 @@ void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uin
         return;
     pay.TimeoutPaid = true;
     float const done = (float(quest.TurnedInCount) + quest.Progress) / float(quest.Chain.size());
-    ledger.Add(RewardTerm::Timeout, -tuning.QuestTimeout * (1.0f - done) / tierScale);
+    ledger.Add(RewardTerm::Timeout, -tuning.QuestTimeout * (1.0f - done), 1.0f / tierScale);
 }
 
 void Animus::Curriculum::QuestEncounter::GuaranteeDrops(Env const& /*env*/, EnvLife const& life, EnvQuest& quest,

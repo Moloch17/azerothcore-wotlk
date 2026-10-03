@@ -49,7 +49,7 @@ from . import blas, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
-from .rewards import WARN_EVERY, audit, describe, reward_mix
+from .rewards import WARN_EVERY, audit, describe, outcome_terms, reward_mix
 
 #: A run whose approx_kl stays under this for STALL_WINDOW updates is told it has stopped moving. Measured
 #: against the stages that do stall (they end around 0.001) and those that do not (0.003 to 0.010).
@@ -898,7 +898,8 @@ class TrainingRun:
         first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None,
-                                           spec_names=self.spec_names, **options)
+                                           spec_names=self.spec_names,
+                                           score_column=self.config.eval.score_column(), **options)
         parts = self.ranks.gather(result)
         return EvalResult.merged(parts) if self.ranks.leader else None
 
@@ -1577,7 +1578,7 @@ class TrainingRun:
 
     def audit_reward(self, row: dict[str, float]) -> None:
         """Say so when a shaping term has become the thing being optimised (animus.rewards)."""
-        finding = audit(reward_mix(row))
+        finding = audit(reward_mix(row), outcome_terms(self.stage))
         if finding is None:
             self.reward_warned_at = None
             return

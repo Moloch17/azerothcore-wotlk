@@ -225,8 +225,8 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
     {
         tally.TimedOut = true;
         ledger.Add(RewardTerm::Timeout, -tuning.Timeout
-            * CombatReward::TimeoutScale(tuning.TimeoutFloor, CombatReward::HealthLeft(opponent))
-            / CombatReward::TierScale(_scenario.Tuning().Difficulty.TierScale, fight.Tier));
+            * CombatReward::TimeoutScale(tuning.TimeoutFloor, CombatReward::HealthLeft(opponent)),
+            1.0f / CombatReward::TierScale(_scenario.Tuning().Difficulty.TierScale, fight.Tier));
     }
 }
 

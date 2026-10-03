@@ -91,6 +91,16 @@ class EvalConfig:
     # ship stage sets it, since its gate is each phase within noise of its own stage. An arena the stage does not have
     # is refused at startup.
     phases: dict = field(default_factory=dict)
+    # What an evaluation is scored on, and so what best.pt, the league's snapshots and convergence follow: "outcome",
+    # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
+    # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting
+    # worse, and a ladder that steps reads as learning or collapse (peak-play plan W0).
+    score: str = "outcome"
+
+    def score_column(self) -> str:
+        if self.score not in ("outcome", "return"):
+            raise ValueError(f"eval.score: expected \"outcome\" or \"return\", got {self.score!r}")
+        return "score_outcome" if self.score == "outcome" else ""
 
 
 @dataclass

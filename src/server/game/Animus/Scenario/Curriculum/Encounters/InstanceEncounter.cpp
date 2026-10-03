@@ -154,7 +154,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout, RewardTerm::Stall,
-        RewardTerm::Readiness, RewardTerm::Threat };
+        RewardTerm::Readiness, RewardTerm::Threat, RewardTerm::PullClean };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -2201,9 +2201,9 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
             ledger.Add(RewardTerm::Approach, -tuning.WingStray * float(_scenario.DecisionMs()) / 1000.0f);
     if (bot && bot->IsAlive())
     {
-        ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * tierScale * float(fight.TrashKills - paid.KillsPaid));
+        ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * float(fight.TrashKills - paid.KillsPaid), tierScale);
         ledger.Add(RewardTerm::Approach, tuning.WingWaypoint * tierScale * float(waypoints - paid.WaypointsPaid));
-        ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * tierScale * float(fight.BossKills - paid.BossKillsPaid));
+        ledger.Add(RewardTerm::Kill, tuning.WingMidBoss * float(fight.BossKills - paid.BossKillsPaid), tierScale);
 
         // Forward through the dungeon, paid as it is walked (Instance.WingProgress over the whole route): the
         // potential is the route still ahead -- to the next point, then along the route from it. The route points
@@ -2229,11 +2229,11 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     if (bot && !bot->IsAlive() && !paid.DeathPaid)
     {
         paid.DeathPaid = true;
-        ledger.Add(RewardTerm::Death, -tuning.WingDeath / tierScale);
+        ledger.Add(RewardTerm::Death, -tuning.WingDeath, 1.0f / tierScale);
     }
     if (fight.Wipes > paid.WipesPaid)
     {
-        ledger.Add(RewardTerm::Death, -tuning.WingWipe * float(fight.Wipes - paid.WipesPaid) / tierScale);
+        ledger.Add(RewardTerm::Death, -tuning.WingWipe * float(fight.Wipes - paid.WipesPaid), 1.0f / tierScale);
         paid.WipesPaid = fight.Wipes;
     }
 
@@ -2250,9 +2250,9 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
         if (fight.DrillExtra)
             ledger.Add(RewardTerm::Threat, -tuning.PullExtra * share / tierScale);
         else if (fight.DrillCleared)
-            ledger.Add(RewardTerm::Kill, tuning.PullClean * share * tierScale);
+            ledger.Add(RewardTerm::PullClean, tuning.PullClean * share * tierScale);
         else if (TimeIsUp(env))
-            ledger.Add(RewardTerm::Timeout, -tuning.PullTimeout * share / tierScale);
+            ledger.Add(RewardTerm::Timeout, -tuning.PullTimeout * share, 1.0f / tierScale);
         return;
     }
     if (seatIndex == 0 && !fight.Recorded)
@@ -2263,10 +2263,10 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
                 uint32(std::max<std::size_t>(1, Rows(env).size())) - 1);
     }
     if (fight.BossDead)
-        ledger.Add(RewardTerm::Kill, tuning.WingBoss * tierScale);
+        ledger.Add(RewardTerm::Kill, tuning.WingBoss, tierScale);
     else if (TimeIsUp(env) && !fight.Route.empty())
-        ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - float(waypoints) / float(fight.Route.size()))
-            / tierScale);
+        ledger.Add(RewardTerm::Timeout, -tuning.WingTimeout * (1.0f - float(waypoints) / float(fight.Route.size())),
+            1.0f / tierScale);
 }
 
 bool Animus::Curriculum::InstanceEncounter::SelectTarget(Env const& env, uint32 seatIndex, Unit*& target)
@@ -2353,7 +2353,7 @@ void Animus::Curriculum::InstanceEncounter::Reward(Env& env, uint32 seatIndex, P
         ledger.Add(RewardTerm::BossProgress, tuning.BossProgress * progress * tierScale);
     if (!fight.Wiped && !fight.Evaded && TimeIsUp(env))
         ledger.Add(RewardTerm::Timeout, -tuning.Timeout
-            * CombatReward::TimeoutScale(_scenario.Tuning().Duel.TimeoutFloor, fight.HealthLeft) / tierScale);
+            * CombatReward::TimeoutScale(_scenario.Tuning().Duel.TimeoutFloor, fight.HealthLeft), 1.0f / tierScale);
 }
 
 void Animus::Curriculum::InstanceEncounter::WriteState(Env const& env, float* state) const

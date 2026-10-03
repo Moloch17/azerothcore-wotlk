@@ -1546,7 +1546,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     float const clearScale = _scenario.Arena(env).Owner ? tuning.OwnerClearScale : 1.0f;
     float const tierScale = CombatReward::TierScale(_scenario.Tuning().Difficulty.TierScale, pulls.Rung);
     if (pulls.NewKills)
-        ledger.Add(RewardTerm::Kill, dense * tuning.Kill * clearScale * tierScale * float(pulls.NewKills));
+        ledger.Add(RewardTerm::Kill, dense * tuning.Kill * clearScale * float(pulls.NewKills), tierScale);
 
     if (pulls.PullCleared)
     {
@@ -1559,7 +1559,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             float const fast = 1.0f - std::min(1.0f, pullTime / PULL_TIME_SCALE_MS);
             ledger.Add(RewardTerm::Clear, (SoloGauntlet(env)
                 ? tuning.SoloGauntletClear + tuning.SoloGauntletFastPull * fast
-                : (tuning.Clear + tuning.FastPull * fast) * clearScale) * tierScale);
+                : (tuning.Clear + tuning.FastPull * fast) * clearScale), tierScale);
             pull.PullDamageTaken = 0;
         }
         else
@@ -1571,7 +1571,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             }
 
             ledger.Add(RewardTerm::Clear,
-                (tuning.PackClear + tuning.FastClear * CombatReward::TimeLeftSince(env, engageMs)) * tierScale);
+                tuning.PackClear + tuning.FastClear * CombatReward::TimeLeftSince(env, engageMs), tierScale);
         }
 
         float const kept = SinglePack(env) ? tuning.PackHealthKept
@@ -1586,14 +1586,14 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
         ledger.Add(RewardTerm::Death, -(SoloGauntlet(env) ? tuning.SoloGauntletDeath
-            : Gauntlet(env) ? tuning.GauntletDeath : tuning.PackDeath) / tierScale);
+            : Gauntlet(env) ? tuning.GauntletDeath : tuning.PackDeath), 1.0f / tierScale);
 
         // A single pack lost in overtime: the rest of the overtime too, which timing out would have cost.
         if (SinglePack(env) && !tally.Killed && pulls.PullEngaged
             && env.EpisodeElapsedMs > pulls.PullEngageMs + tuning.OvertimeGraceMs * std::max<uint32>(1, pulls.CampPacks)
             && env.EpisodeLengthMs > env.EpisodeElapsedMs)
             ledger.Add(RewardTerm::Timeout,
-                -tuning.Overtime * float(env.EpisodeLengthMs - env.EpisodeElapsedMs) / 1000.0f / tierScale);
+                -tuning.Overtime * float(env.EpisodeLengthMs - env.EpisodeElapsedMs) / 1000.0f, 1.0f / tierScale);
     }
 
     if (SoloGauntlet(env))
@@ -1632,7 +1632,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             if (pulls.CampFighting > 1)
                 ledger.Add(RewardTerm::Threat, -tuning.CampExtraPack * float(pulls.CampFighting - 1) * seconds);
             if (pulls.CampNewClean)
-                ledger.Add(RewardTerm::Clear, tuning.CampCleanPack * tierScale * float(pulls.CampNewClean));
+                ledger.Add(RewardTerm::Clear, tuning.CampCleanPack * float(pulls.CampNewClean), tierScale);
         }
 
         if (pulls.PullEngaged)
@@ -1643,7 +1643,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         uint32 const overtimeGraceMs = tuning.OvertimeGraceMs * (camp ? std::max<uint32>(1, pulls.CampPacks) : 1)
             + std::min(pull.ControlledMs, tuning.ControlGraceMaxMs);
         if (pulls.PullEngaged && env.EpisodeElapsedMs > pulls.PullEngageMs + overtimeGraceMs)
-            ledger.Add(RewardTerm::Timeout, -tuning.Overtime * seconds / tierScale);
+            ledger.Add(RewardTerm::Timeout, -tuning.Overtime * seconds, 1.0f / tierScale);
 
         if (seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee)
         {
@@ -1663,7 +1663,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     {
         tally.TimedOut = true;
         ledger.Add(RewardTerm::Timeout, -tuning.Timeout * CombatReward::TimeoutScale(tuning.TimeoutFloor,
-            pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f) / tierScale);
+            pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f), 1.0f / tierScale);
     }
 
     // The outcome moves that class and role on the ladder, once: a clear without a death is a win.

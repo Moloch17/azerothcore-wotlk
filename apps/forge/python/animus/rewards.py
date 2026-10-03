@@ -21,7 +21,8 @@ is the objective, and the policy will tell you so.
 
 from __future__ import annotations
 
-#: What a stage is for. Everything else in the ledger is shaping around it.
+#: What a stage is for. Everything else in the ledger is shaping around it. The sim says this itself in stage.json
+#: ("reward_terms", RewardTermCategory) from peak-play W0 on; this list is what an older stage.json is read with.
 #:
 #: A resurrection is deliberately NOT here. Standing an ally up is a means -- what the stage is for is the
 #: party living through the pull -- and listing it as an outcome is exactly what would have let the farmable
@@ -36,6 +37,16 @@ MAX_SHAPING_SHARE = 0.5
 
 #: Updates between repeats of the same warning, so a run that is going to trip it does not print 153 times.
 WARN_EVERY = 25
+
+
+def outcome_terms(stage: dict | None) -> tuple[str, ...]:
+    """The terms a stage is for -- its Outcome and Cost categories in stage.json's "reward_terms" -- else
+    OUTCOME_TERMS. Cost terms are charges, which the audit never reports anyway; listing them keeps a penalty from
+    being mistaken for shaping in describe's context."""
+    categories = (stage or {}).get("reward_terms")
+    if not categories:
+        return OUTCOME_TERMS
+    return tuple(term for term, category in categories.items() if category in ("outcome", "cost"))
 
 
 def reward_mix(row: dict) -> dict[str, float]:

@@ -59,6 +59,10 @@ DERIVED_METRICS = ("livelocked", "clean_kill", "lost", "wedged", "spl")
 LOST_ABOVE = 3.0
 WEDGED_BELOW = 0.5
 
+#: The episode info column an evaluation is scored on by default: the episode's Outcome and Cost terms before any
+#: rung's tier and any role's scale (RewardLedger::Score, peak-play plan W0).
+SCORE_COLUMN = "score_outcome"
+
 
 @dataclass
 class EvalResult:
@@ -85,18 +89,28 @@ class EvalResult:
     # it was doing. A summary cannot show a plan -- the order of the decisions is the plan -- so this is what to read
     # when asking whether a bot saved a cooldown, rested before a pull or held an add.
     trace: list[dict] = field(default_factory=list)
+    # The episode info column the score is read from (eval.score): SCORE_COLUMN, the episode's Outcome and Cost terms
+    # before any rung's tier (RewardLedger::Score), so the yardstick does not move when shaping is turned down or a
+    # ladder steps. "" -- or a stage.json from before the column -- scores the return, as before.
+    score_column: str = SCORE_COLUMN
 
     @property
     def episodes(self) -> int:
         return len(self.returns)
 
     @property
+    def scores(self) -> np.ndarray:
+        """[n] what each row is scored on: the score column where the sim writes one, else the return."""
+        values = self.column(self.score_column) if self.score_column else None
+        return self.returns if values is None else values.astype(np.float64)
+
+    @property
     def score(self) -> float:
-        return float(self.returns.mean()) if len(self.returns) else float("nan")
+        return float(self.scores.mean()) if len(self.returns) else float("nan")
 
     @property
     def stderr(self) -> float:
-        return standard_error(self.returns, self._episode_of_row())
+        return standard_error(self.scores, self._episode_of_row())
 
     def _episode_of_row(self) -> np.ndarray | None:
         """The episode each row belongs to, for standard_error; None when the rows were not labelled."""
@@ -173,7 +187,7 @@ class EvalResult:
             seconds=max(part.seconds for part in parts), decisions=sum(part.decisions for part in parts),
             action_counts=stacked("action_counts"), allowed_counts=stacked("allowed_counts"),
             action_names=first.action_names, spec_names=first.spec_names,
-            trace=[row for part in parts for row in part.trace])
+            trace=[row for part in parts for row in part.trace], score_column=first.score_column)
 
     def failed_seeds(self, metric: str) -> list[int]:
         """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 field per episode: a
@@ -215,13 +229,15 @@ class EvalResult:
         present = [c for c in columns if c in self.info_names]
         derived = self.derived()
         episodes = self._episode_of_row()
+        scores = self.scores
 
         def means(rows: np.ndarray) -> dict:
             out = {
                 "episodes": int(rows.sum()),
-                "score": float(self.returns[rows].mean()) if rows.any() else None,
-                "stderr": standard_error(self.returns[rows],
-                                         episodes[rows] if episodes is not None else None),
+                "score": float(scores[rows].mean()) if rows.any() else None,
+                "stderr": standard_error(scores[rows], episodes[rows] if episodes is not None else None),
+                # The whole return, shaping and all: what training was paid, beside what it is judged on.
+                "return": float(self.returns[rows].mean()) if rows.any() else None,
             }
             for name in present:
                 values = self.column(name)[rows]
@@ -400,7 +416,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    action_names: dict[str, list[str]] | None = None,
                    spec_names: dict[str, list[str]] | None = None,
                    trace_episodes: int = 0, first_seed: int = 0,
-                   any_playing: Callable[[bool], bool] | None = None) -> tuple[EvalResult, p.Step]:
+                   any_playing: Callable[[bool], bool] | None = None,
+                   score_column: str = SCORE_COLUMN) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -410,6 +427,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     everything); their rows are left out. `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
     decision of the episodes with the first seed indexes, in EvalResult.trace.
+
+    `score_column` is the episode info column the result is scored on (EvalResult.score_column; "" = the return).
 
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
@@ -520,6 +539,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         # The builds' names: without them the summary had no class x build breakdown at all ("castings" and "specs"
         # empty), and the layout weights that read it had nothing to weight.
         spec_names=dict(spec_names or {}),
+        score_column=score_column,
     )
 
     training_step = env.set_mode(False)

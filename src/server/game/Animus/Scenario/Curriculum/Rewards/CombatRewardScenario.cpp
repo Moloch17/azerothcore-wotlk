@@ -124,7 +124,7 @@ void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env con
 
         float const healthKept = 1.0f - std::min(1.0f, float(tally.DamageTaken) / botHealth);
         float const timeLeft = TimeLeftSince(env, tally.Engaged ? tally.EngageMs : env.EpisodeElapsedMs);
-        ledger.Add(RewardTerm::Kill, (tuning.Kill + tuning.FastKill * timeLeft) * tierScale);
+        ledger.Add(RewardTerm::Kill, tuning.Kill + tuning.FastKill * timeLeft, tierScale);
         ledger.Add(RewardTerm::HealthKept, tuning.HealthKept * healthKept * tierScale);
     }
 
@@ -135,6 +135,6 @@ void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env con
         tally.Died = true;
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
-        ledger.Add(RewardTerm::Death, -tuning.Death / tierScale);
+        ledger.Add(RewardTerm::Death, -tuning.Death, 1.0f / tierScale);
     }
 }

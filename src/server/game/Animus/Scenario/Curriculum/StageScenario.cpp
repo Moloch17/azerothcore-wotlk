@@ -594,6 +594,32 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             return Data(env).Seats[seat].Rewards.Episode(RewardTerm::DeathRun);
         });
 
+    // The episode's score (RewardLedger::Score): its Outcome and Cost terms as tuned, before the rung's tier and the
+    // role's scale. Evaluation, best.pt and the league are judged on it rather than on the return, so shaping can be
+    // turned down without the yardstick moving with it. A director's is its side's mean, as its reward is.
+    _info.Add("score_outcome", [this](Env const& env, uint32 agent)
+    {
+        if (agent < _seatCount)
+            return Data(env).Seats[agent].Rewards.Score();
+
+        for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        {
+            if (DirectorAgent(side) != agent)
+                continue;
+
+            float total = 0.0f;
+            uint32 seats = 0;
+            for (uint32 seat = 0; seat < _seatCount; ++seat)
+                if (OnSide(env, seat, side) && Data(env).Seats[seat].L)
+                {
+                    total += Data(env).Seats[seat].Rewards.Score();
+                    ++seats;
+                }
+            return seats ? total / float(seats) : 0.0f;
+        }
+        return 0.0f;
+    });
+
     _spec.EpisodeInfoDim = _info.Size();
     _spec.GoalCount = GOAL_JOINT_COUNT;
 
@@ -1533,6 +1559,19 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     boost::json::array& episodeInfo = stageFile["episode_info"].emplace_array();
     for (std::string const& name : _info.Names())
         episodeInfo.push_back(boost::json::string(name));
+
+    // Every term's category (RewardTermCategory), so the learner's reward audit reads what the sim pays rather than
+    // a list of names kept by hand beside it.
+    {
+        boost::json::object categories;
+        for (std::size_t term = 0; term < REWARD_TERM_COUNT; ++term)
+        {
+            RewardCategory const category = RewardTermCategory(RewardTerm(term));
+            categories[RewardTermName(RewardTerm(term))] = category == RewardCategory::Outcome ? "outcome"
+                : category == RewardCategory::Cost ? "cost" : "shaping";
+        }
+        stageFile["reward_terms"] = std::move(categories);
+    }
 
     // The goal space (Component C): a goal is kind * targets + target. The learner masks its goal head with the
     // goal block's columns (the last block of every layout: kinds, then targets, then "ended") and the table of
