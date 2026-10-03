@@ -526,6 +526,12 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         fight.RouteRemain.assign(fight.Route.size(), 0.0f);
         for (std::size_t i = fight.Route.size(); i-- > 1;)
             fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
+        fight.RoutePacks.clear();
+        for (WingPack const& pack : plan.Packs)
+            fight.RoutePacks.push_back({ pack.Yard && pack.Yard < fight.Dense.size() ? fight.Dense[pack.Yard] : pack.At,
+                pack.Members, false });
+        LOG_DEBUG("module.animus", "{}: env {}: {} route places from {} packs and {} route points", _scenario.Name(),
+            env.Index, fight.Row->Name, fight.RoutePacks.size(), fight.Route.size());
         env.Targets.clear();
         if (fight.Drill && !StartDrill(env, map, plan))
         {
@@ -1699,6 +1705,32 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         }
     }
 
+    // The route's packs no member of which is alive (View's "next pack" places): only the next few still standing are
+    // looked at, by spawn id, so a decision costs at most a handful of lookups. A drill's despawned packs read as
+    // cleared.
+    if (Map* map = seat->GetMap())
+    {
+        auto const& spawned = map->GetCreatureBySpawnIdStore();
+        uint32 looked = 0;
+        for (EnvInstance::RoutePack& pack : fight.RoutePacks)
+        {
+            if (pack.Cleared)
+                continue;
+            if (++looked > WorldView::JOURNAL_PLACES)
+                break;
+            bool standing = false;
+            for (ObjectGuid::LowType member : pack.Members)
+            {
+                auto const [first, last] = spawned.equal_range(member);
+                for (auto it = first; it != last && !standing; ++it)
+                    standing = it->second->IsAlive();
+                if (standing)
+                    break;
+            }
+            pack.Cleared = !standing;
+        }
+    }
+
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
     for (auto watched = fight.Watched.begin(); watched != fight.Watched.end();)
     {
@@ -2129,24 +2161,37 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         objectiveYard = tankIndex >= 0 ? int32(fight.Seats[std::size_t(tankIndex)].DenseAt) : -1;
     }
 
-    // The dungeon's progress in the goal head's own words (peak-play W3): TravelTo about the route's next points
-    // ahead of the party (places 0..6: the next pack, the one after) and, for a seat other than the tank, about the
-    // tank itself (place 7: regroup), with the seat's own objective kept in the assignment slot it had before. The
-    // slow loop chooses among them and is credited by what the run achieves; nothing here pays for choosing them.
-    // Not over a journal a life encounter already keeps.
+    // The dungeon's progress in the goal head's own words (peak-play W3), as TravelTo targets: places 0..5 the next
+    // packs not yet cleared, in route order (a navmesh route has no packs: route points two apart instead); place 6
+    // the route's next point, the step on; place 7, for a seat other than the tank, the tank itself (regroup); and the
+    // seat's own objective in the assignment slot it had before. The slow loop chooses among them and is credited by
+    // what the run achieves. World.Active stays false: no world action changes (WorldView::RoutePlaces). Not over a
+    // journal a life encounter already keeps.
     WorldView& world = view.World;
     if (!world.Active)
     {
-        world.Active = true;
+        constexpr uint32 PACK_PLACES = WorldView::JOURNAL_PLACES - 2;
         world.RoutePlaces = true;
         world.HasAssignment = true;
         world.Assignment = view.Objective;
         uint32 place = 0;
-        for (std::size_t point = last; point < fight.Route.size() && place + 1 < WorldView::JOURNAL_PLACES; ++point)
+        for (EnvInstance::RoutePack const& pack : fight.RoutePacks)
         {
+            if (place >= PACK_PLACES)
+                break;
+            if (pack.Cleared)
+                continue;
             world.Places[place].Present = true;
-            world.Places[place++].Where = fight.Route[point];
+            world.Places[place++].Where = pack.At;
         }
+        if (fight.RoutePacks.empty())
+            for (std::size_t point = last + 2; point < fight.Route.size() && place < PACK_PLACES; point += 2)
+            {
+                world.Places[place].Present = true;
+                world.Places[place++].Where = fight.Route[point];
+            }
+        world.Places[PACK_PLACES].Present = true;
+        world.Places[PACK_PLACES].Where = fight.Route[last];
         if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot))
         {
             WorldView::JournalPlace& regroup = world.Places[WorldView::JOURNAL_PLACES - 1];

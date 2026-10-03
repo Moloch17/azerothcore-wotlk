@@ -730,6 +730,16 @@ namespace Animus::Curriculum
             /// what can still die rather than everything the run has ever seen.
             std::unordered_set<ObjectGuid> Watched;
             std::unordered_set<ObjectGuid> Counted;
+            /// The field route's packs in route order (WingPlan::Packs): where each stands on the route (its yard),
+            /// its members' spawn ids, and whether none of them is alive any more (UpdateWingEnemies) -- the goal
+            /// head's "next pack" places (View). Empty with a navmesh route.
+            struct RoutePack
+            {
+                Position At;
+                std::vector<ObjectGuid::LowType> Members;
+                bool Cleared = false;
+            };
+            std::vector<RoutePack> RoutePacks;
             std::array<SeatInstance, MAX_SEATS> Seats;
         };
 

@@ -89,15 +89,18 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
         places = targets[GOAL_TARGET_GIVER] = true;
     if (world.Active && world.HasEnder)
         places = targets[GOAL_TARGET_ENDER] = true;
+    // Places and the assignment: a journal's, or a dungeon's way on (WorldView::RoutePlaces), which is all a dungeon
+    // fills.
+    bool const placesLive = world.Active || world.RoutePlaces;
     bool found = false;
-    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.Active; ++i)
+    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && placesLive; ++i)
         if (world.Places[i].Present)
             found = places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
-    if (world.Active && world.HasAssignment)
+    if (placesLive && world.HasAssignment)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
     // A trip's objective (the travel block's) is the place a travel stage is about. With no journal it takes the
     // assignment's slot, so TravelTo has a target and the movement phase trains the goal level too.
-    if (!world.Active && view.HasObjective)
+    if (!placesLive && view.HasObjective)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
 
     bool const combat = bot->IsInCombat();
@@ -111,8 +114,7 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
     kinds[uint32(SeatGoal::Loot)] = world.Active && world.Corpse;
-    kinds[uint32(SeatGoal::Gather)] = world.Active && ((world.Node && world.NodeOpenable)
-        || (found && !world.RoutePlaces));
+    kinds[uint32(SeatGoal::Gather)] = world.Active && ((world.Node && world.NodeOpenable) || found);
     kinds[uint32(SeatGoal::Interact)] = world.Active && (world.HasGiver || world.HasEnder || world.QuestObject
         || world.ItemTarget || world.QuestVendor || targets[GOAL_TARGET_OBJECTIVE_FIRST]
         || targets[GOAL_TARGET_OBJECTIVE_FIRST + 1] || targets[GOAL_TARGET_OBJECTIVE_FIRST + 2]
@@ -136,13 +138,16 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
 bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where)
 {
     WorldView const& world = view.World;
-    if (!world.Active)
+    if (!world.Active && !world.RoutePlaces)
     {
         // A trip's objective, where there is no journal (Available).
         if (t == GOAL_TARGET_ASSIGNMENT && view.HasObjective)
             return where = view.Objective, true;
         return false;
     }
+    // A dungeon's way on: its places and the assignment, nothing of a journal (WorldView::RoutePlaces).
+    if (!world.Active && t < GOAL_TARGET_PLACE_FIRST)
+        return false;
     if (t >= GOAL_TARGET_OBJECTIVE_FIRST && t < GOAL_TARGET_GIVER)
     {
         WorldView::JournalObjective const& objective = world.Objectives[t - GOAL_TARGET_OBJECTIVE_FIRST];

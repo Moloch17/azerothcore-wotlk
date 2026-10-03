@@ -126,8 +126,9 @@ namespace Animus::Curriculum
         bool HasEnder = false;
         Position EnderAt;
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
-        /// The places are a dungeon's way on (InstanceEncounter::View: the route's next points and the tank), not
-        /// places something wanted was found: TravelTo takes them, Gather does not.
+        /// A dungeon's way on in Places and the assignment (InstanceEncounter::View: the next packs, the next route
+        /// point, the tank) with no journal behind them: the goal block reads the places and the assignment, and
+        /// nothing else of the world view is live (Active stays false, so no world action changes).
         bool RoutePlaces = false;
         uint8 ChainIndex = 0;                       // quests of the chain turned in
         uint8 ChainLength = 0;
