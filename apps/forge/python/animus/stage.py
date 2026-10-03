@@ -108,6 +108,117 @@ class LayoutState:
         return out
 
 
+class ShapingFade:
+    """The shaping ladder (FadeConfig): which rung the stage is on, and when it moves.
+
+    Each rung has its own tracker of the outcome score, so a plateau is read against the rung's own best: carried over,
+    a best from the rung above would make the dip a step costs read as the plateau that allows the next step."""
+
+    def __init__(self, config: TrainConfig):
+        fade = config.fade
+        self.enabled = bool(fade.enabled) and len(fade.rungs) > 0
+        self.rungs = tuple(float(scale) for scale in fade.rungs) or (1.0,)
+        self.window = max(1, int(fade.window))
+        self.regress_z = float(fade.regress_z)
+        self.give_up = max(1, int(fade.give_up))
+        self._convergence = config.convergence
+        self.rung = 0
+        self.tracker = self._new_tracker()
+        self.evals_at_rung = 0
+        # The score and its standard error at the last step down, which a regression is measured from.
+        self.step_score: float | None = None
+        self.step_stderr = 0.0
+        self.falls: dict[int, int] = {}  # rung -> times the ladder fell back to it
+        self.steps = 0
+
+    def _new_tracker(self) -> ConvergenceTracker:
+        c = self._convergence
+        return ConvergenceTracker(patience=self.window, window=self.window, z=c.z, min_improvement=c.min_improvement,
+                                  min_improvement_abs=c.min_improvement_abs)
+
+    @property
+    def scale(self) -> float:
+        return self.rungs[self.rung] if self.enabled else 1.0
+
+    @property
+    def held(self) -> bool:
+        """Fallen back to this rung often enough that the ladder stays."""
+        return self.falls.get(self.rung, 0) >= self.give_up
+
+    @property
+    def settled(self) -> bool:
+        """The convergence signal: at the last rung, or held. Off, there is nothing to wait for."""
+        return not self.enabled or self.rung == len(self.rungs) - 1 or self.held
+
+    def observe(self, score: float, stderr: float, env_steps: int, ladders_settled: bool = True,
+                anneal_starting: bool = False) -> str | None:
+        """Record an evaluation's outcome score; the log line when the ladder moved, else None.
+
+        It never steps down while a ladder stage's difficulty is still moving (`ladders_settled`), nor at the
+        evaluation where the learning-rate anneal begins (`anneal_starting`): two changes at once cannot be told
+        apart in the score that judges them. A regression steps back up whatever else is moving."""
+        if not self.enabled:
+            return None
+        self.tracker.observe(score, env_steps, stderr)
+        self.evals_at_rung += 1
+        waited = self.evals_at_rung
+
+        if self.step_score is not None and self.rung > 0:
+            noise = self.regress_z * (stderr ** 2 + self.step_stderr ** 2) ** 0.5
+            if score < self.step_score - noise:
+                before, reference, reference_stderr = self.scale, self.step_score, self.step_stderr
+                self.rung -= 1
+                self.falls[self.rung] = self.falls.get(self.rung, 0) + 1
+                self._moved()
+                self.step_score = None
+                return (f"the shaping ladder steps back up, x{before:g} -> x{self.scale:g}: outcome score "
+                        f"{score:.4g} +/- {stderr:.2g} against {reference:.4g} +/- {reference_stderr:.2g} at the step "
+                        f"(more than {self.regress_z:g} standard errors below) after {waited} evaluations"
+                        + (f"; held here after {self.falls[self.rung]} falls" if self.held else ""))
+
+        if (self.rung < len(self.rungs) - 1 and not self.held and waited >= self.window and ladders_settled
+                and not anneal_starting and self.tracker.converged(env_steps, 0)):
+            before, reference = self.scale, self.step_score
+            self.rung += 1
+            self.step_score, self.step_stderr = score, stderr
+            self._moved()
+            against = f" (the last step's {reference:.4g})" if reference is not None else ""
+            return (f"the shaping ladder steps down, x{before:g} -> x{self.scale:g}: outcome score {score:.4g} +/- "
+                    f"{stderr:.2g} plateaued{against} after {waited} evaluations")
+        return None
+
+    def _moved(self) -> None:
+        self.steps += 1
+        self.evals_at_rung = 0
+        self.tracker = self._new_tracker()
+
+    def forget_scores(self) -> None:
+        """Scores of another kind are coming (restore_evaluation_state): keep the rung, drop what was measured."""
+        self.tracker = self._new_tracker()
+        self.evals_at_rung = 0
+        self.step_score = None
+        self.step_stderr = 0.0
+
+    def report(self) -> dict:
+        return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps}
+
+    def state_dict(self) -> dict:
+        return {"rung": self.rung, "tracker": self.tracker.state_dict(), "evals_at_rung": self.evals_at_rung,
+                "step_score": self.step_score, "step_stderr": self.step_stderr,
+                "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps}
+
+    def load_state_dict(self, state: dict | None) -> None:
+        if not state:
+            return
+        self.rung = min(max(0, int(state.get("rung", 0))), len(self.rungs) - 1)
+        self.tracker.load_state_dict(state.get("tracker"))
+        self.evals_at_rung = int(state.get("evals_at_rung", 0))
+        self.step_score = state.get("step_score")
+        self.step_stderr = float(state.get("step_stderr", 0.0))
+        self.falls = {int(rung): int(count) for rung, count in (state.get("falls") or {}).items()}
+        self.steps = int(state.get("steps", 0))
+
+
 def restore_evaluation_state(tracker: ConvergenceTracker, controller: "ConvergenceController", checkpoint: dict,
                              score_kind: str) -> str | None:
     """Load a resumed checkpoint's evaluation state, unless its scores are of another kind than the run's now.
@@ -144,6 +255,9 @@ class ConvergenceController:
         # What the entropy floor multiplies mappo.entropy_coef by; 1 until the floor has reason to raise it.
         self.entropy_scale = 1.0
         self.evals = 0
+        # The shaping ladder (FadeConfig), and what it said at the latest evaluation for the run to print.
+        self.fade = ShapingFade(config)
+        self.fade_message: str | None = None
 
     def _tracker(self, patience: int) -> ConvergenceTracker:
         c = self.config.convergence
@@ -221,6 +335,10 @@ class ConvergenceController:
             self.best_summary = summary
         if self.plateau_env_steps is None and self.tracker.converged(env_steps, 0):
             self.plateau_env_steps = env_steps
+        # Read before this evaluation's rungs join the classes' lists below: the ladder as it stood over the window.
+        anneal_starting = self.plateau_env_steps == env_steps
+        self.fade_message = self.fade.observe(summary["score"], stderr, env_steps, self.ladders_settled(),
+                                              anneal_starting)
 
         rows = summary.get("layouts", {})
         for name, state in self.layouts.items():
@@ -255,6 +373,16 @@ class ConvergenceController:
                 state.converged_score = score
                 state.converged_margin = state.tracker.margin(float(row.get("stderr", 0.0) or 0.0))
         return improved
+
+    def ladders_settled(self) -> bool:
+        """Every played class's difficulty ladder (a ladder stage's rung) has settled over the window; True without
+        one. The shaping ladder waits for it: two ladders moving at once cannot be told apart in the score."""
+        window = self.config.convergence.window
+        for state in self.played_layouts():
+            rungs = [value for value in state.rung[-window:] if value is not None]
+            if rungs and max(rungs) - min(rungs) > RUNG_SETTLED:
+                return False
+        return True
 
     def played_layouts(self) -> list[LayoutState]:
         return [state for state in self.layouts.values() if state.played]
@@ -296,7 +424,7 @@ class ConvergenceController:
         """Call after each training evaluation: ADVANCE once every class the run plays has converged."""
         played = self.played_layouts()
         if (self.config.convergence.advance and played and self.evals >= self.config.convergence.window
-                and all(s.converged for s in played)):
+                and all(s.converged for s in played) and self.fade.settled):
             return self._decide(Outcome(ADVANCE, "converged", self.report()))
         return self._decide(Outcome(CONTINUE, report=self.report()))
 
@@ -315,6 +443,7 @@ class ConvergenceController:
         rung, league, the plateau the learning rate anneals from) are kept: they mean the same either way."""
         self.best_summary = None
         self.baseline_summary = None
+        self.fade.forget_scores()
         for state in self.layouts.values():
             state.tracker = self._tracker(self.config.convergence.window)
             state.scores = []
@@ -331,6 +460,7 @@ class ConvergenceController:
             "baseline_summary": self.baseline_summary,
             "plateau_env_steps": self.plateau_env_steps,
             "evals": self.evals,
+            "fade": self.fade.state_dict(),
             "layouts": {name: {
                 "tracker": state.tracker.state_dict(),
                 "kl": state.kl, "entropy": state.entropy, "rung": state.rung, "league": state.league,
@@ -346,6 +476,7 @@ class ConvergenceController:
         self.baseline_summary = state.get("baseline_summary")
         self.plateau_env_steps = state.get("plateau_env_steps")
         self.evals = int(state.get("evals", 0))
+        self.fade.load_state_dict(state.get("fade"))
         for name, saved in (state.get("layouts") or {}).items():
             layout = self.layouts.get(name)
             if layout is None:

@@ -112,7 +112,9 @@ namespace AnimusForge
     // where it was one of six kinds: an older learner would send kinds the sim reads as targets of the first kind.
     // 17: ACT carries two goals per agent, primary then secondary (GOAL_SLOTS_ON_WIRE), where it carried one; and
     // the goal space has a twelfth kind (Resurrect). The learner keeps the queue behind them itself.
-    constexpr uint32 PROTOCOL_VERSION = 17;
+    // 18: PROGRESS carries the shaping scale after the progress (ProgressMsg): a sim that took the old four bytes
+    // would never fade its shaping, and nothing would say so.
+    constexpr uint32 PROTOCOL_VERSION = 18;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -132,9 +134,10 @@ namespace AnimusForge
         Replay = 8,
         Device = 9,
         DeviceAck = 10,
-        /// client -> server { f32 progress }: how far through its budget the stage's training is, 0 to 1, sent after
-        /// every update and applied without an answer; arenas whose weights change over a stage (ArenaDefinition::
-        /// WeightFinal) draw by it. Protocol 17.
+        /// client -> server ProgressMsg: how far through its budget the stage's training is, 0 to 1, and what shaping
+        /// is paid times, sent after every update and applied without an answer. Arenas whose weights change over a
+        /// stage (ArenaDefinition::WeightFinal) draw by the first; every Shaping reward term is paid times the second
+        /// (RewardLedger::SetShaping). Protocol 17; the shaping scale from 18.
         Progress = 11,
     };
 
@@ -143,6 +146,12 @@ namespace AnimusForge
     {
         uint32 Type;
         uint32 Length;
+    };
+
+    struct ProgressMsg
+    {
+        float Progress;
+        float ShapingScale;
     };
 
     struct HelloMsg

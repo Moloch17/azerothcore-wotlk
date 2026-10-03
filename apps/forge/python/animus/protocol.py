@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 17
+PROTOCOL_VERSION = 18
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -32,7 +32,7 @@ class MsgType(IntEnum):
     REPLAY = 8
     DEVICE = 9
     DEVICE_ACK = 10
-    PROGRESS = 11       # f32: how far through its budget the stage's training is (arena weight schedules)
+    PROGRESS = 11       # f32 progress through the stage's budget (arena weight schedules), f32 shaping scale (18)
 
 
 HEADER = struct.Struct("<II")  # type, payload length
@@ -299,9 +299,10 @@ def decode_mode_first_seed(payload: bytes) -> int:
     return MODE.unpack(payload)[4]
 
 
-def encode_progress(progress: float) -> bytes:
-    """PROGRESS payload: how far through its budget the stage's training is, 0 to 1 (protocol 17)."""
-    return struct.pack("<f", float(min(1.0, max(0.0, progress))))
+def encode_progress(progress: float, shaping_scale: float = 1.0) -> bytes:
+    """PROGRESS payload: how far through its budget the stage's training is, 0 to 1 (protocol 17), and what every
+    Shaping reward term is paid times, 0 to 1 (the fade ladder, protocol 18; ProgressMsg)."""
+    return struct.pack("<ff", float(min(1.0, max(0.0, progress))), float(min(1.0, max(0.0, shaping_scale))))
 
 
 def encode_weights(weights) -> bytes:

@@ -3490,9 +3490,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             ++seat.GoalsReachedBy[GoalKindOf(hold.Goal)];
             float const value = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight ? 0.0f
                 : GoalValue(hold, bot) * (slot ? _tuning.Goals.SecondaryShare : 1.0f);
-            seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
+            float const paid = seat.Rewards.AddTaken(RewardTerm::GoalReached, value);
             if (float* reward = Data(env).StepReward)
-                reward[seatIndex] += value;
+                reward[seatIndex] += paid;
         }
         else if (!possible)
             ++seat.GoalsLost;
@@ -4474,12 +4474,26 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepFidgetMs = 0;
 }
 
+void Animus::Curriculum::StageScenario::SetShapingScale(float scale)
+{
+    // PROGRESS comes after every update; the scale changes only when the learner's fade ladder steps.
+    float const before = _shapingScale.exchange(scale, std::memory_order_relaxed);
+    if (before != scale)
+        LOG_INFO("module.animus", "Animus forge: stage {} pays shaping x{} (was x{})", _stage.Name, scale, before);
+}
+
 void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
 {
     // Held until this decision's observation, which pays a goal it sees reached into this row.
     Data(env).StepReward = reward;
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->BeforeRewards(env);
+
+    // The learner's shaping scale, on every seat's ledger before anything is paid this decision; the goal reached at
+    // the next observation is paid at the same scale.
+    float const shaping = _shapingScale.load(std::memory_order_relaxed);
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        Data(env).Seats[seat].Rewards.SetShaping(shaping);
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         reward[seat] = SeatReward(env, seat);
@@ -4865,10 +4879,10 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         bool const unpaid = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight;
         float const paid = unpaid ? 0.0f : _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
             * (_tuning.Goals.ProgressGamma * potential - hold.Potential);
-        seat.Rewards.Add(RewardTerm::GoalProgress, paid);
+        float const added = seat.Rewards.Add(RewardTerm::GoalProgress, paid);
         hold.Potential = potential;
         if (hold.FromOrder && _director)
-            _director->AddShaping(env, seatIndex, paid);
+            _director->AddShaping(env, seatIndex, added);
     }
     if (seat.Holds[1].Goal != NO_GOAL)
     {

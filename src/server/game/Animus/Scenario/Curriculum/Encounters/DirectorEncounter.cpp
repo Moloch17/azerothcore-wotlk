@@ -136,8 +136,7 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
 
     if (!complied)
         return;
-    ledger.Add(RewardTerm::OrderMatch, paid);
-    state.Shaping[seat] += paid;
+    state.Shaping[seat] += ledger.Add(RewardTerm::OrderMatch, paid);
 }
 
 /// Paid for arriving where the side was sent, once, on the crossing.
@@ -170,8 +169,7 @@ void Animus::Curriculum::DirectorEncounter::RewardPlace(Env& env, uint32 seat, P
 
     order.PlacePaidMs[seat] = std::max<uint32>(1, env.EpisodeElapsedMs);
     float const paid = _scenario.Tuning().Order.PlaceMatch;
-    ledger.Add(RewardTerm::PlaceMatch, paid);
-    state.Shaping[seat] += paid;
+    state.Shaping[seat] += ledger.Add(RewardTerm::PlaceMatch, paid);
 }
 
 void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& table)

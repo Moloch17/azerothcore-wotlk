@@ -135,6 +135,37 @@ class ConvergenceConfig:
 
 
 @dataclass
+class FadeConfig:
+    """The shaping ladder (animus.stage.ShapingFade, peak-play plan W1): every Shaping reward term is paid times the
+    current rung's scale, Outcome and Cost terms never. The ladder steps down when the outcome score has plateaued at
+    its rung (and a ladder stage's difficulty ladder has settled), back up one when the score falls more than
+    `regress_z` standard errors below what it was at the step, and is settled -- a convergence signal, not a gate --
+    at its last rung or once a rung has been fallen back to `give_up` times.
+
+    Earned rather than scheduled: a stage whose budget is a ceiling (stage9's 1e12) never reaches a fraction of it, and
+    shaping pulled before the outcome is learned only stops the learning."""
+
+    enabled: bool = False
+    rungs: tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.0)
+    window: int = 4  # evaluations at a rung before it may step, and the plateau test's patience
+    regress_z: float = 2.0
+    give_up: int = 2  # falls back to the same rung before the ladder stays there
+
+    def __post_init__(self) -> None:
+        rungs = tuple(float(scale) for scale in self.rungs)
+        if not rungs or any(not 0.0 <= scale <= 1.0 for scale in rungs) or rungs[-1] != 0.0 \
+                or any(later >= earlier for earlier, later in zip(rungs, rungs[1:])):
+            raise ValueError(f"fade.rungs: expected scales strictly falling within [0, 1] to 0, got {self.rungs!r}")
+        if self.window < 1:
+            raise ValueError(f"fade.window: expected at least 1 evaluation, got {self.window!r}")
+        if not self.regress_z > 0.0:
+            raise ValueError(f"fade.regress_z: expected more than 0 standard errors, got {self.regress_z!r}")
+        if self.give_up < 1:
+            raise ValueError(f"fade.give_up: expected at least 1 fall, got {self.give_up!r}")
+        self.rungs = rungs
+
+
+@dataclass
 class EntropyFloorConfig:
     """Keep exploration from collapsing, measured against how many actions were actually legal.
 
@@ -322,6 +353,7 @@ class TrainConfig:
     layout_sampling: LayoutSamplingConfig = field(default_factory=LayoutSamplingConfig)
     entropy_floor: EntropyFloorConfig = field(default_factory=EntropyFloorConfig)
     cast: CastConfig = field(default_factory=CastConfig)
+    fade: FadeConfig = field(default_factory=FadeConfig)
 
     @property
     def shared_runs(self) -> str:

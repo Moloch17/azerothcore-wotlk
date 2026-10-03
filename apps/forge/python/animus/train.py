@@ -291,13 +291,32 @@ def init_from_checkpoint(path: str, default: str = "latest") -> Path | None:
 
 
 def baseline_cache_key(policy: str, seed: int, episodes: int, opponents: str, arenas, tuning,
-                       score_kind: str) -> dict:
+                       score_kind: str, shaping_scale: float = 1.0) -> dict:
     """What a cached eval_baseline*.json summary is only good for: the scripted policy, the seeds, the opponents, the
     arenas, the tuning that prices the reward terms, and the kind of score it was summarised on ("" = the return).
     A summary on the return read against outcome scores would skew every per-class gap the training draw weights
-    by (casting_weights)."""
+    by (casting_weights). And the shaping scale it was played at: its outcome score should not move with it, but its
+    return does, and the summary carries both."""
     return {"policy": policy, "seed": seed, "episodes": episodes, "opponents": opponents, "arenas": list(arenas),
-            "tuning": tuning, "score": score_kind}
+            "tuning": tuning, "score": score_kind, "shaping": round(float(shaping_scale), 6)}
+
+
+def reward_terms_line(stage: dict | None) -> str:
+    """What the sim says its reward terms are for (stage.json "reward_terms"), counted: the startup line."""
+    categories = (stage or {}).get("reward_terms")
+    if not categories:
+        return "reward terms: no categories in stage.json (a sim from before peak-play W0), audited by name"
+    counts = {kind: sum(1 for value in categories.values() if value == kind) for kind in ("outcome", "cost", "shaping")}
+    return f"reward terms: {counts['outcome']} outcome, {counts['cost']} cost, {counts['shaping']} shaping"
+
+
+def fade_line(config: TrainConfig) -> str:
+    fade = config.fade
+    if not fade.enabled:
+        return "shaping fade off (shaping paid in full)"
+    rungs = " ".join(f"{scale:g}" for scale in fade.rungs)
+    return (f"shaping fade on: rungs {rungs}, window {fade.window}, regress_z {fade.regress_z:g}, "
+            f"give_up {fade.give_up}")
 
 
 def load_parent(path: Path) -> dict:
@@ -486,6 +505,8 @@ class TrainingRun:
         self.stage = load_stage(config.layouts_dir, spec.scenario)
         if self.stage is not None and leader:
             (self.run_dir / STAGE_FILE).write_text(json.dumps(self.stage, indent=2))
+        if leader:
+            print(f"{config.run_name}: {reward_terms_line(self.stage)}; {fade_line(config)}", flush=True)
         print(
             f"Scenario {spec.scenario}: {spec.num_envs} envs x {spec.agents_per_env} agents, {len(spec.layouts)} "
             f"layouts (obs up to {spec.obs_dim}, actions up to {spec.num_actions}), state {spec.state_dim}, decision "
@@ -650,7 +671,7 @@ class TrainingRun:
             *(f"episode_{name}" for name in spec.episode_info_names),
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
-            "lr_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
+            "lr_scale", "shaping_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
             "hint_loss", "hint_match", "hint_weight", "scripted_share",
@@ -716,6 +737,7 @@ class TrainingRun:
         # The learning-rate scale in force (animus.stage reads the KL against it), the layouts whose classes have
         # converged (frozen and out of the training draw), and the last update's per-class statistics.
         self.lr_scale_now = 1.0
+        self.shaping_scale_now = self.controller.fade.scale
         self.frozen = np.zeros(0, dtype=np.int64)
         self.layout_allowed: dict[int, float] = {}
         self.last_layout_stats: dict[str, dict[str, float]] = {}
@@ -932,7 +954,7 @@ class TrainingRun:
         baseline_path = self.run_dir / ("eval_baseline.json" if is_eval_seeds
                                         else f"eval_baseline_{seed}_{episodes}.json")
         key = baseline_cache_key(config.eval.baseline, seed, episodes, self.opponents, self.arena_names,
-                                 (self.stage or {}).get("tuning"), self.score_kind)
+                                 (self.stage or {}).get("tuning"), self.score_kind, self.controller.fade.scale)
         cached = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
         # The leader's cache decides for every rank: they all play the baseline, or none does.
         fresh = self.ranks.broadcast(not (cached and cached.get("key") == key))
@@ -1008,11 +1030,16 @@ class TrainingRun:
             self.progress.write("training", self.update, self.env_steps)
 
             against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""
+            played = summary.get("return")
             print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
                   f"(best {tracker.best:.4g}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
-                  f"{against}; "
+                  f"{against}; return {played if played is None else format(played, '.4g')} at shaping "
+                  f"x{self.shaping_scale_now:g}; "
                   f"{result.episodes} episodes in {result.seconds:.0f} s"
                   f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
+
+            if controller.fade_message:
+                print(f"{config.run_name}: {controller.fade_message}", flush=True)
 
             if improved:
                 self._save(self.best_path)
@@ -1295,11 +1322,14 @@ class TrainingRun:
         # The leader's controller decides, for every rank.
         entropy_coef = self.controller.entropy_coef(self.env_steps)
         lr_scale = self.controller.lr_scale(self.env_steps)
+        shaping_scale = self.controller.fade.scale
         if self.link is not None:
             entropy_coef = self.link.control.get("entropy_coef", entropy_coef)
             lr_scale = self.link.control.get("lr_scale", lr_scale)
+            shaping_scale = self.link.control.get("shaping_scale", shaping_scale)
         elif self.hub is not None:
-            self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale)
+            self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale, shaping_scale=shaping_scale)
+        self.shaping_scale_now = self.ranks.broadcast(shaping_scale)
         trainer.entropy_coef = self.ranks.broadcast(entropy_coef)
         # The goal head's share of it falls on its own schedule, the same on every rank (it is a function of the
         # steps alone).
@@ -1318,10 +1348,11 @@ class TrainingRun:
         if self.link is not None:
             self.link.steps_since += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
-        # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal). Sent
-        # while the sim waits for this rollout's last ACT, as WEIGHTS is.
-        if hasattr(self.env, "set_stage_progress") and self.config.total_env_steps > 0:
-            self.env.set_stage_progress(self.env_steps / self.config.total_env_steps)
+        # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal), and
+        # the shaping ladder's scale. Sent while the sim waits for this rollout's last ACT, as WEIGHTS is.
+        if hasattr(self.env, "set_stage_progress"):
+            total = self.config.total_env_steps
+            self.env.set_stage_progress(self.env_steps / total if total > 0 else 0.0, self.shaping_scale_now)
 
         if self.updater is None:
             stats = trainer.update(buffer, self.distiller)
@@ -1529,6 +1560,7 @@ class TrainingRun:
             "episodes": len(self.finished_episodes),
             "entropy_coef": self.trainer.entropy_coef,
             "lr_scale": self.lr_scale_now,
+            "shaping_scale": self.shaping_scale_now,
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),

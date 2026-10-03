@@ -212,6 +212,15 @@ convergence:
   hold_share: 0.02
   lr_hold_until_plateau: true
 
+# The shaping ladder (peak-play W1): shaping gets a stage started and then goes, rung by rung, each step taken when the
+# outcome score has plateaued and undone when it falls, so every stage that extends this one ends on what it is for.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.1, 0.0]
+  window: 4
+  regress_z: 2.0
+  give_up: 2
+
 # Exploration has a floor, measured against what the mask allowed: below 30% of ln(legal actions) the entropy
 # coefficient climbs (up to 4x) and falls straight back once entropy recovers. It is also the collapse guard of the
 # convergence rule's entropy signal.

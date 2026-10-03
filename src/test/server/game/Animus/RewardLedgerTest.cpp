@@ -59,6 +59,33 @@ TEST(RewardLedgerTest, ScoreIsOutcomeAndCostBeforeTierAndRole)
     EXPECT_FLOAT_EQ(ledger.Episode(RewardTerm::Kill), 0.0f);
 }
 
+// The shaping fade (peak-play W1): at scale 0 the reward is the outcome and cost terms alone, at any scale the score
+// is untouched, and what Add returns is what was paid -- what the director's mirror of a seat's shaping must use.
+TEST(RewardLedgerTest, ShapingScaleTouchesOnlyShaping)
+{
+    RewardLedger full;
+    RewardLedger faded;
+    faded.SetShaping(0.0f);
+    for (RewardLedger* ledger : { &full, &faded })
+    {
+        ledger->Add(RewardTerm::Kill, 4.0f, 2.0f);
+        ledger->Add(RewardTerm::Timeout, -1.0f);
+        ledger->Add(RewardTerm::Threat, 3.0f, 2.0f);
+        ledger->Add(RewardTerm::GoalProgress, 0.5f);
+    }
+    EXPECT_FLOAT_EQ(full.TakeStep(), 8.0f - 1.0f + 6.0f + 0.5f);
+    EXPECT_FLOAT_EQ(faded.TakeStep(), 8.0f - 1.0f);
+    EXPECT_FLOAT_EQ(full.Score(), faded.Score());
+    EXPECT_FLOAT_EQ(faded.Episode(RewardTerm::Threat), 0.0f);
+
+    RewardLedger half;
+    half.SetShaping(0.5f);
+    EXPECT_FLOAT_EQ(half.Add(RewardTerm::OrderMatch, 2.0f), 1.0f);
+    EXPECT_FLOAT_EQ(half.Add(RewardTerm::Kill, 2.0f), 2.0f);
+    EXPECT_FLOAT_EQ(half.AddTaken(RewardTerm::GoalReached, 4.0f), 2.0f);
+    EXPECT_FLOAT_EQ(half.Score(), 2.0f);
+}
+
 // Every term has a column (reward_<name>) and a category; two terms under one name would share a column, which is how
 // a drill's clean pull was read as the dungeon's kills.
 TEST(RewardLedgerTest, EveryTermHasItsOwnNameAndACategory)

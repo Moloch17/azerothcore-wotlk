@@ -2137,11 +2137,22 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
             continue;
         }
 
-        if (type == MsgType::Progress && payload.size() == sizeof(float))
+        if (type == MsgType::Progress && payload.size() == sizeof(ProgressMsg))
         {
-            float progress = 0.0f;
+            ProgressMsg progress{};
             std::memcpy(&progress, payload.data(), sizeof(progress));
-            _pool->SetStageProgress(std::clamp(progress, 0.0f, 1.0f));
+            _pool->SetStageProgress(std::clamp(progress.Progress, 0.0f, 1.0f));
+            // Clamped to [0, 1]; NaN fails both comparisons and is taken as full shaping, never passed on to the ledger.
+            float shaping = progress.ShapingScale;
+            if (!(shaping >= 0.0f && shaping <= 1.0f))
+                shaping = shaping < 0.0f ? 0.0f : 1.0f;
+            if (shaping != progress.ShapingScale && !_shapingClampLogged)
+            {
+                _shapingClampLogged = true;
+                LOG_WARN("module.animus", "Animus forge: the learner sent shaping scale {} outside [0, 1]; using {} "
+                    "(said once)", progress.ShapingScale, shaping);
+            }
+            _pool->SetShapingScale(shaping);
             continue;
         }
 

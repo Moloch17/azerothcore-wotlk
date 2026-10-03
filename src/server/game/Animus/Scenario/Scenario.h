@@ -141,6 +141,8 @@ namespace Animus
         virtual void SetLayoutWeights(std::vector<float> const& /*weights*/) { }
         /// How far through its budget the stage's training is, 0 to 1 (the learner's PROGRESS).
         virtual void SetStageProgress(float /*progress*/) { }
+        /// What shaping rewards are paid times (the learner's fade ladder, PROGRESS from protocol 18): 1 = as tuned.
+        virtual void SetShapingScale(float /*scale*/) { }
 
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the

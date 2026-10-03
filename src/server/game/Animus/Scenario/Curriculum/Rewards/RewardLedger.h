@@ -255,14 +255,16 @@ namespace Animus::Curriculum
         /// `tier` is the factor a ladder stage's rung puts on the term (CombatReward::TierScale: a win times it, a
         /// loss divided by it), passed apart from `value` so the score can leave it out. The reward is the same
         /// either way; the score is not, and a score that moved whenever a rung stepped would read a harder rung as
-        /// learning and an easier one as collapse.
-        void Add(RewardTerm term, float value, float tier = 1.0f)
+        /// learning and an easier one as collapse. Returns what was paid, which a Shaping term has had the stage's
+        /// shaping scale put on (SetShaping): what mirrors a payment elsewhere has to mirror this, not `value`.
+        float Add(RewardTerm term, float value, float tier = 1.0f)
         {
             if (ScoresOutcome(term))
                 _score += value;
-            value *= _scale[std::size_t(term)] * tier;
+            value *= _scale[std::size_t(term)] * tier * Shaped(term);
             _step += value;
             _episode[std::size_t(term)] += value;
+            return value;
         }
         /// What this seat is paid of a term, whichever encounter adds it: 0 for a party healer's damage, a share
         /// for a party tank's. 1 unless set.
@@ -270,12 +272,19 @@ namespace Animus::Curriculum
 
         /// A term paid into a decision whose total has already been taken (StageScenario pays a goal reached, seen
         /// at the observation, into the reward row of the decision that reached it): the episode's sums only.
-        void AddTaken(RewardTerm term, float value)
+        /// Returns what was paid, shaping scale and all, for the caller to put in that row.
+        float AddTaken(RewardTerm term, float value)
         {
             if (ScoresOutcome(term))
                 _score += value;
+            value *= Shaped(term);
             _episode[std::size_t(term)] += value;
+            return value;
         }
+
+        /// The stage's shaping scale (the learner's fade ladder, peak-play plan W1): every Shaping term is paid
+        /// times it, Outcome and Cost terms never. 1 until the learner says otherwise; 0 is the outcome alone.
+        void SetShaping(float scale) { _shaping = scale; }
 
         /// Start a decision; returns the previous decision's total.
         float TakeStep()
@@ -307,8 +316,14 @@ namespace Animus::Curriculum
             ones.fill(1.0f);
             return ones;
         }
+        [[nodiscard]] float Shaped(RewardTerm term) const
+        {
+            return RewardTermCategory(term) == RewardCategory::Shaping ? _shaping : 1.0f;
+        }
+
         float _step = 0.0f;
         float _score = 0.0f;
+        float _shaping = 1.0f;
     };
 }
 

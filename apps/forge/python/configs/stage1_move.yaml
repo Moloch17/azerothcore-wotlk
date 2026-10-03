@@ -19,6 +19,10 @@ mappo:
   # that punishes it.
   entropy_final_fraction: 0.3
 
+# Arrival is already the outcome here, and the movement terms are what the trip is; stage2_travel inherits this.
+fade:
+  enabled: false
+
 eval:
   trace_episodes: 64
   every_env_steps: 5000000
