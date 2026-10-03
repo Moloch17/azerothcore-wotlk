@@ -12,10 +12,10 @@ from animus.mappo.trainer import MappoConfig, MappoTrainer
 
 # Two layouts holding the same set at different offsets (an enemy: 3 pack columns and 2 hostiles columns a slot, 2
 # slots, present at the first pack column), their select-enemy actions at different action indexes, and one with none.
-SETS_A = [{"name": "enemies", "slots": 2, "present": 0, "segments": [{"first": 2, "stride": 3}, {"first": 10, "stride": 2}],
-           "pointers": [{"first": 1, "count": 2}]}]
-SETS_B = [{"name": "enemies", "slots": 2, "present": 0, "segments": [{"first": 4, "stride": 3}, {"first": 12, "stride": 2}],
-           "pointers": [{"first": 3, "count": 2}]}]
+SETS_A = [{"name": "enemies", "slots": 2, "present": 0,
+           "segments": [{"first": 2, "stride": 3}, {"first": 10, "stride": 2}], "pointers": [{"first": 1, "count": 2}]}]
+SETS_B = [{"name": "enemies", "slots": 2, "present": 0,
+           "segments": [{"first": 4, "stride": 3}, {"first": 12, "stride": 2}], "pointers": [{"first": 3, "count": 2}]}]
 LAYOUTS = [(20, 4), (16, 5), (8, 3)]
 DESCRIPTORS = [SETS_A, SETS_B, []]
 STATE = 6

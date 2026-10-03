@@ -70,6 +70,17 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         f32  pool_weight[adapter_out * 4 * embed], pool_bias[adapter_out]  added to the first layer before its tanh
         u32  pointer_count; per pointer: u32 first_action, u32 set (0 members, 1 enemies),
             f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query
+    u8       seat_sets                      (version 8) this layout's entities as sets (EntitySets), else 0
+    if seat_sets:
+        u32  embed, u32 set_count
+        per set: u32 slots, u32 width, u32 present (slot 0's present column), u32 present_stride, u32 segment_count;
+            per segment: u32 first, u32 stride   (slot k reads stride columns from first + k * stride; in order)
+            f32 w1[embed * width], b1[embed], w2[embed * embed], b2[embed]     encoder: tanh after each
+        f32  pool_weight[adapter_out * 2 * embed * set_count], pool_bias[adapter_out]   mean and max of each set's
+                                            present slots, in set order; added to the first layer before its tanh
+        u32  pointer_count; per pointer: u32 first_action, u32 set (its index above),
+            f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query, after
+                                            the director's
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
@@ -105,7 +116,10 @@ AMDL_MAGIC = b"AMDL"
 # the goal block's next-run columns (the secondary ending, the event, the director's primary, what was achieved).
 # 7: the goal also scales the action head's features (kind_scale, target_scale), so it can change what the seat does
 # in a situation rather than only shift each action's logit.
-AMDL_VERSION = 7
+# 8: a seat layout's entities as sets (seat_sets, mappo.seat_sets: EntitySets). A reader of 8 reads 7 too: a 7 file
+# is an 8 without the section.
+AMDL_VERSION = 8
+AMDL_VERSIONS = (7, 8)
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -178,6 +192,7 @@ def write_amdl(
     feedback: dict[str, np.ndarray] | None = None,
     slow: dict[str, np.ndarray] | None = None,
     sets: dict | None = None,
+    seat_sets: dict | None = None,
 ) -> None:
     if layers[0][0].shape[1] != obs_dim + num_agents:
         raise ValueError(f"first layer takes {layers[0][0].shape[1]} inputs, expected {obs_dim} + {num_agents}")
@@ -259,6 +274,24 @@ def write_amdl(
                 out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
                 out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
 
+        out.write(struct.pack("<B", 1 if seat_sets else 0))
+        if seat_sets:
+            out.write(struct.pack("<II", int(seat_sets["embed"]), len(seat_sets["sets"])))
+            for entry in seat_sets["sets"]:
+                out.write(struct.pack("<IIIII", entry["slots"], entry["width"], entry["present"],
+                                      entry["present_stride"], len(entry["segments"])))
+                for first, stride in entry["segments"]:
+                    out.write(struct.pack("<II", first, stride))
+                for name in ("w1", "b1", "w2", "b2"):
+                    out.write(np.ascontiguousarray(entry[name], dtype="<f4").tobytes())
+            out.write(np.ascontiguousarray(seat_sets["pool_weight"], dtype="<f4").tobytes())
+            out.write(np.ascontiguousarray(seat_sets["pool_bias"], dtype="<f4").tobytes())
+            out.write(struct.pack("<I", len(seat_sets["pointers"])))
+            for pointer in seat_sets["pointers"]:
+                out.write(struct.pack("<II", pointer["first"], pointer["set"]))
+                out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
+                out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
+
 
 def memory_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
     """The GRU's weights, or None when the actor has no memory."""
@@ -335,6 +368,44 @@ def director_sets(actor_state: dict[str, torch.Tensor], descriptor: dict | None)
     return sets
 
 
+def seat_set_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[str], layout: int) -> dict | None:
+    """One seat layout's sets (EntitySets) as its model carries them: its own sets' encoders, the pool's columns for
+    those sets alone (a set the layout lacks pools to zero), and its pointers. None for an actor without seat sets or a
+    layout without any. `names` is every layout's name, in the actor's order (the set order is the network's)."""
+    if "entity_sets.pool.weight" not in actor_state:
+        return None
+    from .mappo.networks import SEAT_SET_NAMES
+    descriptors = [list(stage.get("layouts", {}).get(name, {}).get("sets", ())) for name in names]
+    own = descriptors[layout]
+    if not own:
+        return None
+    present_names = {entry["name"] for sets in descriptors for entry in sets}
+    order = [name for name in SEAT_SET_NAMES if name in present_names] + sorted(present_names - set(SEAT_SET_NAMES))
+
+    def array(key: str) -> np.ndarray:
+        return actor_state[f"entity_sets.{key}"].detach().cpu().numpy().astype("<f4")
+
+    embed = int(actor_state[f"entity_sets.encoders.{order[0]}.0.weight"].shape[0])
+    pool = array("pool.weight")
+    sets, columns, pointers = [], [], []
+    for entry in own:
+        name = entry["name"]
+        position = order.index(name)
+        columns.extend(range(2 * embed * position, 2 * embed * (position + 1)))
+        segments = [(int(part["first"]), int(part["stride"])) for part in entry["segments"]]
+        sets.append({"slots": int(entry["slots"]), "width": sum(stride for _, stride in segments),
+                     "present": segments[0][0] + int(entry["present"]), "present_stride": segments[0][1],
+                     "segments": segments,
+                     "w1": array(f"encoders.{name}.0.weight"), "b1": array(f"encoders.{name}.0.bias"),
+                     "w2": array(f"encoders.{name}.2.weight"), "b2": array(f"encoders.{name}.2.bias")})
+        for ordinal, part in enumerate(entry.get("pointers", ())):
+            kind = f"{name}_{ordinal}"
+            pointers.append({"first": int(part["first"]), "set": len(sets) - 1,
+                             "weight": array(f"queries.{kind}.weight"), "bias": array(f"queries.{kind}.bias")})
+    return {"embed": embed, "sets": sets, "pool_weight": np.ascontiguousarray(pool[:, columns]),
+            "pool_bias": array("pool.bias"), "pointers": pointers}
+
+
 def feedback_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
     """The foresight head and the projection that feeds its predictions back, or None when they are not fed back."""
     if "foresight_proj.weight" not in actor_state:
@@ -383,8 +454,9 @@ def export_layouts(
             if layout["name"] == "director" and sets is None:
                 raise ValueError(f"{name}: a director needs its set encoder, and this checkpoint or its stage.json "
                                  f"has none")
+            seats = seat_set_weights(actor_state, stage, [entry["name"] for entry in layouts], index)
             write_amdl(partial, name, layout["obs_dim"], 1, layout["num_actions"], layers, memory, goals,
-                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), sets)
+                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), sets, seats)
             os.replace(partial, target)
         except OSError:
             partial.unlink(missing_ok=True)
@@ -407,7 +479,7 @@ def read_amdl(path: str | Path) -> dict:
     offset = 4
     version, name_len = struct.unpack_from("<IH", data, offset)
     offset += 6
-    if version != AMDL_VERSION:
+    if version not in AMDL_VERSIONS:
         raise ValueError(f"unsupported .amdl version {version}")
     name = data[offset : offset + name_len].decode("utf-8")
     offset += name_len
@@ -525,6 +597,37 @@ def read_amdl(path: str | Path) -> dict:
             sets["pointers"].append({"first": first, "over": "seats" if over == 0 else "enemies",
                                      "weight": floats(embed * width, embed, width), "bias": floats(embed, embed)})
 
+    seat_sets = None
+    if version >= 8:
+        (has_seat_sets,) = struct.unpack_from("<B", data, offset)
+        offset += 1
+        if has_seat_sets:
+            embed, count = struct.unpack_from("<II", data, offset)
+            offset += 8
+            seat_sets = {"embed": embed, "sets": [], "pointers": []}
+            for _ in range(count):
+                slots, per, present, stride, segment_count = struct.unpack_from("<IIIII", data, offset)
+                offset += 20
+                segments = []
+                for _ in range(segment_count):
+                    segments.append(struct.unpack_from("<II", data, offset))
+                    offset += 8
+                seat_sets["sets"].append({"slots": slots, "width": per, "present": present, "present_stride": stride,
+                                          "segments": segments, "w1": floats(embed * per, embed, per),
+                                          "b1": floats(embed, embed), "w2": floats(embed * embed, embed, embed),
+                                          "b2": floats(embed, embed)})
+            adapter_out = layers[0][0].shape[0]
+            seat_sets["pool_weight"] = floats(adapter_out * 2 * embed * count, adapter_out, 2 * embed * count)
+            seat_sets["pool_bias"] = floats(adapter_out, adapter_out)
+            (pointer_count,) = struct.unpack_from("<I", data, offset)
+            offset += 4
+            for _ in range(pointer_count):
+                first, index = struct.unpack_from("<II", data, offset)
+                offset += 8
+                seat_sets["pointers"].append({"first": first, "set": index,
+                                              "weight": floats(embed * width, embed, width),
+                                              "bias": floats(embed, embed)})
+
     if offset != len(data):
         raise ValueError(f"{len(data) - offset} trailing bytes")
     return {
@@ -539,6 +642,7 @@ def read_amdl(path: str | Path) -> dict:
         "feedback": feedback,
         "slow": slow,
         "sets": sets,
+        "seat_sets": seat_sets,
     }
 
 
@@ -566,8 +670,26 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
             pooled.append((hidden * present[:, None]).sum(axis=0) / count)
             pooled.append(np.where(present[:, None], hidden, -1.0).max(axis=0))
         extra = sets["pool_weight"] @ np.concatenate(pooled) + sets["pool_bias"]
+    else:
+        extra = 0.0
+    # A seat layout's entities (version 8): each slot gathered from its segments through its set's encoder, pooled.
+    seats = model.get("seat_sets")
+    seat_codes = []
+    if seats is not None:
+        pooled = []
+        for entry in seats["sets"]:
+            raw = np.stack([np.concatenate([obs[first + slot * stride : first + (slot + 1) * stride]
+                                            for first, stride in entry["segments"]])
+                            for slot in range(entry["slots"])]).astype(np.float32)
+            hidden = np.tanh(np.tanh(raw @ entry["w1"].T + entry["b1"]) @ entry["w2"].T + entry["b2"])
+            present = obs[[entry["present"] + slot * entry["present_stride"] for slot in range(entry["slots"])]] > 0.5
+            seat_codes.append(hidden)
+            pooled.append((hidden * present[:, None]).sum(axis=0) / max(1.0, float(present.sum())))
+            pooled.append(np.where(present[:, None], hidden, -1.0).max(axis=0) if present.any()
+                          else np.zeros(hidden.shape[1], np.float32))
+        extra = extra + seats["pool_weight"] @ np.concatenate(pooled) + seats["pool_bias"]
     for index, (weight, bias) in enumerate(layers[:-1]):
-        x = np.tanh(weight @ x + bias + (extra if sets is not None and index == 0 else 0.0))
+        x = np.tanh(weight @ x + bias + (extra if index == 0 else 0.0))
 
     memory = model.get("memory")
     if memory is not None:
@@ -600,6 +722,10 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     # The director's per-slot actions: each slot's encoding against a query from the features.
     for pointer in (sets["pointers"] if sets is not None else ()):
         scores = encoded[pointer["over"]] @ (pointer["weight"] @ features + pointer["bias"])
+        x[pointer["first"] : pointer["first"] + len(scores)] = scores
+    # A seat layout's slot-naming actions, the same way, after the director's.
+    for pointer in (seats["pointers"] if seats is not None else ()):
+        scores = seat_codes[pointer["set"]] @ (pointer["weight"] @ features + pointer["bias"])
         x[pointer["first"] : pointer["first"] + len(scores)] = scores
 
     allowed = mask.astype(bool)
