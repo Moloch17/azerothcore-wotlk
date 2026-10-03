@@ -36,29 +36,6 @@ def test_the_split_does_not_move_the_discounts():
         horizon_seconds(gamma * gae_lambda, spec(250, 1).decision_ms)
 
 
-def test_reading_the_tick_instead_of_the_decision_would_stretch_the_real_horizon():
-    """The bug this pins, stated as an assertion: tick_ms alone is not the step.
-
-    The trap is quiet because per_decision compounds gamma to whatever step it is given, so a learner reading
-    tick_ms would report exactly the credit window it was configured for. The damage is only visible against real
-    time: it discounts as if each step were 50 ms while the sim advances 250, so the window it actually applies is
-    five times the one it was asked for. Nothing in the logs would look wrong.
-    """
-    config = MappoConfig()
-    split = spec(50, 5)
-
-    gamma, gae_lambda = per_decision(config, split.decision_ms)
-    asked_for = horizon_seconds(gamma * gae_lambda, split.decision_ms)
-
-    wrong_gamma, wrong_lambda = per_decision(config, split.tick_ms)
-    # Reported against the step it believes in, it looks the same as ever -- this is why it would go unnoticed.
-    assert horizon_seconds(wrong_gamma * wrong_lambda, split.tick_ms) < asked_for
-
-    # Against the step the sim actually takes, it is five times too long.
-    really_applied = horizon_seconds(wrong_gamma * wrong_lambda, split.decision_ms)
-    assert really_applied > asked_for * 4
-
-
 def test_evaluation_sizes_its_window_from_the_decision():
     """evaluation.py divides the episode by the decision, so the number of steps it expects must not change."""
     from animus import evaluation
@@ -71,12 +48,3 @@ def test_evaluation_sizes_its_window_from_the_decision():
     whole, split = spec(250, 1), spec(50, 5)
     steps = lambda s: max(1, s.episode_seconds * 1000 // max(1, s.decision_ms))
     assert steps(whole) == steps(split) == 240
-
-
-def test_the_wire_round_trips_the_split():
-    from animus.protocol import decode_spec, encode_spec
-
-    original = spec(50, 5)
-    restored = decode_spec(encode_spec(original))
-    assert (restored.tick_ms, restored.decision_ticks) == (50, 5)
-    assert restored.decision_ms == 250

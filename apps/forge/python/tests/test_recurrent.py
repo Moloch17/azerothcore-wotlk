@@ -359,7 +359,8 @@ def _carry_results(carry, cell, size, encoded, memory, dones, weight):
     return [out.detach(), x.grad, m.grad] + [p.grad.clone() for p in cell.parameters()]
 
 
-def _check_carry_matches_loop(steps: int, rows: int, hidden: int, size: int, seed: int = 3) -> None:
+def _check_carry_matches_loop(steps: int, rows: int, hidden: int, size: int, seed: int = 3,
+                              episode_ends: bool = True) -> None:
     """The fused GRU call against the step loop, both in fp32, each measured against the step loop in fp64: the
     library may sum in a different order, so it is held to the loop's own rounding error (a few times over), not to
     bit equality."""
@@ -375,7 +376,7 @@ def _check_carry_matches_loop(steps: int, rows: int, hidden: int, size: int, see
     dones[-1, 0] = True             # an end on the last step
     dones[0, 1 % rows] = True       # an end on the first step
     dones[3:6, 2 % rows] = True     # ends on consecutive steps
-    dones = dones.cuda()
+    dones = (dones if episode_ends else torch.zeros_like(dones)).cuda()
     weight = torch.linspace(-1.0, 1.0, steps * rows * size, device="cuda").reshape(steps, rows, size)
 
     exact = _carry_results(_carry_sequence_loop, copy.deepcopy(cell).double(), size, encoded.double(),
@@ -404,20 +405,12 @@ def test_fused_gru_matches_the_step_loop_at_the_real_size():
 
 
 @requires_gpu
-def test_fused_gru_matches_the_step_loop_at_odd_sizes():
-    # Pieces of every length, including the one-step pieces between consecutive episode ends.
-    _check_carry_matches_loop(steps=37, rows=21, hidden=24, size=40)
-
-
-@requires_gpu
-def test_fused_gru_with_no_episode_end():
-    from animus.mappo.networks import _carry_sequence, _carry_sequence_loop
-
-    cell = torch.nn.GRUCell(8, 16).cuda()
-    encoded, memory = torch.randn(5, 3, 8).cuda(), torch.randn(3, 16).cuda()
-    dones = torch.zeros(5, 3, dtype=torch.bool).cuda()
-    torch.testing.assert_close(_carry_sequence(cell, 16, encoded, memory, dones),
-                               _carry_sequence_loop(cell, 16, encoded, memory, dones), rtol=1e-4, atol=1e-5)
+@pytest.mark.parametrize("steps, rows, hidden, size, episode_ends", [
+    (37, 21, 24, 40, True),    # pieces of every length, including one-step pieces between consecutive ends
+    (5, 3, 8, 16, False),      # one piece per row: no episode ends at all
+], ids=["odd_sizes", "no_episode_end"])
+def test_fused_gru_matches_the_step_loop_at_odd_shapes(steps, rows, hidden, size, episode_ends):
+    _check_carry_matches_loop(steps=steps, rows=rows, hidden=hidden, size=size, episode_ends=episode_ends)
 
 
 @requires_gpu

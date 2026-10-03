@@ -200,6 +200,7 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     assert json.loads((run_dir / "progress.json").read_text())["phase"] == "finished"
 
 
+@pytest.mark.slow
 def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
     """With overlap_updates, each rollout hands its update to the worker and returns without joining it; the join
     comes after the next rollout. It used to join every update where it was submitted, so nothing overlapped."""
@@ -292,6 +293,7 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     assert modes.count((True, 2, "")) >= 3
 
 
+@pytest.mark.slow
 def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path):
     """The host's learner trains on its own sim and a worker's as one pool (cluster_sims): a half-batch sim and a
     lock-step one here. Every present seat earns 1 as with one sim, and each evaluation's seeds are shared out so
@@ -339,6 +341,7 @@ def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path)
         assert {seed for steps, policy, seed, _ in played if (steps, policy) == evaluation} == set(range(6))
 
 
+@pytest.mark.slow
 def test_a_worker_that_drops_out_does_not_stop_training_and_rejoins(tmp_path, monkeypatch, capsys):
     """A cluster worker's sim hangs up mid-run: its envs sit out and training goes on on the host's; a worker back on
     the same address rejoins between rollouts. Every present seat still earns 1 -- the rows that sat out are no

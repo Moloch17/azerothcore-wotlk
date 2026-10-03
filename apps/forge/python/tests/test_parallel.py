@@ -37,6 +37,7 @@ def _rank(rank: int, tmp: str, port: int) -> None:
                f"{tmp}/rank{rank}.pt")
 
 
+@pytest.mark.slow
 def test_two_ranks_train_one_policy(tmp_path):
     """Two learners share one run: each trains on its own envs, the gradients are averaged, and they end as the same
     networks. Only rank 0 writes the run; each evaluation's seeds are shared out and every one is played once.
@@ -105,6 +106,7 @@ def _uneven_heads(rank: int, port: int, out: str) -> None:
     ranks.close()
 
 
+@pytest.mark.slow
 def test_gradients_average_when_a_head_is_used_on_one_rank_only(tmp_path):
     """A layout head only one rank's minibatch used: the all-reduce still lines up, both ranks end with the same
     gradients (the head's halved), and a parameter no rank used keeps no gradient."""
@@ -132,6 +134,7 @@ def _average_weights(rank: int, port: int, out: str) -> None:
     ranks.close()
 
 
+@pytest.mark.slow
 def test_weights_average_over_the_ranks(tmp_path):
     """mappo.rank_sync = "weights": ranks that trained apart end on the mean of their networks, the same on both."""
     port = _free_port()

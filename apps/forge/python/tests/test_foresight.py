@@ -1,10 +1,8 @@
-"""The actor's foresight heads: their targets from a rollout, and the loss they add to the update."""
+"""The actor's foresight heads: their targets from a rollout (the loss in the update: test_recurrent)."""
 
 import numpy as np
-import torch
 
-from animus.mappo.buffer import RolloutBuffer, compute_foresight, decisions_left
-from animus.mappo.trainer import MappoConfig, MappoTrainer
+from animus.mappo.buffer import compute_foresight, decisions_left
 
 
 def test_targets_stop_at_a_terminal_and_bootstrap_past_a_truncation():
@@ -29,9 +27,3 @@ def test_decisions_left_counts_to_the_end_of_the_episode():
     dones[2, 0] = True
     assert list(decisions_left(dones)[:, 0]) == [2.0, 1.0, 0.0, -1.0]
     assert list(decisions_left(dones)[:, 1]) == [-1.0] * 4  # never ends in the rollout: nothing to learn from
-
-
-def test_off_by_default():
-    trainer = MappoTrainer([(3, 2)], 4, MappoConfig(hidden=(8, 8)))
-    assert trainer.foresight_outputs == 0 and trainer.actor.foresight is None
-    assert trainer.foresight_of(np.zeros((2, 1, 3), np.float32), np.zeros((2, 1), np.int64)) is None

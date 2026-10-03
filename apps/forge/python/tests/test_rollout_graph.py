@@ -107,7 +107,7 @@ def test_the_lean_sampler_draws_what_categorical_draws():
     torch.testing.assert_close(choice, reference.logits.argmax(-1))
     torch.testing.assert_close(log_probs, reference.log_prob(choice))
 
-    draws = torch.stack([sample_logits(logits)[0] for _ in range(20000)])
+    draws = sample_logits(logits.expand(20000, *logits.shape).contiguous())[0]
     assert (draws < 4).all()
     frequencies = torch.stack([(draws == action).float().mean(0) for action in range(6)], dim=-1)
     torch.testing.assert_close(frequencies, reference.probs, atol=0.015, rtol=0.0)

@@ -100,12 +100,6 @@ def sim_stage_columns() -> dict[str, set[str]]:
     return out
 
 
-@pytest.mark.parametrize("path", sorted(CONFIGS.glob("*.yaml")), ids=lambda p: p.stem)
-def test_shipped_configs_load(path):
-    config = TrainConfig.load(path)
-    assert config.run_name or path.stem == "fast"
-
-
 def test_layout_sampling_metric_must_exist():
     config = TrainConfig.load(CONFIGS / "stage4_duel.yaml")
     assert config.layout_sampling.metric in (*DERIVED_METRICS, *sim_stage_columns()["stage4_duel"])

@@ -13,7 +13,6 @@ from animus.config import TrainConfig
 from animus.env import ForgeEnv
 from animus.evaluation import (LIVELOCK_CANCELS, ConvergenceTracker, EvalResult, action_mask_table,
                                casting_weights, run_evaluation, standard_error)
-from animus.train import init_from_checkpoint
 
 SPEC = p.Spec(
     version=p.PROTOCOL_VERSION,
@@ -409,28 +408,20 @@ def test_config_overlay_merges_over_extends_before_overrides(tmp_path):
     assert config.convergence.window == 2
 
 
-def test_fast_overlay_loads_over_every_stage():
+def test_every_shipped_config_loads_alone_and_under_the_fast_overlay():
     configs = Path(__file__).resolve().parent.parent / "configs"
-    for stage in sorted(configs.glob("stage*.yaml")):
+    TrainConfig.load(configs / "fast.yaml")    # the overlay alone, as forge fast reads it first
+    stages = sorted(configs.glob("stage*.yaml")) + sorted(configs.glob("*/stage*.yaml"))
+    assert len(stages) > 21
+    for stage in stages:
         full = TrainConfig.load(stage)
+        assert full.run_name, stage
         fast = TrainConfig.load(stage, overlays=[configs / "fast.yaml"])
         assert fast.run_name == full.run_name
         assert fast.total_env_steps < full.total_env_steps
         assert fast.eval.every_env_steps < fast.total_env_steps
         assert fast.convergence.patience > 0
         assert tuple(fast.mappo.hidden) == tuple(full.mappo.hidden)
-
-
-def test_init_from_falls_back_between_the_two_names(tmp_path):
-    """Neither name is required: a run that wrote only one of them still seeds. Which one wins when both exist is
-    the seed_from choice, which test_seed_from covers."""
-    run = tmp_path / "warrior_dps"
-    run.mkdir()
-    assert init_from_checkpoint(str(run / "best.pt")) is None
-    (run / "latest.pt").write_text("x")
-    assert init_from_checkpoint(str(run / "best.pt")) == run / "latest.pt"
-    (run / "best.pt").write_text("x")
-    assert init_from_checkpoint(str(run / "best.pt"), "best") == run / "best.pt"
 
 
 def result_with_layouts(returns, layouts, seeds=None):

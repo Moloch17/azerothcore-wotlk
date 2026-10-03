@@ -24,3 +24,6 @@ include = ["animus*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Multi-process and end-to-end training runs (tests/conftest.py): `pytest -m slow` runs them, `pytest -m ""` everything.
+addopts = "-m 'not slow'"
+markers = ["slow: spawns processes or trains end to end; excluded by default, run with -m slow"]

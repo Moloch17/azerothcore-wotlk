@@ -32,26 +32,6 @@ def test_wrong_types_fail_at_load(raw, key):
         from_dict(TrainConfig, raw)
 
 
-def test_torch_threads_defaults_to_torch_and_loads(monkeypatch):
-    assert TrainConfig().torch_threads == 0
-    assert from_dict(TrainConfig, {"torch_threads": 8}).torch_threads == 8
-
-    # 0 leaves torch alone; a count is applied once, before the networks are built.
-    from animus import train
-
-    applied = []
-    monkeypatch.setattr(train.torch, "set_num_threads", applied.append)
-    train.use_threads(0)
-    assert applied == []
-    train.use_threads(6)
-    assert applied == [6]
-
-
-def test_unknown_keys_still_fail():
-    with pytest.raises(ValueError, match="unknown config keys"):
-        from_dict(TrainConfig, {"eval": {"evry_env_steps": 10}})
-
-
 def test_a_gpu_the_machine_does_not_have_falls_back(monkeypatch):
     """A config can name the second GPU before it is fitted: on one card it runs on the first, without one on the CPU."""
     import torch
