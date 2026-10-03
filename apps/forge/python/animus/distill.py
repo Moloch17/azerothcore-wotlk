@@ -95,7 +95,8 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets)
+                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,
+                        entity_attention=bool(mappo.get("entity_attention", False)) and seat_sets is not None)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

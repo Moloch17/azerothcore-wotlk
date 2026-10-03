@@ -73,11 +73,24 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
     u8       seat_sets                      (version 8) this layout's entities as sets (EntitySets), else 0
     if seat_sets:
         u32  embed, u32 set_count
+        u8   attention                      (version 9) a pre-norm attention layer over the tokens (EntitySets), else 0
         per set: u32 slots, u32 width, u32 present (slot 0's present column), u32 present_stride, u32 segment_count;
             per segment: u32 first, u32 stride   (slot k reads stride columns from first + k * stride; in order)
             f32 w1[embed * width], b1[embed], w2[embed * embed], b2[embed]     encoder: tanh after each
-        f32  pool_weight[adapter_out * 2 * embed * set_count], pool_bias[adapter_out]   mean and max of each set's
-                                            present slots, in set order; added to the first layer before its tanh
+        if attention:                       tokens: own, then every set's slots in order, each its code + type_embed;
+                                            the absent slots no keys. x += out(MHA(LN_a(x))); x += W2 relu(W1 LN_m(x))
+            u32  heads
+            f32  type_embed[set_count * embed], own_token[embed]
+            f32  norm_attend weight[embed], bias[embed]      LayerNorm, eps 1e-5, biased variance (torch's)
+            f32  in_proj weight[3 * embed * embed], bias[3 * embed]   q, k, v stacked in that order (torch's
+                                            nn.MultiheadAttention in_proj); head h is columns h * embed/heads.. of each;
+                                            scores q.k / sqrt(embed/heads), softmax over the present keys
+            f32  out_proj weight[embed * embed], bias[embed]
+            f32  norm_mix weight[embed], bias[embed]
+            f32  mix_in weight[2 * embed * embed], bias[2 * embed], mix_out weight[embed * 2 * embed], bias[embed]
+        f32  pool_weight[adapter_out * (2 * embed * set_count + (embed if attention))], pool_bias[adapter_out]   mean
+                                            and max of each set's present slots (attended), in set order, then the
+                                            own token (attended); added to the first layer before its tanh
         u32  pointer_count; per pointer: u32 first_action, u32 set (its index above),
             f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query, after
                                             the director's
@@ -118,8 +131,10 @@ AMDL_MAGIC = b"AMDL"
 # in a situation rather than only shift each action's logit.
 # 8: a seat layout's entities as sets (seat_sets, mappo.seat_sets: EntitySets). A reader of 8 reads 7 too: a 7 file
 # is an 8 without the section.
-AMDL_VERSION = 8
-AMDL_VERSIONS = (7, 8)
+# 9: the seat sets' attention layer (mappo.entity_attention): the section's attention flag and, with it, the layer and
+# the own token's pool columns. A reader of 9 reads 7 and 8.
+AMDL_VERSION = 9
+AMDL_VERSIONS = (7, 8, 9)
 
 _TRUNK_KEY = re.compile(r"^trunk\.layers\.(\d+)\.(weight|bias)$")
 
@@ -277,6 +292,8 @@ def write_amdl(
         out.write(struct.pack("<B", 1 if seat_sets else 0))
         if seat_sets:
             out.write(struct.pack("<II", int(seat_sets["embed"]), len(seat_sets["sets"])))
+            attention = seat_sets.get("attention")
+            out.write(struct.pack("<B", 1 if attention else 0))
             for entry in seat_sets["sets"]:
                 out.write(struct.pack("<IIIII", entry["slots"], entry["width"], entry["present"],
                                       entry["present_stride"], len(entry["segments"])))
@@ -284,6 +301,10 @@ def write_amdl(
                     out.write(struct.pack("<II", first, stride))
                 for name in ("w1", "b1", "w2", "b2"):
                     out.write(np.ascontiguousarray(entry[name], dtype="<f4").tobytes())
+            if attention:
+                out.write(struct.pack("<I", int(attention["heads"])))
+                for name in ATTENTION_ARRAYS:
+                    out.write(np.ascontiguousarray(attention[name], dtype="<f4").tobytes())
             out.write(np.ascontiguousarray(seat_sets["pool_weight"], dtype="<f4").tobytes())
             out.write(np.ascontiguousarray(seat_sets["pool_bias"], dtype="<f4").tobytes())
             out.write(struct.pack("<I", len(seat_sets["pointers"])))
@@ -368,6 +389,18 @@ def director_sets(actor_state: dict[str, torch.Tensor], descriptor: dict | None)
     return sets
 
 
+#: The attention layer's arrays, in the order they are written (.amdl 9) and their EntitySets keys.
+ATTENTION_ARRAYS = ("type_embed", "own_token", "norm_attend_weight", "norm_attend_bias", "in_proj_weight",
+                    "in_proj_bias", "out_proj_weight", "out_proj_bias", "norm_mix_weight", "norm_mix_bias",
+                    "mix_in_weight", "mix_in_bias", "mix_out_weight", "mix_out_bias")
+_ATTENTION_KEYS = {"norm_attend_weight": "norm_attend.weight", "norm_attend_bias": "norm_attend.bias",
+                   "in_proj_weight": "attend.in_proj_weight", "in_proj_bias": "attend.in_proj_bias",
+                   "out_proj_weight": "attend.out_proj.weight", "out_proj_bias": "attend.out_proj.bias",
+                   "norm_mix_weight": "norm_mix.weight", "norm_mix_bias": "norm_mix.bias",
+                   "mix_in_weight": "mix_in.weight", "mix_in_bias": "mix_in.bias",
+                   "mix_out_weight": "mix_out.weight", "mix_out_bias": "mix_out.bias"}
+
+
 def seat_set_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: list[str], layout: int) -> dict | None:
     """One seat layout's sets (EntitySets) as its model carries them: its own sets' encoders, the pool's columns for
     those sets alone (a set the layout lacks pools to zero), and its pointers. None for an actor without seat sets or a
@@ -402,8 +435,18 @@ def seat_set_weights(actor_state: dict[str, torch.Tensor], stage: dict, names: l
             kind = f"{name}_{ordinal}"
             pointers.append({"first": int(part["first"]), "set": len(sets) - 1,
                              "weight": array(f"queries.{kind}.weight"), "bias": array(f"queries.{kind}.bias")})
+    attention = None
+    if "entity_sets.type_embed" in actor_state:
+        # The layer, this layout's own token, its sets' type embeddings, and the own token's pool columns (the last).
+        from .mappo.networks import EntitySets
+        columns.extend(range(2 * embed * len(order), 2 * embed * len(order) + embed))
+        type_embed = array("type_embed")
+        attention = {"heads": EntitySets.HEADS,
+                     "type_embed": np.stack([type_embed[order.index(entry["name"])] for entry in own]),
+                     "own_token": array("self_token")[layout],
+                     **{name: array(key) for name, key in _ATTENTION_KEYS.items()}}
     return {"embed": embed, "sets": sets, "pool_weight": np.ascontiguousarray(pool[:, columns]),
-            "pool_bias": array("pool.bias"), "pointers": pointers}
+            "pool_bias": array("pool.bias"), "pointers": pointers, "attention": attention}
 
 
 def feedback_weights(actor_state: dict[str, torch.Tensor]) -> dict[str, np.ndarray] | None:
@@ -604,7 +647,11 @@ def read_amdl(path: str | Path) -> dict:
         if has_seat_sets:
             embed, count = struct.unpack_from("<II", data, offset)
             offset += 8
-            seat_sets = {"embed": embed, "sets": [], "pointers": []}
+            attending = False
+            if version >= 9:
+                (attending,) = struct.unpack_from("<B", data, offset)
+                offset += 1
+            seat_sets = {"embed": embed, "sets": [], "pointers": [], "attention": None}
             for _ in range(count):
                 slots, per, present, stride, segment_count = struct.unpack_from("<IIIII", data, offset)
                 offset += 20
@@ -616,8 +663,20 @@ def read_amdl(path: str | Path) -> dict:
                                           "segments": segments, "w1": floats(embed * per, embed, per),
                                           "b1": floats(embed, embed), "w2": floats(embed * embed, embed, embed),
                                           "b2": floats(embed, embed)})
+            if attending:
+                (heads,) = struct.unpack_from("<I", data, offset)
+                offset += 4
+                shapes = {"type_embed": (count, embed), "own_token": (embed,), "in_proj_weight": (3 * embed, embed),
+                          "in_proj_bias": (3 * embed,), "out_proj_weight": (embed, embed),
+                          "mix_in_weight": (2 * embed, embed), "mix_in_bias": (2 * embed,),
+                          "mix_out_weight": (embed, 2 * embed)}
+                seat_sets["attention"] = {"heads": heads}
+                for name in ATTENTION_ARRAYS:
+                    shape = shapes.get(name, (embed,))
+                    seat_sets["attention"][name] = floats(int(np.prod(shape)), *shape)
             adapter_out = layers[0][0].shape[0]
-            seat_sets["pool_weight"] = floats(adapter_out * 2 * embed * count, adapter_out, 2 * embed * count)
+            pooled_width = 2 * embed * count + (embed if attending else 0)
+            seat_sets["pool_weight"] = floats(adapter_out * pooled_width, adapter_out, pooled_width)
             seat_sets["pool_bias"] = floats(adapter_out, adapter_out)
             (pointer_count,) = struct.unpack_from("<I", data, offset)
             offset += 4
@@ -676,17 +735,24 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     seats = model.get("seat_sets")
     seat_codes = []
     if seats is not None:
-        pooled = []
+        presents = []
         for entry in seats["sets"]:
             raw = np.stack([np.concatenate([obs[first + slot * stride : first + (slot + 1) * stride]
                                             for first, stride in entry["segments"]])
                             for slot in range(entry["slots"])]).astype(np.float32)
-            hidden = np.tanh(np.tanh(raw @ entry["w1"].T + entry["b1"]) @ entry["w2"].T + entry["b2"])
-            present = obs[[entry["present"] + slot * entry["present_stride"] for slot in range(entry["slots"])]] > 0.5
-            seat_codes.append(hidden)
+            seat_codes.append(np.tanh(np.tanh(raw @ entry["w1"].T + entry["b1"]) @ entry["w2"].T + entry["b2"]))
+            presents.append(obs[[entry["present"] + slot * entry["present_stride"]
+                                 for slot in range(entry["slots"])]] > 0.5)
+        own = None
+        if seats.get("attention") is not None:
+            seat_codes, own = _reference_attention(seats["attention"], seat_codes, presents)
+        pooled = []
+        for hidden, present in zip(seat_codes, presents):
             pooled.append((hidden * present[:, None]).sum(axis=0) / max(1.0, float(present.sum())))
             pooled.append(np.where(present[:, None], hidden, -1.0).max(axis=0) if present.any()
                           else np.zeros(hidden.shape[1], np.float32))
+        if own is not None:
+            pooled.append(own)
         extra = extra + seats["pool_weight"] @ np.concatenate(pooled) + seats["pool_bias"]
     for index, (weight, bias) in enumerate(layers[:-1]):
         x = np.tanh(weight @ x + bias + (extra if index == 0 else 0.0))
@@ -732,6 +798,40 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     if not allowed.any():
         return 0, x
     return int(np.where(allowed, x, -np.inf).argmax()), x
+
+
+def _layer_norm(x: np.ndarray, weight: np.ndarray, bias: np.ndarray) -> np.ndarray:
+    mean = x.mean(axis=-1, keepdims=True)
+    variance = ((x - mean) ** 2).mean(axis=-1, keepdims=True)
+    return (x - mean) / np.sqrt(variance + 1e-5) * weight + bias
+
+
+def _reference_attention(layer: dict, codes: list[np.ndarray], presents: list[np.ndarray]):
+    """The seat sets' attention layer (.amdl 9): (each set's attended slots, the attended own token)."""
+    embed = layer["own_token"].shape[0]
+    heads = int(layer["heads"])
+    width = embed // heads
+    x = np.concatenate([layer["own_token"][None, :]] + [code + layer["type_embed"][index]
+                                                         for index, code in enumerate(codes)]).astype(np.float32)
+    keys = np.concatenate([[True]] + presents)
+    normed = _layer_norm(x, layer["norm_attend_weight"], layer["norm_attend_bias"])
+    q, k, v = np.split(normed @ layer["in_proj_weight"].T + layer["in_proj_bias"], 3, axis=-1)
+    merged = np.zeros_like(x)
+    for head in range(heads):
+        part = slice(head * width, (head + 1) * width)
+        scores = q[:, part] @ k[:, part].T / np.sqrt(width)
+        scores = np.where(keys[None, :], scores, -np.inf)
+        scores = np.exp(scores - scores.max(axis=-1, keepdims=True))
+        merged[:, part] = (scores / scores.sum(axis=-1, keepdims=True)) @ v[:, part]
+    x = x + merged @ layer["out_proj_weight"].T + layer["out_proj_bias"]
+    mixed = np.maximum(_layer_norm(x, layer["norm_mix_weight"], layer["norm_mix_bias"]) @ layer["mix_in_weight"].T
+                       + layer["mix_in_bias"], 0.0)
+    x = x + mixed @ layer["mix_out_weight"].T + layer["mix_out_bias"]
+    out, at = [], 1
+    for code in codes:
+        out.append(x[at : at + len(code)])
+        at += len(code)
+    return out, x[0]
 
 
 def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray, x: np.ndarray,

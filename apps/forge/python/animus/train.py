@@ -605,6 +605,12 @@ class TrainingRun:
 
         self.make_trainer = make_trainer
         self.trainer = make_trainer()
+        if self.trainer.actor.entity_sets is not None and self.trainer.actor.entity_sets.attention:
+            sets = self.trainer.actor.entity_sets
+            layer = sum(parameter.numel() for name, parameter in sets.named_parameters()
+                        if not name.startswith(("encoders.", "queries.", "pool.")))
+            print(f"Entity attention: {sets.HEADS} heads over {sum(slots for slots, _ in sets.shapes.values()) + 1} "
+                  f"tokens of {sets.embed}, {layer} parameters a network beside the sets'", flush=True)
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
         def named(device: torch.device) -> str:

@@ -1,11 +1,13 @@
-"""peak-play W4: a seat layout's sets travel in its .amdl (version 8), the reference forward pass matches the learner's,
-a version 7 file still reads, and golden vectors are kept for the in-game reader (mod-animus) to be checked against."""
+"""peak-play W4/W7: a seat layout's sets -- and their attention layer (version 9) -- travel in its .amdl, the reference
+forward pass matches the learner's, version 7 and 8 files still read, and golden vectors are kept for the in-game
+reader (mod-animus) to be checked against: seat_sets* (version 8, frozen) and seat_attention* (version 9)."""
 
 import json
 import struct
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 from animus.export import AMDL_VERSION, export_layouts, read_amdl, reference_decide
@@ -21,15 +23,23 @@ LAYOUTS = [(20, 4), (16, 5)]
 NAMES = ("warrior_dps", "priest_heal")
 
 
-def actor_and_stage(tmp_path: Path, recurrent_size: int = 0):
+def actor_and_stage(tmp_path: Path, recurrent_size: int = 0, attention: bool = False):
     torch.manual_seed(3 + recurrent_size)
-    actor = LayoutActor(LAYOUTS, [16, 8], recurrent_size=recurrent_size, seat_sets=[SETS_A, SETS_B])
+    actor = LayoutActor(LAYOUTS, [16, 8], recurrent_size=recurrent_size, seat_sets=[SETS_A, SETS_B],
+                        entity_attention=attention)
     with torch.no_grad():
         for head in actor.heads:
             head.weight.mul_(50.0)
         for query in actor.entity_sets.queries.values():
             query.weight.mul_(50.0)
-    stage_dir = tmp_path / f"layouts{recurrent_size}" / "stage5_pack"
+        if attention:
+            # Off the identity start, as training takes it: every part of the layer counts in the logits.
+            sets = actor.entity_sets
+            for parameter in (sets.attend.out_proj.weight, sets.attend.out_proj.bias, sets.mix_out.weight,
+                              sets.mix_out.bias, sets.type_embed, sets.norm_attend.weight, sets.norm_mix.bias):
+                parameter.add_(torch.randn_like(parameter) * 0.5)
+            sets.pool.weight[:, -sets.embed:] = torch.randn_like(sets.pool.weight[:, -sets.embed:]) * 0.5
+    stage_dir = tmp_path / f"layouts{recurrent_size}{'a' if attention else ''}" / "stage5_pack"
     stage_dir.mkdir(parents=True)
     stage = {"stage": "stage5_pack", "models": {name: f"{name}_pack" for name in NAMES},
              "layouts": {"warrior_dps": {"sets": SETS_A}, "priest_heal": {"sets": SETS_B}}}
@@ -60,8 +70,9 @@ def observation(rng, obs_dim: int) -> np.ndarray:
     return obs
 
 
-def test_a_seat_layouts_sets_round_trip_and_match_the_learner(tmp_path):
-    actor, spec, stage_dir = actor_and_stage(tmp_path)
+@pytest.mark.parametrize("attention", [False, True], ids=["sets", "attention"])
+def test_a_seat_layouts_sets_round_trip_and_match_the_learner(tmp_path, attention):
+    actor, spec, stage_dir = actor_and_stage(tmp_path, attention=attention)
     out = tmp_path / "models"
     out.mkdir()
     written = export_layouts(actor.state_dict(), spec, out, stage_dir)
@@ -69,6 +80,7 @@ def test_a_seat_layouts_sets_round_trip_and_match_the_learner(tmp_path):
     for index, ((obs_dim, actions), path) in enumerate(zip(LAYOUTS, written)):
         model = read_amdl(path)
         assert model["seat_sets"] is not None and len(model["seat_sets"]["sets"]) == (2 if index == 0 else 1)
+        assert (model["seat_sets"]["attention"] is not None) == attention
         for _ in range(16):
             obs = observation(rng, obs_dim)
             mask = np.ones(actions, bool)
@@ -86,7 +98,7 @@ def test_a_version_7_file_still_reads(tmp_path):
     [path] = export_layouts(actor.state_dict(), {"scenario": "solo", "layouts": [
         {"name": "warrior_dps", "obs_dim": 9, "num_actions": 3}]}, out, tmp_path)
     data = bytearray(path.read_bytes())
-    assert struct.unpack_from("<I", data, 4)[0] == AMDL_VERSION == 8 and data[-1] == 0
+    assert struct.unpack_from("<I", data, 4)[0] == AMDL_VERSION == 9 and data[-1] == 0
     struct.pack_into("<I", data, 4, 7)
     old = tmp_path / "old.amdl"
     old.write_bytes(bytes(data[:-1]))
@@ -97,11 +109,12 @@ def test_a_version_7_file_still_reads(tmp_path):
                                reference_decide(read_amdl(path), obs, np.ones(3, bool))[1])
 
 
-def golden_vectors(tmp_path: Path) -> dict:
+def golden_vectors(tmp_path: Path, attention: bool = True) -> dict:
     """warrior_dps_pack.amdl and, for 8 seeded observations, the logits the learner gives: what mod-animus's reader
-    (MlpPolicy) has to reproduce to 1e-4 once it reads version 8. Then the same with a memory (recurrent_size 8, as
-    the shipped models carry one): 2 sequences of 3 decisions from a cleared memory, the logits at every step."""
-    actor, spec, stage_dir = actor_and_stage(tmp_path)
+    (MlpPolicy) has to reproduce to 1e-4. Then the same with a memory (recurrent_size 8, as the shipped models carry
+    one): 2 sequences of 3 decisions from a cleared memory, the logits at every step. With the attention layer
+    (version 9); the sets alone (version 8) are frozen in seat_sets*."""
+    actor, spec, stage_dir = actor_and_stage(tmp_path, attention=attention)
     out = tmp_path / "golden"
     out.mkdir()
     [path, _] = export_layouts(actor.state_dict(), spec, out, stage_dir)
@@ -113,7 +126,7 @@ def golden_vectors(tmp_path: Path) -> dict:
         logits = torch_logits(actor, 0, obs, mask)
         cases.append({"obs": obs.tolist(), "logits": (logits - logits[0]).tolist()})
 
-    recurrent, spec, stage_dir = actor_and_stage(tmp_path, recurrent_size=8)
+    recurrent, spec, stage_dir = actor_and_stage(tmp_path, recurrent_size=8, attention=attention)
     out = tmp_path / "golden_recurrent"
     out.mkdir()
     [recurrent_path, _] = export_layouts(recurrent.state_dict(), spec, out, stage_dir)
@@ -130,19 +143,35 @@ def golden_vectors(tmp_path: Path) -> dict:
             "recurrent_cases": sequences}
 
 
+def test_the_frozen_version_8_goldens_read_the_same_through_the_version_9_reader():
+    """seat_sets* were written as version 8 (W4): the reader of 9 gives their logits as they were recorded."""
+    saved = json.loads((GOLDEN / "seat_sets.json").read_text())
+    for name, cases in (("seat_sets.amdl", [[case] for case in saved["cases"]]),
+                        ("seat_sets_recurrent.amdl", saved["recurrent_cases"])):
+        model = read_amdl(GOLDEN / name)
+        assert struct.unpack_from("<I", (GOLDEN / name).read_bytes(), 4)[0] == 8
+        assert model["seat_sets"]["attention"] is None
+        for steps in cases:
+            state = {}
+            for step in steps:
+                _, logits = reference_decide(model, np.asarray(step["obs"], np.float32), np.ones(4, bool),
+                                             state=state)
+                np.testing.assert_allclose(logits - logits[0], step["logits"], rtol=1e-4, atol=1e-4)
+
+
 def test_the_golden_vectors_are_current(tmp_path):
     """tests/golden/ holds the vectors the in-game reader is checked against; regenerated here, they must match (a
-    format or forward change regenerates them: delete the two files and run this test)."""
+    format or forward change regenerates them: delete the three seat_attention files and run this test)."""
     vectors = golden_vectors(tmp_path)
-    model_file, cases_file = GOLDEN / "seat_sets.amdl", GOLDEN / "seat_sets.json"
-    recurrent_file = GOLDEN / "seat_sets_recurrent.amdl"
+    model_file, cases_file = GOLDEN / "seat_attention.amdl", GOLDEN / "seat_attention.json"
+    recurrent_file = GOLDEN / "seat_attention_recurrent.amdl"
     if not cases_file.exists():
         GOLDEN.mkdir(exist_ok=True)
         model_file.write_bytes(vectors["model"])
         recurrent_file.write_bytes(vectors["recurrent_model"])
         cases_file.write_text(json.dumps({
             "tolerance": 1e-4, "note": "logits relative to action 0, all allowed; recurrent_cases: each a sequence "
-            "from a cleared memory, through seat_sets_recurrent.amdl", "cases": vectors["cases"],
+            "from a cleared memory, through seat_attention_recurrent.amdl", "cases": vectors["cases"],
             "recurrent_cases": vectors["recurrent_cases"]}, indent=1) + "\n")
     assert model_file.read_bytes() == vectors["model"]
     assert recurrent_file.read_bytes() == vectors["recurrent_model"]

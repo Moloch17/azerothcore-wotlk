@@ -1,4 +1,4 @@
-"""Build golden.cpp against an MlpPolicy and run it on prep.py's inputs.
+"""Build golden.cpp against an MlpPolicy and run it on prep.py's inputs, once per golden set.
 
     python3 run.py <build dir> [Model source dir]
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 HERE = Path(__file__).resolve().parent
+GOLDEN_SETS = ("seat_sets", "seat_attention")
 work = Path(sys.argv[1])
 model_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "modules/mod-animus/animus-lib/src/runtime/Model"
 # A worktree has no build tree of its own: the main checkout's (mounted at /azerothcore) has the same flags.
@@ -27,7 +28,11 @@ result = subprocess.run(build, capture_output=True, text=True)
 if result.returncode:
     sys.exit(f"build failed:\n{result.stderr[-4000:]}")
 golden = ROOT / "apps/forge/python/tests/golden"
-tolerance = (work / "tolerance.txt").read_text().strip()
-sys.exit(subprocess.run([str(binary), str(golden / "seat_sets.amdl"), str(work / "cases.txt"),
-                         str(golden / "seat_sets_recurrent.amdl"), str(work / "recurrent.txt"),
-                         str(work / "v7.amdl"), str(work / "v9.amdl"), tolerance]).returncode)
+failed = 0
+for name in GOLDEN_SETS:
+    print(f"-- {name}", flush=True)
+    tolerance = (work / f"{name}.tolerance.txt").read_text().strip()
+    failed |= subprocess.run([str(binary), str(golden / f"{name}.amdl"), str(work / f"{name}.cases.txt"),
+                              str(golden / f"{name}_recurrent.amdl"), str(work / f"{name}.recurrent.txt"),
+                              str(work / "v7.amdl"), str(work / "future.amdl"), tolerance]).returncode
+sys.exit(1 if failed else 0)

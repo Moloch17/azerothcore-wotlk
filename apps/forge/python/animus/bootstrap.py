@@ -238,7 +238,8 @@ def _seed_shared(new: dict, old: dict) -> None:
 ENTITY_SETS = "entity_sets."
 
 
-def _seed_entity_sets(new: dict, old: dict) -> tuple[list[str], list[str]] | None:
+def _seed_entity_sets(new: dict, old: dict, new_layouts: list[str] | None = None,
+                      old_layouts: list[str] | None = None) -> tuple[list[str], list[str]] | None:
     """Carry the seat sets from the stage before: each set's encoder where its shape is the same (a set whose slot
     gained features -- the enemies once the hostiles block joins the pack's -- starts fresh), its pool columns with
     it, the pool's bias and the pointer queries. A set that starts fresh, or a checkpoint without seat sets, gets pool
@@ -277,6 +278,22 @@ def _seed_entity_sets(new: dict, old: dict) -> tuple[list[str], list[str]] | Non
     for key, tensor in new.items():
         if key.startswith(f"{ENTITY_SETS}queries.") and key in old and old[key].shape == tensor.shape:
             tensor.copy_(old[key])
+    # Attention (mappo.entity_attention): from a parent without it the layer keeps its identity start; from one with
+    # it the layer carries, each set's type embedding by its name, each layout's own token by its name, and the own
+    # token's pool columns (the last embed of the pool's) with them.
+    if f"{ENTITY_SETS}type_embed" in new and f"{ENTITY_SETS}type_embed" in old:
+        for key, tensor in new.items():
+            layer = key[len(ENTITY_SETS):].startswith(("norm_attend.", "attend.", "norm_mix.", "mix_in.", "mix_out."))
+            if layer and key in old and old[key].shape == tensor.shape:
+                tensor.copy_(old[key])
+        for name in carried:
+            new[f"{ENTITY_SETS}type_embed"][new_names.index(name)] = old[f"{ENTITY_SETS}type_embed"][
+                old_names.index(name)]
+        for index, layout in enumerate(new_layouts or ()):
+            if layout in (old_layouts or ()):
+                new[f"{ENTITY_SETS}self_token"][index] = old[f"{ENTITY_SETS}self_token"][old_layouts.index(layout)]
+        if old_pool is not None and old_pool.shape[0] == pool.shape[0]:
+            pool[:, -embed:] = old_pool[:, -embed:]
     return carried, [name for name in new_names if name not in carried]
 
 
@@ -299,8 +316,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     if not overlay:
         _seed_shared(actor, old["actor"])
         _seed_shared(critic, old["critic"])
-        sets = _seed_entity_sets(actor, old["actor"])
-        _seed_entity_sets(critic, old["critic"])
+        names = [layout.name for layout in spec.layouts]
+        sets = _seed_entity_sets(actor, old["actor"], names, old_names)
+        _seed_entity_sets(critic, old["critic"], names, old_names)
         if sets is not None:
             carried, fresh = sets
             print(f"  seat sets: {', '.join(carried) or 'none'} carried, {', '.join(fresh) or 'none'} fresh (their "

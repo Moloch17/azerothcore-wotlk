@@ -24,10 +24,19 @@ DESCRIPTORS = [SETS_A, SETS_B, []]
 STATE = 6
 
 
-def trainer(seat_sets: bool, descriptors=DESCRIPTORS) -> MappoTrainer:
+def trainer(seat_sets: bool, descriptors=DESCRIPTORS, attention: bool = False) -> MappoTrainer:
     torch.manual_seed(0)
-    config = MappoConfig(hidden=(16, 16), recurrent_size=4, seat_sets=seat_sets, epochs=1, minibatches=1)
+    config = MappoConfig(hidden=(16, 16), recurrent_size=4, seat_sets=seat_sets, epochs=1, minibatches=1,
+                         entity_attention=attention)
     return MappoTrainer(LAYOUTS, STATE, config, seat_sets=descriptors)
+
+
+def awake(sets) -> None:
+    """The attention layer moved off its identity start, as training moves it."""
+    with torch.no_grad():
+        for parameter in (sets.attend.out_proj.weight, sets.mix_out.weight, sets.type_embed,
+                          sets.pool.weight[:, -sets.embed:]):
+            parameter.normal_(0.0, 0.5)
 
 
 def enemy_obs(layout: int, slots: list[tuple[float, float, float, float, float]]) -> torch.Tensor:
@@ -57,9 +66,14 @@ def test_off_the_networks_are_exactly_as_they_were():
     assert torch.equal(off.logits, plain.logits)
 
 
-def test_a_set_reads_the_same_in_any_order_and_its_pointers_follow_the_entity():
-    on = trainer(True)
+@pytest.mark.parametrize("attention", [False, True], ids=["sets", "attention"])
+def test_a_set_reads_the_same_in_any_order_and_its_pointers_follow_the_entity(attention):
+    """With attention too (no position in it): only which entities, not which slots. Without it two classes reading
+    the same entities pool them alike; with it each class's own token is attended to, so they need not."""
+    on = trainer(True, attention=attention)
     sets = on.actor.entity_sets
+    if attention:
+        awake(sets)
     first = (1.0, 0.3, -0.2, 0.9, 0.1)
     second = (1.0, -0.7, 0.5, 0.0, 0.4)
     obs = torch.stack([enemy_obs(0, [first, second]), enemy_obs(0, [second, first]),
@@ -67,7 +81,8 @@ def test_a_set_reads_the_same_in_any_order_and_its_pointers_follow_the_entity():
     layout = torch.tensor([0, 0, 1, 2])
     pooled = sets.pooled(obs, layout)
     torch.testing.assert_close(pooled[0], pooled[1])            # slot order does not matter
-    torch.testing.assert_close(pooled[0], pooled[2])            # nor which class's offsets it came from
+    if not attention:
+        torch.testing.assert_close(pooled[0], pooled[2])        # nor which class's offsets it came from
     assert torch.equal(pooled[3], torch.zeros_like(pooled[3]))  # a layout without sets gets nothing
 
     features = torch.randn(4, on.actor.head_width)
@@ -77,7 +92,8 @@ def test_a_set_reads_the_same_in_any_order_and_its_pointers_follow_the_entity():
     out = sets.with_pointers(logits, features, obs, layout)
     # Layout 0 names its enemies at actions 1-2, layout 1 at 3-4: the same two enemies, swapped slots, swapped scores.
     torch.testing.assert_close(out[0, 1:3], out[1, 1:3].flip(0))
-    torch.testing.assert_close(out[0, 1:3], out[2, 3:5])
+    if not attention:
+        torch.testing.assert_close(out[0, 1:3], out[2, 3:5])
     assert torch.equal(out[0, [0, 3, 4]], logits[0, [0, 3, 4]])  # other actions untouched
     assert torch.equal(out[3], logits[3])                        # a layout without sets untouched
 
@@ -134,3 +150,31 @@ def test_seeding_carries_the_sets_and_starts_them_at_zero_from_a_stage_without()
     seed_trainer(child, {"trainer": trainer(False).state_dict(), "spec": checkpoint_spec(names)}, spec(names, STATE))
     for network in (child.actor, child.critic):
         assert not network.entity_sets.pool.weight.any() and not network.entity_sets.pool.bias.any()
+
+
+def test_attention_with_every_slot_absent_is_finite_and_seeds_from_sets_unchanged():
+    """Every slot absent: the own token is the only key, so no softmax row is empty -- the logits are finite, the sets'
+    mean and max read 0 and only the own token's pool columns can add anything. And an attention actor seeded from a
+    sets checkpoint starts as that checkpoint: the layer is the identity and the own token's columns are 0."""
+    attended = trainer(True, attention=True)
+    awake(attended.actor.entity_sets)
+    obs = torch.zeros(3, 20)
+    obs[1] = enemy_obs(1, [(0.0, 0.3, -0.2, 0.9, 0.1), (0.0, 1.0, 1.0, 1.0, 1.0)])    # slots filled, both absent
+    layout = torch.tensor([0, 1, 2])
+    features = attended.actor.features(obs, layout)
+    logits = attended.actor.action_logits(features, layout, torch.ones(3, 5, dtype=torch.bool), obs=obs)
+    assert torch.isfinite(logits).all()
+
+    parent = trainer(True)
+    with torch.no_grad():
+        for parameter in parent.actor.entity_sets.parameters():
+            parameter.add_(0.3)
+    names = [Layout(name, o, a) for name, (o, a) in zip("abc", LAYOUTS)]
+    child = trainer(True, attention=True)
+    seed_trainer(child, {"trainer": parent.state_dict(), "spec": checkpoint_spec(names)}, spec(names, STATE))
+    obs = torch.stack([enemy_obs(0, [(1.0, 0.3, -0.2, 0.9, 0.1), (1.0, -0.7, 0.5, 0.0, 0.4)]),
+                       enemy_obs(1, [(1.0, 0.1, 0.2, 0.3, 0.4), (0.0, 0.0, 0.0, 0.0, 0.0)]), torch.rand(20)])
+    mask = torch.ones(3, 5, dtype=torch.bool)
+    for network in (parent, child):
+        network.out = network.actor.action_logits(network.actor.features(obs, layout), layout, mask, obs=obs)
+    torch.testing.assert_close(child.out, parent.out, rtol=1e-5, atol=1e-5)

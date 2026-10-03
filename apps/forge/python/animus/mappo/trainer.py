@@ -143,6 +143,10 @@ class MappoConfig:
     # adapters blind to the slot columns the policy reads today, so a running chain does not take it on resume: it is
     # a restart of the chain from the stage it is turned on at.
     seat_sets: bool = False
+    # **Entity attention** (peak-play W7): with seat_sets, one pre-norm transformer layer over the seat's entity tokens
+    # before they are pooled (EntitySets). Starts as the identity, so a sets checkpoint seeds it unchanged; the
+    # network only, the observation is as it was. Off is the default; the A/B against the sets alone is stage5_pack.
+    entity_attention: bool = False
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -630,12 +634,12 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, director, self.goal_slots,
-                                 self.seat_sets).to(self.train_device)
+                                 self.seat_sets, config.entity_attention).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets, director,
-                                   self.goal_slots, self.seat_sets).to(self.train_device)
+                                   self.goal_slots, self.seat_sets, config.entity_attention).to(self.train_device)
         # Self-imitation's replay of the best episodes (sil_coef > 0), and the per-decision discount its returns use
         # (the run's own, set by animus.train; mappo.gamma until then).
         self.sil = SelfImitation(config.sil_episodes) if config.sil_coef > 0.0 else None
@@ -748,9 +752,11 @@ class MappoTrainer:
         hidden = list(self.config.hidden)
         fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
                              self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                             self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets),
+                             self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets,
+                             self.config.entity_attention),
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
-                              self.goal_targets, self.director, self.goal_slots, self.seat_sets))
+                              self.goal_targets, self.director, self.goal_slots, self.seat_sets,
+                              self.config.entity_attention))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)

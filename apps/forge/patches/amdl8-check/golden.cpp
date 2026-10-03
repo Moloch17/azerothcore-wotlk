@@ -1,8 +1,10 @@
-// mod-animus's MlpPolicy against the learner's golden vectors (apps/forge/python/tests/golden/seat_sets*): every
-// case's logits, relative to action 0, within the file's tolerance; a version 7 model loads, a version 9 one is
-// refused. Built and run by run.py; the inputs are prep.py's.
+// mod-animus's MlpPolicy against the learner's golden vectors (apps/forge/python/tests/golden/): every case's
+// logits, relative to action 0, within the file's tolerance; a version 7 model loads, one of a version past the
+// reader's is refused; and what a decision costs. Built and run by run.py, once per golden set; the inputs are
+// prep.py's.
 #include "MlpPolicy.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -59,19 +61,66 @@ namespace
             }
             if (!policy.Logits(entry.Obs.data(), logits.data(), &state))
                 return -1.0f;
+            float error = 0.0f;
             for (uint32 action = 0; action < ACTIONS; ++action)
-                worst = std::max(worst, std::fabs((logits[action] - logits[0]) - entry.Logits[action]));
+                error = std::max(error, std::fabs((logits[action] - logits[0]) - entry.Logits[action]));
+            if (error > 1e-4f)
+                std::printf("  decision %u: error %.3g\n", checked, error);
+            worst = std::max(worst, error);
             ++checked;
         }
         return worst;
+    }
+
+    // Microseconds a Decide takes, over the cases repeated (the realm runs it on the CPU, one seat at a time).
+    double DecideMicros(Animus::MlpPolicy& policy, std::vector<Case> const& cases)
+    {
+        constexpr int REPEATS = 2000;
+        std::vector<uint8> mask(ACTIONS, 1);
+        Animus::MlpPolicy::State state;
+        int sink = 0;
+        auto const start = std::chrono::steady_clock::now();
+        for (int repeat = 0; repeat < REPEATS; ++repeat)
+            for (Case const& entry : cases)
+                sink += policy.Decide(entry.Obs.data(), mask.data(), &state);
+        auto const elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start);
+        return sink < 0 ? 0.0 : elapsed.count() / double(REPEATS * cases.size());
     }
 }
 
 int main(int argc, char** argv)
 {
+    // "bench <model> <scenario> <obs> <actions>": what a decision costs at a model's real size, on random inputs.
+    if (argc == 6 && std::string(argv[1]) == "bench")
+    {
+        Animus::MlpPolicy policy;
+        std::string error;
+        uint32 const obs = uint32(std::stoul(argv[4]));
+        uint32 const actions = uint32(std::stoul(argv[5]));
+        if (!policy.Load(argv[2], argv[3], obs, actions, error))
+        {
+            std::printf("load failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::vector<float> input(obs);
+        std::vector<uint8> mask(actions, 1);
+        Animus::MlpPolicy::State state;
+        uint32 seed = 1;
+        for (float& v : input)
+            v = float((seed = seed * 1103515245u + 12345u) >> 16 & 1);     // present flags and features alike
+        constexpr int DECISIONS = 2000;
+        int sink = 0;
+        auto const start = std::chrono::steady_clock::now();
+        for (int i = 0; i < DECISIONS; ++i)
+            sink += policy.Decide(input.data(), mask.data(), &state);
+        auto const elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start);
+        std::printf("%s (%s): %.1f us a decision%s\n", argv[3], policy.Describe().c_str(),
+            elapsed.count() / DECISIONS, sink < 0 ? "" : "");
+        return 0;
+    }
     if (argc != 8)
     {
-        std::printf("usage: golden <model> <cases> <recurrent model> <recurrent cases> <v7 model> <v9 model> "
+        std::printf("usage: golden <model> <cases> <recurrent model> <recurrent cases> <v7 model> <future model> "
             "<tolerance>\n");
         return 2;
     }
@@ -89,10 +138,12 @@ int main(int argc, char** argv)
             continue;
         }
         uint32 checked = 0;
-        float const worst = MaxError(policy, ReadCases(argv[2 + 2 * index]), checked);
+        std::vector<Case> const cases = ReadCases(argv[2 + 2 * index]);
+        float const worst = MaxError(policy, cases, checked);
         bool const pass = checked > 0 && worst >= 0.0f && worst <= tolerance;
-        std::printf("%s (%s): %u decisions, max abs logit error %.3g (tolerance %g): %s\n", labels[index],
-            policy.Describe().c_str(), checked, worst, tolerance, pass ? "ok" : "FAILED");
+        std::printf("%s (%s): %u decisions, max abs logit error %.3g (tolerance %g): %s; %.1f us a decision\n",
+            labels[index], policy.Describe().c_str(), checked, worst, tolerance, pass ? "ok" : "FAILED",
+            DecideMicros(policy, cases));
         ok = ok && pass;
     }
 
@@ -100,7 +151,7 @@ int main(int argc, char** argv)
     bool const v7 = old.Load(argv[5], "solo", 9, 3, error);
     std::printf("version 7 load: %s\n", v7 ? ("ok, " + old.Describe()).c_str() : error.c_str());
     Animus::MlpPolicy bad;
-    bool const v9 = bad.Load(argv[6], "warrior_dps_pack", OBS, ACTIONS, error);
-    std::printf("version 9 refused: %s\n", v9 ? "NO, it loaded" : error.c_str());
-    return (ok && v7 && !v9) ? 0 : 1;
+    bool const future = bad.Load(argv[6], "warrior_dps_pack", OBS, ACTIONS, error);
+    std::printf("a version past the reader's refused: %s\n", future ? "NO, it loaded" : error.c_str());
+    return (ok && v7 && !future) ? 0 : 1;
 }
