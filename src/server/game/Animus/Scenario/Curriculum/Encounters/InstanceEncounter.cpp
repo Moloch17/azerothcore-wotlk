@@ -1367,8 +1367,11 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
                         closest = member;
                     }
             Position const at = closest->GetHomePosition();
+            // There and back: a pit a seat can drop into but not climb out of (Ragefire's lower cavern) is no
+            // place for the route to go -- the party could never walk on from it.
             std::vector<Position> leg;
-            if (!FieldRoute::Plan(mapId, spine[along], at, leg, 400000))
+            if (!FieldRoute::Plan(mapId, spine[along], at, leg, 400000)
+                || !FieldRoute::Plan(mapId, at, spine[along], leg, 400000))
             {
                 left += uint32(members.size());
                 continue;
@@ -1410,14 +1413,32 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
     }
     std::sort(plan.Reachable.begin(), plan.Reachable.end());
 
-    std::vector<Position> dense;
-    if (!walk(door, stops, dense, true))
+    // Stop by stop; one the field cannot walk to from the last is passed over rather than giving up on the rest.
+    std::vector<Position> dense{ door };
+    Position cursor = door;
+    uint32 skipped = 0;
+    for (std::size_t i = 0; i < stops.size(); ++i)
     {
-        // A pack reached from the spine but not in this order: the spine alone, which the field walks.
-        dense = spine;
-        LOG_WARN("module.animus", "{}: {} field route: the packs in order could not all be walked; the bosses' way "
-            "alone", _scenario.Name(), row.Name);
+        std::vector<Position> leg;
+        if (!FieldRoute::Plan(mapId, cursor, stops[i], leg))
+        {
+            if (i + 1 == stops.size())
+            {
+                // The last boss itself out of reach from here: the spine, which the field walks.
+                LOG_WARN("module.animus", "{}: {} field route: the last boss out of reach after the packs; the bosses' "
+                    "way alone", _scenario.Name(), row.Name);
+                dense = spine;
+                break;
+            }
+            ++skipped;
+            continue;
+        }
+        dense.insert(dense.end(), leg.begin() + 1, leg.end());
+        cursor = leg.back();
     }
+    if (skipped)
+        LOG_WARN("module.animus", "{}: {} field route: {} stops could not be walked from the one before and were "
+            "passed over", _scenario.Name(), row.Name, skipped);
 
     // A route point every WingWaypointYards along it, the last boss's own position last; each point's yard.
     float const spacing = float(std::max<uint32>(5, _scenario.Tuning().Instance.WingWaypointYards));
