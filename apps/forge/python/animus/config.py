@@ -96,11 +96,20 @@ class EvalConfig:
     # policy that memorised its own route is told from one that learned. A reading, never a target: nothing about it
     # moves best.pt, the league or convergence (peak-play W2). {} = none.
     heldout: dict = field(default_factory=dict)
+    # How often the held-out arenas are played: every this many evaluations, and always on the stage's last one and
+    # whenever a new best.pt is saved (so best.pt always has a held-out reading beside it). A second dungeon
+    # evaluation of hours of sim time is a reading that never steers training; 1 = every evaluation.
+    heldout_every: int = 4
     # What an evaluation is scored on, and so what best.pt, the league's snapshots and convergence follow: "outcome",
     # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting
     # worse, and a ladder that steps reads as learning or collapse (peak-play plan W0).
     score: str = "outcome"
+
+    def __post_init__(self) -> None:
+        if self.heldout_every < 1:
+            raise ValueError(f"eval.heldout_every: expected at least 1 (1 = every evaluation), got "
+                             f"{self.heldout_every!r}")
 
     def score_column(self) -> str:
         if self.score not in ("outcome", "return"):

@@ -277,6 +277,12 @@ def init_from_checkpoint(path: str, prefer: str = "latest") -> Path | None:
 HELDOUT_SEED_OFFSET = 7919
 
 
+def heldout_due(evaluations: int, every: int, final: bool, improved: bool) -> bool:
+    """Whether the held-out arenas are played after the `evaluations`-th evaluation: every `every`-th, the stage's
+    last, and one that saved a new best.pt."""
+    return final or improved or evaluations % max(1, every) == 0
+
+
 def heldout_arenas(heldout: dict, stage: dict | None) -> dict[str, tuple[int, int]]:
     """eval.heldout resolved against stage.json: {arena: (MODE's pin, episodes)}. An arena the stage does not have, or
     has but trains on (not "eval_only"), is refused: evaluating on trained content would read as generalisation."""
@@ -541,6 +547,7 @@ class TrainingRun:
         )
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
         self.heldout = heldout_arenas(config.eval.heldout, self.stage) if self.stage is not None else {}
+        self.heldout_current = False   # whether the latest evaluation played them
         # eval.phases: a curriculum phase's arenas, for a row per phase in the evaluation summary. A name the stage
         # has no arena of is a config written for another stage: refused rather than reported as an empty phase.
         self.phases = {str(phase): tuple(str(name) for name in names)
@@ -1031,9 +1038,10 @@ class TrainingRun:
         if self.hub is not None and league.is_dir():
             self.hub.share(shared_listing(Path(self.config.runs_dir), sorted(league.iterdir())))
 
-    def evaluate(self) -> None:
+    def evaluate(self, final: bool = False) -> None:
         """Score the networks on the seeds (and the baseline once per run); the next training STEP becomes current.
-        With data-parallel learners every rank plays its share of the seeds and the leader scores them all."""
+        With data-parallel learners every rank plays its share of the seeds and the leader scores them all. `final`:
+        the stage's last evaluation, which always plays the held-out arenas (eval.heldout_every)."""
         self.drain_update()
         config, tracker, controller = self.config, self.tracker, self.controller
         leader = self.ranks.leader
@@ -1048,7 +1056,7 @@ class TrainingRun:
             self.cast.reset_all()
         self.last_eval_env_steps = self.env_steps
 
-        summary, sampled, joined = None, False, False
+        summary, sampled, joined, heldout = None, False, False, False
         if leader:
             summary = result.summary(self.report, self.phases)
             if self.cast is not None:
@@ -1083,14 +1091,18 @@ class TrainingRun:
 
             sampled_every = config.eval.sampled_every
             sampled = sampled_every > 0 and len(tracker.history) % sampled_every == 0
+            heldout = bool(self.heldout) and heldout_due(len(tracker.history), config.eval.heldout_every, final,
+                                                          improved)
 
         # What the leader decided, carried out on every rank.
-        sampled, joined = self.ranks.broadcast((sampled, joined))
+        sampled, joined, heldout = self.ranks.broadcast((sampled, joined, heldout))
         if joined and not leader:
             self.cast.pool.reload()
         if sampled:
             self.evaluate_sampled(summary)
-        self.evaluate_heldout()
+        self.heldout_current = heldout
+        if heldout:
+            self.evaluate_heldout()
 
         self.apply_holds()
         if leader:
@@ -1762,12 +1774,15 @@ class TrainingRun:
                 # rollout starts from fresh ones (this rollout's advantages were already computed above).
                 self.evaluate()
                 decision = self.ranks.broadcast(controller.after_eval(self.env_steps) if self.ranks.leader else None)
+                # Converged: that evaluation was the stage's last, so it gets its held-out reading if it had none.
+                if decision is not None and decision.action == ADVANCE and self.heldout and not self.heldout_current:
+                    self.evaluate_heldout()
                 if self.handle(decision):
                     return decision
 
         # One last score, so the best model also considers the final networks.
         if self.evaluating and self.last_eval_env_steps < self.env_steps:
-            self.evaluate()
+            self.evaluate(final=True)
         outcome = self.ranks.broadcast(controller.at_budget() if self.ranks.leader else None)
         self.handle(outcome)
         return outcome

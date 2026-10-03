@@ -4,7 +4,8 @@ wire for the evaluation alone."""
 import pytest
 
 from animus import protocol as p
-from animus.train import heldout_arenas
+from animus.config import EvalConfig
+from animus.train import heldout_arenas, heldout_due
 
 STAGE = {"arenas": [{"name": "dungeon"}, {"name": "pull"}, {"name": "heldout", "eval_only": True}]}
 
@@ -33,3 +34,12 @@ def test_mode_carries_the_pin_and_matches_the_sims_layout():
     assert p.decode_mode_arena(payload) == 3 and p.decode_mode_first_seed(payload) == 8
     assert p.decode_mode(payload) == (True, 1000, 16, "", False)
     assert p.decode_mode_arena(p.encode_mode(False)) == 0
+
+
+def test_the_held_out_cadence_is_every_nth_the_last_and_every_new_best():
+    every = [n for n in range(1, 13) if heldout_due(n, 4, final=False, improved=False)]
+    assert every == [4, 8, 12]
+    assert heldout_due(5, 4, final=True, improved=False) and heldout_due(6, 4, final=False, improved=True)
+    assert all(heldout_due(n, 1, final=False, improved=False) for n in range(1, 6))
+    with pytest.raises(ValueError, match="heldout_every"):
+        EvalConfig(heldout_every=0)
