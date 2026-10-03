@@ -7,6 +7,7 @@ import threading
 import numpy as np
 import pytest
 
+from sim_threads import accept, joined, sim_thread  # noqa: E402
 from animus import protocol as p
 from animus.env import ForgeEnv
 
@@ -128,7 +129,7 @@ def test_lockstep_exchange(tmp_path):
     closed = threading.Event()
 
     def fake_sim():
-        conn, _ = listener.accept()
+        conn = accept(listener)
         with conn:
             msg_type, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
             assert msg_type == p.MsgType.HELLO
@@ -150,7 +151,7 @@ def test_lockstep_exchange(tmp_path):
                 assert p.ACT_HEADER.unpack_from(body) == (0, SPEC.num_envs)
                 received_actions.append(np.frombuffer(body, dtype="<i4", offset=p.ACT_HEADER.size))
 
-    server = threading.Thread(target=fake_sim)
+    server = sim_thread(fake_sim)
     server.start()
 
     env = ForgeEnv(path, connect_timeout=5)
@@ -164,7 +165,7 @@ def test_lockstep_exchange(tmp_path):
         assert_steps_equal(env.step(actions), expected)
     env.close()
 
-    server.join(timeout=5)
+    joined(server, 5)
     listener.close()
 
     assert closed.is_set()
@@ -201,7 +202,7 @@ def test_half_batch_step_joins_both_halves(tmp_path):
     acts = []
 
     def fake_sim():
-        conn, _ = listener.accept()
+        conn = accept(listener)
         with conn:
             read_exact(conn, p.HEADER.size + p.HELLO.size)
             spec_payload = p.encode_spec(spec)
@@ -220,7 +221,7 @@ def test_half_batch_step_joins_both_halves(tmp_path):
                     conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
             read_exact(conn, p.HEADER.size)
 
-    server = threading.Thread(target=fake_sim)
+    server = sim_thread(fake_sim)
     server.start()
     env = ForgeEnv(path, connect_timeout=5)
     assert env.spec == spec
@@ -229,7 +230,7 @@ def test_half_batch_step_joins_both_halves(tmp_path):
         actions = np.zeros((spec.num_envs, spec.agents_per_env), dtype=np.int64)
         assert_steps_equal(env.step(actions), p.join_steps(list(decision)))
     env.close()
-    server.join(timeout=5)
+    joined(server, 5)
     listener.close()
     assert acts == [(0, 2), (2, 2)] * 2
 
@@ -243,7 +244,7 @@ def test_a_sim_on_another_machine_is_reached_over_tcp():
     first = make_step(0, np.random.default_rng(3))
 
     def fake_sim():
-        conn, _ = listener.accept()
+        conn = accept(listener)
         with conn:
             read_exact(conn, p.HEADER.size + p.HELLO.size)
             spec_payload = p.encode_spec(SPEC)
@@ -252,13 +253,13 @@ def test_a_sim_on_another_machine_is_reached_over_tcp():
             conn.sendall(p.encode_header(p.MsgType.STEP, len(payload)) + payload)
             read_exact(conn, p.HEADER.size)
 
-    server = threading.Thread(target=fake_sim)
+    server = sim_thread(fake_sim)
     server.start()
     env = ForgeEnv(f"tcp://127.0.0.1:{port}", connect_timeout=5)
     assert env.spec == SPEC
     assert_steps_equal(env.reset(), first)
     env.close()
-    server.join(timeout=5)
+    joined(server, 5)
     listener.close()
 
 
@@ -271,18 +272,18 @@ def test_a_sim_speaking_another_protocol_is_refused(tmp_path):
     listener.listen(1)
 
     def old_sim():
-        conn, _ = listener.accept()
+        conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(conn.recv(p.HEADER.size))
             conn.recv(length)
             spec = p.encode_spec(dataclasses.replace(SPEC, version=p.PROTOCOL_VERSION - 1))
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
 
-    server = threading.Thread(target=old_sim)
+    server = sim_thread(old_sim)
     server.start()
     with pytest.raises(ConnectionError, match="protocol"):
         ForgeEnv(path, connect_timeout=5.0)
-    server.join(timeout=5)
+    joined(server, 5)
     listener.close()
 
 

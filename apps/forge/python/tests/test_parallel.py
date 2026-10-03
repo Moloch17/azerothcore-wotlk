@@ -4,13 +4,13 @@ import csv
 import json
 import os
 import socket
-import threading
 from pathlib import Path
 
 import pytest
 
 torch = pytest.importorskip("torch")
 
+from sim_threads import accept, joined, sim_thread  # noqa: E402
 from animus.config import TrainConfig  # noqa: E402
 from animus.train import TrainingRun  # noqa: E402
 from test_train_run import SPEC, fake_sim  # noqa: E402
@@ -50,7 +50,7 @@ def test_two_ranks_train_one_policy(tmp_path):
     listener.listen(2)
     modes, marks = [[], []], [[], []]
     # One fake sim per learner on the one socket: the sim's pool, as each rank sees its share of it.
-    servers = [threading.Thread(target=fake_sim, args=(listener, modes[index], []), kwargs={"marks": marks[index]})
+    servers = [sim_thread(fake_sim, listener, modes[index], [], marks=marks[index])
                for index in range(2)]
     for server in servers:
         server.start()
@@ -60,7 +60,7 @@ def test_two_ranks_train_one_policy(tmp_path):
     os.environ.pop("MASTER_PORT", None)
     torch.multiprocessing.spawn(_rank, args=(str(tmp_path), port), nprocs=2, join=True)
     for server in servers:
-        server.join(timeout=10)
+        joined(server, 10)
     listener.close()
 
     ranks = [torch.load(tmp_path / f"rank{rank}.pt") for rank in range(2)]

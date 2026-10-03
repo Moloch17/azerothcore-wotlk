@@ -4,7 +4,6 @@ import csv
 import dataclasses
 import json
 import socket
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +11,7 @@ import pytest
 
 pytest.importorskip("torch")
 
+from sim_threads import accept, joined, sim_thread  # noqa: E402
 from animus import protocol as p  # noqa: E402
 from animus.config import TrainConfig  # noqa: E402
 from animus.env import ForgeEnv  # noqa: E402
@@ -54,7 +54,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
 
     With spec.env_groups 2 it runs as the half-batch sim does: every group's STEP after a reset, then for each reply
     only that group's envs move on and only its STEP goes out."""
-    conn, _ = listener.accept()
+    conn = accept(listener)
     with conn:
         read_exact(conn, p.HEADER.size + p.HELLO.size)
         payload = p.encode_spec(spec)
@@ -153,7 +153,7 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     listener.bind(path)
     listener.listen(1)
     modes, replays = [], []
-    server = threading.Thread(target=fake_sim, args=(listener, modes, replays))
+    server = sim_thread(fake_sim, listener, modes, replays)
     server.start()
 
     steps_per_update = 4 * SPEC.num_envs * SPEC.agents_per_env
@@ -166,7 +166,7 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     ])
 
     exit_code = TrainingRun(config, resume=False).run()
-    server.join(timeout=10)
+    joined(server, 10)
     listener.close()
 
     run_dir = tmp_path / "runs" / "fake"
@@ -208,7 +208,7 @@ def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(path)
     listener.listen(1)
-    server = threading.Thread(target=fake_sim, args=(listener, [], []))
+    server = sim_thread(fake_sim, listener, [], [])
     server.start()
 
     steps_per_update = 4 * SPEC.num_envs * SPEC.agents_per_env
@@ -230,7 +230,7 @@ def test_overlapped_updates_run_behind_the_next_rollout(tmp_path, monkeypatch):
 
     monkeypatch.setattr(TrainingRun, "rollout", watched)
     assert TrainingRun(config, resume=False).run() == 0
-    server.join(timeout=10)
+    joined(server, 10)
     listener.close()
 
     assert pending_after_rollout == [True, True, True]
@@ -250,7 +250,7 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     listener.bind(path)
     listener.listen(1)
     modes, replays = [], []
-    server = threading.Thread(target=fake_sim, args=(listener, modes, replays, spec))
+    server = sim_thread(fake_sim, listener, modes, replays, spec)
     server.start()
 
     steps_per_update = 4 * spec.num_envs * spec.agents_per_env
@@ -277,7 +277,7 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     monkeypatch.setattr(ForgeEnv, "send_act", watched_send)
     monkeypatch.setattr(ForgeEnv, "receive_step", watched_receive)
     assert TrainingRun(config, resume=False).run() == 0
-    server.join(timeout=10)
+    joined(server, 10)
     listener.close()
 
     assert all(sent_one_half) and sent_one_half
@@ -306,7 +306,7 @@ def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path)
         listener.bind(path)
         listener.listen(1)
         sim_modes = []
-        servers.append(threading.Thread(target=fake_sim, args=(listener, sim_modes, [], spec)))
+        servers.append(sim_thread(fake_sim, listener, sim_modes, [], spec))
         servers[-1].start()
         listeners.append(listener)
         modes.append(sim_modes)
@@ -323,7 +323,7 @@ def test_a_cluster_trains_on_every_sim_and_shares_the_evaluation_seeds(tmp_path)
     ])
     assert TrainingRun(config, resume=False).run() == 0
     for server, listener in zip(servers, listeners):
-        server.join(timeout=10)
+        joined(server, 10)
         listener.close()
 
     run_dir = tmp_path / "runs" / "fake"
@@ -356,16 +356,16 @@ def test_a_worker_that_drops_out_does_not_stop_training_and_rejoins(tmp_path, mo
         listener.bind(path)
         listener.listen(1)
         listeners.append(listener)
-        servers.append(threading.Thread(target=fake_sim, args=(listener, [], [], SPEC, hang_up)))
+        servers.append(sim_thread(fake_sim, listener, [], [], SPEC, hang_up))
         servers[-1].start()
 
     def worker_comes_back():
-        servers[1].join()
-        comeback = threading.Thread(target=fake_sim, args=(listeners[1], [], [], SPEC))
+        joined(servers[1], 60)
+        comeback = sim_thread(fake_sim, listeners[1], [], [], SPEC)
         comeback.start()
-        comeback.join()
+        joined(comeback, 60)
 
-    back = threading.Thread(target=worker_comes_back)
+    back = sim_thread(worker_comes_back)
     back.start()
 
     envs = 2 * SPEC.num_envs
@@ -379,8 +379,8 @@ def test_a_worker_that_drops_out_does_not_stop_training_and_rejoins(tmp_path, mo
         "convergence.patience=0",
     ])
     assert TrainingRun(config, resume=False).run() == 0
-    back.join(timeout=10)
-    servers[0].join(timeout=10)
+    joined(back, 10)
+    joined(servers[0], 10)
     for listener in listeners:
         listener.close()
 
