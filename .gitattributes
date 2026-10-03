@@ -31,4 +31,6 @@ data/sql/*    linguist-documentation
 
 # Baked ground-probe tables (apps/forge/probes): binary, never line-ending normalised.
 *.probe binary
+# Exported models (apps/forge/python/tests/golden): binary, a CR LF pair in their floats is not a line end.
+*.amdl binary
 *.field binary
