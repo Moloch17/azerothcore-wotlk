@@ -102,9 +102,13 @@ namespace FieldRouteSearch
         return { grid->Intervals.data() + grid->First[cell], grid->Intervals.data() + grid->First[cell + 1] };
     }
 
+    /// Ground a seat walks on: the navmesh's floors (ground, water, and magma and slime at their cost), with room to
+    /// stand. A floor merely open to the sky is the top of the rock in a cave: allowed, the route to Oggleflint
+    /// climbed onto Ragefire's rock and came down its cliff as a chain of 8 yd "drops", and the parties stood at the
+    /// door rather than follow it (2026-10-03).
     bool Standable(Lhf::Interval const& floor)
     {
-        return floor.Headroom() >= MIN_HEADROOM && (floor.NavFlags() != 0 || floor.OpenAbove());
+        return floor.Headroom() >= MIN_HEADROOM && floor.NavFlags() != 0;
     }
 
     /// Ground that burns: magma or slime underfoot. A player wades through it and takes the damage -- Ragefire
