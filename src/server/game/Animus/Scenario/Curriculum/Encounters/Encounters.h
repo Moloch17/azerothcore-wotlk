@@ -604,6 +604,10 @@ namespace Animus::Curriculum
             uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
             mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
+            /// Off the route out of a fight -- fallen into a cavern, kited away -- its own field way back to it,
+            /// planned at DetourMs and again every DETOUR_REPLAN_MS.
+            mutable std::vector<Position> Detour;
+            mutable uint32 DetourMs = 0;
             uint32 FoodItem = 0;                // what it eats and drinks between pulls (Instance.WingSupplies)
             uint32 DrinkItem = 0;
         };

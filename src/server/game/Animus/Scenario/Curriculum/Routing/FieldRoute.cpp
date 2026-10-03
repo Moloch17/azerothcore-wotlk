@@ -43,6 +43,8 @@ namespace FieldRouteSearch
     /// file's needs.
     constexpr uint8 LIQUID_MAGMA = 0x04;
     constexpr uint8 LIQUID_SLIME = 0x08;
+    /// A yard of burning ground costs as many of dry: a dry way round is taken when there is one at all near.
+    constexpr float BURNING_COST = 6.0f;
     /// A drop costs a little more than the yard it crosses, so a ramp beside a ledge is taken when there is one.
     constexpr float DROP_COST = 0.5f;
 
@@ -102,13 +104,16 @@ namespace FieldRouteSearch
 
     bool Standable(Lhf::Interval const& floor)
     {
-        uint8 const nav = floor.NavFlags();
-        if (nav & (NAV_MAGMA | NAV_SLIME))
-            return false;
-        if (floor.HasLiquid() && (floor.LiquidFlags & (LIQUID_MAGMA | LIQUID_SLIME))
-            && floor.Liquid() > floor.Floor())
-            return false;
-        return floor.Headroom() >= MIN_HEADROOM && (nav != 0 || floor.OpenAbove());
+        return floor.Headroom() >= MIN_HEADROOM && (floor.NavFlags() != 0 || floor.OpenAbove());
+    }
+
+    /// Ground that burns: magma or slime underfoot. A player wades through it and takes the damage -- Ragefire
+    /// Chasm's lower cavern is left through its lava lake (2026-10-02) -- so it is walkable, at BURNING_COST a yard.
+    bool Burning(Lhf::Interval const& floor)
+    {
+        return (floor.NavFlags() & (NAV_MAGMA | NAV_SLIME))
+            || (floor.HasLiquid() && (floor.LiquidFlags & (LIQUID_MAGMA | LIQUID_SLIME))
+                && floor.Liquid() > floor.Floor());
     }
 
     /// The standable floor of the column at (x, y) nearest `z`, within SNAP; false without one.
@@ -294,7 +299,8 @@ bool FieldRouteSearch::Search(uint32 mapId, Position const& from, Position const
                 float const rise = floor->Floor() - z;
                 if (rise > MAX_CLIMB || rise < -MAX_DROP)
                     continue;
-                float const cost = across + (rise < -MAX_CLIMB ? DROP_COST + (-rise - MAX_CLIMB) * 0.1f : 0.0f)
+                float const cost = across * (Burning(*floor) ? BURNING_COST : 1.0f)
+                    + (rise < -MAX_CLIMB ? DROP_COST + (-rise - MAX_CLIMB) * 0.1f : 0.0f)
                     + std::fabs(rise) * 0.1f;
                 uint64 const id = Key(nx, ny, index);
                 auto [visit, inserted] = visits.try_emplace(id);

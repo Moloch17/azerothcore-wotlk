@@ -36,10 +36,11 @@ namespace Animus::Curriculum::FieldRoute
 
     /// **A way through the world as a seat walks it, from the layered field** (LayeredField::Store): yard by yard
     /// over the floors the field holds, a climb of up to MAX_CLIMB or a drop of up to MAX_DROP from one cell to the
-    /// next, with room to stand, never on burning ground (magma, slime). It is the bots' own picture of the ground
-    /// -- what their move block steers by -- so it goes where they can go, which the server's navmesh does not:
-    /// Ragefire Chasm's mesh has no link down into its lower cavern that a player simply walks off a ledge into,
-    /// and the parties stood at the top of the drop for the rest of the run (2026-10-02).
+    /// next, with room to stand; burning ground (magma, slime) at a cost, as a player wades through it. It is the
+    /// bots' own picture of the ground -- what their move block steers by -- so it goes where they can go, which the
+    /// server's navmesh does not: Ragefire Chasm's mesh has no link down into its lower cavern, which a player walks
+    /// off a ledge into and out of through the lava, and the parties stood at the top of the drop for the rest of
+    /// the run (2026-10-02).
     ///
     /// `out` is the cells walked, one a yard, `from` first and the cell reaching `to` last. False when the field
     /// does not hold the ground (no field for a grid) or no way is found within `maxNodes` expanded cells; `out`

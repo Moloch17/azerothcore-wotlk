@@ -467,7 +467,11 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         fight.Dense = plan.Dense;
         fight.RouteDense = plan.RouteDense;
         for (SeatInstance& seatState : fight.Seats)
+        {
             seatState.DenseAt = 0;
+            seatState.Detour.clear();
+            seatState.DetourMs = 0;
+        }
         // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
         // and the bosses; every hostile one with the navmesh's.
         fight.HostileTotal = 0;
@@ -1686,11 +1690,42 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         own.DenseAt = yard;
         uint32 const hint = fight.RouteDense[std::min<std::size_t>(walk, fight.RouteDense.size() - 1)];
         uint32 const target = nearestYard(view.Objective, hint).first;
-        if (off <= ON_ROUTE && target != yard)
+        if (off <= ON_ROUTE)
         {
-            int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
-            view.Crowd.HasStep = true;
-            view.Crowd.Step = fight.Dense[std::size_t(int32(yard) + delta)];
+            own.Detour.clear();
+            if (target != yard)
+            {
+                int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
+                view.Crowd.HasStep = true;
+                view.Crowd.Step = fight.Dense[std::size_t(int32(yard) + delta)];
+            }
+        }
+        else if (!view.Bot->IsInCombat())
+        {
+            // Off the route and out of a fight: the seat's own way back over the field, lava and all, replanned
+            // every few seconds as it walks. The server's path cannot leave a cavern its navmesh does not join.
+            constexpr uint32 DETOUR_REPLAN_MS = 5000;
+            constexpr uint32 DETOUR_NODES = 200000;
+            Position const at(view.Bot->GetPositionX(), view.Bot->GetPositionY(), view.Bot->GetPositionZ());
+            if (own.Detour.empty() || env.EpisodeElapsedMs >= own.DetourMs + DETOUR_REPLAN_MS)
+            {
+                own.DetourMs = env.EpisodeElapsedMs;
+                if (!FieldRoute::Plan(fight.MapId, at, fight.Dense[target], own.Detour, DETOUR_NODES))
+                    own.Detour.clear();
+            }
+            if (!own.Detour.empty())
+            {
+                std::size_t nearest = 0;
+                float best = std::numeric_limits<float>::max();
+                for (std::size_t i = 0; i < own.Detour.size(); ++i)
+                    if (float const d = at.GetExactDist(&own.Detour[i]); d < best)
+                    {
+                        best = d;
+                        nearest = i;
+                    }
+                view.Crowd.HasStep = true;
+                view.Crowd.Step = own.Detour[std::min(own.Detour.size() - 1, nearest + std::size_t(STEP_YARDS))];
+            }
         }
     }
 }
