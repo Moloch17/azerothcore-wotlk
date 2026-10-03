@@ -988,14 +988,18 @@ def without_blind_columns(state: dict) -> dict:
 def load_actor_state(actor: nn.Module, state: dict) -> None:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero."""
     missing, unexpected = actor.load_state_dict(without_blind_columns(state), strict=False)
-    wrong = [key for key in missing if key not in _GOAL_SCALE_KEYS]
+    # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
+    # stage's), which a resume keeps; the hint block's are made after loading.
+    wrong = [key for key in missing
+             if key not in _GOAL_SCALE_KEYS and not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
     parameters = dict(actor.named_parameters())
     with torch.no_grad():
         for key in missing:
-            parameters[key].zero_()
+            if key in _GOAL_SCALE_KEYS:
+                parameters[key].zero_()
 
 
 def goal_pair(primary: torch.Tensor, secondary: torch.Tensor, count: int) -> torch.Tensor:

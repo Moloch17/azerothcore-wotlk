@@ -178,3 +178,16 @@ def test_attention_with_every_slot_absent_is_finite_and_seeds_from_sets_unchange
     for network in (parent, child):
         network.out = network.actor.action_logits(network.actor.features(obs, layout), layout, mask, obs=obs)
     torch.testing.assert_close(child.out, parent.out, rtol=1e-5, atol=1e-5)
+
+
+def test_a_seat_sets_run_resumes_from_its_checkpoint():
+    """The blind-column masks are not saved: a resumed actor keeps the ones it was built with, and its weights, the
+    adapters' blind columns at zero included, come back exactly (stage5's first resume, 2026-10-03)."""
+    saved = trainer(True)
+    with torch.no_grad():
+        saved.actor.entity_sets.pool.weight.add_(0.25)
+    resumed = trainer(True)
+    resumed.load_state_dict(saved.state_dict())
+    for key, value in saved.actor.state_dict().items():
+        assert torch.equal(resumed.actor.state_dict()[key], value), key
+    assert resumed.director_columns_clear()
