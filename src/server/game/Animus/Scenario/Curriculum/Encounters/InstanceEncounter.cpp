@@ -826,12 +826,26 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             if (Player* bot = _scenario.SeatBot(env, index))
             {
                 uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-                std::string const& reason = data.Seats[index].ScriptReason;
-                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd{}{}{}]", seats.empty() ? "" : " ",
-                    index, bot == tank ? " tank" : "", bot->GetHealthPct(),
+                SeatState const& state = data.Seats[index];
+                std::string const& reason = state.ScriptReason;
+                // What it pressed against what the script suggested, by name.
+                std::string presses;
+                if (state.L)
+                {
+                    std::vector<std::string> const names = state.L->ActionNames();
+                    auto const name = [&names](int32 action)
+                    {
+                        return action >= 0 && std::size_t(action) < names.size() ? names[std::size_t(action)]
+                            : std::string("-");
+                    };
+                    presses = Acore::StringFormat(" pressed {} hint {}", name(state.Pressed), name(state.HintAction));
+                }
+                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd at ({:.0f} {:.0f} {:.0f}){}{}{}{}]",
+                    seats.empty() ? "" : " ", index, bot == tank ? " tank" : "", bot->GetHealthPct(),
                     maxMana ? std::to_string(bot->GetPower(POWER_MANA) * 100 / maxMana) + "%" : "-",
-                    tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f,
-                    bot->IsAlive() ? "" : " dead", bot->IsInCombat() ? " combat" : "",
+                    tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f, bot->GetPositionX(),
+                    bot->GetPositionY(), bot->GetPositionZ(), bot->IsAlive() ? "" : " dead",
+                    bot->IsInCombat() ? " combat" : "", presses,
                     reason.empty() ? std::string() : " {" + reason + "}");
             }
         float const toNext = tank && fight.RouteNext < fight.Route.size()
@@ -871,11 +885,24 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
                     fighters += Acore::StringFormat(" {}({} on {})", enemy->GetEntry(),
                         tankPlayer->GetExactDist(enemy), enemy->GetVictim() ? enemy->GetVictim()->GetName() : "nobody");
+            uint32 tankSeat = 0;
+            for (uint32 index = 0; index < data.ActiveSeats; ++index)
+                if (_scenario.SeatBot(env, index) == tankPlayer)
+                    tankSeat = index;
             SeatView probe;
             probe.Bot = tankPlayer;
-            View(env, 0, probe);
-            seats += Acore::StringFormat(" | fighting {}{}, moving {}, objective {:.0f} yd", fight.Fighting ? 1 : 0,
-                fighters, tankPlayer->isMoving() ? 1 : 0, tankPlayer->GetExactDist(&probe.Objective));
+            View(env, tankSeat, probe);
+            SeatInstance const& own = fight.Seats[tankSeat];
+            seats += Acore::StringFormat(" | fighting {}{}, moving {}, objective {:.0f} yd at ({:.0f} {:.0f} {:.0f}), "
+                "point ({:.0f} {:.0f} {:.0f}), route yard {} of {} ({:.1f} yd off it), step {}, detour {} points",
+                fight.Fighting ? 1 : 0, fighters, tankPlayer->isMoving() ? 1 : 0,
+                tankPlayer->GetExactDist(&probe.Objective), probe.Objective.GetPositionX(),
+                probe.Objective.GetPositionY(), probe.Objective.GetPositionZ(), next.GetPositionX(), next.GetPositionY(),
+                next.GetPositionZ(), own.DenseAt, fight.Dense.size(),
+                own.DenseAt < fight.Dense.size() ? tankPlayer->GetExactDist(&fight.Dense[own.DenseAt]) : -1.0f,
+                probe.Crowd.HasStep ? Acore::StringFormat("({:.0f} {:.0f} {:.0f})", probe.Crowd.Step.GetPositionX(),
+                    probe.Crowd.Step.GetPositionY(), probe.Crowd.Step.GetPositionZ()) : std::string("none"),
+                own.Detour.size());
         }
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,

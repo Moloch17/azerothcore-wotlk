@@ -335,6 +335,8 @@ namespace Animus::Curriculum
         bool Scripted = false;
         bool ScriptDrawn = false;
         int32 ScriptAction = -1;
+        int32 HintAction = -1;                  // the script's suggestion this decision, and what the seat pressed
+        int32 Pressed = -1;                     // (the "Wing stuck" log line)
         std::string ScriptReason;               // why the dungeon script chose it (Baselines::LastDungeonReason)
         std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;

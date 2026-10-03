@@ -3036,6 +3036,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         action = seat.ScriptAction;
         seat.ScriptAction = -1;
     }
+    seat.Pressed = action;
 
     Unit* target = CurrentTarget(env, seatIndex);
     if (!target && !SeatEncoder::ActsWithoutTarget(*seat.L))
@@ -3566,6 +3567,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
                 columns[HintBlock::OBS_SCRIPTED] = seat.Scripted ? 1.0f : 0.0f;
                 if (seat.Scripted)
                     seat.ScriptAction = hint;
+                seat.HintAction = hint;
                 seat.ScriptReason = Baselines::LastDungeonReason();
             }
     }
