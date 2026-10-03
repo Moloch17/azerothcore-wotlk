@@ -2027,15 +2027,21 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
     std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);
     std::size_t walk = last;
     std::size_t tankWalk = last;
+    int32 tankIndex = -1;
     for (uint32 index = 0; index < MAX_SEATS; ++index)
         if (Player* bot = _scenario.SeatBot(env, index))
         {
             if (bot == view.Bot)
                 walk = std::min<std::size_t>(fight.Seats[index].Walk, last);
             if (bot->GetGUID() == fight.Tank)
+            {
                 tankWalk = std::min<std::size_t>(fight.Seats[index].Walk, last);
+                tankIndex = int32(index);
+            }
         }
     view.Objective = fight.Route[walk];
+    // The objective's own yard of the field route, where it has one: a route point's, or the tank's.
+    int32 objectiveYard = fight.RouteDense.size() == fight.Route.size() ? int32(fight.RouteDense[walk]) : -1;
     // A pull coming in: the tank's objective is a route point behind it, back where the party waits, so what it pulled
     // is fought there and not beside the next pack (2026-10-01: eight enemies at once at the mine's entrance, the
     // packs pulled where they stood). Only while something attacking the tank is still more than PULL_BACK_YARDS out.
@@ -2048,14 +2054,21 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
                 && enemy->IsInMap(view.Bot) && view.Bot->GetExactDist(enemy) > PULL_BACK_YARDS)
                 coming = true;
         if (coming)
+        {
             view.Objective = fight.Route[walk > 0 ? walk - 1 : 0];
+            if (objectiveYard >= 0)
+                objectiveYard = int32(fight.RouteDense[walk > 0 ? walk - 1 : 0]);
+        }
     }
     // Behind the party: the route's next point (the party's) is well ahead of the seat's own place -- the tank that
     // rose at the door, walking back to a party that is still deep in.
     view.Crowd.Behind = walk + 2 < last;
     Unit const* tank = view.Crowd.Tank;
     if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot) && walk >= tankWalk)
+    {
         view.Objective.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+        objectiveYard = tankIndex >= 0 ? int32(fight.Seats[std::size_t(tankIndex)].DenseAt) : -1;
+    }
 
     // Where the advance action steps: a few yards on along the field route towards the objective, from the yard
     // of it the seat stands on. Off the route, nothing: the server's path to the objective is the way back to it.
@@ -2080,12 +2093,27 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
                 best = search(0, size);
             return best;
         };
+        // The seat's yard: on from the one it stood on last, where the route is still under it. The route passes
+        // some ground twice (out to a side pack and back), and the nearest yard of all flipped between the two
+        // passes: at Ragefire's route point 30 the tank stepped back and forth on the spot for the rest of the run
+        // (2026-10-03).
         SeatInstance const& own = fight.Seats[seat];
-        auto const [yard, off] = nearestYard(Position(view.Bot->GetPositionX(), view.Bot->GetPositionY(),
-            view.Bot->GetPositionZ()), own.DenseAt);
+        Position const at(view.Bot->GetPositionX(), view.Bot->GetPositionY(), view.Bot->GetPositionZ());
+        std::pair<uint32, float> near{ own.DenseAt, std::numeric_limits<float>::max() };
+        {
+            std::size_t const first = own.DenseAt > 8 ? own.DenseAt - 8 : 0;
+            std::size_t const end = std::min(fight.Dense.size(), std::size_t(own.DenseAt) + 24);
+            for (std::size_t i = first; i < end; ++i)
+                if (float const d = at.GetExactDist(&fight.Dense[i]); d < near.second)
+                    near = { uint32(i), d };
+        }
+        if (near.second > ON_ROUTE)
+            near = nearestYard(at, own.DenseAt);
+        auto const [yard, off] = near;
         own.DenseAt = yard;
         uint32 const hint = fight.RouteDense[std::min<std::size_t>(walk, fight.RouteDense.size() - 1)];
-        uint32 const target = nearestYard(view.Objective, hint).first;
+        uint32 const target = objectiveYard >= 0 && std::size_t(objectiveYard) < fight.Dense.size()
+            ? uint32(objectiveYard) : nearestYard(view.Objective, hint).first;
         if (off <= ON_ROUTE)
         {
             own.Detour.clear();
