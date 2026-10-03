@@ -1829,8 +1829,10 @@ the door.
 Ragefire's own ground: the parties wiped to ten elites at once with the tank holding a sixth of them, and the camp
 drill's open-field pairs never made a double pull cost anything. A drill draws a pack of the field route
 (`WingPlan::Packs`), clears every pack the route reaches before it, and sets the party down `Instance.PullStartYards`
-(35) back along the route -- further, up to 120 yd, until nothing left alive is within 25 yd. It is over when that
-pack is dead with nothing else fighting the party (`PullClean` 5), when any other creature of the instance fights the
+(35) back along the route -- further, up to 120 yd, until nothing left alive is within 25 yd. The first creature to
+fight the party makes its pack the drill's, the route's next or not: the first drills ended on a "second pack" within
+five seconds, a damage dealer having opened on a nearer pack than the route's next. It is over when that pack is dead
+with nothing else fighting the party (`PullClean` 5), when any other creature of the instance fights the
 party (`PullExtra` 5, the run ends there), on a wipe, or after 150 s with the pack alive (`PullTimeout` 2); the tank
 takes each in full and every other seat `PullOthers` (0.5) of it. Standing about costs `WingStall` after `PullGraceMs`
 (20 s). The seats are at most `PullLift` (2) levels above the dungeon's range, so the creatures' aggro radius is about

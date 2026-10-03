@@ -209,7 +209,8 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             LOG_INFO("module.animus", "Pull drill: env {} rung {} level {} gap {:.0f} yd | {} | peak {} on the party, "
                 "{} wipes, {:.0f}s", env.Index, fight.DrillRung, fight.Level, fight.DrillGap,
                 fight.DrillExtra ? Acore::StringFormat("second pack ({})", fight.DrillExtraEntry)
-                    : fight.DrillCleared ? std::string("clean") : fight.Wiped ? std::string("wiped")
+                    : fight.DrillCleared ? std::string(fight.DrillOther ? "clean (another pack)" : "clean")
+                    : fight.Wiped ? std::string("wiped")
                     : fight.DrillEngaged ? std::string("pack alive at the end") : std::string("never pulled"),
                 fight.DrillPeak, fight.Wipes, float(fight.LastMs) / 1000.0f);
         if (fight.Row)
@@ -1766,6 +1767,7 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
     std::vector<Creature*> clearing;
     std::vector<Position> standing;
     Player* seat = _scenario.SeatBot(env, 0);
+    uint32 alone = uint32(plan.Packs.size());
     for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
     {
         if (!creature || !creature->IsAlive())
@@ -1778,6 +1780,14 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
                 fight.DrillPack.push_back(creature->GetGUID());
             if (Hostile(seat, creature))
                 standing.push_back(creature->GetPosition());
+            uint32 group = alone;
+            for (std::size_t j = chosen; j < plan.Packs.size() && group == alone; ++j)
+                if (std::find(plan.Packs[j].Members.begin(), plan.Packs[j].Members.end(), spawnId)
+                    != plan.Packs[j].Members.end())
+                    group = uint32(j);
+            if (group == alone)
+                ++alone;
+            fight.DrillGroups.emplace_back(creature->GetGUID(), group);
         }
     }
     for (Creature* creature : clearing)
@@ -1886,6 +1896,24 @@ void Animus::Curriculum::InstanceEncounter::UpdateDrill(Env& env, EnvInstance& f
             if (std::find(onParty.begin(), onParty.end(), creature->GetGUID()) != onParty.end())
                 continue;
             onParty.push_back(creature->GetGUID());
+            // The first creature on the party names the pack: the route's next or not, its whole pack is the pull.
+            if (!fight.DrillLocked)
+            {
+                fight.DrillLocked = true;
+                auto const of = std::find_if(fight.DrillGroups.begin(), fight.DrillGroups.end(),
+                    [&creature](auto const& entry) { return entry.first == creature->GetGUID(); });
+                if (std::find(fight.DrillPack.begin(), fight.DrillPack.end(), creature->GetGUID())
+                    == fight.DrillPack.end())
+                {
+                    // Another pack; one the drill never saw (a grid loaded since) is a pack of its own.
+                    fight.DrillOther = true;
+                    fight.DrillPack.assign(1, creature->GetGUID());
+                    if (of != fight.DrillGroups.end())
+                        for (auto const& [guid, group] : fight.DrillGroups)
+                            if (group == of->second && guid != creature->GetGUID())
+                                fight.DrillPack.push_back(guid);
+                }
+            }
             if (!fight.DrillExtra
                 && std::find(fight.DrillPack.begin(), fight.DrillPack.end(), creature->GetGUID()) == fight.DrillPack.end())
             {

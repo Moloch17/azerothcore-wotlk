@@ -713,6 +713,12 @@ namespace Animus::Curriculum
             float DrillGap = 0.0f;
             uint32 DrillPoint = 0;
             std::vector<ObjectGuid> DrillPack;
+            /// Every creature left alive and its pack (WingPlan::Packs' index, or one of its own past them): the first
+            /// creature to fight the party makes its pack the drill's, whichever it is -- the party pulls what it
+            /// pulls, and the lesson is one pack at a time.
+            std::vector<std::pair<ObjectGuid, uint32>> DrillGroups;
+            bool DrillLocked = false;
+            bool DrillOther = false;            // the pack pulled was not the route's next
             bool DrillEngaged = false;
             bool DrillCleared = false;
             bool DrillExtra = false;
