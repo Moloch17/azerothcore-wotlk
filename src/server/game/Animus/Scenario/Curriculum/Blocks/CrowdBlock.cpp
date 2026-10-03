@@ -28,6 +28,7 @@
 #include "EncoderSupport.h"
 #include "MotionMaster.h"
 #include <boost/json/object.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -40,7 +41,7 @@ namespace
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CrowdBlock::Size(Layout const& /*layout*/) const
 {
-    return { OBS_SLOT_FIRST + CROWD_SLOTS * SLOT_FEATURES, ACTION_COUNT };
+    return { OBS_COUNT, ACTION_COUNT };
 }
 
 void Animus::Curriculum::CrowdBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
@@ -103,6 +104,44 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         float const angle = bot->GetRelativeAngle(&crowd.Ahead);
         obs[OBS_AHEAD_SIN] = std::sin(angle);
         obs[OBS_AHEAD_COS] = std::cos(angle);
+    }
+
+    obs[OBS_SECOND_GAP] = 1.0f;
+    obs[OBS_SECOND_DISTANCE] = 1.0f;
+    if (crowd.HasSecond)
+    {
+        obs[OBS_SECOND_PRESENT] = 1.0f;
+        if (crowd.HasAhead)
+            obs[OBS_SECOND_GAP] = std::min(1.0f, crowd.Ahead.GetExactDist(&crowd.Second) / 40.0f);
+        obs[OBS_SECOND_DISTANCE] = std::min(1.0f, bot->GetExactDist(&crowd.Second) / 60.0f);
+        float const angle = bot->GetRelativeAngle(&crowd.Second);
+        obs[OBS_SECOND_SIN] = std::sin(angle);
+        obs[OBS_SECOND_COS] = std::cos(angle);
+    }
+    // How near the seat is to being noticed: the pack ahead (within a pack's reach of it), and anything else idle in
+    // the pack block's slots or past them.
+    {
+        constexpr float PACK_REACH = 12.0f;
+        constexpr float MARGIN_SCALE = 20.0f;
+        float ahead = MARGIN_SCALE;
+        float other = MARGIN_SCALE;
+        auto const consider = [&](Unit const* unit)
+        {
+            Creature const* creature = unit ? unit->ToCreature() : nullptr;
+            if (!creature || !creature->IsAlive() || creature->IsInCombat() || !creature->IsInMap(bot)
+                || !creature->IsHostileTo(bot))
+                return;
+            float const margin = bot->GetExactDist(creature) - creature->GetAggroRange(bot);
+            bool const ofAhead = crowd.HasAhead && creature->GetExactDist(&crowd.Ahead) <= PACK_REACH;
+            float& nearest = ofAhead ? ahead : other;
+            nearest = std::min(nearest, margin);
+        };
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+            consider(view.Enemies[slot]);
+        for (uint32 slot = 0; slot < crowd.Count && slot < CROWD_SLOTS; ++slot)
+            consider(crowd.Units[slot]);
+        obs[OBS_AHEAD_MARGIN] = std::clamp(ahead / MARGIN_SCALE, -1.0f, 1.0f);
+        obs[OBS_SECOND_MARGIN] = std::clamp(other / MARGIN_SCALE, -1.0f, 1.0f);
     }
 
     for (uint32 slot = 0; slot < crowd.Count && slot < CROWD_SLOTS; ++slot)

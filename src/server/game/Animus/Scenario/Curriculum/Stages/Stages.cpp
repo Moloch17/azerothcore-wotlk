@@ -622,6 +622,14 @@ namespace
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .EpisodeSeconds = 7200,
                     .Directed = true, .DirectorLearned = true },
+                // One pull at a time on the dungeon's own ground (2026-10-03: the wipes were ten elites at once with
+                // the tank holding a sixth of them, and the camp drill's open-field pairs never made a double pull
+                // cost anything). A drill lasts a minute or two where a run lasts most of an hour, so its weight is
+                // in episodes: about three steps in four early in the stage, one in three by its end.
+                { .Name = "pull", .Weight = 40, .WeightFinal = 8, .Seats = SeatPlan::Party,
+                    .Against = Opposition::Instance, .PartyGroup = true, .Instance = InstanceLadder::Wing,
+                    .InstanceRow = 0, .PullDrill = true, .EpisodeSeconds = 150, .Directed = true,
+                    .DirectorLearned = true },
             },
         });
 

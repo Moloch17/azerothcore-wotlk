@@ -337,6 +337,24 @@ namespace Animus::Curriculum
             /// leader.
             float WingStray = 0.02f;
             float WingStrayYards = 25.0f;
+            /// The pull drill (ArenaDefinition::PullDrill): one pack of the dungeon a run, the party started
+            /// PullStartYards back along the route from it with the packs before it cleared. A clean pull -- the pack
+            /// dead and nothing else in the fight -- pays PullClean, a second pack joining ends the run at PullExtra,
+            /// and the clock running out with the pack alive costs PullTimeout: the tank in full, every other seat
+            /// PullOthers of it. Standing about costs WingStall after PullGraceMs. The seats are at most PullLift
+            /// levels above the dungeon's range, so the creatures' aggro radius is near the real one. The ladder
+            /// opens packs by how far the nearest other pack stands (30, 22, 14 yd, then any) once PullRungRuns
+            /// drills on the newest rung have pulled clean PullRungTarget of the time; each machine climbs its own.
+            float PullClean = 5.0f;
+            float PullExtra = 5.0f;
+            float PullTimeout = 2.0f;
+            float PullOthers = 0.5f;
+            uint32 PullGraceMs = 20000;
+            uint32 PullLift = 2;
+            float PullStartYards = 35.0f;
+            uint32 PullRungStart = 0;
+            uint32 PullRungRuns = 100;
+            float PullRungTarget = 0.7f;
         } Instance;
 
         /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
@@ -1211,6 +1229,16 @@ namespace Animus::Curriculum
             f("Instance.WingAutoDoors", tuning.Instance.WingAutoDoors);
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
+            f("Instance.PullClean", tuning.Instance.PullClean);
+            f("Instance.PullExtra", tuning.Instance.PullExtra);
+            f("Instance.PullTimeout", tuning.Instance.PullTimeout);
+            f("Instance.PullOthers", tuning.Instance.PullOthers);
+            f("Instance.PullGraceMs", tuning.Instance.PullGraceMs);
+            f("Instance.PullLift", tuning.Instance.PullLift);
+            f("Instance.PullStartYards", tuning.Instance.PullStartYards);
+            f("Instance.PullRungStart", tuning.Instance.PullRungStart);
+            f("Instance.PullRungRuns", tuning.Instance.PullRungRuns);
+            f("Instance.PullRungTarget", tuning.Instance.PullRungTarget);
             f("Life.StepCost", tuning.Life.StepCost);
             f("Life.Progress", tuning.Life.Progress);
             f("Life.Wasted", tuning.Life.Wasted);

@@ -76,6 +76,24 @@ namespace Animus::Curriculum
             SLOT_FEATURES       = 9
         };
 
+        /// After the slots, so a block seeded from one without them keeps every column it had: what a pull of the
+        /// pack ahead may bring (2026-10-03: the tank saw only the nearest pack, never the one behind it).
+        enum TailFeature : uint32
+        {
+            OBS_TAIL_FIRST      = OBS_SLOT_FIRST + CROWD_SLOTS * SLOT_FEATURES,
+            /// The nearest creature out of the fight past the pack ahead's reach: the second pack.
+            OBS_SECOND_PRESENT  = OBS_TAIL_FIRST,
+            OBS_SECOND_GAP      = OBS_TAIL_FIRST + 1,   // from the pack ahead, / 40 yd
+            OBS_SECOND_DISTANCE = OBS_TAIL_FIRST + 2,   // from the seat, / 60 yd
+            OBS_SECOND_SIN      = OBS_TAIL_FIRST + 3,
+            OBS_SECOND_COS      = OBS_TAIL_FIRST + 4,
+            /// Yards the seat stands outside the nearest aggro radius (Creature::GetAggroRange) of a creature of the
+            /// pack ahead, and of any other out of the fight it can see, / 20 in -1..1: below 0 it would be pulled.
+            OBS_AHEAD_MARGIN    = OBS_TAIL_FIRST + 5,
+            OBS_SECOND_MARGIN   = OBS_TAIL_FIRST + 6,
+            OBS_COUNT           = OBS_TAIL_FIRST + 7
+        };
+
         enum Action : uint32
         {
             /// Use the nearest usable thing within reach: pull a lever, press a button, fire the cannon, open a door.

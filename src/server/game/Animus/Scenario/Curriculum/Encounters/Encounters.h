@@ -35,6 +35,8 @@
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include <atomic>
+#include <deque>
+#include <mutex>
 #include <unordered_map>
 #include <array>
 #include <functional>
@@ -699,6 +701,23 @@ namespace Animus::Curriculum
             bool HasAhead = false;
             Position Ahead;
             uint32 AheadSize = 0;
+            /// The nearest creature out of the fight past the pack ahead (CrowdBlock's second pack): what pulling the
+            /// one ahead may bring with it.
+            bool HasSecond = false;
+            Position Second;
+            /// A pull drill (ArenaDefinition::PullDrill): its rung, the pack it pulls and how far the nearest other
+            /// stands from it, the route point at the pack (RouteNext goes no further), and how it ended -- the pack
+            /// dead with nothing else in the fight, or a second pack joining (the first such creature's entry).
+            bool Drill = false;
+            uint32 DrillRung = 0;
+            float DrillGap = 0.0f;
+            uint32 DrillPoint = 0;
+            std::vector<ObjectGuid> DrillPack;
+            bool DrillEngaged = false;
+            bool DrillCleared = false;
+            bool DrillExtra = false;
+            uint32 DrillExtraEntry = 0;
+            uint32 DrillPeak = 0;               // the most on the party at once
             std::vector<ObjectGuid> Watched;
             std::vector<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;
@@ -712,8 +731,18 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Usable(GameObject const* object);
         /// A whole dungeon's way through: its route points every Instance.WingWaypointYards (the last one the boss),
         /// the field route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
+        /// A pack of the field route, in the order the route reaches it: where it is fought from, the route's yard
+        /// there, its creatures' spawns, and how far the nearest creature not cleared before it stands from it.
+        struct WingPack
+        {
+            Position At;
+            uint32 Yard = 0;
+            std::vector<ObjectGuid::LowType> Members;
+            float Gap = 0.0f;
+        };
         struct WingPlan
         {
+            std::vector<WingPack> Packs;        // every pack the field route walks to; empty with a navmesh route
             std::vector<Position> Route;
             std::vector<Position> Dense;
             std::vector<uint32> RouteDense;
@@ -728,6 +757,12 @@ namespace Animus::Curriculum
         [[nodiscard]] WingPlan FieldWingRoute(Env const& env, Map* map, Player* seat, Creature* boss,
             std::vector<Position> const& bosses) const;
         void UpdateWingEnemies(Env& env, EnvInstance& fight);
+        /// The pull drill: a pack off the ladder, the packs before it cleared, the party set down short of it.
+        /// False when the route has no packs to drill (a navmesh route); the run is the whole dungeon then.
+        bool StartDrill(Env& env, Map* map, WingPlan const& plan);
+        /// The drill's pack dead with the fight over, or another creature fighting the party.
+        void UpdateDrill(Env& env, EnvInstance& fight);
+        void NoteDrill(uint32 rung, bool clean);
         /// The level range a dungeon is run at: the dungeon finder's target range for its map and difficulty.
         [[nodiscard]] static std::pair<uint32, uint32> DungeonLevels(BossRow const& row);
         void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
@@ -745,6 +780,10 @@ namespace Animus::Curriculum
         std::vector<EnvInstance> _envs;
         std::map<InstanceLadder, std::vector<BossRow const*>> _rows;   // per ladder, the rows the database fields
         DifficultyLadder _ladder;
+        /// The pull drill's ladder (Instance.PullRung*): the rung and the newest rung's drills, clean or not.
+        std::mutex _drillLock;
+        uint32 _drillRung = 0;
+        std::deque<bool> _drillRuns;
     };
 
     /// An enemy player: one played by a script (Opposition::ScriptedPlayer), or the other seat (self-play,

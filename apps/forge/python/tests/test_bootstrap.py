@@ -302,3 +302,15 @@ def test_a_new_block_starts_from_nothing_and_core_carries_over():
     common = _common_blocks(old, new, "warrior")
     assert ((0, 400), (0, 60)) in [spans[0] for spans in common]
     assert all(spans[1][0][0] != 480 for spans in common)
+
+
+def test_a_block_grown_at_its_end_keeps_its_old_columns():
+    """The crowd block gained its second-pack columns after its slots: the old columns seed where they were, and a
+    block that changed in the middle (any other) still starts from nothing."""
+    from animus.bootstrap import _common_blocks
+
+    old = {"core": ((0, 400), (0, 60)), "crowd": ((400, 102), (60, 3)), "party": ((502, 20), (63, 2))}
+    new = {"core": ((0, 400), (0, 60)), "crowd": ((400, 109), (60, 3)), "party": ((509, 24), (63, 2))}
+    common = _common_blocks(old, new, "warrior")
+    assert (((400, 102), (60, 3)), ((400, 102), (60, 3))) in common
+    assert all(spans[0][0][0] != 502 for spans in common)

@@ -129,6 +129,10 @@ namespace Animus::Curriculum
         /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); -1 = the class's own
         /// rung on the ladder.
         int8 InstanceRow = -1;
+        /// InstanceLadder::Wing: one pull a run instead of the whole dungeon -- the party a little way back along the
+        /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
+        /// joins (Instance.Pull*). Training only: an evaluation never draws it.
+        bool PullDrill = false;
         /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
         uint32 RaidSeats = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds

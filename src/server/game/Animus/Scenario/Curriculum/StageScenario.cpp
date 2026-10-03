@@ -748,7 +748,8 @@ uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
     {
         float const from = float(_arenaWeights[arena]);
         float const to = float(_arenaWeightsFinal[arena]);
-        weights[arena] = uint32(std::lround(100.0f * (from + (to - from) * progress)));
+        weights[arena] = evaluating && _stage.Arenas[arena].PullDrill ? 0
+            : uint32(std::lround(100.0f * (from + (to - from) * progress)));
         total += weights[arena];
     }
     if (!total)

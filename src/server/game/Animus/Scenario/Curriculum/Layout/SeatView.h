@@ -59,6 +59,8 @@ namespace Animus::Curriculum
         bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it
         Position Ahead;
         uint32 AheadSize = 0;
+        bool HasSecond = false;                     // the nearest creature out of the fight past the pack ahead
+        Position Second;
         /// A few yards on along the dungeon's field route towards the seat's objective: where the advance action
         /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
         bool HasStep = false;

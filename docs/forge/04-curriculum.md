@@ -1825,6 +1825,25 @@ Oggleflint, Taragaman and Jergosh: the Deadmines' skills at a lower price. The s
 own rung. Its route is checked by the `Wing stuck` trace lines on its first runs: as a boss rung it had no path from
 the door.
 
+**The pull drill** (`pull`, `ArenaDefinition::PullDrill`, 2026-10-03). Beside the whole run, one pull at a time on
+Ragefire's own ground: the parties wiped to ten elites at once with the tank holding a sixth of them, and the camp
+drill's open-field pairs never made a double pull cost anything. A drill draws a pack of the field route
+(`WingPlan::Packs`), clears every pack the route reaches before it, and sets the party down `Instance.PullStartYards`
+(35) back along the route -- further, up to 120 yd, until nothing left alive is within 25 yd. It is over when that
+pack is dead with nothing else fighting the party (`PullClean` 5), when any other creature of the instance fights the
+party (`PullExtra` 5, the run ends there), on a wipe, or after 150 s with the pack alive (`PullTimeout` 2); the tank
+takes each in full and every other seat `PullOthers` (0.5) of it. Standing about costs `WingStall` after `PullGraceMs`
+(20 s). The seats are at most `PullLift` (2) levels above the dungeon's range, so the creatures' aggro radius is about
+the real one. Its ladder opens packs by the gap to the nearest other creature -- 30, 22, 14 yd, then any -- once
+`PullRungRuns` (100) drills on the newest rung have pulled clean `PullRungTarget` (0.7) of the time; each machine climbs
+its own. Its weight is in episodes, 40 falling to 8 against the whole run's 1: about three steps in four early, one in
+three at the end. An evaluation never draws it. `Pull drill:` log lines say how each ended.
+
+The crowd block's tail (`CrowdBlock::OBS_TAIL_FIRST`) shows every seat the second pack: the nearest creature out of
+the fight past the pack ahead's reach, its gap from that pack, its distance and bearing, and how many yards the seat
+stands outside the nearest aggro radius of the pack ahead and of anything else idle. The columns come after the old
+ones, so a checkpoint from before them seeds the block as it was (`bootstrap.GROWS_AT_END`).
+
 ### `stage9_deadmines`
 
 The Deadmines (row 1, 2026-10-02: after Ragefire; 2026-09-30: the whole parties phase): the Deadmines from its door to VanCleef, run by five learned seats

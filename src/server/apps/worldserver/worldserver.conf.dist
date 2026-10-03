@@ -6107,6 +6107,22 @@ AnimusForge.Curriculum.Instance.WingRiseMs = 30000
 AnimusForge.Curriculum.Instance.WingAutoDoors = 0
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
+#   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it
+#   cleared; a clean pull pays PullClean, a second pack joining ends the run at PullExtra, the clock running out with
+#   the pack alive costs PullTimeout (the tank in full, the others PullOthers of each); standing about costs WingStall
+#   after PullGraceMs (ms); the seats are at most PullLift levels above the dungeon's range; the ladder opens packs by
+#   the gap to the nearest other pack (30, 22, 14 yd, then any) once PullRungRuns drills pull clean PullRungTarget of
+#   the time, starting at PullRungStart (each machine climbs its own)
+AnimusForge.Curriculum.Instance.PullClean = 5.0
+AnimusForge.Curriculum.Instance.PullExtra = 5.0
+AnimusForge.Curriculum.Instance.PullTimeout = 2.0
+AnimusForge.Curriculum.Instance.PullOthers = 0.5
+AnimusForge.Curriculum.Instance.PullGraceMs = 20000
+AnimusForge.Curriculum.Instance.PullLift = 2
+AnimusForge.Curriculum.Instance.PullStartYards = 35.0
+AnimusForge.Curriculum.Instance.PullRungStart = 0
+AnimusForge.Curriculum.Instance.PullRungRuns = 100
+AnimusForge.Curriculum.Instance.PullRungTarget = 0.7
 
 #
 #    AnimusForge.Curriculum.Life.*
