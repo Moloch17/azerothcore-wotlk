@@ -21,7 +21,7 @@ HINT = OWN + BLOCK                    # the hint block: action + 1, weight, scri
 OBS = HINT + 3
 
 
-def scenario_stats() -> dict[str, float]:
+def scenario_stats(masked: bool | None = None) -> dict[str, float]:
     """Goals with four slots and a slow loop, hindsight relabelling, hints with per-block owners and scripted rows,
     over two epochs of two minibatches: every per-minibatch statistic the update keeps."""
     torch.manual_seed(0)
@@ -29,6 +29,8 @@ def scenario_stats() -> dict[str, float]:
                          goal_every_decisions=3, slow_goal_size=5, goal_slots=SLOTS, hindsight_coef=0.5,
                          hint_coef=1.0, epochs=2, minibatches=2)
     trainer = MappoTrainer([(OBS, 3)], 4, config)
+    if masked is not None:
+        trainer._masked_stats = masked
     trainer.actor.goal_head.set_space(np.ones((KINDS, TARGETS), bool), [OWN])
     trainer.hint_at = torch.tensor([HINT])
     trainer.hint_owner = torch.tensor([[0, 0, 1]])
@@ -70,9 +72,12 @@ def write_reference() -> None:
     REFERENCE.write_text(json.dumps(scenario_stats(), indent=2, sort_keys=True) + "\n")
 
 
-def test_the_update_reports_what_it_reported_before():
+@pytest.mark.parametrize("masked", [False, True], ids=["picked_rows", "masked_rows"])
+def test_the_update_reports_what_it_reported_before(masked):
+    """Both ways of taking the optional terms -- picked rows with early-outs, and masked arithmetic over every row (the
+    GPU's) -- report what the update did before, on the CPU: masked arithmetic is the same on any device."""
     expected = json.loads(REFERENCE.read_text())
-    got = scenario_stats()
+    got = scenario_stats(masked)
     assert sorted(got) == sorted(expected)
     for name, value in expected.items():
         assert got[name] == pytest.approx(value, rel=1e-4, abs=1e-6), name

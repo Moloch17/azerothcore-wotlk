@@ -580,6 +580,11 @@ class MappoTrainer:
         self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
         self.train_device = torch.device(train_device)
+        # The update's optional terms (hints, hindsight) as masked arithmetic over every row, rather than picked rows
+        # and early-outs: on the GPU asking which rows have one waits on the device every minibatch, on the CPU it is
+        # free and skipping is cheaper. The same numbers either way; a flag rather than the device, so a test can run
+        # the masked path anywhere (test_update_stats).
+        self._masked_stats = self.train_device.type == "cuda"
         self.rollout_device = torch.device(rollout_device)
         # Starts at config.entropy_coef; the stage controller raises it after a restart (animus.stage).
         self.entropy_coef = config.entropy_coef
@@ -810,7 +815,7 @@ class MappoTrainer:
         # On the GPU masked rather than skipped: a minibatch with no hinted row adds a loss of 0 and counts nothing,
         # and asking whether it has one would wait on the device every minibatch (the stats are read once,
         # _host_stats). On the CPU asking is free, and hints are off in most runs (Instance.WingSupport 0).
-        if not hinted.is_cuda and not bool(hinted.any()):
+        if not getattr(self, "_masked_stats", False) and not bool(hinted.any()):
             return None
         log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))
         w = weight * hinted.float()
@@ -881,12 +886,17 @@ class MappoTrainer:
             self._rollout_stream.wait_stream(torch.cuda.current_stream(self.rollout_device))
 
     def _tensor(self, array: np.ndarray, dtype=None) -> torch.Tensor:
-        # A device tensor (the sim's device buffers, protocol 15) is used where it is, or moved there on the device:
-        # sending it to the host and back up cost the eager decision -- every director stage's -- two copies of
-        # every input.
+        # A device tensor (the sim's device buffers, protocol 15) on the rollout's device is used where it is: sending
+        # it to the host and back up cost the eager decision -- every director stage's -- two copies of every input.
+        # On another device it is copied blocking: a non-blocking copy there is ordered on neither the rollout's
+        # stream nor its downloads, and one to the host can be read before it lands.
         if isinstance(array, torch.Tensor):
-            return array.to(device=self.rollout_device, dtype=dtype if dtype is not None else array.dtype,
-                            non_blocking=True)
+            wanted = dtype if dtype is not None else array.dtype
+            here = (array.device.type == self.rollout_device.type
+                    and (array.device.index or 0) == (self.rollout_device.index or 0))
+            if here:
+                return array if array.dtype == wanted else array.to(dtype=wanted)
+            return array.to(device=self.rollout_device, dtype=wanted)
         if self.rollout_device.type != "cuda":
             return torch.as_tensor(array, device=self.rollout_device, dtype=dtype)
         # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
@@ -1673,7 +1683,7 @@ class MappoTrainer:
                     relabel = (achieved >= 0) & (achieved != primary) & valid[:, chunk].reshape(-1)
                     relabelled_rows = relabel.sum()
                     actions_all = data["actions"][:, chunk].reshape(-1)
-                    if features.is_cuda:
+                    if self._masked_stats:
                         # On the GPU every row goes through the head with the goal it achieved (any valid goal where
                         # it achieved none) and the loss is taken over the relabelled rows: picking them out would
                         # wait on the device for their count every minibatch.
