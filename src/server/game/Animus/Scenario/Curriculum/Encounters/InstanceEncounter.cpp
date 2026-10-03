@@ -1705,9 +1705,12 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         }
     }
 
-    // The route's packs no member of which is alive (View's "next pack" places): only the next few still standing are
-    // looked at, by spawn id, so a decision costs at most a handful of lookups. A drill's despawned packs read as
-    // cleared.
+    // The route's packs no member of which is alive (View's "next pack" places): only the next few not yet cleared
+    // are looked at, by spawn id, so a decision costs at most a handful of lookups. A creature is in the spawn store
+    // only while its grid is loaded -- every run opens a fresh instance, loaded around the party -- so a pack none of
+    // whose members is found is unknown, not cleared: it stays a place until a member has been found and none is alive.
+    // A killed creature stays in the store, dead, until the instance unloads (no respawn in a dungeon run), so a pack
+    // found dead latches cleared; the drill marks the packs it despawns itself (StartDrill).
     if (Map* map = seat->GetMap())
     {
         auto const& spawned = map->GetCreatureBySpawnIdStore();
@@ -1718,16 +1721,21 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
                 continue;
             if (++looked > WorldView::JOURNAL_PLACES)
                 break;
+            bool found = false;
             bool standing = false;
             for (ObjectGuid::LowType member : pack.Members)
             {
                 auto const [first, last] = spawned.equal_range(member);
                 for (auto it = first; it != last && !standing; ++it)
+                {
+                    found = true;
                     standing = it->second->IsAlive();
+                }
                 if (standing)
                     break;
             }
-            pack.Cleared = !standing;
+            pack.Resolved = pack.Resolved || found;
+            pack.Cleared = found && !standing;
         }
     }
 
@@ -1884,6 +1892,9 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
     {
         map->LoadGrid(plan.Packs[j].At.GetPositionX(), plan.Packs[j].At.GetPositionY());
         cleared.insert(cleared.end(), plan.Packs[j].Members.begin(), plan.Packs[j].Members.end());
+        // Despawned below, and so out of the spawn store: cleared by the drill, not unknown (UpdateWingEnemies).
+        if (j < fight.RoutePacks.size())
+            fight.RoutePacks[j].Cleared = fight.RoutePacks[j].Resolved = true;
     }
     map->LoadGrid(pack.At.GetPositionX(), pack.At.GetPositionY());
     std::sort(cleared.begin(), cleared.end());
@@ -2387,6 +2398,12 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
         if (fight.Counts)
             _ladder.Record(fight.Layout, fight.Spec, fight.Tier, fight.BossDead,
                 uint32(std::max<std::size_t>(1, Rows(env).size())) - 1);
+        // Packs whose members were never found all run: the party never came near them, or the route's pack list
+        // names spawns this instance does not have (a mis-built route).
+        if (std::size_t const unseen = std::count_if(fight.RoutePacks.begin(), fight.RoutePacks.end(),
+            [](EnvInstance::RoutePack const& pack) { return !pack.Resolved; }))
+            LOG_DEBUG("module.animus", "{}: env {}: {} of {} route packs never found this run ({})", _scenario.Name(),
+                env.Index, unseen, fight.RoutePacks.size(), fight.Row ? fight.Row->Name : "?");
     }
     if (fight.BossDead)
         ledger.Add(RewardTerm::Kill, tuning.WingBoss, tierScale);
