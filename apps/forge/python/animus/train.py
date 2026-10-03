@@ -57,7 +57,7 @@ STALL_KL = 0.0015
 STALL_WINDOW = 10
 STALL_MIN_UPDATES = 20
 from .runs import FINISHED_FILE, archive_run, prune_checkpoints, resume_checkpoint_path, resume_mismatch
-from .stage import ADVANCE, ConvergenceController, Outcome
+from .stage import ADVANCE, ConvergenceController, Outcome, restore_evaluation_state
 from .stages import STAGE_FILE, arena_names, load_stage
 from .device import host
 
@@ -288,6 +288,16 @@ def init_from_checkpoint(path: str, default: str = "latest") -> Path | None:
                 return found
         return None
     return candidate if candidate.exists() else None
+
+
+def baseline_cache_key(policy: str, seed: int, episodes: int, opponents: str, arenas, tuning,
+                       score_kind: str) -> dict:
+    """What a cached eval_baseline*.json summary is only good for: the scripted policy, the seeds, the opponents, the
+    arenas, the tuning that prices the reward terms, and the kind of score it was summarised on ("" = the return).
+    A summary on the return read against outcome scores would skew every per-class gap the training draw weights
+    by (casting_weights)."""
+    return {"policy": policy, "seed": seed, "episodes": episodes, "opponents": opponents, "arenas": list(arenas),
+            "tuning": tuning, "score": score_kind}
 
 
 def load_parent(path: Path) -> dict:
@@ -568,6 +578,10 @@ class TrainingRun:
         self.evaluating = config.eval.every_env_steps > 0
         self.controller = ConvergenceController(config, [layout.name for layout in spec.layouts])
         self.tracker = self.controller.tracker
+        # What the evaluations are scored on (EvalResult.score_column): eval.score's column where the sim writes it,
+        # else the return ("") -- the kind a checkpoint's scores are of, and a baseline's.
+        wanted = config.eval.score_column()
+        self.score_kind = wanted if wanted in spec.episode_info_names else ""
         self.update = 0
         self.env_steps = 0
         # A follower first takes whatever the leader read that this machine lacks -- parents, teachers, the cast's
@@ -677,7 +691,9 @@ class TrainingRun:
         cached_baseline_score = None
         if self.resume_path and (self.run_dir / "eval_baseline.json").exists():
             cached = json.loads((self.run_dir / "eval_baseline.json").read_text())
-            cached_baseline_score = cached.get("summary", {}).get("score")
+            # Only a baseline scored on the run's kind of score is shown beside it.
+            if cached.get("key", {}).get("score", "") == self.score_kind:
+                cached_baseline_score = cached.get("summary", {}).get("score")
         self.progress.restore_evaluation(self.tracker, cached_baseline_score, self.controller)
 
         self.step = None
@@ -724,9 +740,10 @@ class TrainingRun:
             self.trainer.load_state_dict(checkpoint["trainer"])
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
-            # The convergence test and the best evaluation carry on where the run stopped.
-            self.tracker.load_state_dict(checkpoint.get("convergence"))
-            self.controller.load_state_dict(checkpoint.get("controller"))
+            # The convergence test and the best evaluation carry on where the run stopped -- unless they were scored
+            # on another kind of score, which no score from here on could be compared with.
+            if dropped := restore_evaluation_state(self.tracker, self.controller, checkpoint, self.score_kind):
+                print(f"Resuming {config.run_name}: {dropped}", flush=True)
             print(f"Resumed {config.run_name} from {self.resume_path} at update {self.update}, {self.env_steps} env "
                   f"steps", flush=True)
 
@@ -852,7 +869,7 @@ class TrainingRun:
     def _checkpoint_extra(self) -> dict:
         # The stage (its block positions) travels with the checkpoint, for seeding the stages that extend it.
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
-                "stage": self.stage}
+                "stage": self.stage, "score_kind": self.score_kind}
 
     def _save(self, path: Path) -> None:
         self.drain_update()
@@ -914,10 +931,8 @@ class TrainingRun:
         is_eval_seeds = (seed, episodes) == (config.eval.seed, config.eval.episodes)
         baseline_path = self.run_dir / ("eval_baseline.json" if is_eval_seeds
                                         else f"eval_baseline_{seed}_{episodes}.json")
-        key = {"policy": config.eval.baseline, "seed": seed, "episodes": episodes, "opponents": self.opponents,
-               "arenas": list(self.arena_names),
-               # The tuning prices the reward terms the baseline is scored in: a change must score it again.
-               "tuning": (self.stage or {}).get("tuning")}
+        key = baseline_cache_key(config.eval.baseline, seed, episodes, self.opponents, self.arena_names,
+                                 (self.stage or {}).get("tuning"), self.score_kind)
         cached = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
         # The leader's cache decides for every rank: they all play the baseline, or none does.
         fresh = self.ranks.broadcast(not (cached and cached.get("key") == key))

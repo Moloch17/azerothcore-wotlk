@@ -642,6 +642,19 @@ class ConvergenceTracker:
             "history": list(self.history),
         }
 
+    def forget_scores(self) -> None:
+        """Drop every score seen -- the best, its steps and the history -- when the scores to come are of another
+        kind (stage.restore_evaluation_state): a best measured on the return cannot be beaten by an outcome score,
+        nor a trend read across the two."""
+        self.best = None
+        self.best_stderr = 0.0
+        self.best_env_steps = 0
+        self.evals_since_best = 0
+        self.last_margin = 0.0
+        self.segment_index = 0
+        self.segment_env_steps = 0
+        self.history = []
+
     def load_state_dict(self, state: dict | None) -> None:
         if not state:
             return

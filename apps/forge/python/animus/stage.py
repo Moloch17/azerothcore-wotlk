@@ -108,6 +108,26 @@ class LayoutState:
         return out
 
 
+def restore_evaluation_state(tracker: ConvergenceTracker, controller: "ConvergenceController", checkpoint: dict,
+                             score_kind: str) -> str | None:
+    """Load a resumed checkpoint's evaluation state, unless its scores are of another kind than the run's now.
+
+    `score_kind` is the episode info column the run scores on ("" = the return; EvalResult.score_column). A checkpoint
+    from before the outcome score (peak-play W0) carries none and was scored on the return. When the kinds differ the
+    tracker and the controller's score-based state start over -- best.pt stays on disk, but the next evaluation is
+    the new best -- and the reason is returned for the run to print; None when nothing had to be dropped.
+    """
+    tracker.load_state_dict(checkpoint.get("convergence"))
+    controller.load_state_dict(checkpoint.get("controller"))
+    saved = checkpoint.get("score_kind", "")
+    if saved == score_kind:
+        return None
+    tracker.forget_scores()
+    controller.forget_scores()
+    return (f"the checkpoint's evaluations were scored on {saved or 'the return'} and this run scores on "
+            f"{score_kind or 'the return'}: the best score and the convergence history start over (best.pt is kept)")
+
+
 class ConvergenceController:
     def __init__(self, config: TrainConfig, layout_names: list[str] | tuple[str, ...] = ()):
         self.config = config
@@ -288,6 +308,19 @@ class ConvergenceController:
     def _decide(self, outcome: Outcome) -> Outcome:
         self.last_outcome = outcome
         return outcome
+
+    def forget_scores(self) -> None:
+        """Drop the score-based state -- the best summary, each class's tracker, scores and convergence -- when the
+        scores to come are of another kind (restore_evaluation_state). The signals with no score in them (KL, entropy,
+        rung, league, the plateau the learning rate anneals from) are kept: they mean the same either way."""
+        self.best_summary = None
+        self.baseline_summary = None
+        for state in self.layouts.values():
+            state.tracker = self._tracker(self.config.convergence.window)
+            state.scores = []
+            state.converged = False
+            state.converged_score = None
+            state.converged_margin = 0.0
 
     # ------------------------------------------------------------------ persistence
 
