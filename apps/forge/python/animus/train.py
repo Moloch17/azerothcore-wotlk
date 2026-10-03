@@ -716,6 +716,24 @@ class TrainingRun:
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
 
         self.buffer = new_buffer()
+        # Self-imitation (mappo.sil_coef): its returns discount by the run's own per-decision gamma, and it keeps the
+        # episodes by their outcome score (score_outcome). Its memory bound is said once.
+        self.sil_score_column = None
+        if self.trainer.sil is not None:
+            self.trainer.sil_gamma = float(self.discounts[0])
+            names = spec.episode_info_names
+            self.sil_score_column = names.index("score_outcome") if "score_outcome" in names else None
+            if self.sil_score_column is None:
+                print("mappo.sil_coef is on, but this stage reports no score_outcome: nothing is kept to imitate",
+                      flush=True)
+            else:
+                buffer = self.buffer
+                row = {name: getattr(buffer, name)[0, 0] for name in ("obs", "mask", "layout", "actions", "state",
+                                                                      "rewards")}
+                bound = self.trainer.sil.nbytes(config.rollout_length, row)
+                print(f"Self-imitation: the {config.mappo.sil_episodes} best episodes by outcome, their last "
+                      f"{config.rollout_length} decisions at most, {config.mappo.sil_batch} replayed a minibatch: "
+                      f"at most {bound / 2**20:.0f} MiB", flush=True)
         # Overlapped updates fill this one while the update reads the other; they swap after every rollout.
         self.spare_buffer = new_buffer() if config.overlap_updates else None
         self.pending_update: Future | None = None
@@ -737,6 +755,13 @@ class TrainingRun:
             *(f"hint_match_{block}" for block in ("core", "move", "duel", "pack", "party", "support", "crowd", "pet",
                                                   "gauntlet", "companion")),
         ]
+        if self.trainer.sil is not None:
+            # Self-imitation (mappo.sil_coef): the episodes kept and their scores, what this update took, its terms.
+            columns += ["sil_episodes", "sil_best_score", "sil_floor_score", "sil_collected", "sil_policy_loss",
+                        "sil_better_share", "sil_value_loss"]
+        if self.explore is not None:
+            # Go-Explore (explore.enabled): the cells archived and the furthest of them.
+            columns += ["explore_cells", "explore_deepest"]
         if self.trainer.goal_count:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and
             # the share of decisions spent under each goal.
@@ -1578,6 +1603,14 @@ class TrainingRun:
         ended_memory = memory[done] if memory is not None else None
         ended_layout = layout[done]
         final_state, final_obs = part.final_state[done], part.final_obs[done]
+
+        # Self-imitation keeps the best of them by outcome: each ended env's mean over its seats present.
+        if self.sil_score_column is not None:
+            info = part.episode_info[done]
+            present = (info[..., self.present_column] > 0.0 if self.present_column is not None
+                       else np.ones(info.shape[:-1], dtype=bool))
+            scores = (info[..., self.sil_score_column] * present).sum(axis=-1) / np.maximum(present.sum(axis=-1), 1)
+            self.buffer.ended_episodes.append((self.buffer.cursor, np.flatnonzero(done) + rows.start, scores))
 
         ended = part.episode_info[done].reshape(-1, spec.episode_info_dim)
         ended_layouts = ended_layout.reshape(-1)

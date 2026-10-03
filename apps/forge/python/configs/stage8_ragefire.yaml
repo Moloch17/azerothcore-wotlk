@@ -34,3 +34,6 @@ mappo:
   # Imitate the scripted fight's press where the sim suggests one: only with Instance.WingSupport on; off, the sim
   # writes no hint and this does nothing.
   hint_coef: 1.0
+  # Self-imitation (peak-play W5): the 16 best runs by outcome kept, imitated where they did better than the critic
+  # expects. The wing stages only: a run of a dungeon is long and its successes rare.
+  sil_coef: 0.1

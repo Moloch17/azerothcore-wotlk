@@ -376,6 +376,9 @@ class RolloutBuffer:
 
     def reset(self) -> None:
         self.cursor = 0
+        # The episodes that ended in this rollout -- (decision, envs, outcome scores) -- for self-imitation
+        # (animus.mappo.sil), noted by the rollout when it keeps them.
+        self.ended_episodes: list[tuple[int, np.ndarray, np.ndarray]] = []
 
     def sequences(self) -> dict[str, np.ndarray]:
         """The rollout as it happened, [T, E, A, ...]: what a recurrent update replays in order. `valid` marks the
