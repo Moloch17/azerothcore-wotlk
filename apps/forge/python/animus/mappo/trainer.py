@@ -14,9 +14,9 @@ from torch import nn
 from ..device import host
 from ..parallel import Ranks
 from .buffer import RolloutBuffer
-from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, load_actor_state, log_prob_of,
-                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair, split_goal_pair,
-                       to_device, update_norms)
+from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
+                       log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
+                       split_goal_pair, to_device, update_norms)
 from .valuenorm import ValueNorm
 
 
@@ -539,6 +539,16 @@ class _RolloutGraph:
         return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals, None
 
 
+def _host_stats(values: dict) -> dict[str, float]:
+    """A dict of per-update sums, some on the device, as floats: every tensor read in one transfer."""
+    names = [name for name, value in values.items() if isinstance(value, torch.Tensor)]
+    out = {name: float(value) for name, value in values.items() if not isinstance(value, torch.Tensor)}
+    if names:
+        read = torch.stack([values[name].detach().float().reshape(()) for name in names]).tolist()
+        out.update(zip(names, read))
+    return out
+
+
 class MappoTrainer:
     """Owns the networks. Rollouts run on `rollout_device` (a CPU copy is usually fastest for small
     MLPs at batch sizes of a few hundred); updates run on `train_device`."""
@@ -789,8 +799,6 @@ class MappoTrainer:
             return None
         at = self.hint_at[layout.long()]
         rows = (at >= 0) & valid
-        if not bool(rows.any()):
-            return None
         index = torch.arange(obs.shape[0], device=obs.device)
         safe = at.clamp(min=0)
         action = obs[index, safe].round().long() - 1
@@ -799,28 +807,29 @@ class MappoTrainer:
         # resting and while the party gathers, and a policy taught those no-ops stood still on its own (2026-10-01:
         # 2.5 kills an evaluation, none of them wiped).
         hinted = rows & (action > 0) & (weight > 0)
-        if not bool(hinted.any()):
+        # On the GPU masked rather than skipped: a minibatch with no hinted row adds a loss of 0 and counts nothing,
+        # and asking whether it has one would wait on the device every minibatch (the stats are read once,
+        # _host_stats). On the CPU asking is free, and hints are off in most runs (Instance.WingSupport 0).
+        if not hinted.is_cuda and not bool(hinted.any()):
             return None
         log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))
         w = weight * hinted.float()
         loss = -(log_prob * w).sum() / w.sum().clamp(min=1e-6)
         with torch.no_grad():
             match = (dist.logits.argmax(-1) == action) & hinted
+            count = hinted.sum()
             owners = getattr(self, "hint_owner", None)
             if owners is not None and owners.shape[1] > 0:
-                layout_rows = layout.long()[hinted]
-                actions = action[hinted].clamp(max=owners.shape[1] - 1)
-                kind = owners[layout_rows, actions]
+                kind = owners[layout.long(), action.clamp(min=0, max=owners.shape[1] - 1)]
                 for index, name in enumerate(self.hint_block_names):
-                    of_kind = kind == index
-                    if bool(of_kind.any()):
-                        ok = float(match[hinted][of_kind].sum())
-                        stats[f"hint_ok_{name}"] = stats.get(f"hint_ok_{name}", 0.0) + ok
-                        stats[f"hint_all_{name}"] = stats.get(f"hint_all_{name}", 0.0) + float(of_kind.sum())
-            stats["hint_loss"] = stats.get("hint_loss", 0.0) + float(loss.detach())
-            stats["hint_match"] = stats.get("hint_match", 0.0) + float(match.sum() / hinted.sum())
-            stats["hint_weight"] = stats.get("hint_weight", 0.0) + float(weight[hinted].mean())
-            stats["hint_n"] = stats.get("hint_n", 0.0) + 1.0
+                    of_kind = (kind == index) & hinted
+                    stats[f"hint_ok_{name}"] = stats.get(f"hint_ok_{name}", 0.0) + (match & of_kind).sum()
+                    stats[f"hint_all_{name}"] = stats.get(f"hint_all_{name}", 0.0) + of_kind.sum()
+            some = (count > 0).float()
+            stats["hint_loss"] = stats.get("hint_loss", 0.0) + loss.detach()
+            stats["hint_match"] = stats.get("hint_match", 0.0) + match.sum() / count.clamp(min=1)
+            stats["hint_weight"] = stats.get("hint_weight", 0.0) + (weight * hinted).sum() / count.clamp(min=1)
+            stats["hint_n"] = stats.get("hint_n", 0.0) + some
         return self.config.hint_coef * loss
 
     def _scripted_rows(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor | None:
@@ -872,6 +881,12 @@ class MappoTrainer:
             self._rollout_stream.wait_stream(torch.cuda.current_stream(self.rollout_device))
 
     def _tensor(self, array: np.ndarray, dtype=None) -> torch.Tensor:
+        # A device tensor (the sim's device buffers, protocol 15) is used where it is, or moved there on the device:
+        # sending it to the host and back up cost the eager decision -- every director stage's -- two copies of
+        # every input.
+        if isinstance(array, torch.Tensor):
+            return array.to(device=self.rollout_device, dtype=dtype if dtype is not None else array.dtype,
+                            non_blocking=True)
         if self.rollout_device.type != "cuda":
             return torch.as_tensor(array, device=self.rollout_device, dtype=dtype)
         # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
@@ -951,8 +966,8 @@ class MappoTrainer:
                 if graph.device_fed:
                     self.device_inputs = graph.large.device
                 return decided
-            # Device inputs (protocol 15) are for the captured decision; every other path reads the host's.
-            obs, mask, state_features = host(obs), host(mask), host(state_features)
+            # Device inputs (protocol 15) stay on the device (_tensor): the decision finishes its downloads before the
+            # actions go back, so the sim does not overwrite them while they are read.
             rows = envs * agents
             downloads = _Downloads(self._rollout_stream)
             # Converted and grouped by layout once, for the actor and the critic both.
@@ -1094,17 +1109,23 @@ class MappoTrainer:
     def hindsight_targets(self, buffer: RolloutBuffer) -> None:
         """Fill buffer.achieved: per decision, what the next observation's goal block says it achieved (-1 for
         nothing, and at the rollout's last step and where the episode ended, which have no next observation here)."""
-        buffer.achieved.fill(-1)
+        tensor = lambda array: torch.as_tensor(array, device=self.train_device)
+        buffer.achieved[:] = self._achieved_of(tensor(buffer.obs), tensor(buffer.layout), tensor(buffer.dones)).cpu()
+
+    def _achieved_of(self, obs: torch.Tensor, layout: torch.Tensor, dones: torch.Tensor) -> torch.Tensor:
+        """hindsight_targets on tensors already on the device: [T, E, A], -1 where nothing was achieved. The update
+        reads it off the observations it has just uploaded rather than uploading them a second time."""
+        steps, envs, agents = layout.shape
+        achieved = torch.full((steps, envs, agents), -1, dtype=torch.long, device=obs.device)
         head = self.actor.goal_head
-        if head is None or head.slots <= 1 or buffer.steps < 2:
-            return
-        steps, envs, agents = buffer.layout.shape
+        if head is None or head.slots <= 1 or steps < 2:
+            return achieved
         with torch.no_grad():
-            obs = torch.as_tensor(buffer.obs[1:], device=self.train_device).reshape(-1, buffer.obs.shape[-1])
-            layout = torch.as_tensor(buffer.layout[1:], device=self.train_device).reshape(-1)
-            achieved = head.signals(obs.float(), layout)["achieved"].reshape(steps - 1, envs, agents).cpu().numpy()
-        ended = np.broadcast_to(buffer.dones[:-1, :, None], achieved.shape)
-        buffer.achieved[:-1] = np.where(ended, -1, achieved)
+            following = head.signals(obs[1:].reshape(-1, obs.shape[-1]).float(), layout[1:].reshape(-1))["achieved"]
+            following = following.reshape(steps - 1, envs, agents).long()
+        ended = dones[:-1, :, None].expand_as(following).bool()
+        achieved[:-1] = torch.where(ended, torch.full_like(following, -1), following)
+        return achieved
 
     def wire_goals(self, goal: np.ndarray) -> np.ndarray:
         """The goals ACT carries for held goals `goal` [E, A]: [E, A, 2], primary then secondary (-1 none)."""
@@ -1378,14 +1399,12 @@ class MappoTrainer:
                 if column >= predicted.shape[-1]:
                     continue
                 weight = known[..., column]
-                count = float(weight.sum())
-                if count <= 0.0:
-                    continue
+                count = weight.sum()
                 # Trained by squared error on the value itself (not a logit): a probability is the value, clamped.
                 guess = predicted[..., column].clamp(0.0, 1.0) if binary else predicted[..., column]
                 error = (guess - targets[..., column]) ** 2 if binary else (guess - targets[..., column]).abs()
                 key = f"forecast_{name}_{decisions}_{'brier' if binary else 'error'}"
-                out[key] = out.get(key, 0.0) + float((error * weight).sum())
+                out[key] = out.get(key, 0.0) + (error * weight).sum()
                 out[key + "_n"] = out.get(key + "_n", 0.0) + count
 
     # ------------------------------------------------------------------ update
@@ -1393,8 +1412,6 @@ class MappoTrainer:
     def update(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update over the rollout. `auxiliary(data, idx, dist)` may add a loss to each minibatch's actor
         loss: it returns (loss, {stat: value}) or None (see animus.distill)."""
-        if self.config.hindsight_coef > 0.0:
-            self.hindsight_targets(buffer)
         if self.config.rank_sync not in ("gradients", "weights", "async"):
             raise ValueError(f"mappo.rank_sync is {self.config.rank_sync!r}: gradients, weights or async")
         stats = self._update(buffer, auxiliary, sync)
@@ -1484,6 +1501,8 @@ class MappoTrainer:
         # be read back from the device.
         host = buffer.sequences()
         data = {name: torch.as_tensor(value, device=self.train_device) for name, value in host.items()}
+        if cfg.hindsight_coef > 0.0 and "achieved" in data:
+            data["achieved"] = self._achieved_of(data["obs"], data["layout"], data["dones"])
         chunk_length = self._chunk_length(host["actions"].shape[0], auxiliary)
         if chunk_length:
             # [T, E, ...] as [L, T/L * E, ...]: chunk k of env e is "env" k * E + e, replayed from memory[k * L, e].
@@ -1552,8 +1571,8 @@ class MappoTrainer:
                 scripted = self._scripted_rows(obs_all, layout_all)
                 if scripted is not None:
                     counted = counted * (~scripted).reshape(counted.shape).to(torch.float32)
-                    auxiliary_stats["scripted_share"] = auxiliary_stats.get("scripted_share", 0.0) + float(
-                        scripted.float().mean())
+                    auxiliary_stats["scripted_share"] = (auxiliary_stats.get("scripted_share", 0.0)
+                                                         + scripted.float().mean())
                 weight = counted.sum().clamp(min=1.0)
 
                 # The actor's half of the minibatch on one stream, the critic's on another: they share only these
@@ -1641,9 +1660,9 @@ class MappoTrainer:
                         swapped = self.actor.action_distribution(features, layout_all, mask_all, other, groups,
                                                                  obs_all).logits.argmax(-1)
                         rows_valid = valid[:, chunk].reshape(-1)
-                        changed = (swapped != dist.logits.argmax(-1))[rows_valid]
+                        changed = ((swapped != dist.logits.argmax(-1)) & rows_valid).sum()
                         auxiliary_stats["goal_swap_action_change"] = auxiliary_stats.get(
-                            "goal_swap_action_change", 0.0) + float(changed.float().mean() if changed.numel() else 0.0)
+                            "goal_swap_action_change", 0.0) + changed / rows_valid.sum().clamp(min=1)
                         auxiliary_stats["goal_swap_n"] = auxiliary_stats.get("goal_swap_n", 0.0) + 1.0
 
                 if cfg.hindsight_coef > 0.0 and self.goal_slots > 1 and "achieved" in data:
@@ -1652,18 +1671,28 @@ class MappoTrainer:
                     achieved = data["achieved"][:, chunk].reshape(-1)
                     primary = split_goal_pair(goal_all, self.goal_count)[0]
                     relabel = (achieved >= 0) & (achieved != primary) & valid[:, chunk].reshape(-1)
-                    if bool(relabel.any()):
-                        swapped = goal_pair(achieved[relabel], torch.full_like(achieved[relabel], -1),
-                                            self.goal_count)
+                    relabelled_rows = relabel.sum()
+                    actions_all = data["actions"][:, chunk].reshape(-1)
+                    if features.is_cuda:
+                        # On the GPU every row goes through the head with the goal it achieved (any valid goal where
+                        # it achieved none) and the loss is taken over the relabelled rows: picking them out would
+                        # wait on the device for their count every minibatch.
+                        achieved_goal = torch.where(relabel, achieved, torch.zeros_like(achieved))
+                        swapped = goal_pair(achieved_goal, torch.full_like(achieved_goal, -1), self.goal_count)
+                        relabelled = self.actor.action_distribution(features, layout_all, mask_all, swapped, None,
+                                                                    obs_all)
+                        picked_log_prob = (relabelled.log_prob(actions_all) * relabel).sum()
+                    else:
+                        # On the CPU the count costs nothing to read, and the head runs on the relabelled rows alone.
+                        swapped = goal_pair(achieved[relabel], torch.full_like(achieved[relabel], -1), self.goal_count)
                         relabelled = self.actor.action_distribution(features[relabel], layout_all[relabel],
-                                                                    mask_all[relabel], swapped, None,
-                                                                    obs_all[relabel])
-                        hindsight_loss = -relabelled.log_prob(data["actions"][:, chunk].reshape(-1)[relabel]).mean()
-                        actor_loss = actor_loss + cfg.hindsight_coef * hindsight_loss
-                        auxiliary_stats["hindsight_loss"] = auxiliary_stats.get("hindsight_loss", 0.0) + float(
-                            hindsight_loss.detach())
-                        auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + float(
-                            relabel.sum())
+                                                                    mask_all[relabel], swapped, None, obs_all[relabel])
+                        picked_log_prob = relabelled.log_prob(actions_all[relabel]).sum()
+                    hindsight_loss = -picked_log_prob / relabelled_rows.clamp(min=1)
+                    actor_loss = actor_loss + cfg.hindsight_coef * hindsight_loss
+                    auxiliary_stats["hindsight_loss"] = (auxiliary_stats.get("hindsight_loss", 0.0)
+                                                         + hindsight_loss.detach())
+                    auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + relabelled_rows
 
                 hint_loss = self._hint_loss(dist, obs_all, layout_all, valid[:, chunk].reshape(-1), auxiliary_stats)
                 if hint_loss is not None:
@@ -1674,8 +1703,8 @@ class MappoTrainer:
                     # rows_taught), exactly as the flat path's is over a minibatch's. Both paths add it as it comes:
                     # dividing again by the chunk length would scale the coefficient down by rollout_length.
                     actor_loss = actor_loss + distill_loss
-                    auxiliary_stats["distill_kl"] = auxiliary_stats.get("distill_kl", 0.0) + float(
-                        distill_loss.detach() / max(1e-6, teach.coef))
+                    auxiliary_stats["distill_kl"] = (auxiliary_stats.get("distill_kl", 0.0)
+                                                     + distill_loss.detach() / max(1e-6, teach.coef))
                     auxiliary_stats["distill_rows"] = auxiliary_stats.get("distill_rows", 0.0) + float(distill_rows)
                     auxiliary_updates += 1
 
@@ -1747,28 +1776,38 @@ class MappoTrainer:
         stats["explained_variance"] = float(explained)
         stats["epochs_run"] = float(epochs_run)
         stats.update(self._goal_stats(data))
+        auxiliary_stats = _host_stats(auxiliary_stats)
         # The forecasts' quality: sums over every minibatch with their counts (_foresight_quality).
         for name in [n for n in auxiliary_stats if n.startswith("forecast_") and not n.endswith("_n")]:
             count = auxiliary_stats.pop(name + "_n", 0.0)
-            stats[name] = auxiliary_stats.pop(name) / max(count, 1.0)
+            value = auxiliary_stats.pop(name)
+            if count > 0.0:
+                stats[name] = value / count
         if "goal_swap_n" in auxiliary_stats:
             count = auxiliary_stats.pop("goal_swap_n")
             stats["goal_swap_action_change"] = auxiliary_stats.pop("goal_swap_action_change") / max(count, 1.0)
         # Hints: the imitation loss, how often the greedy action is the hint and the sim's weight, per minibatch.
         if "hint_n" in auxiliary_stats:
-            count = max(auxiliary_stats.pop("hint_n"), 1.0)
+            count = auxiliary_stats.pop("hint_n")
             for name in ("hint_loss", "hint_match", "hint_weight"):
-                stats[name] = auxiliary_stats.pop(name, 0.0) / count
+                value = auxiliary_stats.pop(name, 0.0)
+                if count > 0.0:
+                    stats[name] = value / count
         for key in [k for k in auxiliary_stats if k.startswith("hint_all_")]:
             name = key[len("hint_all_"):]
-            total = max(auxiliary_stats.pop(key), 1.0)
-            stats[f"hint_match_{name}"] = auxiliary_stats.pop(f"hint_ok_{name}", 0.0) / total
+            total = auxiliary_stats.pop(key)
+            ok = auxiliary_stats.pop(f"hint_ok_{name}", 0.0)
+            if total > 0.0:
+                stats[f"hint_match_{name}"] = ok / total
         if "scripted_share" in auxiliary_stats:
             stats["scripted_share"] = auxiliary_stats.pop("scripted_share") / max(1, updates)
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
-            stats["hindsight_rows"] = auxiliary_stats.pop("hindsight_rows")
-            stats["hindsight_loss"] = auxiliary_stats.pop("hindsight_loss") / max(1, updates)
+            relabelled = auxiliary_stats.pop("hindsight_rows")
+            hindsight = auxiliary_stats.pop("hindsight_loss")
+            if relabelled > 0.0:
+                stats["hindsight_rows"] = relabelled
+                stats["hindsight_loss"] = hindsight / max(1, updates)
         stats.update({name: value / auxiliary_updates for name, value in auxiliary_stats.items()})
         # What the update itself cost, as the flat path reports it.
         # After the epochs, not before: the rollout acted through these statistics, and its stored log_probs are
@@ -1777,8 +1816,10 @@ class MappoTrainer:
         # rollout copies below keeps the acting and training views of a feature identical, one rollout apart.
         if cfg.normalise_observations:
             flat_obs = data["obs"].reshape(-1, data["obs"].shape[-1])[rows]
-            update_norms(self.actor.norms, flat_obs, flat_layout[rows], self.actor.obs_dims, self.ranks)
-            update_norms(self.critic.norms, flat_obs, flat_layout[rows], self.critic.obs_dims, self.ranks)
+            sampled_layout = flat_layout[rows]
+            groups = None if self.ranks.active else _per_layout(sampled_layout, len(self.actor.norms))
+            update_norms(self.actor.norms, flat_obs, sampled_layout, self.actor.obs_dims, self.ranks, groups)
+            update_norms(self.critic.norms, flat_obs, sampled_layout, self.critic.obs_dims, self.ranks, groups)
             states = data["state"][:, :, None, :].expand(steps, envs, agents, data["state"].shape[-1])
             self.critic.state_norm.update(states.reshape(-1, data["state"].shape[-1])[rows], self.ranks)
 

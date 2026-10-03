@@ -27,6 +27,7 @@ import json
 import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -360,16 +361,34 @@ class DecisionRows:
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
 
+    #: The large host fields set() writes straight into the rollout buffer at this decision's step (the field's name
+    #: there): copied once, where a decision of their own copied them twice -- into here, then into the buffer.
+    DIRECT = {"obs": "obs", "state": "state", "mask": "mask", "memory": "memory", "critic_memory": "critic_memory"}
+
     def __init__(self, envs: int, agents: int, buffer=None, t: int = 0):
         """`buffer` and `t`: the rollout buffer and the step this decision is recorded at (store_inputs)."""
         self.envs = envs
         self.buffer, self.t = buffer, t
         self.arrays: dict[str, np.ndarray | None] = {}
 
+    def _direct(self, name: str, value):
+        """The rollout buffer's array this field goes straight into, or None (no buffer, a device value, or a buffer
+        array on the device)."""
+        if self.buffer is None or name not in DecisionRows.DIRECT or not isinstance(value, np.ndarray):
+            return None
+        target = getattr(self.buffer, DecisionRows.DIRECT[name], None)
+        if not isinstance(target, np.ndarray) or target.shape[2:] != value.shape[1:]:
+            return None
+        return target
+
     def set(self, rows: slice, **values) -> None:
         for name, value in values.items():
             if value is None:
                 self.arrays[name] = None
+                continue
+            if (target := self._direct(name, value)) is not None:
+                target[self.t, rows] = value
+                self.arrays[name] = DecisionRows.IN_BUFFER
                 continue
             array = self.arrays.get(name)
             if array is None:
@@ -389,7 +408,10 @@ class DecisionRows:
 
     def __getattr__(self, name: str):
         if name in DecisionRows.FIELDS:
-            return self.__dict__["arrays"].get(name)
+            value = self.__dict__["arrays"].get(name)
+            if value is DecisionRows.IN_BUFFER:
+                return getattr(self.__dict__["buffer"], DecisionRows.DIRECT.get(name, name))[self.__dict__["t"]]
+            return value
         raise AttributeError(name)
 
     def recorded(self) -> tuple:
@@ -1302,8 +1324,7 @@ class TrainingRun:
                       obs_targets=trainer.foresight_obs_columns())
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
-        self.rollout_allowed_actions = buffer.mean_allowed_actions()
-        self.layout_allowed = self.allowed_actions_by_layout(buffer)
+        self.rollout_allowed_actions, self.layout_allowed = self.allowed_actions(buffer)
         # The leader's controller decides, for every rank.
         entropy_coef = self.controller.entropy_coef(self.env_steps)
         lr_scale = self.controller.lr_scale(self.env_steps)
@@ -1370,13 +1391,21 @@ class TrainingRun:
     def _act_on_rows(self, part: protocol.Step, rows: slice, decision: DecisionRows, send) -> None:
         """The policy's decision for envs `rows` (`part` is their STEP), recorded into `decision` and sent."""
         trainer = self.trainer
-        memory = self.acting.memory[rows].copy() if self.acting.memory is not None else None
-        critic_memory = self.acting.critic_memory[rows].copy() if self.acting.critic_memory is not None else None
+        # take() copies these envs' state; acting replaces its memories rather than writing into them, so the copies
+        # it was handed are the memories this decision started from, which the rollout buffer records.
+        acting = self.acting.take(rows)
+        memory, critic_memory = acting.memory, acting.critic_memory
         # A non-finite observation reaches the networks as a non-finite logit and comes back out of
         # torch.multinomial as "probability tensor contains either `inf`, `nan` or element < 0" -- an error
         # that names neither the observation nor the seat it came from, several layers away from whichever
         # block wrote it. Caught here it names both, which is the difference between a fix and a hunt.
-        finite = bool(part.obs.isfinite().all()) if hasattr(part.obs, "isfinite") else np.isfinite(part.obs).all()
+        # A device view is checked on the rollout's own stream: on the default one it queued behind an overlapped
+        # update's kernels and the decision waited for the whole update.
+        if isinstance(part.obs, torch.Tensor):
+            with torch.cuda.stream(trainer.rollout_stream) if trainer.rollout_stream is not None else nullcontext():
+                finite = bool(part.obs.isfinite().all())
+        else:
+            finite = np.isfinite(part.obs).all()
         if not finite:
             obs = host(part.obs)
             bad = np.argwhere(~np.isfinite(obs))
@@ -1386,7 +1415,6 @@ class TrainingRun:
                 f"{len(bad)} non-finite observation(s) from the sim at step {self.env_steps}: {where}"
                 + ("" if len(bad) <= 8 else f" (and {len(bad) - 8} more)"))
 
-        acting = self.acting.take(rows)
         actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
             part.obs, part.mask, part.layout, part.state, state=acting)
         self.acting.put(rows, acting)
@@ -1490,16 +1518,20 @@ class TrainingRun:
         return value_ended
 
     @staticmethod
-    def allowed_actions_by_layout(buffer: RolloutBuffer) -> dict[int, float]:
-        """Mean legal actions per decision, per layout index, over the rollout's samples."""
+    def allowed_actions(buffer: RolloutBuffer) -> tuple[float, dict[int, float]]:
+        """Mean legal actions per decision over the rollout's samples (0 when there are none), overall and per layout
+        index: the mask summed once for both. Entropy only means something against this: a policy over 6 legal
+        actions and one over 60 have very different ceilings."""
         layout = buffer.layout.reshape(-1)
         valid = buffer.valid.reshape(-1)
         allowed = host(buffer.mask.reshape(-1, buffer.mask.shape[-1]).sum(-1))
+        if not valid.any():
+            return 0.0, {}
         out = {}
         for index in np.unique(layout[valid]):
             rows = valid & (layout == index)
-            out[int(index)] = float(allowed[rows].mean()) if rows.any() else 0.0
-        return out
+            out[int(index)] = float(allowed[rows].mean())
+        return float(allowed[valid].mean()), out
 
     def named_layout_stats(self) -> dict[str, dict[str, float]]:
         """The last update's per-class entropy, approx_kl and allowed actions, by layout name."""

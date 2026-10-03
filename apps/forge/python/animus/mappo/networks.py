@@ -243,14 +243,16 @@ def skip_distribution_checks() -> None:
 
 
 @torch.no_grad()
-def update_norms(norms: nn.ModuleList, obs: torch.Tensor, layout: torch.Tensor, obs_dims, ranks=None) -> None:
+def update_norms(norms: nn.ModuleList, obs: torch.Tensor, layout: torch.Tensor, obs_dims, ranks=None,
+                 groups=None) -> None:
     """Fold a rollout's observations into each layout's statistics, each from its own rows and own features. With
-    data-parallel `ranks` every layout is visited on every rank, rows or none: each is a collective."""
+    data-parallel `ranks` every layout is visited on every rank, rows or none: each is a collective. `groups` is
+    _per_layout(layout) when the caller has it already (the actor's and the critic's norms read the same rows)."""
     if ranks is not None and ranks.active:
         for index, norm in enumerate(norms):
             norm.update(obs[layout == index, : obs_dims[index]], ranks)
         return
-    for index, rows in _per_layout(layout, len(norms)):
+    for index, rows in groups if groups is not None else _per_layout(layout, len(norms)):
         norms[index].update(obs[rows, : obs_dims[index]])
 
 
@@ -643,12 +645,12 @@ class DirectorSets(nn.Module):
 
 
 def _director_extra(sets: "DirectorSets | None", index: int, obs: torch.Tensor, layout: torch.Tensor):
-    """What the director rows' sets add to the adapter's output [rows, width] (None without director rows)."""
+    """What the director rows' sets add to the adapter's output [rows, width] (zero on the other rows; None without a
+    director). Written through the mask rather than skipped when no row is the director's: asking would wait on the
+    device every forward, and a set of no rows encodes to nothing."""
     if sets is None:
         return None
     rows = layout.reshape(-1) == index
-    if not bool(rows.any()):
-        return None
     extra = obs.new_zeros(obs.shape[0], sets.pool.out_features)
     extra[rows] = sets.pooled(obs[rows, : sets.column_mask.shape[0]]).to(extra.dtype)
     return extra
@@ -981,8 +983,8 @@ class LayoutActor(nn.Module):
         if self.director_sets is None or obs is None:
             return logits
         rows = layout.reshape(-1) == self.director_index
-        if not bool(rows.any()):
-            return logits
+        # No early return for a batch without director rows: asking would wait on the device every forward, and
+        # writing through no rows changes nothing.
         logits = logits.clone()
         picked = torch.nonzero(rows).reshape(-1)
         director_obs = obs.reshape(-1, obs.shape[-1])[picked, : self.director_sets.column_mask.shape[0]]

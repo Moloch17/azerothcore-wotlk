@@ -236,6 +236,20 @@ def encode_step(spec: Spec, step: Step) -> bytes:
     return b"".join(parts)
 
 
+_DECODE_LAYOUTS: dict[tuple, list] = {}
+
+
+def _decode_layout(spec: Spec, envs: int, device: bool) -> list[tuple[str, np.dtype, tuple[int, ...], bool]]:
+    """Spec.step_layout for a STEP of `envs` envs, with each field's u1 flag, built once per shape: a STEP is decoded
+    every decision, and the layout of a given spec and env count never changes."""
+    key = (spec, envs, device)
+    layout = _DECODE_LAYOUTS.get(key)
+    if layout is None:
+        layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1"))
+                                         for name, dtype, shape in spec.step_layout(envs, device=device)]
+    return layout
+
+
 def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None) -> Step:
     """Decode a STEP payload. Arrays are copies, so the receive buffer can be reused. Raises ValueError when the
     payload is not the size its envs and ended envs make. With `device` (animus.device.DeviceBuffers, protocol 15)
@@ -245,21 +259,21 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
     arrays = {}
     if device is not None:
         arrays["obs"], arrays["state"], arrays["mask"] = device.rows(env_begin, envs)
-    done = None
-    layout = spec.step_layout(envs, device=device is not None)
-    for name, dtype, shape in layout:
+    done = ended = None
+    for name, dtype, shape, flag in _decode_layout(spec, envs, device is not None):
         if name in ENDED_ONLY:
-            ended = np.flatnonzero(done)
+            if ended is None:
+                ended = np.flatnonzero(done)
             rows = (len(ended),) + shape[1:]
             count = int(np.prod(rows))
             array = np.zeros(shape, dtype)
             array[ended] = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(rows)
         else:
             count = int(np.prod(shape))
-            array = np.frombuffer(payload, dtype=dtype, count=count, offset=offset).reshape(shape).copy()
+            # A u1 flag is read as bool directly (the sim writes 0 or 1): one copy, not a copy and a conversion.
+            array = np.frombuffer(payload, dtype=bool if flag else dtype, count=count, offset=offset).reshape(
+                shape).copy()
         offset += dtype.itemsize * count
-        if dtype == np.dtype("u1"):
-            array = array.astype(bool)
         if name == "done":
             done = array
         arrays[name] = array

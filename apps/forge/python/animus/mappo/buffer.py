@@ -400,22 +400,6 @@ class RolloutBuffer:
                 "achieved": self.achieved} if self.goals else {}),
         }
 
-    def mean_allowed_actions(self) -> float:
-        """Mean legal actions per decision over the valid samples (0 when there are none).
-
-        Entropy only means something against this: a policy over 6 legal actions and one over 60 have very
-        different ceilings, and the masked action space here swings with level, cooldowns and the global cooldown.
-        """
-        if not self.valid.any():
-            return 0.0
-
-        if isinstance(self.mask, np.ndarray):
-            return float(self.mask[self.valid].sum(axis=-1).mean())
-        import torch
-
-        valid = torch.as_tensor(self.valid, device=self.mask.device)
-        return float(self.mask[valid].sum(dim=-1).float().mean())
-
     def mean_reward(self) -> float:
         """Mean reward per decision over the valid samples (0 when there are none)."""
         return float(self.rewards[self.valid].mean()) if self.valid.any() else 0.0
