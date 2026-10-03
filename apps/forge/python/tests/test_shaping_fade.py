@@ -117,6 +117,7 @@ def test_state_round_trips_mid_wait_and_survives_resumes_across_configs():
     ({"window": 0}, "fade.window"),
     ({"regress_z": 0.0}, "fade.regress_z"),
     ({"give_up": 0}, "fade.give_up"),
+    ({"moving_classes": -1}, "fade.moving_classes"),
 ])
 def test_a_bad_fade_config_is_refused_at_load(raw, key):
     with pytest.raises(ValueError, match=key):
@@ -131,3 +132,21 @@ def test_progress_carries_the_shaping_scale_on_protocol_18():
     assert len(payload) == 8 and struct.unpack("<ff", payload) == (0.25, 0.5)
     assert struct.unpack("<ff", p.encode_progress(2.0, -1.0)) == (1.0, 0.0)   # clamped as the sim would
     assert struct.unpack("<ff", p.encode_progress(0.5)) == (0.5, 1.0)          # shaping in full by default
+
+
+@pytest.mark.parametrize("moving_classes, restless, settled", [
+    (1, 1, True),       # one class still climbing its ladder does not hold the fade
+    (1, 2, False),      # two do
+    (0, 1, False),      # 0: every class still, as before
+])
+def test_the_fade_waits_for_the_ladders_but_not_for_every_last_class(moving_classes, restless, settled):
+    config = TrainConfig()
+    config.fade = FadeConfig(enabled=True, moving_classes=moving_classes)
+    names = ["mage_dps", "warrior_dps", "priest_heal"]
+    controller = ConvergenceController(config, names)
+    for index, name in enumerate(names):
+        state = controller.layouts[name]
+        state.played = True
+        # A restless class's rung moved by a whole rung over the window; a settled one by a tenth.
+        state.rung = [1.0, 2.0, 3.0, 4.0] if index < restless else [3.0, 3.1, 3.0, 3.1]
+    assert controller.ladders_settled() == settled

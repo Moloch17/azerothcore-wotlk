@@ -164,6 +164,9 @@ class FadeConfig:
     window: int = 4  # evaluations at a rung before it may step, and the plateau test's patience
     regress_z: float = 2.0
     give_up: int = 2  # falls back to the same rung before the ladder stays there
+    # Classes whose difficulty ladder may still be moving when the shaping ladder steps: ten classes' ladders are rarely
+    # all still at once, and waiting for every one held the fade at x1 for the whole of stage4 (2026-10-03).
+    moving_classes: int = 2
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)
@@ -176,6 +179,8 @@ class FadeConfig:
             raise ValueError(f"fade.regress_z: expected more than 0 standard errors, got {self.regress_z!r}")
         if self.give_up < 1:
             raise ValueError(f"fade.give_up: expected at least 1 fall, got {self.give_up!r}")
+        if self.moving_classes < 0:
+            raise ValueError(f"fade.moving_classes: expected 0 or more, got {self.moving_classes!r}")
         self.rungs = rungs
 
 

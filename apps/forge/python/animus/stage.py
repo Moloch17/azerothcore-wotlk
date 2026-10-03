@@ -384,14 +384,17 @@ class ConvergenceController:
         return improved
 
     def ladders_settled(self) -> bool:
-        """Every played class's difficulty ladder (a ladder stage's rung) has settled over the window; True without
-        one. The shaping ladder waits for it: two ladders moving at once cannot be told apart in the score."""
+        """The played classes' difficulty ladders (a ladder stage's rungs) have settled over the window, all but at most
+        fade.moving_classes of them; True without one. The shaping ladder waits for it: two ladders moving at once
+        cannot be told apart in the score. A few classes still moving do not move the score much; waiting for every
+        one of ten never ended (stage4, 2026-10-03)."""
         window = self.config.convergence.window
+        moving = 0
         for state in self.played_layouts():
             rungs = [value for value in state.rung[-window:] if value is not None]
             if rungs and max(rungs) - min(rungs) > RUNG_SETTLED:
-                return False
-        return True
+                moving += 1
+        return moving <= self.config.fade.moving_classes
 
     def played_layouts(self) -> list[LayoutState]:
         return [state for state in self.layouts.values() if state.played]
