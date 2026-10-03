@@ -26,9 +26,11 @@
 #include <queue>
 #include <unordered_map>
 
-namespace
+// Named, not anonymous: the build compiles the forge's files several to a unit, and LayeredField.cpp's own helpers
+// (Column, Open, ...) would meet these there.
+namespace FieldRouteSearch
 {
-    namespace Field = Animus::Curriculum::LayeredField;
+    namespace Lhf = Animus::Curriculum::LayeredField;
     using namespace Animus::Curriculum::FieldRoute;
 
     /// How far up or down from a point a floor of its column still counts as the point's own (the seat's feet).
@@ -46,15 +48,15 @@ namespace
     struct Grids
     {
         uint32 MapId = 0;
-        std::map<std::pair<int32, int32>, std::shared_ptr<Field::Grid const>> Held;
+        std::map<std::pair<int32, int32>, std::shared_ptr<Lhf::Grid const>> Held;
 
-        Field::Grid const* At(float x, float y)
+        Lhf::Grid const* At(float x, float y)
         {
             std::pair<int32, int32> const key{ Animus::Curriculum::ProbeBake::GridIndex(x),
                 Animus::Curriculum::ProbeBake::GridIndex(y) };
             auto found = Held.find(key);
             if (found == Held.end())
-                found = Held.emplace(key, Field::Store::Find(MapId, key.first, key.second)).first;
+                found = Held.emplace(key, Lhf::Store::Find(MapId, key.first, key.second)).first;
             return found->second.get();
         }
     };
@@ -76,13 +78,13 @@ namespace
     /// navmesh's or open to the sky (the rest are the undersides of something solid, which the field also holds).
     struct Column
     {
-        Field::Interval const* Begin = nullptr;
-        Field::Interval const* End = nullptr;
+        Lhf::Interval const* Begin = nullptr;
+        Lhf::Interval const* End = nullptr;
     };
 
     Column ColumnAt(Grids& grids, float x, float y)
     {
-        Field::Grid const* grid = grids.At(x, y);
+        Lhf::Grid const* grid = grids.At(x, y);
         if (!grid || !grid->Side)
             return {};
         int32 const column = int32(std::lround((x - grid->MinX) / grid->Cell));
@@ -93,7 +95,7 @@ namespace
         return { grid->Intervals.data() + grid->First[cell], grid->Intervals.data() + grid->First[cell + 1] };
     }
 
-    bool Standable(Field::Interval const& floor)
+    bool Standable(Lhf::Interval const& floor)
     {
         uint8 const nav = floor.NavFlags();
         if (nav & (NAV_MAGMA | NAV_SLIME))
@@ -111,7 +113,7 @@ namespace
         float best = SNAP;
         bool found = false;
         uint32 i = 0;
-        for (Field::Interval const* floor = column.Begin; floor != column.End; ++floor, ++i)
+        for (Lhf::Interval const* floor = column.Begin; floor != column.End; ++floor, ++i)
             if (Standable(*floor) && std::fabs(floor->Floor() - z) <= best)
             {
                 best = std::fabs(floor->Floor() - z);
@@ -141,6 +143,7 @@ namespace
 
 bool Animus::Curriculum::FieldRoute::Covers(uint32 mapId, float x, float y)
 {
+    using namespace FieldRouteSearch;
     Grids grids;
     grids.MapId = mapId;
     return ColumnAt(grids, x, y).Begin != nullptr;
@@ -149,8 +152,9 @@ bool Animus::Curriculum::FieldRoute::Covers(uint32 mapId, float x, float y)
 bool Animus::Curriculum::FieldRoute::Plan(uint32 mapId, Position const& from, Position const& to,
     std::vector<Position>& out, uint32 maxNodes)
 {
+    using namespace FieldRouteSearch;
     out.clear();
-    if (!Field::Store::Enabled())
+    if (!Lhf::Store::Enabled())
         return false;
     Grids grids;
     grids.MapId = mapId;
@@ -217,7 +221,7 @@ bool Animus::Curriculum::FieldRoute::Plan(uint32 mapId, Position const& from, Po
             Column const column = ColumnAt(grids, float(nx), float(ny));
             float const across = (step[0] && step[1]) ? 1.41421356f : 1.0f;
             uint32 index = 0;
-            for (Field::Interval const* floor = column.Begin; floor != column.End; ++floor, ++index)
+            for (Lhf::Interval const* floor = column.Begin; floor != column.End; ++floor, ++index)
             {
                 if (!Standable(*floor))
                     continue;
