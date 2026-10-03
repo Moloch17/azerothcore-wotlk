@@ -20,7 +20,7 @@ import torch
 
 from .bootstrap import DIRECTOR_LAYOUT
 
-from .mappo.networks import MASKED_LOGIT, LayoutActor, load_actor_state
+from .mappo.networks import LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of
 from .stages import Span, arena_names, arena_state_span, block_spans
 
 
@@ -91,9 +91,11 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
     t_stage = checkpoint.get("stage")
     director = ((t_names.index(DIRECTOR_LAYOUT), t_stage["director"])
                 if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
+    # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
+    seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1))
+                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
     actor.to(device).eval()
     for param in actor.parameters():

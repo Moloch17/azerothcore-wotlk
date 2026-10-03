@@ -644,6 +644,142 @@ class DirectorSets(nn.Module):
                 for (first, over), query in zip(self.pointers, self.queries)]
 
 
+#: The seat sets in the order their pooled encodings are concatenated (stage.json layouts.<name>.sets names).
+SEAT_SET_NAMES = ("enemies", "members", "friends", "crowd")
+
+
+class EntitySets(nn.Module):
+    """**Every seat layout's entities as sets** (peak-play W4, mappo.seat_sets): the director's DirectorSets for the
+    seats. A slot of a set -- an enemy, a teammate, a friend, a creature in the crowd -- is gathered from the segments
+    stage.json names (an enemy is its pack block slot and its hostiles block slot) and goes through one encoder shared
+    by every slot and every layout, so a class reads its fourth enemy with the weights it reads its first with. The
+    encodings of the slots present are pooled (mean and max) and added to the adapter's output; the raw slot columns
+    are kept out of every layout's adapter (blind_columns), so nothing learns a slot's position. The actions that name
+    a slot -- select this enemy, assist or guard this member, select this friend -- are scored from that slot's
+    encoding against a query from the features (pointer heads), so they follow the entity rather than the slot.
+
+    `descriptors` is per layout stage.json's layouts.<name>.sets (an empty list for a layout without any, the
+    director included). Every layout gathers through one table indexed by its layout id, one batched op whatever mix
+    of classes a batch holds."""
+
+    def __init__(self, descriptors: Sequence[Sequence[dict]], obs_dims: Sequence[int], width: int,
+                 head_width: int = 0, embed: int = 64):
+        super().__init__()
+        layouts = len(descriptors)
+        self.embed = embed
+        shapes: dict[str, tuple[int, int]] = {}
+        for sets in descriptors:
+            for entry in sets:
+                name = entry["name"]
+                shape = (int(entry["slots"]), sum(int(part["stride"]) for part in entry["segments"]))
+                if shapes.setdefault(name, shape) != shape:
+                    raise ValueError(f"seat set {name!r}: {shapes[name]} (slots, width) in one layout and {shape} in "
+                                     f"another; a shared encoder needs one shape")
+        self.names = [name for name in SEAT_SET_NAMES if name in shapes] + sorted(set(shapes) - set(SEAT_SET_NAMES))
+        self.shapes = {name: shapes[name] for name in self.names}
+        self.encoders = nn.ModuleDict({name: nn.Sequential(_linear(width_, embed, math.sqrt(2)), nn.Tanh(),
+                                                           _linear(embed, embed, math.sqrt(2)), nn.Tanh())
+                                       for name, (_, width_) in self.shapes.items()})
+        self.pool = _linear(2 * embed * len(self.names), width, 1.0)
+        # Per set: [layouts, slots * width] observation columns and [layouts, slots] present columns (-1: the layout
+        # has no such set). Derived from stage.json, not learned: kept out of the state dict.
+        self.has = {}
+        for name, (slots, width_) in self.shapes.items():
+            columns = torch.zeros(layouts, slots * width_, dtype=torch.long)
+            present = torch.full((layouts, slots), -1, dtype=torch.long)
+            for index, sets in enumerate(descriptors):
+                for entry in sets:
+                    if entry["name"] != name:
+                        continue
+                    for slot in range(slots):
+                        row = []
+                        for part in entry["segments"]:
+                            first, stride = int(part["first"]), int(part["stride"])
+                            row.extend(range(first + slot * stride, first + (slot + 1) * stride))
+                        columns[index, slot * width_ : (slot + 1) * width_] = torch.tensor(row)
+                        present[index, slot] = int(entry["segments"][0]["first"]) + slot * int(
+                            entry["segments"][0]["stride"]) + int(entry["present"])
+            self.register_buffer(f"columns_{name}", columns, persistent=False)
+            self.register_buffer(f"present_{name}", present, persistent=False)
+        has = torch.tensor([[any(e["name"] == name for e in sets) for name in self.names] for sets in descriptors],
+                           dtype=torch.bool).reshape(layouts, len(self.names))
+        self.register_buffer("has_sets", has.any(dim=1), persistent=False)
+        # The columns each layout's adapter does not read (attach_blind_columns, tag "set").
+        self.blind = {index: sorted({c for sets in [descriptors[index]] for entry in sets for slot in
+                                     range(int(entry["slots"])) for part in entry["segments"]
+                                     for c in range(int(part["first"]) + slot * int(part["stride"]),
+                                                    int(part["first"]) + (slot + 1) * int(part["stride"]))})
+                      for index in range(layouts) if descriptors[index]}
+        # Pointer heads, one per (set, its n-th action range): a query from the features scored against each slot.
+        kinds: dict[str, list[int]] = {}
+        for index, sets in enumerate(descriptors):
+            for entry in sets:
+                for ordinal, part in enumerate(entry.get("pointers", ())):
+                    kinds.setdefault(f"{entry['name']}_{ordinal}", [-1] * layouts)[index] = int(part["first"])
+        self.pointer_kinds = sorted(kinds) if head_width else []
+        self.queries = nn.ModuleDict({kind: _linear(head_width, embed, 0.01) for kind in self.pointer_kinds})
+        for kind in self.pointer_kinds:
+            self.register_buffer(f"first_{kind}", torch.tensor(kinds[kind], dtype=torch.long), persistent=False)
+
+    def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        """Per set: [rows, slots, embed] encodings and [rows, slots] which slots are present."""
+        rows = obs.shape[0]
+        layout = layout.reshape(-1).long()
+        out = {}
+        for name, (slots, width_) in self.shapes.items():
+            columns = getattr(self, f"columns_{name}")[layout]
+            raw = obs.gather(1, columns).reshape(rows, slots, width_)
+            present_at = getattr(self, f"present_{name}")[layout]
+            present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
+            out[name] = (self.encoders[name](raw.to(self.pool.weight.dtype)), present)
+        return out
+
+    def pooled(self, obs: torch.Tensor, layout: torch.Tensor,
+               encoded: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None) -> torch.Tensor:
+        """What the sets add to the adapter's output: [rows, width], zero for a layout without sets."""
+        encoded = encoded if encoded is not None else self.encode(obs, layout)
+        parts = []
+        for name in self.names:
+            codes, present = encoded[name]
+            weight = present.to(codes.dtype)[..., None]
+            parts.append((codes * weight).sum(dim=1) / weight.sum(dim=1).clamp(min=1.0))
+            peak = torch.where(present[..., None], codes, torch.full_like(codes, -1.0)).amax(dim=1)
+            parts.append(torch.where(present.any(dim=1, keepdim=True), peak, torch.zeros_like(peak)))
+        pooled = self.pool(torch.cat(parts, dim=-1))
+        return pooled * self.has_sets[layout.reshape(-1).long()][:, None].to(pooled.dtype)
+
+    def with_pointers(self, logits: torch.Tensor, features: torch.Tensor, obs: torch.Tensor,
+                      layout: torch.Tensor) -> torch.Tensor:
+        """`logits` with every slot-naming action scored by its slot's encoding, in the rows whose layout has it; the
+        other rows' logits are written back as they were (no row is picked out: nothing waits on the device)."""
+        if not self.pointer_kinds:
+            return logits
+        layout = layout.reshape(-1).long()
+        encoded = self.encode(obs, layout)
+        for kind in self.pointer_kinds:
+            name = kind.rsplit("_", 1)[0]
+            codes, _ = encoded[name]
+            slots = codes.shape[1]
+            first = getattr(self, f"first_{kind}")[layout]
+            scores = torch.einsum("rse,re->rs", codes, self.queries[kind](features).to(codes.dtype))
+            valid = first >= 0
+            columns = first.clamp(min=0)[:, None] + torch.arange(slots, device=logits.device)[None, :]
+            columns = columns.clamp(max=logits.shape[-1] - 1)
+            kept = logits.gather(1, columns)
+            # Out of place: the update differentiates through `logits`, which the gather above has just read.
+            logits = logits.scatter(1, columns, torch.where(valid[:, None], scores.to(logits.dtype), kept))
+        return logits
+
+
+def seat_sets_of(stage: dict | None, layout_names: Sequence[str]) -> list[list[dict]]:
+    """Per layout, in `layout_names` order, stage.json's layouts.<name>.sets (EntitySets' descriptors). Refused for a
+    stage.json from before them (no layout says any): a network built with seat sets would read nothing."""
+    layouts = (stage or {}).get("layouts", {})
+    if not any("sets" in layouts.get(name, {}) for name in layout_names):
+        raise ValueError("mappo.seat_sets is on but stage.json names no seat sets (a sim from before peak-play W4)")
+    return [list(layouts.get(name, {}).get("sets", ())) for name in layout_names]
+
+
 def _director_extra(sets: "DirectorSets | None", index: int, obs: torch.Tensor, layout: torch.Tensor):
     """What the director rows' sets add to the adapter's output [rows, width] (zero on the other rows; None without a
     director). Written through the mask rather than skipped when no row is the director's: asking would wait on the
@@ -676,16 +812,17 @@ def _attach_director(network: nn.Module, director, head_width: int = 0) -> None:
     weight.register_hook(lambda grad: grad * network.director_keep)
 
 
-def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]]) -> None:
+def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag: str = "blind") -> None:
     """Keep layout adapters blind to some of their observation columns (layout index -> columns): the weights start at
     zero and their gradient is masked, so they stay zero through every update and the rollout copies' folding. For
-    columns the learner reads and the policy must not (the hint block: a suggestion imitated, never copied). Once per
-    network; a later call only zeroes again."""
+    columns the learner reads and the policy must not (the hint block: a suggestion imitated, never copied), and the
+    seat sets' slot columns (tag "set": read through EntitySets instead). Once per network and tag; a later call only
+    zeroes again."""
     for index, cols in columns.items():
         if not cols or index >= len(network.adapters):
             continue
         weight = network.adapters[index].weight
-        name = f"blind_keep_{index}"
+        name = f"{tag}_keep_{index}"
         keep = torch.ones((1, weight.shape[1]), dtype=weight.dtype, device=weight.device)
         keep[0, [c for c in cols if c < weight.shape[1]]] = 0.0
         if hasattr(network, name):
@@ -698,11 +835,25 @@ def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]]) -> N
 
 
 def clear_director_columns(network: nn.Module) -> None:
-    """Zero the director adapter's slot columns again (after a seed or a load brought weights from elsewhere)."""
-    if getattr(network, "director_sets", None) is None:
-        return
+    """Zero the director adapter's slot columns again (after a seed or a load brought weights from elsewhere), and
+    every seat layout's set columns (EntitySets)."""
     with torch.no_grad():
-        network.adapters[network.director_index].weight.mul_(network.director_keep)
+        if getattr(network, "director_sets", None) is not None:
+            network.adapters[network.director_index].weight.mul_(network.director_keep)
+        for index in range(len(network.adapters)):
+            keep = getattr(network, f"set_keep_{index}", None)
+            if keep is not None:
+                network.adapters[index].weight.mul_(keep)
+
+
+def _attach_entity_sets(network: nn.Module, seat_sets, head_width: int = 0) -> None:
+    """Give an actor or critic the seat layouts' set encoder (EntitySets) and blind its adapters to the set columns;
+    `seat_sets` is per layout stage.json's sets, or None (mappo.seat_sets off: nothing changes)."""
+    network.entity_sets = None
+    if seat_sets is None:
+        return
+    network.entity_sets = EntitySets(seat_sets, network.obs_dims, network.adapters[0].out_features, head_width)
+    attach_blind_columns(network, network.entity_sets.blind, tag="set")
 
 
 class GoalEmbedding(nn.Module):
@@ -770,8 +921,10 @@ _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_s
 
 def without_blind_columns(state: dict) -> dict:
     """A saved network's state without its blind-column masks (attach_blind_columns): they are made again from the
-    stage's layouts after loading (MappoTrainer.set_hint_space), and a network not yet given them refused them."""
-    return {key: value for key, value in state.items() if not key.split(".")[-1].startswith("blind_keep_")}
+    stage's layouts after loading (MappoTrainer.set_hint_space, the seat sets), and a network not yet given them
+    refused them."""
+    return {key: value for key, value in state.items()
+            if not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))}
 
 
 def load_actor_state(actor: nn.Module, state: dict) -> None:
@@ -801,7 +954,8 @@ def split_goal_pair(pair: torch.Tensor, count: int) -> tuple[torch.Tensor, torch
 class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
-                 foresight_feedback: bool = False, lookahead: bool = False, director=None, goal_slots: int = 1):
+                 foresight_feedback: bool = False, lookahead: bool = False, director=None, goal_slots: int = 1,
+                 seat_sets=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -860,6 +1014,8 @@ class LayoutActor(nn.Module):
         # The director's members and enemies as sets, with pointer heads (DirectorSets): `director` is (its layout
         # index, stage.json's "director").
         _attach_director(self, director, head_width)
+        # Every seat layout's entities as sets, with pointer heads (EntitySets; mappo.seat_sets, None = off).
+        _attach_entity_sets(self, seat_sets, head_width)
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None) -> Categorical:
@@ -903,6 +1059,9 @@ class LayoutActor(nn.Module):
         GRU. A replayed sequence encodes every step in one pass and then carries the memory through them (carry),
         which is the difference between one large matmul per layer and one per step."""
         extra = _director_extra(self.director_sets, self.director_index, obs, layout)
+        if self.entity_sets is not None:
+            seats = self.entity_sets.pooled(obs, layout)
+            extra = seats if extra is None else extra + seats.to(extra.dtype)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -969,13 +1128,22 @@ class LayoutActor(nn.Module):
             own = torch.where(dense.valid[layout.long()], dense(features, layout), MASKED_LOGIT)
             logits = own if own.shape[-1] == mask.shape[-1] else nn.functional.pad(
                 own, (0, mask.shape[-1] - own.shape[-1]), value=MASKED_LOGIT)
-            return masked_logits(self._with_pointers(logits, features, layout, obs), mask)
+            return masked_logits(self._with_seat_pointers(self._with_pointers(logits, features, layout, obs),
+                                                          features, layout, obs), mask)
 
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
         logits = features.new_full((features.shape[0], mask.shape[-1]), MASKED_LOGIT)
         for index, rows in groups:
             logits[rows, : self.action_counts[index]] = self.heads[index](features[rows]).to(logits.dtype)
-        return masked_logits(self._with_pointers(logits, features, layout, obs), mask)
+        return masked_logits(self._with_seat_pointers(self._with_pointers(logits, features, layout, obs), features,
+                                                      layout, obs), mask)
+
+    def _with_seat_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
+                            obs: torch.Tensor | None) -> torch.Tensor:
+        """The seats' slot-naming actions scored by their slots' encodings (EntitySets.with_pointers)."""
+        if self.entity_sets is None or obs is None:
+            return logits
+        return self.entity_sets.with_pointers(logits, features, obs.reshape(-1, obs.shape[-1]), layout)
 
     def _with_pointers(self, logits: torch.Tensor, features: torch.Tensor, layout: torch.Tensor,
                        obs: torch.Tensor | None) -> torch.Tensor:
@@ -1077,7 +1245,7 @@ class LayoutCritic(nn.Module):
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
                  goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1, director=None,
-                 goal_slots: int = 1):
+                 goal_slots: int = 1, seat_sets=None):
         super().__init__()
         if not hidden:
             raise ValueError("the critic needs at least one hidden layer")
@@ -1098,6 +1266,7 @@ class LayoutCritic(nn.Module):
         self.head = _linear(recurrent_size if recurrent_size else hidden[-1], 1, 1.0)
         self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
         _attach_director(self, director)
+        _attach_entity_sets(self, seat_sets)
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
@@ -1122,6 +1291,8 @@ class LayoutCritic(nn.Module):
         extra = _director_extra(self.director_sets, self.director_index, obs, layout)
         if extra is not None:
             own = own + extra.to(own.dtype)
+        if self.entity_sets is not None:
+            own = own + self.entity_sets.pooled(obs, layout).to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

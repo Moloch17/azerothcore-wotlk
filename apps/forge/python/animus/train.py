@@ -45,6 +45,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
+from .mappo.networks import seat_sets_of
 from .progress import ProgressWriter
 from . import blas, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -580,6 +581,8 @@ class TrainingRun:
         # The director's members and enemies are sets (stage.json "director"): its layout index and descriptor.
         director = ((names.index(DIRECTOR_LAYOUT), self.stage["director"])
                     if self.stage and "director" in self.stage and DIRECTOR_LAYOUT in names else None)
+        # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
+        seat_sets = seat_sets_of(self.stage, names) if config.mappo.seat_sets else None
         self.trainer = MappoTrainer(
             [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
             spec.state_dim,
@@ -589,6 +592,7 @@ class TrainingRun:
             slow_layout=self.slow_layout,
             ranks=self.ranks.update,
             director=director,
+            seat_sets=seat_sets,
         )
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.

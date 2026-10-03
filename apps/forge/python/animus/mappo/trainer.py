@@ -128,6 +128,12 @@ class MappoConfig:
     # weight the sim wrote (which falls with the support, and is 0 in evaluation). The hint columns are kept out of the
     # networks (attach_blind_columns): the policy is taught the suggestion, never shown it.
     hint_coef: float = 0.0
+    # **Seat sets** (peak-play W4): every seat layout's entities -- enemies, teammates, friends, the crowd -- read as
+    # sets through encoders shared by every slot and class, and the actions that name a slot scored by its encoding
+    # (EntitySets; stage.json layouts.<name>.sets). Off: the networks are exactly as before. Turning it on makes the
+    # adapters blind to the slot columns the policy reads today, so a running chain does not take it on resume: it is
+    # a restart of the chain from the stage it is turned on at.
+    seat_sets: bool = False
     # The goal head's share of the entropy bonus, as a factor on what it would get from entropy_coef, falling
     # linearly to goal_entropy_final_fraction of itself over total_env_steps. The action head's exploration and the
     # goal head's are different things: the first keeps the fight's options open, the second keeps the head from
@@ -563,6 +569,7 @@ class MappoTrainer:
         slow_layout: int = -1,
         ranks=None,
         director=None,
+        seat_sets=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `slow_layout` is the
         index of config.slow_layout among them, resolved by the caller (layouts carry no names here); -1 when the
@@ -573,6 +580,9 @@ class MappoTrainer:
         self.layouts = list(layouts)
         self.slow_layout = slow_layout if config.slow_layout else -1
         self.director = director
+        # Per layout stage.json's seat sets, when mappo.seat_sets is on (EntitySets); None leaves the networks as they
+        # were.
+        self.seat_sets = seat_sets if config.seat_sets else None
         # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
         self.slow_choose_column = (int(director[1].get("may_call", -1))
                                    if director is not None and director[0] == self.slow_layout else -1)
@@ -610,12 +620,13 @@ class MappoTrainer:
             raise ValueError("mappo.goal_slots > 1 needs mappo.slow_goal_size and at least 3 slots (a queue)")
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
-                                 config.goal_lookahead, director, self.goal_slots).to(self.train_device)
+                                 config.goal_lookahead, director, self.goal_slots,
+                                 self.seat_sets).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets, director,
-                                   self.goal_slots).to(self.train_device)
+                                   self.goal_slots, self.seat_sets).to(self.train_device)
         self.value_norm = (ValueNorm(beta=config.value_norm_beta).to(self.train_device)
                            if config.use_value_norm else None)
 
@@ -724,9 +735,9 @@ class MappoTrainer:
         hidden = list(self.config.hidden)
         fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
                              self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                             self.config.goal_lookahead, self.director, self.goal_slots),
+                             self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets),
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
-                              self.goal_targets, self.director, self.goal_slots))
+                              self.goal_targets, self.director, self.goal_slots, self.seat_sets))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)
@@ -853,6 +864,10 @@ class MappoTrainer:
                 weight = network.adapters[network.director_index].weight
                 if bool((weight[:, network.director_sets.column_mask] != 0).any()):
                     return False
+            for index in range(len(network.adapters)):
+                keep = getattr(network, f"set_keep_{index}", None)
+                if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
+                    return False
         return True
 
     def clear_director_columns(self) -> None:
@@ -908,7 +923,7 @@ class MappoTrainer:
         GPU, turned off (mappo.rollout_graphs), without an acting state, or with a slow layout (its held decisions
         branch on the host)."""
         if (self._rollout_stream is None or not self.config.rollout_graphs or state is None
-                or self.slow_layout >= 0 or self.director is not None):
+                or self.slow_layout >= 0 or self.director is not None or self.seat_sets is not None):
             return None
         envs, agents = layout.shape
         device_fed = isinstance(obs, torch.Tensor)
@@ -1851,7 +1866,7 @@ class MappoTrainer:
         from .networks import without_blind_columns
         load_actor_state(self.actor, state["actor"])
         missing, unexpected = self.critic.load_state_dict(without_blind_columns(state["critic"]), strict=False)
-        missing = [key for key in missing if not key.split(".")[-1].startswith("blind_keep_")]
+        missing = [key for key in missing if not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))]
         if missing or unexpected:
             raise RuntimeError(f"Error(s) in loading state_dict for the critic: missing {missing}, unexpected "
                                f"{list(unexpected)}")

@@ -24,9 +24,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .bootstrap import DIRECTOR_LAYOUT
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
+from .mappo.networks import seat_sets_of
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE
@@ -66,7 +68,13 @@ def main() -> None:
         raise SystemExit(f"the checkpoint's {', '.join(mismatch)} do not match the sim's (AnimusForge.ClassRoles?)")
     layouts = [(layout.obs_dim, layout.num_actions) for layout in spec.layouts]
 
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo)
+    # The checkpoint's own director and seat sets (its stage.json), or its weights do not load.
+    stage = checkpoint.get("stage")
+    names = [layout.name for layout in spec.layouts]
+    director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
+                if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)
+    seat_sets = seat_sets_of(stage, names) if mappo.seat_sets else None
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, director=director, seat_sets=seat_sets)
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)
