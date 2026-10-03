@@ -21,6 +21,7 @@
 #include "CreatureAI.h"
 #include "DBCStores.h"
 #include "EncoderSupport.h"
+#include "GameTime.h"
 #include "Layout.h"
 #include "MotionMaster.h"
 #include "Pet.h"
@@ -33,6 +34,7 @@
 #include "TemporarySummon.h"
 #include <algorithm>
 #include <array>
+#include <unordered_map>
 
 namespace
 {
@@ -124,7 +126,7 @@ namespace
     }
 
     /// The pet's castable abilities, most valuable kinds first, at most ABILITY_SLOTS.
-    std::vector<Ability> Abilities(Creature* pet)
+    std::vector<Ability> ComputeAbilities(Creature* pet)
     {
         std::vector<Ability> found;
         auto const consider = [&found](uint32 spellId)
@@ -158,6 +160,29 @@ namespace
         if (found.size() > PetBlock::ABILITY_SLOTS)
             found.resize(PetBlock::ABILITY_SLOTS);
         return found;
+    }
+
+    /// ComputeAbilities, once per pet per world tick: the observation and the action of a decision (no tick between
+    /// them) read the same list, which walks and classifies every spell the pet has. Per map thread; a pet seen at
+    /// another tick is computed again.
+    std::vector<Ability> const& Abilities(Creature* pet)
+    {
+        struct Cached
+        {
+            Milliseconds At{ -1 };
+            std::vector<Ability> List;
+        };
+        thread_local std::unordered_map<ObjectGuid, Cached> cache;
+        Milliseconds const now = GameTime::GetGameTimeMS();
+        if (cache.size() > 512)
+            cache.clear();
+        Cached& entry = cache[pet->GetGUID()];
+        if (entry.At != now)
+        {
+            entry.List = ComputeAbilities(pet);
+            entry.At = now;
+        }
+        return entry.List;
     }
 
     /// The unit an ability aims at: an enemy spell at the bot's target, a helpful one at the pet itself.
@@ -369,7 +394,7 @@ void Animus::Curriculum::PetBlock::BeforeApply(SeatView& view, SeatActionResult&
     if (!pet)
         return;
 
-    std::vector<Ability> const abilities = Abilities(pet);
+    std::vector<Ability> const& abilities = Abilities(pet);
     for (std::size_t slot = 0; slot < abilities.size(); ++slot)
     {
         if (!(abilities[slot].Flags & (1 << KIND_INTERRUPT)))
@@ -402,7 +427,7 @@ void Animus::Curriculum::PetBlock::Observe(SeatView const& view, float* obs, uin
     if (!pet)
         return;
 
-    std::vector<Ability> const abilities = Abilities(pet);
+    std::vector<Ability> const& abilities = Abilities(pet);
 
     obs[OBS_PRESENT] = 1.0f;
     obs[OBS_ALIVE] = pet->IsAlive() ? 1.0f : 0.0f;
@@ -461,7 +486,8 @@ void Animus::Curriculum::PetBlock::Apply(SeatView& view, uint32 local, SeatActio
         return;
 
     Creature* pet = FindPet(view.Bot);
-    std::vector<Ability> const abilities = pet ? Abilities(pet) : std::vector<Ability>();
+    static std::vector<Ability> const none;
+    std::vector<Ability> const& abilities = pet ? Abilities(pet) : none;
     if (!IsAllowed(view, pet, abilities, local))
         return;
 

@@ -56,6 +56,19 @@ namespace
     /// A closed door this near a living seat opens (InstanceEncounter::UpdateWingEnemies).
     constexpr float DOOR_REACH = 15.0f;
     constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far (CrowdView::Object)
+
+    /// Every gameobject within `range` of a point, flat: UpdateWingEnemies' one visit from the party's middle.
+    class GameObjectsNearPoint
+    {
+    public:
+        GameObjectsNearPoint(float x, float y, float range) : _x(x), _y(y), _range(range) { }
+        bool operator()(GameObject* object) const { return object->GetExactDist2d(_x, _y) <= _range; }
+
+    private:
+        float _x;
+        float _y;
+        float _range;
+    };
     /// Where a dungeon's navmesh does not join two stops, the route steps from creature to creature: to the nearest
     /// within BREADCRUMB_REACH that is at least BREADCRUMB_MIN_GAIN closer to the far side.
     constexpr float BREADCRUMB_REACH = 45.0f;
@@ -1024,19 +1037,20 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
         uint32 engaged = 0;
         uint32 elites = 0;
         uint32 onTank = 0;
-        std::map<uint32, uint32> entries;
-        for (Unit* unit : units)
+        auto const onParty = [](Unit* unit) -> Unit*
         {
             Unit* victim = unit->IsAlive() && !unit->IsPlayer() ? unit->GetVictim() : nullptr;
-            if (!victim || !victim->IsPlayer())
+            return victim && victim->IsPlayer() ? victim : nullptr;
+        };
+        for (Unit* unit : units)
+        {
+            Unit* victim = onParty(unit);
+            if (!victim)
                 continue;
             ++engaged;
             onTank += victim == tank ? 1 : 0;
             if (Creature* creature = unit->ToCreature())
-            {
                 elites += creature->isElite() ? 1 : 0;
-                ++entries[creature->GetEntry()];
-            }
         }
         fight.OnParty = engaged;
         fight.OnTank = onTank;
@@ -1045,6 +1059,11 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
             fight.CrowdSeconds += float(_scenario.DecisionMs()) / 1000.0f;
         if (engaged > trace.PeakEngaged)
         {
+            // Who they are, by entry: counted only on a new peak, the one time the stuck log is given them.
+            std::map<uint32, uint32> entries;
+            for (Unit* unit : units)
+                if (Creature* creature = onParty(unit) ? unit->ToCreature() : nullptr)
+                    ++entries[creature->GetEntry()];
             trace.PeakEngaged = engaged;
             trace.PeakElites = elites;
             trace.PeakOnTank = onTank;
@@ -1634,42 +1653,68 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fighting = true;
     fight.Objects.clear();
+    // One visit from the party's middle, wide enough to reach OBJECT_SIGHT past its farthest living seat, rather than
+    // one per seat: what each seat can see is then picked out of it, as before.
+    std::array<Player*, MAX_SEATS> living{};
+    uint32 livingCount = 0;
+    float centreX = 0.0f;
+    float centreY = 0.0f;
     for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive() && bot->IsInWorld())
+        {
+            living[livingCount++] = bot;
+            centreX += bot->GetPositionX();
+            centreY += bot->GetPositionY();
+        }
+    if (livingCount)
     {
-        Player* bot = _scenario.SeatBot(env, index);
-        if (!bot || !bot->IsAlive() || !bot->IsInWorld())
-            continue;
+        centreX /= float(livingCount);
+        centreY /= float(livingCount);
+        float spread = 0.0f;
+        for (uint32 index = 0; index < livingCount; ++index)
+            spread = std::max(spread, living[index]->GetExactDist2d(centreX, centreY));
         std::list<GameObject*> objects;
-        Acore::AllWorldObjectsInRange check(bot, OBJECT_SIGHT);
-        Acore::GameObjectListSearcher<Acore::AllWorldObjectsInRange> searcher(bot, objects, check);
-        Cell::VisitObjects(bot, searcher, OBJECT_SIGHT);
+        GameObjectsNearPoint check(centreX, centreY, OBJECT_SIGHT + spread);
+        Acore::GameObjectListSearcher<GameObjectsNearPoint> searcher(living[0], objects, check);
+        Cell::VisitObjects(centreX, centreY, living[0]->GetMap(), searcher, OBJECT_SIGHT + spread);
         for (GameObject* object : objects)
         {
             if (!Usable(object)
                 || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;
-            if (std::find(fight.Objects.begin(), fight.Objects.end(), object->GetGUID()) == fight.Objects.end())
-                fight.Objects.push_back(object->GetGUID());
-            if (!fighting && _scenario.Tuning().Instance.WingAutoDoors && object->GetGoType() == GAMEOBJECT_TYPE_DOOR
-                && bot->GetExactDist(object) <= DOOR_REACH)
+            bool seen = false;
+            bool reached = false;
+            for (uint32 index = 0; index < livingCount; ++index)
+            {
+                float const distance = living[index]->GetExactDist(object);
+                seen = seen || distance <= OBJECT_SIGHT;
+                reached = reached || distance <= DOOR_REACH;
+            }
+            if (!seen)
+                continue;
+            fight.Objects.push_back(object->GetGUID());
+            if (!fighting && reached && _scenario.Tuning().Instance.WingAutoDoors
+                && object->GetGoType() == GAMEOBJECT_TYPE_DOOR)
                 object->SetGoState(GO_STATE_ACTIVE);
         }
     }
 
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
-    for (ObjectGuid const& guid : fight.Watched)
+    for (auto watched = fight.Watched.begin(); watched != fight.Watched.end();)
     {
-        if (guid == fight.Boss || std::find(fight.Counted.begin(), fight.Counted.end(), guid) != fight.Counted.end())
-            continue;
-        Creature const* creature = Encoding::CreatureThrough(*seat, guid);
+        ObjectGuid const guid = *watched;
+        Creature const* creature = guid == fight.Boss ? nullptr : Encoding::CreatureThrough(*seat, guid);
         if (creature && !creature->IsAlive())
         {
-            fight.Counted.push_back(guid);
+            fight.Counted.insert(guid);
+            watched = fight.Watched.erase(watched);
             ++fight.TrashKills;
             fight.LastKillMs = env.EpisodeElapsedMs;
             if (creature->IsDungeonBoss() || creature->isWorldBoss())
                 ++fight.BossKills;
         }
+        else
+            ++watched;
     }
 
     // In the slots: what is fighting the party first, then the nearest of what stands ahead of it -- the next pack.
@@ -1691,12 +1736,26 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Creature const* creature = unit->ToCreature();
         return !unit->IsAlive() || unit->IsPlayer() || unit->IsTotem() || (creature && creature->IsEvadingAttacks());
     });
-    units.sort([seat](Unit* a, Unit* b)
+    // Fighting first, then nearest: each unit's key taken once, not in every comparison of the sort.
+    struct Ranked
     {
-        if (a->IsInCombat() != b->IsInCombat())
-            return a->IsInCombat();
-        return seat->GetDistance(a) < seat->GetDistance(b);
+        Unit* U;
+        bool Engaged;
+        float Distance;
+    };
+    std::vector<Ranked> ranked;
+    ranked.reserve(units.size());
+    for (Unit* unit : units)
+        ranked.push_back({ unit, unit->IsInCombat(), seat->GetDistance(unit) });
+    std::sort(ranked.begin(), ranked.end(), [](Ranked const& a, Ranked const& b)
+    {
+        if (a.Engaged != b.Engaged)
+            return a.Engaged;
+        return a.Distance < b.Distance;
     });
+    units.clear();
+    for (Ranked const& entry : ranked)
+        units.push_back(entry.U);
     env.Targets.clear();
     for (Unit* unit : units)
     {
@@ -1714,8 +1773,8 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
             env.Targets.push_back(fight.Boss);
     }
     for (ObjectGuid const& guid : env.Targets)
-        if (std::find(fight.Watched.begin(), fight.Watched.end(), guid) == fight.Watched.end())
-            fight.Watched.push_back(guid);
+        if (!fight.Counted.count(guid))
+            fight.Watched.insert(guid);
 
     // Past the slots (CrowdBlock): the next of them, fight first, and the nearest pack not in the fight with the
     // creatures standing within a pack's reach of it.
@@ -1730,8 +1789,8 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         if (fight.Overflow.size() < CROWD_SLOTS)
         {
             fight.Overflow.push_back(unit->GetGUID());
-            if (std::find(fight.Watched.begin(), fight.Watched.end(), unit->GetGUID()) == fight.Watched.end())
-                fight.Watched.push_back(unit->GetGUID());
+            if (!fight.Counted.count(unit->GetGUID()))
+                fight.Watched.insert(unit->GetGUID());
         }
         if (!fight.HasAhead && !unit->IsInCombat())
         {
@@ -2169,11 +2228,7 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     if (seatIndex == 0)
     {
         uint32 const seen = fight.TrashKills + waypoints;
-        bool engaged = false;
-        for (uint32 slot = 0; slot < env.Targets.size() && !engaged; ++slot)
-            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
-                engaged = true;
-        if (seen != fight.ProgressSeen || engaged)
+        if (seen != fight.ProgressSeen || _scenario.Data(env).StepEngaged)
         {
             fight.ProgressSeen = seen;
             fight.ProgressMs = env.EpisodeElapsedMs;

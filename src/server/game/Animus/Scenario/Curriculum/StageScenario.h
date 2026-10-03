@@ -284,6 +284,9 @@ namespace Animus::Curriculum
 
         /// Seat `seat`'s bot, in or out of the world (see BotSlot::Active).
         [[nodiscard]] Player* SeatBot(Env const& env, uint32 seat) const;
+        /// SeatBot when it is in the world, else null: Env::FindBot's answer for a seat, without the global object
+        /// accessor's lock that FindBot takes for every call (seat loops run on every map thread every decision).
+        [[nodiscard]] Player* SeatBotInWorld(Env const& env, uint32 seat) const;
         /// What SeatReward last resolved as this seat's target (SeatState::CurrentTargetGuid), for the const readers
         /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
         [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
@@ -432,6 +435,9 @@ namespace Animus::Curriculum
         /// support): SeatReward's first step, and all a row that is observed but not paid gets (the cast owner's).
         /// Returns the current target it resolved, or null.
         Unit* TrackSeatStep(Env& env, uint32 seatIndex, Player* bot);
+        /// CurrentTarget, asked once a decision (SeatState::DecisionTarget) and resolved again after: still in the
+        /// world and on the seat's map, or none.
+        Unit* DecisionTarget(Env const& env, uint32 seatIndex);
         void WriteState(Env const& env, float* state) const;
 
         StageDefinition const& _stage;

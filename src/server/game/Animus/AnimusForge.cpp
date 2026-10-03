@@ -1748,7 +1748,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _observeBlockMs.clear();
             for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
             {
-                uint64 const now = Animus::Curriculum::SeatEncoder::ObserveNs[slot].load(std::memory_order_relaxed);
+                uint64 const now = Animus::Curriculum::SeatEncoder::ObserveTotal(slot);
                 double const ms = double(now - std::min(now, _rateObserveNs[slot])) / 1e6 / double(ticks);
                 if (ms > 0.0)
                 {
@@ -1820,7 +1820,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _rateLearnerNs = _learnerNs;
         _rateCollect = _collect;
         for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
-            _rateObserveNs[slot] = Animus::Curriculum::SeatEncoder::ObserveNs[slot].load(std::memory_order_relaxed);
+            _rateObserveNs[slot] = Animus::Curriculum::SeatEncoder::ObserveTotal(slot);
         _rateMapTiming = sMapMgr->GetUpdateTiming();
         _rateTaskTiming = sMapMgr->GetTaskTiming();
     }

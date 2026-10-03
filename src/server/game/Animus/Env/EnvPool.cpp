@@ -525,14 +525,16 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     if (!attacker || !victim || !damage)
         return;
 
+    // The victim among the agents, looked up once for the self damage and the damage taken below.
+    auto const hit = _agents.find(victim->GetGUID());
+
     // What the agent did to itself, or the world did to it: Player::EnvironmentalDamage deals drowning, fatigue,
     // lava and falls as SELF_DAMAGE from the player to itself, and nothing below would see it. Kept apart from
     // DamageTaken, which is what enemies did.
     if (type == SELF_DAMAGE)
     {
-        if (attacker == victim)
-            if (auto const self = _agents.find(victim->GetGUID()); self != _agents.end())
-                _envs[self->second.Env].StepStats[self->second.Agent].SelfDamage += damage;
+        if (attacker == victim && hit != _agents.end())
+            _envs[hit->second.Env].StepStats[hit->second.Agent].SelfDamage += damage;
         return;
     }
     if (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT)
@@ -544,7 +546,6 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
             _envs[master->second.Env].StepStats[master->second.Agent].PetDamageTaken += damage;
 
     // Damage an agent takes. The victim is the agent itself (pets absorb their own damage).
-    auto const hit = _agents.find(victim->GetGUID());
     if (hit != _agents.end())
     {
         Env& env = _envs[hit->second.Env];

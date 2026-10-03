@@ -321,13 +321,27 @@ bool Animus::Curriculum::StoreInBags(Player* bot, uint32 itemId, uint32 count)
     return bot->StoreNewItem(dest, itemId, true) != nullptr;
 }
 
+namespace
+{
+    /// `item` up to `count` in the bags: the shortfall in one store, which is every reset's case, and one at a time
+    /// only when the bags cannot take it whole -- as many as fit, as before.
+    void StockUpTo(Player* bot, uint32 item, uint32 count)
+    {
+        uint32 have = bot->GetItemCount(item);
+        if (have >= count || Animus::Curriculum::StoreInBags(bot, item, count - have))
+            return;
+        for (; have < count; ++have)
+            if (!Animus::Curriculum::StoreInBags(bot, item, 1))
+                break;
+    }
+}
+
 void Animus::Curriculum::StockBattleSupplies(Player* bot, BattleSupplies const& supplies, StatProfile stats)
 {
     auto const stock = [bot](uint32 item, uint32 count)
     {
-        for (uint32 have = item ? bot->GetItemCount(item) : count; have < count; ++have)
-            if (!StoreInBags(bot, item, 1))
-                break;
+        if (item)
+            StockUpTo(bot, item, count);
     };
 
     stock(supplies.HealthPotion, CONSUMABLE_COUNT);
@@ -350,14 +364,8 @@ void Animus::Curriculum::StockBattleSupplies(Player* bot, BattleSupplies const& 
 void Animus::Curriculum::StockConsumables(Player* bot, uint32 food, uint32 drink, uint32 count)
 {
     for (uint32 item : { food, drink })
-    {
-        if (!item)
-            continue;
-
-        for (uint32 carried = bot->GetItemCount(item); carried < count; ++carried)
-            if (!StoreInBags(bot, item, 1))
-                break;
-    }
+        if (item)
+            StockUpTo(bot, item, count);
 }
 
 bool Animus::Curriculum::CanCallHunterBeast(Player* bot)

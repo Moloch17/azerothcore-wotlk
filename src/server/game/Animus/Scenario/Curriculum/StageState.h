@@ -354,6 +354,8 @@ namespace Animus::Curriculum
             int32 DurationLeftMs = 0;
         };
         std::vector<AbsorbTrack> Absorbs;
+        /// TrackSupport's working list for this decision, swapped with Absorbs: neither is reallocated once warm.
+        std::vector<AbsorbTrack> AbsorbScratch;
 
         // Support (every stage): wasted and deliberate casts, and time any friend spent low.
         uint32 HealsOnFull = 0;
@@ -382,6 +384,11 @@ namespace Animus::Curriculum
         /// env's target slots hold creatures and the scripted enemy player; in self-play the opponent is the other
         /// seat and is in no slot at all, so anything that looked a seat's target up by slot was blind there.
         ObjectGuid CurrentTargetGuid;
+        /// The target CurrentTarget chose this decision (StageScenario::DecisionTarget): asked of the encounters once
+        /// and read again by the reward, the observation and the action, between which nothing ticks. Known only
+        /// from the reward (or the first observation) to the end of the actions; an episode starts it unknown.
+        ObjectGuid DecisionTarget;
+        bool DecisionTargetKnown = false;
         ObjectGuid LastInterruptibleCaster;     // ... the caster of the one last counted, so a cast counts once
         uint32 LastInterruptibleSpell = 0;
         uint32 LowHealthMs = 0;
@@ -491,6 +498,7 @@ namespace Animus::Curriculum
         /// Clear the episode totals (not the character).
         void ResetEpisode()
         {
+            DecisionTargetKnown = false;
             LastStepDamage = 0.0f;
             LastStepPowerDelta = 0.0f;
             LastStepDamageTaken = 0.0f;
@@ -676,6 +684,9 @@ namespace Animus::Curriculum
         /// This decision's reward row while the observation that follows it runs (Reward sets it, Observe clears
         /// it): a goal reached is paid into the decision that reached it, so the goal's own span carries it.
         float* StepReward = nullptr;
+        /// Whether any enemy in the target slots is alive and in combat, taken once at the start of the reward
+        /// (StageScenario::Reward) for every seat's terms that ask it: the combat clock, the wing's stall.
+        bool StepEngaged = false;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry

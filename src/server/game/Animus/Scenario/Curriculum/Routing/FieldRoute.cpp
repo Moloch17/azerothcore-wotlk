@@ -245,8 +245,9 @@ bool FieldRouteSearch::Search(uint32 mapId, Position const& from, Position const
         return std::sqrt(dx * dx + dy * dy + dz * dz);
     };
 
-    std::unordered_map<uint64, Visit> visits;
-    visits.reserve(1 << 16);
+    // One per map thread, kept: cleared keeps its buckets, where a fresh map reserved 65536 of them for every plan.
+    thread_local std::unordered_map<uint64, Visit> visits(1 << 16);
+    visits.clear();
     std::priority_queue<Open> open;
     uint64 const startId = Key(start.X, start.Y, start.Floor);
     visits[startId] = Visit{ start, startZ, 0.0f, startId, false };

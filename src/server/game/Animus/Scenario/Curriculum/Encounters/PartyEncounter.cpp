@@ -236,14 +236,16 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     uint32 const side = _scenario.SideOf(env, seatIndex);
     auto const playing = [&](uint32 seat)
     {
-        return seat < seats && seat < MAX_SEATS && !shown[seat] && data.Seats[seat].L && env.FindBot(seat)
+        return seat < seats && seat < MAX_SEATS && !shown[seat] && data.Seats[seat].L
+            && _scenario.SeatBotInWorld(env, seat)
             && (!sides || (_scenario.OnSide(env, seat, side) && !_scenario.IsLoneSeat(env, seatIndex)));
     };
     auto const fill = [&](uint32 slot, uint32 seat)
     {
         SeatState const& other = data.Seats[seat];
         shown[seat] = true;
-        view.Teammates[slot] = { env.FindBot(seat), other.Holds[0].Goal, other.Apt, other.L->Profile->Class };
+        view.Teammates[slot] = { _scenario.SeatBotInWorld(env, seat), other.Holds[0].Goal, other.Apt,
+            other.L->Profile->Class };
     };
 
     // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat
@@ -267,7 +269,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         if (!playing(seat))
             continue;
 
-        Player* other = env.FindBot(seat);
+        Player* other = _scenario.SeatBotInWorld(env, seat);
         if (!other->IsAlive())
             continue;
 
@@ -311,7 +313,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         if (!data.Seats[seat].L)
             continue;
 
-        Player* other = env.FindBot(seat);
+        Player* other = _scenario.SeatBotInWorld(env, seat);
         if (!other)
             continue;
 
@@ -367,7 +369,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     {
         bool tankNearby = false;
         for (uint32 other = 0; other < _scenario.SeatCount() && !tankNearby; ++other)
-            if (Player* mate = other == seatIndex ? nullptr : env.FindBot(other);
+            if (Player* mate = other == seatIndex ? nullptr : _scenario.SeatBotInWorld(env, other);
                 mate && mate->IsAlive() && data.Seats[other].L && HoldsThePull(data.Seats[other].Apt))
                 tankNearby = true;
 
@@ -391,7 +393,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     uint32 outside = 0;
     if (raid)
         for (uint32 other = 0; other < _scenario.SeatCount(); ++other)
-            if (other != seatIndex && !inGroup(other) && data.Seats[other].L && env.FindBot(other))
+            if (other != seatIndex && !inGroup(other) && data.Seats[other].L && _scenario.SeatBotInWorld(env, other))
                 ++outside;
     float const outsideWeight = outside ? float(GROUP_MEMBERS) / float(outside) : 1.0f;
 
@@ -399,7 +401,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     // raider outside the seat's group is still the party's to keep alive.
     for (uint32 teammateSeat = 0; teammateSeat < _scenario.SeatCount(); ++teammateSeat)
     {
-        Player* teammate = teammateSeat == seatIndex ? nullptr : env.FindBot(teammateSeat);
+        Player* teammate = teammateSeat == seatIndex ? nullptr : _scenario.SeatBotInWorld(env, teammateSeat);
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
         float const weight = raid && !inGroup(teammateSeat) ? outsideWeight : 1.0f;
@@ -550,7 +552,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         uint32 const first = GroupFirstSeat(seatIndex);
         int32 kept = 0;
         for (uint32 member = first; member < first + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
-            if (Player* mate = env.FindBot(member); mate && data.Seats[member].L && mate->IsAlive())
+            if (Player* mate = _scenario.SeatBotInWorld(env, member); mate && data.Seats[member].L && mate->IsAlive())
                 kept += mate->GetHealthPct() > 50.0f ? 1 : mate->GetHealthPct() < 35.0f ? -1 : 0;
         // Members kept above half pay at the protecting share (Party.HealOffGoal); those let fall below 35% are
         // charged in full whatever the goal.

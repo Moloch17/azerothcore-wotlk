@@ -19,6 +19,7 @@
 #include <atomic>
 #include "StageScenario.h"
 #include <set>
+#include <span>
 #include "ResetTiming.h"
 #include "Baselines.h"
 #include "CharmInfo.h"
@@ -1636,7 +1637,13 @@ Animus::Curriculum::EnvState const& Animus::Curriculum::StageScenario::Data(Env 
 
 Player* Animus::Curriculum::StageScenario::SeatBot(Env const& env, uint32 seat) const
 {
-    return _data[env.Index].Seats[seat].Bot.Active();
+    return seat < MAX_SEATS ? _data[env.Index].Seats[seat].Bot.Active() : nullptr;
+}
+
+Player* Animus::Curriculum::StageScenario::SeatBotInWorld(Env const& env, uint32 seat) const
+{
+    Player* bot = SeatBot(env, seat);
+    return bot && bot->IsInWorld() ? bot : nullptr;
 }
 
 Player* Animus::Curriculum::StageScenario::Owner(Env const& env) const
@@ -2167,6 +2174,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
         // A whole dungeon: a tank, a healer and three damage dealers, whichever seats they are (the demands were
         // shuffled), each drawn among the castings that fit its place; the level redraw below keeps to them too.
+        // Every casting of the stage, taken once for the whole party rather than once per seat.
+        std::vector<Casting> const everyCasting = proper ? Castings(AptitudeDemand::Anything())
+            : std::vector<Casting>();
         if (proper)
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             {
@@ -2179,7 +2189,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                 std::vector<Casting> fits;
                 // By spec alone: a demand's measured aptitude never let a bear druid hold the pull, so no party drew
                 // one (2026-10-02, stage6: 1,920 seats, no feral bear).
-                for (Casting const& casting : Castings(AptitudeDemand::Anything()))
+                for (Casting const& casting : everyCasting)
                     if (FitsDungeonRole(casting, s.DungeonRole)
                         && (!capLevel || (casting.L && casting.L->Assets->Kit->MinLevel() <= capLevel)))
                         fits.push_back(casting);
@@ -2907,6 +2917,11 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
         encounter->UpdateEnemies(env);
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->Update(env);
+    // The upkeep can have changed what each seat fights (a wing's slots are rebuilt): asked again below.
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        Data(env).Seats[seat].DecisionTargetKnown = false;
+    if (_castOwner)
+        Data(env).Seats[OwnerAgent()].DecisionTargetKnown = false;
 
     AcceptResurrections(env);
 
@@ -2953,6 +2968,26 @@ Unit* Animus::Curriculum::StageScenario::CurrentTarget(Env const& env, uint32 se
         return nullptr;
     Player* bot = target ? env.FindBot(seat) : nullptr;
     if (bot && bot->IsInWorld() && target->GetMap() != bot->GetMap())
+        return nullptr;
+    return target;
+}
+
+Unit* Animus::Curriculum::StageScenario::DecisionTarget(Env const& env, uint32 seatIndex)
+{
+    SeatState& seat = Data(env).Seats[seatIndex];
+    if (!seat.DecisionTargetKnown)
+    {
+        Unit* target = CurrentTarget(env, seatIndex);
+        seat.DecisionTarget = target ? target->GetGUID() : ObjectGuid::Empty;
+        seat.DecisionTargetKnown = true;
+        return target;
+    }
+    if (seat.DecisionTarget.IsEmpty())
+        return nullptr;
+    Player* bot = env.FindBot(seatIndex);
+    Unit* target = bot ? Encoding::UnitThrough(*bot, seat.DecisionTarget) : nullptr;
+    if (!target || !target->IsInWorld() || target->IsDuringRemoveFromWorld()
+        || (bot->IsInWorld() && target->GetMap() != bot->GetMap()))
         return nullptr;
     return target;
 }
@@ -3088,7 +3123,9 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     }
     seat.Pressed = action;
 
-    Unit* target = CurrentTarget(env, seatIndex);
+    // Asked again after the encounters' upkeep (ApplyActions), which can have changed the targets since the
+    // observation: once for the action.
+    Unit* target = DecisionTarget(env, seatIndex);
     if (!target && !SeatEncoder::ActsWithoutTarget(*seat.L))
         return;
 
@@ -3423,7 +3460,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
 
     auto const viewMark = std::chrono::steady_clock::now();
     Player* bot = env.FindBot(seatIndex);
-    Unit* target = CurrentTarget(env, seatIndex);      // may be null between gauntlet pulls
+    Unit* target = DecisionTarget(env, seatIndex);     // may be null between gauntlet pulls
 
     // Note when the bot entered or left combat (SeatView::CombatTime).
     bool const inCombat = bot && bot->IsAlive() && bot->IsInCombat();
@@ -3579,8 +3616,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     }
     else
         view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
-    SeatEncoder::ObserveNs[SeatEncoder::OBSERVE_VIEW].fetch_add(uint64(std::chrono::duration_cast<
-        std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()), std::memory_order_relaxed);
+    SeatEncoder::AddObserve(SeatEncoder::OBSERVE_VIEW, uint64(std::chrono::duration_cast<
+        std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
     SeatEncoder::Observe(view, obs, mask);
 
     if (mask)
@@ -4497,11 +4534,22 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
     for (Encounter* encounter : ActiveRewardOrder(env))
         encounter->BeforeRewards(env);
 
+    Data(env).StepEngaged = false;
+    for (uint32 slot = 0; slot < env.Targets.size() && !Data(env).StepEngaged; ++slot)
+        if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
+            Data(env).StepEngaged = true;
+
     // The learner's shaping scale, on every seat's ledger before anything is paid this decision; the goal reached at
     // the next observation is paid at the same scale.
     float const shaping = _shapingScale.load(std::memory_order_relaxed);
     for (uint32 seat = 0; seat < _seatCount; ++seat)
+    {
         Data(env).Seats[seat].Rewards.SetShaping(shaping);
+        // The world has ticked since the last decision: its targets are asked again (DecisionTarget).
+        Data(env).Seats[seat].DecisionTargetKnown = false;
+    }
+    if (_castOwner)
+        Data(env).Seats[OwnerAgent()].DecisionTargetKnown = false;
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         reward[seat] = SeatReward(env, seat);
@@ -4554,7 +4602,7 @@ Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatInde
         return nullptr;
 
     seat.LastStepDamage = float(env.StepStats[seatIndex].Damage) / seat.DamageScale;
-    Unit* target = CurrentTarget(env, seatIndex);
+    Unit* target = DecisionTarget(env, seatIndex);
     seat.CurrentTargetGuid = target ? target->GetGUID() : ObjectGuid::Empty;
     seat.LastStepDamageTaken = bot
         ? float(env.StepStats[seatIndex].DamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
@@ -4689,12 +4737,16 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
         int32 Agent;
     };
 
-    std::vector<Friend> friends = { { bot, -1, int32(seatIndex) } };
+    // At most every seat and the owner: a fixed array, not a vector per seat per decision.
+    std::array<Friend, MAX_SEATS + 1> friendList;
+    uint32 friendCount = 0;
+    friendList[friendCount++] = { bot, -1, int32(seatIndex) };
     if (Player* owner = Owner(env))
-        friends.push_back({ owner, 0, -1 });
-    for (uint32 other = 0; other < _seatCount; ++other)
-        if (Player* teammate = other != seatIndex && Data(env).Seats[other].L ? env.FindBot(other) : nullptr)
-            friends.push_back({ teammate, -1, int32(other) });
+        friendList[friendCount++] = { owner, 0, -1 };
+    for (uint32 other = 0; other < _seatCount && friendCount < friendList.size(); ++other)
+        if (Player* teammate = other != seatIndex && Data(env).Seats[other].L ? SeatBotInWorld(env, other) : nullptr)
+            friendList[friendCount++] = { teammate, -1, int32(other) };
+    auto const friends = std::span<Friend const>(friendList.data(), friendCount);
 
     AgentStats& step = env.StepStats[seatIndex];
     auto const credit = [&step, seatIndex](Friend const& friendRef, uint64 amount)
@@ -4708,7 +4760,8 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
     };
 
     bool low = false;
-    std::vector<SeatState::AbsorbTrack> now;
+    std::vector<SeatState::AbsorbTrack>& now = seat.AbsorbScratch;
+    now.clear();
     for (Friend const& friendRef : friends)
     {
         low |= friendRef.U->IsAlive() && friendRef.U->GetHealthPct() < LOW_HEALTH_PCT;
@@ -4742,7 +4795,7 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
             credit(*friendRef, uint64(before.Amount));
     }
 
-    seat.Absorbs = std::move(now);
+    seat.Absorbs.swap(now);
     if (low && bot->IsAlive())
         seat.LowHealthMs += _decisionMs;
 }
@@ -4840,11 +4893,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // The combat clock (Output.Clock): every second an engaged enemy lives costs every seat, dead or alive.
     if (Arena(env).Seats != SeatPlan::Raid && _tuning.Output.Clock > 0.0f)
     {
-        bool engaged = false;
-        for (uint32 slot = 0; slot < env.Targets.size() && !engaged; ++slot)
-            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
-                engaged = true;
-        if (engaged)
+        if (Data(env).StepEngaged)
             seat.Rewards.Add(RewardTerm::CombatClock, -_tuning.Output.Clock * float(_decisionMs) / 1000.0f);
     }
 
@@ -4957,7 +5006,7 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
     std::array<Player*, MAX_SEATS> bots{};
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
-        Player* bot = env.FindBot(seat);
+        Player* bot = SeatBotInWorld(env, seat);
         SeatState const& slot = data.Seats[seat];
         bots[seat] = bot;
         if (!bot || !slot.L)

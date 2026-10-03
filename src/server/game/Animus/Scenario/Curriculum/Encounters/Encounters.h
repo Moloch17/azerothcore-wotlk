@@ -34,6 +34,7 @@
 #include "SeatView.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
+#include <unordered_set>
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -724,8 +725,11 @@ namespace Animus::Curriculum
             bool DrillExtra = false;
             uint32 DrillExtraEntry = 0;
             uint32 DrillPeak = 0;               // the most on the party at once
-            std::vector<ObjectGuid> Watched;
-            std::vector<ObjectGuid> Counted;
+            /// Creatures seen in the slots or past them and not yet counted dead; a kill moves from here to Counted,
+            /// which keeps it from being watched (and counted) again. Every decision walks Watched, so it holds only
+            /// what can still die rather than everything the run has ever seen.
+            std::unordered_set<ObjectGuid> Watched;
+            std::unordered_set<ObjectGuid> Counted;
             std::array<SeatInstance, MAX_SEATS> Seats;
         };
 
