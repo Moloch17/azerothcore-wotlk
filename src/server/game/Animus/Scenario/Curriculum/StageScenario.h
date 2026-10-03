@@ -150,6 +150,9 @@ namespace Animus::Curriculum
         [[nodiscard]] StageDefinition const& Stage() const { return _stage; }
         /// The env's current episode's arena.
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
+        /// A start for a training run of `arena` (EXPLORE_STARTS): drawn Share of the time from the table's cells of
+        /// that arena and a row below `rows`, by weight; none otherwise, and the run starts at the door.
+        [[nodiscard]] std::optional<ExploreStart> DrawExploreStart(uint32 arena, uint32 rows) const;
 
         /// The arena's pinned pack rung, or -1 when the ladder is free to climb (ArenaDefinition::MaxRung).
         [[nodiscard]] int32 ArenaMaxRung(Env const& env) const;
@@ -357,6 +360,7 @@ namespace Animus::Curriculum
         void SetStageProgress(float progress) override { _stageProgress.store(progress, std::memory_order_relaxed); }
         void SetShapingScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
+        void SetExploreStarts(float share, std::vector<ExploreStart> starts) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -487,6 +491,9 @@ namespace Animus::Curriculum
         std::atomic<float> _shapingScale{ 1.0f };
         /// The arena an evaluation is pinned to (MODE's arena), its index + 1; 0 = the stage's own draw.
         std::atomic<uint32> _evaluationArena{ 0 };
+        mutable std::mutex _exploreLock;
+        float _exploreShare = 0.0f;
+        std::vector<ExploreStart> _exploreStarts;
         /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
         std::atomic<uint32> _wingRung{ 0 };

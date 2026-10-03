@@ -209,6 +209,35 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         table.Add("wing_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].Rises); });
         table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
+        // Go-Explore: whether the run started from a cell, its arena and row, and the cells it reached (MarkCell).
+        table.Add("wing_started", [this](Env const& env, uint32) { return _envs[env.Index].Started ? 1.0f : 0.0f; });
+        table.Add("wing_arena", [this](Env const& env, uint32) { return float(_scenario.Data(env).Arena); });
+        table.Add("wing_tier", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
+        table.Add("wing_marks", [this](Env const& env, uint32) { return float(_envs[env.Index].Marks.size()); });
+        for (uint32 mark = 0; mark < EXPLORE_MARKS; ++mark)
+        {
+            auto const at = [this, mark](Env const& env) -> EnvInstance::CellMark const*
+            {
+                EnvInstance const& fight = _envs[env.Index];
+                return mark < fight.Marks.size() ? &fight.Marks[mark] : nullptr;
+            };
+            for (uint32 word = 0; word < EXPLORE_PACK_WORDS; ++word)
+                table.Add(Acore::StringFormat("wing_mark{}_packs{}", mark, word), [at, word](Env const& env, uint32)
+                {
+                    EnvInstance::CellMark const* cell = at(env);
+                    return cell ? float(cell->Packs[word]) : 0.0f;
+                });
+            table.Add(Acore::StringFormat("wing_mark{}_yard", mark), [at](Env const& env, uint32)
+            {
+                EnvInstance::CellMark const* cell = at(env);
+                return cell ? float(cell->Yard) : 0.0f;
+            });
+            table.Add(Acore::StringFormat("wing_mark{}_seconds", mark), [at](Env const& env, uint32)
+            {
+                EnvInstance::CellMark const* cell = at(env);
+                return cell ? float(cell->Ms) / 1000.0f : 0.0f;
+            });
+        }
     }
 }
 
@@ -236,14 +265,16 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
         LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
             "{} bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
-            env.Index, fight.Evaluating ? "eval" : "train", fight.Scripted ? " scripted" : "",
+            env.Index, fight.Evaluating ? "eval" : fight.Started ? "train from a cell" : "train",
+            fight.Scripted ? " scripted" : "",
             fight.Probe ? " probe" : "", fight.Rung, fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
             fight.BossDead ? "killed" : "alive", fight.Wipes,
             float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
             fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
-    // Every training run counts for its rung; the probes are the policy's own.
-    if (!fight.Route.empty() && !fight.Evaluating)
+    // Every training run from the door counts for its rung; the probes are the policy's own. A run started from a
+    // cell (Go-Explore) began part-way and is no measure of the rung.
+    if (!fight.Route.empty() && !fight.Evaluating && !fight.Started)
     {
         float const cleared = fight.HostileTotal
             ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
@@ -267,8 +298,20 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     fight.Layout = seat.L ? seat.L->Index : 0;
     fight.Spec = seat.Spec;
     // An arena pinned to one row (ArenaDefinition::InstanceRow) runs it every time, and its outcome moves no rung.
+    // A training run of a wing may start from a cell the learner sent (Go-Explore): that cell's row, and no rung moves
+    // either. Evaluation, and the pull drill, start at the door.
     int8 const pinned = _scenario.Arena(env).InstanceRow;
-    DifficultyLadder::Pick const pick = pinned >= 0 ? DifficultyLadder::Pick{ uint32(pinned), false }
+    std::optional<ExploreStart> const start = Wing(env) && !env.Evaluating && !_scenario.Arena(env).PullDrill
+        ? _scenario.DrawExploreStart(data.Arena, pinned >= 0 ? uint32(pinned) + 1 : uint32(rows.size()))
+        : std::nullopt;
+    fight.Started = start && (pinned < 0 || start->Tier == uint32(pinned));
+    if (fight.Started)
+    {
+        fight.StartPacks = start->Packs;
+        fight.StartYard = start->Yard;
+    }
+    DifficultyLadder::Pick const pick = fight.Started ? DifficultyLadder::Pick{ start->Tier, false }
+        : pinned >= 0 ? DifficultyLadder::Pick{ uint32(pinned), false }
         : _ladder.Draw(env, fight.Layout, fight.Spec, uint32(rows.size()) - 1);
     fight.Tier = std::min<uint32>(pick.Tier, uint32(rows.size()) - 1);
     fight.Counts = pick.Counts;
@@ -294,7 +337,7 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         // walks past what a party of the level would pull, and the drill is about what it would pull. No probes, no
         // script, one wipe; the hints as the support has them.
         fight.Drill = _scenario.Arena(env).PullDrill && !env.Evaluating;
-        fight.Probe = !env.Evaluating && !fight.Drill && frand(0.0f, 1.0f) < tuning.WingProbe;
+        fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && frand(0.0f, 1.0f) < tuning.WingProbe;
         fight.WipesAllowed = fight.Drill ? 1 : tuning.WingWipes + rung.ExtraWipes;
         // The script's seats and hints are a support switched on by hand (Instance.WingSupport): off, the rungs are
         // the levels and the wipes alone.
@@ -519,10 +562,15 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
         // and the bosses; every hostile one with the navmesh's.
         fight.HostileTotal = 0;
+        std::vector<ObjectGuid::LowType> counted;
         for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
             if (Hostile(seat, creature) && (!plan.Field || creature->IsDungeonBoss() || creature->isWorldBoss()
                 || std::binary_search(plan.Reachable.begin(), plan.Reachable.end(), spawnId)))
+            {
                 ++fight.HostileTotal;
+                counted.push_back(spawnId);
+            }
+        std::sort(counted.begin(), counted.end());
         fight.RouteRemain.assign(fight.Route.size(), 0.0f);
         for (std::size_t i = fight.Route.size(); i-- > 1;)
             fight.RouteRemain[i - 1] = fight.RouteRemain[i] + fight.Route[i - 1].GetExactDist(&fight.Route[i]);
@@ -533,11 +581,17 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         LOG_DEBUG("module.animus", "{}: env {}: {} route places from {} packs and {} route points", _scenario.Name(),
             env.Index, fight.Row->Name, fight.RoutePacks.size(), fight.Route.size());
         env.Targets.clear();
-        if (fight.Drill && !StartDrill(env, map, plan))
+        if (fight.Drill && !StartDrill(env, map, plan, counted))
         {
             LOG_WARN("module.animus", "{}: env {}: {} has no field route packs to drill; the whole dungeon instead",
                 _scenario.Name(), env.Index, fight.Row->Name);
             fight.Drill = false;
+        }
+        if (fight.Started && !StartAt(env, map, plan, counted))
+        {
+            LOG_WARN("module.animus", "{}: env {}: {} cannot start from the cell sent ({} packs on its route); "
+                "the door instead", _scenario.Name(), env.Index, fight.Row->Name, plan.Packs.size());
+            fight.Started = false;
         }
         // Food and water for the whole dungeon, as a party brings: without them nobody could eat or drink between
         // pulls (the gauntlet's encounter was the only one that gave them), and a healer waiting for its mana on
@@ -1737,6 +1791,9 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
             pack.Resolved = pack.Resolved || found;
             pack.Cleared = found && !standing;
         }
+        // A cell reached (Go-Explore): the set of cleared packs changed. Not for a drill, which is one pull.
+        if (!fight.Drill)
+            MarkCell(env, fight);
     }
 
     // The creatures watched last decision that have died since: the party's kills (the boss's is its own term).
@@ -1855,7 +1912,146 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         }
 }
 
-bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingPlan const& plan)
+void Animus::Curriculum::InstanceEncounter::PlaceParty(Env& env, Position const& start, std::size_t yard)
+{
+    EnvInstance& fight = _envs[env.Index];
+    EnvState& data = _scenario.Data(env);
+    data.EpisodeSpawn = start;
+    data.HasEpisodeSpawn = true;
+    uint32 const waypoints = std::min<uint32>(fight.RouteNext, uint32(fight.Route.size()));
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+    {
+        fight.Seats[index].Walk = fight.RouteNext;
+        fight.Seats[index].DenseAt = uint32(yard);
+        fight.Seats[index].WaypointsPaid = waypoints;
+        if (Player* bot = _scenario.SeatBot(env, index))
+        {
+            // Close together: the route may be a tunnel no wider than a few yards.
+            Position at = start;
+            at.m_positionX += float(int32(index % 3) - 1) * 1.0f;
+            at.m_positionY += float(int32(index / 3) - 1) * 1.0f;
+            BotFactory::TeleportWithinMap(bot, at);
+        }
+    }
+    fight.ProgressMs = env.EpisodeElapsedMs;
+}
+
+bool Animus::Curriculum::InstanceEncounter::StartAt(Env& env, Map* map, WingPlan const& plan,
+    std::vector<ObjectGuid::LowType> const& counted)
+{
+    EnvInstance& fight = _envs[env.Index];
+    if (plan.Packs.empty() || fight.Dense.empty() || fight.RouteDense.size() != fight.Route.size())
+        return false;
+    std::vector<std::size_t> packs;
+    for (uint32 bit = 0; bit < EXPLORE_PACKS; ++bit)
+        if (fight.StartPacks[bit / EXPLORE_PACK_BITS] & (1u << (bit % EXPLORE_PACK_BITS)))
+        {
+            if (bit >= plan.Packs.size() || bit >= fight.RoutePacks.size())
+                return false;
+            packs.push_back(bit);
+        }
+    if (packs.empty())
+        return false;
+
+    // The cell's packs gone, as the party that reached it left them; their grids loaded on purpose (StartDrill).
+    std::vector<ObjectGuid::LowType> cleared;
+    for (std::size_t index : packs)
+    {
+        map->LoadGrid(plan.Packs[index].At.GetPositionX(), plan.Packs[index].At.GetPositionY());
+        cleared.insert(cleared.end(), plan.Packs[index].Members.begin(), plan.Packs[index].Members.end());
+        fight.RoutePacks[index].Cleared = fight.RoutePacks[index].Resolved = true;
+    }
+    std::sort(cleared.begin(), cleared.end());
+    Player* seat = _scenario.SeatBot(env, 0);
+    std::vector<Creature*> clearing;
+    std::vector<Position> standing;
+    for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+    {
+        if (!creature || !creature->IsAlive())
+            continue;
+        if (std::binary_search(cleared.begin(), cleared.end(), spawnId))
+            clearing.push_back(creature);
+        else if (Hostile(seat, creature))
+            standing.push_back(creature->GetPosition());
+    }
+    uint32 bosses = 0;
+    for (Creature* creature : clearing)
+    {
+        if (fight.HostileTotal && std::binary_search(counted.begin(), counted.end(), creature->GetSpawnId()))
+            --fight.HostileTotal;
+        // A boss dies rather than vanishes: its script (BossAI's JustDied) marks the encounter done, which is what
+        // opens the doors behind it. A despawned one would leave the way on shut.
+        if (creature->IsDungeonBoss() || creature->isWorldBoss())
+        {
+            creature->KillSelf(false);
+            ++bosses;
+        }
+        else
+            creature->DespawnOrUnsummon(0ms, TRASH_RESPAWN);
+    }
+
+    // The party at the cell's yard, back along the route to ground nothing left standing is near (as the drill).
+    std::size_t yard = std::min<std::size_t>(std::size_t(fight.StartYard) * EXPLORE_YARD_BUCKET,
+        fight.Dense.size() - 1);
+    std::size_t const cellYard = yard;
+    float walked = 0.0f;
+    auto const clear = [&standing](Position const& at)
+    {
+        return std::none_of(standing.begin(), standing.end(),
+            [&at](Position const& creature) { return at.GetExactDist(&creature) < PULL_START_CLEARANCE; });
+    };
+    while (yard > 0 && walked < PULL_START_MAX_YARDS && !clear(fight.Dense[yard]))
+    {
+        walked += fight.Dense[yard].GetExactDist(&fight.Dense[yard - 1]);
+        --yard;
+    }
+    Position start = fight.Dense[yard];
+    start.SetOrientation(start.GetAngle(&fight.Dense[std::min(yard + 10, fight.Dense.size() - 1)]));
+    fight.RouteNext = uint32(fight.Route.size()) - 1;
+    for (std::size_t i = 0; i < fight.RouteDense.size(); ++i)
+        if (fight.RouteDense[i] > yard)
+        {
+            fight.RouteNext = uint32(i);
+            break;
+        }
+    PlaceParty(env, start, yard);
+    // The start is a cell reached: the archive counts the visit.
+    fight.Marks.push_back({ fight.StartPacks, fight.StartYard, env.EpisodeElapsedMs });
+    if (_scenario.Tuning().Instance.WingTrace)
+        LOG_INFO("module.animus", "Wing start: env {} {} from a cell, {} of {} packs cleared ({} bosses), yard {} "
+            "({:.0f} yd back to clear ground), route point {}/{}", env.Index, fight.Row->Name, packs.size(),
+            plan.Packs.size(), bosses, cellYard, walked, fight.RouteNext, fight.Route.size());
+    return true;
+}
+
+std::array<uint32, Animus::Curriculum::InstanceEncounter::EXPLORE_PACK_WORDS>
+    Animus::Curriculum::InstanceEncounter::ClearedWords(EnvInstance const& fight)
+{
+    std::array<uint32, EXPLORE_PACK_WORDS> words{};
+    for (std::size_t i = 0; i < std::min<std::size_t>(fight.RoutePacks.size(), EXPLORE_PACKS); ++i)
+        if (fight.RoutePacks[i].Cleared)
+            words[i / EXPLORE_PACK_BITS] |= 1u << (i % EXPLORE_PACK_BITS);
+    return words;
+}
+
+void Animus::Curriculum::InstanceEncounter::MarkCell(Env const& env, EnvInstance& fight)
+{
+    std::array<uint32, EXPLORE_PACK_WORDS> const words = ClearedWords(fight);
+    if (words == std::array<uint32, EXPLORE_PACK_WORDS>{}
+        || (!fight.Marks.empty() && fight.Marks.back().Packs == words))
+        return;
+    // Where the party is: the furthest yard a seat stands at (a seat left behind at the door is not the party's
+    // place).
+    uint32 yard = 0;
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats; ++index)
+        yard = std::max(yard, fight.Seats[index].DenseAt);
+    if (fight.Marks.size() == EXPLORE_MARKS)
+        fight.Marks.erase(fight.Marks.begin());
+    fight.Marks.push_back({ words, yard / EXPLORE_YARD_BUCKET, env.EpisodeElapsedMs });
+}
+
+bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingPlan const& plan,
+    std::vector<ObjectGuid::LowType> const& counted)
 {
     EnvInstance& fight = _envs[env.Index];
     CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
@@ -1927,7 +2123,12 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
         }
     }
     for (Creature* creature : clearing)
+    {
+        // Gone before the run starts: not a creature this run can kill (wing_cleared_share).
+        if (fight.HostileTotal && std::binary_search(counted.begin(), counted.end(), creature->GetSpawnId()))
+            --fight.HostileTotal;
         creature->DespawnOrUnsummon(0ms, TRASH_RESPAWN);
+    }
     if (fight.DrillPack.empty())
         return false;
 
@@ -1965,23 +2166,7 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
             break;
         }
 
-    EnvState& data = _scenario.Data(env);
-    data.EpisodeSpawn = start;
-    data.HasEpisodeSpawn = true;
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
-    {
-        fight.Seats[index].Walk = fight.RouteNext;
-        fight.Seats[index].DenseAt = uint32(yard);
-        if (Player* bot = _scenario.SeatBot(env, index))
-        {
-            // Close together: the route may be a tunnel no wider than a few yards.
-            Position at = start;
-            at.m_positionX += float(int32(index % 3) - 1) * 1.0f;
-            at.m_positionY += float(int32(index / 3) - 1) * 1.0f;
-            BotFactory::TeleportWithinMap(bot, at);
-        }
-    }
-    fight.ProgressMs = env.EpisodeElapsedMs;
+    PlaceParty(env, start, yard);
     if (tuning.WingTrace)
         LOG_INFO("module.animus", "Pull drill start: env {} rung {} pack {} of {} ({} creatures, gap {:.0f} yd), {:.0f} yd "
             "back along the route, {} packs cleared before it", env.Index, rung, chosen + 1, plan.Packs.size(),

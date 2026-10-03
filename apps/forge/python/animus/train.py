@@ -40,6 +40,7 @@ from .cast import LEAGUE, Cast, league_snapshot
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
+from .explore import ExploreArchive, cells_of, mark_columns
 from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
                          format_summary,
                          run_evaluation)
@@ -649,6 +650,20 @@ class TrainingRun:
         self.score_kind = wanted if wanted in spec.episode_info_names else ""
         self.update = 0
         self.env_steps = 0
+        # Go-Explore starts for the wings (explore.enabled): the archive of cells the ended runs reached, kept by the
+        # leader from every rank's runs, and the version of it the sim was last sent.
+        self.explore: ExploreArchive | None = None
+        self.explore_columns = mark_columns(spec.episode_info_names) if config.explore.enabled else None
+        self.explore_sent = -1
+        self.explore_version = 0
+        if config.explore.enabled and self.explore_columns is None:
+            print("explore.enabled, but this stage reports no wing cells (no wing arena): every run starts at the "
+                  "door", flush=True)
+        elif config.explore.enabled:
+            self.explore = ExploreArchive(config.explore.max_cells, config.explore.depth_weight)
+            explore = config.explore
+            print(f"Go-Explore: {explore.share:.0%} of wing training resets start from the {explore.table_size} most "
+                  f"promising of at most {explore.max_cells} cells; evaluation from the door", flush=True)
         # A follower first takes whatever the leader read that this machine lacks -- parents, teachers, the cast's
         # checkpoints, the league -- so it sets up from the same files (async_sync.fetch_shared).
         if self.async_ranks and not leader:
@@ -809,6 +824,8 @@ class TrainingRun:
                 raise SystemExit(f"cannot resume {config.run_name}: the layouts changed since {self.resume_path} was "
                                  f"saved -- {' | '.join(changes)}; start it fresh (it seeds from the stage before)")
             self.trainer.load_state_dict(checkpoint["trainer"])
+            if self.explore is not None and checkpoint.get("explore"):
+                self.explore.load_state_dict(checkpoint["explore"])
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
             # The convergence test and the best evaluation carry on where the run stopped -- unless they were scored
@@ -942,7 +959,8 @@ class TrainingRun:
     def _checkpoint_extra(self) -> dict:
         # The stage (its block positions) travels with the checkpoint, for seeding the stages that extend it.
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
-                "stage": self.stage, "score_kind": self.score_kind}
+                "stage": self.stage, "score_kind": self.score_kind,
+                **({"explore": self.explore.state_dict()} if self.explore is not None else {})}
 
     def _save(self, path: Path) -> None:
         self.drain_update()
@@ -1624,6 +1642,7 @@ class TrainingRun:
                 self.finished_layouts.clear()
         self.last_layout_stats = self.named_layout_stats()
         self.controller.observe_update(self.last_layout_stats, self.lr_scale_now)
+        self.explore_update()
         if self.difficulty_column is not None and self.finished_episodes:
             names = [layout.name for layout in spec.layouts]
             episodes = np.asarray(self.finished_episodes)
@@ -1650,6 +1669,7 @@ class TrainingRun:
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),
+            **(self.explore.summary() if self.explore is not None else {}),
         }
         if self.finished_episodes:
             means = np.mean(self.finished_episodes, axis=0)
@@ -1678,6 +1698,26 @@ class TrainingRun:
               flush=True)
         self.finished_episodes.clear()
         self.finished_layouts.clear()
+
+    def explore_update(self) -> None:
+        """The leader archives the cells every rank's ended wing runs reached, and sends the sim the start table when
+        the archive changed (protocol EXPLORE_STARTS). A cluster's sims all get it; an async follower's own sim keeps
+        starting at the door."""
+        if self.explore is None or not self.ranks.leader:
+            return
+        if self.finished_episodes:
+            rows = np.asarray(self.finished_episodes)
+            for cell, seconds in cells_of(rows, self.explore_columns):
+                self.explore.add(cell, seconds, self.env_steps)
+                self.explore_version += 1
+        if self.explore_version == self.explore_sent:
+            return
+        explore = self.config.explore
+        table = self.explore.table(explore.table_size)
+        if table:
+            self.env.set_explore_starts(explore.share, [(cell.arena, cell.tier, cell.packs, cell.yard, weight)
+                                                        for cell, weight in table])
+            self.explore_sent = self.explore_version
 
     def audit_progress(self, row: dict[str, float]) -> None:
         """Say so when the updates have stopped moving the policy.

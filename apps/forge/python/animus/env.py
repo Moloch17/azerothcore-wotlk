@@ -144,6 +144,12 @@ class ForgeEnv:
         payload = p.encode_replay(seed_base, fraction, seeds)
         self.sock.sendall(p.encode_header(p.MsgType.REPLAY, len(payload)) + payload)
 
+    def set_explore_starts(self, share: float, cells) -> None:
+        """The cells `share` of a wing's training resets start from (protocol EXPLORE_STARTS, animus.explore), in
+        place of the ones sent before. Nothing is sent back."""
+        payload = p.encode_explore_starts(share, cells)
+        self.sock.sendall(p.encode_header(p.MsgType.EXPLORE_STARTS, len(payload)) + payload)
+
     def close(self) -> None:
         try:
             self.sock.sendall(p.encode_header(p.MsgType.CLOSE, 0))
@@ -265,6 +271,7 @@ class ClusterEnv:
         self.sat_out = np.zeros(offset, dtype=bool)
         self._weights = None
         self._replay = None
+        self._explore = None
 
     # ------------------------------------------------------------------ workers dropping out and coming back
 
@@ -341,6 +348,8 @@ class ClusterEnv:
                     sim.set_layout_weights(self._weights)
                 if self._replay is not None:
                     sim.set_replay(*self._replay)
+                if self._explore is not None:
+                    sim.set_explore_starts(*self._explore)
                 fresh = self._seen(index, sim.reset())
             except OSError as error:
                 self._drop(index, error)
@@ -442,6 +451,15 @@ class ClusterEnv:
             if sim is not None:
                 try:
                     sim.set_replay(seed_base, fraction, seeds)
+                except OSError as error:
+                    self._drop(index, error)
+
+    def set_explore_starts(self, share: float, cells) -> None:
+        self._explore = (share, list(cells))
+        for index, sim in enumerate(self.sims):
+            if sim is not None:
+                try:
+                    sim.set_explore_starts(share, self._explore[1])
                 except OSError as error:
                     self._drop(index, error)
 

@@ -9,6 +9,13 @@ run_name: stage8_ragefire
 
 total_env_steps: 3000000000
 
+# Go-Explore (animus.explore, peak-play W5): half the training runs start from a cell an earlier run reached -- its
+# packs gone, the party rested at its place on the route -- rather than the door; evaluation always starts at the
+# door. The stages after it inherit this.
+explore:
+  enabled: true
+  share: 0.5
+
 eval:
   every_env_steps: 40000000
   episodes: 64

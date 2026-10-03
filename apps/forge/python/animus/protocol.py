@@ -33,6 +33,7 @@ class MsgType(IntEnum):
     DEVICE = 9
     DEVICE_ACK = 10
     PROGRESS = 11       # f32 progress through the stage's budget (arena weight schedules), f32 shaping scale (18)
+    EXPLORE_STARTS = 12  # the cells a wing's training runs start from (Go-Explore, animus.explore; 18)
 
 
 HEADER = struct.Struct("<II")  # type, payload length
@@ -48,6 +49,9 @@ MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; 
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
 MAX_REPLAY_SEEDS = 65536
+EXPLORE_STARTS = struct.Struct("<fI")  # share of a wing's training resets, count; then that many EXPLORE_CELL
+EXPLORE_CELL = struct.Struct("<II4IIf")  # arena, tier, cleared packs (4 words of 24 bits), yard / 16, weight
+MAX_EXPLORE_STARTS = 64
 # DEVICE (protocol 15): the sim's device buffers for this learner's obs, state and mask -- GPU, envs, then the three
 # hipIpcMemHandle_t -- offered after SPEC; DEVICE_ACK answers 1 when they were opened (animus.device).
 DEVICE = struct.Struct("<II64s64s64s")
@@ -338,6 +342,16 @@ def encode_weights(weights) -> bytes:
 def decode_weights(payload: bytes | bytearray | memoryview) -> np.ndarray:
     (count,) = WEIGHTS_COUNT.unpack_from(payload)
     return np.frombuffer(payload, dtype="<f4", count=count, offset=WEIGHTS_COUNT.size).copy()
+
+
+def encode_explore_starts(share: float, cells) -> bytes:
+    """EXPLORE_STARTS payload: `cells` -- (arena, tier, packs (4 words), yard, weight) -- that `share` of a wing's
+    training resets start from instead of the door."""
+    cells = list(cells)
+    if len(cells) > MAX_EXPLORE_STARTS:
+        raise ValueError(f"at most {MAX_EXPLORE_STARTS} explore starts, got {len(cells)}")
+    return EXPLORE_STARTS.pack(float(share), len(cells)) + b"".join(
+        EXPLORE_CELL.pack(arena, tier, *packs, yard, float(weight)) for arena, tier, packs, yard, weight in cells)
 
 
 def encode_replay(seed_base: int, fraction: float, seeds) -> bytes:

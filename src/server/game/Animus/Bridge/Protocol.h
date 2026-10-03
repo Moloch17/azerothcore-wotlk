@@ -116,7 +116,7 @@ namespace AnimusForge
     // 18: PROGRESS carries the shaping scale after the progress (ProgressMsg): a sim that took the old four bytes
     // would never fade its shaping, and nothing would say so. STEP's episode_info carries only the envs whose done is
     // set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage. MODE names a
-    // held-out arena for the evaluation to play.
+    // held-out arena for the evaluation to play. EXPLORE_STARTS gives the wings the cells to start from (Go-Explore).
     constexpr uint32 PROTOCOL_VERSION = 18;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
@@ -142,6 +142,10 @@ namespace AnimusForge
         /// stage (ArenaDefinition::WeightFinal) draw by the first; every Shaping reward term is paid times the second
         /// (RewardLedger::SetShaping). Protocol 17; the shaping scale from 18.
         Progress = 11,
+        /// client -> server: ExploreStartsHeader, then Count ExploreCell -- the cells a training run of a dungeon wing
+        /// starts from instead of the door (Go-Explore), Share of them, drawn by weight; replaces the last table,
+        /// applied without an answer as envs reset. Evaluation never takes one. Protocol 18.
+        ExploreStarts = 12,
     };
 
 #pragma pack(push, 1)
@@ -209,6 +213,28 @@ namespace AnimusForge
     {
         uint32 Count;
     };
+
+    /// EXPLORE_STARTS payload: this header, then Count cells (at most MAX_EXPLORE_STARTS).
+    constexpr uint32 MAX_EXPLORE_STARTS = 64;
+
+    struct ExploreStartsHeader
+    {
+        float Share;
+        uint32 Count;
+    };
+
+    /// A cell of a wing run (InstanceEncounter's marks): the arena and its row (tier), the route's packs cleared as
+    /// EXPLORE_PACK_WORDS words of 24 bits (route order, word-major), the party's yard on the route / 16, the weight.
+    struct ExploreCell
+    {
+        uint32 Arena;
+        uint32 Tier;
+        uint32 Packs[4];
+        uint32 Yard;
+        float Weight;
+    };
+    // The learner's EXPLORE_STARTS and EXPLORE_CELL (protocol.py): "<fI" and "<II4IIf".
+    static_assert(sizeof(ExploreStartsHeader) == 8 && sizeof(ExploreCell) == 32);
 
     /// REPLAY payload: this header, then Count uint32 evaluation seed indexes (at most MAX_REPLAY_SEEDS).
     constexpr uint32 MAX_REPLAY_SEEDS = 65536;

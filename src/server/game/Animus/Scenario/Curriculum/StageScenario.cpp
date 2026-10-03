@@ -4528,6 +4528,38 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepFidgetMs = 0;
 }
 
+void Animus::Curriculum::StageScenario::SetExploreStarts(float share, std::vector<ExploreStart> starts)
+{
+    share = std::isfinite(share) ? std::clamp(share, 0.0f, 1.0f) : 0.0f;
+    std::erase_if(starts,
+        [](ExploreStart const& start) { return !(start.Weight > 0.0f) || !std::isfinite(start.Weight); });
+    std::lock_guard<std::mutex> guard(_exploreLock);
+    bool const first = _exploreStarts.empty() && !starts.empty();
+    _exploreShare = share;
+    _exploreStarts = std::move(starts);
+    if (first)
+        LOG_INFO("module.animus", "Animus forge: stage {} starts {:.0f}% of its wing runs from the {} cells the "
+            "learner sent (Go-Explore)", _stage.Name, 100.0f * share, _exploreStarts.size());
+}
+
+std::optional<Animus::ExploreStart> Animus::Curriculum::StageScenario::DrawExploreStart(uint32 arena, uint32 rows) const
+{
+    std::lock_guard<std::mutex> guard(_exploreLock);
+    if (_exploreStarts.empty() || frand(0.0f, 1.0f) >= _exploreShare)
+        return std::nullopt;
+    float total = 0.0f;
+    for (ExploreStart const& start : _exploreStarts)
+        if (start.Arena == arena && start.Tier < rows)
+            total += start.Weight;
+    if (total <= 0.0f)
+        return std::nullopt;
+    float pick = frand(0.0f, total);
+    for (ExploreStart const& start : _exploreStarts)
+        if (start.Arena == arena && start.Tier < rows && (pick -= start.Weight) <= 0.0f)
+            return start;
+    return std::nullopt;
+}
+
 bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)
 {
     if (pin && (pin > _stage.Arenas.size() || !_stage.Arenas[pin - 1].EvalOnly))

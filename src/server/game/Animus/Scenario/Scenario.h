@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,17 @@ namespace Animus
 
     /// One kind of agent: its observation features and actions (a class/role, say). An agent of a layout fills
     /// only the first ObsDim features and NumActions mask entries of its padded row.
+    /// A start a dungeon wing's training run may take instead of the door (Go-Explore, the learner's EXPLORE_STARTS):
+    /// the arena and row, the route's packs cleared (24 bits a word, route order), the party's yard / 16, the weight.
+    struct ExploreStart
+    {
+        uint32 Arena = 0;
+        uint32 Tier = 0;
+        std::array<uint32, 4> Packs{};
+        uint32 Yard = 0;
+        float Weight = 0.0f;
+    };
+
     struct LayoutSpec
     {
         std::string Name;
@@ -146,6 +158,9 @@ namespace Animus
         /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
         /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
         virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }
+        /// The cells training runs of a dungeon wing start from, `share` of the time (EXPLORE_STARTS); replaces the
+        /// last table. Scenarios without wings ignore it.
+        virtual void SetExploreStarts(float /*share*/, std::vector<ExploreStart> /*starts*/) { }
 
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the

@@ -577,6 +577,14 @@ namespace Animus::Curriculum
     class InstanceEncounter final : public Encounter
     {
     public:
+        /// A wing's cells (Go-Explore): the route's packs as EXPLORE_PACK_WORDS words of EXPLORE_PACK_BITS (a float of
+        /// the episode info holds 24 bits exactly), so a route's first 96 packs; the party's yard in buckets.
+        static constexpr uint32 EXPLORE_PACK_WORDS = 4;
+        static constexpr uint32 EXPLORE_PACK_BITS = 24;
+        static constexpr uint32 EXPLORE_PACKS = EXPLORE_PACK_WORDS * EXPLORE_PACK_BITS;
+        static constexpr uint32 EXPLORE_YARD_BUCKET = 16;
+        static constexpr uint32 EXPLORE_MARKS = 8;
+
         InstanceEncounter(StageScenario& scenario, uint32 envs);
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
@@ -743,6 +751,20 @@ namespace Animus::Curriculum
             };
             std::vector<RoutePack> RoutePacks;
             std::array<SeatInstance, MAX_SEATS> Seats;
+            /// Go-Explore (the learner's EXPLORE_STARTS): a training run started from a cell instead of the door --
+            /// its packs cleared and the party's yard / EXPLORE_YARD_BUCKET -- and the cells the run reached, a mark
+            /// each time the set of cleared packs changed (the start's first), the last EXPLORE_MARKS of them with the
+            /// run's clock: the episode info the learner's archive is built from.
+            bool Started = false;
+            std::array<uint32, EXPLORE_PACK_WORDS> StartPacks{};
+            uint32 StartYard = 0;
+            struct CellMark
+            {
+                std::array<uint32, EXPLORE_PACK_WORDS> Packs{};
+                uint32 Yard = 0;
+                uint32 Ms = 0;
+            };
+            std::vector<CellMark> Marks;
         };
 
         [[nodiscard]] bool Wing(Env const& env) const;
@@ -781,7 +803,19 @@ namespace Animus::Curriculum
         void UpdateWingEnemies(Env& env, EnvInstance& fight);
         /// The pull drill: a pack off the ladder, the packs before it cleared, the party set down short of it.
         /// False when the route has no packs to drill (a navmesh route); the run is the whole dungeon then.
-        bool StartDrill(Env& env, Map* map, WingPlan const& plan);
+        /// `counted`: the spawn ids HostileTotal counted (sorted); what a start despawns comes off it.
+        bool StartDrill(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
+        /// A Go-Explore start (EnvInstance::Started): the cell's packs despawned -- a dungeon boss among them killed,
+        /// so its script opens what its death opens -- and marked cleared, the party on the route at the cell's yard
+        /// (back to clear ground), every pay latch at what the start already holds. False, nothing changed, for a
+        /// cell this route cannot have.
+        bool StartAt(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
+        /// The party to `start`, the `yard` of the field route: the wipes' spawn, every seat's route point and yard,
+        /// and its waypoints paid up to RouteNext (an offset start is not paid the route it did not walk).
+        void PlaceParty(Env& env, Position const& start, std::size_t yard);
+        /// The run's cleared packs as a cell's words; a mark when they changed (UpdateWingEnemies).
+        [[nodiscard]] static std::array<uint32, EXPLORE_PACK_WORDS> ClearedWords(EnvInstance const& fight);
+        void MarkCell(Env const& env, EnvInstance& fight);
         /// The drill's pack dead with the fight over, or another creature fighting the party.
         void UpdateDrill(Env& env, EnvInstance& fight);
         void NoteDrill(uint32 rung, bool clean);
