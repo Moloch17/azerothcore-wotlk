@@ -36,8 +36,13 @@ from .stages import arena_state_span
 from .device import host
 
 LEAGUE_DIR = "league"
+#: A league member that is an exploiter (animus.exploit) is saved as exploiter_<n>.pt: drawn at least
+#: cast.exploiter_floor of the time, and never the member the main's league statistics are read from.
+EXPLOITER_PREFIX = "exploiter_"
 LEAGUE_FILE = "league.json"
 AUTO = "auto"
+#: Cast.member of an episode whose far side the exploiter plays (animus.exploit), not a league member.
+EXPLOITER_MEMBER = -2
 LEAGUE = "league"
 
 
@@ -233,10 +238,11 @@ class Member:
     rate: float = 0.5  # the live policy's win rate against it, an EMA over cast.rate_window fights
     retired: bool = False
     order: int = 0  # the order it joined in: the newest are never pruned or retired
+    exploiter: bool = False  # trained against the main to beat it (animus.exploit), not one of its own snapshots
 
     def to_json(self) -> dict:
         return {"path": str(self.path), "fights": self.fights, "win_rate": round(self.rate, 4),
-                "retired": self.retired, "order": self.order}
+                "retired": self.retired, "order": self.order, "kind": "exploiter" if self.exploiter else "snapshot"}
 
 
 class CastPool:
@@ -255,7 +261,7 @@ class CastPool:
         path = Path(path)
         if any(member.path == path for member in self.members) or not path.is_file():
             return None
-        member = Member(path=path, order=self.counter)
+        member = Member(path=path, order=self.counter, exploiter=path.name.startswith(EXPLOITER_PREFIX))
         self.counter += 1
         self.members.append(member)
         self.prune()
@@ -273,22 +279,42 @@ class CastPool:
         return {member.order for member in sorted(self.members, key=lambda m: -m.order)[:count]}
 
     def hardest(self) -> Member | None:
-        fought = [member for member in self.active() if member.fights > 0]
+        """The member the live policy beats least -- of its own snapshots: an exploiter is there to be answered, and
+        never stands for the league in the main's statistics."""
+        fought = [member for member in self.active() if member.fights > 0 and not member.exploiter]
         return min(fought, key=lambda member: member.rate) if fought else None
 
     def weights(self) -> np.ndarray:
         active = self.active()
         return np.array([(1.0 - member.rate) ** 2 + self.config.floor for member in active], dtype=np.float64)
 
+    def probabilities(self) -> np.ndarray:
+        """Each active member's share of the draw: prioritised fictitious self-play weights, an exploiter lifted to
+        cast.exploiter_floor at least (the main must keep answering it) and the snapshots sharing what is left."""
+        active = self.active()
+        weights = self.weights()
+        p = weights / weights.sum()
+        exploiters = np.array([member.exploiter for member in active], dtype=bool)
+        floor = float(getattr(self.config, "exploiter_floor", 0.0))
+        if not exploiters.any() or floor <= 0.0:
+            return p
+        lifted = np.maximum(p[exploiters], floor)
+        if lifted.sum() >= 1.0 or not (~exploiters).any():
+            p[exploiters] = lifted / lifted.sum()
+            p[~exploiters] = 0.0
+            return p
+        rest = p[~exploiters]
+        p[~exploiters] = rest / rest.sum() * (1.0 - lifted.sum())
+        p[exploiters] = lifted
+        return p
+
     def draw(self, count: int, rng: np.random.Generator) -> list[int]:
-        """Indexes into `members` for `count` episodes, by prioritised fictitious self-play weights."""
+        """Indexes into `members` for `count` episodes (probabilities)."""
         active = self.active()
         if not active:
             return [-1] * count
-        weights = self.weights()
-        weights = weights / weights.sum()
         indexes = [self.members.index(member) for member in active]
-        return [indexes[i] for i in rng.choice(len(active), size=count, p=weights)]
+        return [indexes[i] for i in rng.choice(len(active), size=count, p=self.probabilities())]
 
     def record(self, index: int, won: float) -> None:
         if index < 0 or index >= len(self.members):
@@ -379,6 +405,8 @@ class Cast:
             if cast_config.opponents == LEAGUE:
                 self.pool.reload()
         envs = spec.num_envs
+        # The share of the cast episodes the exploiter plays while there is one (animus.exploit sets it).
+        self.exploit_share = 0.0
         self.cast_env = np.zeros(envs, dtype=bool)
         self.member = np.full(envs, -1, dtype=np.int64)
         self.begin_episodes(np.ones(envs, dtype=bool))
@@ -400,8 +428,28 @@ class Cast:
             return
         count = int(envs.sum())
         self.cast_env[envs] = self.rng.random(count) < self.config.opponent_share
-        drawn = self.pool.draw(count, self.rng)
-        self.member[envs] = np.asarray(drawn, dtype=np.int64)
+        drawn = np.asarray(self.pool.draw(count, self.rng), dtype=np.int64)
+        # Of the cast episodes, exploit_share are the exploiter's: the league's draw keeps its weights over the rest.
+        if self.exploit_share > 0.0:
+            drawn[self.rng.random(count) < self.exploit_share] = EXPLOITER_MEMBER
+        self.member[envs] = drawn
+
+    def exploiter_rows(self, rows: np.ndarray) -> np.ndarray:
+        """Of this decision's cast rows [E, A], the exploiter's."""
+        return rows & (self.cast_env & (self.member == EXPLOITER_MEMBER))[:, None]
+
+    def exploiter_results(self, step, won_column: int | None) -> list[float]:
+        """The exploiter's `won` in the episodes it played that ended this decision (its seats' mean)."""
+        if won_column is None or self.last_rows is None or not step.done.any():
+            return []
+        results = []
+        for env in np.nonzero(step.done)[0]:
+            if not self.cast_env[env] or self.member[env] != EXPLOITER_MEMBER:
+                continue
+            seats = self.last_rows[env]
+            if seats.any():
+                results.append(float(step.episode_info[env][seats, won_column].mean()))
+        return results
 
     def rows(self, step) -> np.ndarray:
         """[E, A] bool: the rows a frozen actor answers this decision."""

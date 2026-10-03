@@ -206,6 +206,19 @@ class RolloutBuffer:
         self.foresight_valid = np.zeros((*shape, foresight), dtype=bool)
         self.cursor = 0
 
+    @classmethod
+    def view_of(cls, main: "RolloutBuffer", foresight: int, recurrent: int, goals: bool, slow_goal: int,
+                goal_slots: int) -> "RolloutBuffer":
+        """A second policy's rollout over the same decisions (an exploiter's, animus.exploit): what the sim gave and
+        what was done -- obs, state, mask, layout, actions, rewards, dones -- are `main`'s own arrays, shared, and
+        everything that is the policy's -- which rows it played, its log probabilities, values, memories, goals,
+        advantages and returns -- its own. Written to at the same steps as `main`, after it."""
+        steps, envs, agents = main.actions.shape
+        view = cls(steps, envs, agents, 0, 0, 0, foresight, recurrent, goals, slow_goal, goal_slots)
+        for name in ("obs", "state", "mask", "layout", "actions", "rewards", "dones", "terminated"):
+            setattr(view, name, getattr(main, name))
+        return view
+
     @property
     def samples(self) -> np.ndarray:
         """The rows the loss is drawn from: an agent that had a character and made a decision of its own."""

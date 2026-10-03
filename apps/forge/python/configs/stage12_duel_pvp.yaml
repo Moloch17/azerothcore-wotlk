@@ -21,3 +21,10 @@ eval:
 
 cast:
   opponents: league
+
+# Exploiters (animus.exploit, peak-play W6): a second learner seeded from the league's newest snapshot plays the far
+# side of a quarter of the cast episodes against the main, and joins the league once it beats it; the PvP stages
+# after this one inherit it.
+exploit:
+  enabled: true
+  share: 0.25

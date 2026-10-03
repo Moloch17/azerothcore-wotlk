@@ -36,11 +36,12 @@ import torch
 import yaml
 
 from .bootstrap import DIRECTOR_LAYOUT, seed_merges, seed_trainer
-from .cast import LEAGUE, Cast, league_snapshot
+from .cast import EXPLOITER_MEMBER, LEAGUE, LEAGUE_DIR, Cast, league_snapshot
 from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
 from .explore import ExploreArchive, cells_of, mark_columns
+from .exploit import JOIN, Exploit, exploiter_name
 from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
                          format_summary,
                          run_evaluation)
@@ -587,17 +588,23 @@ class TrainingRun:
         if config.mappo.seat_sets and seat_sets is None:
             print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
                   flush=True)
-        self.trainer = MappoTrainer(
-            [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
-            spec.state_dim,
-            config.mappo,
-            train_device=config.resolved_train_device(),
-            rollout_device=config.resolved_rollout_device(),
-            slow_layout=self.slow_layout,
-            ranks=self.ranks.update,
-            director=director,
-            seat_sets=seat_sets,
-        )
+        def make_trainer() -> MappoTrainer:
+            # The exploiter's (animus.exploit) is built by this too: the same layouts, director and seat sets, the
+            # same ranks -- its update is data-parallel like the main's.
+            return MappoTrainer(
+                [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
+                spec.state_dim,
+                config.mappo,
+                train_device=config.resolved_train_device(),
+                rollout_device=config.resolved_rollout_device(),
+                slow_layout=self.slow_layout,
+                ranks=self.ranks.update,
+                director=director,
+                seat_sets=seat_sets,
+            )
+
+        self.make_trainer = make_trainer
+        self.trainer = make_trainer()
         # ROCm wears the CUDA API's name: torch.cuda is HIP on an AMD card and the device prints as "cuda",
         # which reads as though the wrong backend were in use. Say what it actually is, and which card.
         def named(device: torch.device) -> str:
@@ -653,6 +660,9 @@ class TrainingRun:
         # Go-Explore starts for the wings (explore.enabled): the archive of cells the ended runs reached, kept by the
         # leader from every rank's runs, and the version of it the sim was last sent.
         self.explore: ExploreArchive | None = None
+        # The exploiter (exploit.enabled, animus.exploit): built after the seed, from a resumed state if any.
+        self.exploit: Exploit | None = None
+        self.exploit_resume: dict | None = None
         self.explore_columns = mark_columns(spec.episode_info_names) if config.explore.enabled else None
         self.explore_sent = -1
         self.explore_version = 0
@@ -705,6 +715,7 @@ class TrainingRun:
         self.replay_version = 0
         self.shared_version = 0
         self.trainer.sync_rollout()
+        self.exploit = self._make_exploit()
 
         def new_buffer() -> RolloutBuffer:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
@@ -762,6 +773,10 @@ class TrainingRun:
         if self.explore is not None:
             # Go-Explore (explore.enabled): the cells archived and the furthest of them.
             columns += ["explore_cells", "explore_deepest"]
+        if config.exploit.enabled:
+            # The exploiter (exploit.enabled): whether one plays, its standing against the main, what it costs.
+            columns += ["exploit_active", "exploit_joined", "exploit_win_rate", "exploit_episodes",
+                        "exploit_update_seconds", "exploit_rows", "exploit_policy_loss"]
         if self.trainer.goal_count:
             # What the goal head is doing: the entropy it is kept at, how often a chosen goal is the one held, and
             # the share of decisions spent under each goal.
@@ -851,6 +866,7 @@ class TrainingRun:
             self.trainer.load_state_dict(checkpoint["trainer"])
             if self.explore is not None and checkpoint.get("explore"):
                 self.explore.load_state_dict(checkpoint["explore"])
+            self.exploit_resume = checkpoint.get("exploit")
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
             # The convergence test and the best evaluation carry on where the run stopped -- unless they were scored
@@ -981,11 +997,86 @@ class TrainingRun:
 
     # ------------------------------------------------------------------ checkpoints
 
+    def _make_exploit(self) -> Exploit | None:
+        """The run's exploiter slot (exploit.enabled): only with a league on the far side (cast.opponents: league)
+        and learners in step (an async follower decides nothing). Its resumed state, if the checkpoint has one."""
+        config, spec = self.config, self.spec
+        if not config.exploit.enabled:
+            return None
+        if self.cast is None or self.cast.pool is None or config.cast.opponents != LEAGUE or self.async_ranks:
+            print("exploit.enabled, but this run has no league on the far side (cast.opponents: league) or its "
+                  "learners are not in step: no exploiter", flush=True)
+            return None
+        names = [layout.name for layout in spec.layouts]
+
+        def prepare(trainer) -> None:
+            # As the main's: the stage's goal and hint spaces, blind director columns, every rank the leader's.
+            trainer.set_goal_space(self.stage, names)
+            trainer.set_hint_space(self.stage, names)
+            trainer.clear_director_columns()
+            for module in (trainer.actor, trainer.critic, trainer.value_norm):
+                if module is not None:
+                    self.ranks.broadcast_module(module)
+            trainer.sync_rollout()
+
+        exploit = Exploit(config.exploit, self.make_trainer, prepare, spec.num_envs, spec.agents_per_env)
+        if getattr(self, "exploit_resume", None):
+            exploit.load_state_dict(self.exploit_resume)
+            self.cast.exploit_share = config.exploit.share if exploit.active else 0.0
+        share = config.cast.opponent_share
+        print(f"Far side of the self-play arenas while an exploiter plays: {share * (1 - config.exploit.share):.0%} "
+              f"league, {share * config.exploit.share:.0%} exploiter, {1 - share:.0%} the live policy", flush=True)
+        return exploit
+
+    def exploit_step(self) -> None:
+        """Every update: the exploiter's results from every rank to the leader, who decides whether it joins,
+        retires, or (with none playing) whether the next starts and from which snapshot; every rank does the same."""
+        exploit = self.exploit
+        if exploit is None:
+            return
+        gathered = self.ranks.gather(list(exploit.results))
+        exploit.results.clear()
+        decision = None
+        if self.ranks.leader:
+            results = [won for rows in gathered for won in rows]
+            if exploit.active:
+                for won in results:
+                    exploit.record.observe(won)
+                decision = exploit.record.verdict(self.env_steps)
+                if decision is None and self.update % max(1, self.config.exploit.log_every) == 0:
+                    print(f"Exploiter from {Path(exploit.record.seed).name}: win rate {exploit.record.rate:.0%} over "
+                          f"{len(exploit.record.recent)} of {exploit.record.episodes} episodes against the main, "
+                          f"{self.env_steps - exploit.record.started_env_steps} of "
+                          f"{exploit.record.budget_env_steps} env steps", flush=True)
+            elif self.env_steps - exploit.ended_env_steps >= self.config.exploit.every_env_steps:
+                # Seeded from the league's newest of the main's own snapshots: a learner, never a script.
+                snapshots = [member for member in self.cast.pool.active() if not member.exploiter]
+                if snapshots:
+                    decision = str(max(snapshots, key=lambda member: member.order).path)
+            if decision == JOIN:
+                path = self.run_dir / LEAGUE_DIR / exploiter_name(exploit.joined + 1)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                save_checkpoint(path, exploit.trainer, self.config, self.spec, self.update, self.env_steps,
+                                {"stage": self.stage, "exploiter": exploit.record.state_dict()})
+        decision = self.ranks.broadcast(decision)
+        if decision is None:
+            return
+        if decision in (JOIN, "retire"):
+            exploit.end(decision, self.env_steps)
+            self.cast.exploit_share = 0.0
+            if decision == JOIN:
+                self.cast.pool.reload()
+                self.cast.pool.write()
+            return
+        exploit.launch(Path(decision), load_parent(Path(decision)), self.spec, self.stage, self.env_steps)
+        self.cast.exploit_share = self.config.exploit.share
+
     def _checkpoint_extra(self) -> dict:
         # The stage (its block positions) travels with the checkpoint, for seeding the stages that extend it.
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
                 "stage": self.stage, "score_kind": self.score_kind,
-                **({"explore": self.explore.state_dict()} if self.explore is not None else {})}
+                **({"explore": self.explore.state_dict()} if self.explore is not None else {}),
+                **({"exploit": self.exploit.state_dict()} if getattr(self, "exploit", None) is not None else {})}
 
     def _save(self, path: Path) -> None:
         self.drain_update()
@@ -1110,7 +1201,7 @@ class TrainingRun:
                                       opponents=self.opponents, arenas=self.arena_names,
                                       action_names=self.action_names, trace_episodes=config.eval.trace_episodes)
         if self.cast is not None:
-            self.cast.reset_all()
+            self._reset_far_side()
         self.last_eval_env_steps = self.env_steps
 
         summary, sampled, joined, heldout = None, False, False, False
@@ -1192,7 +1283,7 @@ class TrainingRun:
                                       opponents=self.opponents, arenas=self.arena_names,
                                       action_names=self.action_names)
         if self.cast is not None:
-            self.cast.reset_all()
+            self._reset_far_side()
         if not self.ranks.leader:
             return
         result.policy = "learner_sampled"
@@ -1215,7 +1306,7 @@ class TrainingRun:
             result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
                                           arenas=self.arena_names, action_names=self.action_names, arena=pin)
             if self.cast is not None:
-                self.cast.reset_all()
+                self._reset_far_side()
             if not self.ranks.leader:
                 continue
             result.policy = f"heldout_{name}"
@@ -1296,6 +1387,13 @@ class TrainingRun:
 
     # ------------------------------------------------------------------ training
 
+    def _reset_far_side(self) -> None:
+        """Every env starts afresh (after an evaluation): the cast's members redrawn and memories gone, and the
+        exploiter's."""
+        self.cast.reset_all()
+        if self.exploit is not None and self.exploit.active:
+            self.exploit.clear(np.ones(self.spec.num_envs, dtype=bool))
+
     def finish_update(self) -> dict[str, float] | None:
         """Wait for an overlapped update to finish and hand its weights to the rollout networks. None if none ran."""
         if self.pending_update is None:
@@ -1348,6 +1446,9 @@ class TrainingRun:
         spec, trainer, buffer = self.spec, self.trainer, self.buffer
         envs, agents = spec.num_envs, spec.agents_per_env
         buffer.reset()
+        exploit = self.exploit if self.exploit is not None and self.exploit.active else None
+        if exploit is not None:
+            exploit.view(buffer).reset()
         started = time.perf_counter()
 
         # self.acting is never reset between rollouts, only where an episode ended: a policy's memory carries on
@@ -1394,6 +1495,8 @@ class TrainingRun:
         decision = self._act_on_rows_of(self.step, groups, send)
         while True:
             buffer.add_decision(*decision.recorded())
+            if exploit is not None:
+                exploit.record_decision(buffer, decision.layout, decision.actions)
             last = buffer.cursor + 1 >= buffer.steps
             outcome = RolloutOutcome(envs, agents, trainer.foresight_outputs)
             following = None if last else DecisionRows(envs, agents, buffer, buffer.cursor + 1)
@@ -1413,6 +1516,8 @@ class TrainingRun:
                 self.step = protocol.join_steps(parts)
             buffer.add_outcome(outcome.reward, outcome.done, outcome.terminated, outcome.final_values,
                                outcome.final_foresight)
+            if exploit is not None:
+                exploit.record_outcome(buffer, outcome)
             if following is None:
                 break
             decision = following
@@ -1434,6 +1539,33 @@ class TrainingRun:
                       slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
                       if trainer.slow_goal_size else None,
                       obs_targets=trainer.foresight_obs_columns())
+        # The exploiter's rollout over the same decisions, valued by its own critic and updated now, before the
+        # next rollout writes into the buffer it shares (a rank with none of its rows still joins every all-reduce).
+        self.exploit_stats = {}
+        if exploit is not None:
+            def finish(view, exploiter) -> None:
+                view.finish(exploiter.value(self.step.state, self.step.obs, self.step.layout, exploit.acting.goal,
+                                            exploit.acting.critic_memory),
+                            *self.discounts,
+                            last_foresight=exploiter.foresight_of(self.step.obs, self.step.layout,
+                                                                  exploit.acting.memory),
+                            foresight_gammas=self.foresight_discounts,
+                            time_scale_decisions=self.foresight_time_decisions,
+                            slow_layout=self.slow_layout,
+                            slow_gamma=self.config.mappo.slow_gamma,
+                            slow_gae_lambda=self.config.mappo.slow_gae_lambda,
+                            slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
+                            if exploiter.slow_goal_size else None,
+                            obs_targets=exploiter.foresight_obs_columns())
+
+            # Data-parallel ranks all-reduce on one group: an overlapped main update doing so on its worker thread
+            # while this one does on this thread could pair one rank's main collective with another's exploiter
+            # one. With other ranks the main's pending update is joined first (its stats carried, as finish_update's
+            # are below); alone, nothing is shared and the two overlap.
+            if self.ranks.active and self.pending_update is not None:
+                if (joined := self.finish_update()) is not None:
+                    self.carried_stats = joined
+            self.exploit_stats = exploit.update(buffer, finish)
         # Read before the buffers swap below: log_update runs on the rollout that has just been collected.
         self.rollout_reward = buffer.mean_reward()
         self.rollout_allowed_actions, self.layout_allowed = self.allowed_actions(buffer)
@@ -1542,6 +1674,11 @@ class TrainingRun:
             if cast_rows.any():
                 actions = self.cast.act(part, actions, cast_rows)
                 present = present & ~cast_rows
+                # The exploiter's episodes: the far side is its to play (animus.exploit); the league skipped them.
+                if self.exploit is not None and self.exploit.active:
+                    mine = self.cast.exploiter_rows(cast_rows)
+                    if mine.any():
+                        actions = self.exploit.act(part, rows, actions, mine)
         goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
             goals if goals is not None else (None, None, None, None, None, None))
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
@@ -1621,6 +1758,14 @@ class TrainingRun:
         if self.link is not None:
             self.link.observe(ended[keep], ended_layouts[keep])
 
+        # The exploiter values the episodes ending under it and keeps how its own went, before the cast redraws.
+        if self.exploit is not None and self.exploit.active:
+            self.exploit.value_ended(part, rows, done, ended_layout)
+            self.exploit.results.extend(self.cast.exploiter_results(part, self.won_column))
+            cleared_exploit = np.zeros(spec.num_envs, dtype=bool)
+            cleared_exploit[rows] = done
+            self.exploit.clear(cleared_exploit)
+
         # A new episode starts with nothing remembered and no goal; the league scores the ended ones.
         if self.cast is not None:
             self.cast.observe_ended(part, self.won_column)
@@ -1676,6 +1821,7 @@ class TrainingRun:
         self.last_layout_stats = self.named_layout_stats()
         self.controller.observe_update(self.last_layout_stats, self.lr_scale_now)
         self.explore_update()
+        self.exploit_step()
         if self.difficulty_column is not None and self.finished_episodes:
             names = [layout.name for layout in spec.layouts]
             episodes = np.asarray(self.finished_episodes)
@@ -1703,6 +1849,8 @@ class TrainingRun:
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),
             **(self.explore.summary() if self.explore is not None else {}),
+            **(self.exploit.stats() if self.exploit is not None else {}),
+            **getattr(self, "exploit_stats", {}),
         }
         if self.finished_episodes:
             means = np.mean(self.finished_episodes, axis=0)
@@ -1878,7 +2026,7 @@ class TrainingRun:
         """The whole run; returns the process exit code."""
         self.step = self.env.reset()
         if self.cast is not None:
-            self.cast.reset_all()
+            self._reset_far_side()
         self.progress.write("training", self.update, self.env_steps)
         if self.ranks.broadcast(self.evaluating and self.config.eval.at_start and not self.tracker.history):
             self.evaluate()

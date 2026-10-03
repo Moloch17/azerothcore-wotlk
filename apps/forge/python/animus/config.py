@@ -201,6 +201,32 @@ class ExploreConfig:
 
 
 @dataclass
+class ExploitConfig:
+    """Exploiters for the PvP stages (animus.exploit, peak-play plan W6): a second learner in the same run, seeded
+    from a league snapshot, playing the far side of `share` of the cast episodes against the main. Once it wins
+    `join_at` of them over its last `window` (at least `min_episodes`) it joins the league, tagged, drawn at
+    cast.exploiter_floor at least; a budget of `budget_env_steps` spent without that retires it. The next starts
+    `every_env_steps` after. Never in evaluation, best.pt or the main's convergence. Needs cast.opponents: league."""
+
+    enabled: bool = False
+    share: float = 0.25
+    budget_env_steps: int = 50_000_000
+    join_at: float = 0.6
+    min_episodes: int = 200
+    window: int = 200
+    every_env_steps: int = 0
+    log_every: int = 10
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.share <= 1.0:
+            raise ValueError(f"exploit.share: expected a share within (0, 1], got {self.share!r}")
+        if not 0.5 <= self.join_at <= 1.0:
+            raise ValueError(f"exploit.join_at: expected a win rate within [0.5, 1], got {self.join_at!r}")
+        if self.min_episodes < 1 or self.window < 1 or self.budget_env_steps < 1:
+            raise ValueError("exploit.min_episodes, window and budget_env_steps: expected at least 1")
+
+
+@dataclass
 class EntropyFloorConfig:
     """Keep exploration from collapsing, measured against how many actions were actually legal.
 
@@ -257,6 +283,7 @@ class CastConfig:
     floor: float = 0.05  # minimum draw weight, so no member is forgotten
     retire_above: float = 0.85  # a member the live policy beats this often over a full window is retired
     keep_newest: int = 2  # never retired or pruned
+    exploiter_floor: float = 0.15  # the least share of the draw each exploiter in the league gets (animus.exploit)
 
     def resolved_agents(self, runs_dir: str, run_name: str) -> dict[str, str]:
         return {name: str(path).format(runs_dir=runs_dir, run_name=run_name) for name, path in self.agents.items()}
@@ -387,6 +414,7 @@ class TrainConfig:
     cast: CastConfig = field(default_factory=CastConfig)
     fade: FadeConfig = field(default_factory=FadeConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
+    exploit: ExploitConfig = field(default_factory=ExploitConfig)
 
     @property
     def shared_runs(self) -> str:
