@@ -2495,8 +2495,8 @@ bool AnimusForge::Forge::ApplyModes(std::vector<ModeMsg> const& modes)
     for (ModeMsg const& mode : modes)
     {
         if (mode.Mode != modes.front().Mode || mode.SeedBase != modes.front().SeedBase
-            || mode.Flags != modes.front().Flags || mode.Arena != modes.front().Arena || std::strncmp(mode.Baseline, modes.front().Baseline,
-                POLICY_NAME_SIZE) != 0)
+            || mode.Flags != modes.front().Flags || mode.Arena != modes.front().Arena
+            || std::strncmp(mode.Baseline, modes.front().Baseline, POLICY_NAME_SIZE) != 0)
         {
             LOG_ERROR("module.animus", "Data-parallel learners asked for different modes on the same decision");
             return false;

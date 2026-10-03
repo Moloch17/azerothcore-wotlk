@@ -114,8 +114,9 @@ namespace AnimusForge
     // 17: ACT carries two goals per agent, primary then secondary (GOAL_SLOTS_ON_WIRE), where it carried one; and
     // the goal space has a twelfth kind (Resurrect). The learner keeps the queue behind them itself.
     // 18: PROGRESS carries the shaping scale after the progress (ProgressMsg): a sim that took the old four bytes
-    // would never fade its shaping, and nothing would say so. MODE names a held-out arena for the evaluation to play. And STEP's episode_info carries only the envs whose
-    // done is set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage.
+    // would never fade its shaping, and nothing would say so. STEP's episode_info carries only the envs whose done is
+    // set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage. MODE names a
+    // held-out arena for the evaluation to play.
     constexpr uint32 PROTOCOL_VERSION = 18;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
