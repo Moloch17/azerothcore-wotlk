@@ -18,6 +18,8 @@ mappo:
   # The trips are the whole lesson; a floor on exploration keeps a seat from settling on "hold forward" over ground
   # that punishes it.
   entropy_final_fraction: 0.3
+  # No entity in a movement layout is a set; stage2_travel inherits this, and the sets start at stage3.
+  seat_sets: false
 
 # Arrival is already the outcome here, and the movement terms are what the trip is; stage2_travel inherits this.
 fade:

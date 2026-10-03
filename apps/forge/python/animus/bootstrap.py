@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import torch
 
-from .stages import Span, block_spans
+from .stages import Span, block_revisions, block_spans
 
 #: The director layout's name (Curriculum::DirectorLayout::Name).
 DIRECTOR_LAYOUT = "director"
@@ -106,14 +106,23 @@ GROWS_AT_END = frozenset({"crowd"})
 
 
 def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span, Span]], name: str,
-                   old_names: list[str] | None = None, new_names: list[str] | None = None):
+                   old_names: list[str] | None = None, new_names: list[str] | None = None,
+                   revisions: tuple[dict[str, int], dict[str, int]] | None = None, source: str = ""):
     """(old spans, new spans) of every block both layouts have, sizes checked. A core block whose catalog changed is
-    matched action by action by name, when both stages name their actions."""
+    matched action by action by name, when both stages name their actions. `revisions` (old, new; Block::Revision):
+    a block whose revision differs re-laid its columns, so it starts fresh like one that changed shape -- even at the
+    same width, where the size check alone would carry stale weights onto columns that now mean something else."""
     common = []
+    old_revisions, new_revisions = revisions or ({}, {})
     for block, (new_obs, new_actions) in new.items():
         if block not in old:
             continue
         old_obs, old_actions = old[block]
+        old_revision, new_revision = old_revisions.get(block, 0), new_revisions.get(block, 0)
+        if old_revision != new_revision:
+            print(f"seeding {source or name}: {name} block {block} revision {old_revision} -> {new_revision} (width "
+                  f"{old_obs[1]} -> {new_obs[1]}): its columns start fresh", flush=True)
+            continue
         if old_obs[1] != new_obs[1] or old_actions[1] != new_actions[1]:
             segments = None
             if (block in GROWS_AT_END and old_actions[1] == new_actions[1] and new_obs[1] > old_obs[1]):
@@ -224,7 +233,55 @@ def _seed_shared(new: dict, old: dict) -> None:
             tensor.copy_(old[key])
 
 
-def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False) -> list[str]:
+#: The seat sets' shared encoder (EntitySets, mappo.seat_sets): per set an encoder, the pool onto the adapters'
+#: output, the pointer heads' queries.
+ENTITY_SETS = "entity_sets."
+
+
+def _seed_entity_sets(new: dict, old: dict) -> tuple[list[str], list[str]] | None:
+    """Carry the seat sets from the stage before: each set's encoder where its shape is the same (a set whose slot
+    gained features -- the enemies once the hostiles block joins the pack's -- starts fresh), its pool columns with
+    it, the pool's bias and the pointer queries. A set that starts fresh, or a checkpoint without seat sets, gets pool
+    columns of zero: the seeded policy starts as it was and the sets enter as they learn, as a new block's adapter
+    columns do. Returns (carried, fresh) set names, or None when this network has no seat sets."""
+    if f"{ENTITY_SETS}pool.weight" not in new:
+        return None
+    from .mappo.networks import SEAT_SET_NAMES
+
+    def names_of(state: dict) -> list[str]:
+        present = {key.split(".")[2] for key in state if key.startswith(f"{ENTITY_SETS}encoders.")}
+        return [name for name in SEAT_SET_NAMES if name in present] + sorted(present - set(SEAT_SET_NAMES))
+
+    new_names, old_names = names_of(new), names_of(old)
+    embed = int(new[f"{ENTITY_SETS}encoders.{new_names[0]}.0.weight"].shape[0])
+    carried = []
+    for name in new_names:
+        prefix = f"{ENTITY_SETS}encoders.{name}."
+        keys = [key for key in new if key.startswith(prefix)]
+        if name in old_names and all(key in old and old[key].shape == new[key].shape for key in keys):
+            for key in keys:
+                new[key].copy_(old[key])
+            carried.append(name)
+
+    pool, old_pool = new[f"{ENTITY_SETS}pool.weight"], old.get(f"{ENTITY_SETS}pool.weight")
+    pool.zero_()
+    for name in carried:
+        to, at = new_names.index(name) * 2 * embed, old_names.index(name) * 2 * embed
+        if old_pool is not None and old_pool.shape[0] == pool.shape[0]:
+            pool[:, to : to + 2 * embed] = old_pool[:, at : at + 2 * embed]
+    bias, old_bias = new[f"{ENTITY_SETS}pool.bias"], old.get(f"{ENTITY_SETS}pool.bias")
+    if old_bias is not None and old_bias.shape == bias.shape:
+        bias.copy_(old_bias)
+    else:
+        bias.zero_()
+    for key, tensor in new.items():
+        if key.startswith(f"{ENTITY_SETS}queries.") and key in old and old[key].shape == tensor.shape:
+            tensor.copy_(old[key])
+    return carried, [name for name in new_names if name not in carried]
+
+
+def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False,
+                 source: str = "") -> list[str]:
     """Seed a fresh MappoTrainer for `spec` (whose stage.json is `stage`) from an earlier stage's checkpoint; returns
     the layouts seeded.
 
@@ -242,6 +299,12 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     if not overlay:
         _seed_shared(actor, old["actor"])
         _seed_shared(critic, old["critic"])
+        sets = _seed_entity_sets(actor, old["actor"])
+        _seed_entity_sets(critic, old["critic"])
+        if sets is not None:
+            carried, fresh = sets
+            print(f"  seat sets: {', '.join(carried) or 'none'} carried, {', '.join(fresh) or 'none'} fresh (their "
+                  f"pool columns at zero)", flush=True)
 
     # Every layout this run has must be in the checkpoint it is seeding from. A missing one is not a thing to work
     # around quietly: the alternative is starting that class from scratch in the middle of a curriculum, which looks
@@ -285,7 +348,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         new_blocks = block_spans(stage, layout.name)
         if old_blocks is not None and new_blocks is not None:
             common = _common_blocks(old_blocks, new_blocks, layout.name, _action_names(old_stage, layout.name),
-                                    _action_names(stage, layout.name))
+                                    _action_names(stage, layout.name),
+                                    (block_revisions(old_stage, layout.name), block_revisions(stage, layout.name)),
+                                    source)
             for network, remapped in adapters:
                 _seed_adapter_blocks(network, remapped, f"adapters.{index}", common)
             for network, remapped in norms:
@@ -325,7 +390,9 @@ def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dic
             old_index = names.index(layout.name)
             wanted = {block: spans for block, spans in new_blocks.items() if block not in taken}
             common = _common_blocks(old_blocks, wanted, layout.name, _action_names(merge.get("stage"), layout.name),
-                                    _action_names(stage, layout.name))
+                                    _action_names(stage, layout.name),
+                                    (block_revisions(merge.get("stage"), layout.name),
+                                     block_revisions(stage, layout.name)))
             if not common:
                 continue
 

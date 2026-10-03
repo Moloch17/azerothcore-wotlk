@@ -8,6 +8,7 @@ from it, and export names models from it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -55,6 +56,58 @@ def block_spans(stage: dict | None, layout: str) -> dict[str, tuple[Span, Span]]
     if not entry:
         return None
     return {block["name"]: (tuple(block["obs"]), tuple(block["actions"])) for block in entry["blocks"]}
+
+
+def block_revisions(stage: dict | None, layout: str) -> dict[str, int]:
+    """Block name -> its revision in `layout` (Block::Revision: bumped when a block's columns change meaning in
+    place); 0 for a block the stage.json gives none, which is every block of a stage.json from before revisions."""
+    entry = (stage or {}).get("layouts", {}).get(layout) or {}
+    return {block["name"]: int(block.get("revision", 0)) for block in entry.get("blocks", ())}
+
+
+def revised_blocks(old_stage: dict | None, new_stage: dict | None, layout: str) -> dict[str, tuple[int, int]]:
+    """The blocks both stages give `layout` whose revision differs: name -> (old revision, new revision)."""
+    old, new = block_revisions(old_stage, layout), block_revisions(new_stage, layout)
+    return {name: (old[name], revision) for name, revision in new.items() if name in old and old[name] != revision}
+
+
+def layout_signature(stage: dict | None, layout: str) -> str | None:
+    """What `layout`'s observation and actions are, as a short hash of its blocks in order (name, spans, revision); None
+    without spans. Two stage.jsons with the same signature lay the layout out identically."""
+    entry = (stage or {}).get("layouts", {}).get(layout)
+    if not entry or "blocks" not in entry:
+        return None
+    blocks = [[block["name"], list(block["obs"]), list(block["actions"]), int(block.get("revision", 0))]
+              for block in entry["blocks"]]
+    return hashlib.sha1(json.dumps(blocks).encode()).hexdigest()[:12]
+
+
+def layout_changes(old_stage: dict | None, new_stage: dict | None) -> list[str]:
+    """Every layout both stage.jsons describe whose signature differs, with what changed ("warrior_dps: support
+    revision 0 -> 1, width 152+9 -> 156+9 (obs+actions)"), one entry a layout. Empty when nothing changed, or when
+    either side has no spans (resume_mismatch's shapes are then the only check)."""
+    changes = []
+    for layout in (new_stage or {}).get("layouts", {}):
+        old_signature, new_signature = layout_signature(old_stage, layout), layout_signature(new_stage, layout)
+        if old_signature is None or new_signature is None or old_signature == new_signature:
+            continue
+        old, new = block_spans(old_stage, layout), block_spans(new_stage, layout)
+        old_revisions, new_revisions = block_revisions(old_stage, layout), block_revisions(new_stage, layout)
+        parts = [f"{name} added" for name in new if name not in old]
+        parts += [f"{name} dropped" for name in old if name not in new]
+        for name in (name for name in new if name in old):
+            (old_obs, old_actions), (new_obs, new_actions) = old[name], new[name]
+            what = []
+            if old_revisions[name] != new_revisions[name]:
+                what.append(f"revision {old_revisions[name]} -> {new_revisions[name]}")
+            if old_obs[1] != new_obs[1] or old_actions[1] != new_actions[1]:
+                what.append(f"width {old_obs[1]}+{old_actions[1]} -> {new_obs[1]}+{new_actions[1]} (obs+actions)")
+            elif old_obs[0] != new_obs[0] or old_actions[0] != new_actions[0]:
+                what.append(f"moved from obs {old_obs[0]} to {new_obs[0]}")
+            if what:
+                parts.append(f"{name} {', '.join(what)}")
+        changes.append(f"{layout}: {'; '.join(parts) or 'block order'}")
+    return changes
 
 
 def model_names(stage: dict | None) -> dict[str, str]:

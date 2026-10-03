@@ -21,7 +21,7 @@ import torch
 from .bootstrap import DIRECTOR_LAYOUT
 
 from .mappo.networks import LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of
-from .stages import Span, arena_names, arena_state_span, block_spans
+from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
 
 @dataclass
@@ -106,9 +106,15 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
         if layout.name not in t_names:
             continue
         t_index = t_names.index(layout.name)
-        obs_s, obs_t, act_s, act_t = _index_pairs(
-            block_spans(stage, layout.name), block_spans(t_stage, layout.name),
-            (layout.obs_dim, layout.num_actions), t_layouts[t_index])
+        # A block the teacher has at another revision means other things in its columns: it is not mapped, so the
+        # teacher reads it as absent rather than as what it used to be.
+        revised = revised_blocks(t_stage, stage, layout.name)
+        spans_s, spans_t = block_spans(stage, layout.name), block_spans(t_stage, layout.name)
+        if revised and spans_s is not None and spans_t is not None:
+            spans_s = {name: spans for name, spans in spans_s.items() if name not in revised}
+            spans_t = {name: spans for name, spans in spans_t.items() if name not in revised}
+        obs_s, obs_t, act_s, act_t = _index_pairs(spans_s, spans_t, (layout.obs_dim, layout.num_actions),
+                                                  t_layouts[t_index])
         if not act_s:
             continue
 

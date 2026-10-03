@@ -771,13 +771,18 @@ class EntitySets(nn.Module):
         return logits
 
 
-def seat_sets_of(stage: dict | None, layout_names: Sequence[str]) -> list[list[dict]]:
-    """Per layout, in `layout_names` order, stage.json's layouts.<name>.sets (EntitySets' descriptors). Refused for a
-    stage.json from before them (no layout says any): a network built with seat sets would read nothing."""
-    layouts = (stage or {}).get("layouts", {})
+def seat_sets_of(stage: dict | None, layout_names: Sequence[str]) -> list[list[dict]] | None:
+    """Per layout, in `layout_names` order, stage.json's layouts.<name>.sets (EntitySets' descriptors); None for a stage
+    whose layouts have no set at all (stage4_duel: one opponent, no pack, party or friends), or for a scenario without
+    a stage.json (not a curriculum stage), which run without them. Refused for a stage.json from before them (no
+    layout says any): a network built with seat sets would read nothing."""
+    if stage is None:
+        return None
+    layouts = stage.get("layouts", {})
     if not any("sets" in layouts.get(name, {}) for name in layout_names):
         raise ValueError("mappo.seat_sets is on but stage.json names no seat sets (a sim from before peak-play W4)")
-    return [list(layouts.get(name, {}).get("sets", ())) for name in layout_names]
+    sets = [list(layouts.get(name, {}).get("sets", ())) for name in layout_names]
+    return sets if any(sets) else None
 
 
 def _director_extra(sets: "DirectorSets | None", index: int, obs: torch.Tensor, layout: torch.Tensor):

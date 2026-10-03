@@ -60,7 +60,7 @@ STALL_WINDOW = 10
 STALL_MIN_UPDATES = 20
 from .runs import FINISHED_FILE, archive_run, prune_checkpoints, resume_checkpoint_path, resume_mismatch
 from .stage import ADVANCE, ConvergenceController, Outcome, restore_evaluation_state
-from .stages import STAGE_FILE, arena_names, load_stage
+from .stages import STAGE_FILE, arena_names, layout_changes, load_stage
 from .device import host
 
 
@@ -583,6 +583,9 @@ class TrainingRun:
                     if self.stage and "director" in self.stage and DIRECTOR_LAYOUT in names else None)
         # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
         seat_sets = seat_sets_of(self.stage, names) if config.mappo.seat_sets else None
+        if config.mappo.seat_sets and seat_sets is None:
+            print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
+                  flush=True)
         self.trainer = MappoTrainer(
             [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
             spec.state_dim,
@@ -800,6 +803,11 @@ class TrainingRun:
             if mismatch := resume_mismatch(checkpoint.get("spec", {}), asdict(spec)):
                 raise SystemExit(f"cannot resume {config.run_name}: the scenario's {', '.join(mismatch)} changed since "
                                  f"{self.resume_path} was saved; start it fresh instead")
+            # The same shapes can still be a different layout: a block re-laid in place (its revision), or blocks
+            # that traded places. Its weights would read the new columns as the old ones.
+            if changes := layout_changes(checkpoint.get("stage"), self.stage):
+                raise SystemExit(f"cannot resume {config.run_name}: the layouts changed since {self.resume_path} was "
+                                 f"saved -- {' | '.join(changes)}; start it fresh (it seeds from the stage before)")
             self.trainer.load_state_dict(checkpoint["trainer"])
             self.update = int(checkpoint.get("update", 0))
             self.env_steps = int(checkpoint.get("env_steps", 0))
@@ -833,14 +841,16 @@ class TrainingRun:
         merged = [load_parent(path) for path in merge_paths]
 
         if not self.resume_path and base is not None:
-            seeded = seed_trainer(self.trainer, base, spec, self.stage)
+            seeded = seed_trainer(self.trainer, base, spec, self.stage,
+                                  source=f"{spec.scenario} from {base_path}")
             print(f"Seeded the networks from {base_path}: trunk and {len(seeded)} of {len(spec.layouts)} layouts",
                   flush=True)
             for layout, blocks in (seed_merges(self.trainer, merged, spec, self.stage, base) if merged else {}).items():
                 print(f"  {layout}: {', '.join(blocks)} from the merged stages", flush=True)
             # Farthest first, so the nearest restricted stage's layouts are the ones that stand.
             for path, checkpoint in reversed(restricted):
-                overlaid = seed_trainer(self.trainer, checkpoint, spec, self.stage, overlay=True)
+                overlaid = seed_trainer(self.trainer, checkpoint, spec, self.stage, overlay=True,
+                                        source=f"{spec.scenario} from {path}")
                 print(f"  {', '.join(overlaid)}: layouts from {path} (a restricted stage), over the seed; the trunk "
                       f"stays the seed's", flush=True)
         elif not self.resume_path and candidates:

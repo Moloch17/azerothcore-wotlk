@@ -31,7 +31,7 @@ from .evaluation import action_mask_table, format_summary, run_evaluation
 from .mappo.networks import seat_sets_of
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
-from .stages import STAGE_FILE
+from .stages import STAGE_FILE, layout_changes, load_stage
 from .device import host
 
 
@@ -70,6 +70,9 @@ def main() -> None:
 
     # The checkpoint's own director and seat sets (its stage.json), or its weights do not load.
     stage = checkpoint.get("stage")
+    # And the layouts it was trained on are the sim's, block by block (a block re-laid at the same width included).
+    if changes := layout_changes(stage, load_stage(saved.get("layouts_dir", TrainConfig.layouts_dir), spec.scenario)):
+        raise SystemExit(f"the checkpoint's layouts are not the sim's -- {' | '.join(changes)}")
     names = [layout.name for layout in spec.layouts]
     director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
                 if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)

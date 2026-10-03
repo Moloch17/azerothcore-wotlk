@@ -6,9 +6,12 @@ import numpy as np
 import pytest
 import torch
 
+from animus.bootstrap import seed_trainer
 from animus.mappo.buffer import RolloutBuffer
 from animus.mappo.networks import seat_sets_of
 from animus.mappo.trainer import MappoConfig, MappoTrainer
+from animus.protocol import Layout
+from test_bootstrap import checkpoint_spec, spec
 
 # Two layouts holding the same set at different offsets (an enemy: 3 pack columns and 2 hostiles columns a slot, 2
 # slots, present at the first pack column), their select-enemy actions at different action indexes, and one with none.
@@ -109,5 +112,25 @@ def test_the_adapters_stay_blind_to_the_slot_columns_through_an_update():
 
 def test_a_stage_json_without_seat_sets_is_refused():
     assert seat_sets_of({"layouts": {"a": {"sets": SETS_A}, "b": {}}}, ["a", "b"]) == [SETS_A, []]
+    assert seat_sets_of({"layouts": {"a": {"sets": []}, "b": {"sets": []}}}, ["a", "b"]) is None   # stage4_duel
     with pytest.raises(ValueError, match="names no seat sets"):
         seat_sets_of({"layouts": {"a": {}, "b": {}}}, ["a", "b"])
+
+
+def test_seeding_carries_the_sets_and_starts_them_at_zero_from_a_stage_without():
+    """From a stage with seat sets: its encoders, pool and pointer queries. From one without (stage2 -> stage3): the
+    pool starts at zero, so the seeded policy is the parent's until the sets learn."""
+    names = [Layout(name, obs, actions) for name, (obs, actions) in zip("abc", LAYOUTS)]
+    parent = trainer(True)
+    with torch.no_grad():
+        for parameter in parent.actor.entity_sets.parameters():
+            parameter.add_(0.5)
+    child = trainer(True)
+    seed_trainer(child, {"trainer": parent.state_dict(), "spec": checkpoint_spec(names)}, spec(names, STATE))
+    for key, value in parent.actor.entity_sets.state_dict().items():
+        assert torch.equal(child.actor.entity_sets.state_dict()[key], value), key
+
+    child = trainer(True)
+    seed_trainer(child, {"trainer": trainer(False).state_dict(), "spec": checkpoint_spec(names)}, spec(names, STATE))
+    for network in (child.actor, child.critic):
+        assert not network.entity_sets.pool.weight.any() and not network.entity_sets.pool.bias.any()

@@ -81,6 +81,11 @@ mappo:
   # rest first) is gone by the next decision. It carries across rollouts too, so what it can remember is bounded by
   # the episode rather than by rollout_length; only the gradient is truncated at the rollout.
   recurrent_size: 128
+  # Every seat layout's entities as sets (EntitySets: one encoder a set, mean and max pooled, pointer heads for the
+  # actions that name a slot), from stage3 on: the user's decision, 2026-10-03. A stage with no set (this one) runs
+  # without them, so stage5 starts its own (stage3's enemies are the pack's slots alone, stage5's join the hostiles':
+  # another shape either way); from stage5 on seeding carries them. The movement stages turn it off (stage1_move.yaml).
+  seat_sets: true
   # The update replays the rollout as 32-decision chunks (8 s of game time, beyond GAE's ~5.6 s of credit), each from
   # the memory the rollout stored at its start, rather than one 128-decision chain: 2026-09-25, by the user's
   # decision. The replay is launch-bound, so 4x fewer sequential steps took the update from 0.72 to 0.44 s at 192

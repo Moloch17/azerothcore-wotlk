@@ -358,3 +358,295 @@
 +    // `in` now holds the logits.
 +    return in;
  }
+--- a/animus-lib/src/runtime/Model/ModelLibrary.cpp
++++ b/animus-lib/src/runtime/Model/ModelLibrary.cpp
+@@ -25,6 +25,7 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <sstream>
++#include <vector>
+ 
+ namespace
+ {
+@@ -72,6 +73,61 @@
+         return {};
+     }
+ 
++    /// The first block, by name, whose revision (Block::Revision; absent = 0) or widths differ between the two
++    /// manifests: "block support: revision 1 here, 0 in the model's; obs width 156 here, 152 in the model's". A model
++    /// of a re-laid block is refused saying which block and which layouts, not only the first column that moved.
++    std::string BlockDifference(boost::json::value const& server, boost::json::value const& model)
++    {
++        auto const blocksOf = [](boost::json::value const& manifest) -> boost::json::array const*
++        {
++            boost::json::object const* object = manifest.if_object();
++            boost::json::value const* blocks = object ? object->if_contains("blocks") : nullptr;
++            return blocks ? blocks->if_array() : nullptr;
++        };
++        auto const field = [](boost::json::object const& block, std::string_view key, std::size_t index) -> int64
++        {
++            boost::json::value const* value = block.if_contains(key);
++            if (!value)
++                return 0;
++            if (boost::json::array const* span = value->if_array())
++                return span->size() > index && (*span)[index].is_int64() ? (*span)[index].as_int64() : -1;
++            return value->is_int64() ? value->as_int64() : -1;
++        };
++        boost::json::array const* ours = blocksOf(server);
++        boost::json::array const* theirs = blocksOf(model);
++        if (!ours || !theirs)
++            return {};
++        for (boost::json::value const& entry : *ours)
++        {
++            boost::json::object const* block = entry.if_object();
++            if (!block || !block->contains("name"))
++                continue;
++            for (boost::json::value const& other : *theirs)
++            {
++                boost::json::object const* match = other.if_object();
++                if (!match || !match->contains("name") || match->at("name") != block->at("name"))
++                    continue;
++                std::vector<std::string> parts;
++                if (field(*block, "revision", 0) != field(*match, "revision", 0))
++                    parts.push_back(Acore::StringFormat("revision {} here, {} in the model's",
++                        field(*block, "revision", 0), field(*match, "revision", 0)));
++                for (std::string_view key : { "obs", "actions" })
++                    if (field(*block, key, 1) != field(*match, key, 1))
++                        parts.push_back(Acore::StringFormat("{} width {} here, {} in the model's", key,
++                            field(*block, key, 1), field(*match, key, 1)));
++                if (!parts.empty())
++                {
++                    std::string text = Acore::StringFormat("block {}: {}", boost::json::serialize(block->at("name")),
++                        parts.front());
++                    for (std::size_t i = 1; i < parts.size(); ++i)
++                        text += "; " + parts[i];
++                    return text;
++                }
++            }
++        }
++        return {};
++    }
++
+     std::string ManifestDifference(std::string const& server, std::string const& model)
+     {
+         boost::system::error_code error;
+@@ -81,6 +137,8 @@
+         boost::json::value const theirs = boost::json::parse(model, error);
+         if (error)
+             return "the model's manifest does not parse: " + error.message();
++        if (std::string block = BlockDifference(ours, theirs); !block.empty())
++            return block;
+         std::string found = FirstDifference(ours, theirs, "");
+         return found.empty() ? "they differ only in formatting" : found;
+     }
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/Block.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/Block.h
+@@ -313,6 +313,11 @@
+         /// The features and actions the block adds to `layout` (profile, assets and ally heals are set).
+         [[nodiscard]] virtual BlockSize Size(Layout const& layout) const = 0;
+ 
++        /// Bumped when the block's columns change meaning at the same place (a re-layout, not new features at the
++        /// end): written to the manifest and stage.json when not 0, so a model or checkpoint of the old layout is
++        /// told apart from one of the new even where the widths agree.
++        [[nodiscard]] virtual uint32 Revision() const { return 0; }
++
+         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
+         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/Layout.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/Layout.cpp
+@@ -425,6 +425,8 @@
+         block["name"] = BlockName(id);
+         block["obs"] = Span(slice.ObsFirst, slice.ObsCount);
+         block["actions"] = Span(slice.ActionFirst, slice.ActionCount);
++        if (uint32 const revision = GetBlock(id).Revision())
++            block["revision"] = revision;
+         GetBlock(id).DescribeManifest(*this, block);
+     }
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/SupportBlock.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/SupportBlock.h
+@@ -35,8 +35,8 @@
+         enum Obs : uint32
+         {
+             OBS_SELECTED_FIRST          = 0,    // one-hot over FRIEND_SLOTS: the selected friend
+-            OBS_RANK_TIER_FIRST         = 5,    // one-hot over RANK_TIERS
+-            OBS_GLOBAL_COUNT            = 8
++            OBS_RANK_TIER_FIRST         = OBS_SELECTED_FIRST + FRIEND_SLOTS,   // one-hot over RANK_TIERS
++            OBS_GLOBAL_COUNT            = OBS_RANK_TIER_FIRST + RANK_TIERS
+ 
+             // Then FRIEND_SLOTS friend slots of FRIEND_FEATURES.
+         };
+@@ -70,6 +70,9 @@
+ 
+         [[nodiscard]] BlockId Id() const override { return BlockId::Support; }
+         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
++        /// 1: the selected-friend one-hot spans FRIEND_SLOTS (it was 5 columns wide, so friends 5-8 wrote over the
++        /// rank tier and the first friend's present flag), the rank tier after it.
++        [[nodiscard]] uint32 Revision() const override { return 1; }
+         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
+         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/SupportBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/SupportBlock.cpp
+@@ -86,6 +86,15 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::SupportBlock::OBS_SELECTED_FIRST) + Animus::Curriculum::FRIEND_SLOTS
++    <= uint32(Animus::Curriculum::SupportBlock::OBS_RANK_TIER_FIRST));
++static_assert(uint32(Animus::Curriculum::SupportBlock::OBS_RANK_TIER_FIRST) + Animus::Curriculum::RANK_TIERS
++    <= uint32(Animus::Curriculum::SupportBlock::OBS_GLOBAL_COUNT));
++static_assert(uint32(Animus::Curriculum::SupportBlock::FRIEND_APTITUDE_FIRST)
++    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT)
++    <= uint32(Animus::Curriculum::SupportBlock::FRIEND_OWN_HEAL_OVER_TIME));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::SupportBlock::Size(Layout const& /*layout*/) const
+ {
+     return { OBS_GLOBAL_COUNT + FRIEND_SLOTS * FRIEND_FEATURES, ACTION_COUNT };
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CompanionBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CompanionBlock.cpp
+@@ -164,6 +164,14 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_CLASS_FIRST)
++    + Animus::Curriculum::PLAYABLE_CLASSES.size() <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_ATTACKERS));
++static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
++    <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_NO_TARGET));
++static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_SLOT_ON_OWNER_FIRST) + Animus::Curriculum::PACK_SLOTS
++    <= uint32(Animus::Curriculum::CompanionBlock::OBS_FOLLOWING));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::CompanionBlock::Size(Layout const& layout) const
+ {
+     uint32 const revives = uint32(layout.AllyRevives.size());
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
+@@ -132,6 +132,14 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RACE_FIRST) + Animus::Curriculum::PLAYABLE_RACES.size()
++    <= uint32(Animus::Curriculum::CoreBlock::OBS_APTITUDE_FIRST));
++static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RUNE_FIRST) + MAX_RUNES
++    <= uint32(Animus::Curriculum::CoreBlock::OBS_COMBO_POINTS));
++static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_FORM_FIRST) + TRACKED_FORMS.size()
++    <= uint32(Animus::Curriculum::CoreBlock::OBS_GCD));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::CoreBlock::Size(Layout const& layout) const
+ {
+     uint32 const actions = uint32(layout.Catalog().Actions().size());
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/DuelBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/DuelBlock.cpp
+@@ -120,6 +120,20 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_TYPE_FIRST)
++    + Animus::Curriculum::Encoding::OPPONENT_TYPES.size()
++    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_MAX_HEALTH));
++static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_SCHOOL_FIRST)
++    + Animus::Curriculum::Encoding::OBSERVED_SCHOOLS.size()
++    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_MECHANIC_FIRST));
++static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_MECHANIC_FIRST)
++    + Animus::Curriculum::Encoding::OBSERVED_MECHANICS.size()
++    <= uint32(Animus::Curriculum::DuelBlock::OBS_BOT_STUNNED));
++static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_DEBUFF_MECHANIC_FIRST)
++    + Animus::Curriculum::Encoding::OBSERVED_MECHANICS.size()
++    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_CAST_FIRST));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::DuelBlock::Size(Layout const& layout) const
+ {
+     uint32 const stable = StableSlots(layout);
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/HostilesBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/HostilesBlock.cpp
+@@ -24,6 +24,10 @@
+ #include "SpellInfo.h"
+ #include <boost/json/object.hpp>
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::HostilesBlock::SLOT_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
++    <= uint32(Animus::Curriculum::HostilesBlock::SLOT_HEALING));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::HostilesBlock::Size(Layout const& /*layout*/) const
+ {
+     return { PACK_SLOTS * SLOT_FEATURES, 0 };
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/OrderBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/OrderBlock.cpp
+@@ -37,6 +37,16 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these): the order's
++// objective one-hot and the goal targets' objectives and places are the journal's.
++static_assert(uint32(Animus::Curriculum::OrderBlock::OBS_ORDER_SOURCE_FIRST)
++    - uint32(Animus::Curriculum::OrderBlock::OBS_ORDER_OBJECTIVE_FIRST)
++    == Animus::Curriculum::WorldView::JOURNAL_OBJECTIVES);
++static_assert(Animus::Curriculum::GOAL_TARGET_GIVER - Animus::Curriculum::GOAL_TARGET_OBJECTIVE_FIRST
++    == Animus::Curriculum::WorldView::JOURNAL_OBJECTIVES);
++static_assert(Animus::Curriculum::GOAL_TARGET_ASSIGNMENT - Animus::Curriculum::GOAL_TARGET_PLACE_FIRST
++    == Animus::Curriculum::WorldView::JOURNAL_PLACES);
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::OrderBlock::Size(Layout const& /*layout*/) const
+ {
+     // No actions: an order is read, not pressed.
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PartyBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PartyBlock.cpp
+@@ -70,6 +70,18 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_APTITUDE_FIRST)
++    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT) <= uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST));
++static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
++    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_ATTACKERS));
++static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
++    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_NO_TARGET));
++static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_SLOT_ON_FIRST) + Animus::Curriculum::PACK_SLOTS
++    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST));
++static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST) + Animus::Curriculum::GOAL_COUNT
++    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_FEATURES));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::PartyBlock::Size(Layout const& layout) const
+ {
+     return { OBS_GLOBAL_COUNT + PARTY_MEMBERS * MEMBER_FEATURES,
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PetBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PetBlock.cpp
+@@ -385,6 +385,11 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these): the react one-hot
++// is three wide (Observe clamps to 2).
++static_assert(uint32(Animus::Curriculum::PetBlock::OBS_REACT_FIRST) + 3
++    <= uint32(Animus::Curriculum::PetBlock::OBS_FOLLOWING));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::PetBlock::Size(Layout const& layout) const
+ {
+     if (!HasPet(layout.Profile->Class))
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PvpBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PvpBlock.cpp
+@@ -69,6 +69,18 @@
+     }
+ }
+ 
++// The observation's segments do not overlap (every block with hand-written offsets has these).
++static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_CLASS_FIRST)
++    + Animus::Curriculum::PLAYABLE_CLASSES.size()
++    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_APTITUDE_FIRST));
++static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_APTITUDE_FIRST)
++    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT)
++    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_LEVEL_DIFF));
++static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_DR_FIRST) + Animus::Curriculum::PvpBlock::DR_GROUP_COUNT
++    <= uint32(Animus::Curriculum::PvpBlock::OBS_BOT_DR_FIRST));
++static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_BOT_DR_FIRST) + Animus::Curriculum::PvpBlock::DR_GROUP_COUNT
++    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_CC_LEFT));
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::PvpBlock::Size(Layout const& /*layout*/) const
+ {
+     return { OBS_COUNT, 0 };
