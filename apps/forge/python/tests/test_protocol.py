@@ -78,9 +78,9 @@ def test_spec_matches_cpp_layout():
 
 
 def test_mode_matches_cpp_layout():
-    # ModeMsg in Protocol.h: five uint32 fields (mode, seed base, episodes, flags, first seed) and a 32-byte policy
-    # name, packed.
-    assert p.MODE.size == 5 * 4 + 32
+    # ModeMsg in Protocol.h: six uint32 fields (mode, seed base, episodes, flags, first seed, held-out arena) and a
+    # 32-byte policy name, packed.
+    assert p.MODE.size == 6 * 4 + 32
     assert p.decode_mode_first_seed(p.encode_mode(True, 1000, 64, "", first_seed=64)) == 64
     assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight")) == (True, 1000, 128, "fight", False)
     assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight", opponents_only=True)) == (

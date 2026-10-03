@@ -24,6 +24,8 @@ distill:
   half_life_env_steps: 50000000
 
 eval:
+  # No held-out dungeon here (stage9_deadmines has one; peak-play W2).
+  heldout: {}
   episodes: 256
   every_env_steps: 20000000
   sampled_every: 3

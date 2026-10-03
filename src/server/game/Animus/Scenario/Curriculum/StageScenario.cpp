@@ -772,6 +772,9 @@ std::vector<Animus::Curriculum::Encounter*> const& Animus::Curriculum::StageScen
 
 uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
 {
+    // An evaluation pinned to one arena (the learner's eval.heldout) plays only it.
+    if (uint32 const pinned = _evaluationArena.load(std::memory_order_relaxed); evaluating && pinned)
+        return pinned - 1;
     if (_arenaWeights.size() == 1)
         return 0;
 
@@ -784,7 +787,7 @@ uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
     {
         float const from = float(_arenaWeights[arena]);
         float const to = float(_arenaWeightsFinal[arena]);
-        weights[arena] = evaluating && _stage.Arenas[arena].PullDrill ? 0
+        weights[arena] = (evaluating && _stage.Arenas[arena].PullDrill) || _stage.Arenas[arena].EvalOnly ? 0
             : uint32(std::lround(100.0f * (from + (to - from) * progress)));
         total += weights[arena];
     }
@@ -1490,6 +1493,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             : definition.Seats == SeatPlan::Mirror ? 1u : 0u;
         entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
         entry["directed"] = definition.Directed;
+        entry["eval_only"] = definition.EvalOnly;
     }
 
     // Agents beyond the seats: a directed arena's two directors (one a side, after the seats). The learner never
@@ -4517,6 +4521,21 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepAimless = 0;
     seat.StepEffort = 0;
     seat.StepFidgetMs = 0;
+}
+
+bool Animus::Curriculum::StageScenario::PinEvaluationArena(uint32 pin)
+{
+    if (pin && (pin > _stage.Arenas.size() || !_stage.Arenas[pin - 1].EvalOnly))
+    {
+        LOG_ERROR("module.animus", "Animus forge: stage {} has no held-out arena {} to evaluate on", _stage.Name,
+            pin - 1);
+        return false;
+    }
+    uint32 const before = _evaluationArena.exchange(pin, std::memory_order_relaxed);
+    if (before != pin)
+        LOG_INFO("module.animus", "Animus forge: stage {} evaluates {}", _stage.Name,
+            pin ? "held-out arena " + _stage.Arenas[pin - 1].Name : std::string("its own arenas"));
+    return true;
 }
 
 void Animus::Curriculum::StageScenario::SetShapingScale(float scale)

@@ -143,6 +143,9 @@ namespace Animus
         virtual void SetStageProgress(float /*progress*/) { }
         /// What shaping rewards are paid times (the learner's fade ladder, PROGRESS from protocol 18): 1 = as tuned.
         virtual void SetShapingScale(float /*scale*/) { }
+        /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
+        /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
+        virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }
 
         /// A cluster's shared curriculum state (StageScenario's dungeon ladder): a worker's runs since its last
         /// report, as a PROGRESS field (empty for none); the host folds every worker's into its own and sends the

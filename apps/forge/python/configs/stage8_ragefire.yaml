@@ -12,6 +12,9 @@ total_env_steps: 3000000000
 eval:
   every_env_steps: 40000000
   episodes: 64
+  # Wailing Caverns, which no stage trains on (peak-play W2): reported as heldout_heldout, never a target.
+  heldout:
+    heldout: 16
   report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, wing_rung, wing_probe,
            wing_cleared_share, wing_crowd_seconds, wing_level, teammates_died, teammate_healing, tank_hold_share,
            tank_target_share, pulled_off_seconds, idle_seconds_in_combat, director_member_orders, goals_reached,

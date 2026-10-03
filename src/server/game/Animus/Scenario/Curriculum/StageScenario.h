@@ -356,6 +356,7 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 DrawArena(bool evaluating) const;
         void SetStageProgress(float progress) override { _stageProgress.store(progress, std::memory_order_relaxed); }
         void SetShapingScale(float scale) override;
+        bool PinEvaluationArena(uint32 pin) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
@@ -484,6 +485,8 @@ namespace Animus::Curriculum
         std::atomic<float> _stageProgress{ 0.0f };
         /// What every Shaping term is paid times (RewardLedger::SetShaping): the learner's fade ladder, from PROGRESS.
         std::atomic<float> _shapingScale{ 1.0f };
+        /// The arena an evaluation is pinned to (MODE's arena), its index + 1; 0 = the stage's own draw.
+        std::atomic<uint32> _evaluationArena{ 0 };
         /// The running route share of training runs of a whole dungeon (NoteWingRun); runs on several map threads may
         /// lose a step to each other, which a running average does not mind.
         std::atomic<uint32> _wingRung{ 0 };

@@ -143,6 +143,11 @@ namespace
             .Name = "Ragefire Chasm to Bazzalan" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = 0, .Trash = true,
             .Name = "the Deadmines to Edwin VanCleef" },
+        // Held out (peak-play W2, ArenaDefinition::EvalOnly): Wailing Caverns (map 43, levels 15-25) to Lord Serpentis,
+        // a fixed level-20 spawn on its main way, past Anacondra, Pythas and Cobrahn. Its last boss proper, Mutanus,
+        // only comes with the Naralex escort, which no route can walk to.
+        { .MapId = 43, .Entry = 3673, .Level = 20, .Difficulty = 0, .Trash = true,
+            .Name = "Wailing Caverns to Lord Serpentis" },
     };
 }
 

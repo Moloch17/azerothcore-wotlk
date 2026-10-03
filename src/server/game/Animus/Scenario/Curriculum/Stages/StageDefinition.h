@@ -133,6 +133,11 @@ namespace Animus::Curriculum
         /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
         /// joins (Instance.Pull*). Training only: an evaluation never draws it.
         bool PullDrill = false;
+        /// Played only when an evaluation pins it (the learner's eval.heldout, MODE's arena): never drawn in training
+        /// nor in an ordinary evaluation, whatever its weight. Content a stage is measured on and never trained on --
+        /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run
+        /// dungeons (peak-play W2).
+        bool EvalOnly = false;
         /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
         uint32 RaidSeats = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds

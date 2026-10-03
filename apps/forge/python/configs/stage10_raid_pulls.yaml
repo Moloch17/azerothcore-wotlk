@@ -9,6 +9,8 @@ run_name: stage10_raid_pulls
 total_env_steps: 250000000
 
 eval:
+  # No held-out dungeon here (stage9_deadmines has one; peak-play W2).
+  heldout: {}
   every_env_steps: 10000000
   episodes: 64
   report: [pulls_cleared, died, wipes, teammates_died, engage_health, engage_mana, low_health_seconds, threat_share,

@@ -273,6 +273,28 @@ def init_from_checkpoint(path: str, prefer: str = "latest") -> Path | None:
     return candidate if candidate.exists() else None
 
 
+#: The held-out evaluation's seeds are the evaluation's moved on by this much, so its characters are its own.
+HELDOUT_SEED_OFFSET = 7919
+
+
+def heldout_arenas(heldout: dict, stage: dict | None) -> dict[str, tuple[int, int]]:
+    """eval.heldout resolved against stage.json: {arena: (MODE's pin, episodes)}. An arena the stage does not have, or
+    has but trains on (not "eval_only"), is refused: evaluating on trained content would read as generalisation."""
+    arenas = [arena.get("name") for arena in (stage or {}).get("arenas", ())]
+    out = {}
+    for name, episodes in (heldout or {}).items():
+        if name not in arenas:
+            raise ValueError(f"eval.heldout names arena {name!r}, which the stage does not have (it has "
+                             f"{', '.join(map(str, arenas)) or 'none'})")
+        if not (stage or {})["arenas"][arenas.index(name)].get("eval_only"):
+            raise ValueError(f"eval.heldout names arena {name!r}, which the stage trains on: only an arena it holds "
+                             f"out (ArenaDefinition::EvalOnly) measures generalisation")
+        if not isinstance(episodes, int) or episodes <= 0:
+            raise ValueError(f"eval.heldout.{name}: expected a positive episode count, got {episodes!r}")
+        out[name] = (arenas.index(name) + 1, episodes)
+    return out
+
+
 def baseline_cache_key(policy: str, seed: int, episodes: int, opponents: str, arenas, tuning,
                        score_kind: str, shaping_scale: float = 1.0) -> dict:
     """What a cached eval_baseline*.json summary is only good for: the scripted policy, the seeds, the opponents, the
@@ -518,6 +540,7 @@ class TrainingRun:
             flush=True,
         )
         self.arena_names = tuple(arena["name"] for arena in (self.stage or {}).get("arenas", ()))
+        self.heldout = heldout_arenas(config.eval.heldout, self.stage) if self.stage is not None else {}
         # eval.phases: a curriculum phase's arenas, for a row per phase in the evaluation summary. A name the stage
         # has no arena of is a config written for another stage: refused rather than reported as an empty phase.
         self.phases = {str(phase): tuple(str(name) for name in names)
@@ -1067,6 +1090,7 @@ class TrainingRun:
             self.cast.pool.reload()
         if sampled:
             self.evaluate_sampled(summary)
+        self.evaluate_heldout()
 
         self.apply_holds()
         if leader:
@@ -1113,6 +1137,25 @@ class TrainingRun:
         self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
         print("Sampled vs argmax actions on the evaluation seeds: " + ", ".join(
             f"{name} {summary[name]:.4g} / {argmax.get(name, float('nan')):.4g}" for name in fields), flush=True)
+
+    def evaluate_heldout(self) -> None:
+        """eval.heldout: each held-out arena on its own seeds (eval.seed + HELDOUT_SEED_OFFSET), every rank playing
+        its share, reported as policy heldout_<arena> in eval.csv and eval.jsonl. A reading only: neither the tracker,
+        the controller nor the league sees it."""
+        for name, (pin, episodes) in self.heldout.items():
+            result = self._evaluate_share(self.learner_actions(), episodes, self.config.eval.seed + HELDOUT_SEED_OFFSET,
+                                          arenas=self.arena_names, action_names=self.action_names, arena=pin)
+            if self.cast is not None:
+                self.cast.reset_all()
+            if not self.ranks.leader:
+                continue
+            result.policy = f"heldout_{name}"
+            summary = result.summary(self.report, self.phases)
+            self.eval_log.write(self.update, self.env_steps, result, summary, self.tracker)
+            shown = ", ".join(f"{column} {summary[column]:.3g}" for column in self.report
+                              if isinstance(summary.get(column), (int, float)))
+            print(f"Held out {name}: score {result.score:.4g} +/- {result.stderr:.2g} over {result.episodes} "
+                  f"episodes in {result.seconds:.0f} s" + (f"; {shown}" if shown else ""), flush=True)
 
     def send_replay(self, result: EvalResult) -> None:
         """Send the sim the seeds this evaluation lost, for training resets to rebuild (protocol REPLAY)."""

@@ -91,6 +91,11 @@ class EvalConfig:
     # ship stage sets it, since its gate is each phase within noise of its own stage. An arena the stage does not have
     # is refused at startup.
     phases: dict = field(default_factory=dict)
+    # Held-out arenas (their name -> seeded episodes), played after every evaluation and reported apart as
+    # `heldout_<arena>`: content the stage never trains on (stage.json "eval_only", ArenaDefinition::EvalOnly), so a
+    # policy that memorised its own route is told from one that learned. A reading, never a target: nothing about it
+    # moves best.pt, the league or convergence (peak-play W2). {} = none.
+    heldout: dict = field(default_factory=dict)
     # What an evaluation is scored on, and so what best.pt, the league's snapshots and convergence follow: "outcome",
     # the episode's Outcome and Cost terms before any rung's tier (the sim's score_outcome column), or "return", the
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting

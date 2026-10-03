@@ -2241,6 +2241,10 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
         return false;
     }
 
+    // A held-out arena for an evaluation; training (and an evaluation that names none) draws as the stage does.
+    if (!_pool->PinEvaluationArena(mode.Mode == 1 ? mode.Arena : 0))
+        return false;
+
     bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
     _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly, mode.FirstSeed);
 
@@ -2491,7 +2495,7 @@ bool AnimusForge::Forge::ApplyModes(std::vector<ModeMsg> const& modes)
     for (ModeMsg const& mode : modes)
     {
         if (mode.Mode != modes.front().Mode || mode.SeedBase != modes.front().SeedBase
-            || mode.Flags != modes.front().Flags || std::strncmp(mode.Baseline, modes.front().Baseline,
+            || mode.Flags != modes.front().Flags || mode.Arena != modes.front().Arena || std::strncmp(mode.Baseline, modes.front().Baseline,
                 POLICY_NAME_SIZE) != 0)
         {
             LOG_ERROR("module.animus", "Data-parallel learners asked for different modes on the same decision");

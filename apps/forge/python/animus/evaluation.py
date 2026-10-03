@@ -417,7 +417,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    spec_names: dict[str, list[str]] | None = None,
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None,
-                   score_column: str = SCORE_COLUMN) -> tuple[EvalResult, p.Step]:
+                   score_column: str = SCORE_COLUMN, arena: int = 0) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -429,6 +429,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     decision of the episodes with the first seed indexes, in EvalResult.trace.
 
     `score_column` is the episode info column the result is scored on (EvalResult.score_column; "" = the return).
+    `arena` pins the evaluation to a held-out arena (stage.json's index + 1; eval.heldout).
 
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
@@ -444,6 +445,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         max_decisions = per_episode * (-(-episodes // envs) + 2)
 
     share = {"first_seed": first_seed} if first_seed else {}
+    if arena:
+        share["arena"] = arena
     if baseline:
         step = env.set_mode(True, seed, episodes, baseline, **share)
     else:
