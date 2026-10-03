@@ -1843,7 +1843,12 @@ three at the end. An evaluation never draws it. `Pull drill:` log lines say how 
 
 The crowd block's tail (`CrowdBlock::OBS_TAIL_FIRST`) shows every seat the second pack: the nearest creature out of
 the fight past the pack ahead's reach, its gap from that pack, its distance and bearing, and how many yards the seat
-stands outside the nearest aggro radius of the pack ahead and of anything else idle. The columns come after the old
+stands outside the nearest aggro radius of the pack ahead and of anything else idle, and how long the party has gone
+without a kill, a step along the route or a fight (`OBS_STILL`, / 120 s). The dungeon script's tank stops waiting for
+the party's health and mana after a minute of that; its seats drink at 0% mana and stop moving to drink; and a creature
+that cannot reach the party or is running home is not in the slots (2026-10-03: parties stood at Ragefire's route point
+30 for the rest of the run, a caster at 0% mana never drinking and the script reading a creature below the ledge as a
+fight). The columns come after the old
 ones, so a checkpoint from before them seeds the block as it was (`bootstrap.GROWS_AT_END`).
 
 ### `stage9_deadmines`

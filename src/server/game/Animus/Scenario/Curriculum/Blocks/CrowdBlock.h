@@ -91,7 +91,9 @@ namespace Animus::Curriculum
             /// pack ahead, and of any other out of the fight it can see, / 20 in -1..1: below 0 it would be pulled.
             OBS_AHEAD_MARGIN    = OBS_TAIL_FIRST + 5,
             OBS_SECOND_MARGIN   = OBS_TAIL_FIRST + 6,
-            OBS_COUNT           = OBS_TAIL_FIRST + 7
+            /// How long the party has gone without a kill, a step along the route or a fight, / 120 s, at most 1.
+            OBS_STILL           = OBS_TAIL_FIRST + 7,
+            OBS_COUNT           = OBS_TAIL_FIRST + 8
         };
 
         enum Action : uint32

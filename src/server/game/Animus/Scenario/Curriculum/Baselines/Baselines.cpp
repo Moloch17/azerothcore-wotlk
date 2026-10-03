@@ -821,6 +821,8 @@ namespace
     constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
     constexpr float DUNGEON_REST_HEALTH = 0.7f;
     constexpr float DUNGEON_REST_MANA = 0.6f;
+    /// The tank waits this long with nothing done for the party's health and mana, then pulls as it is.
+    constexpr float DUNGEON_WAIT_SECONDS = 60.0f;
 
     float SlotObs(Row const& row, uint32 slot, uint32 feature)
     {
@@ -891,16 +893,28 @@ namespace
             return std::nullopt;
         float const health = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH);
         float const mana = row.Obs(BlockId::Core, CoreBlock::OBS_MANA);
+        // A seat with mana: some left, or drinks to get it back with (only a mana user is given them). At exactly
+        // none the script never drank, and a caster stood at 0% for the rest of the run (2026-10-03).
+        bool const usesMana = mana > 0.0f || row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINK_LEFT) > 0.0f;
         bool const eating = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_EATING) > 0.0f;
         bool const drinking = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINKING) > 0.0f;
-        if ((eating && health < 0.99f) || (drinking && mana > 0.0f && mana < 0.99f))
+        if ((eating && health < 0.99f) || (drinking && usesMana && mana < 0.99f))
             return 0;
-        if (health < DUNGEON_REST_HEALTH)
+        bool const wantsFood = health < DUNGEON_REST_HEALTH
+            && row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_FOOD_LEFT) > 0.0f;
+        bool const wantsDrink = usesMana && mana < DUNGEON_REST_MANA
+            && row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINK_LEFT) > 0.0f;
+        if (wantsFood)
             if (std::optional<int32> eat = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_EAT))
                 return eat;
-        if (mana > 0.0f && mana < DUNGEON_REST_MANA)
+        if (wantsDrink)
             if (std::optional<int32> drink = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_DRINK))
                 return drink;
+        // Eating and drinking wait for the seat to stand still: a seat turning and stepping on the spot was never
+        // offered its drink, and the script said nothing instead of stopping it.
+        if ((wantsFood || wantsDrink) && row.Has(BlockId::Move) && row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f)
+            if (std::optional<int32> halt = Halt(row))
+                return halt;
         return std::nullopt;
     }
 
@@ -1199,7 +1213,11 @@ namespace
 
         // The tank: everybody up, rested and gathered before the next pull -- every member alive, healthy and near,
         // and the healer's mana up (the healer's mana is what a pull spends; the others' waited the hour out).
-        bool ready = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) >= DUNGEON_READY_HEALTH;
+        // Waited out: a minute with nothing done (CrowdBlock::OBS_STILL) and the health and mana waits are over -- with
+        // no drinks left or a caster that never drank, the tank waited out the whole run (2026-10-03).
+        bool const waitedOut = row.Has(BlockId::Crowd)
+            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_STILL) * 120.0f >= DUNGEON_WAIT_SECONDS;
+        bool ready = waitedOut || row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) >= DUNGEON_READY_HEALTH;
         float const bestHealing = row.Obs(BlockId::Party, PartyBlock::OBS_BEST_HEALING);
         for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
         {
@@ -1210,8 +1228,8 @@ namespace
                 + uint32(Aptitude::BRIEF_HEALING));
             bool const heals = memberHealing >= std::max(bestHealing - 1e-3f, AptitudeDemand::KeepsThemUp().AtLeast);
             ready = MemberLive(row, member)
-                && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH
-                && (!heals || mana <= 0.0f || mana >= DUNGEON_READY_MANA)
+                && (waitedOut || MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH)
+                && (waitedOut || !heals || mana <= 0.0f || mana >= DUNGEON_READY_MANA)
                 && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
         }
         if (!ready)

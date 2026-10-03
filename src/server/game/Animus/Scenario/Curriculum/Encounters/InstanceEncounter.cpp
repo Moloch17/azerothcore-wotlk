@@ -1683,7 +1683,14 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, WING_SIGHT);
     Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
     Cell::VisitObjects(seat, searcher, WING_SIGHT);
-    units.remove_if([](Unit* unit) { return !unit->IsAlive() || unit->IsPlayer() || unit->IsTotem(); });
+    // A creature that cannot reach the party (below a ledge, across lava) or is running home is no fight: in and out
+    // of combat with the party above Ragefire's drop at route point 30, it held the script's "fight" -- and the
+    // party, imitating it -- for the rest of the run (2026-10-03).
+    units.remove_if([](Unit* unit)
+    {
+        Creature const* creature = unit->ToCreature();
+        return !unit->IsAlive() || unit->IsPlayer() || unit->IsTotem() || (creature && creature->IsEvadingAttacks());
+    });
     units.sort([seat](Unit* a, Unit* b)
     {
         if (a->IsInCombat() != b->IsInCombat())
@@ -2010,6 +2017,7 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
     crowd.AheadSize = fight.AheadSize;
     crowd.HasSecond = fight.HasSecond;
     crowd.Second = fight.Second;
+    crowd.Still = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.ProgressMs)) / 120000.0f;
     view.HasObjective = true;
     // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the
     // others up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at

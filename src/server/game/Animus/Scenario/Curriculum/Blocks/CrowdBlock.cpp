@@ -106,6 +106,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         obs[OBS_AHEAD_COS] = std::cos(angle);
     }
 
+    obs[OBS_STILL] = std::clamp(crowd.Still, 0.0f, 1.0f);
     obs[OBS_SECOND_GAP] = 1.0f;
     obs[OBS_SECOND_DISTANCE] = 1.0f;
     if (crowd.HasSecond)

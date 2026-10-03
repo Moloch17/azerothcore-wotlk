@@ -61,6 +61,7 @@ namespace Animus::Curriculum
         uint32 AheadSize = 0;
         bool HasSecond = false;                     // the nearest creature out of the fight past the pack ahead
         Position Second;
+        float Still = 0.0f;                         // time without progress or a fight / 120 s
         /// A few yards on along the dungeon's field route towards the seat's objective: where the advance action
         /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
         bool HasStep = false;
