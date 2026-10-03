@@ -17,7 +17,7 @@ explore:
   share: 0.5
 
 eval:
-  every_env_steps: 40000000
+  every_env_steps: 20000000
   episodes: 64
   # Wailing Caverns, which no stage trains on (peak-play W2): reported as heldout_heldout, never a target.
   heldout:

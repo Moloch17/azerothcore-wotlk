@@ -160,8 +160,8 @@ class FadeConfig:
     shaping pulled before the outcome is learned only stops the learning."""
 
     enabled: bool = False
-    rungs: tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.0)
-    window: int = 4  # evaluations at a rung before it may step, and the plateau test's patience
+    rungs: tuple[float, ...] = (1.0, 0.5, 0.25, 0.0)
+    window: int = 3  # evaluations at a rung before it may step, and the plateau test's patience
     regress_z: float = 2.0
     give_up: int = 2  # falls back to the same rung before the ladder stays there
     # Classes whose difficulty ladder may still be moving when the shaping ladder steps: ten classes' ladders are rarely

@@ -27,7 +27,7 @@ eval:
   # No held-out dungeon here (stage9_deadmines has one; peak-play W2).
   heldout: {}
   episodes: 256
-  every_env_steps: 20000000
+  every_env_steps: 10000000
   sampled_every: 3
   phases:
     movement: [travel, flight, water]

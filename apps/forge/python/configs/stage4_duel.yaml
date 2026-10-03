@@ -185,7 +185,7 @@ mappo:
 # sampled_every: every third evaluation also plays sampled actions on the same seeds (policy learner_sampled), to
 # see whether the argmax policy that is exported plays like the one that trained.
 eval:
-  every_env_steps: 10000000
+  every_env_steps: 5000000
   at_start: true
   episodes: 2048
   seed: 1000
@@ -219,10 +219,12 @@ convergence:
 
 # The shaping ladder (peak-play W1): shaping gets a stage started and then goes, rung by rung, each step taken when the
 # outcome score has plateaued and undone when it falls, so every stage that extends this one ends on what it is for.
+# Four rungs and a window of 3 evaluations (2026-10-03): five rungs at 4 evaluations each needed 160M+ steps of flat
+# score, more than a stage's budget; a step taken too early is undone by the regression rule.
 fade:
   enabled: true
-  rungs: [1.0, 0.5, 0.25, 0.1, 0.0]
-  window: 4
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  window: 3
   regress_z: 2.0
   give_up: 2
 

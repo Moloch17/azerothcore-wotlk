@@ -151,16 +151,16 @@ stage trains its whole budget).
 | Stage | Budget | Eval every | Episodes | Stage | Budget | Eval every | Episodes |
 |---|---|---|---|---|---|---|---|
 | `stage1_move` | 250M | 5M | 2048 | `stage2_travel` | 250M | 5M | 2048 |
-| `stage3_rotation` | 250M | 5M | 2048 | `stage4_duel` | 250M | 10M | 2048 |
-| `stage5_pack` | 250M | 10M | 2048 | `stage6_roles` | 400M | 20M | 384 |
-| `stage7_group` | 400M | 20M | 384 | `stage8_ragefire` | 3000M | 40M | 64 |
-| `stage9_deadmines` | 1000000M | 40M | 64 | `stage10_raid_pulls` | 250M | 10M | 64 |
-| `stage11_raids` | 250M | 10M | 128 | | | | |
-| `stage12_duel_pvp` | 250M | 10M | 2048 | `stage13_escape` | 250M | 10M | 2048 |
-| `stage14_stealth` | 250M | 10M | 2048 | `stage15_arena` | 250M | 10M | 512 |
-| `stage16_flag` | 250M | 10M | 2048 | `stage17_warsong` | 250M | 10M | 128 |
-| `stage18_life` | 250M | 10M | 1024 | `stage19_world_group` | 250M | 10M | 128 |
-| `stage20_world_shared` | 250M | 10M | 128 | `stage21_ship` | 250M | 20M | 256 |
+| `stage3_rotation` | 250M | 5M | 2048 | `stage4_duel` | 250M | 5M | 2048 |
+| `stage5_pack` | 250M | 5M | 2048 | `stage6_roles` | 400M | 10M | 384 |
+| `stage7_group` | 400M | 10M | 384 | `stage8_ragefire` | 3000M | 20M | 64 |
+| `stage9_deadmines` | 1000000M | 20M | 64 | `stage10_raid_pulls` | 250M | 5M | 64 |
+| `stage11_raids` | 250M | 5M | 128 | | | | |
+| `stage12_duel_pvp` | 250M | 5M | 2048 | `stage13_escape` | 250M | 5M | 2048 |
+| `stage14_stealth` | 250M | 5M | 2048 | `stage15_arena` | 250M | 5M | 512 |
+| `stage16_flag` | 250M | 5M | 2048 | `stage17_warsong` | 250M | 5M | 128 |
+| `stage18_life` | 250M | 5M | 1024 | `stage19_world_group` | 250M | 5M | 128 |
+| `stage20_world_shared` | 250M | 5M | 128 | `stage21_ship` | 250M | 10M | 256 |
 
 **What the budgets assume.** 128 envs (`AnimusForge.Envs`; this machine's `forge bench` result, where the shipped
 default is 64 -- every number in this chapter is at 128), except the raid stages, which set their own

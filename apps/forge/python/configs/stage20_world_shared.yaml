@@ -10,7 +10,7 @@ run_name: stage20_world_shared
 total_env_steps: 250000000
 
 eval:
-  every_env_steps: 10000000
+  every_env_steps: 5000000
   episodes: 128
   report: [quests_turned_in, quest_turned_in, quest_poached, world_claims, ambushers, ambushers_killed,
            quest_progress, quest_places_found, director_member_orders, goals_reached, died, quest_band]
