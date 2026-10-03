@@ -347,6 +347,15 @@ namespace Animus::Curriculum
 
     /// The block implementation of `id`.
     [[nodiscard]] Block const& GetBlock(BlockId id);
+
+    /// A seat layout's entities as sets, for the learner's shared set encoders and pointer heads (peak-play W4,
+    /// stage.json layouts.<name>.sets): per set its name, slot count, the column of a slot's "present" feature, the
+    /// observation segments a slot is gathered from (each `first` column of slot 0 and `stride` columns a slot, read
+    /// in order and concatenated) and the action ranges that name its slots (`first` global action, `count` = slots).
+    /// The enemies are the pack block's slots joined with the hostiles block's for the same slot; the members the
+    /// party block's teammates; the friends the support block's; the crowd the crowd block's. Empty for a layout with
+    /// none of them, and for the director, which has its own (DirectorLayout::SetDescriptor).
+    void DescribeSeatSets(Layout const& layout, boost::json::array& sets);
 }
 
 #endif

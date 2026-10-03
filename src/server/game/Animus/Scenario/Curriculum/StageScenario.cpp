@@ -1559,6 +1559,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             for (SpecProfile const& spec : layout.Profile->Specs)
                 specNames.push_back(boost::json::string(spec.Name));
 
+        // Its entities as sets, for the learner's set encoders and pointer heads (mappo.seat_sets; DescribeSeatSets).
+        DescribeSeatSets(layout, entry["sets"].emplace_array());
+
         boost::json::array& spans = entry["blocks"].emplace_array();
         for (BlockId id : layout.Blocks)
         {
