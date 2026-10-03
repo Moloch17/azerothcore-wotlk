@@ -70,6 +70,18 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_APTITUDE_FIRST)
+    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT) <= uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_ATTACKERS));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_NO_TARGET));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_SLOT_ON_FIRST) + Animus::Curriculum::PACK_SLOTS
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST) + Animus::Curriculum::GOAL_COUNT
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_FEATURES));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::PartyBlock::Size(Layout const& layout) const
 {
     return { OBS_GLOBAL_COUNT + PARTY_MEMBERS * MEMBER_FEATURES,

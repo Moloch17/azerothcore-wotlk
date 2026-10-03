@@ -132,6 +132,14 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RACE_FIRST) + Animus::Curriculum::PLAYABLE_RACES.size()
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_APTITUDE_FIRST));
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RUNE_FIRST) + MAX_RUNES
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_COMBO_POINTS));
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_FORM_FIRST) + TRACKED_FORMS.size()
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_GCD));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::CoreBlock::Size(Layout const& layout) const
 {
     uint32 const actions = uint32(layout.Catalog().Actions().size());

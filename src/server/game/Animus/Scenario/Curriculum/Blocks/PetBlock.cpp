@@ -410,6 +410,11 @@ void Animus::Curriculum::PetBlock::BeforeApply(SeatView& view, SeatActionResult&
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these): the react one-hot
+// is three wide (Observe clamps to 2).
+static_assert(uint32(Animus::Curriculum::PetBlock::OBS_REACT_FIRST) + 3
+    <= uint32(Animus::Curriculum::PetBlock::OBS_FOLLOWING));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::PetBlock::Size(Layout const& layout) const
 {
     if (!HasPet(layout.Profile->Class))

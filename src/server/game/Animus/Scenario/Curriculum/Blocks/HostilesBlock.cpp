@@ -24,6 +24,10 @@
 #include "SpellInfo.h"
 #include <boost/json/object.hpp>
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::HostilesBlock::SLOT_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
+    <= uint32(Animus::Curriculum::HostilesBlock::SLOT_HEALING));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::HostilesBlock::Size(Layout const& /*layout*/) const
 {
     return { PACK_SLOTS * SLOT_FEATURES, 0 };

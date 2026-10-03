@@ -120,6 +120,20 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_TYPE_FIRST)
+    + Animus::Curriculum::Encoding::OPPONENT_TYPES.size()
+    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_MAX_HEALTH));
+static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_SCHOOL_FIRST)
+    + Animus::Curriculum::Encoding::OBSERVED_SCHOOLS.size()
+    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_MECHANIC_FIRST));
+static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_IMMUNE_MECHANIC_FIRST)
+    + Animus::Curriculum::Encoding::OBSERVED_MECHANICS.size()
+    <= uint32(Animus::Curriculum::DuelBlock::OBS_BOT_STUNNED));
+static_assert(uint32(Animus::Curriculum::DuelBlock::OBS_DEBUFF_MECHANIC_FIRST)
+    + Animus::Curriculum::Encoding::OBSERVED_MECHANICS.size()
+    <= uint32(Animus::Curriculum::DuelBlock::OBS_TARGET_CAST_FIRST));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::DuelBlock::Size(Layout const& layout) const
 {
     uint32 const stable = StableSlots(layout);

@@ -310,6 +310,11 @@ namespace Animus::Curriculum
         /// The features and actions the block adds to `layout` (profile, assets and ally heals are set).
         [[nodiscard]] virtual BlockSize Size(Layout const& layout) const = 0;
 
+        /// Bumped when the block's columns change meaning at the same place (a re-layout, not new features at the
+        /// end): written to the manifest and stage.json when not 0, so a model or checkpoint of the old layout is
+        /// told apart from one of the new even where the widths agree.
+        [[nodiscard]] virtual uint32 Revision() const { return 0; }
+
         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }
 

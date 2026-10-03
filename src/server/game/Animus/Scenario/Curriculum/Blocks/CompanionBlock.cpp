@@ -164,6 +164,14 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_CLASS_FIRST)
+    + Animus::Curriculum::PLAYABLE_CLASSES.size() <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_ATTACKERS));
+static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
+    <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_NO_TARGET));
+static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_SLOT_ON_OWNER_FIRST) + Animus::Curriculum::PACK_SLOTS
+    <= uint32(Animus::Curriculum::CompanionBlock::OBS_FOLLOWING));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::CompanionBlock::Size(Layout const& layout) const
 {
     uint32 const revives = uint32(layout.AllyRevives.size());

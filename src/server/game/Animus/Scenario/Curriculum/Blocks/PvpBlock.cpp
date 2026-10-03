@@ -69,6 +69,18 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_CLASS_FIRST)
+    + Animus::Curriculum::PLAYABLE_CLASSES.size()
+    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_APTITUDE_FIRST));
+static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_APTITUDE_FIRST)
+    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT)
+    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_LEVEL_DIFF));
+static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_DR_FIRST) + Animus::Curriculum::PvpBlock::DR_GROUP_COUNT
+    <= uint32(Animus::Curriculum::PvpBlock::OBS_BOT_DR_FIRST));
+static_assert(uint32(Animus::Curriculum::PvpBlock::OBS_BOT_DR_FIRST) + Animus::Curriculum::PvpBlock::DR_GROUP_COUNT
+    <= uint32(Animus::Curriculum::PvpBlock::OBS_OPPONENT_CC_LEFT));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::PvpBlock::Size(Layout const& /*layout*/) const
 {
     return { OBS_COUNT, 0 };

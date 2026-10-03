@@ -1570,6 +1570,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             block["name"] = BlockName(id);
             block["obs"] = Span(slice.ObsFirst, slice.ObsCount);
             block["actions"] = Span(slice.ActionFirst, slice.ActionCount);
+            if (uint32 const revision = GetBlock(id).Revision())
+                block["revision"] = revision;
         }
     }
 

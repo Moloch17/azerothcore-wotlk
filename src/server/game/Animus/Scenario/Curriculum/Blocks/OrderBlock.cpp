@@ -37,6 +37,16 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these): the order's
+// objective one-hot and the goal targets' objectives and places are the journal's.
+static_assert(uint32(Animus::Curriculum::OrderBlock::OBS_ORDER_SOURCE_FIRST)
+    - uint32(Animus::Curriculum::OrderBlock::OBS_ORDER_OBJECTIVE_FIRST)
+    == Animus::Curriculum::WorldView::JOURNAL_OBJECTIVES);
+static_assert(Animus::Curriculum::GOAL_TARGET_GIVER - Animus::Curriculum::GOAL_TARGET_OBJECTIVE_FIRST
+    == Animus::Curriculum::WorldView::JOURNAL_OBJECTIVES);
+static_assert(Animus::Curriculum::GOAL_TARGET_ASSIGNMENT - Animus::Curriculum::GOAL_TARGET_PLACE_FIRST
+    == Animus::Curriculum::WorldView::JOURNAL_PLACES);
+
 Animus::Curriculum::BlockSize Animus::Curriculum::OrderBlock::Size(Layout const& /*layout*/) const
 {
     // No actions: an order is read, not pressed.

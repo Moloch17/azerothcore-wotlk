@@ -35,8 +35,8 @@ namespace Animus::Curriculum
         enum Obs : uint32
         {
             OBS_SELECTED_FIRST          = 0,    // one-hot over FRIEND_SLOTS: the selected friend
-            OBS_RANK_TIER_FIRST         = 5,    // one-hot over RANK_TIERS
-            OBS_GLOBAL_COUNT            = 8
+            OBS_RANK_TIER_FIRST         = OBS_SELECTED_FIRST + FRIEND_SLOTS,   // one-hot over RANK_TIERS
+            OBS_GLOBAL_COUNT            = OBS_RANK_TIER_FIRST + RANK_TIERS
 
             // Then FRIEND_SLOTS friend slots of FRIEND_FEATURES.
         };
@@ -69,6 +69,9 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        /// 1: the selected-friend one-hot spans FRIEND_SLOTS (it was 5 columns wide, so friends 5-8 wrote over the
+        /// rank tier and the first friend's present flag), the rank tier after it.
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
