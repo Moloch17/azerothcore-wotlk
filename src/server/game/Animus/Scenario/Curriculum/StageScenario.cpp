@@ -2210,8 +2210,30 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
                         fits.push_back(casting);
                 if (fits.empty())
                     continue;
-                std::size_t const pick = env.EpisodeSeedIndex != NO_EPISODE_SEED
-                    ? (std::size_t(env.EpisodeSeedIndex) + seat) % fits.size() : urand(0, uint32(fits.size()) - 1);
+                // Training draws by the learner's weights (the pairs furthest below their baseline get more), as
+                // DrawCasting does: drawn evenly, a drill's weakest build -- the holy paladin, healing two heals a
+                // fight -- got a fifth of the healer drill like the builds that had learned it (2026-10-03).
+                std::size_t pick = 0;
+                if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
+                    pick = (std::size_t(env.EpisodeSeedIndex) + seat) % fits.size();
+                else
+                {
+                    float total = 0.0f;
+                    for (Casting const& casting : fits)
+                        total += Weight(*casting.L, casting.Spec);
+                    pick = urand(0, uint32(fits.size()) - 1);
+                    if (total > 0.0f)
+                    {
+                        float roll = frand(0.0f, total);
+                        for (std::size_t index = 0; index < fits.size(); ++index)
+                        {
+                            roll -= Weight(*fits[index].L, fits[index].Spec);
+                            pick = index;
+                            if (roll <= 0.0f)
+                                break;
+                        }
+                    }
+                }
                 s.L = fits[pick].L;
                 s.Spec = fits[pick].Spec;
             }
@@ -4019,6 +4041,7 @@ char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
         case AimlessCause::ModeFlip:         return "mode_flip";
         case AimlessCause::ModeReverse:      return "mode_reverse";
         case AimlessCause::NeedlessMove:     return "needless_move";
+        case AimlessCause::TauntOffRole:     return "taunt_off_role";
         case AimlessCause::Count:            break;
     }
     return "unknown";
@@ -4046,10 +4069,29 @@ namespace
             case AimlessCause::ModeFlip:         return tuning.AimlessModeFlip;
             case AimlessCause::ModeReverse:      return tuning.AimlessModeReverse;
             case AimlessCause::NeedlessMove:     return tuning.AimlessNeedlessMove;
+            case AimlessCause::TauntOffRole:     return tuning.AimlessTauntOffRole;
             case AimlessCause::Count:            break;
         }
         return tuning.Aimless;
     }
+}
+
+bool Animus::Curriculum::StageScenario::IsPartyTank(SeatState const& seat)
+{
+    return seat.DungeonRole == DUNGEON_TANK
+        || (seat.DungeonRole == DUNGEON_ANY && AptitudeDemand::HoldsThePull().MetBy(seat.Apt));
+}
+
+bool Animus::Curriculum::StageScenario::PartyHasLivingTank(Env const& env, Player const* bot) const
+{
+    EnvState const& data = Data(env);
+    if (data.ActiveSeats < 2)
+        return false;
+    for (uint32 other = 0; other < data.ActiveSeats; ++other)
+        if (Player* mate = env.FindBot(other); mate && mate != bot && mate->IsAlive() && data.Seats[other].L
+            && IsPartyTank(data.Seats[other]))
+            return true;
+    return false;
 }
 
 void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target,
@@ -4169,6 +4211,14 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             else if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
                 || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
                 verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
+            else if (result.CastTaunt && !IsPartyTank(seat) && PartyHasLivingTank(env, bot))
+            {
+                // Taunting beside a living tank: the enemies are the tank's to take, and a healer or damage dealer
+                // that pulls one onto itself has made the tank's job its own (2026-10-03, stage6: holy paladins
+                // pressed Hand of Reckoning four times a fight from the healer's seat).
+                verdict = Verdict::Aimless;
+                cause = AimlessCause::TauntOffRole;
+            }
             else if (result.CastHarmful)
             {
                 switch (goal)
@@ -4239,8 +4289,11 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                         break;
                     case SeatGoal::Fight:
                     case SeatGoal::Control:
-                        // Help on someone else while the seat said it was fighting: it should have said Protect.
-                        verdict = !onSelf && !untargeted && !hurt ? Verdict::Aimless : Verdict::Neutral;
+                        // Help on someone else while the seat said it was fighting: it should have said Protect. Not a
+                        // heal: one lands only on missing health, and a healer holds Fight most of a fight -- every
+                        // heal on a teammate was charged as aimless (2026-10-03, stage6 healers: Fight 83-88%).
+                        verdict = !onSelf && !untargeted && !hurt && !result.HealingCasts ? Verdict::Aimless
+                            : Verdict::Neutral;
                         break;
                     case SeatGoal::Resurrect:
                         // Raising the friend it named (any dead friend when it names none).

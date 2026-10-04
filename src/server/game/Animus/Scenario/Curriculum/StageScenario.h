@@ -392,6 +392,10 @@ namespace Animus::Curriculum
         /// Whether a press served the goal the seat holds, was neutral, or worked against it (Actions.Aimless), and
         /// the effort every press costs (Actions.Effort). A step is judged at the next reward, when it is known
         /// whether it closed on or opened the gap to where the goal wants the seat (SettleIntent).
+        /// The party's tank: drawn as the tank, or any seat whose build holds a pull.
+        [[nodiscard]] static bool IsPartyTank(SeatState const& seat);
+        /// Another seat of the env that is the party's tank and alive (none in a lone seat's stage).
+        [[nodiscard]] bool PartyHasLivingTank(Env const& env, Player const* bot) const;
         void JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target, uint32 action,
             SeatActionResult const& result) const;
         /// An instructed seat's goal in a whole dungeon (SeatState::Instructed), by its role: the healer protects the

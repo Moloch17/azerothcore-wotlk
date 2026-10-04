@@ -172,6 +172,7 @@ namespace Animus::Curriculum
         ModeFlip,           // an aspect, stance or form changed with nothing about the seat's situation changed
         ModeReverse,        // ... and back again within ten seconds
         NeedlessMove,       // a ranged seat moving in a fight it could stand and shoot in
+        TauntOffRole,       // a taunt from a seat that is not the tank, beside a living one
         Count
     };
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);

@@ -176,6 +176,36 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
+    /// Where a heal goes: the selected friend when it can take it, else the most hurt living friend the heal reaches
+    /// (range and line of sight), else the selected friend as before. Heals went only to the selected friend, which
+    /// starts as the seat itself, and a heal on a friend at full health is masked: a healer that kept an enemy
+    /// selected and seldom picked a friend was seldom offered a heal at all (2026-10-03, stage6: holy paladins had
+    /// Holy Light open 13 decisions a fight against a priest's 60-90 for its heals, and cast two heals a fight).
+    Unit* HealTarget(SeatView const& view, ActionCatalog::Action const& def, SpellInfo const* info)
+    {
+        Unit* selected = SupportTarget(view);
+        Player* bot = view.Bot;
+        if (!def.Healing || !view.L || !view.L->Has(BlockId::Support))
+            return selected;
+
+        float const range = info->GetMaxRange(true, bot);
+        auto const takes = [&](Unit* unit)
+        {
+            return unit && unit->IsAlive() && (!def.DirectHeal || !unit->IsFullHealth())
+                && (!def.KeepsAura || !OwnAuraHasPlentyLeft(unit, info, bot->GetGUID()))
+                && (unit == bot || (bot->IsWithinDistInMap(unit, range) && bot->IsWithinLOSInMap(unit)));
+        };
+        if (takes(selected))
+            return selected;
+
+        Unit* best = nullptr;
+        for (uint32 slot = 0; slot < FRIEND_SLOTS; ++slot)
+            if (Unit* unit = FriendUnit(view, slot); unit && unit != selected && !unit->IsFullHealth() && takes(unit)
+                && (!best || unit->GetHealthPct() < best->GetHealthPct()))
+                best = unit;
+        return best ? best : selected;
+    }
+
     bool MountCastInProgress(Player const* bot)
     {
         Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
@@ -277,7 +307,7 @@ namespace Animus::Curriculum::Encoding
         Unit* friendUnit = nullptr;
         if (info->IsPositive())
         {
-            friendUnit = AimsAtFriend(info) ? SupportTarget(view) : bot;
+            friendUnit = AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
             if (!friendUnit)
                 return false;
 
@@ -310,7 +340,7 @@ namespace Animus::Curriculum::Encoding
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
-        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? SupportTarget(view) : bot;
+        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
         if (info->IsPositive() && !friendUnit)
             return false;
 
@@ -330,6 +360,7 @@ namespace Animus::Curriculum::Encoding
         ++result.SpellCasts;
         result.CastHarmful = !info->IsPositive();
         result.CastTactical = def.From == ActionCatalog::Group::Tactical;
+        result.CastTaunt = info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_MOD_TAUNT);
         result.CastTrap = IsTrapSpell(info);
         result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
