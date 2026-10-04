@@ -178,6 +178,20 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
+    bool CastHoldsFeet(Player const* bot)
+    {
+        return bot && bot->IsNonMeleeSpellCast(false, false, true);
+    }
+
+    void ReleaseBearing(SeatView& view)
+    {
+        view.HeldBearing = 0xFF;
+        if (view.Option)
+            view.Option->Stop(SeatOptionKind::MoveBearing);
+        if (view.Bot && !view.Bot->movespline->Finalized())
+            view.Bot->StopMoving();
+    }
+
     /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
     /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
     /// pressed four to seven heals for each that started, and stage5's casters five to seven spells (2026-10-04);

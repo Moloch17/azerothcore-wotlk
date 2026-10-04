@@ -498,6 +498,7 @@ namespace Animus::Curriculum
         float FollowDistanceSq = 0.0f;
         uint32 FollowInBand = 0;
         uint32 MoveStarts = 0;
+        uint32 SplineRestarts = 0;          // a decision that launched a move spline over one still running
         bool WasMoving = false;
         uint32 StoppedAtMs = 0;
 
@@ -661,6 +662,7 @@ namespace Animus::Curriculum
             FollowDistanceSq = 0.0f;
             FollowInBand = 0;
             MoveStarts = 0;
+            SplineRestarts = 0;
             WasMoving = false;
             StoppedAtMs = 0;
             Combat = CombatTally();

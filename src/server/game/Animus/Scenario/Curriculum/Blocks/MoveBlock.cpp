@@ -551,6 +551,12 @@ namespace
         if (!bot || !view.Option)
             return;
 
+        // Nothing under a cast or a channel: a spline launched, or a turn pushed onto the unit, would cancel it. The
+        // press that started it let go of the bearing (Encoding::ReleaseBearing); a held turn waits (movement-smooth
+        // A4).
+        if (Encoding::CastHoldsFeet(bot))
+            return;
+
         bool const alive = bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES);
 
         // Where the head is pointing this decision, settled before a single bearing is measured off it.

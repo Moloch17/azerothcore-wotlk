@@ -294,14 +294,20 @@ void Animus::Curriculum::WorldBlock::Apply(SeatView& view, uint32 local, SeatAct
             else if (best.Thing == world.Node)
             {
                 if (WorldActions::Gather(bot, world.Node))
+                {
                     ++result.GatherCasts;
+                    Encoding::ReleaseBearing(view);     // the gathering cast holds the feet (movement-smooth A4)
+                }
                 else
                     ++result.Wasted;
             }
             else if (world.CorpseSkinnable)
             {
                 if (WorldActions::Skin(bot, world.Corpse->ToCreature()))
+                {
                     ++result.GatherCasts;
+                    Encoding::ReleaseBearing(view);
+                }
                 else
                     ++result.Wasted;
             }

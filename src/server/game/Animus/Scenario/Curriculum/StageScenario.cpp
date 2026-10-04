@@ -1266,6 +1266,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).MoveStarts) / minutes;
     });
+    // Move splines relaunched under a running one, per minute (movement-smooth): each is a hitch a client draws.
+    _info.Add("spline_restarts", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).SplineRestarts) / minutes;
+    });
     _info.Add("fidget_seconds", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).FidgetMs) / 1000.0f;
@@ -3227,7 +3233,12 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     view.Option = &seat.Option;
     SeatActionResult result;
     SeatOptionSet const started = seat.Option;
+    // A spline launched while one was still running is a restart: what a client draws as a hitch in the stride.
+    uint32 const splineBefore = bot->movespline->GetId();
+    bool const splineRunning = !bot->movespline->Finalized();
     SeatEncoder::Apply(view, action, result);
+    if (splineRunning && bot->movespline->GetId() != splineBefore)
+        ++seat.SplineRestarts;
     // Steering is state, not a one-off order: what the feet and the head were told is what the next decision
     // continues from.
     seat.HeldBearing = view.HeldBearing;

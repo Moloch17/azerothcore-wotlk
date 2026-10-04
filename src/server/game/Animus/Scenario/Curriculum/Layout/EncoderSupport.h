@@ -82,6 +82,12 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
+    /// A cast or a channel under way that moving would cancel: the steering does not launch a spline under it
+    /// (MoveBlock Steer), and a press that started one lets go of the held bearing (ReleaseBearing).
+    [[nodiscard]] bool CastHoldsFeet(Player const* bot);
+    /// Stop the feet and let go of the held bearing and its option, so nothing re-issues the walk under a cast.
+    void ReleaseBearing(SeatView& view);
+
     /// Whether the cast in flight is a mount.
     ///
     /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
