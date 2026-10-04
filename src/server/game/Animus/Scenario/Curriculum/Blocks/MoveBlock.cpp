@@ -17,6 +17,7 @@
  */
 
 #include "MoveBlock.h"
+#include "MoveKeep.h"
 #include "GroundSense.h"
 #include "LayeredField.h"
 #include "ProbeBake.h"
@@ -50,13 +51,15 @@ namespace
     using Animus::Curriculum::SeatOptionKind;
     namespace Ground = Animus::Curriculum::GroundSense;
     namespace LayeredField = Animus::Curriculum::LayeredField;
+    namespace MoveKeep = Animus::Curriculum::MoveKeep;
     using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
-    /// How far a running step may have drifted from the held heading, and the facing from the one wanted, and still
-    /// be left to run (Steer): about 20 degrees, a path bent round a rock; and under 6 degrees of facing.
-    constexpr float RUN_HEADING_SLACK = 0.35f;
-    constexpr float RUN_FACING_SLACK = 0.1f;
+    /// The unsigned angle between two orientations, 0..pi (how far a running step has drifted: MoveKeep).
+    float AngleBetween(float a, float b)
+    {
+        return std::fabs(Position::NormalizeOrientation(a - b + float(M_PI)) - float(M_PI));
+    }
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
@@ -582,30 +585,38 @@ namespace
         float const heading = HeadingOf(view.Facing, view.HeldBearing);
         bool const airborne = Airborne(bot);
 
-        // On the ground, a run still under way along this heading and facing this way is left to run until it is
-        // half spent. Re-issuing it every decision restarted the spline four times a second, and a client draws each
-        // restart as a hitch in the stride (in-game testing, 2026-09-28): the seat walked in a stutter. Half a step
-        // is still under two decisions of ground at a run, so the path is recomputed about as often as the seat
-        // covers new ground.
-        if (!airborne && !bot->movespline->Finalized())
+        // A run still under way that goes where the seat wants, facing as it wants, with a couple of decisions of
+        // travel left at its own speed, is left to run (MoveKeep::KeepRun). Re-issuing it every decision restarted
+        // the spline four times a second, and a client draws each restart as a hitch in the stride (in-game
+        // testing, 2026-09-28); the old "half an 8-yard step" still let go every ~750 ms on foot, and in water and
+        // the air there was no keep at all (movement-smooth A1). Flying faces along its path (FlyTo), so its facing
+        // is not compared.
+        if (!bot->movespline->Finalized())
         {
             G3D::Vector3 const end = bot->movespline->FinalDestination();
-            float const remaining = bot->GetExactDist2d(end.x, end.y);
-            float const toward = bot->GetAbsoluteAngle(end.x, end.y);
-            if (remaining >= MoveBlock::STEP_YARDS * 0.5f
-                && std::fabs(Position::NormalizeOrientation(toward - heading + float(M_PI)) - float(M_PI)) < RUN_HEADING_SLACK
-                && std::fabs(Position::NormalizeOrientation(bot->GetOrientation() - view.Facing + float(M_PI))
-                    - float(M_PI)) < RUN_FACING_SLACK)
+            float const flat = bot->GetExactDist2d(end.x, end.y);
+            float const remaining = airborne ? std::hypot(flat, end.z - bot->GetPositionZ()) : flat;
+            float const headingError = AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading);
+            float const pitchError = airborne && flat > 0.1f
+                ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
+            float const facingError = airborne && bot->CanFly() ? 0.0f
+                : AngleBetween(bot->GetOrientation(), view.Facing);
+            if (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError,
+                    facingError))
                 return;
         }
 
         float const pitch = airborne ? view.Pitch : 0.0f;
-        float const reach = MoveBlock::STEP_YARDS * std::cos(pitch);
+        // About three seconds of travel at the seat's own speed (MoveKeep::Reach): a run that outlasts the keep check
+        // by a decision or two, so the spline is not relaunched for want of ground ahead.
+        float const speed = bot->GetSpeed(!airborne ? MOVE_RUN : bot->CanFly() ? MOVE_FLIGHT : MOVE_SWIM);
+        float const length = MoveKeep::Reach(speed);
+        float const reach = length * std::cos(pitch);
 
         Position destination = *bot;
         destination.Relocate(bot->GetPositionX() + reach * std::cos(heading),
             bot->GetPositionY() + reach * std::sin(heading),
-            bot->GetPositionZ() + MoveBlock::STEP_YARDS * std::sin(pitch));
+            bot->GetPositionZ() + length * std::sin(pitch));
 
         if (airborne)
         {
@@ -639,8 +650,13 @@ namespace
         // to just under the surface, and from the next decision `airborne` is true and the seat is swimming.
         if (Map* map = bot->GetMap())
         {
-            LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), destination.GetPositionX(),
-                destination.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
+            // A step ahead, not the run's far end: a lake twenty yards off is not a reason to swim there in a
+            // straight line over the ground between (movement-smooth A1).
+            Position step = *bot;
+            step.Relocate(bot->GetPositionX() + MoveBlock::STEP_YARDS * std::cos(heading),
+                bot->GetPositionY() + MoveBlock::STEP_YARDS * std::sin(heading), bot->GetPositionZ());
+            LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), step.GetPositionX(),
+                step.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
             // Water and ocean only: stepping into magma or slime is not a crossing, it is a death, and the probe
             // reports it as no reach for that reason.
             if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
@@ -653,11 +669,11 @@ namespace
                 if (bot->HasWaterWalkAura())
                 {
                     bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
-                    Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+                    Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
                         liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing);
                     return;
                 }
-                Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+                Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
                     liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing);
                 return;
             }

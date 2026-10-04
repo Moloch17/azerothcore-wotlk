@@ -3134,6 +3134,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Options = _tuning.Options;
     view.JumpDropSearch = _tuning.Actions.JumpDropSearch;
     view.NowMs = env.EpisodeElapsedMs;
+    view.DecisionMs = _decisionMs;
     view.LastStepDamage = seat.LastStepDamage;
     view.LastStepPowerDelta = seat.LastStepPowerDelta;
     view.LastStepDamageTaken = seat.LastStepDamageTaken;
