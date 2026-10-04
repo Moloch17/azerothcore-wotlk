@@ -114,6 +114,35 @@ def test_free_until_the_gate_then_in_and_back_out():
     assert _play(plain, [5, 5, 5]) == pytest.approx([0.0, 0.0, 1.0])
 
 
+def test_a_ladder_cut_short_under_a_resume_lands_on_full_price_as_a_fresh_step():
+    """stage1_move's fade-out was cut while the run was on x0: the resumed ladder is at x1 with its wait, plateau and
+    step score started over, and the classes' convergence and the learning-rate anneal start over with it."""
+    long = _config(rungs=(0.0, 1.0, 0.0))
+    long.convergence.patience = 3
+    long.eval.every_env_steps = 10
+    controller = ConvergenceController(long, ["mage_dps"])
+    controller.costs.rung = 2
+    controller.costs.evals_at_rung = 9
+    controller.plateau_env_steps = 100
+    controller.layouts["mage_dps"].converged = True
+    saved = {"convergence": controller.tracker.state_dict(), "controller": controller.state_dict(),
+             "score_kind": "score_outcome"}
+
+    short = _config(rungs=(0.0, 1.0))
+    short.convergence.patience = 3
+    short.eval.every_env_steps = 10
+    again = ConvergenceController(short, ["mage_dps"])
+    restore_evaluation_state(again.tracker, again, saved, "score_outcome")
+    assert again.costs.scale == 1.0 and again.costs.reshaped and again.costs.evals_at_rung == 0
+    assert again.costs.settled and not again.costs.ready
+    assert again.plateau_env_steps is None and not again.layouts["mage_dps"].converged
+
+    # A resume within the ladder's length is left as it was.
+    same = ConvergenceController(long, ["mage_dps"])
+    restore_evaluation_state(same.tracker, same, saved, "score_outcome")
+    assert not same.costs.reshaped and same.costs.evals_at_rung == 9 and same.plateau_env_steps == 100
+
+
 @pytest.mark.parametrize("raw", [
     {"rungs": [0.5, 0.5, 1.0]},      # a rung like the one before is no step
     {"rungs": [0.0, 1.5]},           # above full price

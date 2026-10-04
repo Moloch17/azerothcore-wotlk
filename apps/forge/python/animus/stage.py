@@ -255,11 +255,25 @@ class CostLadder(ShapingFade):
         self.gate_metric = str(config.costs.gate_metric or "")
         self.gate_value = float(config.costs.gate_value)
         self.gate_seen: float | None = None
+        self.reshaped = False
 
     def see_gate(self, summary: dict) -> None:
         """The latest evaluation's gate metric, read before observe()."""
         value = summary.get(self.gate_metric) if self.gate_metric else None
         self.gate_seen = float(value) if isinstance(value, (int, float)) else None
+
+    def load_state_dict(self, state: dict | None) -> None:
+        """As the shaping ladder's; a checkpoint whose rung is past the configured ladder's end (the rungs were cut
+        short since) lands on the last rung as a fresh step: what it played there was another price, so the wait,
+        the plateau and the step score start over (`reshaped`, for the controller to start its own over)."""
+        self.reshaped = False
+        super().load_state_dict(state)
+        if state and int(state.get("rung", 0)) > len(self.rungs) - 1:
+            self.reshaped = True
+            self.evals_at_rung = 0
+            self.tracker = self._new_tracker()
+            self.step_score = None
+            self.step_stderr = 0.0
 
     def _earned(self, env_steps: int, waited: int) -> bool:
         if self.rung == 0 and self.gate_metric:
@@ -565,3 +579,14 @@ class ConvergenceController:
             layout.converged_margin = float(saved.get("converged_margin", 0.0))
             layout.reentries = int(saved.get("reentries", 0))
             layout.played = bool(saved.get("played", False))
+        if self.costs.reshaped:
+            # The ladder was cut short under a resumed run (stage1_move's fade-out, 2026-10-04: the habits did not
+            # stick without the price): the classes converged at another price, and the learning rate annealed from
+            # a plateau at it. Both start over at the ladder's last rung.
+            self.plateau_env_steps = None
+            for layout in self.layouts.values():
+                layout.converged = False
+                layout.converged_score = None
+                layout.converged_margin = 0.0
+                layout.tracker = self._tracker(self.config.convergence.window)
+                layout.scores = []

@@ -26,12 +26,13 @@ fade:
   enabled: false
 
 # The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until the argmax evaluation arrives 80% of the
-# time, then faded in to full price and back out, each step on a plateau, to see whether the habits stick. The score
-# is at full price throughout, so a habit that does not stick is a fall, and the ladder moves back to the price that
-# held it. Runs at full price, or from x0.25 on a plateau, stood still (2026-10-04).
+# time, then faded in to full price, each step on a plateau, and ended there. Runs at full price from the start, or
+# from x0.25 on a plateau, stood still (2026-10-04). A fade back out to x0 did not stick: arriving held at 98%, but
+# land turn reversals went from ~5 to ~12 and spline restarts from ~75 to ~100 -- and the full-price score, where
+# noise is a small share next to arriving, never fell far enough to move the ladder back.
 costs:
   enabled: true
-  rungs: [0.0, 0.25, 0.5, 1.0, 0.5, 0.25, 0.0]
+  rungs: [0.0, 0.25, 0.5, 1.0]
   gate_metric: arrived
   gate_value: 0.8
 
