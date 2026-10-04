@@ -927,9 +927,14 @@ namespace
     }
 }
 
+// Revision 1 appends past revision 0's columns and actions and moves none of them (movement-smooth D).
+static_assert(Animus::Curriculum::MoveBlock::OBS_R1_COUNT - Animus::Curriculum::MoveBlock::OBS_COUNT
+    == 6 + Animus::Curriculum::MoveBlock::BEARING_COUNT);
+static_assert(Animus::Curriculum::MoveBlock::ACTION_R1_COUNT - Animus::Curriculum::MoveBlock::ACTION_COUNT == 2);
+
 Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
 {
-    return { OBS_COUNT, ACTION_COUNT };
+    return CurrentRevision ? BlockSize{ OBS_R1_COUNT, ACTION_R1_COUNT } : BlockSize{ OBS_COUNT, ACTION_COUNT };
 }
 
 void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
@@ -995,6 +1000,10 @@ std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, 
         "pitch_up_15", "pitch_up_30", "pitch_up_45", "pitch_up_60", "jump",
     };
 
+    if (local == ACTION_R1_TURN_LEFT_FINE)
+        return "turn_left_5";
+    if (local == ACTION_R1_TURN_RIGHT_FINE)
+        return "turn_right_5";
     return local < NAMES.size() ? NAMES[local] : std::string();
 }
 
@@ -1345,6 +1354,28 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     if (bot)
         ObserveTrail(view, bot, out);
 
+    // Revision 1: what the jitter charge prices, made visible -- the last turn, bearing and pitch and how much each
+    // still weighs on the decay the charge uses, and the held bearing's clock on its own 3-second scale (the core
+    // block's option clock is on the 30-second rest's, where a bearing reads 0.1 at most). Movement-smooth D.
+    if (CurrentRevision && view.Steering)
+    {
+        SteerMemory const& steering = *view.Steering;
+        uint32 const decay = view.Options.JitterDecayMs;
+        auto const since = [&view](uint64 at) { return at ? view.NowMs - std::min(view.NowMs, at) : uint64(-1); };
+        auto const weigh = [&](uint64 at) { return at ? MovePrice::Recency(since(at), decay) : 0.0f; };
+        out[OBS_R1_TURN_SIGN] = float(steering.TurnSign);
+        out[OBS_R1_TURN_RECENCY] = weigh(steering.TurnMs);
+        if (steering.Bearing < BEARING_COUNT)
+            out[OBS_R1_BEARING_LAST_FIRST + steering.Bearing] = 1.0f;
+        out[OBS_R1_BEARING_RECENCY] = steering.Bearing < BEARING_COUNT ? weigh(steering.BearingMs) : 0.0f;
+        out[OBS_R1_PITCH_SIGN] = float(steering.PitchSign);
+        out[OBS_R1_PITCH_RECENCY] = weigh(steering.PitchMs);
+        if (view.Option && view.HeldBearing < BEARING_COUNT && view.Option->Running(SeatOptionKind::MoveBearing,
+                view.NowMs))
+            out[OBS_R1_BEARING_LEFT] = std::min(1.0f,
+                float(view.Option->Of(SeatOptionKind::MoveBearing).UntilMs - view.NowMs) / BEARING_CLOCK_MS);
+    }
+
     if (!mask)
         return;
 
@@ -1383,6 +1414,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     bool const aimed = view.FacingMode == ACTION_FACE_TARGET;
     for (uint32 turn = 0; turn < TURN_COUNT; ++turn)
         allowed[ACTION_TURN_FIRST + turn] = canTurn && !aimed ? 1 : 0;
+    if (CurrentRevision)
+        allowed[ACTION_R1_TURN_LEFT_FINE] = allowed[ACTION_R1_TURN_RIGHT_FINE] = canTurn && !aimed ? 1 : 0;
 
     // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
     // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
@@ -1606,12 +1639,13 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         return;
     }
 
-    if (local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT)
+    if ((local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT) || IsFineTurn(local))
     {
         // Left is counter-clockwise, which is the positive way round in WoW's orientation -- the same convention
         // HeadingOf subtracts for a clockwise bearing. A policy learns whichever it is, but a scripted baseline
         // and a reader of the traces do not.
-        float const angle = TURN_ANGLES[local - ACTION_TURN_FIRST];
+        float const angle = local == ACTION_R1_TURN_LEFT_FINE ? FINE_TURN : local == ACTION_R1_TURN_RIGHT_FINE
+            ? -FINE_TURN : TURN_ANGLES[local - ACTION_TURN_FIRST];
         int8 const sign = angle > 0.0f ? 1 : -1;
 
         // A turn against one still under way, or against one chosen moments ago, is a head that twitches

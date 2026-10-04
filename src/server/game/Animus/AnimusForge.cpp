@@ -145,6 +145,11 @@ AnimusForge::Forge* AnimusForge::Forge::Instance()
 void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
+    // The move block's layout for every seat, before any layout is built (movement-smooth D).
+    Animus::Curriculum::MoveBlock::SetRevision(_config.MoveRevision);
+    if (_config.MoveRevision)
+        LOG_INFO("module.animus", "AnimusForge.MoveRevision = {}: the move block's steering memory and fine turns",
+            _config.MoveRevision);
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
     // Fields with tables too: where a seat stands on a grid with no table, the field works the same dense probe out

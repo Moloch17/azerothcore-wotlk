@@ -5269,6 +5269,20 @@ AnimusForge.ResetOnMapThreads = 1
 AnimusForge.TravelPools = 0
 
 ###################################################################################################
+# MOVE BLOCK REVISION
+#
+#    AnimusForge.MoveRevision
+#        Description: The move block's layout. 1 adds the steering's recent past to what a seat sees --
+#                     the last turn, bearing and pitch and how much each still weighs on the jitter
+#                     charge's decay (Options.JitterDecayMs), and the held bearing's clock on a 3-second
+#                     scale -- and two fine turns of 5 degrees either way. A different layout: a fresh
+#                     start, not a resume or a seed from a revision-0 checkpoint; a model trained on it
+#                     carries "revision": 1 in its manifest. Logged at startup when on.
+#        Default:     0
+
+AnimusForge.MoveRevision = 0
+
+###################################################################################################
 # GROUND PROBE
 #
 #    AnimusForge.Probe.Source

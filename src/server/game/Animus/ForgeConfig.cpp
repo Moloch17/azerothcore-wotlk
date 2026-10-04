@@ -267,6 +267,8 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const outputDir = sConfigMgr->GetOption<std::string>("AnimusForge.OutputDir", "");
     OutputDir = (outputDir.empty() ? workDir : Resolve(outputDir, configDir)).lexically_normal().string();
 
+    MoveRevision = std::min<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.MoveRevision", 0));
+
     std::string const probeSource = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Source", "geometry");
     ProbeBaked = probeSource == "baked";
     ProbeGeometry = probeSource != "live" && !ProbeBaked;
