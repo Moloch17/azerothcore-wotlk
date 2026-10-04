@@ -724,6 +724,7 @@ namespace Animus::Curriculum
         bool CastTaunt = false;                     // a taunt (Taunt, Growl, Hand of Reckoning, Dark Command, ...)
         bool CastTankMode = false;                  // a tank's stance, form, aura or presence
         uint32 RefusedCast = 0;                     // a press that did not start: the core's SpellCastResult
+        bool BearingRefresh = false;                // the bearing already held, pressed again: kept, not a press
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

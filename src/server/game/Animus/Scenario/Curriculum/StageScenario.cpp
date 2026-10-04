@@ -1272,6 +1272,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).SplineRestarts) / minutes;
     });
+    // A stop followed by a new start within a second, per minute (movement-smooth): the stutter a lapsing held bearing
+    // made. spline_restarts counts relaunches over a running spline; this, the stops between them.
+    _info.Add("move_stop_starts", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).MoveStopStarts) / minutes;
+    });
     _info.Add("fidget_seconds", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).FidgetMs) / 1000.0f;
@@ -3315,7 +3322,8 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
                 seat.SubmergedMs / 1000, action);
         }
     }
-    if (action > 0)
+    // A held bearing pressed again is the key kept down (MoveBlock, movement-smooth A5): no repeat, effort or verdict.
+    if (action > 0 && !result.BearingRefresh)
     {
         Press(env, seat, bot, uint32(action), result.DidSomething());
         JudgePress(env, seat, bot, target, uint32(action), result);
@@ -4615,7 +4623,10 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
         {
             ++seat.MoveStarts;
             if (seat.StoppedAtMs && env.EpisodeElapsedMs < seat.StoppedAtMs + 1000)
+            {
                 seat.StepJitter += 1.0f;
+                ++seat.MoveStopStarts;
+            }
         }
         if (!moving && seat.WasMoving)
             seat.StoppedAtMs = std::max<uint32>(1, env.EpisodeElapsedMs);

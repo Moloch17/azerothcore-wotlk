@@ -1106,11 +1106,9 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
         allowed[ACTION_BEARING_FIRST + bearing] = canMove ? 1 : 0;
 
-    // The bearing already being walked is masked: pressing it again would be a repeat of a key already held, and
-    // the option machinery re-issues the spline each decision without being asked.
-    if (canMove && view.HeldBearing < BEARING_COUNT && view.Option
-        && view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs))
-        allowed[ACTION_BEARING_FIRST + view.HeldBearing] = 0;
+    // The bearing already being walked stays offered: pressing it again keeps the key held (a refresh of
+    // Options.MoveBearingMs, not a new walk, and not charged as a press). Masked, it could only be renewed on the
+    // decision it lapsed, and a seat walking one way stopped every three seconds (movement-smooth A5).
 
     // Halting is only worth offering while something is being walked.
     allowed[ACTION_HALT] = canMove && view.HeldBearing < BEARING_COUNT ? 1 : 0;
@@ -1206,6 +1204,16 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
     if (local < ACTION_HALT)
     {
         uint8 const bearing = uint8(local - ACTION_BEARING_FIRST);
+        // The bearing already held, pressed again: the key stays down a while longer. No new walk -- Steer keeps the
+        // run under way -- and nothing charged for it (ApplySeatAction, SeatActionResult::BearingRefresh).
+        if (bearing == view.HeldBearing && view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs))
+        {
+            view.Option->Start(SeatOptionKind::MoveBearing, view.NowMs + view.Options.MoveBearingMs);
+            if (SteerMemory* steering = view.Steering)
+                steering->BearingMs = view.NowMs;
+            result.BearingRefresh = true;
+            return;
+        }
         // A bearing swung round from one pressed moments ago is feet that zigzag (Actions.Jitter): counted by how
         // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
         if (SteerMemory* steering = view.Steering)
