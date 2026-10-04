@@ -100,6 +100,71 @@ def _core_by_name(old_spans: tuple[Span, Span], new_spans: tuple[Span, Span], ol
     return segments
 
 
+def _layout_sets(stage: dict | None, layout: str) -> list[dict]:
+    """The seat sets stage.json gives `layout` (Blocks::DescribeSeatSets): name, slots, segments (first, stride)."""
+    return list(((stage or {}).get("layouts", {}).get(layout) or {}).get("sets", ()))
+
+
+def _slots_grown(old_spans: tuple[Span, Span], new_spans: tuple[Span, Span], old_sets: list[dict],
+                 new_sets: list[dict], old_names: list[str], new_names: list[str]):
+    """Segments of a block whose seat set changed only in how many slots it has (the enemies, PACK_SLOTS 4 -> 24,
+    2026-10-03): what comes before the slots, the slots both have, what comes after them, and each of the block's
+    actions both name (target_slot_0..3, hold_interrupt, which moved past the new slots); None when the block is not
+    that."""
+    (old_obs, old_actions), (new_obs, new_actions) = old_spans, new_spans
+
+    def inside(sets: list[dict], obs: Span) -> list[tuple[dict, dict]]:
+        return [(entry, segment) for entry in sets for segment in entry.get("segments", ())
+                if obs[0] <= segment["first"] < obs[0] + obs[1]]
+
+    old_in, new_in = inside(old_sets, old_obs), inside(new_sets, new_obs)
+    if len(old_in) != 1 or len(new_in) != 1:
+        return None
+    (old_set, old_segment), (new_set, new_segment) = old_in[0], new_in[0]
+    stride = old_segment["stride"]
+    if old_set["name"] != new_set["name"] or new_segment["stride"] != stride:
+        return None
+    head = old_segment["first"] - old_obs[0]
+    tail = old_obs[1] - head - old_set["slots"] * stride
+    if new_segment["first"] - new_obs[0] != head or new_obs[1] - head - new_set["slots"] * stride != tail or tail < 0:
+        return None
+    old_block = old_names[old_actions[0] : old_actions[0] + old_actions[1]]
+    new_block = new_names[new_actions[0] : new_actions[0] + new_actions[1]]
+    if len(old_block) != old_actions[1] or len(new_block) != new_actions[1]:
+        return None
+
+    def segment(old_obs_first, new_obs_first, obs_count, old_action=0, new_action=0, action_count=0):
+        return (((old_obs_first, obs_count), (old_action, action_count)),
+                ((new_obs_first, obs_count), (new_action, action_count)))
+
+    kept = min(old_set["slots"], new_set["slots"])
+    segments = [segment(old_obs[0], new_obs[0], head + kept * stride),
+                segment(old_obs[0] + head + old_set["slots"] * stride, new_obs[0] + head + new_set["slots"] * stride,
+                        tail)]
+    where = {action: position for position, action in enumerate(old_block)}
+    for position, action in enumerate(new_block):
+        if action in where:
+            segments.append(segment(0, 0, 0, old_actions[0] + where[action], new_actions[0] + position, 1))
+    return segments
+
+
+def _seed_grown_slot_norms(new: dict, prefix: str, old_sets: list[dict], new_sets: list[dict]) -> None:
+    """A seat set that gained slots: each new slot's normaliser statistics start as the last old slot's, carried
+    already, so the set encoder reads the new slots at the scale it reads the old ones from the first rollout."""
+    old_slots = {entry["name"]: entry["slots"] for entry in old_sets}
+    for entry in new_sets:
+        had = old_slots.get(entry["name"], 0)
+        if not had or entry["slots"] <= had:
+            continue
+        for segment in entry.get("segments", ()):
+            first, stride = segment["first"], segment["stride"]
+            for name in ("mean", "var"):
+                stat = new[f"{prefix}.{name}"]
+                source = stat[first + (had - 1) * stride : first + had * stride].clone()
+                for slot in range(had, entry["slots"]):
+                    stat[first + slot * stride : first + (slot + 1) * stride] = source
+
+
 #: Blocks whose observation only ever grows at its end (new features after the old ones, the actions unchanged), so a
 #: checkpoint from before the growth seeds their old columns as they were. CrowdBlock.h's tail features (2026-10-03).
 GROWS_AT_END = frozenset({"crowd"})
@@ -107,7 +172,8 @@ GROWS_AT_END = frozenset({"crowd"})
 
 def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span, Span]], name: str,
                    old_names: list[str] | None = None, new_names: list[str] | None = None,
-                   revisions: tuple[dict[str, int], dict[str, int]] | None = None, source: str = ""):
+                   revisions: tuple[dict[str, int], dict[str, int]] | None = None, source: str = "",
+                   sets: tuple[list[dict], list[dict]] | None = None):
     """(old spans, new spans) of every block both layouts have, sizes checked. A core block whose catalog changed is
     matched action by action by name, when both stages name their actions. `revisions` (old, new; Block::Revision):
     a block whose revision differs re-laid its columns, so it starts fresh like one that changed shape -- even at the
@@ -133,6 +199,13 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
                 continue
             if block == "core" and old_names and new_names:
                 segments = _core_by_name((old_obs, old_actions), (new_obs, new_actions), old_names, new_names)
+            elif sets and old_names and new_names:
+                segments = _slots_grown((old_obs, old_actions), (new_obs, new_actions), sets[0], sets[1], old_names,
+                                        new_names)
+                if segments is not None:
+                    print(f"  {name}: block {block} grew from {old_obs[1]} to {new_obs[1]} features and "
+                          f"{old_actions[1]} to {new_actions[1]} actions with its seat set's slots: the slots both "
+                          f"have and the actions both name carry over", flush=True)
             if segments is None:
                 # A block that changed shape cannot be copied column by column, but it is the only part of the
                 # layout that cannot: seeding everything else and leaving this one to start from nothing is worth
@@ -364,15 +437,17 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
 
         old_blocks = block_spans(old_stage, layout.name)
         new_blocks = block_spans(stage, layout.name)
+        sets = (_layout_sets(old_stage, layout.name), _layout_sets(stage, layout.name))
         if old_blocks is not None and new_blocks is not None:
             common = _common_blocks(old_blocks, new_blocks, layout.name, _action_names(old_stage, layout.name),
                                     _action_names(stage, layout.name),
                                     (block_revisions(old_stage, layout.name), block_revisions(stage, layout.name)),
-                                    source)
+                                    source, sets)
             for network, remapped in adapters:
                 _seed_adapter_blocks(network, remapped, f"adapters.{index}", common)
             for network, remapped in norms:
                 _seed_norm_blocks(network, remapped, f"norms.{index}", common)
+                _seed_grown_slot_norms(network, f"norms.{index}", *sets)
             _seed_head_blocks(actor, head, f"heads.{index}", common)
         else:
             for network, remapped in adapters:

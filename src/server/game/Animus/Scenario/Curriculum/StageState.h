@@ -338,7 +338,7 @@ namespace Animus::Curriculum
         int32 HintAction = -1;                  // the script's suggestion this decision, and what the seat pressed
         int32 Pressed = -1;                     // (the "Wing stuck" log line)
         std::string ScriptReason;               // why the dungeon script chose it (Baselines::LastDungeonReason)
-        std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
+        std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)

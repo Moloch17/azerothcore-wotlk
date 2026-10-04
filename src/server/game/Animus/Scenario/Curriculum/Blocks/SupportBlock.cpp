@@ -153,7 +153,7 @@ void Animus::Curriculum::SupportBlock::Observe(SeatView const& view, float* obs,
                 ++attackers;
         if (view.Opponent && view.Opponent->IsAlive() && view.Opponent->GetVictim() == other && !view.EnemyCount)
             ++attackers;
-        features[FRIEND_ATTACKERS] = std::min(1.0f, float(attackers) / float(PACK_SLOTS));
+        features[FRIEND_ATTACKERS] = std::min(1.0f, float(attackers) / ENEMY_COUNT_SCALE);
 
         if (std::optional<Aptitude> aptitude = AptitudeOf(view, slot))
             aptitude->WriteBrief(features + FRIEND_APTITUDE_FIRST);

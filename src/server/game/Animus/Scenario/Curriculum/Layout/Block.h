@@ -192,7 +192,19 @@ namespace Animus::Curriculum
     /// Teammate slots a seat observes and acts on (PartyBlock). Bounded on purpose: a raider heals, assists and
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.
     constexpr uint32 PARTY_MEMBERS = GROUP_MEMBERS + SPOTLIGHT_SLOTS;
-    constexpr uint32 PACK_SLOTS = 4;        // enemies observed
+    /// Enemies observed one by one (PackBlock, HostilesBlock: the seat sets' enemies, picked by pointer). A dungeon's
+    /// fights had a median of eight creatures on the party and raids and battlegrounds have more; four left half of
+    /// a pull out of sight (2026-10-03). The slots are in order of what matters to the party (the encounters keep
+    /// them so: PullsEncounter::OrderCamp), and the crowd block counts what is past them.
+    constexpr uint32 PACK_SLOTS = 24;
+    /// The first enemy slots the other blocks name by index -- a teammate's target and the slots on it (PartyBlock),
+    /// the owner's (CompanionBlock), the tank's (CrowdBlock) and a goal's enemy (GoalTarget): the four that matter
+    /// most, the tank's target first. Fixed apart from PACK_SLOTS so those blocks keep their sizes and seeded weights
+    /// when the observed slots grow; a target past them reads as none of these.
+    constexpr uint32 NAMED_ENEMY_SLOTS = 4;
+    /// The scale an enemy count is observed at (living enemies, attackers on a seat): what PACK_SLOTS was when those
+    /// features were trained, so a seeded policy reads them as it did. Not a cap: eight attackers read 2.
+    constexpr float ENEMY_COUNT_SCALE = 4.0f;
     constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
     /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
     /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
@@ -247,7 +259,7 @@ namespace Animus::Curriculum
     {
         GOAL_TARGET_NONE        = 0,
         GOAL_TARGET_ENEMY_FIRST = 1,
-        GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS,
+        GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS,
         GOAL_TARGET_OBJECTIVE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
         GOAL_TARGET_GIVER       = GOAL_TARGET_OBJECTIVE_FIRST + 4,
         GOAL_TARGET_ENDER,

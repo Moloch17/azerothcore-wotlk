@@ -64,7 +64,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         float const angle = bot->GetRelativeAngle(tank);
         obs[OBS_TANK_SIN] = std::sin(angle);
         obs[OBS_TANK_COS] = std::cos(angle);
-        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
             if (view.Enemies[slot] && view.Enemies[slot] == tank->GetVictim())
                 obs[OBS_TANK_TARGET_FIRST + slot] = 1.0f;
     }

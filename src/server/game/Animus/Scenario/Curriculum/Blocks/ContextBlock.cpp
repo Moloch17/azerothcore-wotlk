@@ -63,8 +63,8 @@ void Animus::Curriculum::ContextBlock::Observe(SeatView const& view, float* obs,
             obs[OBS_PLAYER_ON_US] = 1.0f;
     }
 
-    obs[OBS_HOSTILE_PLAYERS] = float(players) / float(PACK_SLOTS);
-    obs[OBS_HOSTILE_CREATURES] = float(creatures) / float(PACK_SLOTS);
+    obs[OBS_HOSTILE_PLAYERS] = float(players) / ENEMY_COUNT_SCALE;
+    obs[OBS_HOSTILE_CREATURES] = float(creatures) / ENEMY_COUNT_SCALE;
     obs[OBS_NEAREST_PLAYER_DISTANCE] = nearest;
     obs[OBS_PVP_FLAGGED] = bot->IsPvP() ? 1.0f : 0.0f;
 

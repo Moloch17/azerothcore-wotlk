@@ -31,7 +31,7 @@ namespace Animus::Curriculum
     /// in the goal space), or whose target the member cannot see.
     [[nodiscard]] inline int32 OrderGoal(OrderKind kind, int32 enemySlot, uint32 objective)
     {
-        bool const enemy = enemySlot >= 0 && enemySlot < int32(PACK_SLOTS);
+        bool const enemy = enemySlot >= 0 && enemySlot < int32(NAMED_ENEMY_SLOTS);
         switch (kind)
         {
             case OrderKind::Focus:

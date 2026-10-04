@@ -137,7 +137,7 @@ bool Animus::Curriculum::AmbushEncounter::Arrive(Env& env, Map* map)
         for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             EnemyPlayers::Flag(_scenario.SeatBot(env, seat));
 
-        // Ambushers keep the first slots the pulls leave free (the pulls stay within PACK_SLOTS - Ambushers).
+        // Ambushers keep the first slots the pulls leave free (a pull spawns within its room less the Ambushers).
         env.Targets.push_back(spawned.Bot->GetGUID());
         ++created;
     }

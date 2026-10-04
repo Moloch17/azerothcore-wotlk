@@ -48,10 +48,10 @@ namespace Animus::Curriculum
             OBS_OWNER_MOVING            = 8,
             OBS_OWNER_LEVEL_DIFF        = 9,    // (owner level - bot level) / 5
             OBS_OWNER_CLASS_FIRST       = 10,   // one-hot over PLAYABLE_CLASSES (10)
-            OBS_OWNER_ATTACKERS         = 20,   // enemies attacking the owner / PACK_SLOTS
-            OBS_OWNER_TARGET_FIRST      = 21,   // one-hot: which enemy slot the owner attacks
-            OBS_OWNER_NO_TARGET         = 25,
-            OBS_SLOT_ON_OWNER_FIRST     = 26,   // per enemy slot: attacking the owner
+            OBS_OWNER_ATTACKERS         = 20,   // enemies attacking the owner / ENEMY_COUNT_SCALE
+            OBS_OWNER_TARGET_FIRST      = 21,   // one-hot: which of the NAMED_ENEMY_SLOTS the owner attacks
+            OBS_OWNER_NO_TARGET         = 25,   // it attacks nothing (past the named slots: this and those all 0)
+            OBS_SLOT_ON_OWNER_FIRST     = 26,   // per named enemy slot: attacking the owner
             OBS_FOLLOWING               = 30,   // the follow's clock left / Options.FollowMs; 0 when not following
             OBS_GLOBAL_COUNT            = 31
 

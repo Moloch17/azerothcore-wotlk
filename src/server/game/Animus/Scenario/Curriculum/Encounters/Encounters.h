@@ -63,6 +63,22 @@ namespace Animus::Curriculum
     /// so the duel and the pack price the same prevented cast the same way.
     [[nodiscard]] float PreventedScale(float heal, float area, float longCast, uint8 prevented);
 
+    /// How much an enemy matters to a party, for the order of the enemy slots (PACK_SLOTS, the first
+    /// NAMED_ENEMY_SLOTS of them named by the other blocks): the tank's target, then what is on a player, what else
+    /// fights, what stands, what is gone. One order per env, so a slot is the same enemy to every seat. Coarse on
+    /// purpose: within a fighting rank the encounters keep the slot an enemy had, so the slots do not reshuffle
+    /// whenever someone takes a step (a distance order did, and it confused the seeded policies, 2026-10-03).
+    enum class EnemyRank : uint8
+    {
+        TankTarget,
+        OnPlayer,
+        Fighting,
+        Standing,
+        Gone
+    };
+
+    [[nodiscard]] EnemyRank RankEnemy(Unit const* enemy, Unit const* tank);
+
     /// Scripted enemy players: the PvP stages' opponent and the ambushers.
     namespace EnemyPlayers
     {
@@ -237,7 +253,12 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Controlled(Unit const* enemy);
 
     private:
-        static constexpr uint32 CAMP_PACKS = 4;     // most packs a camp stands (two creatures each fill MAX_TARGETS)
+        /// Most creatures a pull spawns: a solo or gauntlet pull's pack, and a party's (a drill's single pack, a
+        /// camp's packs together). What the enemy slots were when these were tuned (PACK_SLOTS 4, MAX_TARGETS 8);
+        /// the slots grew so a seat sees a dungeon's pulls, not so the drills' pulls grow with them.
+        static constexpr uint32 PACK_SPAWN_MAX = 4;
+        static constexpr uint32 PARTY_SPAWN_MAX = 8;
+        static constexpr uint32 CAMP_PACKS = 4;     // most packs a camp stands (two creatures each: PARTY_SPAWN_MAX)
 
         struct SeatPull
         {
@@ -344,7 +365,7 @@ namespace Animus::Curriculum
         /// A party's run ended: won (every pull cleared) or lost; it moves the run ladder once.
         void RecordRun(Env& env, bool won);
 
-        /// A proper party's single pack (the roles stage's tank, healer and damage drills): up to MAX_TARGETS
+        /// A proper party's single pack (the roles stage's tank, healer and damage drills): up to PARTY_SPAWN_MAX
         /// creatures, ordered as a camp's.
         [[nodiscard]] bool PartyDrill(Env const& env) const
         {
@@ -1311,8 +1332,8 @@ namespace Animus::Curriculum
         /// thread.
         struct SideKnowledge
         {
-            std::array<EnemyMemory, PACK_SLOTS> Enemies{};
-            std::array<uint8, PACK_SLOTS> Seen{};
+            std::array<EnemyMemory, NAMED_ENEMY_SLOTS> Enemies{};
+            std::array<uint8, NAMED_ENEMY_SLOTS> Seen{};
         };
 
         struct EnvDirector
@@ -1330,7 +1351,7 @@ namespace Animus::Curriculum
         /// The enemies of `side` in slot order: the other side's seats in a match, the env's target slots (the
         /// pack, the boss) against creatures. Slots the side's seats select between, so a call means the same
         /// enemy as a seat's own choice.
-        uint32 Enemies(Env const& env, uint32 side, std::array<Unit*, PACK_SLOTS>& out) const;
+        uint32 Enemies(Env const& env, uint32 side, std::array<Unit*, NAMED_ENEMY_SLOTS>& out) const;
         /// The seats of `side` a director commands, in seat order: up to a raid.
         uint32 Members(Env const& env, uint32 side, std::array<uint32, DirectorLayout::DIRECTOR_SEATS>& out) const;
         /// The member slot of `seat` on its side (the director's own slot order), or DIRECTOR_SEATS when none.

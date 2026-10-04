@@ -1814,13 +1814,16 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
             ++watched;
     }
 
-    // In the slots: what is fighting the party first, then the nearest of what stands ahead of it -- the next pack.
-    // Seen from the tank, who leads and pulls, while it is up; seat 0 otherwise. From seat 0 the pack the tank was
-    // about to pull was often not in the slots at all (2026-10-01).
+    // In the slots, by what matters to the party (RankEnemy): the tank's target, what is on a player, what else
+    // fights -- each keeping the slot it had, so the slots do not reshuffle as the fight moves -- then the nearest of
+    // what stands ahead, the next pack. Seen from the tank, who leads and pulls, while it is up; seat 0 otherwise.
+    // From seat 0 the pack the tank was about to pull was often not in the slots at all (2026-10-01).
     constexpr float WING_SIGHT = 45.0f;
-    if (Player* tank = fight.Tank.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(*seat, fight.Tank);
-        tank && tank->IsAlive() && tank->IsInWorld() && tank->IsInMap(seat))
+    Player* tank = fight.Tank.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(*seat, fight.Tank);
+    if (tank && tank->IsAlive() && tank->IsInWorld() && tank->IsInMap(seat))
         seat = tank;
+    else
+        tank = nullptr;
     std::list<Unit*> units;
     Acore::AnyUnfriendlyUnitInObjectRangeCheck check(seat, seat, WING_SIGHT);
     Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, units, check);
@@ -1833,22 +1836,30 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Creature const* creature = unit->ToCreature();
         return !unit->IsAlive() || unit->IsPlayer() || unit->IsTotem() || (creature && creature->IsEvadingAttacks());
     });
-    // Fighting first, then nearest: each unit's key taken once, not in every comparison of the sort.
+    // Each unit's key taken once, not in every comparison of the sort: its rank, then the slot it had (a fighting
+    // rank) or its distance (standing; a unit new to the slots after those that were in them).
     struct Ranked
     {
         Unit* U;
-        bool Engaged;
-        float Distance;
+        EnemyRank Rank;
+        float Order;
     };
     std::vector<Ranked> ranked;
     ranked.reserve(units.size());
     for (Unit* unit : units)
-        ranked.push_back({ unit, unit->IsInCombat(), seat->GetDistance(unit) });
+    {
+        EnemyRank const rank = RankEnemy(unit, tank);
+        float order = seat->GetDistance(unit);
+        if (rank != EnemyRank::Standing)
+        {
+            auto const had = std::find(env.Targets.begin(), env.Targets.end(), unit->GetGUID());
+            order = had != env.Targets.end() ? float(had - env.Targets.begin()) : float(PACK_SLOTS) + order;
+        }
+        ranked.push_back({ unit, rank, order });
+    }
     std::sort(ranked.begin(), ranked.end(), [](Ranked const& a, Ranked const& b)
     {
-        if (a.Engaged != b.Engaged)
-            return a.Engaged;
-        return a.Distance < b.Distance;
+        return a.Rank != b.Rank ? a.Rank < b.Rank : a.Order < b.Order;
     });
     units.clear();
     for (Ranked const& entry : ranked)

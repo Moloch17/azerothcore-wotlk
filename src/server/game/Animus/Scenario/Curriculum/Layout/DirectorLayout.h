@@ -68,7 +68,7 @@ namespace Animus::Curriculum::DirectorLayout
         SEAT_AT_PLACE       = 17,   // it is standing where the side was told to be
         SEAT_GROUP          = 18,   // its group / RAID_GROUPS
         SEAT_ADDRESSED      = 19,   // the next order goes to it (addressed by name or by group)
-        SEAT_ATTACKED       = 20,   // enemies attacking it / PACK_SLOTS
+        SEAT_ATTACKED       = 20,   // enemies attacking it / ENEMY_COUNT_SCALE
         SEAT_ORDER_FIRST    = 21,   // one-hot over OrderKind: the order it holds
         SEAT_ORDER_AGE      = SEAT_ORDER_FIRST + ORDER_KIND_COUNT,     // decisions since / CALL_AGE_SCALE
         /// The goals it holds (one-hot over SeatGoal, all zero for none): the primary, which an order the director
@@ -135,7 +135,7 @@ namespace Animus::Curriculum::DirectorLayout
         OBS_GLOBAL_COUNT,
         OBS_SEAT_FIRST          = OBS_GLOBAL_COUNT,
         OBS_ENEMY_FIRST         = OBS_SEAT_FIRST + DIRECTOR_SEATS * SEAT_FEATURES,
-        OBS_COUNT               = OBS_ENEMY_FIRST + PACK_SLOTS * ENEMY_FEATURES
+        OBS_COUNT               = OBS_ENEMY_FIRST + NAMED_ENEMY_SLOTS * ENEMY_FEATURES
     };
 
     /// The learner reads OBS_MAY_CALL to know when the director chooses (mappo.slow_choose_column).
@@ -158,10 +158,10 @@ namespace Animus::Curriculum::DirectorLayout
         ACTION_ADDRESS_GROUP_FIRST,
         ACTION_ADDRESS_MEMBER_FIRST = ACTION_ADDRESS_GROUP_FIRST + RAID_GROUPS,
         ACTION_FOCUS_FIRST      = ACTION_ADDRESS_MEMBER_FIRST + DIRECTOR_SEATS,    // + enemy slot
-        ACTION_TANK_FIRST       = ACTION_FOCUS_FIRST + PACK_SLOTS,
-        ACTION_INTERRUPT_FIRST  = ACTION_TANK_FIRST + PACK_SLOTS,
-        ACTION_CONTROL_FIRST    = ACTION_INTERRUPT_FIRST + PACK_SLOTS,
-        ACTION_HEAL_FIRST       = ACTION_CONTROL_FIRST + PACK_SLOTS,                // + member
+        ACTION_TANK_FIRST       = ACTION_FOCUS_FIRST + NAMED_ENEMY_SLOTS,
+        ACTION_INTERRUPT_FIRST  = ACTION_TANK_FIRST + NAMED_ENEMY_SLOTS,
+        ACTION_CONTROL_FIRST    = ACTION_INTERRUPT_FIRST + NAMED_ENEMY_SLOTS,
+        ACTION_HEAL_FIRST       = ACTION_CONTROL_FIRST + NAMED_ENEMY_SLOTS,                // + member
         ACTION_GO_TO            = ACTION_HEAL_FIRST + DIRECTOR_SEATS,
         ACTION_OBJECTIVE_FIRST,                                                     // + journal objective
         ACTION_COUNT            = ACTION_OBJECTIVE_FIRST + 4
@@ -233,7 +233,7 @@ namespace Animus::Curriculum::DirectorLayout
         std::array<SeatSlot, DIRECTOR_SEATS> Seats{};
         uint32 SeatCount = 0;
         uint32 Groups = 1;
-        std::array<EnemySlot, PACK_SLOTS> Enemies{};
+        std::array<EnemySlot, NAMED_ENEMY_SLOTS> Enemies{};
         uint32 EnemyCount = 0;
 
         // The order as it stands, so the director sees what it has already said.

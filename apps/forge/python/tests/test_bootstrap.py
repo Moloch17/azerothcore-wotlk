@@ -314,3 +314,51 @@ def test_a_block_grown_at_its_end_keeps_its_old_columns():
     common = _common_blocks(old, new, "warrior")
     assert (((400, 102), (60, 3)), ((400, 102), (60, 3))) in common
     assert all(spans[0][0][0] != 502 for spans in common)
+
+
+def test_a_seat_set_that_gained_slots_carries_its_slots_and_actions_by_name():
+    """The enemies went from four slots to twenty-four (PACK_SLOTS, 2026-10-03): the pack block's globals and its
+    first four slots seed where they were, hold_interrupt's row moves past the new slot actions, the new slots'
+    actions keep their init, and their normaliser statistics start as the last old slot's."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(8,))
+    G, F = 2, 3                                         # the pack block's globals, the slot's features
+
+    def stage(slots: int) -> dict:
+        built = stage_with({"warrior_tank": [("core", 4, 2), ("pack", G + slots * F, slots + 1), ("duel", 3, 1)]})
+        entry = built["layouts"]["warrior_tank"]
+        entry["action_names"] = (["noop", "stop"] + [f"target_slot_{slot}" for slot in range(slots)]
+                                 + ["hold_interrupt", "kick"])
+        entry["sets"] = [{"name": "enemies", "slots": slots, "present": 0,
+                          "segments": [{"first": 4 + G, "stride": F}], "pointers": [{"first": 2, "count": slots}]}]
+        return built
+
+    old_obs, new_obs = 4 + G + 4 * F + 3, 4 + G + 24 * F + 3
+    old = MappoTrainer([(old_obs, 2 + 5 + 1)], 4, config)
+    new = MappoTrainer([(new_obs, 2 + 25 + 1)], 4, config)
+    old.actor.norms[0].mean.copy_(torch.arange(old_obs, dtype=torch.float32))
+    old.actor.norms[0].count.fill_(1_000_000.0)
+    fresh_head = new.actor.state_dict()["heads.0.weight"].clone()
+    checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec([Layout("warrior_tank", old_obs, 8)]),
+                  "stage": stage(4)}
+
+    seed_trainer(new, checkpoint, spec([Layout("warrior_tank", new_obs, 28)], 4), stage(24))
+
+    new_w = new.actor.state_dict()["adapters.0.weight"]
+    old_w = old.actor.state_dict()["adapters.0.weight"]
+    kept = 4 + G + 4 * F
+    torch.testing.assert_close(new_w[:, :kept], old_w[:, :kept])                    # core, globals, slots 0-3
+    torch.testing.assert_close(new_w[:, new_obs - 3 :], old_w[:, old_obs - 3 :])    # duel after the slots
+    assert torch.count_nonzero(new_w[:, kept : new_obs - 3]) == 0                   # slots 4-23 start at zero
+
+    new_head = new.actor.state_dict()["heads.0.weight"]
+    old_head = old.actor.state_dict()["heads.0.weight"]
+    torch.testing.assert_close(new_head[:6], old_head[:6])                          # noop, stop, slots 0-3
+    torch.testing.assert_close(new_head[26], old_head[6])                           # hold_interrupt moved
+    torch.testing.assert_close(new_head[27], old_head[7])                           # the duel's kick
+    torch.testing.assert_close(new_head[6:26], fresh_head[6:26])                    # the new slots' actions
+
+    mean = new.actor.norms[0].mean
+    last = old.actor.norms[0].mean[4 + G + 3 * F : 4 + G + 4 * F]
+    for slot in range(4, 24):
+        torch.testing.assert_close(mean[4 + G + slot * F : 4 + G + (slot + 1) * F], last)

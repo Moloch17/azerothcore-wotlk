@@ -38,9 +38,10 @@ namespace Animus
     /// agent, so it must cover Curriculum::MAX_SEATS -- StageScenario asserts that it does.
     constexpr std::size_t MAX_AGENTS = 40;
 
-    /// Most enemy slots an env attributes damage to (Env::Targets): a pack's four, and the enemy players of the
-    /// self-play and party arenas. Targets past this take damage as usual, they are just not attributed per slot.
-    constexpr std::size_t MAX_TARGETS = 8;
+    /// Most enemy slots an env attributes damage to (Env::Targets): every slot a seat observes
+    /// (Curriculum::PACK_SLOTS, which StageScenario asserts this covers), and the enemy players of the self-play and
+    /// party arenas. Targets past this take damage as usual, they are just not attributed per slot.
+    constexpr std::size_t MAX_TARGETS = 24;
 
     /// Combat totals for one agent. Written only by the map thread that updates the agent's
     /// instance (damage hooks), read by the world thread after MapMgr::Update has joined.

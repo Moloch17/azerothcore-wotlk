@@ -601,8 +601,8 @@ or lost as the single pack is; the second is pull after pull with recovery betwe
 instance is before its boss.
 
 A raid is not a bigger party, so it does not fight a bigger pack. Its rungs (`RAID_RUNGS`) put the difficulty in what
-the enemy is -- elite, levels above, something on the ground -- rather than in how many there are, which `PACK_SLOTS`
-caps at what a seat can observe anyway. The seats outnumber the enemies on purpose: what is being trained is
+the enemy is -- elite, levels above, something on the ground -- rather than in how many there are, which `PACK_SPAWN_MAX`
+caps. The seats outnumber the enemies on purpose: what is being trained is
 coordination against a fight that punishes standing in the wrong place.
 
 Neither stage is in the default queue, and **neither is runnable at the usual env count**: forty seats an env is
@@ -794,7 +794,7 @@ counts the charged presses.
 | `move` | Whether it is moving and how fast; the bearing it is walking (one-hot over the eight, or none); its own facing as sine and cosine, how much of a turn it still has to make either way, how far up or down it is looking and the pitch it is on its way to, and which facing mode it is holding; the bearing and distance to the target, all zero without one; the bearing, distance and width of the nearest ground effect it is not standing in; the objective's bearing and its distance twice, over 500 yd and again over 40 so the last few yards are resolvable; **how far the ground runs along each of sixteen rays** -- the eight bearings and the rays half way between them, each marched at 6, 12, 20, 30 and 40 yd, reporting the distance to the first thing that stops it, what stopped it, and whether it was water or something that burns; water -- in it, under it, how long under it, and how fast it swims; the detour the ground costs, whether its legs are getting anywhere, its clearance and the way out; and **a trail of where it has been** -- its last eight positions, one a second, each as an offset in its own frame, and how many of them it is still standing on | 8 egocentric bearings (forward, forward-right, ... clockwise) and halt; three facings chosen apart from the feet (the target, the way it is going, hold); a turn of 15, 45, 90 or 135 degrees either way or about, chosen whole and carried out at 45 degrees a decision, which is the mouse-look and the only way to reach a heading between two bearings; a pitch to one of nine angles from a 60 degree dive to a 60 degree climb, chosen whole and reached at 30 degrees a decision, which is how it swims and flies; and a jump. It is the only way a seat moves: the duel block's target-relative orders were the pathfinder choosing a position on the policy's behalf, and they are gone |
 | `duel` | Distance and bearing to the target, behind it, it faces the bot, its combat, target and casting state; the bot's movement, combat, stealth and auto-attack; damage taken last step; pet out, health, attacking; combat time; current cast progress and time left; a cancellable form; potions, healthstones and bandages carried and their cooldowns; Recently Bandaged; can resurrect itself; a hidden target, time since it was seen, and distance and bearing to where it was last seen; the target in line of sight; what the target is (creature type one-hot, max health against the bot's, damage multiplier, the share of the bot's hits its armor takes off, run speed, level difference, immunity to six magic schools and to fear, stun, root, snare, silence and polymorph); the bot stunned, feared or confused, rooted, silenced, snared; hunters' stable families and pet types | Start attack, pet attack, stop casting, cancel form, healing potion, mana potion, healthstone, bandage self, soulstone self (warlock), resurrect self, 4 call-beast actions (hunter). No movement: where to stand in a fight is a bearing, chosen against the target's bearing and distance reported here |
 | `pet` (hunters, warlocks, death knights, mages; empty for others) | The pet's presence, health, power, distance to the target, attacking it, casting, stance, following or staying; what it is (a ferocity, tenacity or cunning beast, an Imp, Voidwalker, Succubus, Felhunter or Felguard, a ghoul, a Water Elemental); whether it leaves on its own and how soon; its four most useful abilities (interrupts, then crowd control, dispels, threat, help, damage): present, on cooldown and what each does | Cast each ability (at the target, or on itself when helpful) as the pet bar does; passive, defensive, aggressive; follow; stay |
-| `pack` | Living and in-combat enemy counts; 4 enemy slots (present, alive, health, distance, bearing, behind, attacking the bot or its pet, casting, in combat, crowd-controlled, current target, elite, level difference, in line of sight); (the tactical spells are core actions, cast at the selected enemy) | Select target slot 1-4 |
+| `pack` | Living and in-combat enemy counts; 24 enemy slots (`PACK_SLOTS`, the enemies seat set; present, alive, health, distance, bearing, behind, attacking the bot or its pet, casting, in combat, crowd-controlled, current target, elite, level difference, in line of sight); (the tactical spells are core actions, cast at the selected enemy) | Select target slot 1-24 (a pointer over the set); hold an interrupt |
 | `gauntlet` | Pulls cleared, pull active, time since the last fight, time into the pull, elite or higher-level pull, eating, drinking, food and drink left, time until an unengaged pull comes to the bot, time until the next pull spawns (the sustain spells are core actions) | Eat, drink (offered only where the item's cast check passes) |
 | `companion` | The owner's presence, health, mana, distance, bearing, combat, movement, level difference and class; enemies on it; which slot it attacks; which enemies attack it; each revive's known and cooldown | Follow, assist (owner's target), guard (an enemy attacking the owner), one revive-on-owner per revive |
 | `party` | Living party size, the most hurt ally's health, living tank and healer present; per teammate: presence, health, mana, distance, bearing, combat, role, class, attackers, target slot, which enemies attack it | Follow the tank; per teammate: assist, guard, revives |
@@ -1798,8 +1798,11 @@ each on its own ladder per class and build, as the pack stage's do. A party's si
 to run to the clock, paying the clear every decision).
 
 **A camp** (`PullSchedule::Camp`) stands its packs one on from the next, away from the party: a corridor. Every
-creature is in the enemy slots (up to `MAX_TARGETS`), ordered for each observation fight first, then nearest the tank,
-the dead last (the seats' selections and per-slot tallies move with them); a pack's members join each other and no
+creature is in the enemy slots (up to `PARTY_SPAWN_MAX` spawned), ordered for each observation by `RankEnemy` -- the
+tank's target, what is on a player, what else fights (each keeping the slot it had), what stands (nearest the tank), the
+dead -- so the first `NAMED_ENEMY_SLOTS` (4), which the party, companion, crowd and goal blocks name by index, are the
+ones that matter most (the seats' selections and per-slot tallies move with them); a dungeon's slots are ranked the
+same way; a pack's members join each other and no
 other pack. The crowd block reads it as it reads a dungeon: what is on the party and on the tank, what is past the
 pack's slots, and the next pack standing -- the tank's way on (`advance`), the others' the tank. Between fights only
 the tank is paid to close on the next pack.
@@ -2274,7 +2277,7 @@ seeded down the stage chain like any other. Two more agents an env, one a side, 
 undirected episode marks them absent rather than resizing anything.
 
 Its action space is one call per decision, not several heads at once: `hold`, then posture (6), rally (8),
-place anchor (6), place offset (5), place ring (2), focus slot (`PACK_SLOTS`), duty slot (`TEAM_SEATS`). The
+place anchor (6), place offset (5), place ring (2), focus slot (`NAMED_ENEMY_SLOTS`), duty slot (`TEAM_SEATS`). The
 standing order is state it edits, and an action names the single field it changes -- everything else keeps what
 it was. That is closer to what a leader does than four
 simultaneous heads would be (a call stands until it is changed) and it needs no new transport: the wire carries

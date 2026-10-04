@@ -81,6 +81,8 @@ namespace
 
     static_assert(MAX_SEATS <= Animus::BotAccounts::SEATS_PER_ENV, "every seat needs its own bot accounts");
     static_assert(MAX_SEATS <= Animus::MAX_AGENTS, "every seat needs a column in the per-agent stats");
+    static_assert(PACK_SLOTS <= Animus::MAX_TARGETS, "every enemy slot a seat observes is attributed its damage");
+    static_assert(NAMED_ENEMY_SLOTS <= PACK_SLOTS, "the named enemy slots are the first of the observed");
     static_assert(MAX_SEATS == RAID_GROUPS * GROUP_SEATS, "the seats are the raid's groups");
     static_assert(PARTY_MEMBERS == GROUP_MEMBERS + SPOTLIGHT_SLOTS, "teammate slots are the group and the spotlights");
 
@@ -3748,7 +3750,7 @@ int32 Animus::Curriculum::StageScenario::InstructedGoal(Env const& env, uint32 s
     Aptitude const& apt = data.Seats[seatIndex].Apt;
     auto const enemySlot = [&view](Unit const* unit) -> int32
     {
-        for (uint32 slot = 0; unit && slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; unit && slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
             if (view.Enemies[slot] == unit && unit->IsAlive())
                 return int32(slot);
         return -1;
@@ -3772,12 +3774,13 @@ int32 Animus::Curriculum::StageScenario::InstructedGoal(Env const& env, uint32 s
     }
     else if (AptitudeDemand::HoldsThePull().MetBy(apt))
     {
-        // Whatever is hitting someone else first, the nearest of them; else the nearest enemy in the fight.
+        // Whatever is hitting someone else first, the nearest of them; else the nearest enemy in the fight. Among the
+        // named slots: a goal names no other.
         int32 peel = -1;
         int32 nearest = -1;
         float peelDist = 0.0f;
         float nearDist = 0.0f;
-        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
         {
             Unit* enemy = view.Enemies[slot];
             if (!enemy || !enemy->IsAlive() || !enemy->IsInCombat() || !enemy->IsInMap(bot))
@@ -3958,18 +3961,20 @@ void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, SeatS
     if (!bot || !bot->IsAlive())
         return;
 
-    // Achieved, whatever the seat pursued: an enemy in one of its slots died since the last decision, else its own
-    // health and mana came back past Recover's line. The learner trains the actions it took as if it had meant it.
-    std::array<uint8, PACK_SLOTS> alive{};
+    // Achieved, whatever the seat pursued: an enemy in one of its named slots (the goal space's) died since the last
+    // decision, else its own health and mana came back past Recover's line. The learner trains the actions it took
+    // as if it had meant it.
+    std::array<uint8, NAMED_ENEMY_SLOTS> alive{};
     uint32 enemies = 0;
     for (uint32 slot = 0; slot < PACK_SLOTS && slot < env.Targets.size(); ++slot)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
         {
-            alive[slot] = 1;
+            if (slot < NAMED_ENEMY_SLOTS)
+                alive[slot] = 1;
             if (enemy->IsInCombat())
                 ++enemies;
         }
-    for (uint32 slot = 0; slot < PACK_SLOTS && seat.Achieved == NO_GOAL; ++slot)
+    for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS && seat.Achieved == NO_GOAL; ++slot)
         if (seat.EnemySeenAlive[slot] && !alive[slot])
             seat.Achieved = MakeGoal(SeatGoal::Fight, GOAL_TARGET_ENEMY_FIRST + slot);
     uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
@@ -4116,7 +4121,8 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
         bool judged = false;
         // The enemy slot the goal names, if it names one.
         int32 const namedSlot = goalTarget >= GOAL_TARGET_ENEMY_FIRST
-            && goalTarget < GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
+            && goalTarget < GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS
+            ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
 
 
         if (result.SpellCasts && !result.Revives)

@@ -75,9 +75,9 @@ static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_APTITUDE_FIRST)
     + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT) <= uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST));
 static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
     <= uint32(Animus::Curriculum::PartyBlock::MEMBER_ATTACKERS));
-static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_TARGET_FIRST) + Animus::Curriculum::NAMED_ENEMY_SLOTS
     <= uint32(Animus::Curriculum::PartyBlock::MEMBER_NO_TARGET));
-static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_SLOT_ON_FIRST) + Animus::Curriculum::PACK_SLOTS
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_SLOT_ON_FIRST) + Animus::Curriculum::NAMED_ENEMY_SLOTS
     <= uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST));
 static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST) + Animus::Curriculum::GOAL_COUNT
     <= uint32(Animus::Curriculum::PartyBlock::MEMBER_FEATURES));
@@ -158,10 +158,11 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
         if (int32 const kind = GoalKindOf(other.Goal); kind >= 0 && kind < int32(GOAL_COUNT))
             features[MEMBER_GOAL_FIRST + kind] = 1.0f;
 
+        // A target past the named slots is neither one of them nor none: both stay 0.
         int32 const target = Encoding::SlotOf(view, teammate->GetVictim());
-        if (target >= 0)
+        if (target >= 0 && target < int32(NAMED_ENEMY_SLOTS))
             features[MEMBER_TARGET_FIRST + target] = 1.0f;
-        else
+        else if (target < 0)
             features[MEMBER_NO_TARGET] = 1.0f;
 
         uint32 attackers = 0;
@@ -170,11 +171,12 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
             Unit* enemy = view.Enemies[slot];
             if (enemy && enemy->IsAlive() && enemy->GetVictim() == teammate)
             {
-                features[MEMBER_SLOT_ON_FIRST + slot] = 1.0f;
+                if (slot < NAMED_ENEMY_SLOTS)
+                    features[MEMBER_SLOT_ON_FIRST + slot] = 1.0f;
                 ++attackers;
             }
         }
-        features[MEMBER_ATTACKERS] = float(attackers) / float(PACK_SLOTS);
+        features[MEMBER_ATTACKERS] = float(attackers) / ENEMY_COUNT_SCALE;
 
         if (teammate->IsAlive())
         {

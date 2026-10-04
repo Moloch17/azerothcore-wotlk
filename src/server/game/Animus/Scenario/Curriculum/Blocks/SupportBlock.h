@@ -49,7 +49,7 @@ namespace Animus::Curriculum
             FRIEND_MANA                 = 3,    // 0 without mana
             FRIEND_DISTANCE             = 4,    // yards / 40; 0 for the bot itself
             FRIEND_IN_LINE_OF_SIGHT     = 5,
-            FRIEND_ATTACKERS            = 6,    // enemies attacking it / PACK_SLOTS
+            FRIEND_ATTACKERS            = 6,    // enemies attacking it / ENEMY_COUNT_SCALE
             /// What it can do, as the six-number brief of its Aptitude; all zero when the seat has no way of
             /// knowing (an empty slot). A healer choosing who to spend a cast on wants to know what the candidate
             /// can do for itself, and a three-way label was a coarse answer to that.

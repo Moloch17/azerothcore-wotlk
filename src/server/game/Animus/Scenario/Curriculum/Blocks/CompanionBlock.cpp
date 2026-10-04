@@ -167,9 +167,10 @@ namespace
 // The observation's segments do not overlap (every block with hand-written offsets has these).
 static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_CLASS_FIRST)
     + Animus::Curriculum::PLAYABLE_CLASSES.size() <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_ATTACKERS));
-static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_TARGET_FIRST) + Animus::Curriculum::PACK_SLOTS
-    <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_NO_TARGET));
-static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_SLOT_ON_OWNER_FIRST) + Animus::Curriculum::PACK_SLOTS
+static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_TARGET_FIRST)
+    + Animus::Curriculum::NAMED_ENEMY_SLOTS <= uint32(Animus::Curriculum::CompanionBlock::OBS_OWNER_NO_TARGET));
+static_assert(uint32(Animus::Curriculum::CompanionBlock::OBS_SLOT_ON_OWNER_FIRST)
+    + Animus::Curriculum::NAMED_ENEMY_SLOTS
     <= uint32(Animus::Curriculum::CompanionBlock::OBS_FOLLOWING));
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CompanionBlock::Size(Layout const& layout) const
@@ -207,10 +208,11 @@ void Animus::Curriculum::CompanionBlock::Observe(SeatView const& view, float* ob
         obs[OBS_OWNER_LEVEL_DIFF] = (float(owner->GetLevel()) - float(bot->GetLevel())) / 5.0f;
         WriteOneHot(PLAYABLE_CLASSES, owner->getClass(), obs + OBS_OWNER_CLASS_FIRST);
 
+        // A target past the named slots is neither one of them nor none: both stay 0.
         int32 const ownerTarget = Encoding::SlotOf(view, owner->GetVictim());
-        if (ownerTarget >= 0)
+        if (ownerTarget >= 0 && ownerTarget < int32(NAMED_ENEMY_SLOTS))
             obs[OBS_OWNER_TARGET_FIRST + ownerTarget] = 1.0f;
-        else
+        else if (ownerTarget < 0)
             obs[OBS_OWNER_NO_TARGET] = 1.0f;
 
         uint32 attackers = 0;
@@ -219,12 +221,13 @@ void Animus::Curriculum::CompanionBlock::Observe(SeatView const& view, float* ob
             Unit* enemy = view.Enemies[slot];
             if (enemy && enemy->IsAlive() && enemy->GetVictim() == owner)
             {
-                obs[OBS_SLOT_ON_OWNER_FIRST + slot] = 1.0f;
+                if (slot < NAMED_ENEMY_SLOTS)
+                    obs[OBS_SLOT_ON_OWNER_FIRST + slot] = 1.0f;
                 ++attackers;
             }
         }
 
-        obs[OBS_OWNER_ATTACKERS] = float(attackers) / float(PACK_SLOTS);
+        obs[OBS_OWNER_ATTACKERS] = float(attackers) / ENEMY_COUNT_SCALE;
     }
 
     if (view.Option && view.Option->Running(SeatOptionKind::Follow, view.NowMs))

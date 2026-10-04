@@ -42,11 +42,11 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
         return;
     }
 
-    // Enemies: the pack's slots, or the one target of a stage without them.
+    // Enemies: the pack's named slots (the ones that matter most), or the one target of a stage without them.
     uint32 enemies = 0;
     if (view.EnemyCount)
     {
-        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
             if (view.Enemies[slot] && view.Enemies[slot]->IsAlive())
             {
                 targets[GOAL_TARGET_ENEMY_FIRST + slot] = true;

@@ -110,7 +110,7 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         }
     }
 
-    for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+    for (uint32 slot = 0; slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
     {
         DirectorView::EnemySlot const& enemy = view.Enemies[slot];
         float* out = obs + OBS_ENEMY_FIRST + slot * ENEMY_FEATURES;
@@ -194,7 +194,7 @@ std::vector<std::string> Animus::Curriculum::DirectorLayout::ActionNames()
         names[ACTION_ADDRESS_MEMBER_FIRST + slot] = Acore::StringFormat("address_member_{}", slot);
         names[ACTION_HEAL_FIRST + slot] = Acore::StringFormat("heal_{}", slot);
     }
-    for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+    for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS; ++slot)
     {
         names[ACTION_FOCUS_FIRST + slot] = Acore::StringFormat("focus_{}", slot);
         names[ACTION_TANK_FIRST + slot] = Acore::StringFormat("tank_{}", slot);
@@ -229,7 +229,7 @@ boost::json::object Animus::Curriculum::DirectorLayout::SetDescriptor()
     boost::json::object descriptor;
     descriptor["globals"] = uint32(OBS_GLOBAL_COUNT);
     descriptor["seats"] = set(OBS_SEAT_FIRST, DIRECTOR_SEATS, SEAT_FEATURES);
-    descriptor["enemies"] = set(OBS_ENEMY_FIRST, PACK_SLOTS, ENEMY_FEATURES);
+    descriptor["enemies"] = set(OBS_ENEMY_FIRST, NAMED_ENEMY_SLOTS, ENEMY_FEATURES);
     boost::json::array pointers;
     pointers.push_back(pointer(ACTION_ADDRESS_MEMBER_FIRST, "seats"));
     pointers.push_back(pointer(ACTION_HEAL_FIRST, "seats"));

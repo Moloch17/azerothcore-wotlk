@@ -169,9 +169,9 @@ void Animus::Curriculum::DirectorRules::Apply(DirectorOrders& orders, uint32 ste
     }
     if (local < ACTION_HEAL_FIRST)
     {
-        uint32 const family = (local - ACTION_TANK_FIRST) / PACK_SLOTS;
+        uint32 const family = (local - ACTION_TANK_FIRST) / NAMED_ENEMY_SLOTS;
         OrderKind const kind = family == 0 ? OrderKind::Tank : family == 1 ? OrderKind::Interrupt : OrderKind::Control;
-        ObjectGuid const enemy = enemyAt((local - ACTION_TANK_FIRST) % PACK_SLOTS);
+        ObjectGuid const enemy = enemyAt((local - ACTION_TANK_FIRST) % NAMED_ENEMY_SLOTS);
         if (enemy && orders.Address != OrderSource::Side)
             Order(orders, step, memberCount, kind, enemy, 0);
         return;

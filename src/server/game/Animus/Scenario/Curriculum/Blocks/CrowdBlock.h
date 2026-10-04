@@ -57,8 +57,8 @@ namespace Animus::Curriculum
             OBS_TANK_DISTANCE   = 17,   // / 100 yd
             OBS_TANK_SIN        = 18,
             OBS_TANK_COS        = 19,
-            OBS_TANK_TARGET_FIRST = 20, // one-hot over the pack block's slots: the enemy the tank is on
-            OBS_BEHIND          = OBS_TANK_TARGET_FIRST + PACK_SLOTS,   // its place on the route is behind the party
+            OBS_TANK_TARGET_FIRST = 20, // one-hot over the named enemy slots: the enemy the tank is on
+            OBS_BEHIND          = OBS_TANK_TARGET_FIRST + NAMED_ENEMY_SLOTS,   // its route place is behind the party
             OBS_SLOT_FIRST      = OBS_BEHIND + 1
         };
 

@@ -34,8 +34,8 @@ namespace Animus::Curriculum
             OBS_OWNER_PRESENT           = 0,
             OBS_OWNER_ALIVE             = 1,
             OBS_TEAMMATES_ALIVE         = 2,    // living learned teammates / 3
-            OBS_HOSTILE_PLAYERS         = 3,    // living enemy players in the enemy slots / PACK_SLOTS
-            OBS_HOSTILE_CREATURES       = 4,    // living enemy creatures in the enemy slots / PACK_SLOTS
+            OBS_HOSTILE_PLAYERS         = 3,    // living enemy players in the enemy slots / ENEMY_COUNT_SCALE
+            OBS_HOSTILE_CREATURES       = 4,    // living enemy creatures in the enemy slots / ENEMY_COUNT_SCALE
             OBS_NEAREST_PLAYER_DISTANCE = 5,    // yards / 60 to the nearest living enemy player; 1 without one
             OBS_PLAYER_ON_US            = 6,    // an enemy player attacks the bot or the owner
             OBS_PVP_FLAGGED             = 7,

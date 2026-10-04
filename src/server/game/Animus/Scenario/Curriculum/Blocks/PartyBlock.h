@@ -70,10 +70,10 @@ namespace Animus::Curriculum
             /// these heals", and the second is true of a build nobody planned.
             MEMBER_APTITUDE_FIRST       = 8,
             MEMBER_CLASS_FIRST          = 14,   // one-hot over PLAYABLE_CLASSES
-            MEMBER_ATTACKERS            = 24,   // enemies attacking it / PACK_SLOTS
-            MEMBER_TARGET_FIRST         = 25,   // one-hot: which enemy slot it attacks
-            MEMBER_NO_TARGET            = 29,
-            MEMBER_SLOT_ON_FIRST        = 30,   // per enemy slot: attacking it
+            MEMBER_ATTACKERS            = 24,   // enemies attacking it / ENEMY_COUNT_SCALE
+            MEMBER_TARGET_FIRST         = 25,   // one-hot: which of the NAMED_ENEMY_SLOTS it attacks
+            MEMBER_NO_TARGET            = 29,   // it attacks nothing (past the named slots: this and those all 0)
+            MEMBER_SLOT_ON_FIRST        = 30,   // per named enemy slot: attacking it
             MEMBER_GOAL_FIRST           = 34,   // one-hot over GOAL_COUNT: the goal it is pursuing (none: all 0)
             MEMBER_FEATURES             = 34 + GOAL_COUNT
         };

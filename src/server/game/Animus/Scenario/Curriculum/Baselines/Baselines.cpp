@@ -859,8 +859,9 @@ namespace
             if (!SlotFighting(row, slot))
                 continue;
             bool const onSeat = SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
+            // The party block names only the first slots; past them a member's attackers are not read.
             bool onMember = false;
-            for (uint32 member = 0; member < GROUP_MEMBERS && !onMember; ++member)
+            for (uint32 member = 0; member < GROUP_MEMBERS && !onMember && slot < NAMED_ENEMY_SLOTS; ++member)
                 onMember = MemberLive(row, member)
                     && MemberObs(row, member, PartyBlock::MEMBER_SLOT_ON_FIRST + slot) > 0.0f;
             if (!(onMember || (onSeat && !notOnSeat)) || (notOnSeat && onSeat))
@@ -1057,7 +1058,7 @@ namespace
                         return back;
                     }
                 if (hasLeader)
-                    for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
+                    for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS && want < 0; ++slot)
                         if (row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f
                             && SlotFighting(row, slot))
                             want = int32(slot);
@@ -1123,8 +1124,8 @@ namespace
                 if (!controlled && (loose >= 2 || inFight >= 4))
                     for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
                     {
-                        if (!SlotFighting(row, slot) || (hasLeader && row.Obs(BlockId::Crowd,
-                            CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f))
+                        if (!SlotFighting(row, slot) || (hasLeader && slot < NAMED_ENEMY_SLOTS
+                            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f))
                             continue;
                         if (SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) == 0.0f)
                         {

@@ -78,7 +78,7 @@ int32 Animus::Curriculum::DirectorEncounter::MemberGoal(Env const& env, uint32 s
     if (order.Kind == OrderKind::None || order.Source == OrderSource::Side)
         return NO_GOAL;
     int32 enemySlot = -1;
-    for (uint32 index = 0; index < env.Targets.size() && index < PACK_SLOTS && enemySlot < 0; ++index)
+    for (uint32 index = 0; index < env.Targets.size() && index < NAMED_ENEMY_SLOTS && enemySlot < 0; ++index)
         if (env.Targets[index] == order.Target)
             enemySlot = int32(index);
     return OrderGoal(order.Kind, enemySlot, order.Objective);
@@ -301,7 +301,7 @@ void Animus::Curriculum::DirectorEncounter::Observe(Env& env, uint32 side)
 {
     SideKnowledge& known = _envs[env.Index].Knowledge[side];
 
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
 
     known.Seen.fill(0);
@@ -334,7 +334,7 @@ void Animus::Curriculum::DirectorEncounter::Observe(Env& env, uint32 side)
 }
 
 uint32 Animus::Curriculum::DirectorEncounter::Enemies(Env const& env, uint32 side,
-    std::array<Unit*, PACK_SLOTS>& out) const
+    std::array<Unit*, NAMED_ENEMY_SLOTS>& out) const
 {
     out.fill(nullptr);
     SeatPlan const plan = _scenario.Arena(env).Seats;
@@ -343,14 +343,14 @@ uint32 Animus::Curriculum::DirectorEncounter::Enemies(Env const& env, uint32 sid
     if ((plan == SeatPlan::Teams || plan == SeatPlan::Mirror) && !sharedZone)
     {
         std::array<uint32, TEAM_SEATS> theirs{};
-        uint32 const count = std::min(_scenario.SideSeats(env, side ? 0 : 1, theirs), PACK_SLOTS);
+        uint32 const count = std::min(_scenario.SideSeats(env, side ? 0 : 1, theirs), NAMED_ENEMY_SLOTS);
         for (uint32 slot = 0; slot < count; ++slot)
             out[slot] = _scenario.SeatBot(env, theirs[slot]);
         return count;
     }
 
     // Against creatures: the env's target slots, which every seat's pack block selects between.
-    uint32 const count = std::min<uint32>(uint32(env.Targets.size()), PACK_SLOTS);
+    uint32 const count = std::min<uint32>(uint32(env.Targets.size()), NAMED_ENEMY_SLOTS);
     for (uint32 slot = 0; slot < count; ++slot)
         out[slot] = env.FindTargetUnit(slot);
     return count;
@@ -416,7 +416,7 @@ void Animus::Curriculum::DirectorEncounter::ResolvePlace(Env& env, uint32 side)
     Position lastSeen;
     uint32 lastSeenMs = 0;
     bool haveLastSeen = false;
-    for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+    for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS; ++slot)
     {
         EnemyMemory const& memory = known.Enemies[slot];
         if (!memory.Known)
@@ -442,7 +442,7 @@ void Animus::Curriculum::DirectorEncounter::ResolvePlace(Env& env, uint32 side)
         case PlaceAnchor::Focus:
         {
             bool found = false;
-            for (uint32 slot = 0; slot < PACK_SLOTS && !found; ++slot)
+            for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS && !found; ++slot)
                 if (known.Enemies[slot].Known && known.Enemies[slot].Guid == order.Focus)
                 {
                     anchor = known.Enemies[slot].LastSeen;
@@ -513,14 +513,14 @@ void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
     // Whether an enemy is still worth an order: for a learned director, as far as its side knows -- a call that
     // quietly cleared itself the instant its target died would be ground truth arriving through the back door.
     // The scripted director reads the world: it is the fixed yardstick the learned one is scored against.
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
     auto const worth = [&](ObjectGuid guid)
     {
         if (Learned(env))
         {
             SideKnowledge const& known = state.Knowledge[side];
-            for (uint32 slot = 0; slot < count && slot < PACK_SLOTS; ++slot)
+            for (uint32 slot = 0; slot < count && slot < NAMED_ENEMY_SLOTS; ++slot)
                 if (known.Enemies[slot].Known && known.Enemies[slot].Alive && known.Enemies[slot].Guid == guid)
                     return true;
             return false;
@@ -564,14 +564,14 @@ void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
     SideOrder& order = _envs[env.Index].Sides[side];
     SideKnowledge const& known = _envs[env.Index].Knowledge[side];
 
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
 
     Unit const* lowest = nullptr;
     Unit const* focus = nullptr;
     float least = 2.0f;
     uint32 living = 0;
-    for (uint32 slot = 0; slot < count && slot < PACK_SLOTS; ++slot)
+    for (uint32 slot = 0; slot < count && slot < NAMED_ENEMY_SLOTS; ++slot)
     {
         Unit const* bot = theirs[slot];
         if (!bot || !bot->IsAlive())
@@ -600,7 +600,7 @@ void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
     // that could only see what the director sees would measure nothing. Alongside it, how much the side could
     // actually see, so a call that was hopeless for want of information is distinguishable from a poor one.
     uint32 seen = 0;
-    for (uint32 slot = 0; slot < count && slot < PACK_SLOTS; ++slot)
+    for (uint32 slot = 0; slot < count && slot < NAMED_ENEMY_SLOTS; ++slot)
         seen += known.Seen[slot] ? 1 : 0;
     order.SeenSum += float(seen);
 
@@ -682,7 +682,7 @@ void Animus::Curriculum::DirectorEncounter::PrepareTurn(Env& env, uint32 side)
     std::array<Unit*, DirectorLayout::DIRECTOR_SEATS> members{};
     for (uint32 slot = 0; slot < own; ++slot)
         members[slot] = _scenario.SeatBot(env, mine[slot]);
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
     CurriculumTuning::DirectorTuning const& tuning = _scenario.Tuning().Director;
     DirectorRules::PrepareTurn(state.Sides[side], state.Steps, members.data(), own, theirs.data(), count,
@@ -703,9 +703,9 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, uint32 side, int32 ac
 
     // An enemy slot a call may name: believed alive, not known alive -- refusing a call on one that died out of
     // sight would tell a learned director so through the refusal itself.
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
-    std::array<ObjectGuid, PACK_SLOTS> callable{};
+    std::array<ObjectGuid, NAMED_ENEMY_SLOTS> callable{};
     for (uint32 slot = 0; slot < count; ++slot)
     {
         if (!theirs[slot])
@@ -754,7 +754,7 @@ void Animus::Curriculum::DirectorEncounter::Command(Env& env, uint32 side)
 
     // Focus: the enemy with the least left. The simplest call a director can make, and the one a seat cannot
     // make for the side -- ten seats each choosing their own target is how a team loses a fight it should win.
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const count = Enemies(env, side, theirs);
     ObjectGuid focus;
     float lowest = 2.0f;
@@ -816,7 +816,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
     view.SinceCall = std::min(1.0f,
         float(state.Steps - std::min(state.Steps, order.CalledStep)) / DirectorLayout::CALL_AGE_SCALE);
 
-    std::array<Unit*, PACK_SLOTS> theirs{};
+    std::array<Unit*, NAMED_ENEMY_SLOTS> theirs{};
     uint32 const enemy = Enemies(env, side, theirs);
     Unit const* focus = nullptr;
     for (uint32 slot = 0; slot < enemy; ++slot)
@@ -853,7 +853,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
     {
         float enemyX = 0.0f, enemyY = 0.0f;
         uint32 enemies = 0;
-        for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS; ++slot)
             if (EnemyMemory const& memory = state.Knowledge[side].Enemies[slot]; memory.Known)
             {
                 enemyX += memory.LastSeen.GetPositionX();
@@ -897,7 +897,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         uint32 attackers = 0;
         for (uint32 e = 0; e < enemy; ++e)
             attackers += theirs[e] && theirs[e]->IsAlive() && theirs[e]->GetVictim() == bot ? 1 : 0;
-        out.Attacked = float(attackers) / float(PACK_SLOTS);
+        out.Attacked = float(attackers) / ENEMY_COUNT_SCALE;
         {
             DirectorOrders::MemberOrder const& member = order.Members[slot];
             out.Order = member.Kind;
@@ -921,7 +921,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
 
     // Only the enemies a seat of this side could select between, and only what the side knows of them.
     SideKnowledge const& known = state.Knowledge[side];
-    view.EnemyCount = std::min(enemy, PACK_SLOTS);
+    view.EnemyCount = std::min(enemy, NAMED_ENEMY_SLOTS);
     float enemyHealth = 0.0f;
     uint32 enemyStanding = 0;
     for (uint32 slot = 0; slot < view.EnemyCount; ++slot)

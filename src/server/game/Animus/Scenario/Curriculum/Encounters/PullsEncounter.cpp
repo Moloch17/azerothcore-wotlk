@@ -76,7 +76,7 @@ namespace
 
     /// A raid's rungs (SeatPlan::Raid). A raid is not a bigger party: it is many seats around one large enemy, so
     /// difficulty comes from what the enemy is -- elite, levels above, something on the ground -- rather than from
-    /// the count, which PACK_SLOTS caps at what a seat can observe anyway. The seats outnumber the enemies by design;
+    /// the count, which PACK_SPAWN_MAX caps. The seats outnumber the enemies by design;
     /// what is being trained is a raid's coordination against a fight that punishes standing in the wrong place, not
     /// a brawl.
     constexpr std::array<PackRung, 6> RAID_RUNGS =
@@ -93,10 +93,10 @@ namespace
 
     /// A party's drill rungs (a proper party against a single pack, ArenaDefinition::ProperParty): what a group of
     /// five at the dungeons' levels meets, from a small pack to a crowd of elites, so holding a pull, keeping a group
-    /// up and killing the tank's target are learned before a dungeon asks for all of them at once. Up to MAX_TARGETS:
-    /// four creatures, three of them elite, never threatened five seats (2026-10-02, stage6: the top rung of
-    /// tank_hold and pull cleared 100%), and the Deadmines puts six to eleven on a party. Past the pack's four slots
-    /// the crowd block reads them, as it reads a dungeon's.
+    /// up and killing the tank's target are learned before a dungeon asks for all of them at once. Up to
+    /// PARTY_SPAWN_MAX: four creatures, three of them elite, never threatened five seats (2026-10-02, stage6: the top
+    /// rung of tank_hold and pull cleared 100%), and the Deadmines puts six to eleven on a party. Every one of them is
+    /// in the pack's slots (PACK_SLOTS), as a dungeon's pull is.
     constexpr std::array<PackRung, 6> PARTY_RUNGS =
     {{
         { 1, 2, 0, 0, 0 },  // 3
@@ -498,7 +498,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     {
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + urand(0, 2)));
         uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
-        for (uint32 i = urand(2, PACK_SLOTS); i > 0; --i)
+        for (uint32 i = urand(2, PACK_SPAWN_MAX); i > 0; --i)
         {
             uint32 const elite = roll_chance_i(tuning.PartyEliteChance) ? pool.RandomElite(poolLevel) : 0;
             if (elite)
@@ -621,7 +621,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
             pulls.EliteOrHigher = true;
         }
 
-        uint32 const count = Gauntlet(env) ? urand(1, PACK_SLOTS) : urand(2, PACK_SLOTS);
+        uint32 const count = Gauntlet(env) ? urand(1, PACK_SPAWN_MAX) : urand(2, PACK_SPAWN_MAX);
         for (uint32 i = 0; i < count; ++i)
             if (uint32 const entry = pool.RandomPackMember(uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL))))
                 entries.push_back(entry);
@@ -646,8 +646,8 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         if (uint32 const entry = pool.RandomHazardCaster(uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL))))
             entries.back() = entry;
 
-    // Ambushers keep their enemy slots: the pull takes what is left. A party's drill fills every target slot.
-    uint32 const slots = PartyDrill(env) ? uint32(MAX_TARGETS) : PACK_SLOTS;
+    // Ambushers keep their enemy slots: the pull takes what is left. A party's drill has a party's room.
+    uint32 const slots = PartyDrill(env) ? PARTY_SPAWN_MAX : PACK_SPAWN_MAX;
     uint32 const room = slots - std::min(slots, arena.Ambushers);
     if (entries.size() > room)
         entries.resize(room);
@@ -755,7 +755,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnCamp(Env& env, Map* map, uint32 pa
         return false;
 
     packs = std::min<uint32>(packs, CAMP_PACKS - (patrol ? 1 : 0));
-    uint32 const room = uint32(MAX_TARGETS) - (patrol ? PATROL_SIZE : 0);
+    uint32 const room = PARTY_SPAWN_MAX - (patrol ? PATROL_SIZE : 0);
     size = std::clamp<uint32>(size, 1, room / std::max<uint32>(1, packs));
     uint8 const level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, data.Seats[0].Level + levels));
     uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
@@ -1202,7 +1202,8 @@ void Animus::Curriculum::PullsEncounter::View(Env const& env, uint32 seat, SeatV
         }
         if (slot >= PACK_SLOTS && crowd.Count < CROWD_SLOTS)
             crowd.Units[crowd.Count++] = unit;
-        // The slots are fight first, then nearest the tank (OrderCamp): the first standing is the next pack.
+        // The slots are the fight first, then the standing nearest the tank (OrderCamp): the first standing is the
+        // next pack.
         if (Camp(env) && !crowd.HasAhead && !unit->IsInCombat())
         {
             crowd.HasAhead = true;
@@ -1301,6 +1302,18 @@ void Animus::Curriculum::PullsEncounter::UpdateCamp(Env& env)
     }
 }
 
+Animus::Curriculum::EnemyRank Animus::Curriculum::RankEnemy(Unit const* enemy, Unit const* tank)
+{
+    if (!enemy || !enemy->IsAlive())
+        return EnemyRank::Gone;
+    if (!enemy->IsInCombat())
+        return EnemyRank::Standing;
+    if (tank && tank->IsAlive() && tank->GetVictim() == enemy)
+        return EnemyRank::TankTarget;
+    Unit const* victim = enemy->GetVictim();
+    return victim && victim->IsPlayer() ? EnemyRank::OnPlayer : EnemyRank::Fighting;
+}
+
 void Animus::Curriculum::PullsEncounter::OrderCamp(Env& env)
 {
     Player* tank = PartyTank(env);
@@ -1308,29 +1321,26 @@ void Animus::Curriculum::PullsEncounter::OrderCamp(Env& env)
     if (!from || !from->IsInWorld())
         return;
 
-    // Each slot's rank: fighting someone other than the tank (a creature that peeled off: first, so it stays in the
-    // four slots a seat can see and pick -- the tank has to taunt it back), fighting, standing, then dead; nearer to
-    // the tank first within each. Nearest-first alone filled the slots with what was already on the tank, and a
-    // creature chasing a healer 30 yd away could not be targeted at all (stage6, 2026-10-03).
+    // Each slot's rank (RankEnemy): the tank's target, on a player, fighting, standing, gone. A fighting rank keeps
+    // the slots' order as it was (the sort is stable); standing creatures go nearest the tank first, so the first
+    // standing is the next pack (View), and they hardly move while they stand.
     struct Ranked
     {
         uint32 Slot;
-        uint32 Group;
+        EnemyRank Rank;
         float Distance;
     };
     std::vector<Ranked> ranked;
     for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
     {
         Unit* unit = env.FindTargetUnit(slot);
-        bool const alive = unit && unit->IsAlive() && unit->IsInMap(from);
-        Unit const* victim = alive && unit->IsInCombat() ? unit->GetVictim() : nullptr;
-        bool const loose = tank && victim && victim != tank && victim->IsPlayer();
-        uint32 const group = !alive ? 3u : loose ? 0u : unit->IsInCombat() ? 1u : 2u;
-        ranked.push_back({ slot, group, alive ? from->GetExactDist(unit) : 0.0f });
+        bool const here = unit && unit->IsInMap(from);
+        EnemyRank const rank = here ? RankEnemy(unit, tank) : EnemyRank::Gone;
+        ranked.push_back({ slot, rank, rank == EnemyRank::Standing ? from->GetExactDist(unit) : 0.0f });
     }
     std::stable_sort(ranked.begin(), ranked.end(), [](Ranked const& a, Ranked const& b)
     {
-        return a.Group != b.Group ? a.Group < b.Group : a.Distance < b.Distance;
+        return a.Rank != b.Rank ? a.Rank < b.Rank : a.Distance < b.Distance;
     });
 
     bool moved = false;
@@ -1903,7 +1913,8 @@ void Animus::Curriculum::PullsEncounter::AfterRewards(Env& env)
     EnvPulls& pulls = _envs[env.Index];
     if (Camp(env))
         pulls.CampNewClean = 0;
-    // More creatures than the pack's slots: the fight first, nearest the tank, so the slots hold what matters.
+    // The slots in order of what matters to the party (RankEnemy): the tank's target first, which the named slots
+    // need, and what is past the pack's slots is what matters least.
     if (Camp(env) || PartyDrill(env))
         OrderCamp(env);
     if (!pulls.PullCleared || !Gauntlet(env))

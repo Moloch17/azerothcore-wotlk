@@ -93,8 +93,8 @@ void Animus::Curriculum::PackBlock::Observe(SeatView const& view, float* obs, ui
         inCombat += enemy->IsAlive() && enemy->IsInCombat() ? 1 : 0;
     }
 
-    obs[OBS_ALIVE] = float(alive) / float(PACK_SLOTS);
-    obs[OBS_IN_COMBAT] = float(inCombat) / float(PACK_SLOTS);
+    obs[OBS_ALIVE] = float(alive) / ENEMY_COUNT_SCALE;
+    obs[OBS_IN_COMBAT] = float(inCombat) / ENEMY_COUNT_SCALE;
 
     if (!mask)
         return;
