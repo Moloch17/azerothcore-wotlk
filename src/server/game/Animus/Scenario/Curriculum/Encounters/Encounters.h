@@ -647,6 +647,9 @@ namespace Animus::Curriculum
             /// planned at DetourMs and again every DETOUR_REPLAN_MS.
             mutable std::vector<Position> Detour;
             mutable uint32 DetourMs = 0;
+            /// Taken off the route (past 6 yards from it) and not yet back on it (within 4): the way back is the
+            /// detour until then, so a seat at the edge does not swap the two every decision (movement-smooth A8).
+            mutable bool OffRoute = false;
             uint32 FoodItem = 0;                // what it eats and drinks between pulls (Instance.WingSupplies)
             uint32 DrinkItem = 0;
         };
@@ -679,6 +682,8 @@ namespace Animus::Curriculum
             /// point: what the crowd block's advance steps along. Empty when the route is the navmesh's.
             std::vector<Position> Dense;
             std::vector<uint32> RouteDense;
+            std::vector<uint32> CornerAhead;    // WingPlan's
+            std::vector<uint32> CornerBack;
             uint32 RouteNext = 0;
             uint32 TrashKills = 0;
             uint32 BossKills = 0;               // dungeon bosses killed on the way (of the trash kills)
@@ -819,6 +824,10 @@ namespace Animus::Curriculum
             std::vector<uint32> RouteDense;
             std::vector<ObjectGuid::LowType> Reachable;     // sorted; empty with a navmesh route: every creature
             bool Field = false;
+            /// For each yard of Dense, the farthest yard on (and back) within RouteShortcut::REACH walked straight:
+            /// the corners an advance runs through (movement-smooth A8). Empty with a navmesh route.
+            std::vector<uint32> CornerAhead;
+            std::vector<uint32> CornerBack;
         };
         /// The door-to-boss plan, once per boss: over the layered field where it covers the dungeon (FieldRoute),
         /// else the server's navmesh as before.

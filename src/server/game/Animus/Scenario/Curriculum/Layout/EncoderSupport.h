@@ -300,6 +300,8 @@ namespace Animus::Curriculum::Encoding
     /// Walk a path already laid out and checked (MoveBlock's turn walked as one run, movement-smooth A2): no
     /// pathfinding, the points as given from the seat's own position on, facing `facing` the whole way as MoveTo does.
     void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
+    /// Walk through `points` from where the seat is, no pathfinding, facing along the way (the dungeon advance).
+    void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points);
     /// The direction of the leg a running spline will be on `aheadMs` from now, radians: where the run is going over
     /// the next decision, which on a turn walked as one run is not the way to its end. A leg's end is reached a
     /// millisecond after the decision that should start the next (the spline's timestamps start at 1), so asking

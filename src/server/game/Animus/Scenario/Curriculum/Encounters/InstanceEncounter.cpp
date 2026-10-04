@@ -41,11 +41,13 @@
 #include "ObjectMgr.h"
 #include "PathGenerator.h"
 #include "Player.h"
+#include "RouteShortcut.h"
 #include "StageScenario.h"
 #include "Supplies.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -553,11 +555,14 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         fight.Route = plan.Route;
         fight.Dense = plan.Dense;
         fight.RouteDense = plan.RouteDense;
+        fight.CornerAhead = plan.CornerAhead;
+        fight.CornerBack = plan.CornerBack;
         for (SeatInstance& seatState : fight.Seats)
         {
             seatState.DenseAt = 0;
             seatState.Detour.clear();
             seatState.DetourMs = 0;
+            seatState.OffRoute = false;
         }
         // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
         // and the bosses; every hostile one with the navmesh's.
@@ -1693,6 +1698,51 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
         "packs; {} creatures no seat can walk to are left out", _scenario.Name(), row.Name, row.Entry,
         plan.Route.size(),
         walked, packsReached, left);
+
+    // The corners an advance walks through (RouteShortcut, movement-smooth A8): from each yard, the farthest one
+    // within reach that a seat walks straight to -- in sight at chest height, ground under every yard of the way
+    // within a step of the line between, and no liquid on it (the field route keeps off burning ground; a straight
+    // line must not cross it either). Once per plan, which is cached per boss.
+    {
+        auto const started = std::chrono::steady_clock::now();
+        uint32 const phase = PHASEMASK_NORMAL;
+        std::vector<Position> const& dense = plan.Dense;
+        auto const clear = [&](uint32 from, uint32 to)
+        {
+            Position const& a = dense[from];
+            Position const& b = dense[to];
+            if (std::fabs(b.GetPositionZ() - a.GetPositionZ()) > float(std::max(from, to) - std::min(from, to)))
+                return false;
+            constexpr float CHEST = 1.5f;
+            if (!map->isInLineOfSight(a.GetPositionX(), a.GetPositionY(), a.GetPositionZ() + CHEST, b.GetPositionX(),
+                    b.GetPositionY(), b.GetPositionZ() + CHEST, phase, LINEOFSIGHT_ALL_CHECKS,
+                    VMAP::ModelIgnoreFlags::Nothing))
+                return false;
+            float const length = a.GetExactDist2d(b.GetPositionX(), b.GetPositionY());
+            uint32 const samples = std::max<uint32>(1, uint32(length));
+            for (uint32 s = 1; s < samples; ++s)
+            {
+                float const t = float(s) / float(samples);
+                float const x = a.GetPositionX() + (b.GetPositionX() - a.GetPositionX()) * t;
+                float const y = a.GetPositionY() + (b.GetPositionY() - a.GetPositionY()) * t;
+                float const z = a.GetPositionZ() + (b.GetPositionZ() - a.GetPositionZ()) * t;
+                float const ground = map->GetHeight(phase, x, y, z + 2.0f, true, 4.0f);
+                if (ground <= INVALID_HEIGHT || std::fabs(ground - z) > 1.5f)
+                    return false;
+                if (map->GetLiquidData(phase, x, y, ground, 2.0f, {}).Status != LIQUID_MAP_NO_WATER)
+                    return false;
+            }
+            return true;
+        };
+        plan.CornerAhead = RouteShortcut::Corners(dense.size(), 1, clear);
+        plan.CornerBack = RouteShortcut::Corners(dense.size(), -1, clear);
+        std::size_t legs = 0;
+        for (uint32 yard = 0; yard + 1 < dense.size(); yard = plan.CornerAhead[yard])
+            ++legs;
+        LOG_INFO("module.animus", "{}: {} field route corners: {} yards walked in {} straight legs ({:.0f} ms)",
+            _scenario.Name(), row.Name, dense.size(), legs, std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+    }
     return plan;
 }
 
@@ -2451,14 +2501,30 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         uint32 const hint = fight.RouteDense[std::min<std::size_t>(walk, fight.RouteDense.size() - 1)];
         uint32 const target = objectiveYard >= 0 && std::size_t(objectiveYard) < fight.Dense.size()
             ? uint32(objectiveYard) : nearestYard(view.Objective, hint).first;
-        if (off <= ON_ROUTE)
+        // Off the route past ON_ROUTE, and back on it only within REJOIN_ROUTE: at the edge the seat would otherwise
+        // swap between the route and the detour every decision (movement-smooth A8).
+        constexpr float REJOIN_ROUTE = 4.0f;
+        own.OffRoute = own.OffRoute ? off > REJOIN_ROUTE : off > ON_ROUTE;
+        if (!own.OffRoute)
         {
             own.Detour.clear();
             if (target != yard)
             {
-                int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
+                // Corner to corner along the route (RouteShortcut), about RouteShortcut::ADVANCE_YARDS of it; a few
+                // yards on, as it always was, where the plan has no corners.
+                std::vector<uint32> const chain = fight.CornerAhead.size() == fight.Dense.size()
+                    ? RouteShortcut::Chain(fight.CornerAhead, fight.CornerBack, yard, target) : std::vector<uint32>();
+                if (chain.empty())
+                {
+                    int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
+                    view.Crowd.Path[0] = fight.Dense[std::size_t(int32(yard) + delta)];
+                    view.Crowd.PathPoints = 1;
+                }
+                else
+                    for (uint32 corner : chain)
+                        view.Crowd.Path[view.Crowd.PathPoints++] = fight.Dense[corner];
                 view.Crowd.HasStep = true;
-                view.Crowd.Step = fight.Dense[std::size_t(int32(yard) + delta)];
+                view.Crowd.Step = view.Crowd.Path[0];
             }
         }
         else if (!view.Bot->IsInCombat())
@@ -2485,7 +2551,15 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
                         nearest = i;
                     }
                 view.Crowd.HasStep = true;
-                view.Crowd.Step = own.Detour[std::min(own.Detour.size() - 1, nearest + std::size_t(STEP_YARDS))];
+                // About RouteShortcut::ADVANCE_YARDS of it, a point every STEP_YARDS.
+                for (std::size_t ahead = STEP_YARDS; view.Crowd.PathPoints < 3; ahead += STEP_YARDS)
+                {
+                    std::size_t const point = std::min(own.Detour.size() - 1, nearest + ahead);
+                    view.Crowd.Path[view.Crowd.PathPoints++] = own.Detour[point];
+                    if (point == own.Detour.size() - 1)
+                        break;
+                }
+                view.Crowd.Step = view.Crowd.Path[0];
             }
         }
     }

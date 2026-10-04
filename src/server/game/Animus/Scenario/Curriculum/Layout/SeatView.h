@@ -66,6 +66,10 @@ namespace Animus::Curriculum
         /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
         bool HasStep = false;
         Position Step;
+        /// The run an advance walks (movement-smooth A8): the route's corners about 18 yards on (Step the first), or
+        /// the detour's points back to it.
+        std::array<Position, 6> Path{};
+        uint32 PathPoints = 0;
     };
 
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
@@ -293,6 +297,8 @@ namespace Animus::Curriculum
         /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
         uint64 FollowAimMs = 0;
         uint32 FollowRunId = 0;
+        /// CrowdBlock's ADVANCE: the run it launched, which it carries on before it arrives (movement-smooth A8).
+        uint32 AdvanceRunId = 0;
         float ShownFacing = 0.0f;
         bool ShownSeeded = false;
         uint32 ShownSinceMs = 0;

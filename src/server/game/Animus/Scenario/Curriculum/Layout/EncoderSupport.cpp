@@ -1062,6 +1062,16 @@ namespace Animus::Curriculum::Encoding
         init.Launch();
     }
 
+    void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points)
+    {
+        bot->GetMotionMaster()->Clear();
+        std::vector<G3D::Vector3> path{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
+        path.insert(path.end(), points.begin(), points.end());
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(path);
+        init.Launch();
+    }
+
     float CourseAhead(Unit const* bot, uint32 aheadMs)
     {
         if (std::optional<float> const course = RunCourse(*bot->movespline, aheadMs))

@@ -17,6 +17,8 @@
  */
 
 #include "CrowdBlock.h"
+#include "MoveKeep.h"
+#include "MoveSpline.h"
 #include "Creature.h"
 #include "DBCStores.h"
 #include "GameObject.h"
@@ -166,6 +168,45 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
     }
 }
 
+namespace
+{
+    /// Walk the advance's run (SeatView::CrowdView::Path) and remember it, so BeforeApply can carry it on.
+    void WalkAdvance(Animus::Curriculum::SeatView& view)
+    {
+        Player* bot = view.Bot;
+        std::vector<G3D::Vector3> points;
+        for (uint32 i = 0; i < view.Crowd.PathPoints; ++i)
+            points.emplace_back(view.Crowd.Path[i].GetPositionX(), view.Crowd.Path[i].GetPositionY(),
+                view.Crowd.Path[i].GetPositionZ());
+        Animus::Curriculum::Encoding::WalkPath(bot, points);
+        if (view.Steering)
+            view.Steering->AdvanceRunId = bot->movespline->GetId();
+    }
+}
+
+void Animus::Curriculum::CrowdBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
+{
+    // An advance under way is carried on before it arrives (movement-smooth A8): with a couple of decisions of its
+    // run left, out of a fight, the next run along the route is launched from where it is, so the party walks the
+    // route without a stop at each run's end -- and neither the policy nor the dungeon script has to press it again.
+    // Any other move (a different run), a fight, or the objective reached ends it.
+    Player* bot = view.Bot;
+    if (!bot || !view.Steering || !view.Steering->AdvanceRunId || !bot->IsAlive())
+        return;
+    if (bot->movespline->Finalized() || bot->movespline->GetId() != view.Steering->AdvanceRunId || bot->IsInCombat()
+        || !view.Crowd.HasStep || !view.Crowd.PathPoints || Encoding::CastHoldsFeet(bot))
+    {
+        if (bot->movespline->Finalized() || bot->movespline->GetId() != view.Steering->AdvanceRunId)
+            view.Steering->AdvanceRunId = 0;
+        return;
+    }
+    G3D::Vector3 const end = bot->movespline->FinalDestination();
+    float const remaining = bot->GetExactDist(end.x, end.y, end.z);
+    if (MoveKeep::CoastsTooFar(remaining, bot->movespline->Velocity(), view.DecisionMs))
+        return;
+    WalkAdvance(view);
+}
+
 void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
 {
     Player* bot = view.Bot;
@@ -175,13 +216,9 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
     {
         // Along the dungeon's field route a few yards at a time, straight: it is ground the seat can walk, where the
         // server's navmesh may not join it (a drop into a cavern). Off the route, the server's path.
-        if (view.Crowd.HasStep)
-        {
-            bot->GetMotionMaster()->Clear();
-            bot->GetMotionMaster()->MovePoint(ADVANCE_POINT_ID, view.Crowd.Step.GetPositionX(),
-                view.Crowd.Step.GetPositionY(), view.Crowd.Step.GetPositionZ(), FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
-                false);
-        }
+        // Corner to corner along the route, as one run (movement-smooth A8), carried on in BeforeApply.
+        if (view.Crowd.HasStep && view.Crowd.PathPoints)
+            WalkAdvance(view);
         else if (view.HasObjective)
             Encoding::MoveTo(bot, ADVANCE_POINT_ID, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
                 view.Objective.GetPositionZ());
