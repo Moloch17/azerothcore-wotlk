@@ -28,6 +28,9 @@ fade:
 eval:
   trace_episodes: 64
   every_env_steps: 5000000
+  # Every third evaluation also plays sampled actions on the same seeds: the movement stages' jitter, restarts and
+  # fidget are what a sampled policy shows and an argmax one can hide (movement-smooth C). stage2_travel inherits it.
+  sampled_every: 3
   report: [arrived, spl, lost, wedged, stall_seconds, stalls, travel_seconds, start_distance, walk_distance,
            distance_travelled, dry_detour, detour_band, saved, died, timed_out, crossing, swim_seconds, ledge,
            ledge_drop, jumps, drops, fall_damage, fall_deaths, dive, dive_depth, breaths, drowned, checkpoints,
