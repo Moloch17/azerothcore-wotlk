@@ -83,6 +83,20 @@ bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCas
     bool const stunsPet = info->HasEffect(SPELL_EFFECT_SUMMON_PET) && bot->IsClass(CLASS_WARLOCK, CLASS_CONTEXT_PET)
         && bot->GetPet();
     SpellCastResult result = spell->CheckCast(!stunsPet);
+
+    // The power cost, which Spell::CheckPower compares against but only Spell::prepare works out: a Spell built just
+    // to be checked has a cost of 0, so no mask ever closed a spell the seat could not afford. Stage7's healers had a
+    // heal offered with an empty mana bar on four presses in five, and every one of them did nothing
+    // (SPELL_FAILED_NO_POWER, 2026-10-04). Runes are checked by CheckCast itself (CheckRuneCost).
+    if (result == SPELL_CAST_OK && !castItem && info->PowerType != POWER_RUNE)
+    {
+        int32 const cost = info->CalcPowerCost(bot, info->GetSchoolMask(), spell);
+        if (cost > 0 && info->PowerType == POWER_HEALTH && int32(bot->GetHealth()) <= cost)
+            result = SPELL_FAILED_CASTER_AURASTATE;
+        else if (cost > 0 && info->PowerType < MAX_POWERS && info->PowerType != POWER_HEALTH
+            && int32(bot->GetPower(Powers(info->PowerType))) < cost)
+            result = SPELL_FAILED_NO_POWER;
+    }
     delete spell;
 
     if (stunsPet && result == SPELL_CAST_OK)
