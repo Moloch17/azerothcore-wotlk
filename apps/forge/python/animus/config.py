@@ -185,6 +185,39 @@ class FadeConfig:
 
 
 @dataclass
+class CostLadderConfig:
+    """The cost ladder (animus.stage.CostLadder): every noise price -- Repeat, Jitter, Aimless, Effort, Fidget
+    (RewardLedger PricesNoise) -- is paid times the current rung's scale; deaths, the clock and the step cost always
+    in full, and the score always at full price. The ladder steps up when the outcome score has plateaued at its rung,
+    back down one when the score falls more than `regress_z` standard errors below what it was at the step, and is
+    settled at its last rung (full price) or once a rung has been fallen back to `give_up` times.
+
+    For a stage trained from scratch: stage1_move's first run at full price (2026-10-04) paid about -9 an episode in
+    noise for a 6% chance at arriving, and stood still from 5M steps on. A policy that has found the outcome can trade
+    noise for it; one that has not only learns to stop. Nothing converges, and the learning rate does not anneal,
+    until the ladder has been at full price for `window` evaluations."""
+
+    enabled: bool = False
+    rungs: tuple[float, ...] = (0.25, 0.5, 1.0)
+    window: int = 3  # evaluations at a rung before it may step, and the plateau test's patience
+    regress_z: float = 2.0
+    give_up: int = 2  # falls back to the same rung before the ladder stays there
+
+    def __post_init__(self) -> None:
+        rungs = tuple(float(scale) for scale in self.rungs)
+        if not rungs or any(not 0.0 < scale <= 1.0 for scale in rungs) or rungs[-1] != 1.0 \
+                or any(later <= earlier for earlier, later in zip(rungs, rungs[1:])):
+            raise ValueError(f"costs.rungs: expected scales strictly rising within (0, 1] to 1, got {self.rungs!r}")
+        if self.window < 1:
+            raise ValueError(f"costs.window: expected at least 1 evaluation, got {self.window!r}")
+        if not self.regress_z > 0.0:
+            raise ValueError(f"costs.regress_z: expected more than 0 standard errors, got {self.regress_z!r}")
+        if self.give_up < 1:
+            raise ValueError(f"costs.give_up: expected at least 1 fall, got {self.give_up!r}")
+        self.rungs = rungs
+
+
+@dataclass
 class ExploreConfig:
     """Go-Explore starts for the dungeon wings (animus.explore, peak-play plan W5): the cells ended training runs
     reached are archived, and `share` of a wing's training resets start from one of the `table_size` most promising
@@ -424,6 +457,7 @@ class TrainConfig:
     entropy_floor: EntropyFloorConfig = field(default_factory=EntropyFloorConfig)
     cast: CastConfig = field(default_factory=CastConfig)
     fade: FadeConfig = field(default_factory=FadeConfig)
+    costs: CostLadderConfig = field(default_factory=CostLadderConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     exploit: ExploitConfig = field(default_factory=ExploitConfig)
 

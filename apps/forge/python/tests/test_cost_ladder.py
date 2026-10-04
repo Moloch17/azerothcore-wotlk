@@ -1,0 +1,104 @@
+"""The cost ladder: the noise prices climb to full price as the outcome plateaus at each rung, step back down when the
+outcome is given up for them, and hold convergence and the learning-rate anneal until full price has been played."""
+
+import pytest
+
+from animus.config import CostLadderConfig, FadeConfig, TrainConfig, from_dict
+from animus.stage import ConvergenceController, CostLadder, restore_evaluation_state
+
+
+def _config(**costs) -> TrainConfig:
+    config = TrainConfig()
+    config.costs = CostLadderConfig(**{"enabled": True, "rungs": (0.25, 0.5, 1.0), "window": 2, "give_up": 2,
+                                       **costs})
+    return config
+
+
+def _play(ladder: CostLadder, scores, start=0) -> list[float]:
+    scales = []
+    for index, score in enumerate(scores):
+        ladder.observe(score, 0.1, (start + index + 1) * 10)
+        scales.append(ladder.scale)
+    return scales
+
+
+def test_the_ladder_climbs_on_a_plateau_and_is_ready_after_a_window_at_full_price():
+    ladder = CostLadder(_config())
+    assert ladder.scale == 0.25 and not ladder.settled and not ladder.ready
+    assert _play(ladder, [5] * 6) == pytest.approx([0.25, 0.25, 0.5, 0.5, 0.5, 1.0])
+    assert ladder.settled and not ladder.ready                       # at full price, not yet played there
+    _play(ladder, [5, 5], start=6)
+    assert ladder.scale == 1.0 and ladder.ready
+    # A climbing score is no plateau: it stays cheap while the policy is still finding the outcome.
+    climbing = CostLadder(_config())
+    assert _play(climbing, [1, 2, 3, 4, 5, 6]) == [0.25] * 6
+
+
+def test_giving_up_the_outcome_for_the_price_steps_back_down():
+    ladder = CostLadder(_config())
+    _play(ladder, [5, 5, 5])
+    assert ladder.scale == 0.5
+    message = None
+    for steps, score in ((40, 3.0), (50, 3.0)):
+        message = ladder.observe(score, 0.1, steps) or message
+    assert ladder.scale == 0.25 and "cost ladder steps back down" in message and "x0.5 -> x0.25" in message
+
+
+def test_off_is_full_price_and_never_holds_anything():
+    ladder = CostLadder(TrainConfig())
+    assert _play(ladder, [5] * 4 + [0] * 3) == [1.0] * 7 and ladder.settled and ladder.ready
+
+
+def test_the_anneal_convergence_and_the_shaping_fade_wait_for_full_price():
+    config = _config()
+    config.fade = FadeConfig(enabled=True, rungs=(1.0, 0.0), window=2)
+    config.convergence.patience = 3   # the anneal starts at the overall score's plateau (0 would never anneal)
+    config.eval.every_env_steps = 10  # and only an evaluating run has one
+    controller = ConvergenceController(config, ["mage_dps"])
+    summary = {"score": 5.0, "stderr": 0.1, "layouts": {"mage_dps": {"score": 5.0, "stderr": 0.1}}}
+    steps = 0
+    while not controller.costs.ready:
+        steps += 10
+        controller.observe(summary, steps)
+        assert controller.plateau_env_steps is None, steps         # no anneal while noise is cheap
+        assert controller.fade.scale == 1.0, steps                  # nor a shaping step
+        assert not controller.layouts["mage_dps"].converged, steps  # nor a class converged
+        assert steps < 1000
+    assert controller.costs.scale == 1.0
+    for _ in range(12):
+        steps += 10
+        controller.observe(summary, steps)
+    assert controller.plateau_env_steps is not None and controller.fade.scale == 0.0
+
+
+def test_state_round_trips_through_a_resume():
+    config = _config()
+    controller = ConvergenceController(config, ["mage_dps"])
+    summary = {"score": 5.0, "stderr": 0.1, "layouts": {}}
+    for steps in (10, 20, 30):
+        controller.observe(summary, steps)
+    assert controller.costs.scale == 0.5
+    saved = {"convergence": controller.tracker.state_dict(), "controller": controller.state_dict(),
+             "score_kind": "score_outcome"}
+    again = ConvergenceController(config, ["mage_dps"])
+    restore_evaluation_state(again.tracker, again, saved, "score_outcome")
+    assert again.costs.state_dict() == controller.costs.state_dict() and again.costs.scale == 0.5
+    # A checkpoint from before the ladder starts at its first rung.
+    old = {**saved, "controller": {k: v for k, v in saved["controller"].items() if k != "costs"}}
+    fresh = ConvergenceController(config, ["mage_dps"])
+    restore_evaluation_state(fresh.tracker, fresh, old, "score_outcome")
+    assert fresh.costs.scale == 0.25
+
+
+@pytest.mark.parametrize("raw", [
+    {"rungs": [0.25, 0.5]},          # does not end at full price
+    {"rungs": [0.5, 0.5, 1.0]},      # not strictly rising
+    {"rungs": [0.0, 1.0]},           # a free rung would not price noise at all
+    {"rungs": []},
+    {"window": 0},
+    {"regress_z": 0.0},
+    {"give_up": 0},
+])
+def test_a_bad_cost_ladder_is_refused_at_load(raw):
+    with pytest.raises(ValueError, match="costs\\."):
+        from_dict(TrainConfig, {"costs": raw})

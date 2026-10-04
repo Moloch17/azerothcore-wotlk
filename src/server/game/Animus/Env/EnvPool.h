@@ -125,6 +125,7 @@ namespace Animus
         /// How far through its budget the stage's training is (the learner's PROGRESS).
         void SetStageProgress(float progress) { _scenario.SetStageProgress(progress); }
         void SetShapingScale(float scale) { _scenario.SetShapingScale(scale); }
+        void SetCostScale(float scale) { _scenario.SetCostScale(scale); }
         bool PinEvaluationArena(uint32 pin) { return _scenario.PinEvaluationArena(pin); }
         void SetExploreStarts(float share, std::vector<ExploreStart> starts)
         {

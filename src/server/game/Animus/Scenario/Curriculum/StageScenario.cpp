@@ -4321,7 +4321,6 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             && goalTarget < GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS
             ? int32(goalTarget - GOAL_TARGET_ENEMY_FIRST) : -1;
 
-
         if (result.SpellCasts && !result.Revives)
         {
             judged = true;
@@ -4849,6 +4848,14 @@ void Animus::Curriculum::StageScenario::SetShapingScale(float scale)
         LOG_INFO("module.animus", "Animus forge: stage {} pays shaping x{} (was x{})", _stage.Name, scale, before);
 }
 
+void Animus::Curriculum::StageScenario::SetCostScale(float scale)
+{
+    // Like the shaping scale: it changes only when the learner's cost ladder steps.
+    float const before = _costScale.exchange(scale, std::memory_order_relaxed);
+    if (before != scale)
+        LOG_INFO("module.animus", "Animus forge: stage {} charges noise x{} (was x{})", _stage.Name, scale, before);
+}
+
 void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
 {
     // Held until this decision's observation, which pays a goal it sees reached into this row.
@@ -4861,12 +4868,14 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             Data(env).StepEngaged = true;
 
-    // The learner's shaping scale, on every seat's ledger before anything is paid this decision; the goal reached at
-    // the next observation is paid at the same scale.
+    // The learner's shaping and cost scales, on every seat's ledger before anything is paid this decision; the goal
+    // reached at the next observation is paid at the same scales.
     float const shaping = _shapingScale.load(std::memory_order_relaxed);
+    float const costs = _costScale.load(std::memory_order_relaxed);
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
         Data(env).Seats[seat].Rewards.SetShaping(shaping);
+        Data(env).Seats[seat].Rewards.SetCosts(costs);
         // The world has ticked since the last decision: its targets are asked again (DecisionTarget).
         Data(env).Seats[seat].DecisionTargetKnown = false;
     }

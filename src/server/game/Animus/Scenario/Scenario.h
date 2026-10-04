@@ -160,6 +160,8 @@ namespace Animus
         virtual void SetStageProgress(float /*progress*/) { }
         /// What shaping rewards are paid times (the learner's fade ladder, PROGRESS from protocol 18): 1 = as tuned.
         virtual void SetShapingScale(float /*scale*/) { }
+        /// What noise prices are paid times (the learner's cost ladder, PROGRESS from protocol 19): 1 = as tuned.
+        virtual void SetCostScale(float /*scale*/) { }
         /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
         /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
         virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }

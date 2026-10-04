@@ -86,6 +86,32 @@ TEST(RewardLedgerTest, ShapingScaleTouchesOnlyShaping)
     EXPECT_FLOAT_EQ(half.Score(), 2.0f);
 }
 
+// The cost ladder: a noise price is paid times the cost scale, deaths and the clock in full, and the score is at full
+// price whatever the rung, so the ladder judges its steps on what the stage is for.
+TEST(RewardLedgerTest, CostScaleTouchesOnlyNoisePrices)
+{
+    RewardLedger full;
+    RewardLedger cheap;
+    cheap.SetCosts(0.25f);
+    for (RewardLedger* ledger : { &full, &cheap })
+    {
+        ledger->Add(RewardTerm::Arrive, 4.0f);
+        ledger->Add(RewardTerm::Death, -2.0f);
+        ledger->Add(RewardTerm::StepCost, -0.5f);
+        ledger->Add(RewardTerm::Jitter, -2.0f);
+        ledger->Add(RewardTerm::Aimless, -1.0f);
+        ledger->Add(RewardTerm::Effort, -1.0f);
+    }
+    EXPECT_FLOAT_EQ(full.TakeStep(), 4.0f - 2.0f - 0.5f - 4.0f);
+    EXPECT_FLOAT_EQ(cheap.TakeStep(), 4.0f - 2.0f - 0.5f - 1.0f);
+    EXPECT_FLOAT_EQ(full.Score(), cheap.Score());
+    EXPECT_FLOAT_EQ(cheap.Episode(RewardTerm::Jitter), -0.5f);
+    EXPECT_FLOAT_EQ(cheap.Episode(RewardTerm::Death), -2.0f);
+    EXPECT_FLOAT_EQ(cheap.AddTaken(RewardTerm::Fidget, -4.0f), -1.0f);
+    EXPECT_TRUE(Animus::Curriculum::PricesNoise(RewardTerm::Repeat));
+    EXPECT_FALSE(Animus::Curriculum::PricesNoise(RewardTerm::Timeout));
+}
+
 // Every term has a column (reward_<name>) and a category; two terms under one name would share a column, which is how
 // a drill's clean pull was read as the dungeon's kills.
 TEST(RewardLedgerTest, EveryTermHasItsOwnNameAndACategory)

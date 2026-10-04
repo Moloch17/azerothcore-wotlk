@@ -132,10 +132,11 @@ class ForgeEnv:
         payload = p.encode_weights(weights)
         self.sock.sendall(p.encode_header(p.MsgType.WEIGHTS, len(payload)) + payload)
 
-    def set_stage_progress(self, progress: float, shaping_scale: float = 1.0) -> None:
+    def set_stage_progress(self, progress: float, shaping_scale: float = 1.0, cost_scale: float = 1.0) -> None:
         """How far through its budget the stage's training is (protocol PROGRESS): arenas whose weights change over
-        a stage draw by it. And what shaping is paid times (the fade ladder). Nothing is sent back."""
-        payload = p.encode_progress(progress, shaping_scale)
+        a stage draw by it. And what shaping is paid times (the fade ladder), and the noise prices (the cost
+        ladder). Nothing is sent back."""
+        payload = p.encode_progress(progress, shaping_scale, cost_scale)
         self.sock.sendall(p.encode_header(p.MsgType.PROGRESS, len(payload)) + payload)
 
     def set_replay(self, seed_base: int, fraction: float, seeds) -> None:
@@ -437,11 +438,11 @@ class ClusterEnv:
                 except OSError as error:
                     self._drop(index, error)
 
-    def set_stage_progress(self, progress: float, shaping_scale: float = 1.0) -> None:
+    def set_stage_progress(self, progress: float, shaping_scale: float = 1.0, cost_scale: float = 1.0) -> None:
         for index, sim in enumerate(self.sims):
             if sim is not None:
                 try:
-                    sim.set_stage_progress(progress, shaping_scale)
+                    sim.set_stage_progress(progress, shaping_scale, cost_scale)
                 except OSError as error:
                     self._drop(index, error)
 

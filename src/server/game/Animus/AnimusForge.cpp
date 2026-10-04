@@ -2247,6 +2247,17 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
                     "(said once)", progress.ShapingScale, shaping);
             }
             _pool->SetShapingScale(shaping);
+            // The cost ladder's rung, held to [0, 1] the same way; NaN is the full price.
+            float costs = progress.CostScale;
+            if (!(costs >= 0.0f && costs <= 1.0f))
+                costs = costs < 0.0f ? 0.0f : 1.0f;
+            if (costs != progress.CostScale && !_costClampLogged)
+            {
+                _costClampLogged = true;
+                LOG_WARN("module.animus", "Animus forge: the learner sent cost scale {} outside [0, 1]; using {} "
+                    "(said once)", progress.CostScale, costs);
+            }
+            _pool->SetCostScale(costs);
             continue;
         }
 

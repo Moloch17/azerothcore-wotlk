@@ -300,4 +300,4 @@ def test_episode_info_travels_for_the_ended_envs_only():
     decoded = p.decode_step(spec, payload)
     np.testing.assert_array_equal(decoded.episode_info[[2, 6]], step.episode_info[[2, 6]])
     assert not decoded.episode_info[[0, 1, 3, 4, 5, 7]].any()
-    assert "episode_info" in p.ENDED_ONLY and p.PROTOCOL_VERSION == 18
+    assert "episode_info" in p.ENDED_ONLY and p.PROTOCOL_VERSION == 19

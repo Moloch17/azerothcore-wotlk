@@ -348,6 +348,7 @@ namespace AnimusForge
         std::unique_ptr<Animus::EnvPool> _pool;
         /// A PROGRESS shaping scale outside [0, 1] was clamped and said so: once a run, not after every update.
         bool _shapingClampLogged = false;
+        bool _costClampLogged = false;
         LockstepServer _server;
         LearnerProcess _learner;
         ChildProcess _export{ "Export" };

@@ -16,6 +16,10 @@ mappo:
   gamma: 0.999
   gae_lambda: 0.995
 
+# Seeded from stage1, which ended at full price: no ladder to climb again.
+costs:
+  enabled: false
+
 eval:
   every_env_steps: 5000000
   trace_episodes: 16

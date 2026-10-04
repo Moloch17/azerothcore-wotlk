@@ -25,6 +25,12 @@ mappo:
 fade:
   enabled: false
 
+# The noise prices (Repeat, Jitter, Aimless, Effort, Fidget) climb x0.25 -> x0.5 -> x1 as arriving plateaus at each:
+# the first run at full price (2026-10-04) paid about -9 an episode in noise for a 6% chance at arriving and stood
+# still from 5M steps on. The score is at full price throughout, and nothing converges before the ladder is.
+costs:
+  enabled: true
+
 eval:
   trace_episodes: 64
   every_env_steps: 5000000

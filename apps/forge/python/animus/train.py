@@ -333,6 +333,15 @@ def fade_line(config: TrainConfig) -> str:
             f"give_up {fade.give_up}")
 
 
+def costs_line(config: TrainConfig) -> str:
+    costs = config.costs
+    if not costs.enabled:
+        return "cost ladder off (noise priced in full)"
+    rungs = " ".join(f"{scale:g}" for scale in costs.rungs)
+    return (f"cost ladder on: rungs {rungs}, window {costs.window}, regress_z {costs.regress_z:g}, "
+            f"give_up {costs.give_up}")
+
+
 def load_parent(path: Path) -> dict:
     """A parent stage's checkpoint, with the stage.json of its run when it carries none (for block positions)."""
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
@@ -541,7 +550,8 @@ class TrainingRun:
         if self.stage is not None and leader:
             (self.run_dir / STAGE_FILE).write_text(json.dumps(self.stage, indent=2))
         if leader:
-            print(f"{config.run_name}: {reward_terms_line(self.stage)}; {fade_line(config)}", flush=True)
+            print(f"{config.run_name}: {reward_terms_line(self.stage)}; {fade_line(config)}; {costs_line(config)}",
+                  flush=True)
         print(
             f"Scenario {spec.scenario}: {spec.num_envs} envs x {spec.agents_per_env} agents, {len(spec.layouts)} "
             f"layouts (obs up to {spec.obs_dim}, actions up to {spec.num_actions}), state {spec.state_dim}, decision "
@@ -769,7 +779,7 @@ class TrainingRun:
             *(f"episode_{name}" for name in spec.episode_info_names),
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
-            "lr_scale", "shaping_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
+            "lr_scale", "shaping_scale", "cost_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
             "hint_loss", "hint_match", "hint_weight", "scripted_share",
@@ -847,6 +857,7 @@ class TrainingRun:
         # converged (frozen and out of the training draw), and the last update's per-class statistics.
         self.lr_scale_now = 1.0
         self.shaping_scale_now = self.controller.fade.scale
+        self.cost_scale_now = self.controller.costs.scale
         self.frozen = np.zeros(0, dtype=np.int64)
         self.layout_allowed: dict[int, float] = {}
         self.last_layout_stats: dict[str, dict[str, float]] = {}
@@ -1230,10 +1241,12 @@ class TrainingRun:
             print(f"Eval at {self.env_steps} env steps: score {result.score:.4g} +/- {result.stderr:.2g} "
                   f"(best {tracker.best:.4g}, {tracker.evals_since_best} evals since, margin {tracker.last_margin:.2g})"
                   f"{against}; return {played if played is None else format(played, '.4g')} at shaping "
-                  f"x{self.shaping_scale_now:g}; "
+                  f"x{self.shaping_scale_now:g}, noise priced x{self.cost_scale_now:g}; "
                   f"{result.episodes} episodes in {result.seconds:.0f} s"
                   f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
 
+            if controller.costs_message:
+                print(f"{config.run_name}: {controller.costs_message}", flush=True)
             if controller.fade_message:
                 print(f"{config.run_name}: {controller.fade_message}", flush=True)
 
@@ -1584,13 +1597,17 @@ class TrainingRun:
         entropy_coef = self.controller.entropy_coef(self.env_steps)
         lr_scale = self.controller.lr_scale(self.env_steps)
         shaping_scale = self.controller.fade.scale
+        cost_scale = self.controller.costs.scale
         if self.link is not None:
             entropy_coef = self.link.control.get("entropy_coef", entropy_coef)
             lr_scale = self.link.control.get("lr_scale", lr_scale)
             shaping_scale = self.link.control.get("shaping_scale", shaping_scale)
+            cost_scale = self.link.control.get("cost_scale", cost_scale)
         elif self.hub is not None:
-            self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale, shaping_scale=shaping_scale)
+            self.hub.set(entropy_coef=entropy_coef, lr_scale=lr_scale, shaping_scale=shaping_scale,
+                         cost_scale=cost_scale)
         self.shaping_scale_now = self.ranks.broadcast(shaping_scale)
+        self.cost_scale_now = self.ranks.broadcast(cost_scale)
         trainer.entropy_coef = self.ranks.broadcast(entropy_coef)
         # The goal head's share of it falls on its own schedule, the same on every rank (it is a function of the
         # steps alone).
@@ -1610,10 +1627,11 @@ class TrainingRun:
             self.link.steps_since += self.config.rollout_length * self.run_envs * agents
         self.maybe_league_snapshot()
         # How far through its budget the stage is, for the arenas whose weights change over it (WeightFinal), and
-        # the shaping ladder's scale. Sent while the sim waits for this rollout's last ACT, as WEIGHTS is.
+        # the shaping and cost ladders' scales. Sent while the sim waits for this rollout's last ACT, as WEIGHTS is.
         if hasattr(self.env, "set_stage_progress"):
             total = self.config.total_env_steps
-            self.env.set_stage_progress(self.env_steps / total if total > 0 else 0.0, self.shaping_scale_now)
+            self.env.set_stage_progress(self.env_steps / total if total > 0 else 0.0, self.shaping_scale_now,
+                                        self.cost_scale_now)
 
         if self.updater is None:
             stats = trainer.update(buffer, self.distiller)
@@ -1856,6 +1874,7 @@ class TrainingRun:
             "entropy_coef": self.trainer.entropy_coef,
             "lr_scale": self.lr_scale_now,
             "shaping_scale": self.shaping_scale_now,
+            "cost_scale": self.cost_scale_now,
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **({"distill_coef": self.distiller.coef} if self.distiller is not None else {}),

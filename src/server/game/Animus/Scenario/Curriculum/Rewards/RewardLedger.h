@@ -260,6 +260,24 @@ namespace Animus::Curriculum
         return category == RewardCategory::Outcome || category == RewardCategory::Cost;
     }
 
+    /// The Cost terms that price noise rather than the outcome: a repeated press, a turn and its reversal, a press its
+    /// goal did not call for, any press at all, shuffling in place. The learner's cost ladder pays these times its
+    /// rung (RewardLedger::SetCosts); deaths, the clock and the step cost are always paid in full.
+    [[nodiscard]] constexpr bool PricesNoise(RewardTerm term)
+    {
+        switch (term)
+        {
+            case RewardTerm::Repeat:
+            case RewardTerm::Jitter:
+            case RewardTerm::Aimless:
+            case RewardTerm::Effort:
+            case RewardTerm::Fidget:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// One seat's reward: this decision's total, every term's sum over the episode, and the episode's score.
     class RewardLedger
     {
@@ -268,7 +286,8 @@ namespace Animus::Curriculum
         /// loss divided by it), passed apart from `value` so the score can leave it out. The reward is the same
         /// either way; the score is not, and a score that moved whenever a rung stepped would read a harder rung as
         /// learning and an easier one as collapse. Returns what was paid, which a Shaping term has had the stage's
-        /// shaping scale put on (SetShaping): what mirrors a payment elsewhere has to mirror this, not `value`.
+        /// shaping scale put on (SetShaping), and a noise price the cost scale (SetCosts): what mirrors a payment
+        /// elsewhere has to mirror this, not `value`. The score takes `value` as tuned, at full price.
         float Add(RewardTerm term, float value, float tier = 1.0f)
         {
             if (ScoresOutcome(term))
@@ -297,6 +316,11 @@ namespace Animus::Curriculum
         /// The stage's shaping scale (the learner's fade ladder, peak-play plan W1): every Shaping term is paid
         /// times it, Outcome and Cost terms never. 1 until the learner says otherwise; 0 is the outcome alone.
         void SetShaping(float scale) { _shaping = scale; }
+
+        /// The stage's cost scale (the learner's cost ladder): every noise price (PricesNoise) is paid times it, so a
+        /// fresh policy can find the outcome before it is charged in full for the noise of looking. The score is
+        /// always at full price. 1 until the learner says otherwise.
+        void SetCosts(float scale) { _costs = scale; }
 
         /// Start a decision; returns the previous decision's total.
         float TakeStep()
@@ -330,12 +354,15 @@ namespace Animus::Curriculum
         }
         [[nodiscard]] float Shaped(RewardTerm term) const
         {
-            return RewardTermCategory(term) == RewardCategory::Shaping ? _shaping : 1.0f;
+            if (RewardTermCategory(term) == RewardCategory::Shaping)
+                return _shaping;
+            return PricesNoise(term) ? _costs : 1.0f;
         }
 
         float _step = 0.0f;
         float _score = 0.0f;
         float _shaping = 1.0f;
+        float _costs = 1.0f;
     };
 }
 

@@ -117,7 +117,8 @@ namespace AnimusForge
     // would never fade its shaping, and nothing would say so. STEP's episode_info carries only the envs whose done is
     // set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage. MODE names a
     // held-out arena for the evaluation to play. EXPLORE_STARTS gives the wings the cells to start from (Go-Explore).
-    constexpr uint32 PROTOCOL_VERSION = 18;
+    // 19: PROGRESS carries the cost scale after the shaping scale (the learner's cost ladder on the noise prices).
+    constexpr uint32 PROTOCOL_VERSION = 19;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -140,7 +141,8 @@ namespace AnimusForge
         /// client -> server ProgressMsg: how far through its budget the stage's training is, 0 to 1, and what shaping
         /// is paid times, sent after every update and applied without an answer. Arenas whose weights change over a
         /// stage (ArenaDefinition::WeightFinal) draw by the first; every Shaping reward term is paid times the second
-        /// (RewardLedger::SetShaping). Protocol 17; the shaping scale from 18.
+        /// (RewardLedger::SetShaping), and every noise price times the third (RewardLedger::SetCosts, the cost
+        /// ladder). Protocol 17; the shaping scale from 18, the cost scale from 19.
         Progress = 11,
         /// client -> server: ExploreStartsHeader, then Count ExploreCell -- the cells a training run of a dungeon wing
         /// starts from instead of the door (Go-Explore), Share of them, drawn by weight; replaces the last table,
@@ -159,6 +161,7 @@ namespace AnimusForge
     {
         float Progress;
         float ShapingScale;
+        float CostScale;
     };
 
     struct HelloMsg

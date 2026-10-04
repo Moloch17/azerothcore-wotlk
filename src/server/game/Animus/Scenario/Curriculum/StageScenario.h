@@ -360,6 +360,7 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 DrawArena(bool evaluating) const;
         void SetStageProgress(float progress) override { _stageProgress.store(progress, std::memory_order_relaxed); }
         void SetShapingScale(float scale) override;
+        void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
         void SetExploreStarts(float share, std::vector<ExploreStart> starts) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
@@ -494,6 +495,8 @@ namespace Animus::Curriculum
         std::atomic<float> _stageProgress{ 0.0f };
         /// What every Shaping term is paid times (RewardLedger::SetShaping): the learner's fade ladder, from PROGRESS.
         std::atomic<float> _shapingScale{ 1.0f };
+        /// What every noise price is paid times (RewardLedger::SetCosts): the learner's cost ladder, from PROGRESS.
+        std::atomic<float> _costScale{ 1.0f };
         /// The arena an evaluation is pinned to (MODE's arena), its index + 1; 0 = the stage's own draw.
         std::atomic<uint32> _evaluationArena{ 0 };
         mutable std::mutex _exploreLock;
