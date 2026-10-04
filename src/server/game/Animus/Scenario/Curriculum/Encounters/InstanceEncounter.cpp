@@ -1700,7 +1700,9 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
         walked, packsReached, left);
 
     // The corners an advance walks through (RouteShortcut, movement-smooth A8): from each yard, the farthest one
-    // within reach that a seat walks straight to -- in sight at chest height, ground under every yard of the way
+    // within reach that a seat walks straight to -- in sight at chest height of the static geometry alone (doors open
+    // and shut from one episode to the next, and the table is cached: they are the run's to stop at), ground under
+    // every yard of the way
     // within a step of the line between, and no liquid on it (the field route keeps off burning ground; a straight
     // line must not cross it either). Once per plan, which is cached per boss.
     {
@@ -1715,7 +1717,7 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
                 return false;
             constexpr float CHEST = 1.5f;
             if (!map->isInLineOfSight(a.GetPositionX(), a.GetPositionY(), a.GetPositionZ() + CHEST, b.GetPositionX(),
-                    b.GetPositionY(), b.GetPositionZ() + CHEST, phase, LINEOFSIGHT_ALL_CHECKS,
+                    b.GetPositionY(), b.GetPositionZ() + CHEST, phase, LINEOFSIGHT_CHECK_VMAP,
                     VMAP::ModelIgnoreFlags::Nothing))
                 return false;
             float const length = a.GetExactDist2d(b.GetPositionX(), b.GetPositionY());
@@ -1763,6 +1765,7 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
             fighting = true;
     fight.Objects.clear();
+    fight.ClosedDoors.clear();
     // One visit from the party's middle, wide enough to reach OBJECT_SIGHT past its farthest living seat, rather than
     // one per seat: what each seat can see is then picked out of it, as before.
     std::array<Player*, MAX_SEATS> living{};
@@ -1789,6 +1792,12 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
         Cell::VisitObjects(centreX, centreY, living[0]->GetMap(), searcher, OBJECT_SIGHT + spread);
         for (GameObject* object : objects)
         {
+            // Every closed door, locked or not: a spline walks through one, so an advance stops at it (A8).
+            constexpr float DOOR_RADIUS = 4.0f;
+            if (object->GetGoType() == GAMEOBJECT_TYPE_DOOR && object->isSpawned()
+                && object->GetGoState() == GO_STATE_READY)
+                fight.ClosedDoors.push_back({ { object->GetPositionX(), object->GetPositionY() },
+                    std::max(DOOR_RADIUS, object->GetObjectSize()) });
             if (!Usable(object)
                 || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;
@@ -2562,7 +2571,38 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
                 view.Crowd.Step = view.Crowd.Path[0];
             }
         }
+        CutAdvanceAtDoors(view, fight);
     }
+}
+
+void Animus::Curriculum::InstanceEncounter::CutAdvanceAtDoors(SeatView& view, EnvInstance const& fight)
+{
+    // A spline goes through anything, and the advance launches without pathfinding (as the old 6-yard step did,
+    // MovePoint with generatePath off): a run that crossed a closed door walked through it, and never needed to open
+    // it. The run ends where the first closed door begins; at the door, there is no run, and the seat opens it
+    // (ACTION_USE_OBJECT, or Instance.WingAutoDoors on reach). The carry-on reads the same path.
+    if (!view.Bot || !view.Crowd.HasStep || !view.Crowd.PathPoints || fight.ClosedDoors.empty())
+        return;
+    std::vector<RouteShortcut::Point> path;
+    for (uint32 i = 0; i < view.Crowd.PathPoints; ++i)
+        path.push_back({ view.Crowd.Path[i].GetPositionX(), view.Crowd.Path[i].GetPositionY() });
+    std::size_t const kept = RouteShortcut::CutAtDoors({ view.Bot->GetPositionX(), view.Bot->GetPositionY() }, path,
+        fight.ClosedDoors);
+    if (kept == view.Crowd.PathPoints && path.back().X == view.Crowd.Path[kept - 1].GetPositionX()
+        && path.back().Y == view.Crowd.Path[kept - 1].GetPositionY())
+        return;
+    view.Crowd.AtDoor = true;
+    view.Crowd.PathPoints = uint32(kept);
+    if (!kept)
+    {
+        view.Crowd.HasStep = false;
+        return;
+    }
+    Position& last = view.Crowd.Path[kept - 1];
+    float const ground = view.Bot->GetMap()->GetHeight(view.Bot->GetPhaseMask(), path[kept - 1].X, path[kept - 1].Y,
+        last.GetPositionZ() + 2.0f, true, 6.0f);
+    last.Relocate(path[kept - 1].X, path[kept - 1].Y, ground > INVALID_HEIGHT ? ground : last.GetPositionZ());
+    view.Crowd.Step = view.Crowd.Path[0];
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,

@@ -219,7 +219,8 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
         // Corner to corner along the route, as one run (movement-smooth A8), carried on in BeforeApply.
         if (view.Crowd.HasStep && view.Crowd.PathPoints)
             WalkAdvance(view);
-        else if (view.HasObjective)
+        // The server's path to the objective -- not past a closed door, which a spline would walk through.
+        else if (view.HasObjective && !view.Crowd.AtDoor)
             Encoding::MoveTo(bot, ADVANCE_POINT_ID, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
                 view.Objective.GetPositionZ());
         return;

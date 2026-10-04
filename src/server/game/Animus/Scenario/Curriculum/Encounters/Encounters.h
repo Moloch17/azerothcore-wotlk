@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
 #define ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
 
+#include "RouteShortcut.h"
 #include "BotSlot.h"
 #include "DifficultyLadder.h"
 #include "InstanceBosses.h"
@@ -734,6 +735,8 @@ namespace Animus::Curriculum
             ObjectGuid Tank;
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)
+            /// Every closed door near the party, locked or not, as discs: an advance's run ends at one (A8).
+            std::vector<RouteShortcut::Door> ClosedDoors;
             mutable std::vector<ObjectGuid> Used;   // what a seat has used this run: each thing once
             ObjectGuid Approached;              // the thing the tank has been near, unused, since ApproachedMs
             uint32 ApproachedMs = 0;
@@ -832,6 +835,8 @@ namespace Animus::Curriculum
         /// The door-to-boss plan, once per boss: over the layered field where it covers the dungeon (FieldRoute),
         /// else the server's navmesh as before.
         [[nodiscard]] WingPlan WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
+        /// An advance's run cut short at the first closed door on it (RouteShortcut::CutAtDoors, A8).
+        static void CutAdvanceAtDoors(SeatView& view, EnvInstance const& fight);
         /// The plan over the layered field, from the door (`seat`) through `bosses` in order (the last one last);
         /// WingPlan::Field false when the field cannot walk that far.
         [[nodiscard]] WingPlan FieldWingRoute(Env const& env, Map* map, Player* seat, Creature* boss,

@@ -69,3 +69,25 @@ TEST(RouteShortcutTest, AWindingRouteStillAdvances)
     ASSERT_EQ(run.size(), RouteShortcut::MAX_POINTS);
     EXPECT_EQ(run.back(), 5u + RouteShortcut::MAX_POINTS);
 }
+
+// A closed door on the run cuts it where the door begins; an open one (not in the list) does not; a seat already at
+// the door has no run.
+TEST(RouteShortcutTest, AClosedDoorEndsTheRunAtIt)
+{
+    using RouteShortcut::Point;
+    std::vector<Point> path{ { 10.0f, 0.0f }, { 20.0f, 0.0f } };
+    std::vector<RouteShortcut::Door> const doors{ { { 15.0f, 0.0f }, 2.0f } };
+    EXPECT_NEAR(RouteShortcut::EntersDoor({ 0.0f, 0.0f }, { 20.0f, 0.0f }, doors[0]), 0.65f, 1e-5f);
+    EXPECT_LT(RouteShortcut::EntersDoor({ 0.0f, 5.0f }, { 20.0f, 5.0f }, doors[0]), 0.0f);  // passes it by
+
+    ASSERT_EQ(RouteShortcut::CutAtDoors({ 0.0f, 0.0f }, path, doors), 2u);
+    EXPECT_FLOAT_EQ(path[0].X, 10.0f);
+    EXPECT_FLOAT_EQ(path[1].X, 13.0f);          // the second leg ends where the door begins
+
+    std::vector<Point> open{ { 10.0f, 0.0f }, { 20.0f, 0.0f } };
+    EXPECT_EQ(RouteShortcut::CutAtDoors({ 0.0f, 0.0f }, open, {}), 2u);
+    EXPECT_FLOAT_EQ(open[1].X, 20.0f);
+
+    std::vector<Point> at{ { 20.0f, 0.0f } };
+    EXPECT_EQ(RouteShortcut::CutAtDoors({ 12.8f, 0.0f }, at, doors), 0u);
+}

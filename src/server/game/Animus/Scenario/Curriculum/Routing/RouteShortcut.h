@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 /// **A dungeon's field route walked corner to corner** (movement-smooth A8). The field route is a yard-by-yard walk
@@ -59,6 +60,67 @@ namespace Animus::Curriculum::RouteShortcut
             corner[i] = uint32(best);
         }
         return corner;
+    }
+
+    struct Point
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+    };
+
+    /// A closed door, as a disc on the ground (centre and radius, yards).
+    struct Door
+    {
+        Point At;
+        float Radius = 0.0f;
+    };
+
+    /// Where along the segment `a` -> `b` (as a share of it, 0..1) it first comes within `door`'s radius; negative
+    /// when it never does.
+    [[nodiscard]] inline float EntersDoor(Point a, Point b, Door const& door)
+    {
+        float const dx = b.X - a.X;
+        float const dy = b.Y - a.Y;
+        float const fx = a.X - door.At.X;
+        float const fy = a.Y - door.At.Y;
+        float const qa = dx * dx + dy * dy;
+        float const qb = 2.0f * (fx * dx + fy * dy);
+        float const qc = fx * fx + fy * fy - door.Radius * door.Radius;
+        if (qc <= 0.0f)
+            return 0.0f;                        // starts inside it
+        if (qa <= 0.0f)
+            return -1.0f;
+        float const disc = qb * qb - 4.0f * qa * qc;
+        if (disc < 0.0f)
+            return -1.0f;
+        float const t = (-qb - std::sqrt(disc)) / (2.0f * qa);
+        return t >= 0.0f && t <= 1.0f ? t : -1.0f;
+    }
+
+    /// A run from `start` through `path` cut short at the first closed door it would walk into: a spline goes through
+    /// anything, so a run must end where the door is and the seat open it (movement-smooth A8). Returns how many of
+    /// `path`'s points are kept; when the cut falls inside a segment, `cut` is where it now ends (and is the last
+    /// point kept). 0: the seat is at a door already, and there is no run.
+    [[nodiscard]] inline std::size_t CutAtDoors(Point start, std::vector<Point>& path, std::vector<Door> const& doors)
+    {
+        Point from = start;
+        for (std::size_t i = 0; i < path.size(); ++i)
+        {
+            float first = 2.0f;
+            for (Door const& door : doors)
+                if (float const t = EntersDoor(from, path[i], door); t >= 0.0f)
+                    first = std::min(first, t);
+            if (first <= 1.0f)
+            {
+                Point const cut{ from.X + (path[i].X - from.X) * first, from.Y + (path[i].Y - from.Y) * first };
+                if (std::hypot(cut.X - from.X, cut.Y - from.Y) < 0.5f)
+                    return i;                   // nothing to walk before the door
+                path[i] = cut;
+                return i + 1;
+            }
+            from = path[i];
+        }
+        return path.size();
     }
 
     /// The corners from `from` towards `target` (inclusive, never past it), at most ADVANCE_YARDS yards of route and

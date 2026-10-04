@@ -70,6 +70,7 @@ namespace Animus::Curriculum
         /// the detour's points back to it.
         std::array<Position, 6> Path{};
         uint32 PathPoints = 0;
+        bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
     };
 
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
