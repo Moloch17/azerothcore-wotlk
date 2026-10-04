@@ -438,6 +438,7 @@ namespace AnimusForge
         std::vector<float> _endedState;
         std::vector<float> _endedInfo;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once
+        bool _tickJustSet = false;          // the run's tick was set this update; the world ticked the old one
         uint32 _progressInterval = 0;
 
         std::chrono::steady_clock::time_point _scenarioStarted;

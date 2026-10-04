@@ -361,7 +361,6 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     PollExport();
     PollCluster();
 
-
     // AnimusForge.Bench.AutoTune: a machine with no benchmark of its own CPU (a fresh copy of the project) tunes
     // itself before anything else, once per start.
     if (!_autoTuneChecked && _state == State::Idle && _request == Request::None && !_benching)
@@ -423,8 +422,11 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
     ForgeConfig const& run = RunConfig();
 
     // The forge core sizes its tick from the same keys; a different tick means a worldserver built before they
-    // were one, and every reward scaled per decision would be off.
-    if (diff != _runWorldTickMs && !ForgeCore::Playtest() && !_tickMismatchLogged)
+    // were one, and every reward scaled per decision would be off. The update a run starts in (the console's
+    // `forge start` runs inside it) was sized before the run's tick, so the check waits for the next one.
+    bool const tickJustSet = _tickJustSet;
+    _tickJustSet = false;
+    if (diff != _runWorldTickMs && !tickJustSet && !ForgeCore::Playtest() && !_tickMismatchLogged)
     {
         _tickMismatchLogged = true;
         LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {}{} "
@@ -740,6 +742,7 @@ bool AnimusForge::Forge::StartCurrent()
     _runWorldTickMs = std::max<uint32>(1, config.DecisionMs / _runTicks / (_halfBatch ? 2 : 1));
     ForgeCore::SetTickMs(_runWorldTickMs);
     _tickMismatchLogged = false;
+    _tickJustSet = true;
     if (_runTicks != config.TicksPerDecision)
         LOG_INFO("module.animus", "{} runs {} world ticks of {} ms a decision (AnimusForge.Stage.{}.TicksPerDecision)",
             entry.Scenario, _runTicks, _runWorldTickMs, entry.Scenario);
