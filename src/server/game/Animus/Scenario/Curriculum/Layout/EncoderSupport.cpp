@@ -17,6 +17,7 @@
  */
 
 #include "EncoderSupport.h"
+#include <atomic>
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
@@ -30,6 +31,7 @@
 #include "SpellChecks.h"
 #include "Item.h"
 #include "Layout.h"
+#include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
 #include "MoveSpline.h"
@@ -174,6 +176,23 @@ namespace Animus::Curriculum::Encoding
     bool CastInProgress(Player const* bot)
     {
         return bot->IsNonMeleeSpellCast(false, true, true);
+    }
+
+    /// A heal the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
+    /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
+    /// pressed four to seven heals for each that started (2026-10-04); this says where the rest went.
+    void NoteHealRefused(Player* bot, SpellInfo const* info, Unit const* friendUnit, uint32 reason)
+    {
+        static std::atomic<uint32> logged{ 0 };
+        if (logged.fetch_add(1) >= 600)
+            return;
+        LOG_INFO("module.animus", "Heal refused: class {} level {} spell {} reason {} friend {} health {:.0f}% "
+            "distance {:.1f} los {} moving {} casting {} gcd {} combat {}", uint32(bot->getClass()), bot->GetLevel(),
+            info ? info->Id : 0, reason, friendUnit ? (friendUnit == bot ? "self" : "other") : "none",
+            friendUnit ? friendUnit->GetHealthPct() : 0.0f, friendUnit ? bot->GetDistance(friendUnit) : 0.0f,
+            friendUnit ? bot->IsWithinLOSInMap(friendUnit) : false, !bot->movespline->Finalized() || bot->isMoving(),
+            bot->IsNonMeleeSpellCast(false, true, true),
+            info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
     }
 
     /// Where a heal goes: the selected friend when it can take it, else the most hurt living friend the heal reaches
@@ -336,13 +355,21 @@ namespace Animus::Curriculum::Encoding
 
         SpellInfo const* info = KnownRank(view, def);
         if (!info || !bot->HasActiveSpell(info->Id) || CastInProgress(bot))
+        {
+            if (def.Healing)
+                NoteHealRefused(bot, info, nullptr, CastInProgress(bot) ? 1001 : 1000);
             return false;
+        }
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
         Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
         if (info->IsPositive() && !friendUnit)
+        {
+            if (def.Healing)
+                NoteHealRefused(bot, info, nullptr, 1002);
             return false;
+        }
 
         bool const onFullHealth = def.DirectHeal && friendUnit && friendUnit->IsFullHealth();
         SpellCastTargets targets = TargetsFor(info, bot, target, friendUnit);
@@ -354,8 +381,12 @@ namespace Animus::Curriculum::Encoding
         if (SpellInfo const* current = FormToDropFor(bot, info))
             bot->RemoveAurasDueToSpell(current->Id);
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
-        if (spell->prepare(&targets) != SPELL_CAST_OK)
+        if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+        {
+            if (def.Healing)
+                NoteHealRefused(bot, info, friendUnit, uint32(cast));
             return false;
+        }
 
         ++result.SpellCasts;
         result.CastHarmful = !info->IsPositive();
