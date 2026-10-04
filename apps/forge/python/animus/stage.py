@@ -189,21 +189,28 @@ class ShapingFade:
                         f"(more than {self.regress_z:g} standard errors below) after {waited} evaluations"
                         + (f"; held here after {self.falls[self.rung]} falls" if self.held else ""))
 
-        if (self.rung < len(self.rungs) - 1 and not self.held and waited >= self.window and ladders_settled
-                and not anneal_starting and self.tracker.converged(env_steps, 0)):
+        if (self.rung < len(self.rungs) - 1 and not self.held and ladders_settled and not anneal_starting
+                and self._earned(env_steps, waited)):
             before, reference = self.scale, self.step_score
             self.rung += 1
             self.step_score, self.step_stderr = score, stderr
             self._moved()
             against = f" (the last step's {reference:.4g})" if reference is not None else ""
             return (f"the {self.NAME} {self.FORWARD}, x{before:g} -> x{self.scale:g}: outcome score {score:.4g} +/- "
-                    f"{stderr:.2g} plateaued{against} after {waited} evaluations")
+                    f"{stderr:.2g} {self._why()}{against} after {waited} evaluations")
         return None
+
+    def _earned(self, env_steps: int, waited: int) -> bool:
+        """The rung has been played long enough and the score has plateaued on it."""
+        return waited >= self.window and self.tracker.converged(env_steps, 0)
 
     def _moved(self) -> None:
         self.steps += 1
         self.evals_at_rung = 0
         self.tracker = self._new_tracker()
+
+    def _why(self) -> str:
+        return "plateaued"
 
     def forget_scores(self) -> None:
         """Scores of another kind are coming (restore_evaluation_state): keep the rung, drop what was measured."""
@@ -233,17 +240,36 @@ class ShapingFade:
 
 
 class CostLadder(ShapingFade):
-    """The cost ladder (CostLadderConfig): the shaping ladder's rules on the noise prices, climbing to full price.
+    """The cost ladder (CostLadderConfig): the shaping ladder's rules on the noise prices, along any path of rungs.
 
-    It reads the same outcome score, which is at full price whatever the rung, so a step up costs the score nothing
-    unless the policy gives up the outcome for it -- and that is the regression that steps it back down."""
+    It reads the same outcome score, which is at full price whatever the rung, so a step costs the score nothing
+    unless the policy gives up the outcome for it, or its habits for the lower price -- and that is the regression
+    that moves it back. Off the first rung it waits for the gate metric instead of a plateau (see_gate)."""
 
     NAME = "cost ladder"
-    FORWARD = "steps up"
-    BACK = "steps back down"
+    FORWARD = "moves on"
+    BACK = "moves back"
 
     def __init__(self, config: TrainConfig):
         super().__init__(config, config.costs)
+        self.gate_metric = str(config.costs.gate_metric or "")
+        self.gate_value = float(config.costs.gate_value)
+        self.gate_seen: float | None = None
+
+    def see_gate(self, summary: dict) -> None:
+        """The latest evaluation's gate metric, read before observe()."""
+        value = summary.get(self.gate_metric) if self.gate_metric else None
+        self.gate_seen = float(value) if isinstance(value, (int, float)) else None
+
+    def _earned(self, env_steps: int, waited: int) -> bool:
+        if self.rung == 0 and self.gate_metric:
+            return self.gate_seen is not None and self.gate_seen >= self.gate_value
+        return super()._earned(env_steps, waited)
+
+    def _why(self) -> str:
+        if self.rung == 1 and self.gate_metric and self.gate_seen is not None:
+            return f"({self.gate_metric} {self.gate_seen:.3g} reached {self.gate_value:g})"
+        return "plateaued"
 
     @property
     def ready(self) -> bool:
@@ -376,6 +402,7 @@ class ConvergenceController:
         # Read before this evaluation's rungs join the classes' lists below: the ladder as it stood over the window.
         anneal_starting = self.plateau_env_steps == env_steps
         ladders_settled = self.ladders_settled()
+        self.costs.see_gate(summary)
         self.costs_message = self.costs.observe(summary["score"], stderr, env_steps, ladders_settled,
                                                 anneal_starting)
         # The shaping ladder waits for the cost ladder: two scales moving at once cannot be told apart in the score.

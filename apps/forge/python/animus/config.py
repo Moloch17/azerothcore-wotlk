@@ -188,26 +188,34 @@ class FadeConfig:
 class CostLadderConfig:
     """The cost ladder (animus.stage.CostLadder): every noise price -- Repeat, Jitter, Aimless, Effort, Fidget
     (RewardLedger PricesNoise) -- is paid times the current rung's scale; deaths, the clock and the step cost always
-    in full, and the score always at full price. The ladder steps up when the outcome score has plateaued at its rung,
-    back down one when the score falls more than `regress_z` standard errors below what it was at the step, and is
-    settled at its last rung (full price) or once a rung has been fallen back to `give_up` times.
+    in full, and the score always at full price. The ladder moves on a rung when the outcome score has plateaued at
+    its rung -- off the first, once the evaluation's `gate_metric` has reached `gate_value` instead -- back one when the
+    score falls more than `regress_z` standard errors below what it was at the step, and is settled at its last rung
+    or once a rung has been fallen back to `give_up` times.
 
-    For a stage trained from scratch: stage1_move's first run at full price (2026-10-04) paid about -9 an episode in
-    noise for a 6% chance at arriving, and stood still from 5M steps on. A policy that has found the outcome can trade
-    noise for it; one that has not only learns to stop. Nothing converges, and the learning rate does not anneal,
-    until the ladder has been at full price for `window` evaluations."""
+    The rungs are any path through [0, 1]. stage1_move's: free (x0) until arriving is learned, faded in to full
+    price, then faded back out to see whether the habits stick -- the score is at full price throughout, so habits
+    that do not stick read as a fall, and the ladder moves back to the price that held them. Its first run at full
+    price (2026-10-04) paid about -9 an episode in noise for a 6% chance at arriving and stood still from 5M steps
+    on; a second, starting at x0.25 on a plateau rule, drifted the same way. Nothing converges, and the learning rate
+    does not anneal, until the ladder has played its last rung for `window` evaluations."""
 
     enabled: bool = False
-    rungs: tuple[float, ...] = (0.25, 0.5, 1.0)
+    rungs: tuple[float, ...] = (0.0, 0.25, 0.5, 1.0, 0.5, 0.25, 0.0)
     window: int = 3  # evaluations at a rung before it may step, and the plateau test's patience
     regress_z: float = 2.0
     give_up: int = 2  # falls back to the same rung before the ladder stays there
+    # Off the first rung only once the evaluation's metric (a column of its summary, e.g. arrived) reaches the value:
+    # a plateau is no signal there, since a policy stalled short of the outcome has plateaued too. "" = the plateau.
+    gate_metric: str = ""
+    gate_value: float = 0.0
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)
-        if not rungs or any(not 0.0 < scale <= 1.0 for scale in rungs) or rungs[-1] != 1.0 \
-                or any(later <= earlier for earlier, later in zip(rungs, rungs[1:])):
-            raise ValueError(f"costs.rungs: expected scales strictly rising within (0, 1] to 1, got {self.rungs!r}")
+        if not rungs or any(not 0.0 <= scale <= 1.0 for scale in rungs) \
+                or any(later == earlier for earlier, later in zip(rungs, rungs[1:])):
+            raise ValueError(f"costs.rungs: expected scales within [0, 1], each unlike the one before, got "
+                             f"{self.rungs!r}")
         if self.window < 1:
             raise ValueError(f"costs.window: expected at least 1 evaluation, got {self.window!r}")
         if not self.regress_z > 0.0:

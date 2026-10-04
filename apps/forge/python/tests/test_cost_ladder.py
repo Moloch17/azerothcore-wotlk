@@ -41,7 +41,7 @@ def test_giving_up_the_outcome_for_the_price_steps_back_down():
     message = None
     for steps, score in ((40, 3.0), (50, 3.0)):
         message = ladder.observe(score, 0.1, steps) or message
-    assert ladder.scale == 0.25 and "cost ladder steps back down" in message and "x0.5 -> x0.25" in message
+    assert ladder.scale == 0.25 and "cost ladder moves back" in message and "x0.5 -> x0.25" in message
 
 
 def test_off_is_full_price_and_never_holds_anything():
@@ -90,10 +90,34 @@ def test_state_round_trips_through_a_resume():
     assert fresh.costs.scale == 0.25
 
 
+def test_free_until_the_gate_then_in_and_back_out():
+    """stage1_move's path: x0 until the evaluation arrives often enough (a plateau short of it is no step), in to full
+    price and out again on plateaus; a habit that does not stick at the lower price is a fall that moves it back."""
+    ladder = CostLadder(_config(rungs=(0.0, 0.5, 1.0, 0.5, 0.0), gate_metric="arrived", gate_value=0.8))
+    scales = []
+    for index, arrived in enumerate([0.06, 0.06, 0.06, 0.06, 0.5, 0.79]):   # flat score, arriving short of the gate
+        ladder.see_gate({"arrived": arrived})
+        ladder.observe(5, 0.1, (index + 1) * 10)
+        scales.append(ladder.scale)
+    assert scales == [0.0] * 6
+    ladder.see_gate({"arrived": 0.85})
+    message = ladder.observe(5, 0.1, 70)
+    assert ladder.scale == 0.5 and "moves on" in message and "arrived 0.85 reached 0.8" in message
+    ladder.see_gate({})                                                     # the gate is read off the first rung only
+    assert _play(ladder, [5] * 6, start=7) == pytest.approx([0.5, 0.5, 1.0, 1.0, 1.0, 0.5])
+    # Fading out, the habits slip: the full-price score falls and the ladder moves back to x1.
+    for steps in (140, 150):
+        ladder.observe(4.0, 0.1, steps)
+    assert ladder.scale == 1.0 and ladder.falls == {2: 1}
+    # Without a gate the first rung steps on a plateau, as any other.
+    plain = CostLadder(_config(rungs=(0.0, 1.0)))
+    assert _play(plain, [5, 5, 5]) == pytest.approx([0.0, 0.0, 1.0])
+
+
 @pytest.mark.parametrize("raw", [
-    {"rungs": [0.25, 0.5]},          # does not end at full price
-    {"rungs": [0.5, 0.5, 1.0]},      # not strictly rising
-    {"rungs": [0.0, 1.0]},           # a free rung would not price noise at all
+    {"rungs": [0.5, 0.5, 1.0]},      # a rung like the one before is no step
+    {"rungs": [0.0, 1.5]},           # above full price
+    {"rungs": [-0.25, 1.0]},
     {"rungs": []},
     {"window": 0},
     {"regress_z": 0.0},
