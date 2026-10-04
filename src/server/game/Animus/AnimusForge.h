@@ -289,7 +289,8 @@ namespace AnimusForge
         /// `restart`: only the learners start again (after one failed), the workers' sims carry on.
         void DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume, bool restart);
         [[nodiscard]] Plan WorkerPlan(std::string const& scenario, bool resume, bool fast,
-            ClusterRank const& rank, std::optional<uint32> envs, std::optional<uint32> ticks) const;
+            ClusterRank const& rank, std::optional<uint32> envs, std::optional<uint32> ticks,
+            std::optional<uint32> moveRevision) const;
 
         void LocalDecision(uint32 group);
         void RemoteDecision(uint32 group);
