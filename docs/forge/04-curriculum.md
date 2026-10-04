@@ -563,8 +563,10 @@ The same function builds training seats and live companions, so a model gets in 
   three has to play the character it was handed -- which is what a live server hands it. Glyph slots the level has
   opened get the spec's standard major and minor glyphs, whatever the plan.
 - **Kit** (`ClassKit`). Every spell the class trainers teach up to the level (`trainer`/`trainer_spell`, learn-spells
-  resolved), talent-gated ranks when the talent was taken, and class quest spells trainers don't teach (stances, Bear
-  Form, warlock demons, Raise Dead). Weapon and armor skills the race and class may have, maxed for the level.
+  resolved), talent-gated ranks when the talent was taken, and everything the class quests teach, read from
+  `quest_template` (every quest only the class can take, its reward spell's learn-spells followed through, a race's
+  quest for that race only: Defensive Stance with Sunder Armor and Taunt, Bear Form with Growl and Maul, Berserker
+  Stance, the demons, totems' spells, Redemption, Runeforging and the rest), plus Raise Dead. Weapon and armor skills the race and class may have, maxed for the level.
   Reagents: totems, Ankhs, soul shards, corpse dust, flash powder, Light Feathers for Slow Fall and Levitate, and
   ammo in a quiver or pouch for hunters.
 - **Gear** (`GearBuilder`). A random level-appropriate item for every slot, including both trinkets, drawn from every

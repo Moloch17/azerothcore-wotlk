@@ -25,6 +25,7 @@
 #include "SpellMgr.h"
 #include "Supplies.h"
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace
@@ -36,15 +37,10 @@ namespace
         uint8 ReqLevel;
     };
 
-    /// Spells the class quests give rather than the trainers.
-    constexpr std::array<QuestSpell, 7> QUEST_SPELLS =
+    /// Spells neither a trainer nor a class quest's reward teaches (the class quests' are read from the world
+    /// database: ClassKit::ClassKit).
+    constexpr std::array<QuestSpell, 1> QUEST_SPELLS =
     {{
-        { CLASS_WARRIOR,        71,     10 },   // Defensive Stance
-        { CLASS_WARRIOR,        2458,   30 },   // Berserker Stance
-        { CLASS_DRUID,          5487,   10 },   // Bear Form
-        { CLASS_WARLOCK,        697,    10 },   // Summon Voidwalker
-        { CLASS_WARLOCK,        712,    20 },   // Summon Succubus
-        { CLASS_WARLOCK,        691,    30 },   // Summon Felhunter
         { CLASS_DEATH_KNIGHT,   46584,  55 },   // Raise Dead
     }};
 
@@ -97,6 +93,40 @@ namespace
 
         return taught;
     }
+
+    /// What a class quest's reward teaches: the spells its reward spell's LEARN_SPELL effects teach, followed through
+    /// (Path of Defense: Defensive Stance, Sunder Armor and Taunt), else the spell the quest shows (an ability the
+    /// reward spell casts on the player rather than teaches). Empty for a reward that teaches nothing (a buff).
+    std::vector<uint32> QuestTaught(uint32 rewardSpell, uint32 displaySpell)
+    {
+        std::vector<uint32> taught;
+        std::vector<uint32> open{ rewardSpell };
+        std::set<uint32> visited;
+        while (!open.empty())
+        {
+            uint32 const spellId = open.back();
+            open.pop_back();
+            SpellInfo const* info = spellId && visited.insert(spellId).second ? sSpellMgr->GetSpellInfo(spellId)
+                : nullptr;
+            if (!info)
+                continue;
+            bool teaches = false;
+            for (SpellEffectInfo const& effect : info->GetEffects())
+                if (effect.Effect == SPELL_EFFECT_LEARN_SPELL && effect.TriggerSpell)
+                {
+                    open.push_back(effect.TriggerSpell);
+                    teaches = true;
+                }
+            if (!teaches && spellId != rewardSpell)
+                taught.push_back(spellId);
+        }
+
+        if (taught.empty() && displaySpell && displaySpell != rewardSpell)
+            taught = QuestTaught(displaySpell, 0);
+        if (taught.empty() && displaySpell && sSpellMgr->GetSpellInfo(displaySpell))
+            taught.push_back(displaySpell);
+        return taught;
+    }
 }
 
 Animus::Curriculum::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
@@ -125,9 +155,37 @@ Animus::Curriculum::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
         } while (result->NextRow());
     }
 
+    // Every class quest's reward: a quest only this class can take, whatever its reward spell teaches. A list of the
+    // abilities by hand named Defensive Stance and Bear Form, not the quests' rewards, so no warrior or druid ever
+    // learned Taunt, Sunder Armor, Growl or Maul's first rank, and no tank could taunt a single enemy back
+    // (2026-10-03). A race's quest (a priest's race spell) is for that race; faction variants of one quest merge.
+    std::map<uint32, KitSpell> questSpells;
+    if (QueryResult result = WorldDatabase.Query("SELECT q.RewardSpell, q.RewardDisplaySpell, q.MinLevel, "
+        "q.AllowableRaces FROM quest_template q JOIN quest_template_addon a ON a.ID = q.ID WHERE a.AllowableClasses = "
+        "{} AND (q.RewardSpell <> 0 OR q.RewardDisplaySpell <> 0)", 1u << (playerClass - 1)))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            uint8 const level = uint8(std::max<int32>(1, fields[2].Get<int32>()));
+            uint32 const races = fields[3].Get<uint32>();
+            for (uint32 spellId : QuestTaught(fields[0].Get<uint32>(), fields[1].Get<uint32>()))
+            {
+                auto const [entry, added] = questSpells.try_emplace(spellId, KitSpell{ spellId, level, {}, races });
+                if (added)
+                    continue;
+                KitSpell& spell = entry->second;
+                spell.ReqLevel = std::min(spell.ReqLevel, level);
+                spell.RaceMask = spell.RaceMask && races ? spell.RaceMask | races : 0;
+            }
+        } while (result->NextRow());
+    }
     for (QuestSpell const& quest : QUEST_SPELLS)
-        if (quest.Class == playerClass && sSpellMgr->GetSpellInfo(quest.SpellId) && seen.insert(quest.SpellId).second)
-            _spells.push_back({ quest.SpellId, quest.ReqLevel, {} });
+        if (quest.Class == playerClass)
+            questSpells.try_emplace(quest.SpellId, KitSpell{ quest.SpellId, quest.ReqLevel, {}, 0 });
+    for (auto const& [spellId, spell] : questSpells)
+        if (seen.insert(spellId).second)
+            _spells.push_back(spell);
 
     std::stable_sort(_spells.begin(), _spells.end(),
         [](KitSpell const& a, KitSpell const& b) { return a.ReqLevel < b.ReqLevel; });
@@ -156,7 +214,8 @@ void Animus::Curriculum::ClassKit::Learn(Player* bot) const
     {
         for (KitSpell const& spell : _spells)
         {
-            if (spell.ReqLevel > level || bot->HasSpell(spell.SpellId))
+            if (spell.ReqLevel > level || bot->HasSpell(spell.SpellId)
+                || (spell.RaceMask && !(spell.RaceMask & bot->getRaceMask())))
                 continue;
 
             bool const abilitiesKnown = std::all_of(spell.ReqAbility.begin(), spell.ReqAbility.end(),

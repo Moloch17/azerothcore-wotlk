@@ -35,7 +35,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PartyEncounter::
 {
     return { RewardTerm::TeammateDamageTaken, RewardTerm::TeammateHealing, RewardTerm::TeammateThreat,
         RewardTerm::TeammateDeath, RewardTerm::Threat, RewardTerm::Revive, RewardTerm::DamageDealt,
-        RewardTerm::Stall };
+        RewardTerm::Stall, RewardTerm::EarlyPull };
 }
 
 void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)

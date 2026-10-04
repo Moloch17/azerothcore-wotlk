@@ -37,6 +37,7 @@ namespace Animus::Curriculum
             uint32 SpellId = 0;                     // the spell the player ends up knowing
             uint8 ReqLevel = 0;
             std::array<uint32, 3> ReqAbility{};     // must all be known (talent-gated ranks)
+            uint32 RaceMask = 0;                    // the races it is for (a race's class quest); 0: every race
         };
 
         struct Reagent

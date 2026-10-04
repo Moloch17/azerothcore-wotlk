@@ -2163,9 +2163,13 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             std::swap(demands[0], demands[1]);
         else if (arena.DrillRole == DUNGEON_DAMAGE && data.ActiveSeats > 2)
             std::swap(demands[0], demands[2]);
-        if (!arena.DrillRole && (instance || proper || roll_chance_i(_tuning.Party.ClassicChance)))
+        // A drill keeps the classic makeup as it was placed: one tank, one healer, the drilled role in seat 0. It fell
+        // through to the drawn roles below, so a drill party had no tank one time in four and two or more one time in
+        // three, and its seat 0 was a healer or a mage as often as the role it drilled (2026-10-03, stage6).
+        bool const classic = arena.DrillRole || instance || proper || roll_chance_i(_tuning.Party.ClassicChance);
+        if (classic && !arena.DrillRole)
             std::shuffle(demands.begin(), demands.begin() + data.ActiveSeats, RandomEngine::Instance());
-        else
+        else if (!classic)
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
                 demands[seat] = RollDemand(_tuning.Party.RoleTankChance, _tuning.Party.RoleHealerChance);
 
