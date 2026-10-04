@@ -18,6 +18,8 @@ explore:
 
 eval:
   every_env_steps: 20000000
+  # Every second evaluation also plays sampled actions on the same seeds (learner_sampled), as stage7 does.
+  sampled_every: 2
   episodes: 64
   # Wailing Caverns, which no stage trains on (peak-play W2): reported as heldout_heldout, never a target.
   heldout:

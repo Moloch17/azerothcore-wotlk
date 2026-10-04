@@ -664,8 +664,9 @@ namespace Animus::Curriculum
             float AimlessModeReverse = 0.06f;
             float AimlessNeedlessMove = 0.02f;
             /// A taunt from a healer or damage dealer beside a living tank (holy paladins taunted four times a fight
-            /// from the healer's seat, 2026-10-03).
-            float AimlessTauntOffRole = 0.04f;
+            /// from the healer's seat, 2026-10-03). At 0.04 Hand of Reckoning from the healer's seat rose through
+            /// stage6, 3.3 to 4.1 a fight between 20M and 62M steps, while Righteous Fury at the same price halved.
+            float AimlessTauntOffRole = 0.15f;
             /// A tank's stance, form, aura or presence from a seat that is not the tank, beside a living one (holy
             /// paladins took up Righteous Fury three and a half times a fight from the healer's seat, 2026-10-03).
             float AimlessTankModeOffRole = 0.04f;

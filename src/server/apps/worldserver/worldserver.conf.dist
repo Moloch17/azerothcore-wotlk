@@ -6324,7 +6324,7 @@ AnimusForge.Curriculum.Actions.Aimless.ModeFlip = 0.03
 AnimusForge.Curriculum.Actions.Aimless.ModeReverse = 0.06
 AnimusForge.Curriculum.Actions.Aimless.NeedlessMove = 0.02
 #   a taunt from a healer or damage dealer beside a living tank
-AnimusForge.Curriculum.Actions.Aimless.TauntOffRole = 0.04
+AnimusForge.Curriculum.Actions.Aimless.TauntOffRole = 0.15
 #   a tank's stance, form, aura or presence from a healer or damage dealer beside a living tank
 AnimusForge.Curriculum.Actions.Aimless.TankModeOffRole = 0.04
 #   every aspect, stance, form or presence changed; every food or drink consumed
