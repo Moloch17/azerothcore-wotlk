@@ -32,6 +32,7 @@
 #include "SpellChecks.h"
 #include "Item.h"
 #include "Layout.h"
+#include "RunCourse.h"
 #include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
@@ -1038,6 +1039,29 @@ namespace Animus::Curriculum::Encoding
             init.SetFacing(*facing);
         }
         init.Launch();
+    }
+
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing)
+    {
+        // As MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the spline in
+        // flight, then hold it for the run's whole life.
+        bot->GetMotionMaster()->Clear();
+        bot->DisableSpline();
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(points);
+        init.SetOrientationFixed(true);
+        init.SetFacing(facing);
+        init.Launch();
+    }
+
+    float CourseAhead(Unit const* bot, uint32 aheadMs)
+    {
+        if (std::optional<float> const course = RunCourse(*bot->movespline, aheadMs))
+            return Position::NormalizeOrientation(*course);
+        G3D::Vector3 const end = bot->movespline->FinalDestination();
+        return bot->GetAbsoluteAngle(end.x, end.y);
     }
 
     void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)

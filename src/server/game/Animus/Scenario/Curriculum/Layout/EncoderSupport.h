@@ -289,6 +289,15 @@ namespace Animus::Curriculum::Encoding
     /// where the walkable mesh stops at the surface.
     void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 
+    /// Walk a path already laid out and checked (MoveBlock's turn walked as one run, movement-smooth A2): no
+    /// pathfinding, the points as given from the seat's own position on, facing `facing` the whole way as MoveTo does.
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing);
+    /// The direction of the leg a running spline will be on `aheadMs` from now, radians: where the run is going over
+    /// the next decision, which on a turn walked as one run is not the way to its end. A leg's end is reached a
+    /// millisecond after the decision that should start the next (the spline's timestamps start at 1), so asking
+    /// about the leg under way now would read the previous leg's direction at every boundary.
+    [[nodiscard]] float CourseAhead(Unit const* bot, uint32 aheadMs);
+
     /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
 
     /// The caller must already know there is somewhere to land.

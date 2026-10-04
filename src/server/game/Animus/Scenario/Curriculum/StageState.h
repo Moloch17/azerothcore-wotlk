@@ -499,6 +499,7 @@ namespace Animus::Curriculum
         uint32 FollowInBand = 0;
         uint32 MoveStarts = 0;
         uint32 SplineRestarts = 0;          // a decision that launched a move spline over one still running
+        uint32 TurnRestarts = 0;            // ... of them, on a decision with a turn under way or chosen
         uint32 MoveStopStarts = 0;          // a start within a second of a stop
         bool WasMoving = false;
         uint32 StoppedAtMs = 0;
@@ -664,6 +665,7 @@ namespace Animus::Curriculum
             FollowInBand = 0;
             MoveStarts = 0;
             SplineRestarts = 0;
+            TurnRestarts = 0;
             MoveStopStarts = 0;
             WasMoving = false;
             StoppedAtMs = 0;

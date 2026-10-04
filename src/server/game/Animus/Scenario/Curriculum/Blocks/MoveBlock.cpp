@@ -18,6 +18,8 @@
 
 #include "MoveBlock.h"
 #include "MoveKeep.h"
+#include "MoveTurnPath.h"
+#include "PathGenerator.h"
 #include "Forge.h"
 #include "GroundSense.h"
 #include "LayeredField.h"
@@ -53,6 +55,7 @@ namespace
     namespace Ground = Animus::Curriculum::GroundSense;
     namespace LayeredField = Animus::Curriculum::LayeredField;
     namespace MoveKeep = Animus::Curriculum::MoveKeep;
+    namespace MoveTurnPath = Animus::Curriculum::MoveTurnPath;
     using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
@@ -542,6 +545,75 @@ namespace
         }
     }
 
+    /// A turn under a held bearing on the ground, walked as one run (movement-smooth A2): the legs StepTurn's
+    /// remaining steps will give the seat a decision apart (MoveTurnPath::Legs), then straight on, so the feet are
+    /// where the per-decision steps would have put them and the spline is launched once for the whole turn rather
+    /// than every decision of it. Each turning leg's end is put on the ground within MAX_STEP, seen from the last,
+    /// dry, and reached by the navmesh without a detour; the rest is pathfound as a straight run is. Any failure
+    /// lays nothing out and the caller launches the straight run, never part of a path.
+    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
+    {
+        Player* bot = view.Bot;
+        Map* map = bot->GetMap();
+        if (!map)
+            return false;
+        float const spacing = speed * float(view.DecisionMs) / 1000.0f;
+        auto const legs = MoveTurnPath::Legs(heading, view.TurnLeft, MoveBlock::TURN_RATE, spacing, length);
+        if (legs.size() < 2)
+            return false;
+
+        uint32 const phase = bot->GetPhaseMask();
+        float const eye = bot->GetCollisionHeight();
+        std::vector<G3D::Vector3> points{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
+        Position at = *bot;
+        for (std::size_t index = 0; index + 1 < legs.size(); ++index)
+        {
+            MoveTurnPath::Leg const& leg = legs[index];
+            Position next = at;
+            next.Relocate(at.GetPositionX() + leg.Length * std::cos(leg.Heading),
+                at.GetPositionY() + leg.Length * std::sin(leg.Heading), at.GetPositionZ());
+            if (!Encoding::SnapToGround(map, phase, next, at.GetPositionZ(), MoveBlock::MAX_STEP))
+                return false;
+            if (!map->isInLineOfSight(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() + eye,
+                    next.GetPositionX(), next.GetPositionY(), next.GetPositionZ() + eye, phase, LINEOFSIGHT_ALL_CHECKS,
+                    VMAP::ModelIgnoreFlags::Nothing))
+                return false;
+            if (map->GetLiquidData(phase, next.GetPositionX(), next.GetPositionY(), next.GetPositionZ(), eye, {})
+                    .Status != LIQUID_MAP_NO_WATER)
+                return false;           // water entry is the straight run's own case
+            PathGenerator path(bot);
+            if (!path.CalculatePath(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), next.GetPositionX(),
+                    next.GetPositionY(), next.GetPositionZ(), false) || path.GetPathType() != PATHFIND_NORMAL)
+                return false;
+            float walked = 0.0f;
+            Movement::PointsArray const& found = path.GetPath();
+            for (std::size_t point = 1; point < found.size(); ++point)
+                walked += (found[point] - found[point - 1]).length();
+            if (walked > leg.Length * 1.25f + 0.5f)
+                return false;           // round something: not the leg the step would walk
+            points.emplace_back(next.GetPositionX(), next.GetPositionY(), next.GetPositionZ());
+            at = next;
+        }
+
+        MoveTurnPath::Leg const& rest = legs.back();
+        Position end = at;
+        end.Relocate(at.GetPositionX() + rest.Length * std::cos(rest.Heading),
+            at.GetPositionY() + rest.Length * std::sin(rest.Heading), at.GetPositionZ());
+        (void)Encoding::SnapToGround(map, phase, end, at.GetPositionZ(), MoveBlock::STEP_YARDS);
+        PathGenerator path(bot);
+        if (!path.CalculatePath(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), end.GetPositionX(),
+                end.GetPositionY(), end.GetPositionZ(), false) || (path.GetPathType() & PATHFIND_NOPATH))
+            return false;
+        Movement::PointsArray const& found = path.GetPath();
+        for (std::size_t point = 1; point < found.size(); ++point)
+            points.push_back(found[point]);
+        if (points.size() < 2)
+            return false;
+
+        Encoding::MoveAlong(bot, points, view.Facing);
+        return true;
+    }
+
     /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a
     /// turn on the spot if they are not.
     ///
@@ -608,7 +680,11 @@ namespace
             G3D::Vector3 const end = bot->movespline->FinalDestination();
             float const flat = bot->GetExactDist2d(end.x, end.y);
             float const remaining = airborne ? std::hypot(flat, end.z - bot->GetPositionZ()) : flat;
-            float const headingError = AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading);
+            // Where the run goes over the next decision (Encoding::CourseAhead), which on a turn walked as one run
+            // is the leg the next step's heading is on; or the way to its end, which is what a pathfound straight
+            // run bending round a rock still points at. Either keeps it; a new mind matches neither.
+            float const headingError = std::min(AngleBetween(Encoding::CourseAhead(bot, view.DecisionMs / 2),
+                heading), AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading));
             float const pitchError = airborne && flat > 0.1f
                 ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
             // A watching client draws the run with the head it was launched with; past the threshold it is
@@ -707,6 +783,10 @@ namespace
         // Deliberately discarded: see above -- a failure is a reason to move anyway, not a reason to stand still.
         (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
             MoveBlock::STEP_YARDS);
+
+        // A turn still to come is walked as one run (TurnRun); where that cannot be laid out, the straight run below.
+        if (std::fabs(view.TurnLeft) >= 1e-4f && TurnRun(view, heading, speed, length))
+            return;
 
         // Pathfinding on, which is the default: a bearing is where the seat wants to go, not a licence to walk through
         // a wall to get there.

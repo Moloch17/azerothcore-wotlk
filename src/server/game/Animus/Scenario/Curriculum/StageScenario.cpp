@@ -1273,6 +1273,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).SplineRestarts) / minutes;
     });
+    // Of those, the ones on a decision with a turn under way or chosen, per minute (movement-smooth A2): what walking a
+    // turn as one run removes.
+    _info.Add("turn_restarts", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).TurnRestarts) / minutes;
+    });
     // A stop followed by a new start within a second, per minute (movement-smooth): the stutter a lapsing held bearing
     // made. spline_restarts counts relaunches over a running spline; this, the stops between them.
     _info.Add("move_stop_starts", [seat](Env const& env, uint32 index)
@@ -3273,9 +3280,14 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     // A spline launched while one was still running is a restart: what a client draws as a hitch in the stride.
     uint32 const splineBefore = bot->movespline->GetId();
     bool const splineRunning = !bot->movespline->Finalized();
+    bool const turning = std::fabs(seat.TurnLeft) >= 1e-4f;
     SeatEncoder::Apply(view, action, result);
     if (splineRunning && bot->movespline->GetId() != splineBefore)
+    {
         ++seat.SplineRestarts;
+        if (turning || std::fabs(view.TurnLeft) >= 1e-4f)
+            ++seat.TurnRestarts;
+    }
     // Steering is state, not a one-off order: what the feet and the head were told is what the next decision
     // continues from.
     seat.HeldBearing = view.HeldBearing;
