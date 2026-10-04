@@ -6311,9 +6311,10 @@ AnimusForge.Curriculum.Actions.Repeat = 0.03
 AnimusForge.Curriculum.Actions.RepeatWindowMs = 10000
 #   presses of one action within the window that cost nothing
 AnimusForge.Curriculum.Actions.RepeatFree = 3
-#   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed
-#   within it swings the feet round from the last one: steering that does not commit, which on screen is a head
-#   twitching side to side, a flyer bobbing up and down, and feet that zigzag
+#   per quarter turn a turn, a pitch or a bearing takes back of the one before it, weighed by how recent that was
+#   (e^(-dt / Options.JitterDecayMs)), and per facing mode taken back or start moments after a stop: steering that
+#   does not commit, which on screen is a head twitching side to side, a flyer bobbing up and down, and feet that
+#   zigzag
 AnimusForge.Curriculum.Actions.Jitter = 0.05
 #   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
 #   it (damage off the focus under Fight, a nuke while Recovering, a step that opens the gap to the wanted range) is
@@ -6354,6 +6355,9 @@ AnimusForge.Curriculum.Actions.Effort = 0.004
 #   per second spent moving in a fight while already at the range the spec wants, with nothing underfoot, the focus
 #   standing still and no from-behind spell to get into position for: the shuffle that reads as a bot
 AnimusForge.Curriculum.Actions.Fidget = 0.01
+#   how long Fidget's and the needless-move charge's conditions must hold before they are charged (ms): running into
+#   the band and stopping within it is not fidgeting, and a range flickering at its edge is not charged each flicker
+AnimusForge.Curriculum.Actions.SettleGraceMs = 500
 #   how much a step must close or open the gap to the wanted range to count as serving or aimless (yards)
 AnimusForge.Curriculum.Actions.IntentSlackYards = 0.5
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
@@ -6549,8 +6553,9 @@ AnimusForge.Curriculum.Options.MoveTurnMs = 250
 #   ... and the same for each 30-degree step of a chosen pitch (ms). A pitch is chosen whole (every 15 degrees from a
 #   60 degree dive to a 60 degree climb) and ends when it gets there.
 AnimusForge.Curriculum.Options.MovePitchMs = 250
-#   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter)
-AnimusForge.Curriculum.Options.JitterWindowMs = 1500
+#   ... and how fast a turn, a pitch or a bearing stops weighing on one that undoes it (ms; Actions.Jitter): its
+#   weight is e^(-dt / this), 0.72 a decision later and 0.14 at 1.5 s. Replaced a 1500 ms window charged in full
+AnimusForge.Curriculum.Options.JitterDecayMs = 750
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
 #   3.5 yd back along its own path at its pace, re-aimed at most once a second; it ends on its own when the seat is

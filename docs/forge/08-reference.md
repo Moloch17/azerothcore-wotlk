@@ -248,7 +248,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Options.MoveBearingMs` | 3000 | | | |
 | `Options.MoveTurnMs` | 250 | | | |
 | `Options.MovePitchMs` | 250 | | | |
-| `Options.JitterWindowMs` | 1500 | | | |
+| `Options.JitterDecayMs` | 750 | | | |
 | `Options.FollowMs` | 6000 | | | |
 
 | Key | Default | | Key | Default |

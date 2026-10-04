@@ -689,9 +689,11 @@ Pitch followed (2026-09-28): with the turn chosen whole and priced, the second f
 the one axis still held and free -- 58% of pitch presses undone within three decisions, and flights half as long
 again. A pitch is now one of nine angles chosen whole, reached at 30 degrees a decision, and priced like a turn.
 
-**Jitter** (`Actions.Jitter`, every stage). A turn or a pitch chosen against one chosen within
-`Options.JitterWindowMs` (750 ms), or still under way, costs `Actions.Jitter` (0.02); a bearing pressed within the window costs the same per half turn it
-swings the feet round from the last one (a reversal 1, a quarter turn 0.5, a neighbouring bearing 0.25). Nothing else
+**Jitter** (`Actions.Jitter`, every stage). A turn, a pitch or a bearing costs `Actions.Jitter` per quarter turn it
+takes back of the one before it (a 45-degree turn undone 0.5, a bearing reversed 2), weighed by how recent that one was:
+e^(-dt / `Options.JitterDecayMs`), 750 ms, so 0.72 a decision later and 0.14 at 1.5 s, with no window edge to time a
+press against; a facing mode taken back, and a start moments after a stop, cost one each on the same decay
+(movement-smooth C, replacing a 1500 ms window charged in full). Nothing else
 in the rewards cared how a seat got where it was going, so a wobble that cost nothing was learned as harmless; in
 flight the feet changed bearing every quarter second. `turn_reversals`, `pitch_reversals` and `bearing_flips` (in half
 turns) count what was charged, and `reward_jitter` what it cost. Jitter, like the repeat, aimless, effort and fidget charges, is a

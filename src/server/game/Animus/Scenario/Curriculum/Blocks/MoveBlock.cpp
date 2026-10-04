@@ -18,6 +18,7 @@
 
 #include "MoveBlock.h"
 #include "MoveKeep.h"
+#include "MovePrice.h"
 #include "MoveTurnPath.h"
 #include "PathGenerator.h"
 #include "Forge.h"
@@ -1541,11 +1542,16 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
         if (SteerMemory* steering = view.Steering)
         {
-            if (steering->Bearing < BEARING_COUNT && steering->Bearing != bearing
-                && view.NowMs < steering->BearingMs + view.Options.JitterWindowMs)
+            if (steering->Bearing < BEARING_COUNT && steering->Bearing != bearing)
             {
                 uint32 const apart = (uint32(bearing) + BEARING_COUNT - steering->Bearing) % BEARING_COUNT;
-                result.BearingFlip += float(std::min(apart, BEARING_COUNT - apart)) / float(BEARING_COUNT / 2);
+                uint64 const since = view.NowMs - std::min(view.NowMs, steering->BearingMs);
+                // Priced per quarter turn swung, as a turn is (MovePrice::BearingSwing), weighed by recency; counted
+                // in half turns within two decay lengths, as the column always was.
+                result.JitterWeight += MovePrice::BearingSwing(apart, BEARING_COUNT)
+                    * MovePrice::Recency(since, view.Options.JitterDecayMs);
+                if (since < 2 * uint64(view.Options.JitterDecayMs))
+                    result.BearingFlip += float(std::min(apart, BEARING_COUNT - apart)) / float(BEARING_COUNT / 2);
             }
             steering->Bearing = bearing;
             steering->BearingMs = view.NowMs;
@@ -1567,6 +1573,20 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local <= ACTION_FACE_HOLD)
     {
+        // A facing mode taken back -- the one left moments ago chosen again -- is a head that cannot settle on what to
+        // look at (Actions.Jitter, weighed by recency as a turn back is; movement-smooth C).
+        if (SteerMemory* steering = view.Steering; steering && view.FacingMode != uint8(local))
+        {
+            uint64 const since = view.NowMs - std::min(view.NowMs, steering->FacingModeMs);
+            if (steering->LastFacingMode == uint8(local))
+            {
+                result.JitterWeight += MovePrice::Recency(since, view.Options.JitterDecayMs);
+                if (since < 2 * uint64(view.Options.JitterDecayMs))
+                    ++result.FacingToggles;
+            }
+            steering->LastFacingMode = view.FacingMode;
+            steering->FacingModeMs = view.NowMs;
+        }
         view.FacingMode = uint8(local);
         // A turn already held would otherwise keep running under a mode that overwrites it, and the turn actions
         // are masked from here on, so nothing could stop it.
@@ -1595,13 +1615,19 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         // (Actions.Jitter). Turning about is not a reversal of anything: it is the one turn with no wrong way.
         if (SteerMemory* steering = view.Steering)
         {
-            bool const recent = steering->TurnSign != 0
-                && (view.TurnLeft != 0.0f || view.NowMs < steering->TurnMs + view.Options.JitterWindowMs);
-            if (recent && sign != steering->TurnSign && std::fabs(angle) < float(M_PI) - 0.01f)
+            // What it takes back of the last turn (MovePrice::Undone, per quarter turn), weighed by how recent that
+            // was -- as now while it is still under way. Counted, as the column always was, within two decay lengths.
+            uint64 const since = view.TurnLeft != 0.0f ? 0 : view.NowMs - std::min(view.NowMs, steering->TurnMs);
+            float const undone = MovePrice::Undone(steering->TurnAngle, angle);
+            result.JitterWeight += undone * MovePrice::Recency(since, view.Options.JitterDecayMs);
+            if (undone > 0.0f && since < 2 * uint64(view.Options.JitterDecayMs))
                 ++result.TurnReversals;
             steering->TurnSign = sign;
+            steering->TurnAngle = angle;
             steering->TurnMs = view.NowMs;
         }
+        // A fine correction is not priced like a swing (Actions.Effort): 15 degrees is a third of a press.
+        result.EffortWeight = MovePrice::EffortOf(angle, TURN_RATE);
 
         // Replaces what is left of a turn already under way: the seat turns this far from where it faces now.
         view.TurnLeft = angle;
@@ -1625,13 +1651,17 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         int8 const sign = target > view.Pitch ? 1 : target < view.Pitch ? -1 : 0;
         if (SteerMemory* steering = view.Steering; steering && sign != 0)
         {
-            bool const recent = steering->PitchSign != 0
-                && (view.PitchTarget != view.Pitch || view.NowMs < steering->PitchMs + view.Options.JitterWindowMs);
-            if (recent && sign != steering->PitchSign)
+            uint64 const since = view.PitchTarget != view.Pitch ? 0
+                : view.NowMs - std::min(view.NowMs, steering->PitchMs);
+            float const undone = MovePrice::Undone(steering->PitchDelta, target - view.Pitch);
+            result.JitterWeight += undone * MovePrice::Recency(since, view.Options.JitterDecayMs);
+            if (undone > 0.0f && since < 2 * uint64(view.Options.JitterDecayMs))
                 ++result.PitchReversals;
             steering->PitchSign = sign;
+            steering->PitchDelta = target - view.Pitch;
             steering->PitchMs = view.NowMs;
         }
+        result.EffortWeight = MovePrice::EffortOf(target - view.Pitch, TURN_RATE);
 
         view.PitchTarget = target;
         uint32 const steps = uint32(std::ceil(std::fabs(target - view.Pitch) / PITCH_RATE - 1e-3f));

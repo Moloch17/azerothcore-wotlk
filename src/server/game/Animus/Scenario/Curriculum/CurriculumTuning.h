@@ -627,13 +627,14 @@ namespace Animus::Curriculum
             float Repeat = 0.03f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
-            /// Steering that does not commit: a turn or a pitch chosen against one chosen within
-            /// Options.JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one,
-            /// charged per reversal (a bearing by the share of a half turn it swings). Nothing in the rewards cared how
-            /// a seat got where it was going, so a wobble that cost nothing was learned as harmless: in the first full
-            /// run's final evaluations 63-70% of the ground stages' turns were undone within three decisions, and in
-            /// flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course
-            /// is the habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
+            /// Steering that does not commit, per quarter turn a turn, a pitch or a bearing takes back of the one
+            /// before it, weighed by how recent that was (e^(-dt / Options.JitterDecayMs)); a facing mode taken back
+            /// and a start moments after a stop at one each (MovePrice, movement-smooth C). Nothing in the rewards
+            /// cared how a seat got where it was going, so a wobble that cost nothing was learned as harmless: in the
+            /// first full run's final evaluations 63-70% of the ground stages' turns were undone within three
+            /// decisions, and in flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat:
+            /// a steady course is the habit it teaches, and a real reason to turn back -- a target that moved -- still
+            /// outweighs it.
             /// Raised from 0.02 after the next-run trial, where bearing flips ran twice the last run's and did not
             /// fall over 20M steps (2026-09-30).
             float Jitter = 0.05f;
@@ -689,6 +690,10 @@ namespace Animus::Curriculum
             /// ground to step out of: the shuffle that reads as a bot. Moving to reach range, to dodge, or out of a
             /// fight is untouched.
             float Fidget = 0.01f;
+            /// How long Fidget's and NeedlessMove's conditions must hold before they are charged (ms): a seat that
+            /// runs into the band it wants and stops within it is not fidgeting, and a range that flickers at its
+            /// edge is not charged on every flicker (movement-smooth C).
+            uint32 SettleGraceMs = 500;
             /// How much the gap to the wanted range has to change for a step to count as closing or opening it.
             float IntentSlackYards = 0.5f;
             /// How far below where a jump would come down the ground is looked for before the jump is refused.
@@ -895,12 +900,14 @@ namespace Animus::Curriculum
             uint32 MoveTurnMs = 250;
             /// The same for each MoveBlock::PITCH_RATE step of a chosen pitch: the decision interval.
             uint32 MovePitchMs = 250;
-            /// How soon after a turn, a pitch or a bearing another one that undoes it counts as jitter
-            /// (Actions.Jitter). About three decisions: long enough to catch a head twitching side to side, short
+            /// How fast a steering choice stops weighing on the one that undoes it (Actions.Jitter): its weight is
+            /// e^(-dt / this). Replaces a window, JitterWindowMs (1500), that charged in full up to its edge and
+            /// nothing past it; at 750 a reversal a decision later weighs 0.72, at 1.5 s 0.14 (movement-smooth C).
+            /// The window's history: about three decisions: long enough to catch a head twitching side to side, short
             /// enough that a seat that walked one way for a moment and then chose another is not charged for having
             /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
             /// a second later went uncharged, and bearing flips did not fall.
-            uint32 JitterWindowMs = 1500;
+            uint32 JitterDecayMs = 750;
             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
@@ -1324,6 +1331,7 @@ namespace Animus::Curriculum
             f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);
             f("Actions.Effort", tuning.Actions.Effort);
             f("Actions.Fidget", tuning.Actions.Fidget);
+            f("Actions.SettleGraceMs", tuning.Actions.SettleGraceMs);
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
             f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
@@ -1461,7 +1469,7 @@ namespace Animus::Curriculum
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
-            f("Options.JitterWindowMs", tuning.Options.JitterWindowMs);
+            f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

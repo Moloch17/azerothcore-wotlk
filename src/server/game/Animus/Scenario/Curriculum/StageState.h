@@ -467,7 +467,11 @@ namespace Animus::Curriculum
         // reward, the episode's judged presses by verdict, and a movement press waiting for the reward to see
         // whether it closed or opened the gap to where the goal wants the seat (MoveGap, yards; negative = none).
         uint32 StepAimless = 0;
-        uint32 StepEffort = 0;
+        float StepEffort = 0.0f;            // presses, a steering one by its angle (SeatActionResult::EffortWeight)
+        /// How long the fidget's and the needless move's conditions have held (Actions.SettleGraceMs).
+        uint32 FidgetHeldMs = 0;
+        uint32 NeedlessHeldMs = 0;
+        uint32 FacingToggles = 0;
         uint32 StepFidgetMs = 0;
         std::array<uint32, AIMLESS_CAUSES> StepAimlessBy{};     // this decision's, by cause (priced at the reward)
         std::array<uint32, AIMLESS_CAUSES> AimlessBy{};         // the episode's
@@ -636,7 +640,10 @@ namespace Animus::Curriculum
             BearingFlips = 0.0f;
             PitchReversals = 0;
             StepAimless = 0;
-            StepEffort = 0;
+            StepEffort = 0.0f;
+            FidgetHeldMs = 0;
+            NeedlessHeldMs = 0;
+            FacingToggles = 0;
             StepFidgetMs = 0;
             StepAimlessBy.fill(0);
             AimlessBy.fill(0);

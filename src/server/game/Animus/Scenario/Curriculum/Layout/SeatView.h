@@ -269,6 +269,12 @@ namespace Animus::Curriculum
         uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
         uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
         int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
+        /// The angles those were, signed (MovePrice::Undone prices a reversal by what it takes back), and the facing
+        /// mode before the current one with when it was left (a FACE_* back to it is a toggle, movement-smooth C).
+        float TurnAngle = 0.0f;
+        float PitchDelta = 0.0f;
+        uint8 LastFacingMode = 0xFF;
+        uint64 FacingModeMs = 0;
         /// What a watching client draws (movement-smooth A2, B2): a run keeps the head it was launched with
         /// (RunFacing, for the run RunId) however it is re-aimed since, and a seat standing still is shown its turns
         /// swung across the ticks (ShownFacing) rather than snapped.
@@ -726,12 +732,19 @@ namespace Animus::Curriculum
         uint32 Falls = 0;
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
-        /// Steering that failed to commit (MoveBlock, Actions.Jitter): a turn chosen against one chosen within
-        /// JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one -- as the
-        /// share of a half turn it swings (a reversal is 1, a quarter turn 0.5).
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter), counted for the columns as before: a turn or a
+        /// pitch chosen against one chosen within two Options.JitterDecayMs, a bearing pressed within it that swings
+        /// the feet round from the last one -- as the share of a half turn it swings -- and a facing mode taken back.
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
-        uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
+        uint32 PitchReversals = 0;
+        uint32 FacingToggles = 0;
+        /// ... and what they cost, in quarter turns undone weighed by how recent the choice undone was
+        /// (MovePrice::Undone, Recency): the Actions.Jitter charge.
+        float JitterWeight = 0.0f;
+        /// The share of a full press this press costs in Actions.Effort: a steering press by its angle
+        /// (MovePrice::EffortOf), everything else 1.
+        float EffortWeight = 1.0f;
         /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
         /// ran (negative: none ran).
         uint32 FollowAims = 0;

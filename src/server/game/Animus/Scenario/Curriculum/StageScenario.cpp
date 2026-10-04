@@ -35,6 +35,7 @@
 #include "DeathBlock.h"
 #include "DuelBlock.h"
 #include "MoveBlock.h"
+#include "MovePrice.h"
 #include "Forge.h"
 #include "World.h"
 #include "EncoderSupport.h"
@@ -1360,6 +1361,11 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("pitch_reversals", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).PitchReversals);
+    });
+    // FACE_* modes taken back within two decay lengths, per episode (movement-smooth C).
+    _info.Add("facing_toggles", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).FacingToggles);
     });
 
     // Support: healing and protection done (on itself, the owner and teammates) as fractions of the bot's health, the
@@ -3427,7 +3433,8 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.TurnReversals += result.TurnReversals;
     seat.BearingFlips += result.BearingFlip;
     seat.PitchReversals += result.PitchReversals;
-    seat.StepJitter += float(result.TurnReversals + result.PitchReversals) + result.BearingFlip;
+    seat.FacingToggles += result.FacingToggles;
+    seat.StepJitter += result.JitterWeight;
     if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
     {
         ++seat.Drops;
@@ -4206,8 +4213,9 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     if (!block || !bot)
         return;
 
-    // Every press but the no-op costs a little effort: the no-op is what a player does most of the time.
-    ++seat.StepEffort;
+    // Every press but the no-op costs a little effort: the no-op is what a player does most of the time. A steering
+    // press by its angle (SeatActionResult::EffortWeight).
+    seat.StepEffort += result.EffortWeight;
     ++seat.EffortPresses;
     if (bot->IsInCombat())
         ++seat.CombatPresses;
@@ -4671,15 +4679,18 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
         if (combat)
             seat.CombatMs += _decisionMs;
 
-        // Starting to move again moments after stopping is the stutter a player never shows: priced as a bearing
-        // flip (Actions.Jitter). Every start is counted.
+        // Starting to move again moments after stopping is the stutter a player never shows: priced as jitter,
+        // weighed by how recent the stop was (MovePrice::Recency, Options.JitterDecayMs) rather than in full up to a
+        // second and not at all past it. Every start is counted, and a restart within a second for the column.
         if (moving && !seat.WasMoving)
         {
             ++seat.MoveStarts;
-            if (seat.StoppedAtMs && env.EpisodeElapsedMs < seat.StoppedAtMs + 1000)
+            if (seat.StoppedAtMs)
             {
-                seat.StepJitter += 1.0f;
-                ++seat.MoveStopStarts;
+                uint32 const since = env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, seat.StoppedAtMs);
+                seat.StepJitter += MovePrice::Recency(since, _tuning.Options.JitterDecayMs);
+                if (since < 1000)
+                    ++seat.MoveStopStarts;
             }
         }
         if (!moving && seat.WasMoving)
@@ -4702,18 +4713,27 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
         }
         bool const gettingBehind = seat.FromBehind > 0 && target && bot->IsWithinMeleeRange(target)
             && !target->isInBack(bot);
+        // Charged once it has held Actions.SettleGraceMs (MovePrice::Settled): running into the band and stopping is
+        // not a fidget, and a gap flickering at the band's edge is not charged each flicker (movement-smooth C).
         if (moving && combat && !focusMoving && !gettingBehind && GoalGap(seat, bot, target) == 0.0f
             && !Encoding::StandingInHazards(bot, nullptr))
         {
-            seat.StepFidgetMs += _decisionMs;
-            seat.FidgetMs += _decisionMs;
+            seat.FidgetHeldMs += _decisionMs;
+            if (MovePrice::Settled(seat.FidgetHeldMs, tuning.SettleGraceMs))
+            {
+                seat.StepFidgetMs += _decisionMs;
+                seat.FidgetMs += _decisionMs;
+            }
         }
+        else
+            seat.FidgetHeldMs = 0;
 
         // A ranged seat moving in a fight it could stand and shoot in: its target in reach and in sight, nothing
         // underfoot, nothing in melee with it, its owner (if it has one) close. Moving stops a hunter's Auto Shot
         // and a caster's cast, which is what a player stands still to avoid. Kiting, stepping out of melee or out
         // of fire, getting back into range or sight and keeping up with the owner are untouched.
         bool const ranged = seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee;
+        bool needless = false;
         if (ranged && moving && combat && target && target->IsAlive() && !focusMoving)
         {
             float const distance = bot->GetDistance(target);
@@ -4724,8 +4744,11 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
                     meleed = true;
             Player* owner = Owner(env);
             bool const ownerNear = !owner || !owner->IsAlive() || bot->GetDistance(owner) <= 15.0f;
-            if (distance >= minRange && distance <= 30.0f && bot->IsWithinLOSInMap(target) && !meleed && ownerNear
-                && !Encoding::StandingInHazards(bot, nullptr))
+            needless = distance >= minRange && distance <= 30.0f && bot->IsWithinLOSInMap(target) && !meleed
+                && ownerNear && !Encoding::StandingInHazards(bot, nullptr);
+            // Held Actions.SettleGraceMs first, as the fidget is.
+            seat.NeedlessHeldMs = needless ? seat.NeedlessHeldMs + _decisionMs : 0;
+            if (needless && MovePrice::Settled(seat.NeedlessHeldMs, tuning.SettleGraceMs))
             {
                 ++seat.StepAimless;
                 ++seat.AimlessPresses;
@@ -4733,6 +4756,8 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
                 ++seat.AimlessBy[size_t(AimlessCause::NeedlessMove)];
             }
         }
+        if (!needless)
+            seat.NeedlessHeldMs = 0;
     }
 
     // Each cause at its own price; one left without a cause (none should be) at the plain one.
@@ -4753,7 +4778,7 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     seat.StepSuppliesSpent = 0;
     seat.Rewards.Add(RewardTerm::Fidget, -tuning.Fidget * float(seat.StepFidgetMs) / 1000.0f);
     seat.StepAimless = 0;
-    seat.StepEffort = 0;
+    seat.StepEffort = 0.0f;
     seat.StepFidgetMs = 0;
 }
 
