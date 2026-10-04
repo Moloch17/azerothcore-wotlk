@@ -366,6 +366,9 @@ namespace AnimusForge
 
         uint64 _ticks = 0;                  // decisions since the scenario started, not world updates
         uint32 _ticksSinceDecision = 0;     // world updates since the last decision (< TicksPerDecision)
+        /// The running stage's split and world tick (ForgeConfig::TicksFor, movement-smooth A6), set when it starts.
+        uint32 _runTicks = 1;
+        uint32 _runWorldTickMs = 0;
         /// Half-batch (AnimusForge.HalfBatch with TicksPerDecision 1): the world ticks at half a decision and the
         /// pool's two groups' maps take turns; `_turn` is the group whose maps tick this world tick and decide at
         /// its end, `_nextTurn` the next one's. Without half-batch the one group ticks every world tick.
@@ -470,6 +473,8 @@ namespace AnimusForge
 
         std::chrono::steady_clock::time_point _rateTime;
         uint64 _rateTicks = 0;
+        uint64 _rateTurnRuns = 0;           // Encoding::TurnRunCalls at _rateTime
+        double _turnRunsPerSecond = 0.0;
         uint64 _rateEpisodes = 0;
         uint64 _rateWorldNs = 0;
         uint64 _rateSimNs = 0;

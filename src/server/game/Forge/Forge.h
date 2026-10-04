@@ -40,6 +40,12 @@ namespace ForgeCore
     /// session manager, so this is the cheap answer to "is there anybody to build a packet for": the
     /// packet builders skip their work while it is false, and behave as stock while it is true.
     AC_GAME_API bool HasClients();
+
+    /// The world tick (game ms) the running stage wants, set by the module when a stage starts and cleared (0) when
+    /// the plan ends: AnimusForge.Stage.<name>.TicksPerDecision cuts one stage's decision finer than the rest.
+    /// ForgeMain's update loop reads it every tick and falls back to the configured tick at 0.
+    AC_GAME_API void SetTickMs(uint32 tickMs);
+    AC_GAME_API uint32 TickMs();
 }
 
 #endif

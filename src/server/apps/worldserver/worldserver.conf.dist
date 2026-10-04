@@ -5158,6 +5158,21 @@ AnimusForge.DecisionMs = 250
 AnimusForge.TicksPerDecision = 1
 
 #
+#    AnimusForge.Stage.<name>.TicksPerDecision
+#        Description: One stage's own world updates per decision, where the default would not do: the movement
+#                     stages want the finer world (smooth splines, the facing kept on a moving target between
+#                     decisions, turns shown swung to a watching client) without every stage paying for it. The
+#                     worldserver takes the stage's tick while it runs and the configured one again after, so
+#                     no restart is needed. It must divide AnimusForge.DecisionMs; one that does not is dropped
+#                     with an error. Under AnimusForge.HalfBatch such a stage runs as one group.
+#                     Suggested for the movement stages: 4 (stage1_move, stage2_travel), at roughly the cost
+#                     above.
+#        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
+#
+#    AnimusForge.Stage.stage1_move.TicksPerDecision = 4
+#    AnimusForge.Stage.stage2_travel.TicksPerDecision = 4
+
+#
 #    AnimusForge.HalfBatch
 #        Description: Split the envs into two halves whose maps tick in turn, so the learner decides one half
 #                     while the other half's maps tick, instead of the sim and the learner taking turns.

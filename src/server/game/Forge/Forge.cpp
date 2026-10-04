@@ -21,10 +21,12 @@
 #include "Config.h"
 #include "Log.h"
 #include "WorldSessionMgr.h"
+#include <atomic>
 
 namespace
 {
     bool ForgePlaytest = false;
+    std::atomic<uint32> ForgeTickMs{ 0 };
 }
 
 namespace ForgeCore
@@ -44,5 +46,15 @@ namespace ForgeCore
     bool HasClients()
     {
         return sWorldSessionMgr->GetActiveSessionCount() > 0;
+    }
+
+    void SetTickMs(uint32 tickMs)
+    {
+        ForgeTickMs.store(tickMs, std::memory_order_relaxed);
+    }
+
+    uint32 TickMs()
+    {
+        return ForgeTickMs.load(std::memory_order_relaxed);
     }
 }

@@ -64,6 +64,16 @@ namespace AnimusForge
         /// ForgeUpdateLoop reads both keys -- so splines, auras and the fight run at the finer step while the policy
         /// still chooses every DecisionMs. It buys smooth movement without paying for more decisions.
         uint32 TicksPerDecision = 1;
+        /// AnimusForge.Stage.<name>.TicksPerDecision: a stage's own split where the default would not do -- the
+        /// movement stages want a finer world (movement-smooth A6) without every stage paying for it. Validated at
+        /// load as TicksPerDecision is; one that does not divide DecisionMs is dropped with an error.
+        std::map<std::string, uint32> StageTicks;
+        /// The split `scenario` runs with: its own (StageTicks), or TicksPerDecision.
+        [[nodiscard]] uint32 TicksFor(std::string const& scenario) const
+        {
+            auto const own = StageTicks.find(scenario);
+            return own != StageTicks.end() ? own->second : TicksPerDecision;
+        }
         /// DecisionMs / TicksPerDecision: how far a map moves per tick.
         [[nodiscard]] uint32 TickMs() const
         {

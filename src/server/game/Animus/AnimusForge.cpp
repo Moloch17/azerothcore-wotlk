@@ -246,7 +246,7 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // learner. That is the whole point: movement wants a fast world, the policy does not want a faster decision.
     // Counting ticks rather than accumulating milliseconds keeps a decision exactly TicksPerDecision ticks
     // whatever the tick rounds to.
-    _decisionTick = ++_ticksSinceDecision >= RunConfig().TicksPerDecision;
+    _decisionTick = ++_ticksSinceDecision >= _runTicks;
     if (_decisionTick)
         _pool->BeginDecision(_turn);
 
@@ -404,12 +404,12 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
 
     // The forge core sizes its tick from the same keys; a different tick means a worldserver built before they
     // were one, and every reward scaled per decision would be off.
-    if (diff != _config.WorldTickMs() && !ForgeCore::Playtest() && !_tickMismatchLogged)
+    if (diff != _runWorldTickMs && !ForgeCore::Playtest() && !_tickMismatchLogged)
     {
         _tickMismatchLogged = true;
         LOG_ERROR("module.animus", "The world ticks {} ms, but AnimusForge.DecisionMs {} over TicksPerDecision {}{} "
-            "wants {} ms: rebuild the worldserver (./forge.sh --build)", diff, run.DecisionMs, run.TicksPerDecision,
-            _config.HalvesTick() ? ", halved for AnimusForge.HalfBatch," : "", _config.WorldTickMs());
+            "wants {} ms: rebuild the worldserver (./forge.sh --build)", diff, run.DecisionMs, _runTicks,
+            _halfBatch ? ", halved for AnimusForge.HalfBatch," : "", _runWorldTickMs);
     }
 
     // The clock and the count of ticks to a decision are the prologue's, before the maps tick: what is left here
@@ -711,7 +711,16 @@ bool AnimusForge::Forge::StartCurrent()
     // Half-batch: two halves, provided no map holds envs of both (a continent's replicas are dealt contiguous
     // blocks, so the split has to fall on a replica boundary). Otherwise one group, which ticks on every other
     // world tick: the world still runs at half a decision, and the decisions are what they are without it.
-    _halfBatch = _config.HalvesTick();
+    // The stage's own split (AnimusForge.Stage.<name>.TicksPerDecision), handed to the update loop as its tick.
+    // Half-batch needs one tick a decision, so a finer stage runs as one group.
+    _runTicks = config.TicksFor(entry.Scenario);
+    _halfBatch = _config.HalvesTick() && _runTicks == 1;
+    _runWorldTickMs = std::max<uint32>(1, config.DecisionMs / _runTicks / (_halfBatch ? 2 : 1));
+    ForgeCore::SetTickMs(_runWorldTickMs);
+    _tickMismatchLogged = false;
+    if (_runTicks != config.TicksPerDecision)
+        LOG_INFO("module.animus", "{} runs {} world ticks of {} ms a decision (AnimusForge.Stage.{}.TicksPerDecision)",
+            entry.Scenario, _runTicks, _runWorldTickMs, entry.Scenario);
     _pool->SetGroups(_halfBatch ? _pool->NumEnvs() / 2 : _pool->NumEnvs());
     if (_halfBatch && (_pool->NumEnvs() < 2 || !_pool->GroupsKeepToTheirMaps()))
     {
@@ -832,6 +841,7 @@ void AnimusForge::Forge::FinishCurrent(Outcome outcome)
 void AnimusForge::Forge::EndPlan(char const* reason)
 {
     _state = State::Idle;
+    ForgeCore::SetTickMs(0);            // the configured tick again (movement-smooth A6)
     _lastPlan = _plan;
 
     LOG_INFO("module.animus", "Plan ended: {}. The sim is idle.", reason);
@@ -1736,6 +1746,8 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     {
         _ticksPerSecond = double(ticks) / seconds;
         _episodesPerSecond = double(sim.Episodes - std::min(sim.Episodes, _rateEpisodes)) / seconds;
+        uint64 const turnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
+        _turnRunsPerSecond = double(turnRuns - std::min(turnRuns, _rateTurnRuns)) / seconds;
 
         // Where those decisions' wall time went, per decision.
         if (ticks)
@@ -1820,6 +1832,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     {
         _rateTime = now;
         _rateTicks = _ticks;
+        _rateTurnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
         _rateEpisodes = sim.Episodes;
         _rateWorldNs = _worldNs;
         _rateSimNs = _simNs;
@@ -1845,6 +1858,13 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         if (moves)
             sim.ProbeNote += Acore::StringFormat("moves {} ({:.3f} ms each); ", moves,
                 double(Animus::Curriculum::Encoding::MoveToNs.load(std::memory_order_relaxed)) / double(moves) / 1e6);
+        // A turn walked as one run (MoveBlock): what laying it out costs, how often, and how often it fell back.
+        uint64 const turnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
+        if (turnRuns)
+            sim.ProbeNote += Acore::StringFormat("turn runs {} ({:.3f} ms each, {:.1f}/s, {} fell back straight); ",
+                turnRuns, double(Animus::Curriculum::Encoding::TurnRunNs.load(std::memory_order_relaxed))
+                / double(turnRuns) / 1e6, _turnRunsPerSecond,
+                Animus::Curriculum::Encoding::TurnRunFallbacks.load(std::memory_order_relaxed));
         uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
         if (searches)
             sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths "
@@ -2308,8 +2328,8 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.GoalCount = spec.GoalCount;
     // The learner reads a step as tick_ms * decision_ticks, which is AnimusForge.DecisionMs however the two are
     // split; the split itself is what tells it how finely the world moved underneath a decision.
-    msg.TickMs = RunConfig().TickMs();
-    msg.DecisionTicks = RunConfig().TicksPerDecision;
+    msg.TickMs = std::max<uint32>(1, RunConfig().DecisionMs / _runTicks);
+    msg.DecisionTicks = _runTicks;
     // The longest episode the scenario can have: the learner sizes evaluation windows by it.
     msg.EpisodeSeconds = std::max(RunConfig().EpisodeSeconds, spec.LongestEpisodeSeconds);
     msg.EnvGroups = _pool->GroupCount();

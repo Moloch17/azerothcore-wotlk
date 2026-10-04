@@ -281,6 +281,11 @@ namespace Animus::Curriculum::Encoding
     /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
     inline std::atomic<uint64> MoveToCalls{ 0 };
     inline std::atomic<uint64> MoveToNs{ 0 };
+    /// MoveBlock's turns walked as one run (movement-smooth A2): the tries at laying one out, their time since the
+    /// start (a PathGenerator and a line of sight a turning leg), and how many fell back to the straight run.
+    inline std::atomic<uint64> TurnRunCalls{ 0 };
+    inline std::atomic<uint64> TurnRunNs{ 0 };
+    inline std::atomic<uint64> TurnRunFallbacks{ 0 };
 
     /// Move along a straight spline through the air or the water, with no path and no ground under it. Steering in
     /// three dimensions needs this: a ground move is snapped to the ground by definition, which is exactly what a

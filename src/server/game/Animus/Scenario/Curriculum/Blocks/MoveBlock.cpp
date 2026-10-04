@@ -28,6 +28,7 @@
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include <boost/json/array.hpp>
+#include <chrono>
 #include <boost/json/object.hpp>
 #include "DetourExtended.h"
 #include "DetourNavMeshQuery.h"
@@ -551,7 +552,7 @@ namespace
     /// than every decision of it. Each turning leg's end is put on the ground within MAX_STEP, seen from the last,
     /// dry, and reached by the navmesh without a detour; the rest is pathfound as a straight run is. Any failure
     /// lays nothing out and the caller launches the straight run, never part of a path.
-    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
+    bool LayTurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
     {
         Player* bot = view.Bot;
         Map* map = bot->GetMap();
@@ -612,6 +613,20 @@ namespace
 
         Encoding::MoveAlong(bot, points, view.Facing);
         return true;
+    }
+
+    /// LayTurnRun, timed and counted for the status line (Encoding::TurnRunCalls): what the curve costs on the map
+    /// thread, and how often it is refused for the straight run.
+    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
+    {
+        auto const started = std::chrono::steady_clock::now();
+        bool const laid = LayTurnRun(view, heading, speed, length);
+        Encoding::TurnRunCalls.fetch_add(1, std::memory_order_relaxed);
+        Encoding::TurnRunNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        if (!laid)
+            Encoding::TurnRunFallbacks.fetch_add(1, std::memory_order_relaxed);
+        return laid;
     }
 
     /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a

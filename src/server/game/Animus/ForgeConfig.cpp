@@ -224,6 +224,28 @@ void AnimusForge::ForgeConfig::Load()
             "{} ms", DecisionMs, DecisionMs - 1);
         DecisionMs -= 1;
     }
+    // AnimusForge.Stage.<name>.TicksPerDecision, held to what TicksPerDecision is held to above.
+    StageTicks.clear();
+    for (std::string const& key : sConfigMgr->GetKeysByString("AnimusForge.Stage."))
+    {
+        std::string const rest = key.substr(std::string("AnimusForge.Stage.").size());
+        std::string const suffix = ".TicksPerDecision";
+        if (rest.size() <= suffix.size() || rest.compare(rest.size() - suffix.size(), suffix.size(), suffix))
+            continue;
+        std::string const stage = rest.substr(0, rest.size() - suffix.size());
+        uint32 const ticks = std::max<uint32>(1, sConfigMgr->GetOption<uint32>(key, TicksPerDecision));
+        if (ticks > DecisionMs || DecisionMs % ticks)
+        {
+            LOG_ERROR("module.animus", "{} = {} does not divide AnimusForge.DecisionMs = {} ms into whole ticks; {} "
+                "runs with {}", key, ticks, DecisionMs, stage, TicksPerDecision);
+            continue;
+        }
+        if (HalfBatch && ticks != 1)
+            LOG_WARN("module.animus", "{} = {}: AnimusForge.HalfBatch needs one tick a decision, so {} runs as one "
+                "group", key, ticks, stage);
+        StageTicks[stage] = ticks;
+    }
+
     EpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.EpisodeSeconds", 60));
 
     Policy = sConfigMgr->GetOption<std::string>("AnimusForge.Policy", "remote");
