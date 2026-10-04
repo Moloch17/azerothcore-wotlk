@@ -1787,7 +1787,7 @@ dungeon draws them, by spec alone) at 15-30 (`FocusLevelFirst/Last`, `FocusChanc
 |---|---|---|---|
 | `tank_hold` | tank | each enemy on it (`Raid.TankHold`) | each enemy on anybody else (`Raid.TankLoose`) |
 | `heal_keep` | healer | each member above 50% (`Raid.KeepUp`); the pack has twice its health (`PackHealthPct` 200), so the fight outlasts a mana bar | each member below 35% |
-| `damage_discipline` | a damage dealer | damage on the tank's target (`Raid.TankTarget`) | each enemy it has taken off the tank (`Raid.PulledOff`) |
+| `damage_discipline` | a damage dealer | damage on the tank's target (`Raid.TankTarget`) | each enemy it has taken off the tank (`Raid.PulledOff`); each enemy on it before the tank has engaged (`Raid.EarlyPull`, a cost that never fades) |
 | `pull` | tank | each pack of a camp killed with no other pack in its fight (`Pulls.CampCleanPack`) | each pack in the fight past the first, by the second (`Pulls.CampExtraPack`); standing about past `Pulls.CampRestMs` between packs |
 
 The drilled seat is seat 0 and its role's terms weigh `Raid.DrillWeight` (3); the others earn their own role's, so

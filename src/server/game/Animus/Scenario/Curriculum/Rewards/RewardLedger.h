@@ -119,6 +119,9 @@ namespace Animus::Curriculum
         /// A director replacing or churning its side's orders (Director.OrderChange, Director.OrderChurn): charged to
         /// the director's own row, outside any seat's. A term since 2026-10-03, so it fades with the rest of shaping.
         OrderChurn,
+        /// A party's damage dealer or healer with enemies on it while the tank has not engaged (Raid.EarlyPull): the
+        /// pull opened before the tank was there to take it. A cost, not shaping: it never fades (2026-10-03).
+        EarlyPull,
         Count
     };
 
@@ -170,6 +173,7 @@ namespace Animus::Curriculum
             case RewardTerm::Timeout:
             case RewardTerm::StepCost:
             case RewardTerm::DeathRun:
+            case RewardTerm::EarlyPull:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

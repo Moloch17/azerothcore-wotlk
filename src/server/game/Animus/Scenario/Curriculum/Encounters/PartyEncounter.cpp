@@ -68,13 +68,17 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         return float(_envs[env.Index].Seats[seat].IdleMs) / 1000.0f;
     });
 
-    // The roles' readings (the Deadmines curriculum's phase B): a tank's share of the party's enemies held, and a
-    // damage dealer's share of its damage on the tank's target and its seconds with an enemy pulled off the tank.
-    // Zero for the seats whose role it is not.
-    table.Add("tank_hold_share", [this](Env const& env, uint32 seat)
+    // The roles' readings (the Deadmines curriculum's phase B): the party tank's share of the party's enemies held, the
+    // same on every seat of the party (only the tank's seat counts them; read off one seat, averaged over five, it read
+    // a fifth of what the tank held), and a damage dealer's share of its damage on the tank's target and its seconds
+    // with an enemy pulled off the tank, zero for the seats whose role it is not.
+    table.Add("tank_hold_share", [this](Env const& env, uint32)
     {
-        SeatParty const& party = _envs[env.Index].Seats[seat];
-        return party.EnemiesOnParty ? float(party.EnemiesHeld) / float(party.EnemiesOnParty) : 0.0f;
+        SeatParty const* tank = nullptr;
+        for (SeatParty const& party : _envs[env.Index].Seats)
+            if (party.EnemiesOnParty && (!tank || party.EnemiesOnParty > tank->EnemiesOnParty))
+                tank = &party;
+        return tank ? float(tank->EnemiesHeld) / float(tank->EnemiesOnParty) : 0.0f;
     });
     table.Add("tank_target_share", [this](Env const& env, uint32 seat)
     {
@@ -106,6 +110,15 @@ namespace
 
     bool Heals(Aptitude const& aptitude) { return AptitudeDemand::KeepsThemUp().MetBy(aptitude); }
     bool HoldsThePull(Aptitude const& aptitude) { return AptitudeDemand::HoldsThePull().MetBy(aptitude); }
+
+    /// The party's tank: a dungeon's party names it (StageScenario::FitsDungeonRole); any other reads it off the build.
+    /// The build alone mislabelled both ways -- a bear tank without a shield was charged as a damage dealer pulling
+    /// aggro, and a shield-carrying healer counted as the tank (2026-10-03).
+    bool IsTank(Animus::Curriculum::SeatState const& state)
+    {
+        return state.DungeonRole == Animus::Curriculum::DUNGEON_TANK
+            || (state.DungeonRole == Animus::Curriculum::DUNGEON_ANY && HoldsThePull(state.Apt));
+    }
 }
 
 Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
@@ -128,9 +141,7 @@ Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
         if (!tank || !tank->IsAlive())
             continue;
 
-        // A dungeon's party names its tank (StageScenario::FitsDungeonRole); any other reads it off the build.
-        bool const can = state.DungeonRole == DUNGEON_TANK
-            || (state.DungeonRole == DUNGEON_ANY && HoldsThePull(state.Apt));
+        bool const can = IsTank(state);
         if ((can && !holds) || (can == holds && state.Apt[Aptitude::MITIGATION] > most))
         {
             holds = holds || can;
@@ -273,7 +284,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         if (!other->IsAlive())
             continue;
 
-        if (tank == MAX_SEATS && HoldsThePull(data.Seats[seat].Apt))
+        if (tank == MAX_SEATS && IsTank(data.Seats[seat]))
             tank = seat;
 
         float const health = other->GetHealthPct();
@@ -327,7 +338,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         groupAlive += ownGroup ? 1 : 0;
         inCombat += other->IsInCombat() ? 1 : 0;
         lowestHealth = std::min(lowestHealth, other->GetHealthPct() / 100.0f);
-        tanks += HoldsThePull(data.Seats[seat].Apt) ? 1 : 0;
+        tanks += IsTank(data.Seats[seat]) ? 1 : 0;
         healers += Heals(data.Seats[seat].Apt) ? 1 : 0;
     }
 
@@ -365,12 +376,12 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
 
     // Taking aggro while a teammate is there to hold it (Party.PulledThreat): the enemies on a damage dealer or a
     // healer are the tank's to take, and the seat that draws them is the one to charge.
-    if (!HoldsThePull(apt) && bot->IsAlive())
+    if (!IsTank(data.Seats[seatIndex]) && bot->IsAlive())
     {
         bool tankNearby = false;
         for (uint32 other = 0; other < _scenario.SeatCount() && !tankNearby; ++other)
             if (Player* mate = other == seatIndex ? nullptr : _scenario.SeatBotInWorld(env, other);
-                mate && mate->IsAlive() && data.Seats[other].L && HoldsThePull(data.Seats[other].Apt))
+                mate && mate->IsAlive() && data.Seats[other].L && IsTank(data.Seats[other]))
                 tankNearby = true;
 
         if (tankNearby)
@@ -406,7 +417,6 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             continue;
         float const weight = raid && !inGroup(teammateSeat) ? outsideWeight : 1.0f;
 
-        Aptitude const& teammateApt = data.Seats[teammateSeat].Apt;
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
         // Healing, and what the seat's absorbs soaked and its reductions prevented on the teammate, count alike.
@@ -417,7 +427,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
 
         // Somebody who can hold the pull is there to be hit; everyone else being hit is what the party wants to
         // avoid. And the charge is lighter on a build that protects, because keeping people up is its job.
-        if (!HoldsThePull(teammateApt))
+        if (!IsTank(data.Seats[teammateSeat]))
             ledger.Add(RewardTerm::TeammateDamageTaken,
                 -(Protects(apt) ? tuning.TeammateDamageTakenProtector : tuning.TeammateDamageTakenDps)
                 * weight * float(taken) / health);
@@ -425,7 +435,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (Heals(apt))
             ledger.Add(RewardTerm::TeammateHealing, healShare * tuning.TeammateHealing * float(healed) / health);
 
-        if (!HoldsThePull(teammateApt) && teammate->IsAlive())
+        if (!IsTank(data.Seats[teammateSeat]) && teammate->IsAlive())
         {
             uint32 onTeammate = 0;
             for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
@@ -434,7 +444,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                     ++onTeammate;
 
             seat.ThreatOnTeammates += onTeammate;
-            if (HoldsThePull(apt))
+            if (IsTank(data.Seats[seatIndex]))
                 ledger.Add(RewardTerm::TeammateThreat,
                     -tuning.TankLoseTeammate * weight * float(onTeammate) * _scenario.DecisionScale());
         }
@@ -508,7 +518,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // Beside an owner the owner encounter pays the tank for this (Owner.TankHold). The party's tank also pays for
     // every enemy on somebody else (Raid.TankLoose): holding the pull is its job, and the Deadmines' parties lost
     // their fights with two of eight enemies on the tank (2026-10-01). A dungeon's drawn tank is the tank.
-    bool const tank = state.DungeonRole == DUNGEON_TANK || (state.DungeonRole == DUNGEON_ANY && HoldsThePull(apt));
+    bool const tank = IsTank(state);
     bool const healer = state.DungeonRole == DUNGEON_HEALER || (state.DungeonRole == DUNGEON_ANY && Heals(apt));
     // A drill weights the drilled seat's role terms (ArenaDefinition::DrillRole, seat 0): the lesson is that role's.
     ArenaDefinition const& arena = _scenario.Arena(env);
@@ -545,6 +555,14 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             ledger.Add(RewardTerm::Threat, -drill * tuning.PulledOff * float(onBot) * scale);
         }
 
+    // A damage dealer or the healer with enemies on it while the party's tank is alive and has not engaged: the pull
+    // was opened before the tank was there to take it (Raid.EarlyPull, a cost). A linked pack then turns on whoever
+    // opened -- the stage6 parties' damage dealers kept enemies ~8 s a fight (2026-10-03).
+    if (!tank && !raid && !arena.Owner && onBot)
+        if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive()
+            && !partyTank->IsInCombat())
+            ledger.Add(RewardTerm::EarlyPull, -drill * tuning.EarlyPull * float(onBot) * scale);
+
     // The healer keeps its group up, in a party as in a raid: in the Deadmines a level-20 healer cast about five
     // heals a run and its party wiped at the first packs (2026-09-30).
     if (healer)
@@ -568,7 +586,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             ledger.Add(RewardTerm::TeammateHealing, -drill * tuning.Overheal * float(step.HealingRaw - effective)
                 / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
-    else if (raid && !HoldsThePull(apt))
+    else if (raid && !IsTank(state))
         ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);
 
     // Idle: in a fight, an enemy in reach, and nothing done -- no press that served or was neutral, no damage, no

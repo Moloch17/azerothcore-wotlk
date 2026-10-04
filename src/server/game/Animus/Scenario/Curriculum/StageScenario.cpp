@@ -2651,6 +2651,37 @@ void Animus::Curriculum::StageScenario::Configure(Player* bot, SeatState& seat, 
 void Animus::Curriculum::StageScenario::PrepareFighter(Player* bot, SeatState& seat) const
 {
     seat.Stable = SeatCharacter::PrepareFighter(bot, *seat.L, seat.Apt);
+
+    // A party's drawn tank starts in its tanking stance, form or aura, as a tank walks into a dungeon: only the warrior
+    // was given one, and by its build, so a bear (no shield) or a paladin without Righteous Fury fought a pull it was
+    // drawn to hold in the wrong mode (stage6, 2026-10-03). Changing it is the seat's own press from here on.
+    if (seat.DungeonRole != DUNGEON_TANK || !seat.L->Profile)
+        return;
+    constexpr uint32 SPELL_DEFENSIVE_STANCE = 71;
+    constexpr uint32 SPELL_RIGHTEOUS_FURY = 25780;
+    constexpr uint32 SPELL_BEAR_FORM = 5487;
+    constexpr uint32 SPELL_DIRE_BEAR_FORM = 9634;
+    constexpr uint32 SPELL_FROST_PRESENCE = 48263;
+    uint32 mode = 0;
+    switch (seat.L->Profile->Class)
+    {
+        case CLASS_WARRIOR:
+            mode = SPELL_DEFENSIVE_STANCE;
+            break;
+        case CLASS_PALADIN:
+            mode = SPELL_RIGHTEOUS_FURY;
+            break;
+        case CLASS_DRUID:
+            mode = bot->HasSpell(SPELL_DIRE_BEAR_FORM) ? SPELL_DIRE_BEAR_FORM : SPELL_BEAR_FORM;
+            break;
+        case CLASS_DEATH_KNIGHT:
+            mode = SPELL_FROST_PRESENCE;
+            break;
+        default:
+            break;
+    }
+    if (mode && bot->HasSpell(mode) && !bot->HasAura(mode))
+        bot->CastSpell(bot, mode, true);
 }
 
 void Animus::Curriculum::StageScenario::StockSeats(Env& env)

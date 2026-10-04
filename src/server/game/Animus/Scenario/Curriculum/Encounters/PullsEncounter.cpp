@@ -1308,7 +1308,10 @@ void Animus::Curriculum::PullsEncounter::OrderCamp(Env& env)
     if (!from || !from->IsInWorld())
         return;
 
-    // Each slot's rank: fighting, then standing, then dead; nearer first within each.
+    // Each slot's rank: fighting someone other than the tank (a creature that peeled off: first, so it stays in the
+    // four slots a seat can see and pick -- the tank has to taunt it back), fighting, standing, then dead; nearer to
+    // the tank first within each. Nearest-first alone filled the slots with what was already on the tank, and a
+    // creature chasing a healer 30 yd away could not be targeted at all (stage6, 2026-10-03).
     struct Ranked
     {
         uint32 Slot;
@@ -1320,8 +1323,10 @@ void Animus::Curriculum::PullsEncounter::OrderCamp(Env& env)
     {
         Unit* unit = env.FindTargetUnit(slot);
         bool const alive = unit && unit->IsAlive() && unit->IsInMap(from);
-        ranked.push_back({ slot, !alive ? 2u : unit->IsInCombat() ? 0u : 1u,
-            alive ? from->GetExactDist(unit) : 0.0f });
+        Unit const* victim = alive && unit->IsInCombat() ? unit->GetVictim() : nullptr;
+        bool const loose = tank && victim && victim != tank && victim->IsPlayer();
+        uint32 const group = !alive ? 3u : loose ? 0u : unit->IsInCombat() ? 1u : 2u;
+        ranked.push_back({ slot, group, alive ? from->GetExactDist(unit) : 0.0f });
     }
     std::stable_sort(ranked.begin(), ranked.end(), [](Ranked const& a, Ranked const& b)
     {

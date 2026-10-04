@@ -565,6 +565,9 @@ bool Animus::Curriculum::ActionCatalog::IsLongBuff(SpellInfo const* info)
             case SPELL_AURA_MOUNTED:
             case SPELL_AURA_MOD_REGEN:
             case SPELL_AURA_MOD_POWER_REGEN:
+            // A tank's threat aura (Righteous Fury) is a mode like a stance, put up when it is needed: closed in
+            // combat as a long buff, a paladin drawn to tank could not take it up once the pull had started.
+            case SPELL_AURA_MOD_THREAT:
                 return false;
             default:
                 aura = true;

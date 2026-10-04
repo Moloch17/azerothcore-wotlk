@@ -115,6 +115,9 @@ namespace Animus::Curriculum
             /// off the tank, per decision.
             float TankTarget = 0.3f;
             float PulledOff = 0.004f;
+            /// A party's damage dealer or healer, per enemy on it while the party's tank is alive and not yet in
+            /// combat, per decision (RewardTerm::EarlyPull, a cost): the pull opened before the tank engaged.
+            float EarlyPull = 0.01f;
             /// A drill's drilled seat (ArenaDefinition::DrillRole): its role's terms times this.
             float DrillWeight = 3.0f;
             /// Healers in a party or a raid: per member of its group above 50% health, per decision; the same
@@ -1143,6 +1146,7 @@ namespace Animus::Curriculum
             f("Raid.TankLoose", tuning.Raid.TankLoose);
             f("Raid.TankTarget", tuning.Raid.TankTarget);
             f("Raid.PulledOff", tuning.Raid.PulledOff);
+            f("Raid.EarlyPull", tuning.Raid.EarlyPull);
             f("Raid.DrillWeight", tuning.Raid.DrillWeight);
             f("Raid.KeepUp", tuning.Raid.KeepUp);
             f("Raid.Overheal", tuning.Raid.Overheal);
