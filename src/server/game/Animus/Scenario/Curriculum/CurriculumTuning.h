@@ -666,6 +666,9 @@ namespace Animus::Curriculum
             /// A taunt from a healer or damage dealer beside a living tank (holy paladins taunted four times a fight
             /// from the healer's seat, 2026-10-03).
             float AimlessTauntOffRole = 0.04f;
+            /// A tank's stance, form, aura or presence from a seat that is not the tank, beside a living one (holy
+            /// paladins took up Righteous Fury three and a half times a fight from the healer's seat, 2026-10-03).
+            float AimlessTankModeOffRole = 0.04f;
             /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
             float ModeSwitch = 0.01f;
             /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
@@ -1303,6 +1306,7 @@ namespace Animus::Curriculum
             f("Actions.Aimless.ModeReverse", tuning.Actions.AimlessModeReverse);
             f("Actions.Aimless.NeedlessMove", tuning.Actions.AimlessNeedlessMove);
             f("Actions.Aimless.TauntOffRole", tuning.Actions.AimlessTauntOffRole);
+            f("Actions.Aimless.TankModeOffRole", tuning.Actions.AimlessTankModeOffRole);
             f("Actions.ModeSwitch", tuning.Actions.ModeSwitch);
             f("Actions.SupplySpent", tuning.Actions.SupplySpent);
             f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);

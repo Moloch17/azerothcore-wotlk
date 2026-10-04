@@ -148,6 +148,36 @@ def _slots_grown(old_spans: tuple[Span, Span], new_spans: tuple[Span, Span], old
     return segments
 
 
+def _rescaled(stage: dict | None, layout: str) -> dict[str, list[tuple[int, int, str]]]:
+    """Block name -> its rescaled columns (Block::DescribeRescaled) as (first, count, tag), first relative to the
+    block."""
+    entry = (stage or {}).get("layouts", {}).get(layout) or {}
+    return {block["name"]: [(int(c["first"]), int(c["count"]), str(c["tag"])) for c in block.get("rescaled", ())]
+            for block in entry.get("blocks", ())}
+
+
+def _seed_rescaled_norms(new: dict, prefix: str, old_stage: dict | None, stage: dict | None, layout: str) -> list[str]:
+    """Columns whose reading changed its scale in place (the talent trees as a share of the points spent, 2026-10-03):
+    where the parent's block lacks the tag, their normaliser statistics start at mean 0, variance 1 and the count is
+    capped, as for a block that gained features -- the parent's were measured on the old scale, and with its count of
+    tens of millions and no clipping the new values would read several deviations off for many updates. The adapter
+    columns carry: the reading means what it meant, more points in that tree. Returns the tags reset."""
+    old, new_cols = _rescaled(old_stage, layout), _rescaled(stage, layout)
+    spans = block_spans(stage, layout) or {}
+    reset = []
+    for block, columns in new_cols.items():
+        had = {tag for _, _, tag in old.get(block, ())}
+        first = spans.get(block, ((0, 0), (0, 0)))[0][0]
+        for at, count, tag in columns:
+            if tag in had:
+                continue
+            new[f"{prefix}.mean"][first + at : first + at + count] = 0.0
+            new[f"{prefix}.var"][first + at : first + at + count] = 1.0
+            new[f"{prefix}.count"].clamp_(max=SEED_COUNT_CAP)
+            reset.append(f"{block}.{tag}")
+    return reset
+
+
 def _seed_grown_slot_norms(new: dict, prefix: str, old_sets: list[dict], new_sets: list[dict]) -> None:
     """A seat set that gained slots: each new slot's normaliser statistics start as the last old slot's, carried
     already, so the set encoder reads the new slots at the scale it reads the old ones from the first rollout."""
@@ -448,6 +478,10 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
             for network, remapped in norms:
                 _seed_norm_blocks(network, remapped, f"norms.{index}", common)
                 _seed_grown_slot_norms(network, f"norms.{index}", *sets)
+                reset = _seed_rescaled_norms(network, f"norms.{index}", old_stage, stage, layout.name)
+                if reset and network is actor:
+                    print(f"  {layout.name}: rescaled columns {', '.join(sorted(set(reset)))} start their "
+                          f"normaliser afresh", flush=True)
             _seed_head_blocks(actor, head, f"heads.{index}", common)
         else:
             for network, remapped in adapters:

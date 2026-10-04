@@ -722,6 +722,7 @@ namespace Animus::Curriculum
         bool CastHarmful = false;
         bool CastTactical = false;
         bool CastTaunt = false;                     // a taunt (Taunt, Growl, Hand of Reckoning, Dark Command, ...)
+        bool CastTankMode = false;                  // a tank's stance, form, aura or presence
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

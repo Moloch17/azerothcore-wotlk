@@ -115,6 +115,7 @@ namespace Animus::Curriculum
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
+        void DescribeRescaled(Layout const& layout, boost::json::array& out) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
         [[nodiscard]] ModeGroup ModeGroupOf(Layout const& layout, uint32 local) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

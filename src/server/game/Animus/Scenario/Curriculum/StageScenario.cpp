@@ -1588,6 +1588,10 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             block["actions"] = Span(slice.ActionFirst, slice.ActionCount);
             if (uint32 const revision = GetBlock(id).Revision())
                 block["revision"] = revision;
+            boost::json::array rescaled;
+            GetBlock(id).DescribeRescaled(layout, rescaled);
+            if (!rescaled.empty())
+                block["rescaled"] = std::move(rescaled);
         }
     }
 
@@ -4047,6 +4051,7 @@ char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
         case AimlessCause::ModeReverse:      return "mode_reverse";
         case AimlessCause::NeedlessMove:     return "needless_move";
         case AimlessCause::TauntOffRole:     return "taunt_off_role";
+        case AimlessCause::TankModeOffRole:  return "tank_mode_off_role";
         case AimlessCause::Count:            break;
     }
     return "unknown";
@@ -4075,6 +4080,7 @@ namespace
             case AimlessCause::ModeReverse:      return tuning.AimlessModeReverse;
             case AimlessCause::NeedlessMove:     return tuning.AimlessNeedlessMove;
             case AimlessCause::TauntOffRole:     return tuning.AimlessTauntOffRole;
+            case AimlessCause::TankModeOffRole:  return tuning.AimlessTankModeOffRole;
             case AimlessCause::Count:            break;
         }
         return tuning.Aimless;
@@ -4216,13 +4222,14 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             else if (!result.PendingInterrupt.IsEmpty() || result.BreathingCasts || (result.DefensiveCasts && hurt)
                 || result.StealthOpener || !result.StealthUtilityTarget.IsEmpty())
                 verdict = Verdict::Neutral;         // always a reason: a cast stopped, a breath, a hurt seat, an opener
-            else if (result.CastTaunt && !IsPartyTank(seat) && PartyHasLivingTank(env, bot))
+            else if ((result.CastTaunt || result.CastTankMode) && !IsPartyTank(seat) && PartyHasLivingTank(env, bot))
             {
-                // Taunting beside a living tank: the enemies are the tank's to take, and a healer or damage dealer
-                // that pulls one onto itself has made the tank's job its own (2026-10-03, stage6: holy paladins
-                // pressed Hand of Reckoning four times a fight from the healer's seat).
+                // Taunting, or taking up a tank's stance, form or aura, beside a living tank: the enemies are the
+                // tank's to take, and a healer or damage dealer that pulls one onto itself has made the tank's job its
+                // own (2026-10-03, stage6: holy paladins pressed Hand of Reckoning four times a fight from the healer's
+                // seat, and Righteous Fury -- more threat from every heal -- three and a half).
                 verdict = Verdict::Aimless;
-                cause = AimlessCause::TauntOffRole;
+                cause = result.CastTaunt ? AimlessCause::TauntOffRole : AimlessCause::TankModeOffRole;
             }
             else if (result.CastHarmful)
             {

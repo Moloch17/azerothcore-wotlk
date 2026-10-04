@@ -361,6 +361,9 @@ namespace Animus::Curriculum::Encoding
         result.CastHarmful = !info->IsPositive();
         result.CastTactical = def.From == ActionCatalog::Group::Tactical;
         result.CastTaunt = info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_MOD_TAUNT);
+        // Defensive Stance, Righteous Fury, Bear Form (Dire Bear Form is its rank), Frost Presence.
+        uint32 const chain = info->GetFirstRankSpell() ? info->GetFirstRankSpell()->Id : info->Id;
+        result.CastTankMode = chain == 71 || chain == 25780 || chain == 5487 || chain == 9634 || chain == 48263;
         result.CastTrap = IsTrapSpell(info);
         result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was

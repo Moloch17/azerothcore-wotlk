@@ -614,7 +614,7 @@ namespace
             .Suffix = "_ragefire",
             .Extends = "stage7_group",
             .Summary = "Ragefire Chasm from the door to Bazzalan, five seats of its level under a director",
-            // Crowd: what is on the party past the pack's four slots, and the pack ahead. Hint: the suggestion the
+            // Crowd: what is on the party past the pack's slots, and the pack ahead. Hint: the suggestion the
             // learner imitates while the support lasts, hidden from the networks.
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Crowd, Hint,
                 Goal },

@@ -46,7 +46,6 @@ namespace
     /// which the companion block reports itself), and the scale their time left is reported on.
     constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Follow) - 1;
     constexpr float OPTION_SCALE_MS = 30000.0f;
-    constexpr float TALENT_POINTS_AT_MAX_LEVEL = 71.0f;
     constexpr float GOAL_ESCAPE_HEALTH_PCT = 35.0f;
 
     bool IsActionAllowed(SeatView const& view, uint32 action)
@@ -152,6 +151,23 @@ uint32 Animus::Curriculum::CoreBlock::TalentObsFirst(Layout const& layout)
 {
     return layout.Slice(BlockId::Core).ObsFirst + OBS_GLOBAL_COUNT
         + uint32(layout.Catalog().Actions().size()) * ACTION_FEATURES;
+}
+
+void Animus::Curriculum::CoreBlock::DescribeRescaled(Layout const& layout, boost::json::array& out) const
+{
+    // The talent trees as a share of the points spent, not of a full build's 71 (2026-10-03): the aptitude's and the
+    // block's own, relative to the block.
+    uint32 const first = layout.Slice(BlockId::Core).ObsFirst;
+    auto const add = [&out](uint32 at, uint32 count)
+    {
+        boost::json::object columns;
+        columns["tag"] = "tree_share";
+        columns["first"] = at;
+        columns["count"] = count;
+        out.emplace_back(std::move(columns));
+    };
+    add(OBS_APTITUDE_FIRST + Aptitude::TREE_POINTS_FIRST, TalentBuilder::TREE_COUNT);
+    add(TreeObsFirst(layout) - first, TalentBuilder::TREE_COUNT);
 }
 
 uint32 Animus::Curriculum::CoreBlock::TreeObsFirst(Layout const& layout)
@@ -277,9 +293,13 @@ void Animus::Curriculum::CoreBlock::ObserveCharacter(SeatView const& view, float
     for (uint32 i = 0; i < talents.size() && i < view.Build->Ranks.size(); ++i)
         talentObs[i] = float(view.Build->Ranks[i]) / float(std::max<uint8>(1, talents[i].MaxRank));
 
+    // Each tree's points as a share of those spent (Aptitude::Measure's reading), and how far the build has come.
     float* treeObs = obs + TreeObsFirst(layout);
+    uint32 spent = 0;
+    for (uint32 points : view.Build->TreePoints)
+        spent += points;
     for (uint32 tree = 0; tree < TalentBuilder::TREE_COUNT; ++tree)
-        treeObs[tree] = float(view.Build->TreePoints[tree]) / TALENT_POINTS_AT_MAX_LEVEL;
+        treeObs[tree] = spent ? float(view.Build->TreePoints[tree]) / float(spent) : 0.0f;
 }
 
 void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, uint8* mask) const

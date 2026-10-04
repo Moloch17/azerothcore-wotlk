@@ -313,9 +313,15 @@ Animus::Curriculum::Aptitude Animus::Curriculum::Aptitude::Of(ClassAssets const&
 
     out.Features[MITIGATION] = mitigation;
 
+    // Where the points went, as a share of those spent: a level-20 holy paladin reads 1 in Holy, as it will at 80.
+    // Over the 71 of a full build it read 0.15, a sliver from a protection paladin's 0, and the one network that plays
+    // both played its holy seats as tanks (2026-10-03, stage6: two heals a fight to a priest's seven).
+    uint32 spent = 0;
+    for (uint32 points : build.TreePoints)
+        spent += points;
     for (uint32 tree = 0; tree < TalentBuilder::TREE_COUNT; ++tree)
-        out.Features[TREE_POINTS_FIRST + tree] = tree < build.TreePoints.size()
-            ? std::min(1.0f, float(build.TreePoints[tree]) / 71.0f) : 0.0f;
+        out.Features[TREE_POINTS_FIRST + tree] = tree < build.TreePoints.size() && spent
+            ? float(build.TreePoints[tree]) / float(spent) : 0.0f;
 
     return out;
 }

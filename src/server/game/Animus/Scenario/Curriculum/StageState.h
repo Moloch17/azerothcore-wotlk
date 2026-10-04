@@ -173,6 +173,7 @@ namespace Animus::Curriculum
         ModeReverse,        // ... and back again within ten seconds
         NeedlessMove,       // a ranged seat moving in a fight it could stand and shoot in
         TauntOffRole,       // a taunt from a seat that is not the tank, beside a living one
+        TankModeOffRole,    // ... a tank's stance, form, aura or presence
         Count
     };
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);

@@ -326,6 +326,11 @@ namespace Animus::Curriculum
         /// end): written to the manifest and stage.json when not 0, so a model or checkpoint of the old layout is
         /// told apart from one of the new even where the widths agree.
         [[nodiscard]] virtual uint32 Revision() const { return 0; }
+        /// Columns of the block whose scale changed in place, each {tag, first (relative to the block), count}: the
+        /// learner's seeding starts their normaliser statistics afresh when the parent's block lacks the tag, and
+        /// keeps the rest of the block (bootstrap._seed_rescaled_norms). A Revision is for columns that changed
+        /// meaning; this is for a reading that changed its scale.
+        virtual void DescribeRescaled(Layout const& /*layout*/, boost::json::array& /*out*/) const { }
 
         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }

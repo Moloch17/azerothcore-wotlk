@@ -14,7 +14,7 @@ eval:
   # 384: an evaluation gives (class, build) pair i rung (i / pairs) mod 6, so 64 episodes over ~30 pairs reached
   # rungs 0-2 only and every party cleared everything (2026-10-02).
   episodes: 384
-  report: [clean_kill, died, wipes, kills, difficulty, tank_hold_share, threat_on_teammates, teammate_damage_taken,
-           low_health_seconds, overheal_share, healing_per_mana, teammates_died, tank_target_share,
-           pulled_off_seconds, interrupts, control_seconds, camp_packs, camp_peak_packs, camp_clean_packs,
-           dps_scaled, level]
+  report: [clean_kill, died, wipes, kills, difficulty, tank_hold_share, tank_form_share, threat_on_teammates,
+           teammate_damage_taken, low_health_seconds, overheal_share, healing_per_mana, teammates_died,
+           tank_target_share, pulled_off_seconds, interrupts, control_seconds, camp_packs, camp_peak_packs,
+           camp_clean_packs, dps_scaled, level]

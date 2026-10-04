@@ -362,3 +362,37 @@ def test_a_seat_set_that_gained_slots_carries_its_slots_and_actions_by_name():
     last = old.actor.norms[0].mean[4 + G + 3 * F : 4 + G + 4 * F]
     for slot in range(4, 24):
         torch.testing.assert_close(mean[4 + G + slot * F : 4 + G + (slot + 1) * F], last)
+
+
+def test_rescaled_columns_start_their_normaliser_afresh_and_keep_their_weights():
+    """The talent trees read as a share of the points spent (2026-10-03): a parent without the tag measured those
+    columns on the old scale, so their statistics start at 0/1 with the count capped; the adapter columns carry. A
+    parent that has the tag already keeps everything."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(8,))
+
+    def stage(tagged: bool) -> dict:
+        built = stage_with({"paladin": [("core", 6, 2), ("duel", 3, 1)]})
+        if tagged:
+            built["layouts"]["paladin"]["blocks"][0]["rescaled"] = [{"tag": "tree_share", "first": 4, "count": 2}]
+        return built
+
+    old = MappoTrainer([(9, 3)], 4, config)
+    old.actor.norms[0].mean.copy_(torch.full((9,), 5.0))
+    old.actor.norms[0].var.copy_(torch.full((9,), 4.0))
+    old.actor.norms[0].count.fill_(30_000_000.0)
+    for parent, fresh in ((stage(False), True), (stage(True), False)):
+        new = MappoTrainer([(9, 3)], 4, config)
+        checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec([Layout("paladin", 9, 3)]), "stage": parent}
+        seed_trainer(new, checkpoint, spec([Layout("paladin", 9, 3)], 4), stage(True))
+        norm = new.actor.norms[0]
+        torch.testing.assert_close(norm.mean[:4], torch.full((4,), 5.0))
+        torch.testing.assert_close(norm.mean[6:], torch.full((3,), 5.0))
+        torch.testing.assert_close(new.actor.state_dict()["adapters.0.weight"][:, 4:6],
+                                   old.actor.state_dict()["adapters.0.weight"][:, 4:6])
+        if fresh:
+            assert float(norm.mean[4:6].abs().max()) == 0.0 and float(norm.var[4:6].min()) == 1.0
+            assert float(norm.count) <= SEED_COUNT_CAP
+        else:
+            torch.testing.assert_close(norm.mean[4:6], torch.full((2,), 5.0))
+            assert float(norm.count) == 30_000_000.0
