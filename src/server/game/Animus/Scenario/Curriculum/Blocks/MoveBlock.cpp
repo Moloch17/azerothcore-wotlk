@@ -615,6 +615,47 @@ namespace
         return true;
     }
 
+    /// The straight run, pathfound as Encoding::MoveTo would (movement-smooth A7), so what came back can be read. A
+    /// path that came back incomplete -- the point the bearing aims at is off the mesh or walled off -- ends as far
+    /// as the ground lets the bearing go: it is launched and marked (SteerMemory::EdgeRunId) so the keep check holds
+    /// it to that end rather than relaunching the same end nearer every decision of its last two, and once there,
+    /// with nothing left to walk, the seat holds rather than launching an empty run each decision. False when no
+    /// path was found at all: MoveTo's own straight-line fallback then, as before.
+    bool StraightRun(Animus::Curriculum::SeatView& view, Position const& destination)
+    {
+        Player* bot = view.Bot;
+        auto const started = std::chrono::steady_clock::now();
+        PathGenerator path(bot);
+        bool const found = path.CalculatePath(destination.GetPositionX(), destination.GetPositionY(),
+            destination.GetPositionZ(), false);
+        if (!found || (path.GetPathType() & PATHFIND_NOPATH) || path.GetPath().size() < 2)
+            return false;
+
+        Movement::PointsArray const& points = path.GetPath();
+        bool const edge = (path.GetPathType() & PATHFIND_INCOMPLETE) != 0;
+        float walk = 0.0f;
+        for (std::size_t point = 1; point < points.size(); ++point)
+            walk += (points[point] - points[point - 1]).length();
+        if (edge && walk < MoveKeep::NOTHING_TO_WALK)
+        {
+            if (!bot->movespline->Finalized())
+                bot->StopMoving();
+            Encoding::TurnOnSpot(bot, view.Facing);
+        }
+        else
+        {
+            Encoding::MoveAlong(bot, points, view.Facing);
+            if (view.Steering)
+                view.Steering->EdgeRunId = edge ? bot->movespline->GetId() : 0;
+        }
+
+        // Counted as MoveTo's own (the status line's "moves"): it is the same launch.
+        Encoding::MoveToCalls.fetch_add(1, std::memory_order_relaxed);
+        Encoding::MoveToNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        return true;
+    }
+
     /// LayTurnRun, timed and counted for the status line (Encoding::TurnRunCalls): what the curve costs on the map
     /// thread, and how often it is refused for the straight run.
     bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
@@ -708,8 +749,10 @@ namespace
                 && view.Steering->RunId == bot->movespline->GetId()
                 && MoveKeep::FacingRelaunch(view.Steering->RunFacing, view.Facing,
                     view.Options.ShownFacingRelaunchDeg * float(M_PI) / 180.0f);
+            bool const edge = view.Steering && view.Steering->EdgeRunId == bot->movespline->GetId();
             if (!shownStale
-                && MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError))
+                && (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError)
+                    || (edge && MoveKeep::KeepEdgeRun(bot->movespline->Velocity(), headingError, pitchError))))
                 return;
         }
 
@@ -796,8 +839,12 @@ namespace
         // policy's; only the height of a point eight yards away is being guessed at, and the path the spline takes
         // sorts that out. The ground probe is how the seat learns not to choose such a bearing in the first place.
         // Deliberately discarded: see above -- a failure is a reason to move anyway, not a reason to stand still.
-        (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
-            MoveBlock::STEP_YARDS);
+        // Within a step of the seat's own height first, so a floor above or below the one it walks on is not
+        // taken for its ground; only where there is none that near, the wider window it always had (A7).
+        if (!Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
+                MoveBlock::MAX_STEP))
+            (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
+                MoveBlock::STEP_YARDS);
 
         // A turn still to come is walked as one run (TurnRun); where that cannot be laid out, the straight run below.
         if (std::fabs(view.TurnLeft) >= 1e-4f && TurnRun(view, heading, speed, length))
@@ -805,6 +852,8 @@ namespace
 
         // Pathfinding on, which is the default: a bearing is where the seat wants to go, not a licence to walk through
         // a wall to get there.
+        if (StraightRun(view, destination))
+            return;
         Encoding::MoveTo(bot, MOVE_POINT_ID, destination.GetPositionX(), destination.GetPositionY(),
             destination.GetPositionZ(), &view.Facing);
     }

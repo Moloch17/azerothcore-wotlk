@@ -35,6 +35,7 @@ namespace Animus::Curriculum::MoveKeep
     constexpr uint32 KEEP_DECISIONS = 2;        // a run is kept while this many decisions of travel are left
     constexpr float HEADING_SLACK = 0.35f;      // about 20 degrees: a path bent round a rock
     constexpr float PITCH_SLACK = 0.2f;         // about 11 degrees of climb or dive
+    constexpr float NOTHING_TO_WALK = 0.5f;     // a path to the edge shorter than this: the seat is already there
 
     /// How far a fresh run reaches, at `speed` yards a second.
     [[nodiscard]] inline float Reach(float speed)
@@ -66,6 +67,15 @@ namespace Animus::Curriculum::MoveKeep
     {
         float const apart = std::fabs(std::remainder(decided - shown, 2.0f * float(M_PI)));
         return apart > threshold;
+    }
+
+    /// Whether a run whose end is as far as the ground lets the bearing go -- its path came back incomplete, the
+    /// point it was aimed at unreachable -- is kept to that end (movement-smooth A7). Relaunching it only finds the
+    /// same end nearer, so the time-left rule would restart it every decision of its last two; it is let go only
+    /// when its course or climb no longer fits, or it has stopped.
+    [[nodiscard]] inline bool KeepEdgeRun(float velocity, float headingError, float pitchError)
+    {
+        return velocity > 0.0f && std::fabs(headingError) < HEADING_SLACK && std::fabs(pitchError) < PITCH_SLACK;
     }
 
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least

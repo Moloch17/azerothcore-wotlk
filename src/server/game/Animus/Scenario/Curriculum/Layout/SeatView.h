@@ -274,6 +274,9 @@ namespace Animus::Curriculum
         /// swung across the ticks (ShownFacing) rather than snapped.
         float RunFacing = 0.0f;
         uint32 RunId = 0;
+        /// The run (spline id) launched on an incomplete path: it ends where the ground lets the bearing go, and is
+        /// kept to that end (MoveKeep::KeepEdgeRun, movement-smooth A7). 0: none.
+        uint32 EdgeRunId = 0;
         float ShownFacing = 0.0f;
         bool ShownSeeded = false;
         uint32 ShownSinceMs = 0;

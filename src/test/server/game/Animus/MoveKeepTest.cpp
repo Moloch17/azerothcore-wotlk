@@ -82,3 +82,13 @@ TEST(MoveKeepTest, ARunDrawnTooFarOffWhereTheSeatLooksIsRelaunched)
     EXPECT_FALSE(MoveKeep::FacingRelaunch(3.1f, -3.1f, twenty));    // 0.08 apart across the wrap
     EXPECT_TRUE(MoveKeep::FacingRelaunch(0.0f, 0.01f, 0.0f));
 }
+
+// A run to where the ground ends is kept with any time left, so long as it still goes the way the seat wants.
+TEST(MoveKeepTest, ARunToTheEdgeIsKeptToItsEnd)
+{
+    EXPECT_FALSE(MoveKeep::KeepRun(1.0f, 7.0f, 250, 0.0f, 0.0f));          // half a decision left: a plain run goes
+    EXPECT_TRUE(MoveKeep::KeepEdgeRun(7.0f, 0.0f, 0.0f));                   // an edge run stays
+    EXPECT_FALSE(MoveKeep::KeepEdgeRun(7.0f, MoveKeep::HEADING_SLACK + 0.01f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepEdgeRun(7.0f, 0.0f, MoveKeep::PITCH_SLACK + 0.01f));
+    EXPECT_FALSE(MoveKeep::KeepEdgeRun(0.0f, 0.0f, 0.0f));
+}
