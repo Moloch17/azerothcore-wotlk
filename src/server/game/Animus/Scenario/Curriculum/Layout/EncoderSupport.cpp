@@ -198,13 +198,12 @@ namespace Animus::Curriculum::Encoding
         if (!bot || !bot->movespline->ReaimFacing(facing))
             return false;
         // The spline writes initialOrientation onto the unit only on the next world tick
-        // (Unit::UpdateSplinePosition); a press this decision must not wait for it.
+        // (Unit::UpdateSplinePosition); a press this decision must not wait for it. Not shown to clients: they are
+        // drawing this unit along a monster-move spline, and a facing packet in the middle of one is unverified --
+        // the realm's TurnShown sends none while a spline runs either. They see the head at the next launch.
         if (std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI)) - float(M_PI))
             > 0.001f)
-        {
             bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
-            ShowFacing(bot);
-        }
         return true;
     }
 
