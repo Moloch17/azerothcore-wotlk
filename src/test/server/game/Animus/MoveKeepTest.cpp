@@ -24,27 +24,26 @@ namespace MoveKeep = Animus::Curriculum::MoveKeep;
 // "half an 8-yard step" let go at 4 yards, so a fresh 21-yard run now lasts about 2.5 s instead of ~0.6 s.
 TEST(MoveKeepTest, KeptWhileTwoDecisionsOfTravelAreLeft)
 {
-    EXPECT_TRUE(MoveKeep::KeepRun(3.6f, 7.0f, 250, 0.0f, 0.0f, 0.0f));
-    EXPECT_FALSE(MoveKeep::KeepRun(3.4f, 7.0f, 250, 0.0f, 0.0f, 0.0f));
+    EXPECT_TRUE(MoveKeep::KeepRun(3.6f, 7.0f, 250, 0.0f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(3.4f, 7.0f, 250, 0.0f, 0.0f));
     // Faster: the same yards are less time.
-    EXPECT_FALSE(MoveKeep::KeepRun(3.6f, 14.0f, 250, 0.0f, 0.0f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(3.6f, 14.0f, 250, 0.0f, 0.0f));
     // Longer decisions need more travel left.
-    EXPECT_FALSE(MoveKeep::KeepRun(3.6f, 7.0f, 500, 0.0f, 0.0f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(3.6f, 7.0f, 500, 0.0f, 0.0f));
 }
 
-TEST(MoveKeepTest, LetGoWhenCourseClimbOrFacingNoLongerFit)
+TEST(MoveKeepTest, LetGoWhenCourseOrClimbNoLongerFit)
 {
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, MoveKeep::HEADING_SLACK + 0.01f, 0.0f, 0.0f));
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, -(MoveKeep::HEADING_SLACK + 0.01f), 0.0f, 0.0f));
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, 0.0f, MoveKeep::PITCH_SLACK + 0.01f, 0.0f));
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, 0.0f, 0.0f, MoveKeep::FACING_SLACK + 0.01f));
-    EXPECT_TRUE(MoveKeep::KeepRun(20.0f, 7.0f, 250, 0.3f, -0.15f, 0.05f));
+    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, MoveKeep::HEADING_SLACK + 0.01f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, -(MoveKeep::HEADING_SLACK + 0.01f), 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 250, 0.0f, MoveKeep::PITCH_SLACK + 0.01f));
+    EXPECT_TRUE(MoveKeep::KeepRun(20.0f, 7.0f, 250, 0.3f, -0.15f));
 }
 
 TEST(MoveKeepTest, NoVelocityOrNoDecisionIsNeverKept)
 {
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 0.0f, 250, 0.0f, 0.0f, 0.0f));
-    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 0, 0.0f, 0.0f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 0.0f, 250, 0.0f, 0.0f));
+    EXPECT_FALSE(MoveKeep::KeepRun(20.0f, 7.0f, 0, 0.0f, 0.0f));
 }
 
 TEST(MoveKeepTest, ReachIsThreeSecondsOfTravelAndNeverShort)

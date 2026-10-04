@@ -35,7 +35,6 @@ namespace Animus::Curriculum::MoveKeep
     constexpr uint32 KEEP_DECISIONS = 2;        // a run is kept while this many decisions of travel are left
     constexpr float HEADING_SLACK = 0.35f;      // about 20 degrees: a path bent round a rock
     constexpr float PITCH_SLACK = 0.2f;         // about 11 degrees of climb or dive
-    constexpr float FACING_SLACK = 0.1f;        // under 6 degrees of the facing wanted
 
     /// How far a fresh run reaches, at `speed` yards a second.
     [[nodiscard]] inline float Reach(float speed)
@@ -62,16 +61,17 @@ namespace Animus::Curriculum::MoveKeep
     }
 
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least
-    /// KEEP_DECISIONS decisions of `decisionMs`, and its course, climb and the seat's facing are within their slack
-    /// of what is wanted (errors in radians, any sign). A run with no velocity is never kept.
+    /// KEEP_DECISIONS decisions of `decisionMs`, and its course and climb are within their slack of what is wanted
+    /// (errors in radians, any sign). A run with no velocity is never kept. Facing is not asked: it is turned on
+    /// the run itself (Encoding::ReaimRun, movement-smooth A3).
     [[nodiscard]] inline bool KeepRun(float remaining, float velocity, uint32 decisionMs, float headingError,
-        float pitchError, float facingError)
+        float pitchError)
     {
         if (velocity <= 0.0f || decisionMs == 0)
             return false;
         float const leftMs = remaining / velocity * 1000.0f;
         return leftMs >= float(KEEP_DECISIONS * decisionMs) && std::fabs(headingError) < HEADING_SLACK
-            && std::fabs(pitchError) < PITCH_SLACK && std::fabs(facingError) < FACING_SLACK;
+            && std::fabs(pitchError) < PITCH_SLACK;
     }
 }
 

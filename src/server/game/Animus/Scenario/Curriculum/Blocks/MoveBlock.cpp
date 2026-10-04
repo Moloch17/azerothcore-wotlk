@@ -581,9 +581,8 @@ namespace
             view.HeldBearing = 0xFF;
             // Standing still, so no move spline will carry the heading: push it onto the unit here instead, or a
             // turn and a FACE_* would be things the seat believed about itself that the world did not share.
-            // UpdatePosition with the same coordinates is a pure turn, and it is a no-op when the angle is unchanged.
             if (alive)
-                bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), view.Facing);
+                Encoding::TurnOnSpot(bot, view.Facing);
             return;
         }
 
@@ -595,24 +594,23 @@ namespace
         float const heading = HeadingOf(view.Facing, view.HeldBearing);
         bool const airborne = Airborne(bot);
 
-        // A run still under way that goes where the seat wants, facing as it wants, with a couple of decisions of
-        // travel left at its own speed, is left to run (MoveKeep::KeepRun). Re-issuing it every decision restarted
-        // the spline four times a second, and a client draws each restart as a hitch in the stride (in-game
-        // testing, 2026-09-28); the old "half an 8-yard step" still let go every ~750 ms on foot, and in water and
-        // the air there was no keep at all (movement-smooth A1). Flying faces along its path (FlyTo), so its facing
-        // is not compared.
+        // A run still under way that goes where the seat wants with a couple of decisions of travel left at its own
+        // speed is left to run (MoveKeep::KeepRun). Re-issuing it every decision restarted the spline four times a
+        // second, and a client draws each restart as a hitch in the stride (in-game testing, 2026-09-28); the old
+        // "half an 8-yard step" still let go every ~750 ms on foot, and in water and the air there was no keep at
+        // all (movement-smooth A1). Where it looks is turned on the run itself (Encoding::ReaimRun), so facing alone
+        // never relaunches it -- FACE_TARGET round a moving target used to restart every decision (A3). Flying faces
+        // along its path (FlyTo) and is not turned.
         if (!bot->movespline->Finalized())
         {
+            Encoding::ReaimRun(bot, view.Facing);
             G3D::Vector3 const end = bot->movespline->FinalDestination();
             float const flat = bot->GetExactDist2d(end.x, end.y);
             float const remaining = airborne ? std::hypot(flat, end.z - bot->GetPositionZ()) : flat;
             float const headingError = AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading);
             float const pitchError = airborne && flat > 0.1f
                 ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
-            float const facingError = airborne && bot->CanFly() ? 0.0f
-                : AngleBetween(bot->GetOrientation(), view.Facing);
-            if (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError,
-                    facingError))
+            if (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError))
                 return;
         }
 
@@ -1178,6 +1176,24 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     for (uint32 pitch = 0; pitch < PITCH_COUNT; ++pitch)
         allowed[ACTION_PITCH_FIRST + pitch] = canPitch
             && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
+}
+
+void Animus::Curriculum::MoveBlock::BeforePress(SeatView& view) const
+{
+    // A spell press lands first (PressesFirst), against the unit's orientation. A run is orientation-fixed and its
+    // head was only ever set at launch, and a seat standing still was turned after the press: under FACE_TARGET a
+    // target that moved since the last decision left the seat facing where it used to be, and the cast failed its
+    // facing check although the seat had chosen to look at it (movement-smooth A3). The head is brought to where
+    // the seat is looking now, on the run or on the spot, before the press. Not under a cast or channel (a turn
+    // would cancel it), and not for a seat that cannot turn.
+    Player* bot = view.Bot;
+    if (!bot || !bot->IsAlive() || bot->HasUnitState(Encoding::IMMOBILE_STATES) || Encoding::CastHoldsFeet(bot))
+        return;
+    UpdateFacing(view);
+    if (bot->movespline->Finalized())
+        Encoding::TurnOnSpot(bot, view.Facing);
+    else
+        Encoding::ReaimRun(bot, view.Facing);
 }
 
 void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const

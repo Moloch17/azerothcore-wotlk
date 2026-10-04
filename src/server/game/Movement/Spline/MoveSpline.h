@@ -89,6 +89,18 @@ namespace Movement
         [[nodiscard]] float Velocity() const { return velocity; }
         void _Finalize();
         void _Interrupt() { splineflags.done = true; }
+        /// Forge (movement-smooth A3): turn the head of a run under way without relaunching it. Only an
+        /// orientation-fixed run carries a head of its own -- any other faces along its path every tick -- so this
+        /// is false for any other, and for a finished one. A final angle follows, so the run ends facing the same way.
+        bool ReaimFacing(float angle)
+        {
+            if (splineflags.done || !splineflags.hasFlag(MoveSplineFlag::OrientationFixed))
+                return false;
+            initialOrientation = angle;
+            if (splineflags.final_angle)
+                facing.angle = angle;
+            return true;
+        }
 
     public:
         void Initialize(MoveSplineInitArgs const&);

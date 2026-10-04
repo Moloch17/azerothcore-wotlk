@@ -18,6 +18,7 @@
 
 #include "EncoderSupport.h"
 #include <atomic>
+#include "Forge.h"
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
@@ -190,6 +191,40 @@ namespace Animus::Curriculum::Encoding
             view.Option->Stop(SeatOptionKind::MoveBearing);
         if (view.Bot && !view.Bot->movespline->Finalized())
             view.Bot->StopMoving();
+    }
+
+    bool ReaimRun(Player* bot, float facing)
+    {
+        if (!bot || !bot->movespline->ReaimFacing(facing))
+            return false;
+        // The spline writes initialOrientation onto the unit only on the next world tick
+        // (Unit::UpdateSplinePosition); a press this decision must not wait for it.
+        if (std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI)) - float(M_PI))
+            > 0.001f)
+        {
+            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+            ShowFacing(bot);
+        }
+        return true;
+    }
+
+    void TurnOnSpot(Player* bot, float facing)
+    {
+        if (!bot || std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI))
+            - float(M_PI)) <= 0.001f)
+            return;
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+        ShowFacing(bot);
+    }
+
+    void ShowFacing(Player* bot)
+    {
+        if (!bot || !ForgeCore::HasClients())
+            return;
+        WorldPacket data(MSG_MOVE_SET_FACING, 64);
+        data << bot->GetPackGUID();
+        bot->BuildMovementPacket(&data);
+        bot->SendMessageToSet(&data, false);
     }
 
     /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal

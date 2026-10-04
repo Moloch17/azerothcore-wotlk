@@ -88,6 +88,19 @@ namespace Animus::Curriculum::Encoding
     /// Stop the feet and let go of the held bearing and its option, so nothing re-issues the walk under a cast.
     void ReleaseBearing(SeatView& view);
 
+    /// Turn the head of the run under way to `facing` without relaunching it (MoveSpline::ReaimFacing), and the
+    /// unit's orientation with it at once, so a facing check made before the next world tick reads where the seat
+    /// is looking (movement-smooth A3). False when there is no orientation-fixed run to turn -- standing, flying
+    /// (FlyTo faces along its path), a follow or an advance -- and then nothing is changed.
+    bool ReaimRun(Player* bot, float facing);
+    /// Turn a seat standing still to `facing`, as a turn on the spot does (UpdatePosition with the same
+    /// coordinates fires AURA_INTERRUPT_FLAG_TURNING); nothing when the angle is unchanged.
+    void TurnOnSpot(Player* bot, float facing);
+    /// A turn made without a spline reaches clients only with the next run, as a snap: while a real client is
+    /// connected (ForgeCore::HasClients) the seat's facing goes out in an ordinary MSG_MOVE_SET_FACING. Nothing
+    /// is built otherwise, so training pays nothing for it.
+    void ShowFacing(Player* bot);
+
     /// Whether the cast in flight is a mount.
     ///
     /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must

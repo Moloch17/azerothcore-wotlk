@@ -343,6 +343,10 @@ namespace Animus::Curriculum
         /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
         /// it does is recorded in `result` as a press would be.
         virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
+        /// Every decision before the press, whatever it is (the no-op included) and whichever block it belongs to:
+        /// what a press must meet already true of the world (MoveBlock: the seat's orientation synced to where it is
+        /// looking, for a spell's facing check -- movement-smooth A3). Nothing is recorded; it is not an action.
+        virtual void BeforePress(SeatView& /*view*/) const { }
         /// The action is applied before every block's BeforeApply rather than after: a press that must meet the
         /// world as the seat saw it (a spell: facing, range, the global cooldown).
         [[nodiscard]] virtual bool PressesFirst(Layout const& /*layout*/, uint32 /*local*/) const { return false; }
