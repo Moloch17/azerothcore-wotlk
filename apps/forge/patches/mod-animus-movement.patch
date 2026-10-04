@@ -1,12 +1,17 @@
-mod-animus-movement.patch -- the movement-smooth work (forge commits e0aac3412..061ad18b6) for the realm module.
+mod-animus-movement.patch -- the movement-smooth work for the realm module: A1-A5, A7, A9, B and D (forge commits
+e0aac3412..2f7f4d155). C (the jitter prices), A6, A8 (the dungeon advance; the realm has no wing routes) and A10 are
+sim-only. A snapshot: the forge's MoveBlock has moved on with C and A8, so a later resync starts from a diverged file.
 
 Apply in modules/mod-animus with `patch -p1`, after mod-animus-amdl8.patch (either order gives the same tree; on
 the bare module it applies with offsets). Realm-specific (stock AzerothCore has no MoveSpline::ReaimFacing and no
 PressesFirst): Encoding::ReaimRun turns only the unit, for this decision's press, and MoveBlock's Steer relaunches
 a run whose launch facing is more than Animus.Curriculum.Options.ShownFacingRelaunchDeg (default 20) off where the
-seat looks -- always, not only with a client watching; Block::BeforePress runs before BeforeApply; there is no
-per-tick hook (FaceTargetBetween, ShowTurn) -- CompanionParty::TurnShown shows turns, seeded from the run's launch
-facing; a refreshed held bearing skips SeatMemory::Press. Observations are unchanged (only the held-bearing mask).
+seat looks -- always, not only with a client watching; Block::BeforePress runs before BeforeApply, and the press
+after Steer; there is no per-tick hook (FaceTargetBetween, ShowTurn) -- CompanionParty::TurnShown shows turns,
+seeded from the run's launch facing; a refreshed held bearing skips SeatMemory::Press. Animus.MoveRevision (default
+0, logged once at load) selects the move block's revision 1 (D) for models trained with AnimusForge.MoveRevision 1;
+its features read Animus.Curriculum.Options.JitterDecayMs (2500), the forge's decay. At revision 0 the observations
+are unchanged (only the held-bearing mask).
 
 --- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
 +++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
@@ -29,17 +34,18 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
 --- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.cpp
 +++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.cpp
-@@ -17,6 +17,9 @@
+@@ -17,6 +17,10 @@
   */
  
  #include "MoveBlock.h"
 +#include "MoveKeep.h"
++#include "MovePrice.h"
 +#include "MoveTurnPath.h"
 +#include "PathGenerator.h"
  #include "GroundSense.h"
  #include "LayeredField.h"
  #include "ProbeBake.h"
-@@ -24,6 +27,7 @@
+@@ -24,6 +28,7 @@
  #include "EncoderSupport.h"
  #include "Layout.h"
  #include <boost/json/array.hpp>
@@ -47,11 +53,12 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  #include <boost/json/object.hpp>
  #include "DetourExtended.h"
  #include "DetourNavMeshQuery.h"
-@@ -50,13 +54,16 @@
+@@ -50,13 +55,17 @@
      using Animus::Curriculum::SeatOptionKind;
      namespace Ground = Animus::Curriculum::GroundSense;
      namespace LayeredField = Animus::Curriculum::LayeredField;
 +    namespace MoveKeep = Animus::Curriculum::MoveKeep;
++    namespace MovePrice = Animus::Curriculum::MovePrice;
 +    namespace MoveTurnPath = Animus::Curriculum::MoveTurnPath;
      using Ground::NavRay;
  
@@ -68,7 +75,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
      constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
      constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
      constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
-@@ -538,6 +545,164 @@
+@@ -538,6 +547,164 @@
          }
      }
  
@@ -233,7 +240,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
      /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a
      /// turn on the spot if they are not.
      ///
-@@ -545,12 +710,18 @@
+@@ -545,12 +712,18 @@
      /// re-running the things that must happen exactly once a decision. Pressing a facing or a bearing used to
      /// call the whole of BeforeApply again, which stepped a held turn a second time in the same 250 ms: the turn
      /// rate doubled whenever the policy did anything else while turning.
@@ -253,7 +260,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
          bool const alive = bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES);
  
          // Where the head is pointing this decision, settled before a single bearing is measured off it.
-@@ -559,12 +730,21 @@
+@@ -559,12 +732,21 @@
          if (!view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs)
              || view.HeldBearing >= MoveBlock::BEARING_COUNT)
          {
@@ -277,7 +284,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
              return;
          }
  
-@@ -574,32 +754,70 @@
+@@ -574,32 +756,70 @@
          // Re-aimed from where the seat is now, every decision it keeps walking. Aiming once at a point chosen when the
          // key went down would walk it into the first wall the ground put in the way; recomputing lets the path bend.
          float const heading = HeadingOf(view.Facing, view.HeldBearing);
@@ -363,7 +370,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  
          if (airborne)
          {
-@@ -609,9 +827,22 @@
+@@ -609,9 +829,22 @@
              if (!bot->CanFly())
              {
                  // In the water. Keep the seat under the surface rather than skimming along the top of it, and swim
@@ -388,7 +395,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
                  return;
              }
  
-@@ -621,7 +852,7 @@
+@@ -621,7 +854,7 @@
                  std::min(destination.GetPositionZ(), ceiling));
  
              Encoding::FlyTo(bot, destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
@@ -397,7 +404,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
              return;
          }
  
-@@ -633,13 +864,23 @@
+@@ -633,13 +866,23 @@
          // to just under the surface, and from the next decision `airborne` is true and the seat is swimming.
          if (Map* map = bot->GetMap())
          {
@@ -424,7 +431,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
              {
                  // With a water-walking aura the lake is a floor: the step lands on the surface, and the movement
                  // flag the core would only set on a client's acknowledgement (Unit::SetWaterWalking sends a packet
-@@ -647,12 +888,12 @@
+@@ -647,12 +890,12 @@
                  if (bot->HasWaterWalkAura())
                  {
                      bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
@@ -441,7 +448,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
                  return;
              }
          }
-@@ -665,13 +906,23 @@
+@@ -665,19 +908,34 @@
          // policy's; only the height of a point eight yards away is being guessed at, and the path the spline takes
          // sorts that out. The ground probe is how the seat learns not to choose such a bearing in the first place.
          // Deliberately discarded: see above -- a failure is a reason to move anyway, not a reason to stand still.
@@ -468,7 +475,59 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
      }
  }
  
-@@ -1100,11 +1351,9 @@
++// Revision 1 appends past revision 0's columns and actions and moves none of them (movement-smooth D).
++static_assert(Animus::Curriculum::MoveBlock::OBS_R1_COUNT - Animus::Curriculum::MoveBlock::OBS_COUNT
++    == 6 + Animus::Curriculum::MoveBlock::BEARING_COUNT);
++static_assert(Animus::Curriculum::MoveBlock::ACTION_R1_COUNT - Animus::Curriculum::MoveBlock::ACTION_COUNT == 2);
++
+ Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
+ {
+-    return { OBS_COUNT, ACTION_COUNT };
++    return CurrentRevision ? BlockSize{ OBS_R1_COUNT, ACTION_R1_COUNT } : BlockSize{ OBS_COUNT, ACTION_COUNT };
+ }
+ 
+ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
+@@ -743,6 +1001,10 @@
+         "pitch_up_15", "pitch_up_30", "pitch_up_45", "pitch_up_60", "jump",
+     };
+ 
++    if (local == ACTION_R1_TURN_LEFT_FINE)
++        return "turn_left_5";
++    if (local == ACTION_R1_TURN_RIGHT_FINE)
++        return "turn_right_5";
+     return local < NAMES.size() ? NAMES[local] : std::string();
+ }
+ 
+@@ -1093,6 +1355,28 @@
+     if (bot)
+         ObserveTrail(view, bot, out);
+ 
++    // Revision 1: what the jitter charge prices, made visible -- the last turn, bearing and pitch and how much each
++    // still weighs on the decay the charge uses, and the held bearing's clock on its own 3-second scale (the core
++    // block's option clock is on the 30-second rest's, where a bearing reads 0.1 at most). Movement-smooth D.
++    if (CurrentRevision && view.Steering)
++    {
++        SteerMemory const& steering = *view.Steering;
++        uint32 const decay = view.Options.JitterDecayMs;
++        auto const since = [&view](uint64 at) { return at ? view.NowMs - std::min(view.NowMs, at) : uint64(-1); };
++        auto const weigh = [&](uint64 at) { return at ? MovePrice::Recency(since(at), decay) : 0.0f; };
++        out[OBS_R1_TURN_SIGN] = float(steering.TurnSign);
++        out[OBS_R1_TURN_RECENCY] = weigh(steering.TurnMs);
++        if (steering.Bearing < BEARING_COUNT)
++            out[OBS_R1_BEARING_LAST_FIRST + steering.Bearing] = 1.0f;
++        out[OBS_R1_BEARING_RECENCY] = steering.Bearing < BEARING_COUNT ? weigh(steering.BearingMs) : 0.0f;
++        out[OBS_R1_PITCH_SIGN] = float(steering.PitchSign);
++        out[OBS_R1_PITCH_RECENCY] = weigh(steering.PitchMs);
++        if (view.Option && view.HeldBearing < BEARING_COUNT && view.Option->Running(SeatOptionKind::MoveBearing,
++                view.NowMs))
++            out[OBS_R1_BEARING_LEFT] = std::min(1.0f,
++                float(view.Option->Of(SeatOptionKind::MoveBearing).UntilMs - view.NowMs) / BEARING_CLOCK_MS);
++    }
++
+     if (!mask)
+         return;
+ 
+@@ -1100,11 +1384,9 @@
      for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
          allowed[ACTION_BEARING_FIRST + bearing] = canMove ? 1 : 0;
  
@@ -483,7 +542,16 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  
      // Halting is only worth offering while something is being walked.
      allowed[ACTION_HALT] = canMove && view.HeldBearing < BEARING_COUNT ? 1 : 0;
-@@ -1148,6 +1397,40 @@
+@@ -1133,6 +1415,8 @@
+     bool const aimed = view.FacingMode == ACTION_FACE_TARGET;
+     for (uint32 turn = 0; turn < TURN_COUNT; ++turn)
+         allowed[ACTION_TURN_FIRST + turn] = canTurn && !aimed ? 1 : 0;
++    if (CurrentRevision)
++        allowed[ACTION_R1_TURN_LEFT_FINE] = allowed[ACTION_R1_TURN_RIGHT_FINE] = canTurn && !aimed ? 1 : 0;
+ 
+     // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
+     // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
+@@ -1148,6 +1432,40 @@
              && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
  }
  
@@ -524,7 +592,7 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
  {
      if (!view.Bot || !view.Option)
-@@ -1200,6 +1483,16 @@
+@@ -1200,6 +1518,16 @@
      if (local < ACTION_HALT)
      {
          uint8 const bearing = uint8(local - ACTION_BEARING_FIRST);
@@ -541,15 +609,107 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
          // A bearing swung round from one pressed moments ago is feet that zigzag (Actions.Jitter): counted by how
          // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
          if (SteerMemory* steering = view.Steering)
+@@ -1246,12 +1574,13 @@
+         return;
+     }
+ 
+-    if (local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT)
++    if ((local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT) || IsFineTurn(local))
+     {
+         // Left is counter-clockwise, which is the positive way round in WoW's orientation -- the same convention
+         // HeadingOf subtracts for a clockwise bearing. A policy learns whichever it is, but a scripted baseline
+         // and a reader of the traces do not.
+-        float const angle = TURN_ANGLES[local - ACTION_TURN_FIRST];
++        float const angle = local == ACTION_R1_TURN_LEFT_FINE ? FINE_TURN : local == ACTION_R1_TURN_RIGHT_FINE
++            ? -FINE_TURN : TURN_ANGLES[local - ACTION_TURN_FIRST];
+         int8 const sign = angle > 0.0f ? 1 : -1;
+ 
+         // A turn against one still under way, or against one chosen moments ago, is a head that twitches
 --- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.h
 +++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.h
-@@ -442,6 +442,7 @@
+@@ -151,7 +151,11 @@
+             /// the pathfinder can never propose: a route is built from polygons that touch, and a gap has none.
+             /// A seat that jumps does it on what it can see, against the route it was given.
+             ACTION_JUMP = ACTION_PITCH_FIRST + PITCH_COUNT,
+-            ACTION_COUNT
++            ACTION_COUNT,
++            /// Revision 1: a fine turn, 5 degrees either way, for the aim a 15-degree lattice cannot reach.
++            ACTION_R1_TURN_LEFT_FINE = ACTION_COUNT,
++            ACTION_R1_TURN_RIGHT_FINE,
++            ACTION_R1_COUNT
+         };
+ 
+         enum Obs : uint32
+@@ -314,7 +318,19 @@
+             /// zero; the dwell share is what tells them apart.
+             OBS_TRAIL_FIRST,
+             OBS_TRAIL_DWELL         = OBS_TRAIL_FIRST + 2 * TRAIL_SAMPLES,
+-            OBS_COUNT
++            OBS_COUNT,
++
++            /// **Revision 1** (AnimusForge.MoveRevision = 1, movement-smooth D; off by default, for a fresh start):
++            /// the steering's own recent past, which the jitter charge prices and the seat could not see. Appended
++            /// past OBS_COUNT, so revision 0's columns are where they always were.
++            OBS_R1_TURN_SIGN        = OBS_COUNT,    // the last turn's way: +1 left, -1 right, 0 none yet
++            OBS_R1_TURN_RECENCY,                    // how much it still weighs (MovePrice::Recency, JitterDecayMs)
++            OBS_R1_BEARING_LAST_FIRST,              // one-hot over the last bearing pressed (BEARING_COUNT)
++            OBS_R1_BEARING_RECENCY  = OBS_R1_BEARING_LAST_FIRST + BEARING_COUNT,
++            OBS_R1_PITCH_SIGN,                      // the last pitch's way: +1 up, -1 down
++            OBS_R1_PITCH_RECENCY,
++            OBS_R1_BEARING_LEFT,                    // the held bearing's clock, / 3 s (Options.MoveBearingMs)
++            OBS_R1_COUNT
+         };
+ 
+         /// How far ahead a held bearing aims each decision. Far enough that the seat is still walking when the next
+@@ -331,6 +347,15 @@
+         /// FACE_TARGET were the only escapes from, which is why a trained policy found exactly one strategy (face
+         /// the objective, hold forward). The 15 degree turn in TURN_ANGLES keeps the finer lattice.
+         static constexpr float TURN_RATE = 0.7853982f;          // 45 degrees a decision
++        static constexpr float FINE_TURN = 0.0872665f;          // 5 degrees (revision 1)
++        static constexpr float BEARING_CLOCK_MS = 3000.0f;      // the held bearing's clock is observed on this
++
++        /// The layout revision every seat's move block has (AnimusForge.MoveRevision): 0, or 1 with the steering
++        /// memory and the fine turns. Set once at startup, before any layout is built; never per seat.
++        static void SetRevision(uint32 revision) { CurrentRevision = revision ? 1 : 0; }
++        /// Not `override`: Block::Revision comes with mod-animus-amdl8.patch, and this patch applies with or without
++        /// it; with it, this overrides it all the same.
++        [[nodiscard]] uint32 Revision() const { return CurrentRevision; }
+         /// How far a chosen pitch tilts the seat each decision until it is there: 30 degrees, so level to a full
+         /// climb is two decisions. Slower than the turn because pitch is a smaller range doing more -- the whole
+         /// useful span is a dive and a climb -- and how far it may get from level.
+@@ -442,6 +467,7 @@
  
          void Observe(SeatView const& view, float* obs, uint8* mask) const override;
          void BeforeApply(SeatView& view, SeatActionResult& result) const override;
 +        void BeforePress(SeatView& view) const override;
          void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
          [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
+ 
+@@ -452,15 +478,23 @@
+         /// spams it should pay.
+         [[nodiscard]] bool IsMovement(uint32 local) const override
+         {
+-            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP);
++            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP) || IsFineTurn(local);
+         }
+ 
+         /// The turns and the pitches aim the seat without moving its feet: pressing one leaves a held bearing walking
+         /// (SeatEncoder::Apply), which is what turning while walking is.
+         [[nodiscard]] bool IsAiming(uint32 local) const override
+         {
+-            return local >= ACTION_TURN_FIRST && local < ACTION_JUMP;
++            return (local >= ACTION_TURN_FIRST && local < ACTION_JUMP) || IsFineTurn(local);
++        }
++
++        [[nodiscard]] static bool IsFineTurn(uint32 local)
++        {
++            return CurrentRevision && (local == ACTION_R1_TURN_LEFT_FINE || local == ACTION_R1_TURN_RIGHT_FINE);
+         }
++
++    private:
++        static inline uint32 CurrentRevision = 0;
+     };
+ }
  
 --- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveKeep.h
 +++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveKeep.h
@@ -683,6 +843,99 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
 +        float const leftMs = remaining / velocity * 1000.0f;
 +        return leftMs >= float(KEEP_DECISIONS * decisionMs) && std::fabs(headingError) < HEADING_SLACK
 +            && std::fabs(pitchError) < PITCH_SLACK;
++    }
++}
++
++#endif
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MovePrice.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MovePrice.h
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of the Animus Forge project, based on AzerothCore.
++ * See AUTHORS file for Copyright information.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef ANIMUS_LIB_CURRICULUM_MOVE_PRICE_H
++#define ANIMUS_LIB_CURRICULUM_MOVE_PRICE_H
++
++#include "Define.h"
++#include <algorithm>
++#include <cmath>
++
++/// **What steering that does not commit costs** (Actions.Jitter, Effort, Fidget; movement-smooth C). The jitter
++/// charge was a count inside a hard window: any turn back within JitterWindowMs cost one reversal whether it undid 15
++/// degrees or 135 and whether it came 250 ms or 1499 ms later, and a bearing swung round cost half as much per degree
++/// as a turn. Now a reversal is priced by the angle it undoes, in quarter turns for every axis alike, and weighed by
++/// how recent the choice it undoes was, e^(-dt/tau) -- no edge to time a press against. Pure, so it is tested on its
++/// own (MovePriceTest).
++namespace Animus::Curriculum::MovePrice
++{
++    constexpr float QUARTER_TURN = float(M_PI) / 2.0f;     // the unit every steering reversal is priced in
++    /// The columns count reversals as they always did, within the old 1500 ms window, so runs before and after the
++    /// decay compare; a reversal past it but within WEAVE_MS is a weave, the slow wobble the decay now prices.
++    constexpr uint64 COUNT_MS = 1500;
++    constexpr uint64 WEAVE_MS = 4000;
++
++    /// Which column a reversal `sinceMs` after the choice it undoes is counted in: 1 a reversal, 2 a weave, 0 none.
++    [[nodiscard]] inline uint32 CountAs(uint64 sinceMs)
++    {
++        return sinceMs < COUNT_MS ? 1 : sinceMs < WEAVE_MS ? 2 : 0;
++    }
++
++    /// How much a choice `sinceMs` ago still weighs: 1 now, e^-1 at `decayMs`. Nothing with no decay.
++    [[nodiscard]] inline float Recency(uint64 sinceMs, uint32 decayMs)
++    {
++        return decayMs ? std::exp(-float(sinceMs) / float(decayMs)) : 0.0f;
++    }
++
++    /// The angle a steering choice `now` (signed radians) takes back from the one before it, `previous`, in quarter
++    /// turns: nothing unless they go opposite ways, then the smaller of the two -- undoing 15 of a 45 degree turn
++    /// undoes 15. A turn about (half a turn or more) is not a reversal of anything.
++    [[nodiscard]] inline float Undone(float previous, float now)
++    {
++        if (previous == 0.0f || now == 0.0f || (previous > 0.0f) == (now > 0.0f)
++            || std::fabs(now) >= float(M_PI) - 0.01f)
++            return 0.0f;
++        return std::min(std::fabs(previous), std::fabs(now)) / QUARTER_TURN;
++    }
++
++    /// A bearing `apart` steps of `count` round from the last, in quarter turns: a neighbour of eight is half of one,
++    /// a reversal two. At least what a turn of the same angle costs.
++    [[nodiscard]] inline float BearingSwing(uint32 apart, uint32 count)
++    {
++        if (!count)
++            return 0.0f;
++        apart %= count;
++        uint32 const steps = std::min(apart, count - apart);
++        return float(steps) * (2.0f * float(M_PI) / float(count)) / QUARTER_TURN;
++    }
++
++    /// The effort a steering press costs, as a share of a full press: in proportion to its angle up to `full`, so a
++    /// fine correction is not priced like a swing.
++    [[nodiscard]] inline float EffortOf(float angle, float full)
++    {
++        return full > 0.0f ? std::min(1.0f, std::fabs(angle) / full) : 1.0f;
++    }
++
++    /// Whether a condition held `heldMs` has held long enough to be charged (`graceMs`): a seat that runs into the
++    /// band it wants and stops within the grace is not fidgeting, and a range that flickers at its edge is not charged
++    /// on every flicker.
++    [[nodiscard]] inline bool Settled(uint32 heldMs, uint32 graceMs)
++    {
++        return heldMs >= graceMs;
 +    }
 +}
 +
@@ -905,7 +1158,15 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
      ClampPercent(prefix, "Characters.PetOutChance", tuning.Characters.PetOutChance);
 --- a/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.h
 +++ b/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.h
-@@ -891,6 +891,11 @@
+@@ -886,11 +886,19 @@
+             /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
+             /// a second later went uncharged, and bearing flips did not fall.
+             uint32 JitterWindowMs = 1500;
++            /// The decay a forge seat's steering is priced and, with the move block's revision 1, observed on
++            /// (MovePrice::Recency): here only the revision-1 features read it, so they read what the model trained on.
++            uint32 JitterDecayMs = 2500;
+             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
+             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
              /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
              /// seat is there and the owner has stopped.
              uint32 FollowMs = 6000;
@@ -917,9 +1178,11 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
          } Options;
  
          /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
-@@ -1438,6 +1443,7 @@
+@@ -1437,7 +1445,9 @@
+             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
              f("Options.MovePitchMs", tuning.Options.MovePitchMs);
              f("Options.JitterWindowMs", tuning.Options.JitterWindowMs);
++            f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
              f("Options.FollowMs", tuning.Options.FollowMs);
 +            f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);
              f("Owner.LevelSpread", tuning.Owner.LevelSpread);
@@ -1203,7 +1466,32 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
          uint32 Wasted = 0;                          // a press that did nothing in the world
 --- a/conf/mod_animus.conf.dist
 +++ b/conf/mod_animus.conf.dist
-@@ -824,6 +824,10 @@
+@@ -67,6 +67,14 @@
+ 
+ Animus.Curriculum.DecisionMs = 250
+ 
++#    Animus.MoveRevision
++#        Description: The move block's layout the models in the model directory were trained with: 0, or 1
++#                     with the steering memory and the fine turns (the forge's AnimusForge.MoveRevision). A
++#                     model of the other revision is refused, with the block named. Logged once at load.
++#        Default:     0
++
++Animus.MoveRevision = 0
++
+ ###################################################################################################
+ # GROUND PROBE
+ #
+@@ -817,6 +825,9 @@
+ #   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter). The forge
+ #   charges it in training; nothing is charged in play, but the seat observes its turns as it was trained to
+ Animus.Curriculum.Options.JitterWindowMs = 1500
++#   ... and the decay the move block's revision-1 features read a steering choice's weight on (ms): the forge's
++#   Options.JitterDecayMs, so a model of revision 1 sees here what it trained on
++Animus.Curriculum.Options.JitterDecayMs = 2500
+ 
+ #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
+ #   just behind the owner and keeps re-aiming that run at where the owner is now; it ends on its own when the seat
+@@ -824,6 +835,10 @@
  #   than a bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
  Animus.Curriculum.Options.FollowMs = 6000
  
@@ -1214,6 +1502,54 @@ facing; a refreshed held bearing skips SeatMemory::Press. Observations are uncha
  #   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison
  #   cloud, a consecration), charged per fraction of maximum health ON TOP of DamageTaken, which already charges it
  #   once as damage. This is the damage a seat could have walked out of, and the only term that pays for moving its
+--- a/src/AnimusConfig.cpp
++++ b/src/AnimusConfig.cpp
+@@ -123,6 +123,7 @@
+         CurriculumStage = fallback;
+     }
+     CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
++    MoveRevision = std::min<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.MoveRevision", 0));
+     Curriculum::CurriculumTuning const curriculum = Curriculum::CurriculumTuning::Load("Animus.Curriculum.");
+     CurriculumActions = curriculum.Actions;
+     CurriculumOptions = curriculum.Options;
+--- a/src/AnimusConfig.h
++++ b/src/AnimusConfig.h
+@@ -40,6 +40,9 @@
+         /// Load falls back to the default, then to the first stage), and their decision interval.
+         std::string CurriculumStage = "stage9_deadmines";
+         uint32 CurriculumDecisionMs = 250;
++        /// Animus.MoveRevision: the move block's layout the models were trained with, 0 or 1 (the forge's
++        /// AnimusForge.MoveRevision, movement-smooth D). A model of the other revision is refused, by name.
++        uint32 MoveRevision = 0;
+         /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
+         Curriculum::CurriculumTuning::ActionTuning CurriculumActions;
+         /// Animus.Curriculum.Options.*: how long a companion's durative actions (rest, hold an interrupt, keep range)
+--- a/src/AnimusMod.cpp
++++ b/src/AnimusMod.cpp
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "AnimusMod.h"
++#include "MoveBlock.h"
+ #include "LifeService.h"
+ #include "AccountMgr.h"
+ #include "AnimusAddon.h"
+@@ -148,6 +149,15 @@
+ {
+     _config.Load();
+     sLife->Configure(_config.Life);
++    // The move block's layout, before any model's layouts are built (movement-smooth D).
++    Curriculum::MoveBlock::SetRevision(_config.MoveRevision);
++    static bool logged = false;
++    if (!logged)
++    {
++        logged = true;
++        LOG_INFO("module.animus", "Animus.MoveRevision = {}: models of move block revision {} are played",
++            _config.MoveRevision, _config.MoveRevision);
++    }
+ 
+     // Models load when a companion or a stage seat first needs them, from the (new) model directory.
+     _models.Reset(_config.Enable ? _config.ModelDir : "");
 --- a/src/Companion/CompanionParty.cpp
 +++ b/src/Companion/CompanionParty.cpp
 @@ -758,7 +758,10 @@
