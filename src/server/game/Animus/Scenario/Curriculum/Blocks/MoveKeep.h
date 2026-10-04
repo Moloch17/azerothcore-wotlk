@@ -43,6 +43,24 @@ namespace Animus::Curriculum::MoveKeep
         return std::max(MIN_REACH, std::max(0.0f, speed) * REACH_SECONDS);
     }
 
+    /// How far a fresh run reaches while the held bearing has `optionLeftMs` to go: no further than the seat would
+    /// travel before the option lapses plus KEEP_DECISIONS decisions, so a bearing let go does not coast on for the
+    /// rest of a three-second run it never asked for -- into a pack or off a ledge -- and the credit for stopping
+    /// stays with the decision that stopped. Never below MIN_REACH while the option runs; a refresh extends the
+    /// option, so a seat walking on never hitches.
+    [[nodiscard]] inline float CappedReach(float speed, uint64 optionLeftMs, uint32 decisionMs)
+    {
+        float const left = std::max(0.0f, speed) * float(optionLeftMs + uint64(KEEP_DECISIONS) * decisionMs) / 1000.0f;
+        return std::min(Reach(speed), std::max(MIN_REACH, left));
+    }
+
+    /// Whether a run still under way when its held bearing lapsed has more than KEEP_DECISIONS decisions of travel
+    /// left, and so is stopped rather than left to coast.
+    [[nodiscard]] inline bool CoastsTooFar(float remaining, float velocity, uint32 decisionMs)
+    {
+        return velocity > 0.0f && remaining / velocity * 1000.0f > float(KEEP_DECISIONS * decisionMs);
+    }
+
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least
     /// KEEP_DECISIONS decisions of `decisionMs`, and its course, climb and the seat's facing are within their slack
     /// of what is wanted (errors in radians, any sign). A run with no velocity is never kept.

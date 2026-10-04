@@ -53,3 +53,21 @@ TEST(MoveKeepTest, ReachIsThreeSecondsOfTravelAndNeverShort)
     EXPECT_FLOAT_EQ(MoveKeep::Reach(1.0f), MoveKeep::MIN_REACH);
     EXPECT_FLOAT_EQ(MoveKeep::Reach(-3.0f), MoveKeep::MIN_REACH);
 }
+
+// A launch reaches no further than the option has left plus two decisions: a held bearing lapsing without a refresh
+// does not coast on for the rest of a three-second run.
+TEST(MoveKeepTest, ReachShrinksAsTheBearingNearsItsEnd)
+{
+    EXPECT_FLOAT_EQ(MoveKeep::CappedReach(7.0f, 3000, 250), 21.0f);         // the full three seconds
+    EXPECT_FLOAT_EQ(MoveKeep::CappedReach(7.0f, 1500, 250), 14.0f);         // (1.5 + 0.5) s at 7 yd/s
+    EXPECT_LT(MoveKeep::CappedReach(7.0f, 1000, 250), MoveKeep::CappedReach(7.0f, 2000, 250));
+    EXPECT_FLOAT_EQ(MoveKeep::CappedReach(7.0f, 0, 250), MoveKeep::MIN_REACH);   // never below while it runs
+    EXPECT_FLOAT_EQ(MoveKeep::CappedReach(1.0f, 0, 250), MoveKeep::MIN_REACH);
+}
+
+TEST(MoveKeepTest, ALapsedBearingStopsARunWithMoreThanTwoDecisionsLeft)
+{
+    EXPECT_TRUE(MoveKeep::CoastsTooFar(10.0f, 7.0f, 250));
+    EXPECT_FALSE(MoveKeep::CoastsTooFar(3.0f, 7.0f, 250));
+    EXPECT_FALSE(MoveKeep::CoastsTooFar(10.0f, 0.0f, 250));
+}

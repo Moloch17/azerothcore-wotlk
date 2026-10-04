@@ -568,6 +568,16 @@ namespace
         if (!view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs)
             || view.HeldBearing >= MoveBlock::BEARING_COUNT)
         {
+            // A held bearing let go (lapsed, unrefreshed): a run with more than a couple of decisions left stops
+            // rather than coasting on for the rest of a run it no longer asked for (MoveKeep::CoastsTooFar). Only a
+            // bearing's own run -- a follow or an advance is not held here.
+            if (view.HeldBearing < MoveBlock::BEARING_COUNT && alive && !bot->movespline->Finalized())
+            {
+                G3D::Vector3 const end = bot->movespline->FinalDestination();
+                float const remaining = std::hypot(bot->GetExactDist2d(end.x, end.y), end.z - bot->GetPositionZ());
+                if (MoveKeep::CoastsTooFar(remaining, bot->movespline->Velocity(), view.DecisionMs))
+                    bot->StopMoving();
+            }
             view.HeldBearing = 0xFF;
             // Standing still, so no move spline will carry the heading: push it onto the unit here instead, or a
             // turn and a FACE_* would be things the seat believed about itself that the world did not share.
@@ -610,7 +620,9 @@ namespace
         // About three seconds of travel at the seat's own speed (MoveKeep::Reach): a run that outlasts the keep check
         // by a decision or two, so the spline is not relaunched for want of ground ahead.
         float const speed = bot->GetSpeed(!airborne ? MOVE_RUN : bot->CanFly() ? MOVE_FLIGHT : MOVE_SWIM);
-        float const length = MoveKeep::Reach(speed);
+        uint64 const until = view.Option->Of(SeatOptionKind::MoveBearing).UntilMs;
+        float const length = MoveKeep::CappedReach(speed, until > view.NowMs ? until - view.NowMs : 0,
+            view.DecisionMs);
         float const reach = length * std::cos(pitch);
 
         Position destination = *bot;
