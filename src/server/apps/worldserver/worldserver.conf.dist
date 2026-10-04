@@ -5165,14 +5165,15 @@ AnimusForge.TicksPerDecision = 1
 #                     worldserver takes the stage's tick while it runs and the configured one again after, so
 #                     no restart is needed. It must divide AnimusForge.DecisionMs; one that does not is dropped
 #                     with an error. Under AnimusForge.HalfBatch such a stage runs as one group.
-#                     Suggested for the movement stages: 4 (stage1_move, stage2_travel), at roughly the cost
+#                     Suggested for the movement stages: 5 (stage1_move, stage2_travel; 50 ms ticks, a live
+#                     server's own rate -- 4 does not divide 250 ms), at roughly the cost
 #                     above.
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
-#                     stage1_move runs at 4 from the 2026-10-04 fresh start, its throughput read before
+#                     stage1_move runs at 5 from the 2026-10-04 fresh start, its throughput read before
 #                     stage2_travel follows.
 
-AnimusForge.Stage.stage1_move.TicksPerDecision = 4
-#    AnimusForge.Stage.stage2_travel.TicksPerDecision = 4
+AnimusForge.Stage.stage1_move.TicksPerDecision = 5
+#    AnimusForge.Stage.stage2_travel.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
