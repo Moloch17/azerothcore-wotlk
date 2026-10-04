@@ -41,11 +41,12 @@ namespace AnimusForge
     ///   host -> worker   START ... rank=<r> world=<n> dist=<address:port> iface=<name>   to such a worker: its
     ///                    learner's rank among all of the cluster's, and where they meet (torch.distributed)
     ///   host -> worker   START <scenario> <resume 0|1> <fast 0|1> [envs=<n>] ticks=<n> moverev=<n>
-    ///                    envs: the host's own env count for this stage (AnimusForge.Stage.<name>.Envs, per learner); the worker runs at most
-    ///                    that many, and fewer where its own conf says so. ticks: the stage's world ticks a decision
-    ///                    (AnimusForge.Stage.<name>.TicksPerDecision or the global), which the worker runs whatever
-    ///                    its own conf says -- the learner's spec is the host's. moverev: the host's
-    ///                    AnimusForge.MoveRevision, the move block's layout, which the worker builds likewise
+    ///                    envs: the host's own env count for this stage (AnimusForge.Stage.<name>.Envs, per
+    ///                    learner); the worker runs at most that many, and fewer where its own conf says so.
+    ///                    ticks: the stage's world ticks a decision (AnimusForge.Stage.<name>.TicksPerDecision or
+    ///                    the global), which the worker runs whatever its own conf says -- the learner's spec is the
+    ///                    host's. moverev: the host's AnimusForge.MoveRevision, the move block's layout, which the
+    ///                    worker builds likewise
     ///   host -> worker   STOP
     ///   worker -> host   PROGRESS <key=value ...>   every few seconds: what the worker runs and how fast, and with
     ///                    wing=<tally> its dungeon runs since the last (Scenario::TakeClusterTally)
