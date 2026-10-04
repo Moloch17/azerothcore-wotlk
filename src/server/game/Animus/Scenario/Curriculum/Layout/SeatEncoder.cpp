@@ -151,13 +151,18 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
         }
     }
 
-    // Every decision, whatever the action (the no-op included): this is where a running option acts.
+    // A spell press first (Block::PressesFirst), against the world the seat observed; then every decision's upkeep,
+    // whatever the action (the no-op included): this is where a running option acts.
+    bool const first = block && GetBlock(*block).PressesFirst(layout, local);
+    if (first)
+        GetBlock(*block).Apply(view, local, result);
+
     for (BlockId id : layout.Blocks)
         GetBlock(id).BeforeApply(view, result);
 
     if (action <= 0)
         return;
 
-    if (block)
+    if (block && !first)
         GetBlock(*block).Apply(view, local, result);
 }

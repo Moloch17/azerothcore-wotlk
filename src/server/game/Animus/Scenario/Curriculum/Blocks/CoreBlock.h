@@ -112,6 +112,7 @@ namespace Animus::Curriculum
         static constexpr uint32 ACTION_FEATURES = 6;
 
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
+        [[nodiscard]] bool PressesFirst(Layout const& layout, uint32 local) const override;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;

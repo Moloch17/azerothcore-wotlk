@@ -4060,6 +4060,11 @@ char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
         case AimlessCause::NeedlessMove:     return "needless_move";
         case AimlessCause::TauntOffRole:     return "taunt_off_role";
         case AimlessCause::TankModeOffRole:  return "tank_mode_off_role";
+        case AimlessCause::CastFacing:       return "cast_facing";
+        case AimlessCause::CastRange:        return "cast_range";
+        case AimlessCause::CastSight:        return "cast_sight";
+        case AimlessCause::CastMoving:       return "cast_moving";
+        case AimlessCause::CastPower:        return "cast_power";
         case AimlessCause::Count:            break;
     }
     return "unknown";
@@ -4089,6 +4094,11 @@ namespace
             case AimlessCause::NeedlessMove:     return tuning.AimlessNeedlessMove;
             case AimlessCause::TauntOffRole:     return tuning.AimlessTauntOffRole;
             case AimlessCause::TankModeOffRole:  return tuning.AimlessTankModeOffRole;
+            case AimlessCause::CastFacing:
+            case AimlessCause::CastRange:
+            case AimlessCause::CastSight:
+            case AimlessCause::CastMoving:
+            case AimlessCause::CastPower:        return tuning.AimlessCastFailed;
             case AimlessCause::Count:            break;
         }
         return tuning.Aimless;
@@ -4126,6 +4136,33 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
     ++seat.EffortPresses;
     if (bot->IsInCombat())
         ++seat.CombatPresses;
+
+    // A press that failed for something the seat controls -- facing away, out of range or sight, a cast time on the
+    // move, short of power -- whatever the goal: offered rather than masked (Encoding::SituationalFailure), so this
+    // charge is how the seat learns to put it right before it presses (2026-10-04).
+    // The seat's own press only: a held interrupt that fails in the same decision is not the press's doing.
+    if (*block == BlockId::Core && !result.SpellCasts && result.RefusedCast)
+    {
+        AimlessCause failed = AimlessCause::Count;
+        switch (Encoding::SituationalFailure(result.RefusedCast))
+        {
+            case Encoding::Situational::Facing: failed = AimlessCause::CastFacing; break;
+            case Encoding::Situational::Range:  failed = AimlessCause::CastRange; break;
+            case Encoding::Situational::Sight:  failed = AimlessCause::CastSight; break;
+            case Encoding::Situational::Moving: failed = AimlessCause::CastMoving; break;
+            case Encoding::Situational::Power:  failed = AimlessCause::CastPower; break;
+            case Encoding::Situational::None:   break;
+        }
+        if (failed != AimlessCause::Count)
+        {
+            ++seat.JudgedPresses;
+            ++seat.StepAimless;
+            ++seat.AimlessPresses;
+            ++seat.StepAimlessBy[size_t(failed)];
+            ++seat.AimlessBy[size_t(failed)];
+            return;
+        }
+    }
 
     auto const chargeRepeat = [&seat]
     {

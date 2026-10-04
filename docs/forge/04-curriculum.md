@@ -697,6 +697,12 @@ flight the feet changed bearing every quarter second. `turn_reversals`, `pitch_r
 turns) count what was charged, and `reward_jitter` what it cost. Jitter, like the repeat, aimless, effort and fidget charges, is a
 cost (`RewardCategory::Cost`): it never fades with the shaping, so spinning and re-pressing stay priced to
 the end of every stage (as shaping they cost nothing once the fade ran out, 2026-10-04).
+Facing is the seat's own: nothing turns it onto its target any more. A spell is offered whenever the only thing
+in its way is something the seat can put right -- facing (or getting behind), range, line of sight, standing
+still for a cast, power -- and a press that fails on one of them is charged `Actions.Aimless.CastFailed` (0.02, a
+cost) under its cause (`aimless_cast_facing`, `_range`, `_sight`, `_moving`, `_power`). A cooldown, the global
+cooldown and a cast under way stay masked. A spell press is applied before the decision's upkeep
+(`Block::PressesFirst`), so a held interrupt or a step never spoils it (2026-10-04).
 - **standby** (`hold_interrupt`): nothing the seat does takes over from it, because waiting for the target's cast is
   not something it stops fighting to do. Cancelled by any press, a hold lasted 0.6 s against casts of 1.5-2.5 s and
   interrupted next to nothing.

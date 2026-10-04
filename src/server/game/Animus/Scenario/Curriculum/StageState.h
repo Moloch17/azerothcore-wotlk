@@ -174,6 +174,13 @@ namespace Animus::Curriculum
         NeedlessMove,       // a ranged seat moving in a fight it could stand and shoot in
         TauntOffRole,       // a taunt from a seat that is not the tank, beside a living one
         TankModeOffRole,    // ... a tank's stance, form, aura or presence
+        // A press that failed for something the seat controls (Encoding::SituationalFailure): it is offered, not
+        // masked, so the seat learns to face, close, see, stand still and pool power before it presses.
+        CastFacing,         // the target not in front (or, for a back attack, not behind)
+        CastRange,          // out of range, or too close
+        CastSight,          // no line of sight
+        CastMoving,         // a cast with a cast time pressed on the move
+        CastPower,          // not enough mana, rage, energy or runic power
         Count
     };
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);

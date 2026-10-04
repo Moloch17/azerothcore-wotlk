@@ -240,6 +240,29 @@ namespace Animus::Curriculum::Encoding
         return CheckCast(bot, info, TargetsFor(info, bot, target, friendUnit), castItem);
     }
 
+    Situational SituationalFailure(uint32 castResult)
+    {
+        switch (SpellCastResult(castResult))
+        {
+            case SPELL_FAILED_UNIT_NOT_INFRONT:
+            case SPELL_FAILED_NOT_INFRONT:
+            case SPELL_FAILED_UNIT_NOT_BEHIND:
+            case SPELL_FAILED_NOT_BEHIND:
+                return Situational::Facing;
+            case SPELL_FAILED_OUT_OF_RANGE:
+            case SPELL_FAILED_TOO_CLOSE:
+                return Situational::Range;
+            case SPELL_FAILED_LINE_OF_SIGHT:
+                return Situational::Sight;
+            case SPELL_FAILED_MOVING:
+                return Situational::Moving;
+            case SPELL_FAILED_NO_POWER:
+                return Situational::Power;
+            default:
+                return Situational::None;
+        }
+    }
+
     bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally)
     {
         SpellInfo const* info = ActionCatalog::KnownRank(bot, heal.FirstRank);
@@ -317,11 +340,7 @@ namespace Animus::Curriculum::Encoding
         if (bot->GetGlobalCooldownMgr().HasGlobalCooldown(info))
             return false;
 
-        // With movement actions (duel block on): server-driven movement does not set the movement flags CheckCast
-        // looks at, so no cast-time or channeled spell while running.
-        if (view.L->Has(BlockId::Duel) && !bot->movespline->Finalized()
-            && (info->CalcCastTime(bot) || info->IsChanneled()))
-            return false;
+        // Running with a cast time is not masked: the press fails SPELL_FAILED_MOVING and is charged (Situational).
 
         // Heals, shields and buffs go to the selected friend (the bot itself without the support block); a friend who
         // is gone or dead takes none. Casts that can only be wasted are not offered: a heal with nothing else to it on
@@ -346,7 +365,10 @@ namespace Animus::Curriculum::Encoding
         if (FormToDropFor(bot, info))
             return info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
 
-        return CanCast(bot, info, target, nullptr, friendUnit);
+        // What the seat can put right itself -- facing, range, sight, moving, power -- is offered: the press fails,
+        // and the failure is charged by its cause.
+        SpellCastResult const cast = SpellChecks::CastResult(bot, info, TargetsFor(info, bot, target, friendUnit));
+        return cast == SPELL_CAST_OK || SituationalFailure(uint32(cast)) != Situational::None;
     }
 
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
@@ -385,6 +407,7 @@ namespace Animus::Curriculum::Encoding
         if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
         {
             NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
+            result.RefusedCast = uint32(cast);
             return false;
         }
 

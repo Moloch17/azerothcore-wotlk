@@ -105,6 +105,14 @@ namespace Animus::Curriculum::Encoding
 
     [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def);
 
+    /// A cast failure the seat brings on itself and can put right by what it does -- facing (or getting behind),
+    /// range, line of sight, standing still for a cast, power -- as 1-5 (Situational), else 0. Not masked: the seat
+    /// presses, the press fails, and the failure is charged by its cause (StageScenario::JudgePress), as a player
+    /// learns from "You are facing the wrong way" (2026-10-04). A cooldown, the global cooldown and a cast already
+    /// under way stay masked: waiting is not a skill.
+    enum class Situational : uint8 { None, Facing, Range, Sight, Moving, Power };
+    [[nodiscard]] Situational SituationalFailure(uint32 castResult);
+
     /// Cast a spell action at `target` as CMSG_CAST_SPELL would. Returns true if it started.
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
         SeatActionResult& result);

@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include "ObjectGuid.h"
+#include "SharedDefines.h"
 
 class Item;
 class Player;
@@ -53,6 +54,11 @@ namespace Animus::SpellChecks
     /// `reason`, when given, takes the core's SpellCastResult as a number -- SPELL_CAST_OK (255) when it passed.
     [[nodiscard]] bool CheckCast(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
         Item* castItem = nullptr, uint32* reason = nullptr);
+
+    /// The same check's result. `exact`: the core's own reason for a mounted, wrong-form or out-of-combat refusal
+    /// (CheckCast's full check); otherwise those are refused early, with the reason the early check knows.
+    [[nodiscard]] SpellCastResult CastResult(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
+        Item* castItem = nullptr, bool exact = false);
 }
 
 #endif

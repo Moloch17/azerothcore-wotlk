@@ -50,13 +50,22 @@ float Animus::SpellChecks::AuraFraction(Unit const* unit, uint32 spellId, Object
 bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
     Item* castItem, uint32* reason)
 {
+    SpellCastResult const result = CastResult(bot, info, targets, castItem, reason != nullptr);
+    if (reason)
+        *reason = uint32(result);
+    return result == SPELL_CAST_OK;
+}
+
+SpellCastResult Animus::SpellChecks::CastResult(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
+    Item* castItem, bool exact)
+{
     // Decided without building anything, where Spell::CheckCast is certain to refuse. Every one of these is a
     // condition CheckCast fails on wherever in its order it comes (it has no early success), under exactly the
     // conditions it checks them: the mount rule, the form rule (unless an aura lets this caster ignore forms) and the
     // combat rule (unless an aura lifts it). They are two fifths of what the masks' checks are asked -- a mounted seat
     // is asked about every spell it has -- and each of those used to build, check and delete a Spell to say no.
-    // A caller that wants the reason gets CheckCast's own, from the full check.
-    if (!reason)
+    // A caller that wants the exact reason gets CheckCast's own, from the full check.
+    if (!exact)
     {
         SpellCastResult early = SPELL_CAST_OK;
         if (bot->IsMounted() && !info->IsPassive() && !info->HasAttribute(SPELL_ATTR0_ALLOW_WHILE_MOUNTED))
@@ -67,7 +76,7 @@ bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCas
             && bot->GetAuraEffectsByType(SPELL_AURA_ABILITY_IGNORE_AURASTATE).empty())
             early = SPELL_FAILED_AFFECTING_COMBAT;
         if (early != SPELL_CAST_OK)
-            return false;
+            return early;
     }
 
     // Build the spell, validate it, throw it away.
@@ -103,8 +112,5 @@ bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCas
         result = bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) ? SPELL_FAILED_NOT_READY
             : info->CheckShapeshift(bot->GetShapeshiftForm());
 
-    if (reason)
-        *reason = uint32(result);
-
-    return result == SPELL_CAST_OK;
+    return result;
 }

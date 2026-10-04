@@ -343,29 +343,16 @@ void Animus::Curriculum::DuelBlock::ObserveDead(SeatView const& view, float* obs
         mask[ACTION_SELF_RESURRECT] = selfResurrect ? 1 : 0;
 }
 
-void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
+void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const
 {
-    // Face the target whenever not running somewhere: casts and swings need it, and turning is not a decision worth
-    // learning. Written to the seat's own heading as well as to the unit, so the frame the move block measures
-    // every bearing in agrees with where the seat is actually looking -- a strafe chosen after this used to be
-    // measured off a heading the world had already overwritten.
+    // Nothing here any more. It turned the seat onto its target whenever it was not running somewhere, on the
+    // argument that turning was not a decision worth learning; but an attack pressed facing away, behind a wall or out
+    // of range is a mistake a player learns from, and the seat now does too: it is offered, it fails, and the failure
+    // is charged by its cause (Encoding::SituationalFailure, StageScenario::JudgePress, 2026-10-04). Facing is the
+    // move block's FACE_TARGET or a turn.
     //
-    // Nothing else happens here any more. This hook used to run the keep-range and stay-on-target options, and
-    // to clear the positioning slot whenever there was no living target -- which, once the held bearing became a
-    // positioning option, ended every bearing in every travel arena one decision after it was pressed: no target
-    // there, ever. The slot is the move block's; the duel block does not touch it.
-    Player* bot = view.Bot;
-    Unit* target = view.Target;
-    //
-    // Turned onto the target at once, as the move block turns a seat standing still (Steer): SetFacingToObject
-    // launches an orientation spline, which counts as moving for the decision it runs in, so a cast with a cast time
-    // pressed right after it failed SPELL_FAILED_MOVING. A seat that had turned away was snapped back this way, and
-    // stage5's casters -- 90-190 turns an episode -- pressed 5-7 spells for each that started (2026-10-04).
-    if (target && bot->IsAlive() && bot->movespline->Finalized() && !bot->HasInArc(float(M_PI) / 2, target))
-    {
-        view.Facing = bot->GetAngle(target);
-        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), view.Facing);
-    }
+    // Before that it ran the keep-range and stay-on-target options and cleared the positioning slot whenever there
+    // was no living target -- which ended every bearing in every travel arena one decision after it was pressed.
 }
 
 void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const

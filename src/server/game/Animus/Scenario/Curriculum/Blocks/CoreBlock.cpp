@@ -475,6 +475,16 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
         ++result.SustainCasts;
 }
 
+bool Animus::Curriculum::CoreBlock::PressesFirst(Layout const& layout, uint32 local) const
+{
+    // A spell or an item use meets the world the seat observed: a held interrupt fired first put it on the global
+    // cooldown or mid-cast, and a walk stepped first turned it from its target, and the policy's own press failed
+    // for something it never chose (2026-10-04: three in four refused presses).
+    std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+    return local < actions.size()
+        && (actions[local].Type == ActionCatalog::Kind::Spell || actions[local].Type == ActionCatalog::Kind::Trinket);
+}
+
 void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
 {
     if (!view.Option || !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs))

@@ -343,6 +343,9 @@ namespace Animus::Curriculum
         /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
         /// it does is recorded in `result` as a press would be.
         virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
+        /// The action is applied before every block's BeforeApply rather than after: a press that must meet the
+        /// world as the seat saw it (a spell: facing, range, the global cooldown).
+        [[nodiscard]] virtual bool PressesFirst(Layout const& /*layout*/, uint32 /*local*/) const { return false; }
 
         /// Apply the block's action `local` (0-based within the block) as the client would. Masked actions do nothing.
         virtual void Apply(SeatView& /*view*/, uint32 /*local*/, SeatActionResult& /*result*/) const { }
