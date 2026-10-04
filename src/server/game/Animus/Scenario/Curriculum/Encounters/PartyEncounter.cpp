@@ -373,6 +373,12 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     AgentStats const& step = env.StepStats[seatIndex];
     Aptitude const& apt = data.Seats[seatIndex].Apt;
     float const healShare = HealShare(data.Seats[seatIndex]);
+    // A drill's drilled seat (RewardRole's weight): a heal_keep healer's healing is the lesson, so it is paid at the
+    // weight its overheal is charged at. Only the charge was weighted, and a heal netted -5.5 times what it healed
+    // (2026-10-03, stage6: healers cast 3.6 heals a 78 s fight and smote instead).
+    ArenaDefinition const& drillArena = _scenario.Arena(env);
+    float const healDrill = seatIndex == 0 && drillArena.DrillRole
+        && drillArena.DrillRole == data.Seats[seatIndex].DungeonRole ? _scenario.Tuning().Raid.DrillWeight : 1.0f;
 
     // Taking aggro while a teammate is there to hold it (Party.PulledThreat): the enemies on a damage dealer or a
     // healer are the tank's to take, and the seat that draws them is the one to charge.
@@ -433,7 +439,8 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                 * weight * float(taken) / health);
 
         if (Heals(apt))
-            ledger.Add(RewardTerm::TeammateHealing, healShare * tuning.TeammateHealing * float(healed) / health);
+            ledger.Add(RewardTerm::TeammateHealing, healDrill * healShare * tuning.TeammateHealing * float(healed)
+                / health);
 
         if (!IsTank(data.Seats[teammateSeat]) && teammate->IsAlive())
         {
@@ -578,13 +585,14 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * keptPay * scale);
 
         // Healing that landed on no missing health: what it cast, less what it healed on itself, its allies and the
-        // other seats.
+        // other seats. Charged at a share of what effective healing pays (Raid.Overheal), so it discounts a heal
+        // rather than outweighing it: at 2.0 against the pay's 0.5 a heal half wasted cost more than it earned.
         uint64 effective = step.SelfHealing + step.AllyHealing;
         for (uint64 healed : step.AgentHealingBy)
             effective += healed;
         if (step.HealingRaw > effective)
-            ledger.Add(RewardTerm::TeammateHealing, -drill * tuning.Overheal * float(step.HealingRaw - effective)
-                / float(std::max<uint32>(1, bot->GetMaxHealth())));
+            ledger.Add(RewardTerm::TeammateHealing, -drill * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
+                * float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
     else if (raid && !IsTank(state))
         ledger.Add(RewardTerm::DamageDealt, tuning.Output * state.LastStepDamage);

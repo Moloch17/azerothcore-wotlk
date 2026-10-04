@@ -85,10 +85,10 @@ namespace Animus::Curriculum
             float TeammateDamageTakenProtector = 1.0f;  // tanks and healers
             float TeammateHealing = 2.0f;               // healers: effective healing, fraction of its health
             /// A healer's pay for keeping the others up (TeammateHealing, Raid.KeepUp's above-half share) while it
-            /// holds no Protect goal, as a share of the full: protecting is how healing pays. Party healers chose
-            /// Protect 2% of the time through the group stage, healing anyway on the pay a Fight goal also earned
-            /// (2026-10-02). 1 pays it whatever the goal; a seat with no goal held is paid in full.
-            float HealOffGoal = 0.25f;
+            /// holds no Protect goal, as a share of the full. 1 pays it whatever the goal: at 0.25 healers held Protect
+            /// 0.2% of the time and their healing was paid a quarter, which the overheal charge then outweighed
+            /// (2026-10-03, stage6).
+            float HealOffGoal = 1.0f;
             /// A party's or raid's tank: its damage dealt, as a share of what a damage dealer is paid for it. Holding
             /// the enemies (Raid.TankHold) is the tank's pay; hitting them is the damage dealers'.
             float TankDamageShare = 0.25f;
@@ -125,10 +125,11 @@ namespace Animus::Curriculum
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
             float KeepUp = 0.0002f;
             /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share
-            /// of their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
-            /// (2026-10-02, stage6 at 41M): healing late, big, and on the full. At 1.0 it stayed at 50% through the
-            /// stage.
-            float Overheal = 2.0f;
+            /// of their own health, charged at this share of what effective healing pays (Party.TeammateHealing). At
+            /// 0.5 a heal two-thirds wasted breaks even and anything less wasted pays. Charged at 2.0 outright (four
+            /// times the off-goal pay, three times more in a drill) a heal half wasted cost five times what it earned,
+            /// and the healers stopped healing (2026-10-03, stage6).
+            float Overheal = 0.5f;
             /// Tanks in a party or a raid, per decision in a fight: in the spec's tanking stance, form or aura
             /// (Defensive Stance, Bear Form, Righteous Fury, Frost Presence). Warrior tanks finished 27 of 38 drill
             /// fights in Battle Stance (stage6 at 41M).
