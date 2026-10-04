@@ -63,21 +63,46 @@ def _seed_head(new: dict, old: dict, prefix: str) -> None:
 # (tests/test_bootstrap.py reads the header): it was 67 long after the globals had grown to 94, which seeded every
 # changed catalog's action features 27 columns off.
 CORE_GLOBAL_FEATURES = 94
-CORE_ACTION_FEATURES = 6
+# Per catalog action (CoreBlock::ACTION_FEATURES): 6 until ready and affordable joined them (2026-10-04). A stage.json
+# says its own (the core block's "action_features"); one that does not is from before, and had 6.
+CORE_ACTION_FEATURES = 8
+CORE_ACTION_FEATURES_BEFORE = 6
+# The rank tiers (CoreBlock::ACTION_RANK_TIERS) close the core block's actions, and have no features of their own.
+CORE_RANK_TIER_PREFIX = "rank_"
+
+
+def core_action_features(stage: dict | None, layout: str) -> int:
+    """The core block's features per catalog action in `stage` (its stage.json), 6 for one from before they were
+    written down."""
+    entry = (stage or {}).get("layouts", {}).get(layout) or {}
+    for block in entry.get("blocks", ()):
+        if block.get("name") == "core":
+            return int(block.get("action_features", CORE_ACTION_FEATURES_BEFORE))
+    return CORE_ACTION_FEATURES_BEFORE
 
 
 def _core_by_name(old_spans: tuple[Span, Span], new_spans: tuple[Span, Span], old_names: list[str],
-                  new_names: list[str]):
-    """Segments of a core block whose catalog changed: the globals, each action both catalogs name (its features and
-    its action row) and the talents after them; None when the rest of the block does not line up."""
+                  new_names: list[str], old_features: int = CORE_ACTION_FEATURES,
+                  new_features: int = CORE_ACTION_FEATURES):
+    """Segments of a core block whose catalog or per-action width changed: the globals, each action both catalogs
+    name (the features both widths have, and its action row), the rank tiers' rows, and the talents after them; None
+    when the rest of the block does not line up."""
     (old_obs, old_actions), (new_obs, new_actions) = old_spans, new_spans
     old_catalog = old_names[old_actions[0] : old_actions[0] + old_actions[1]]
     new_catalog = new_names[new_actions[0] : new_actions[0] + new_actions[1]]
     if len(old_catalog) != old_actions[1] or len(new_catalog) != new_actions[1]:
         return None
 
-    old_tail = old_obs[1] - CORE_GLOBAL_FEATURES - old_actions[1] * CORE_ACTION_FEATURES
-    new_tail = new_obs[1] - CORE_GLOBAL_FEATURES - new_actions[1] * CORE_ACTION_FEATURES
+    def featured(catalog: list[str]) -> int:
+        """The actions with features: all but the rank tiers that close the block."""
+        tiers = 0
+        while tiers < len(catalog) and catalog[len(catalog) - 1 - tiers].startswith(CORE_RANK_TIER_PREFIX):
+            tiers += 1
+        return len(catalog) - tiers
+
+    old_featured, new_featured = featured(old_catalog), featured(new_catalog)
+    old_tail = old_obs[1] - CORE_GLOBAL_FEATURES - old_featured * old_features
+    new_tail = new_obs[1] - CORE_GLOBAL_FEATURES - new_featured * new_features
     if old_tail != new_tail or old_tail < 0:
         return None
 
@@ -86,16 +111,18 @@ def _core_by_name(old_spans: tuple[Span, Span], new_spans: tuple[Span, Span], ol
         return (((old_obs_first, obs_count), (old_action, action_count)),
                 ((new_obs_first, obs_count), (new_action, action_count)))
 
+    kept = min(old_features, new_features)
     segments = [segment(old_obs[0], new_obs[0], CORE_GLOBAL_FEATURES, 0, 0, 0)]
     where = {action: position for position, action in enumerate(old_catalog)}
     for position, action in enumerate(new_catalog):
         if action in where:
             old_position = where[action]
-            segments.append(segment(old_obs[0] + CORE_GLOBAL_FEATURES + old_position * CORE_ACTION_FEATURES,
-                                    new_obs[0] + CORE_GLOBAL_FEATURES + position * CORE_ACTION_FEATURES,
-                                    CORE_ACTION_FEATURES, old_actions[0] + old_position, new_actions[0] + position, 1))
-    segments.append(segment(old_obs[0] + CORE_GLOBAL_FEATURES + old_actions[1] * CORE_ACTION_FEATURES,
-                            new_obs[0] + CORE_GLOBAL_FEATURES + new_actions[1] * CORE_ACTION_FEATURES,
+            features = kept if position < new_featured and old_position < old_featured else 0
+            segments.append(segment(old_obs[0] + CORE_GLOBAL_FEATURES + old_position * old_features,
+                                    new_obs[0] + CORE_GLOBAL_FEATURES + position * new_features,
+                                    features, old_actions[0] + old_position, new_actions[0] + position, 1))
+    segments.append(segment(old_obs[0] + CORE_GLOBAL_FEATURES + old_featured * old_features,
+                            new_obs[0] + CORE_GLOBAL_FEATURES + new_featured * new_features,
                             new_tail, 0, 0, 0))
     return segments
 
@@ -203,7 +230,8 @@ GROWS_AT_END = frozenset({"crowd"})
 def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span, Span]], name: str,
                    old_names: list[str] | None = None, new_names: list[str] | None = None,
                    revisions: tuple[dict[str, int], dict[str, int]] | None = None, source: str = "",
-                   sets: tuple[list[dict], list[dict]] | None = None):
+                   sets: tuple[list[dict], list[dict]] | None = None,
+                   core_features: tuple[int, int] = (CORE_ACTION_FEATURES, CORE_ACTION_FEATURES)):
     """(old spans, new spans) of every block both layouts have, sizes checked. A core block whose catalog changed is
     matched action by action by name, when both stages name their actions. `revisions` (old, new; Block::Revision):
     a block whose revision differs re-laid its columns, so it starts fresh like one that changed shape -- even at the
@@ -228,7 +256,8 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
                 common.append(((old_obs, old_actions), ((new_obs[0], old_obs[1]), new_actions)))
                 continue
             if block == "core" and old_names and new_names:
-                segments = _core_by_name((old_obs, old_actions), (new_obs, new_actions), old_names, new_names)
+                segments = _core_by_name((old_obs, old_actions), (new_obs, new_actions), old_names, new_names,
+                                         *core_features)
             elif sets and old_names and new_names:
                 segments = _slots_grown((old_obs, old_actions), (new_obs, new_actions), sets[0], sets[1], old_names,
                                         new_names)
@@ -472,7 +501,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
             common = _common_blocks(old_blocks, new_blocks, layout.name, _action_names(old_stage, layout.name),
                                     _action_names(stage, layout.name),
                                     (block_revisions(old_stage, layout.name), block_revisions(stage, layout.name)),
-                                    source, sets)
+                                    source, sets,
+                                    (core_action_features(old_stage, layout.name),
+                                     core_action_features(stage, layout.name)))
             for network, remapped in adapters:
                 _seed_adapter_blocks(network, remapped, f"adapters.{index}", common)
             for network, remapped in norms:

@@ -103,7 +103,17 @@ namespace Animus::Curriculum::Encoding
     /// at its rank tier.
     [[nodiscard]] SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def);
 
-    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def);
+    /// What a spell action would do if pressed now, beside whether it is offered: it would start (Ready), and the
+    /// seat has the power it costs (Affordable). Observed per action (CoreBlock ACTION_READY, ACTION_AFFORDABLE), so a
+    /// seat offered a spell that will fail -- facing away, out of range, short of mana -- can see that it will.
+    struct SpellReadiness
+    {
+        bool Ready = false;
+        bool Affordable = false;
+    };
+
+    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
+        SpellReadiness* readiness = nullptr);
 
     /// A cast failure the seat brings on itself and can put right by what it does -- facing (or getting behind),
     /// range, line of sight, standing still for a cast, power -- as 1-5 (Situational), else 0. Not masked: the seat

@@ -48,7 +48,7 @@ namespace
     constexpr float OPTION_SCALE_MS = 30000.0f;
     constexpr float GOAL_ESCAPE_HEALTH_PCT = 35.0f;
 
-    bool IsActionAllowed(SeatView const& view, uint32 action)
+    bool IsActionAllowed(SeatView const& view, uint32 action, Encoding::SpellReadiness* readiness = nullptr)
     {
         ActionCatalog::Action const& def = view.L->Catalog().Actions()[action];
         Player* bot = view.Bot;
@@ -72,7 +72,7 @@ namespace
                 break;
         }
 
-        return Encoding::IsSpellActionAllowed(view, view.Target, def);
+        return Encoding::IsSpellActionAllowed(view, view.Target, def, readiness);
     }
 
     /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
@@ -403,10 +403,18 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         else if (actions[action].Type == ActionCatalog::Kind::Trinket)
             info = Encoding::TrinketSpell(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, actions[action].EquipmentSlot));
 
+        // Offered or not, and whether it would work: one check for the mask and the readiness features alike.
+        Encoding::SpellReadiness readiness;
+        bool const allowed = action > 0 && bot->IsAlive() && IsActionAllowed(view, action, &readiness);
+        if (actions[action].Type == ActionCatalog::Kind::Trinket)
+            readiness = { allowed, true };
+
         if (info)
         {
             float* features = obs + OBS_GLOBAL_COUNT + action * ACTION_FEATURES;
             float stacks = 0.0f;
+            features[ACTION_READY] = readiness.Ready ? 1.0f : 0.0f;
+            features[ACTION_AFFORDABLE] = readiness.Affordable ? 1.0f : 0.0f;
             features[0] = 1.0f;
             features[1] = Animus::SpellChecks::CooldownFraction(bot, info);
             features[2] = target ? Animus::SpellChecks::AuraFraction(target, info->Id, botGuid, &stacks) : 0.0f;
@@ -421,7 +429,7 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
             ? memory->SincePressed(view.L->Slice(BlockId::Core).ActionFirst + action, view.NowMs) : 1.0f;
 
         if (mask && action > 0)
-            mask[action] = IsActionAllowed(view, action) && !GoalCloses(view, actions[action]) ? 1 : 0;
+            mask[action] = allowed && !GoalCloses(view, actions[action]) ? 1 : 0;
     }
 
     // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.

@@ -97,8 +97,8 @@ namespace Animus::Curriculum
             OBS_GLOBAL_COUNT            = 94
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
-            // stacks, time since the seat pressed it / 10 s). Then per talent of the class: rank / max rank. Then
-            // per tree: points / 71.
+            // stacks, time since the seat pressed it / 10 s, ready, affordable). Then per talent of the class: rank /
+            // max rank. Then per tree: its share of the points spent.
         };
 
         /// After the catalog's actions: which rank of a rankable spell to cast (RANK_TIERS: the highest known, about
@@ -109,7 +109,13 @@ namespace Animus::Curriculum
 
         /// The first two catalog actions are the no-op and cancel-queued.
         static constexpr uint32 FIRST_CAST_ACTION = 2;
-        static constexpr uint32 ACTION_FEATURES = 6;
+        /// Per catalog action, after the six it always had: it would start if pressed now (ready), and the seat has
+        /// the power for it (affordable). A spell is offered when the only thing in its way is something the seat
+        /// can put right, so these are how the seat sees which presses will fail and why (2026-10-04: stage6's rogues
+        /// pressed 94 spells for 13 casts with nothing per spell to tell them which would work).
+        static constexpr uint32 ACTION_READY = 6;
+        static constexpr uint32 ACTION_AFFORDABLE = 7;
+        static constexpr uint32 ACTION_FEATURES = 8;
 
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         [[nodiscard]] bool PressesFirst(Layout const& layout, uint32 local) const override;

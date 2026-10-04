@@ -325,12 +325,22 @@ namespace Animus::Curriculum::Encoding
         return CancellableForm(bot);
     }
 
-    bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def)
+    bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
+        SpellReadiness* readiness)
     {
         Player* bot = view.Bot;
 
         // Cheap rejections before the full cast check.
         SpellInfo const* info = KnownRank(view, def);
+        if (info && readiness && bot->HasActiveSpell(info->Id))
+        {
+            // Affordable whatever else stands in the way: what it costs against what the seat has (as Spell::prepare
+            // works the cost out and Spell::CheckPower compares it). Runes are the core's own check.
+            int32 const cost = info->PowerType == POWER_RUNE ? 0 : info->CalcPowerCost(bot, info->GetSchoolMask());
+            readiness->Affordable = cost <= 0
+                || (info->PowerType == POWER_HEALTH ? int32(bot->GetHealth()) > cost
+                    : info->PowerType < MAX_POWERS && int32(bot->GetPower(Powers(info->PowerType))) >= cost);
+        }
         if (!info || !bot->HasActiveSpell(info->Id) || bot->HasSpellCooldown(info->Id) || CastInProgress(bot))
             return false;
 
@@ -363,11 +373,18 @@ namespace Animus::Curriculum::Encoding
         // (ApplySpellAction). The full cast check cannot be asked that question, so this is the shapeshift rule
         // alone; a press the core still refuses simply does nothing, as any masked-through press does.
         if (FormToDropFor(bot, info))
-            return info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
+        {
+            bool const shifts = info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
+            if (readiness)
+                readiness->Ready = shifts && readiness->Affordable;
+            return shifts;
+        }
 
         // What the seat can put right itself -- facing, range, sight, moving, power -- is offered: the press fails,
         // and the failure is charged by its cause.
         SpellCastResult const cast = SpellChecks::CastResult(bot, info, TargetsFor(info, bot, target, friendUnit));
+        if (readiness)
+            readiness->Ready = cast == SPELL_CAST_OK;
         return cast == SPELL_CAST_OK || SituationalFailure(uint32(cast)) != Situational::None;
     }
 

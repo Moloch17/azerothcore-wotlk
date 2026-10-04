@@ -224,6 +224,8 @@ def test_a_core_catalog_that_lost_a_spell_is_seeded_by_action_name():
     new_stage = stage_with({"priest_heal": [("core", new_core, 2), ("duel", 3, 1)]})
     old_stage["layouts"]["priest_heal"]["action_names"] = ["noop", "grovel_7267", "smite_585", "stop"]
     new_stage["layouts"]["priest_heal"]["action_names"] = ["noop", "smite_585", "stop"]
+    for stage in (old_stage, new_stage):
+        stage["layouts"]["priest_heal"]["blocks"][0]["action_features"] = F
     old = MappoTrainer([(old_core + 3, 4)], 4, config)
     new = MappoTrainer([(new_core + 3, 3)], 4, config)
     checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec([Layout("priest_heal", old_core + 3, 4)]),
@@ -396,3 +398,38 @@ def test_rescaled_columns_start_their_normaliser_afresh_and_keep_their_weights()
         else:
             torch.testing.assert_close(norm.mean[4:6], torch.full((2,), 5.0))
             assert float(norm.count) == 30_000_000.0
+
+
+def test_a_core_block_from_before_ready_and_affordable_keeps_each_actions_features():
+    """A stage.json without "action_features" is from before ready and affordable (6 per action): each action's six
+    seed into the first six of its eight, the new two start at zero, the rank tiers keep their rows, and the talents
+    after the catalog land where they now are (2026-10-04)."""
+    torch.manual_seed(0)
+    config = MappoConfig(hidden=(8,))
+    from animus.bootstrap import CORE_ACTION_FEATURES as F, CORE_GLOBAL_FEATURES as G
+
+    names = ["noop", "smite_585", "heal_2054", "rank_high", "rank_mid", "rank_low", "stop"]
+    talents = 2
+    old_core, new_core = G + 3 * 6 + talents, G + 3 * F + talents
+    old_stage = stage_with({"priest_heal": [("core", old_core, 6), ("duel", 3, 1)]})
+    new_stage = stage_with({"priest_heal": [("core", new_core, 6), ("duel", 3, 1)]})
+    old_stage["layouts"]["priest_heal"]["action_names"] = names
+    new_stage["layouts"]["priest_heal"]["action_names"] = names
+    new_stage["layouts"]["priest_heal"]["blocks"][0]["action_features"] = F
+    old = MappoTrainer([(old_core + 3, 7)], 4, config)
+    new = MappoTrainer([(new_core + 3, 7)], 4, config)
+    checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec([Layout("priest_heal", old_core + 3, 7)]),
+                  "stage": old_stage}
+
+    seed_trainer(new, checkpoint, spec([Layout("priest_heal", new_core + 3, 7)], 4), new_stage)
+
+    new_w = new.actor.state_dict()["adapters.0.weight"]
+    old_w = old.actor.state_dict()["adapters.0.weight"]
+    torch.testing.assert_close(new_w[:, :G], old_w[:, :G])
+    for action in range(3):
+        torch.testing.assert_close(new_w[:, G + action * F : G + action * F + 6],
+                                   old_w[:, G + action * 6 : G + action * 6 + 6])
+        assert torch.count_nonzero(new_w[:, G + action * F + 6 : G + (action + 1) * F]) == 0
+    torch.testing.assert_close(new_w[:, new_core - talents :], old_w[:, old_core - talents :])   # talents and duel
+    torch.testing.assert_close(new.actor.state_dict()["heads.0.weight"], old.actor.state_dict()["heads.0.weight"])
+

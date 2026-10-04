@@ -1596,6 +1596,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             block["actions"] = Span(slice.ActionFirst, slice.ActionCount);
             if (uint32 const revision = GetBlock(id).Revision())
                 block["revision"] = revision;
+            if (id == BlockId::Core)
+                block["action_features"] = CoreBlock::ACTION_FEATURES;
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
             if (!rescaled.empty())
