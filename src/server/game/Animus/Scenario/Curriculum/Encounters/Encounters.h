@@ -566,6 +566,8 @@ namespace Animus::Curriculum
             uint64 TankTargetDamage = 0;
             uint64 DamageDealt = 0;
             uint32 PulledOffMs = 0;
+            uint32 TankFightMs = 0;             // the tank alive and in a fight ...
+            uint32 TankModeMs = 0;              // ... and of that, in its tanking stance, form or aura
         };
 
         struct EnvParty

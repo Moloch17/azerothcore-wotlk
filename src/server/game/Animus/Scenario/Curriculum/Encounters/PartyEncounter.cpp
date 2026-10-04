@@ -80,6 +80,16 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
                 tank = &party;
         return tank ? float(tank->EnemiesHeld) / float(tank->EnemiesOnParty) : 0.0f;
     });
+    // The party tank's time in its tanking stance, form or aura while alive and fighting, the same on every seat. The
+    // form at an episode's end read a dead druid, or one too low to have Bear Form, as one that had left it.
+    table.Add("tank_form_share", [this](Env const& env, uint32)
+    {
+        SeatParty const* tank = nullptr;
+        for (SeatParty const& party : _envs[env.Index].Seats)
+            if (party.TankFightMs && (!tank || party.TankFightMs > tank->TankFightMs))
+                tank = &party;
+        return tank ? float(tank->TankModeMs) / float(tank->TankFightMs) : 0.0f;
+    });
     table.Add("tank_target_share", [this](Env const& env, uint32 seat)
     {
         SeatParty const& party = _envs[env.Index].Seats[seat];
@@ -535,6 +545,12 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // Righteous Fury takes far less from, and holds a pull with.
     if (tank && !arena.Owner && bot->IsInCombat() && InTankingStance(bot))
         ledger.Add(RewardTerm::Threat, drill * tuning.TankStance * scale);
+    if (tank && bot->IsAlive() && bot->IsInCombat())
+    {
+        SeatParty& reading = _envs[env.Index].Seats[seatIndex];
+        reading.TankFightMs += _scenario.DecisionMs();
+        reading.TankModeMs += InTankingStance(bot) ? _scenario.DecisionMs() : 0;
+    }
     if (tank && !arena.Owner)
     {
         seat.EnemiesHeld += onBot;

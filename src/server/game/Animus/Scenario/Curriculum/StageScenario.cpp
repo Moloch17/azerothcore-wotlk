@@ -161,6 +161,20 @@ namespace
     /// band in equal numbers however the training draw is weighted: training sees the levels the shipped companions
     /// play, and the evaluation still measures all of them. A band the seat's classes cannot reach (a death knight
     /// below 55) falls through to the next one up.
+    /// A tank's tanking stance, form, aura or presence (its first rank): Defensive Stance, Righteous Fury, Bear Form,
+    /// Frost Presence. 0 for a class that has none.
+    uint32 TankModeSpell(uint8 playerClass)
+    {
+        switch (playerClass)
+        {
+            case CLASS_WARRIOR:         return 71;
+            case CLASS_PALADIN:         return 25780;
+            case CLASS_DRUID:           return 5487;
+            case CLASS_DEATH_KNIGHT:    return 48263;
+            default:                    return 0;
+        }
+    }
+
     uint8 RandomLevel(uint8 minLevel, uint32 fixed, CurriculumTuning::CharacterTuning const& tuning,
         uint32 seedIndex, uint32 layouts)
     {
@@ -2298,11 +2312,17 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             s.Spec = fits[pick].Spec;
         }
 
-    // One level every seat's class/role can be.
+    // One level every seat's class/role can be. A drawn tank's includes the level its tanking stance, form or aura
+    // is learned: a bear-spec druid tank below 10 had no Bear Form, a warrior no Defensive Stance or Taunt -- a
+    // third of stage6's druid tanks "out of bear form" were evaluated at levels 1-9 (2026-10-03).
     uint8 minLevel = 1;
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-        if (data.Seats[seat].L)
-            minLevel = std::max(minLevel, data.Seats[seat].L->Assets->Kit->MinLevel());
+        if (SeatState const& s = data.Seats[seat]; s.L)
+        {
+            minLevel = std::max(minLevel, s.L->Assets->Kit->MinLevel());
+            if (s.DungeonRole == DUNGEON_TANK && s.L->Profile)
+                minLevel = std::max(minLevel, s.L->Assets->Kit->LevelOf(TankModeSpell(s.L->Profile->Class)));
+        }
 
     minLevel = std::max({ minLevel, _stage.MinLevel, arena.MinLevel });
 
@@ -2346,9 +2366,13 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     bool const focus = !_level && _stage.FocusChance && env.EpisodeSeedIndex == NO_EPISODE_SEED
         && _stage.FocusLevelLast >= std::max<uint8>(minLevel, _stage.FocusLevelFirst)
         && irand(0, 99) < int32(_stage.FocusChance);
+    // An evaluation of a stage trained wholly in its band (FocusChance 100) is in the band too: spread over 1-80 it
+    // scored stage6 mostly on levels the stage never trains (2026-10-03).
+    bool const focusEval = !_level && _stage.FocusChance >= 100 && env.EpisodeSeedIndex != NO_EPISODE_SEED
+        && _stage.FocusLevelLast >= std::max<uint8>(minLevel, _stage.FocusLevelFirst);
     uint8 const level = data.EpisodeLevel ? std::clamp<uint8>(data.EpisodeLevel, minLevel, DEFAULT_MAX_LEVEL)
         : keptLevel ? keptLevel
-        : focus ? uint8(urand(std::max<uint8>(minLevel, _stage.FocusLevelFirst), _stage.FocusLevelLast))
+        : focus || focusEval ? uint8(urand(std::max<uint8>(minLevel, _stage.FocusLevelFirst), _stage.FocusLevelLast))
         : RandomLevel(minLevel, _level, _tuning.Characters, env.EpisodeSeedIndex, uint32(_layouts.size()));
 
     // The first build opens a new instance (or a phase of the continent); every later one reuses it. An env whose
@@ -2685,29 +2709,10 @@ void Animus::Curriculum::StageScenario::PrepareFighter(Player* bot, SeatState& s
     // drawn to hold in the wrong mode (stage6, 2026-10-03). Changing it is the seat's own press from here on.
     if (seat.DungeonRole != DUNGEON_TANK || !seat.L->Profile)
         return;
-    constexpr uint32 SPELL_DEFENSIVE_STANCE = 71;
-    constexpr uint32 SPELL_RIGHTEOUS_FURY = 25780;
-    constexpr uint32 SPELL_BEAR_FORM = 5487;
     constexpr uint32 SPELL_DIRE_BEAR_FORM = 9634;
-    constexpr uint32 SPELL_FROST_PRESENCE = 48263;
-    uint32 mode = 0;
-    switch (seat.L->Profile->Class)
-    {
-        case CLASS_WARRIOR:
-            mode = SPELL_DEFENSIVE_STANCE;
-            break;
-        case CLASS_PALADIN:
-            mode = SPELL_RIGHTEOUS_FURY;
-            break;
-        case CLASS_DRUID:
-            mode = bot->HasSpell(SPELL_DIRE_BEAR_FORM) ? SPELL_DIRE_BEAR_FORM : SPELL_BEAR_FORM;
-            break;
-        case CLASS_DEATH_KNIGHT:
-            mode = SPELL_FROST_PRESENCE;
-            break;
-        default:
-            break;
-    }
+    uint32 mode = TankModeSpell(seat.L->Profile->Class);
+    if (seat.L->Profile->Class == CLASS_DRUID && bot->HasSpell(SPELL_DIRE_BEAR_FORM))
+        mode = SPELL_DIRE_BEAR_FORM;
     if (mode && bot->HasSpell(mode) && !bot->HasAura(mode))
         bot->CastSpell(bot, mode, true);
 }

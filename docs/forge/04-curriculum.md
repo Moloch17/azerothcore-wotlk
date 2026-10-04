@@ -1783,7 +1783,10 @@ The roles before the dungeon (2026-10-02, the Deadmines curriculum). The Deadmin
 hours: its parties lost their fights with eight enemies on them, two on the tank, the healer dry -- role failures, not
 class failures, and no stage before it taught a role. So each role is drilled where its feedback is seconds away, by
 a **proper party** (`ArenaDefinition::ProperParty`: a tank, a healer and three damage dealers drawn by gear, as the
-dungeon draws them, by spec alone) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only castings that can be that level).
+dungeon draws them, by spec alone) at 15-30 (`FocusLevelFirst/Last`, `FocusChance` 100: only castings that can be that level,
+and its evaluations are in the band too). A drill keeps that makeup with the drilled role in seat 0; a drawn tank is at
+least the level its tanking stance, form or aura is learned (Bear Form and Defensive Stance at 10); `tank_form_share` is
+the tank's time in it while alive and fighting.
 
 | Arena | Drilled (`DrillRole`) | What it pays | What it charges |
 |---|---|---|---|

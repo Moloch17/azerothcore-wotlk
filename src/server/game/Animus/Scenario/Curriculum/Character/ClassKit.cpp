@@ -199,6 +199,14 @@ Animus::Curriculum::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
             playerClass);
 }
 
+uint8 Animus::Curriculum::ClassKit::LevelOf(uint32 spellId) const
+{
+    for (KitSpell const& spell : _spells)
+        if (spell.SpellId == spellId)
+            return std::max<uint8>(1, spell.ReqLevel);
+    return 0;
+}
+
 uint8 Animus::Curriculum::ClassKit::MinLevelOf(uint8 playerClass)
 {
     return playerClass == CLASS_DEATH_KNIGHT ? DEATH_KNIGHT_START_LEVEL : 1;
