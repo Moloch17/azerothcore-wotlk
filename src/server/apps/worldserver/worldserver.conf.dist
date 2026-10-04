@@ -5168,8 +5168,10 @@ AnimusForge.TicksPerDecision = 1
 #                     Suggested for the movement stages: 4 (stage1_move, stage2_travel), at roughly the cost
 #                     above.
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
-#
-#    AnimusForge.Stage.stage1_move.TicksPerDecision = 4
+#                     stage1_move runs at 4 from the 2026-10-04 fresh start, its throughput read before
+#                     stage2_travel follows.
+
+AnimusForge.Stage.stage1_move.TicksPerDecision = 4
 #    AnimusForge.Stage.stage2_travel.TicksPerDecision = 4
 
 #
@@ -5277,10 +5279,11 @@ AnimusForge.TravelPools = 0
 #                     charge's decay (Options.JitterDecayMs), and the held bearing's clock on a 3-second
 #                     scale -- and two fine turns of 5 degrees either way. A different layout: a fresh
 #                     start, not a resume or a seed from a revision-0 checkpoint; a model trained on it
-#                     carries "revision": 1 in its manifest. Logged at startup when on.
-#        Default:     0
+#                     carries "revision": 1 in its manifest. Logged at startup when on. The realm runs such a
+#                     model with the module's Animus.MoveRevision = 1.
+#        Default:     1 (since the 2026-10-04 fresh start from stage1)
 
-AnimusForge.MoveRevision = 0
+AnimusForge.MoveRevision = 1
 
 ###################################################################################################
 # GROUND PROBE

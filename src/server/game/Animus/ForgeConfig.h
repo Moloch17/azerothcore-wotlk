@@ -108,8 +108,9 @@ namespace AnimusForge
         /// (`forge fieldstage`); live measures.
         bool ProbeBaked = false;
         /// AnimusForge.MoveRevision: the move block's layout, 0 or 1 (MoveBlock revision 1: the steering memory and
-        /// the fine turns, movement-smooth D). A new layout: a fresh start, not a resume.
-        uint32 MoveRevision = 0;
+        /// the fine turns, movement-smooth D). A new layout: a fresh start, not a resume. 1 from the curriculum's
+        /// fresh start at stage1 (2026-10-04).
+        uint32 MoveRevision = 1;
         bool ProbeGeometry = false;
         std::string ProbeDir;           // AnimusForge.Probe.Dir, resolved: never empty after Load
         uint32 ProbeCacheGrids = 64;    // AnimusForge.Probe.CacheGrids: tables held in memory at once
