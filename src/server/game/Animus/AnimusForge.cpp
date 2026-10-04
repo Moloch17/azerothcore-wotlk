@@ -1105,6 +1105,14 @@ void AnimusForge::Forge::PollCluster()
                 if (std::sscanf(at, " envs=%u", &count) == 1 && count)
                     envs = count;
             }
+            // The host's world ticks a decision for the stage, which this worker runs (WorkerPlan).
+            std::optional<uint32> ticks;
+            if (char const* at = std::strstr(order->c_str(), " ticks="))
+            {
+                unsigned count = 0;
+                if (std::sscanf(at, " ticks=%u", &count) == 1 && count)
+                    ticks = count;
+            }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
             // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
             // Never for a cluster rank: a rank's learner cannot rejoin its learners' group once the host has
@@ -1121,7 +1129,7 @@ void AnimusForge::Forge::PollCluster()
             LOG_INFO("module.animus", "Cluster: the host orders {}{}{}", scenario, fast ? " (fast)" : "",
                 rank.World > 1 ? Acore::StringFormat(", with this machine's learner as rank {} of {}", rank.Rank,
                     rank.World) : "");
-            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs);
+            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs, ticks);
             if (_state != State::Idle)
                 _request = Request::Cancel;
         }
@@ -1148,7 +1156,10 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
     // confs are each machine's and never synced), and forty-seat raid envs at a worker's default count ran every
     // worker's GPU out of memory.
     std::optional<uint32> const envs = learnerConfig.StageEnvsPerLearner(scenario);
-    std::string const cap = envs ? Acore::StringFormat(" envs={}", *envs) : "";
+    // And the stage's world ticks a decision, which a worker runs whatever its own conf says: the learner's spec
+    // (TickMs, DecisionTicks) is this machine's, so a worker ticking differently would train a different world.
+    std::string const cap = (envs ? Acore::StringFormat(" envs={}", *envs) : "")
+        + Acore::StringFormat(" ticks={}", learnerConfig.TicksFor(scenario));
     std::string const start = Acore::StringFormat("START {} {} {}{}", scenario, resume ? 1 : 0, _plan.Fast ? 1 : 0,
         cap);
     _clusterStart = Acore::StringFormat("START {} 0 {}{}", scenario, _plan.Fast ? 1 : 0, cap);
@@ -1206,7 +1217,7 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
 }
 
 AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast,
-    ClusterRank const& rank, std::optional<uint32> envs) const
+    ClusterRank const& rank, std::optional<uint32> envs, std::optional<uint32> ticks) const
 {
     // A fast run's scenarios are built from the fast profile (its classes, levels, envs): the host's learner refuses a
     // worker whose sim is not the same scenario as its own.
@@ -1231,6 +1242,17 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
         config.StageEnvs[scenario] = std::min(own, *envs);
         LOG_INFO("module.animus", "Cluster: {} runs {} envs here (the host's cap {}, this machine's own {})", scenario,
             config.StageEnvs[scenario], *envs, own);
+    }
+    if (ticks)
+    {
+        uint32 const own = config.TicksFor(scenario);
+        static std::atomic<bool> warned{ false };
+        if (own != *ticks && !warned.exchange(true))
+            LOG_WARN("module.animus", "Cluster: {} runs the host's {} world ticks a decision; this machine's own {} "
+                "(AnimusForge.Stage.{}.TicksPerDecision or AnimusForge.TicksPerDecision) is ignored", scenario, *ticks,
+                own, scenario);
+        config.StageTicks[scenario] = *ticks;
+        LOG_INFO("module.animus", "Cluster: {} runs {} world ticks a decision (the host's)", scenario, *ticks);
     }
 
     Plan plan;
