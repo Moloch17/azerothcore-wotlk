@@ -35,6 +35,7 @@
 #include "DeathBlock.h"
 #include "DuelBlock.h"
 #include "MoveBlock.h"
+#include "Forge.h"
 #include "World.h"
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
@@ -3035,6 +3036,34 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
 
     if (CastOwnerActive(env))
         ApplySeatAction(env, OwnerAgent(), actions[OwnerAgent()]);
+}
+
+void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool decided)
+{
+    // Between decisions a seat facing its target keeps facing it (MoveBlock::FaceTargetBetween): the decision chose
+    // to look at the target, not at where it stood when the decision was made. With a watching client, every tick,
+    // what the client is shown of each seat's turns (MoveBlock::ShowTurn). Neither at TicksPerDecision 1 in training.
+    bool const shown = ForgeCore::HasClients();
+    if (decided && !shown)
+        return;
+
+    auto const tick = [&](uint32 index)
+    {
+        SeatState& seat = Data(env).Seats[index];
+        Player* bot = env.FindBot(index);
+        if (!bot || !seat.L || !bot->IsInWorld())
+            return;
+        if (!decided && seat.FacingMode == MoveBlock::ACTION_FACE_TARGET && !seat.DecisionTarget.IsEmpty())
+            if (Unit* target = Encoding::UnitThrough(*bot, seat.DecisionTarget))
+                if (target->IsInWorld() && !target->IsDuringRemoveFromWorld() && target->GetMap() == bot->GetMap())
+                    MoveBlock::FaceTargetBetween(bot, target, seat.Facing);
+        if (shown)
+            MoveBlock::ShowTurn(bot, seat.Steering, diffMs, _decisionMs);
+    };
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        tick(seat);
+    if (CastOwnerActive(env))
+        tick(OwnerAgent());
 }
 
 Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat) const

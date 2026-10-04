@@ -134,6 +134,7 @@ namespace Animus::Curriculum
         bool Setup(Env& env) override;
         void Reset(Env& env) override;
         void ApplyActions(Env& env, int32 const* actions) override;
+        void SubTick(Env& env, uint32 diffMs, bool decided) override;
         void ApplyGoals(Env& env, int32 const* goals) override;
         void Observe(Env& env, float* obs, float* state, uint8* mask) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;

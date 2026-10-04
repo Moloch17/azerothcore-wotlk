@@ -23,9 +23,13 @@
 #include <atomic>
 
 class Map;
+class Player;
+class Unit;
 
 namespace Animus::Curriculum
 {
+    struct SteerMemory;
+
     /// Where the seat puts its feet, answered without reference to anything it is fighting.
     ///
     /// Every movement the curriculum had before this was target-relative: DuelBlock's MOVE_TO_TARGET, MOVE_TO_RANGE,
@@ -438,6 +442,17 @@ namespace Animus::Curriculum
         /// NavRay and findDistanceToWall the probe calls, from the same kind of start polygon, so what it
         /// prints is what a seat standing there would sense and not a second implementation of it.
         static std::string RayReport(Map* map, float x, float y, float z, float facing);
+
+        /// A world tick between decisions under FACE_TARGET (StageScenario::SubTick): the seat keeps facing its
+        /// target, on its run or on the spot, and `facing` (the seat's frame) follows. Not under a cast or channel,
+        /// nor for a seat that cannot turn; a flying run faces along its path and is left alone (movement-smooth A2).
+        static void FaceTargetBetween(Player* bot, Unit const* target, float& facing);
+        /// Every world tick while a real client is connected: swing what the client is shown of a seat standing
+        /// still toward its orientation at TURN_RATE a decision, a packet every SHOWN_PACKET_MS and one when it
+        /// arrives -- the realm's CompanionParty::TurnShown. Cosmetic: the seat's own orientation, what casts and
+        /// facing checks read, is the decided one throughout. A running seat is shown its run's launch facing.
+        static void ShowTurn(Player* bot, SteerMemory& steering, uint32 diffMs, uint32 decisionMs);
+        static constexpr uint32 SHOWN_PACKET_MS = 100;
 
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;

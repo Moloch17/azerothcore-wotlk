@@ -94,6 +94,9 @@ namespace Animus
         /// Each takes the group deciding (0 with one group): a half-batch decision is two, one per half.
         void BeginDecision(uint32 group);
         void ApplyActionsForMap(Map const& map);
+        /// Every world tick of the envs on `map`, after ApplyActionsForMap on a tick that has actions (`decided`):
+        /// Scenario::SubTick. Same thread and the same envs as ApplyActionsForMap.
+        void SubTickMap(Map const& map, uint32 diffMs, bool decided);
         void ObserveMap(Map const& map);
         void FinishCollect(uint32 group);
         /// Close whichever decisions are open.

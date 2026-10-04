@@ -100,6 +100,11 @@ namespace Animus
         /// misbehaving client and must be ignored safely.
         virtual void ApplyActions(Env& env, int32 const* actions) = 0;
 
+        /// Every world tick, after ApplyActions on a tick that has a decision's actions (`decided`), with the game
+        /// milliseconds the tick moved: what the world does between decisions when TicksPerDecision is above 1, and
+        /// what clients are shown (movement-smooth A2). No observation, no action, no reward.
+        virtual void SubTick(Env& /*env*/, uint32 /*diffMs*/, bool /*decided*/) { }
+
         /// goals: [AgentsPerEnv] the goal each agent is pursuing (0..GoalCount-1, or Curriculum::NO_GOAL), sent with
         /// the actions by a policy that has a goal head. Called before ApplyActions. A goal is scored, reported and
         /// shown to teammates; it never masks an action, so a goal out of range is simply ignored.

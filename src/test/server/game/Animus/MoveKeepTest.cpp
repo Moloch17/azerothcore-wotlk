@@ -70,3 +70,15 @@ TEST(MoveKeepTest, ALapsedBearingStopsARunWithMoreThanTwoDecisionsLeft)
     EXPECT_FALSE(MoveKeep::CoastsTooFar(3.0f, 7.0f, 250));
     EXPECT_FALSE(MoveKeep::CoastsTooFar(10.0f, 0.0f, 250));
 }
+
+// With a client watching, a run drawn 20 degrees or less off where the seat looks is left alone; past that it is
+// relaunched once. Either way round, across the wrap at pi.
+TEST(MoveKeepTest, ARunDrawnTooFarOffWhereTheSeatLooksIsRelaunched)
+{
+    float const twenty = 20.0f * float(M_PI) / 180.0f;
+    EXPECT_FALSE(MoveKeep::FacingRelaunch(1.0f, 1.0f + 0.3f, twenty));
+    EXPECT_TRUE(MoveKeep::FacingRelaunch(1.0f, 1.0f + 0.4f, twenty));
+    EXPECT_TRUE(MoveKeep::FacingRelaunch(1.0f, 1.0f - 0.4f, twenty));
+    EXPECT_FALSE(MoveKeep::FacingRelaunch(3.1f, -3.1f, twenty));    // 0.08 apart across the wrap
+    EXPECT_TRUE(MoveKeep::FacingRelaunch(0.0f, 0.01f, 0.0f));
+}

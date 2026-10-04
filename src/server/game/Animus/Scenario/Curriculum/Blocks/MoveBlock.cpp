@@ -18,6 +18,7 @@
 
 #include "MoveBlock.h"
 #include "MoveKeep.h"
+#include "Forge.h"
 #include "GroundSense.h"
 #include "LayeredField.h"
 #include "ProbeBake.h"
@@ -548,7 +549,7 @@ namespace
     /// re-running the things that must happen exactly once a decision. Pressing a facing or a bearing used to
     /// call the whole of BeforeApply again, which stepped a held turn a second time in the same 250 ms: the turn
     /// rate doubled whenever the policy did anything else while turning.
-    void Steer(Animus::Curriculum::SeatView& view)
+    void SteerFeet(Animus::Curriculum::SeatView& view)
     {
         Player* bot = view.Bot;
         if (!bot || !view.Option)
@@ -610,7 +611,14 @@ namespace
             float const headingError = AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading);
             float const pitchError = airborne && flat > 0.1f
                 ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
-            if (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError))
+            // A watching client draws the run with the head it was launched with; past the threshold it is
+            // relaunched once so the turn is seen (Options.ShownFacingRelaunchDeg). Never in training: no client.
+            bool const shownStale = ForgeCore::HasClients() && view.Steering && !(airborne && bot->CanFly())
+                && view.Steering->RunId == bot->movespline->GetId()
+                && MoveKeep::FacingRelaunch(view.Steering->RunFacing, view.Facing,
+                    view.Options.ShownFacingRelaunchDeg * float(M_PI) / 180.0f);
+            if (!shownStale
+                && MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError))
                 return;
         }
 
@@ -1176,6 +1184,65 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     for (uint32 pitch = 0; pitch < PITCH_COUNT; ++pitch)
         allowed[ACTION_PITCH_FIRST + pitch] = canPitch
             && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
+}
+
+namespace
+{
+    /// Steer the feet (SteerFeet), and remember the head a fresh run was launched with: what a watching client
+    /// draws for the rest of it, however the sim re-aims it since (MoveBlock::ShowTurn,
+    /// Options.ShownFacingRelaunchDeg).
+    void Steer(Animus::Curriculum::SeatView& view)
+    {
+        SteerFeet(view);
+        Player const* bot = view.Bot;
+        if (bot && view.Steering && !bot->movespline->Finalized() && bot->movespline->GetId() != view.Steering->RunId)
+        {
+            view.Steering->RunId = bot->movespline->GetId();
+            view.Steering->RunFacing = bot->GetOrientation();
+        }
+    }
+}
+
+void Animus::Curriculum::MoveBlock::FaceTargetBetween(Player* bot, Unit const* target, float& facing)
+{
+    if (!bot || !target || !bot->IsAlive() || bot->HasUnitState(Encoding::IMMOBILE_STATES)
+        || Encoding::CastHoldsFeet(bot))
+        return;
+    facing = bot->GetAngle(target);
+    if (bot->movespline->Finalized())
+        Encoding::TurnOnSpot(bot, facing);
+    else
+        Encoding::ReaimRun(bot, facing);
+}
+
+void Animus::Curriculum::MoveBlock::ShowTurn(Player* bot, SteerMemory& steering, uint32 diffMs, uint32 decisionMs)
+{
+    float const decided = bot->GetOrientation();
+    if (!steering.ShownSeeded || !bot->IsAlive() || !bot->movespline->Finalized())
+    {
+        // Running: the client draws the run's launch facing, and keeps it when the run ends.
+        bool const run = !bot->movespline->Finalized() && steering.RunId == bot->movespline->GetId();
+        steering.ShownFacing = run ? steering.RunFacing : decided;
+        steering.ShownSeeded = true;
+        steering.ShownSinceMs = 0;
+        return;
+    }
+
+    float const left = std::remainder(decided - steering.ShownFacing, 2.0f * float(M_PI));
+    if (std::fabs(left) < 0.01f)
+    {
+        steering.ShownSinceMs = 0;
+        return;             // not turning: nothing is sent
+    }
+
+    float const step = TURN_RATE * float(diffMs) / float(std::max<uint32>(1, decisionMs));
+    steering.ShownFacing = Position::NormalizeOrientation(steering.ShownFacing + std::clamp(left, -step, step));
+    steering.ShownSinceMs += diffMs;
+    bool const arrived = std::fabs(left) <= step;
+    if (!arrived && steering.ShownSinceMs < SHOWN_PACKET_MS)
+        return;
+    steering.ShownSinceMs = 0;
+    Encoding::ShowFacing(bot, steering.ShownFacing);
 }
 
 void Animus::Curriculum::MoveBlock::BeforePress(SeatView& view) const

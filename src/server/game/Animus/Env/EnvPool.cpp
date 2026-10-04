@@ -326,6 +326,16 @@ void Animus::EnvPool::ApplyActionsForMap(Map const& map)
     _applyNs.fetch_add(Since(mark), std::memory_order_relaxed);
 }
 
+void Animus::EnvPool::SubTickMap(Map const& map, uint32 diffMs, bool decided)
+{
+    auto const envs = _mapEnvs.find(MapKey(map));
+    if (envs == _mapEnvs.end())
+        return;
+
+    for (uint32 index : envs->second)
+        _scenario.SubTick(_envs[index], diffMs, decided);
+}
+
 void Animus::EnvPool::ObserveMap(Map const& map)
 {
     auto const envs = _mapEnvs.find(MapKey(map));

@@ -213,16 +213,19 @@ namespace Animus::Curriculum::Encoding
             - float(M_PI)) <= 0.001f)
             return;
         bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
-        ShowFacing(bot);
     }
 
-    void ShowFacing(Player* bot)
+    void ShowFacing(Player* bot, float shown)
     {
         if (!bot || !ForgeCore::HasClients())
             return;
+        // The shown angle goes out in an ordinary facing packet; the unit's orientation is put back at once.
+        float const decided = bot->GetOrientation();
+        bot->SetOrientation(shown);
         WorldPacket data(MSG_MOVE_SET_FACING, 64);
         data << bot->GetPackGUID();
         bot->BuildMovementPacket(&data);
+        bot->SetOrientation(decided);
         bot->SendMessageToSet(&data, false);
     }
 

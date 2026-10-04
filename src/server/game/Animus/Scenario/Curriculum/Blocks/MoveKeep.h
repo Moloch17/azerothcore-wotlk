@@ -60,6 +60,14 @@ namespace Animus::Curriculum::MoveKeep
         return velocity > 0.0f && remaining / velocity * 1000.0f > float(KEEP_DECISIONS * decisionMs);
     }
 
+    /// Whether a run whose drawn head is `shown` (radians) is relaunched so a watching client draws `decided`: more
+    /// than `threshold` radians apart, either way round. The same rule the realm's MoveBlock keeps (A3).
+    [[nodiscard]] inline bool FacingRelaunch(float shown, float decided, float threshold)
+    {
+        float const apart = std::fabs(std::remainder(decided - shown, 2.0f * float(M_PI)));
+        return apart > threshold;
+    }
+
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least
     /// KEEP_DECISIONS decisions of `decisionMs`, and its course and climb are within their slack of what is wanted
     /// (errors in radians, any sign). A run with no velocity is never kept. Facing is not asked: it is turned on

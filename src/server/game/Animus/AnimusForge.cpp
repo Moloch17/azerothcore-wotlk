@@ -214,6 +214,7 @@ void AnimusForge::Forge::OnStartup()
 void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
 {
     _applyTick = false;
+    _tickDiff = 0;
 
     if (!_config.Enable || !_pool)
         return;
@@ -238,6 +239,7 @@ void AnimusForge::Forge::OnWorldPrologue(uint32 diff)
     // everything the library measures against it, is in game milliseconds and does not care how often anyone
     // decides. It is advanced before the maps tick because the terminal check that follows them reads it.
     _pool->AdvanceClock(_turn, _halfBatch ? 2 * diff : diff);
+    _tickDiff = _halfBatch ? 2 * diff : diff;
 
     // Above TicksPerDecision = 1 the world runs several times between decisions. The intervening ticks move
     // splines, auras and the fight at the finer step and are otherwise silent -- no observation, no action, no
@@ -271,6 +273,10 @@ void AnimusForge::Forge::OnMapPrologue(Map& map)
 {
     if (_applyTick && _pool)
         _pool->ApplyActionsForMap(map);
+    // Every tick of a running group, after its actions if it has any: what moves between decisions
+    // (movement-smooth A2). At TicksPerDecision 1 every tick decides, and only the shown facing is left to it.
+    if (_pool && _tickDiff && !IsMapFrozen(map))
+        _pool->SubTickMap(map, _tickDiff, _applyTick);
 }
 
 void AnimusForge::Forge::OnMapEpilogue(Map& map)

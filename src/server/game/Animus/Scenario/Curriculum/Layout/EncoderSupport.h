@@ -96,10 +96,10 @@ namespace Animus::Curriculum::Encoding
     /// Turn a seat standing still to `facing`, as a turn on the spot does (UpdatePosition with the same
     /// coordinates fires AURA_INTERRUPT_FLAG_TURNING); nothing when the angle is unchanged.
     void TurnOnSpot(Player* bot, float facing);
-    /// A turn on the spot reaches clients only with the next run, as a snap: while a real client is
-    /// connected (ForgeCore::HasClients) the seat's facing goes out in an ordinary MSG_MOVE_SET_FACING. Nothing
-    /// is built otherwise, so training pays nothing for it.
-    void ShowFacing(Player* bot);
+    /// A turn on the spot reaches clients only with the next run: while a real client is connected
+    /// (ForgeCore::HasClients) `shown` goes out in an ordinary MSG_MOVE_SET_FACING, the unit's own orientation
+    /// untouched (MoveBlock::ShowTurn swings it across the ticks). Nothing is built otherwise.
+    void ShowFacing(Player* bot, float shown);
 
     /// Whether the cast in flight is a mount.
     ///

@@ -269,6 +269,14 @@ namespace Animus::Curriculum
         uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
         uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
         int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
+        /// What a watching client draws (movement-smooth A2, B2): a run keeps the head it was launched with
+        /// (RunFacing, for the run RunId) however it is re-aimed since, and a seat standing still is shown its turns
+        /// swung across the ticks (ShownFacing) rather than snapped.
+        float RunFacing = 0.0f;
+        uint32 RunId = 0;
+        float ShownFacing = 0.0f;
+        bool ShownSeeded = false;
+        uint32 ShownSinceMs = 0;
 
         void Clear() { *this = SteerMemory(); }
     };

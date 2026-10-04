@@ -20,6 +20,7 @@
 #include "Config.h"
 #include "Log.h"
 #include <algorithm>
+#include <atomic>
 #include <boost/json/object.hpp>
 #include <charconv>
 #include <cstdlib>
@@ -69,6 +70,13 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
 
         value = loaded;
     });
+
+    tuning.Options.ShownFacingRelaunchDeg = std::clamp(tuning.Options.ShownFacingRelaunchDeg, 0.0f, 180.0f);
+    static std::atomic<bool> shownLogged{ false };
+    if (!shownLogged.exchange(true))
+        LOG_INFO("module.animus", "{}Options.ShownFacingRelaunchDeg = {:.0f}: with a client connected, a running seat "
+            "drawn more than this off where it looks is relaunched once", prefix,
+            tuning.Options.ShownFacingRelaunchDeg);
 
     ClampRolePair(prefix, "Characters.HighLevelChance", tuning.Characters.HighLevelChance,
         "Characters.LowLevelChance", tuning.Characters.LowLevelChance);

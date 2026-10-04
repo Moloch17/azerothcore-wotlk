@@ -412,6 +412,9 @@ namespace AnimusForge
         /// so the maps of exactly one tick apply a decision's actions, whatever TicksPerDecision is.
         bool _actionsPending[2] = { false, false };        // per group
         bool _applyTick = false;
+        /// Game milliseconds this world tick moves a running group's envs by (0: no group ticks), for the per-tick
+        /// hook (Scenario::SubTick).
+        uint32 _tickDiff = 0;
         uint64 _decisions = 0;
         /// SendStep's gather of the ended envs' final obs and state (protocol 14), kept to reuse the allocations.
         /// A rank's device buffers (OfferDevice): obs, state and mask, written before each STEP instead of sent.
