@@ -20,6 +20,7 @@
 #include "MoveKeep.h"
 #include "MovePrice.h"
 #include "MoveTurnPath.h"
+#include "RouteShortcut.h"
 #include "PathGenerator.h"
 #include "Forge.h"
 #include "GroundSense.h"
@@ -58,6 +59,7 @@ namespace
     namespace LayeredField = Animus::Curriculum::LayeredField;
     namespace MoveKeep = Animus::Curriculum::MoveKeep;
     namespace MoveTurnPath = Animus::Curriculum::MoveTurnPath;
+    namespace RouteShortcut = Animus::Curriculum::RouteShortcut;
     using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
@@ -547,6 +549,39 @@ namespace
         }
     }
 
+    /// Cut a run (`points`, the seat's own position first) where it first walks into a closed door near a dungeon
+    /// wing's party (SeatView::ClosedDoors, RouteShortcut::CutAtDoors): Steer's runs are pathfound on a navmesh that
+    /// knows no doors, and a spline walks through anything. False when nothing is left to walk: the seat then holds
+    /// at the door (SteerMemory::DoorHolds) and opens it, or goes another way.
+    bool CutAtDoors(Animus::Curriculum::SeatView& view, std::vector<G3D::Vector3>& points)
+    {
+        if (!view.ClosedDoors || view.ClosedDoors->empty() || points.size() < 2)
+            return true;
+        std::vector<RouteShortcut::Point> path;
+        for (std::size_t i = 1; i < points.size(); ++i)
+            path.push_back({ points[i].x, points[i].y });
+        std::size_t const kept = RouteShortcut::CutAtDoors({ points[0].x, points[0].y }, path, *view.ClosedDoors);
+        if (!kept)
+        {
+            Player* bot = view.Bot;
+            if (!bot->movespline->Finalized())
+                bot->StopMoving();
+            Encoding::TurnOnSpot(bot, view.Facing);
+            if (view.Steering)
+                ++view.Steering->DoorHolds;
+            return false;
+        }
+        points.resize(kept + 1);
+        G3D::Vector3& last = points.back();
+        if (last.x != path[kept - 1].X || last.y != path[kept - 1].Y)
+        {
+            float const ground = view.Bot->GetMap()->GetHeight(view.Bot->GetPhaseMask(), path[kept - 1].X,
+                path[kept - 1].Y, last.z + 2.0f, true, 6.0f);
+            last = G3D::Vector3(path[kept - 1].X, path[kept - 1].Y, ground > INVALID_HEIGHT ? ground : last.z);
+        }
+        return true;
+    }
+
     /// A turn under a held bearing on the ground, walked as one run (movement-smooth A2): the legs StepTurn's
     /// remaining steps will give the seat a decision apart (MoveTurnPath::Legs), then straight on, so the feet are
     /// where the per-decision steps would have put them and the spline is launched once for the whole turn rather
@@ -611,6 +646,8 @@ namespace
             points.push_back(found[point]);
         if (points.size() < 2)
             return false;
+        if (!CutAtDoors(view, points))
+            return true;
 
         Encoding::MoveAlong(bot, points, view.Facing, velocity);
         return true;
@@ -661,8 +698,10 @@ namespace
         if (!found || (path.GetPathType() & PATHFIND_NOPATH) || path.GetPath().size() < 2)
             return false;
 
-        Movement::PointsArray const& points = path.GetPath();
+        std::vector<G3D::Vector3> points = path.GetPath();
         bool const edge = (path.GetPathType() & PATHFIND_INCOMPLETE) != 0;
+        if (!CutAtDoors(view, points))
+            return true;
         float walk = 0.0f;
         for (std::size_t point = 1; point < points.size(); ++point)
             walk += (points[point] - points[point - 1]).length();
@@ -922,6 +961,15 @@ namespace
         // a wall to get there.
         if (StraightRun(view, destination, velocity))
             return;
+        // No path: MoveTo's straight line -- cut at a closed door too.
+        if (view.ClosedDoors && !view.ClosedDoors->empty())
+        {
+            std::vector<G3D::Vector3> line{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()),
+                G3D::Vector3(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ()) };
+            if (!CutAtDoors(view, line))
+                return;
+            destination.Relocate(line.back().x, line.back().y, line.back().z);
+        }
         Encoding::MoveTo(bot, MOVE_POINT_ID, destination.GetPositionX(), destination.GetPositionY(),
             destination.GetPositionZ(), &view.Facing, velocity);
     }

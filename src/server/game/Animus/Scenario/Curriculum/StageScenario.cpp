@@ -1293,6 +1293,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).Steering.EdgeHolds) / minutes;
     });
+    // Decisions a run was held at a closed door it would have walked through, per minute (movement-smooth A8).
+    _info.Add("door_holds", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).Steering.DoorHolds) / minutes;
+    });
     // A stop followed by a new start within a second, per minute (movement-smooth): the stutter a lapsing held bearing
     // made. spline_restarts counts relaunches over a running spline; this, the stops between them.
     _info.Add("move_stop_starts", [seat](Env const& env, uint32 index)

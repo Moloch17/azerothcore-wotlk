@@ -2572,6 +2572,8 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
             }
         }
         CutAdvanceAtDoors(view, fight);
+        if (!fight.ClosedDoors.empty())
+            view.ClosedDoors = &fight.ClosedDoors;
     }
 }
 

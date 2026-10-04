@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
+#include "RouteShortcut.h"
 #include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
@@ -290,6 +291,7 @@ namespace Animus::Curriculum
         uint32 EdgeRunId = 0;
         uint32 EdgeRuns = 0;                    // runs launched on an incomplete path this episode
         uint32 EdgeHolds = 0;                   // ... and decisions held at the edge with nothing left to walk
+        uint32 DoorHolds = 0;                   // decisions held at a closed door a run would have walked through
         /// The speed Steer measured when it launched the run RunId (MoveKeep::SpeedChanged), and the one it measured
         /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
         float RunSpeed = 0.0f;
@@ -509,6 +511,9 @@ namespace Animus::Curriculum
         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
         uint64 NowMs = 0;                           // the clock Memory was kept with
         uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
+        /// The closed doors near a dungeon wing's party (InstanceEncounter's EnvInstance::ClosedDoors); null
+        /// elsewhere. Steer's runs stop at one, as the advance's do: a spline walks through anything.
+        std::vector<RouteShortcut::Door> const* ClosedDoors = nullptr;
 
         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
         // a hunter's beasts on offer.
