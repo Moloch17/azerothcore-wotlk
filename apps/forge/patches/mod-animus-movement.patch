@@ -1,0 +1,1248 @@
+mod-animus-movement.patch -- the movement-smooth work (forge commits e0aac3412..061ad18b6) for the realm module.
+
+Apply in modules/mod-animus with `patch -p1`, after mod-animus-amdl8.patch (either order gives the same tree; on
+the bare module it applies with offsets). Realm-specific (stock AzerothCore has no MoveSpline::ReaimFacing and no
+PressesFirst): Encoding::ReaimRun turns only the unit, for this decision's press, and MoveBlock's Steer relaunches
+a run whose launch facing is more than Animus.Curriculum.Options.ShownFacingRelaunchDeg (default 20) off where the
+seat looks -- always, not only with a client watching; Block::BeforePress runs before BeforeApply; there is no
+per-tick hook (FaceTargetBetween, ShowTurn) -- CompanionParty::TurnShown shows turns, seeded from the run's launch
+facing; a refreshed held bearing skips SeatMemory::Press. Observations are unchanged (only the held-bearing mask).
+
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/CoreBlock.cpp
+@@ -451,8 +451,15 @@
+             break;
+     }
+ 
+-    if (Encoding::ApplySpellAction(view, view.Target, def, result) && def.From == ActionCatalog::Group::Sustain)
++    bool const started = Encoding::ApplySpellAction(view, view.Target, def, result);
++    if (started && def.From == ActionCatalog::Group::Sustain)
+         ++result.SustainCasts;
++
++    // A cast under way holds the feet. A held bearing is re-issued by the option machinery every decision without
++    // being asked -- so the next decision's spline came straight back under the cast and killed it. Only a cast that
++    // started lets go: a refused press leaves the bearing, so the seat keeps walking (movement-smooth A4).
++    if (started && Encoding::CastHoldsFeet(view.Bot))
++        Encoding::ReleaseBearing(view);
+ }
+ 
+ void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.cpp
+@@ -17,6 +17,9 @@
+  */
+ 
+ #include "MoveBlock.h"
++#include "MoveKeep.h"
++#include "MoveTurnPath.h"
++#include "PathGenerator.h"
+ #include "GroundSense.h"
+ #include "LayeredField.h"
+ #include "ProbeBake.h"
+@@ -24,6 +27,7 @@
+ #include "EncoderSupport.h"
+ #include "Layout.h"
+ #include <boost/json/array.hpp>
++#include <chrono>
+ #include <boost/json/object.hpp>
+ #include "DetourExtended.h"
+ #include "DetourNavMeshQuery.h"
+@@ -50,13 +54,16 @@
+     using Animus::Curriculum::SeatOptionKind;
+     namespace Ground = Animus::Curriculum::GroundSense;
+     namespace LayeredField = Animus::Curriculum::LayeredField;
++    namespace MoveKeep = Animus::Curriculum::MoveKeep;
++    namespace MoveTurnPath = Animus::Curriculum::MoveTurnPath;
+     using Ground::NavRay;
+ 
+     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
+-    /// How far a running step may have drifted from the held heading, and the facing from the one wanted, and still
+-    /// be left to run (Steer): about 20 degrees, a path bent round a rock; and under 6 degrees of facing.
+-    constexpr float RUN_HEADING_SLACK = 0.35f;
+-    constexpr float RUN_FACING_SLACK = 0.1f;
++    /// The unsigned angle between two orientations, 0..pi (how far a running step has drifted: MoveKeep).
++    float AngleBetween(float a, float b)
++    {
++        return std::fabs(Position::NormalizeOrientation(a - b + float(M_PI)) - float(M_PI));
++    }
+     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
+     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
+     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
+@@ -538,6 +545,164 @@
+         }
+     }
+ 
++    /// A turn under a held bearing on the ground, walked as one run (movement-smooth A2): the legs StepTurn's
++    /// remaining steps will give the seat a decision apart (MoveTurnPath::Legs), then straight on, so the feet are
++    /// where the per-decision steps would have put them and the spline is launched once for the whole turn rather
++    /// than every decision of it. Each turning leg's end is put on the ground within MAX_STEP, seen from the last,
++    /// dry, and reached by the navmesh without a detour; the rest is pathfound as a straight run is. Any failure
++    /// lays nothing out and the caller launches the straight run, never part of a path.
++    bool LayTurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity)
++    {
++        Player* bot = view.Bot;
++        Map* map = bot->GetMap();
++        if (!map)
++            return false;
++        float const spacing = speed * float(view.DecisionMs) / 1000.0f;
++        auto const legs = MoveTurnPath::Legs(heading, view.TurnLeft, MoveBlock::TURN_RATE, spacing, length);
++        if (legs.size() < 2)
++            return false;
++
++        uint32 const phase = bot->GetPhaseMask();
++        float const eye = bot->GetCollisionHeight();
++        std::vector<G3D::Vector3> points{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
++        Position at = *bot;
++        for (std::size_t index = 0; index + 1 < legs.size(); ++index)
++        {
++            MoveTurnPath::Leg const& leg = legs[index];
++            Position next = at;
++            next.Relocate(at.GetPositionX() + leg.Length * std::cos(leg.Heading),
++                at.GetPositionY() + leg.Length * std::sin(leg.Heading), at.GetPositionZ());
++            if (!Encoding::SnapToGround(map, phase, next, at.GetPositionZ(), MoveBlock::MAX_STEP))
++                return false;
++            if (!map->isInLineOfSight(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() + eye,
++                    next.GetPositionX(), next.GetPositionY(), next.GetPositionZ() + eye, phase, LINEOFSIGHT_ALL_CHECKS,
++                    VMAP::ModelIgnoreFlags::Nothing))
++                return false;
++            if (map->GetLiquidData(phase, next.GetPositionX(), next.GetPositionY(), next.GetPositionZ(), eye, {})
++                    .Status != LIQUID_MAP_NO_WATER)
++                return false;           // water entry is the straight run's own case
++            PathGenerator path(bot);
++            if (!path.CalculatePath(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), next.GetPositionX(),
++                    next.GetPositionY(), next.GetPositionZ(), false) || path.GetPathType() != PATHFIND_NORMAL)
++                return false;
++            float walked = 0.0f;
++            Movement::PointsArray const& found = path.GetPath();
++            for (std::size_t point = 1; point < found.size(); ++point)
++                walked += (found[point] - found[point - 1]).length();
++            if (walked > leg.Length * 1.25f + 0.5f)
++                return false;           // round something: not the leg the step would walk
++            points.emplace_back(next.GetPositionX(), next.GetPositionY(), next.GetPositionZ());
++            at = next;
++        }
++
++        MoveTurnPath::Leg const& rest = legs.back();
++        Position end = at;
++        end.Relocate(at.GetPositionX() + rest.Length * std::cos(rest.Heading),
++            at.GetPositionY() + rest.Length * std::sin(rest.Heading), at.GetPositionZ());
++        (void)Encoding::SnapToGround(map, phase, end, at.GetPositionZ(), MoveBlock::STEP_YARDS);
++        PathGenerator path(bot);
++        if (!path.CalculatePath(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), end.GetPositionX(),
++                end.GetPositionY(), end.GetPositionZ(), false) || (path.GetPathType() & PATHFIND_NOPATH))
++            return false;
++        Movement::PointsArray const& found = path.GetPath();
++        for (std::size_t point = 1; point < found.size(); ++point)
++            points.push_back(found[point]);
++        if (points.size() < 2)
++            return false;
++
++        Encoding::MoveAlong(bot, points, view.Facing, velocity);
++        return true;
++    }
++
++    /// Yards of water under its surface at (x, y), seen from height `z` by someone `height` tall; 0 with none, and a
++    /// lot where no floor is found under it.
++    float WaterDepth(Map* map, uint32 phase, float x, float y, float z, float height)
++    {
++        if (!map)
++            return 0.0f;
++        LiquidData const liquid = map->GetLiquidData(phase, x, y, z, height, {});
++        if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT)
++            return 0.0f;
++        float const floor = map->GetHeight(phase, x, y, liquid.Level, true, 100.0f);
++        return floor > INVALID_HEIGHT ? std::max(0.0f, liquid.Level - floor) : 100.0f;
++    }
++
++    /// Whether Steer moves the seat as a swimmer (MoveKeep::SwimMode): the core's in-water flag, held steady at the
++    /// shore by the depth, so a seat bobbing at the waterline is not switched between a swim and a walk every
++    /// decision (movement-smooth A9).
++    bool SwimSteered(Animus::Curriculum::SeatView& view)
++    {
++        Player* bot = view.Bot;
++        bool const inWater = bot->IsInWater();
++        float const height = bot->GetCollisionHeight();
++        float const depth = WaterDepth(bot->GetMap(), bot->GetPhaseMask(), bot->GetPositionX(), bot->GetPositionY(),
++            bot->GetPositionZ(), height);
++        bool const swim = MoveKeep::SwimMode(view.Steering ? view.Steering->Swimming : inWater, inWater, depth, height);
++        if (view.Steering)
++            view.Steering->Swimming = swim;
++        return swim;
++    }
++
++    /// The straight run, pathfound as Encoding::MoveTo would (movement-smooth A7), so what came back can be read. A
++    /// path that came back incomplete -- the point the bearing aims at is off the mesh or walled off -- ends as far
++    /// as the ground lets the bearing go: it is launched and marked (SteerMemory::EdgeRunId) so the keep check holds
++    /// it to that end rather than relaunching the same end nearer every decision of its last two, and once there,
++    /// with nothing left to walk, the seat holds rather than launching an empty run each decision. False when no
++    /// path was found at all: MoveTo's own straight-line fallback then, as before.
++    bool StraightRun(Animus::Curriculum::SeatView& view, Position const& destination, float velocity)
++    {
++        Player* bot = view.Bot;
++        auto const started = std::chrono::steady_clock::now();
++        PathGenerator path(bot);
++        bool const found = path.CalculatePath(destination.GetPositionX(), destination.GetPositionY(),
++            destination.GetPositionZ(), false);
++        if (!found || (path.GetPathType() & PATHFIND_NOPATH) || path.GetPath().size() < 2)
++            return false;
++
++        Movement::PointsArray const& points = path.GetPath();
++        bool const edge = (path.GetPathType() & PATHFIND_INCOMPLETE) != 0;
++        float walk = 0.0f;
++        for (std::size_t point = 1; point < points.size(); ++point)
++            walk += (points[point] - points[point - 1]).length();
++        if (edge && walk < MoveKeep::NOTHING_TO_WALK)
++        {
++            if (!bot->movespline->Finalized())
++                bot->StopMoving();
++            Encoding::TurnOnSpot(bot, view.Facing);
++            if (view.Steering)
++                ++view.Steering->EdgeHolds;
++        }
++        else
++        {
++            Encoding::MoveAlong(bot, points, view.Facing, velocity);
++            if (view.Steering)
++            {
++                view.Steering->EdgeRunId = edge ? bot->movespline->GetId() : 0;
++                view.Steering->EdgeRuns += edge ? 1 : 0;
++            }
++        }
++
++        // Counted as MoveTo's own (the status line's "moves"): it is the same launch.
++        Encoding::MoveToCalls.fetch_add(1, std::memory_order_relaxed);
++        Encoding::MoveToNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
++        return true;
++    }
++
++    /// LayTurnRun, timed and counted for the status line (Encoding::TurnRunCalls): what the curve costs on the map
++    /// thread, and how often it is refused for the straight run.
++    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity)
++    {
++        auto const started = std::chrono::steady_clock::now();
++        bool const laid = LayTurnRun(view, heading, speed, length, velocity);
++        Encoding::TurnRunCalls.fetch_add(1, std::memory_order_relaxed);
++        Encoding::TurnRunNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
++        if (!laid)
++            Encoding::TurnRunFallbacks.fetch_add(1, std::memory_order_relaxed);
++        return laid;
++    }
++
+     /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a
+     /// turn on the spot if they are not.
+     ///
+@@ -545,12 +710,18 @@
+     /// re-running the things that must happen exactly once a decision. Pressing a facing or a bearing used to
+     /// call the whole of BeforeApply again, which stepped a held turn a second time in the same 250 ms: the turn
+     /// rate doubled whenever the policy did anything else while turning.
+-    void Steer(Animus::Curriculum::SeatView& view)
++    void SteerFeet(Animus::Curriculum::SeatView& view)
+     {
+         Player* bot = view.Bot;
+         if (!bot || !view.Option)
+             return;
+ 
++        // Nothing under a cast or a channel: a spline launched, or a turn pushed onto the unit, would cancel it. The
++        // press that started it let go of the bearing (Encoding::ReleaseBearing); a held turn waits (movement-smooth
++        // A4).
++        if (Encoding::CastHoldsFeet(bot))
++            return;
++
+         bool const alive = bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES);
+ 
+         // Where the head is pointing this decision, settled before a single bearing is measured off it.
+@@ -559,12 +730,21 @@
+         if (!view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs)
+             || view.HeldBearing >= MoveBlock::BEARING_COUNT)
+         {
++            // A held bearing let go (lapsed, unrefreshed): a run with more than a couple of decisions left stops
++            // rather than coasting on for the rest of a run it no longer asked for (MoveKeep::CoastsTooFar). Only a
++            // bearing's own run -- a follow or an advance is not held here.
++            if (view.HeldBearing < MoveBlock::BEARING_COUNT && alive && !bot->movespline->Finalized())
++            {
++                G3D::Vector3 const end = bot->movespline->FinalDestination();
++                float const remaining = std::hypot(bot->GetExactDist2d(end.x, end.y), end.z - bot->GetPositionZ());
++                if (MoveKeep::CoastsTooFar(remaining, bot->movespline->Velocity(), view.DecisionMs))
++                    bot->StopMoving();
++            }
+             view.HeldBearing = 0xFF;
+             // Standing still, so no move spline will carry the heading: push it onto the unit here instead, or a
+             // turn and a FACE_* would be things the seat believed about itself that the world did not share.
+-            // UpdatePosition with the same coordinates is a pure turn, and it is a no-op when the angle is unchanged.
+             if (alive)
+-                bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), view.Facing);
++                Encoding::TurnOnSpot(bot, view.Facing);
+             return;
+         }
+ 
+@@ -574,32 +754,70 @@
+         // Re-aimed from where the seat is now, every decision it keeps walking. Aiming once at a point chosen when the
+         // key went down would walk it into the first wall the ground put in the way; recomputing lets the path bend.
+         float const heading = HeadingOf(view.Facing, view.HeldBearing);
+-        bool const airborne = Airborne(bot);
++        bool const airborne = bot->CanFly() || SwimSteered(view);
+ 
+-        // On the ground, a run still under way along this heading and facing this way is left to run until it is
+-        // half spent. Re-issuing it every decision restarted the spline four times a second, and a client draws each
+-        // restart as a hitch in the stride (in-game testing, 2026-09-28): the seat walked in a stutter. Half a step
+-        // is still under two decisions of ground at a run, so the path is recomputed about as often as the seat
+-        // covers new ground.
+-        if (!airborne && !bot->movespline->Finalized())
++        // A bearing behind the seat is walked backwards, at the speed the game gives that: run-back, swim-back or
++        // flight-back, slower than forwards. And every run is launched at the speed of the way Steer moves the seat
++        // (MoveKeep::SteerMoveType): left to itself the spline takes it from the core's swimming flag, which flickers
++        // at the shore, and a swim launched at run speed or a walk at swim speed was the same 4.7 <-> 7 yd/s flicker
++        // the swim hysteresis exists to remove (movement-smooth A9).
++        bool const back = view.HeldBearing == MoveBlock::BEARING_BACK
++            || view.HeldBearing == MoveBlock::BEARING_BACK_LEFT || view.HeldBearing == MoveBlock::BEARING_BACK_RIGHT;
++        float const speed = bot->GetSpeed(MoveKeep::SteerMoveType(bot->CanFly(), airborne && !bot->CanFly(), back));
++        float const velocity = speed;
++        if (view.Steering)
++            view.Steering->LaunchSpeed = speed;
++
++        // A run still under way that goes where the seat wants with a couple of decisions of travel left at its own
++        // speed is left to run (MoveKeep::KeepRun). Re-issuing it every decision restarted the spline four times a
++        // second, and a client draws each restart as a hitch in the stride (in-game testing, 2026-09-28); the old
++        // "half an 8-yard step" still let go every ~750 ms on foot, and in water and the air there was no keep at
++        // all (movement-smooth A1). Where it looks is turned on the run itself (Encoding::ReaimRun), so facing alone
++        // never relaunches it -- FACE_TARGET round a moving target used to restart every decision (A3). Flying faces
++        // along its path (FlyTo) and is not turned.
++        if (!bot->movespline->Finalized())
+         {
++            Encoding::ReaimRun(bot, view.Facing);
+             G3D::Vector3 const end = bot->movespline->FinalDestination();
+-            float const remaining = bot->GetExactDist2d(end.x, end.y);
+-            float const toward = bot->GetAbsoluteAngle(end.x, end.y);
+-            if (remaining >= MoveBlock::STEP_YARDS * 0.5f
+-                && std::fabs(Position::NormalizeOrientation(toward - heading + float(M_PI)) - float(M_PI)) < RUN_HEADING_SLACK
+-                && std::fabs(Position::NormalizeOrientation(bot->GetOrientation() - view.Facing + float(M_PI))
+-                    - float(M_PI)) < RUN_FACING_SLACK)
++            float const flat = bot->GetExactDist2d(end.x, end.y);
++            float const remaining = airborne ? std::hypot(flat, end.z - bot->GetPositionZ()) : flat;
++            // Where the run goes over the next decision (Encoding::CourseAhead), which on a turn walked as one run
++            // is the leg the next step's heading is on; or the way to its end, which is what a pathfound straight
++            // run bending round a rock still points at. Either keeps it; a new mind matches neither.
++            float const headingError = std::min(AngleBetween(Encoding::CourseAhead(bot, view.DecisionMs / 2),
++                heading), AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading));
++            float const pitchError = airborne && flat > 0.1f
++                ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
++            // Stock AzerothCore draws -- and between decisions, faces -- a run with the head it was launched with
++            // (Encoding::ReaimRun turns only the unit, for this decision's press); past the threshold it is
++            // relaunched once so the turn is made (Options.ShownFacingRelaunchDeg, the forge's rule with a client).
++            bool const shownStale = view.Steering && !(airborne && bot->CanFly())
++                && view.Steering->RunId == bot->movespline->GetId()
++                && MoveKeep::FacingRelaunch(view.Steering->RunFacing, view.Facing,
++                    view.Options.ShownFacingRelaunchDeg * float(M_PI) / 180.0f);
++            bool const edge = view.Steering && view.Steering->EdgeRunId == bot->movespline->GetId();
++            // A run launched at another speed than the seat has now -- a sprint, a slow, a mount -- is relaunched at
++            // the new one (MoveKeep::SpeedChanged, A9).
++            bool const resped = view.Steering && view.Steering->RunId == bot->movespline->GetId()
++                && MoveKeep::SpeedChanged(view.Steering->RunSpeed, speed);
++            if (!shownStale && !resped
++                && (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError)
++                    || (edge && MoveKeep::KeepEdgeRun(bot->movespline->Velocity(), headingError, pitchError))))
+                 return;
+         }
+ 
+         float const pitch = airborne ? view.Pitch : 0.0f;
+-        float const reach = MoveBlock::STEP_YARDS * std::cos(pitch);
++        // About three seconds of travel at the seat's own speed (MoveKeep::Reach): a run that outlasts the keep check
++        // by a decision or two, so the spline is not relaunched for want of ground ahead.
++        uint64 const until = view.Option->Of(SeatOptionKind::MoveBearing).UntilMs;
++        float const length = MoveKeep::CappedReach(speed, until > view.NowMs ? until - view.NowMs : 0,
++            view.DecisionMs);
++        float const reach = length * std::cos(pitch);
+ 
+         Position destination = *bot;
+         destination.Relocate(bot->GetPositionX() + reach * std::cos(heading),
+             bot->GetPositionY() + reach * std::sin(heading),
+-            bot->GetPositionZ() + MoveBlock::STEP_YARDS * std::sin(pitch));
++            bot->GetPositionZ() + length * std::sin(pitch));
+ 
+         if (airborne)
+         {
+@@ -609,9 +827,22 @@
+             if (!bot->CanFly())
+             {
+                 // In the water. Keep the seat under the surface rather than skimming along the top of it, and swim
+-                // rather than fly: a spline with the fly flag on a swimmer is a different animal.
++                // rather than fly: a spline with the fly flag on a swimmer is a different animal. A water-walker is
++                // on the surface and stays there: a dive would push it under water it is walking on (A9).
++                if (bot->HasWaterWalkAura())
++                    if (Map* map = bot->GetMap())
++                    {
++                        LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
++                            bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
++                        if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT)
++                        {
++                            bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
++                            destination.Relocate(destination.GetPositionX(), destination.GetPositionY(),
++                                std::max(destination.GetPositionZ(), liquid.Level + MoveBlock::WATER_WALK_ABOVE));
++                        }
++                    }
+                 Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+-                    destination.GetPositionZ(), &facing);
++                    destination.GetPositionZ(), &facing, velocity);
+                 return;
+             }
+ 
+@@ -621,7 +852,7 @@
+                 std::min(destination.GetPositionZ(), ceiling));
+ 
+             Encoding::FlyTo(bot, destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
+-                &facing);
++                &facing, velocity);
+             return;
+         }
+ 
+@@ -633,13 +864,23 @@
+         // to just under the surface, and from the next decision `airborne` is true and the seat is swimming.
+         if (Map* map = bot->GetMap())
+         {
+-            LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), destination.GetPositionX(),
+-                destination.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
++            // A step ahead, not the run's far end: a lake twenty yards off is not a reason to swim there in a
++            // straight line over the ground between (movement-smooth A1).
++            Position step = *bot;
++            step.Relocate(bot->GetPositionX() + MoveBlock::STEP_YARDS * std::cos(heading),
++                bot->GetPositionY() + MoveBlock::STEP_YARDS * std::sin(heading), bot->GetPositionZ());
++            LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), step.GetPositionX(),
++                step.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
+             // Water and ocean only: stepping into magma or slime is not a crossing, it is a death, and the probe
+             // reports it as no reach for that reason.
++            // Deep enough to swim, or walked on: water a seat would only wade is walked into on the ground, or the
++            // seat swims in, finds its feet, walks, and swims again at the shore (MoveKeep::SwimMode, A9).
+             if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
+                 && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0
+-                && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP)
++                && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP
++                && (bot->HasWaterWalkAura() || WaterDepth(map, bot->GetPhaseMask(), step.GetPositionX(),
++                    step.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight())
++                    >= MoveKeep::SWIM_ENTER * bot->GetCollisionHeight()))
+             {
+                 // With a water-walking aura the lake is a floor: the step lands on the surface, and the movement
+                 // flag the core would only set on a client's acknowledgement (Unit::SetWaterWalking sends a packet
+@@ -647,12 +888,12 @@
+                 if (bot->HasWaterWalkAura())
+                 {
+                     bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
+-                    Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+-                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing);
++                    Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
++                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing, velocity);
+                     return;
+                 }
+-                Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+-                    liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing);
++                Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
++                    liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing, velocity);
+                 return;
+             }
+         }
+@@ -665,13 +906,23 @@
+         // policy's; only the height of a point eight yards away is being guessed at, and the path the spline takes
+         // sorts that out. The ground probe is how the seat learns not to choose such a bearing in the first place.
+         // Deliberately discarded: see above -- a failure is a reason to move anyway, not a reason to stand still.
+-        (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
+-            MoveBlock::STEP_YARDS);
++        // Within a step of the seat's own height first, so a floor above or below the one it walks on is not
++        // taken for its ground; only where there is none that near, the wider window it always had (A7).
++        if (!Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
++                MoveBlock::MAX_STEP))
++            (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
++                MoveBlock::STEP_YARDS);
++
++        // A turn still to come is walked as one run (TurnRun); where that cannot be laid out, the straight run below.
++        if (std::fabs(view.TurnLeft) >= 1e-4f && TurnRun(view, heading, speed, length, velocity))
++            return;
+ 
+         // Pathfinding on, which is the default: a bearing is where the seat wants to go, not a licence to walk through
+         // a wall to get there.
++        if (StraightRun(view, destination, velocity))
++            return;
+         Encoding::MoveTo(bot, MOVE_POINT_ID, destination.GetPositionX(), destination.GetPositionY(),
+-            destination.GetPositionZ(), &view.Facing);
++            destination.GetPositionZ(), &view.Facing, velocity);
+     }
+ }
+ 
+@@ -1100,11 +1351,9 @@
+     for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
+         allowed[ACTION_BEARING_FIRST + bearing] = canMove ? 1 : 0;
+ 
+-    // The bearing already being walked is masked: pressing it again would be a repeat of a key already held, and
+-    // the option machinery re-issues the spline each decision without being asked.
+-    if (canMove && view.HeldBearing < BEARING_COUNT && view.Option
+-        && view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs))
+-        allowed[ACTION_BEARING_FIRST + view.HeldBearing] = 0;
++    // The bearing already being walked stays offered: pressing it again keeps the key held (a refresh of
++    // Options.MoveBearingMs, not a new walk, and not charged as a press). Masked, it could only be renewed on the
++    // decision it lapsed, and a seat walking one way stopped every three seconds (movement-smooth A5).
+ 
+     // Halting is only worth offering while something is being walked.
+     allowed[ACTION_HALT] = canMove && view.HeldBearing < BEARING_COUNT ? 1 : 0;
+@@ -1148,6 +1397,40 @@
+             && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
+ }
+ 
++namespace
++{
++    /// Steer the feet (SteerFeet), and remember the head a fresh run was launched with: what the run faces, and a
++    /// client draws, for the rest of it (Options.ShownFacingRelaunchDeg; CompanionParty::TurnShown seeds from it).
++    void Steer(Animus::Curriculum::SeatView& view)
++    {
++        SteerFeet(view);
++        Player const* bot = view.Bot;
++        if (bot && view.Steering && !bot->movespline->Finalized() && bot->movespline->GetId() != view.Steering->RunId)
++        {
++            view.Steering->RunId = bot->movespline->GetId();
++            view.Steering->RunFacing = bot->GetOrientation();
++            view.Steering->RunSpeed = view.Steering->LaunchSpeed;
++        }
++    }
++}
++
++void Animus::Curriculum::MoveBlock::BeforePress(SeatView& view) const
++{
++    // A run is orientation-fixed and its head was only ever set at launch: under FACE_TARGET a target that moved
++    // since the last decision left the seat facing where it used to be, and a cast failed its facing check although
++    // the seat had chosen to look at it (movement-smooth A3). The unit is brought to where the seat is looking now,
++    // on the run or on the spot, before anything this decision does. Not under a cast or channel (a turn would
++    // cancel it), and not for a seat that cannot turn.
++    Player* bot = view.Bot;
++    if (!bot || !bot->IsAlive() || bot->HasUnitState(Encoding::IMMOBILE_STATES) || Encoding::CastHoldsFeet(bot))
++        return;
++    UpdateFacing(view);
++    if (bot->movespline->Finalized())
++        Encoding::TurnOnSpot(bot, view.Facing);
++    else
++        Encoding::ReaimRun(bot, view.Facing);
++}
++
+ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+ {
+     if (!view.Bot || !view.Option)
+@@ -1200,6 +1483,16 @@
+     if (local < ACTION_HALT)
+     {
+         uint8 const bearing = uint8(local - ACTION_BEARING_FIRST);
++        // The bearing already held, pressed again: the key stays down a while longer. No new walk -- Steer keeps the
++        // run under way -- and nothing charged for it (ApplySeatAction, SeatActionResult::BearingRefresh).
++        if (bearing == view.HeldBearing && view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs))
++        {
++            view.Option->Start(SeatOptionKind::MoveBearing, view.NowMs + view.Options.MoveBearingMs);
++            if (SteerMemory* steering = view.Steering)
++                steering->BearingMs = view.NowMs;
++            result.BearingRefresh = true;
++            return;
++        }
+         // A bearing swung round from one pressed moments ago is feet that zigzag (Actions.Jitter): counted by how
+         // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
+         if (SteerMemory* steering = view.Steering)
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveBlock.h
+@@ -442,6 +442,7 @@
+ 
+         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
++        void BeforePress(SeatView& view) const override;
+         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveKeep.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveKeep.h
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of the Animus Forge project, based on AzerothCore.
++ * See AUTHORS file for Copyright information.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef ANIMUS_LIB_CURRICULUM_MOVE_KEEP_H
++#define ANIMUS_LIB_CURRICULUM_MOVE_KEEP_H
++
++#include "Define.h"
++#include "UnitDefines.h"
++#include <algorithm>
++#include <cmath>
++
++/// **When a held bearing's run is left alone** (MoveBlock Steer, movement-smooth A1). A spline relaunched over a
++/// running one is a hitch a client draws in the stride; the keep check used to be "half an 8-yard step left", which on
++/// foot restarted every ~750 ms and in water or the air every decision. Now a run is kept while it has a couple of
++/// decisions of travel left at its own speed and still goes where the seat wants, and a fresh run reaches about three
++/// seconds of travel. Pure, so it is tested on its own (MoveKeepTest).
++namespace Animus::Curriculum::MoveKeep
++{
++    constexpr float REACH_SECONDS = 3.0f;       // a fresh run reaches this much travel at the seat's speed ...
++    constexpr float MIN_REACH = 8.0f;           // ... and never less than the old step
++    constexpr uint32 KEEP_DECISIONS = 2;        // a run is kept while this many decisions of travel are left
++    constexpr float HEADING_SLACK = 0.35f;      // about 20 degrees: a path bent round a rock
++    constexpr float PITCH_SLACK = 0.2f;         // about 11 degrees of climb or dive
++    constexpr float NOTHING_TO_WALK = 0.5f;     // a path to the edge shorter than this: the seat is already there
++    constexpr float SPEED_SLACK = 0.05f;        // a run launched at a speed more than 5% off the seat's is relaunched
++    constexpr float SWIM_ENTER = 0.75f;         // water this deep (of the seat's height) is swum ...
++    constexpr float SWIM_LEAVE = 0.4f;          // ... and is walked again only once it is this shallow
++
++    /// How far a fresh run reaches, at `speed` yards a second.
++    [[nodiscard]] inline float Reach(float speed)
++    {
++        return std::max(MIN_REACH, std::max(0.0f, speed) * REACH_SECONDS);
++    }
++
++    /// How far a fresh run reaches while the held bearing has `optionLeftMs` to go: no further than the seat would
++    /// travel before the option lapses plus KEEP_DECISIONS decisions, so a bearing let go does not coast on for the
++    /// rest of a three-second run it never asked for -- into a pack or off a ledge -- and the credit for stopping
++    /// stays with the decision that stopped. Never below MIN_REACH while the option runs; a refresh extends the
++    /// option, so a seat walking on never hitches.
++    [[nodiscard]] inline float CappedReach(float speed, uint64 optionLeftMs, uint32 decisionMs)
++    {
++        float const left = std::max(0.0f, speed) * float(optionLeftMs + uint64(KEEP_DECISIONS) * decisionMs) / 1000.0f;
++        return std::min(Reach(speed), std::max(MIN_REACH, left));
++    }
++
++    /// Whether a run still under way when its held bearing lapsed has more than KEEP_DECISIONS decisions of travel
++    /// left, and so is stopped rather than left to coast.
++    [[nodiscard]] inline bool CoastsTooFar(float remaining, float velocity, uint32 decisionMs)
++    {
++        return velocity > 0.0f && remaining / velocity * 1000.0f > float(KEEP_DECISIONS * decisionMs);
++    }
++
++    /// Whether a run whose drawn head is `shown` (radians) is relaunched so a watching client draws `decided`: more
++    /// than `threshold` radians apart, either way round. The same rule the realm's MoveBlock keeps (A3).
++    [[nodiscard]] inline bool FacingRelaunch(float shown, float decided, float threshold)
++    {
++        float const apart = std::fabs(std::remainder(decided - shown, 2.0f * float(M_PI)));
++        return apart > threshold;
++    }
++
++    /// Whether a run whose end is as far as the ground lets the bearing go -- its path came back incomplete, the
++    /// point it was aimed at unreachable -- is kept to that end (movement-smooth A7). Relaunching it only finds the
++    /// same end nearer, so the time-left rule would restart it every decision of its last two; it is let go only
++    /// when its course or climb no longer fits, or it has stopped.
++    [[nodiscard]] inline bool KeepEdgeRun(float velocity, float headingError, float pitchError)
++    {
++        return velocity > 0.0f && std::fabs(headingError) < HEADING_SLACK && std::fabs(pitchError) < PITCH_SLACK;
++    }
++
++    /// Whether a run launched at `launched` yards a second is relaunched because the seat now moves at `now`: a
++    /// sprint, a slow, a mount or a form change (movement-smooth A9). A spline keeps the speed it was launched with.
++    [[nodiscard]] inline bool SpeedChanged(float launched, float now)
++    {
++        return launched > 0.0f && std::fabs(now - launched) > SPEED_SLACK * launched;
++    }
++
++    /// Whether the seat is steered as a swimmer (movement-smooth A9): the core says it is in the water and the water
++    /// is deep enough to swim, or it was swimming and the water has not yet got shallow enough to walk. At the shore
++    /// the core's in-water flag flickers as the seat bobs, and each flicker switched a straight swim for a pathfound
++    /// walk and back -- a relaunch each time. Depth and height in yards.
++    [[nodiscard]] inline bool SwimMode(bool wasSwimming, bool coreInWater, float depth, float height)
++    {
++        if (!coreInWater && depth < SWIM_LEAVE * height)
++            return false;
++        if (coreInWater && depth >= SWIM_ENTER * height)
++            return true;
++        return wasSwimming;
++    }
++
++    /// The speed a run Steer launches moves at, from how Steer moves the seat: flying, swimming by SwimMode's
++    /// hysteresis (not the core's in-water flag, which flickers at the shore), or on foot; backwards for a bearing
++    /// behind it. Every run is launched at this speed explicitly, so the path type and the speed always agree
++    /// (movement-smooth A9).
++    [[nodiscard]] inline UnitMoveType SteerMoveType(bool flying, bool swimming, bool back)
++    {
++        if (flying)
++            return back ? MOVE_FLIGHT_BACK : MOVE_FLIGHT;
++        if (swimming)
++            return back ? MOVE_SWIM_BACK : MOVE_SWIM;
++        return back ? MOVE_RUN_BACK : MOVE_RUN;
++    }
++
++    /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least
++    /// KEEP_DECISIONS decisions of `decisionMs`, and its course and climb are within their slack of what is wanted
++    /// (errors in radians, any sign). A run with no velocity is never kept. Facing is not asked: it is turned on
++    /// the run itself (Encoding::ReaimRun, movement-smooth A3).
++    [[nodiscard]] inline bool KeepRun(float remaining, float velocity, uint32 decisionMs, float headingError,
++        float pitchError)
++    {
++        if (velocity <= 0.0f || decisionMs == 0)
++            return false;
++        float const leftMs = remaining / velocity * 1000.0f;
++        return leftMs >= float(KEEP_DECISIONS * decisionMs) && std::fabs(headingError) < HEADING_SLACK
++            && std::fabs(pitchError) < PITCH_SLACK;
++    }
++}
++
++#endif
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveTurnPath.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/MoveTurnPath.h
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of the Animus Forge project, based on AzerothCore.
++ * See AUTHORS file for Copyright information.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef ANIMUS_LIB_CURRICULUM_MOVE_TURN_PATH_H
++#define ANIMUS_LIB_CURRICULUM_MOVE_TURN_PATH_H
++
++#include <algorithm>
++#include <cmath>
++#include <vector>
++
++/// **A turn walked as one run** (MoveBlock Steer, movement-smooth A2). A turn under a held bearing swings the
++/// heading TURN_RATE a decision, more than the keep check's slack, so every decision of it relaunched the spline: an
++/// about-turn was four restarts in a second, the largest source left. The whole remaining turn is laid out at launch
++/// instead -- one leg a decision at the heading StepTurn will have given the seat by then, then straight on -- so the
++/// feet are where the per-decision steps would have put them and the run is launched once. Pure, so it is tested on
++/// its own (MoveTurnPathTest).
++namespace Animus::Curriculum::MoveTurnPath
++{
++    struct Leg
++    {
++        float Heading = 0.0f;       // radians, 0..2pi
++        float Length = 0.0f;        // yards
++    };
++
++    /// The legs of a run launched at `heading` with `turnLeft` radians of a turn still to come (signed, left
++    /// positive, as SeatView::TurnLeft after this decision's step), stepping at most `rate` a decision: one leg of
++    /// `spacing` yards (the seat's speed over a decision) per decision while the turn lasts, then one straight leg,
++    /// `reach` yards in all and cut short there. A run with no turn left is one straight leg.
++    [[nodiscard]] inline std::vector<Leg> Legs(float heading, float turnLeft, float rate, float spacing, float reach)
++    {
++        auto const wrap = [](float angle)
++        {
++            float const twoPi = 2.0f * float(M_PI);
++            float const wrapped = std::fmod(angle, twoPi);
++            return wrapped < 0.0f ? wrapped + twoPi : wrapped;
++        };
++
++        std::vector<Leg> legs;
++        if (reach <= 0.0f)
++            return legs;
++        float left = std::fabs(turnLeft) < 1e-4f ? 0.0f : turnLeft;
++        if (rate <= 0.0f || spacing <= 0.0f)
++            left = 0.0f;
++
++        float course = heading;
++        float walked = 0.0f;
++        while (walked < reach)
++        {
++            bool const turning = left != 0.0f;
++            float const length = turning ? std::min(spacing, reach - walked) : reach - walked;
++            legs.push_back({ wrap(course), length });
++            walked += length;
++            if (!turning)
++                break;
++            // The step StepTurn takes at the next decision, the same float arithmetic.
++            float const step = std::clamp(left, -rate, rate);
++            course += step;
++            left -= step;
++            if (std::fabs(left) < 1e-4f)
++                left = 0.0f;
++        }
++        return legs;
++    }
++}
++
++#endif
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PartyBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/PartyBlock.cpp
+@@ -32,6 +32,10 @@
+     constexpr uint32 FOLLOW_TANK_MOVE_POINT_ID = 4;
+     constexpr float FOLLOW_TANK_DISTANCE = 4.0f;
+     constexpr float FOLLOW_TANK_MIN_DISTANCE = 8.0f;
++    /// A follow re-aimed no more than once a second while its run is under way, unless the tank has moved this far
++    /// from where it was aimed (movement-smooth A9): each press relaunched the run, a hitch a decision.
++    constexpr uint64 FOLLOW_TANK_AIM_MS = 1000;
++    constexpr float FOLLOW_TANK_REAIM_YARDS = 3.0f;
+ 
+     bool IsAllowed(SeatView const& view, uint32 action)
+     {
+@@ -218,7 +222,20 @@
+         float z = 0.0f;
+         tank->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_TANK_DISTANCE,
+             Position::NormalizeOrientation(tank->GetOrientation() + float(M_PI)));
++        if (SteerMemory* steering = view.Steering)
++        {
++            if (!bot->movespline->Finalized() && bot->movespline->GetId() == steering->FollowRunId
++                && view.NowMs < steering->FollowAimMs + FOLLOW_TANK_AIM_MS)
++            {
++                G3D::Vector3 const end = bot->movespline->FinalDestination();
++                if ((end - G3D::Vector3(x, y, z)).length() < FOLLOW_TANK_REAIM_YARDS)
++                    return;
++            }
++            steering->FollowAimMs = view.NowMs;
++        }
+         Encoding::MoveTo(bot, FOLLOW_TANK_MOVE_POINT_ID, x, y, z);
++        if (view.Steering)
++            view.Steering->FollowRunId = bot->movespline->GetId();
+         return;
+     }
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/RunCourse.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/RunCourse.h
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of the Animus Forge project, based on AzerothCore.
++ * See AUTHORS file for Copyright information.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef ANIMUS_LIB_CURRICULUM_RUN_COURSE_H
++#define ANIMUS_LIB_CURRICULUM_RUN_COURSE_H
++
++#include "MoveSpline.h"
++#include <algorithm>
++#include <cmath>
++#include <optional>
++
++namespace Animus::Curriculum
++{
++    /// The direction (radians, atan2 of the leg) of the leg a running spline will be on `aheadMs` from now; none for
++    /// a leg with no length. A leg's end is reached a millisecond after the decision that should start the next (the
++    /// spline's timestamps start at 1), so the leg under way now reads the previous leg's direction at every decision
++    /// boundary; half a decision ahead reads the leg the coming decision walks (Encoding::CourseAhead, RunCourseTest).
++    [[nodiscard]] inline std::optional<float> RunCourse(Movement::MoveSpline const& run, uint32 aheadMs)
++    {
++        auto const& spline = run._Spline();
++        int32 const at = std::min(run.timePassed() + int32(aheadMs), run.Duration());
++        int32 leg = spline.first();
++        while (leg + 1 < spline.last() && spline.length(leg + 1) <= at)
++            ++leg;
++        G3D::Vector3 const& from = spline.getPoint(leg);
++        G3D::Vector3 const& to = spline.getPoint(std::min(leg + 1, spline.last()));
++        if (std::fabs(to.x - from.x) + std::fabs(to.y - from.y) < 0.01f)
++            return std::nullopt;
++        return std::atan2(to.y - from.y, to.x - from.x);
++    }
++}
++
++#endif
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Blocks/WorldBlock.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Blocks/WorldBlock.cpp
+@@ -294,14 +294,20 @@
+             else if (best.Thing == world.Node)
+             {
+                 if (WorldActions::Gather(bot, world.Node))
++                {
+                     ++result.GatherCasts;
++                    Encoding::ReleaseBearing(view);     // the gathering cast holds the feet (movement-smooth A4)
++                }
+                 else
+                     ++result.Wasted;
+             }
+             else if (world.CorpseSkinnable)
+             {
+                 if (WorldActions::Skin(bot, world.Corpse->ToCreature()))
++                {
+                     ++result.GatherCasts;
++                    Encoding::ReleaseBearing(view);
++                }
+                 else
+                     ++result.Wasted;
+             }
+--- a/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.cpp
+@@ -20,6 +20,7 @@
+ #include "Config.h"
+ #include "Log.h"
+ #include <algorithm>
++#include <atomic>
+ #include <boost/json/object.hpp>
+ #include <charconv>
+ #include <cstdlib>
+@@ -70,6 +71,13 @@
+         value = loaded;
+     });
+ 
++    tuning.Options.ShownFacingRelaunchDeg = std::clamp(tuning.Options.ShownFacingRelaunchDeg, 0.0f, 180.0f);
++    static std::atomic<bool> shownLogged{ false };
++    if (!shownLogged.exchange(true))
++        LOG_INFO("module.animus", "{}Options.ShownFacingRelaunchDeg = {:.0f}: a running seat whose run faces more than "
++            "this off where it looks is relaunched once", prefix,
++            tuning.Options.ShownFacingRelaunchDeg);
++
+     ClampRolePair(prefix, "Characters.HighLevelChance", tuning.Characters.HighLevelChance,
+         "Characters.LowLevelChance", tuning.Characters.LowLevelChance);
+     ClampPercent(prefix, "Characters.PetOutChance", tuning.Characters.PetOutChance);
+--- a/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/CurriculumTuning.h
+@@ -891,6 +891,11 @@
+             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
+             /// seat is there and the owner has stopped.
+             uint32 FollowMs = 6000;
++            /// A run faces, and a client draws, the head it was launched with: stock AzerothCore cannot turn it on the
++            /// run (the forge's MoveSpline::ReaimFacing). A running seat whose run's head is more than this many
++            /// degrees off where it looks is relaunched once, so the turn is made. The forge keeps the same threshold
++            /// for when a client is watching (movement-smooth A3).
++            float ShownFacingRelaunchDeg = 20.0f;
+         } Options;
+ 
+         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
+@@ -1438,6 +1443,7 @@
+             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
+             f("Options.JitterWindowMs", tuning.Options.JitterWindowMs);
+             f("Options.FollowMs", tuning.Options.FollowMs);
++            f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);
+             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
+             f("Owner.TankChance", tuning.Owner.TankChance);
+             f("Owner.HealerChance", tuning.Owner.HealerChance);
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/Block.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/Block.h
+@@ -329,6 +329,10 @@
+         /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
+         /// it does is recorded in `result` as a press would be.
+         virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
++        /// Every decision before BeforeApply and the press, whatever it is (the no-op included) and whichever block it
++        /// belongs to: what a press must meet already true of the world (MoveBlock: the seat's orientation synced to
++        /// where it is looking, for a spell's facing check -- movement-smooth A3). Nothing is recorded.
++        virtual void BeforePress(SeatView& /*view*/) const { }
+ 
+         /// Apply the block's action `local` (0-based within the block) as the client would. Masked actions do nothing.
+         virtual void Apply(SeatView& /*view*/, uint32 /*local*/, SeatActionResult& /*result*/) const { }
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/EncoderSupport.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/EncoderSupport.cpp
+@@ -30,6 +30,7 @@
+ #include "SpellChecks.h"
+ #include "Item.h"
+ #include "Layout.h"
++#include "RunCourse.h"
+ #include "MotionMaster.h"
+ #include "MoveSplineInit.h"
+ #include "MoveSpline.h"
+@@ -176,6 +177,38 @@
+         return bot->IsNonMeleeSpellCast(false, true, true);
+     }
+ 
++    bool CastHoldsFeet(Player const* bot)
++    {
++        return bot && bot->IsNonMeleeSpellCast(false, false, true);
++    }
++
++    void ReleaseBearing(SeatView& view)
++    {
++        view.HeldBearing = 0xFF;
++        if (view.Option)
++            view.Option->Stop(SeatOptionKind::MoveBearing);
++        if (view.Bot && !view.Bot->movespline->Finalized())
++            view.Bot->StopMoving();
++    }
++
++    bool ReaimRun(Player* bot, float facing)
++    {
++        if (!bot || bot->movespline->Finalized())
++            return false;
++        if (std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI)) - float(M_PI))
++            > 0.001f)
++            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
++        return true;
++    }
++
++    void TurnOnSpot(Player* bot, float facing)
++    {
++        if (!bot || std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI))
++            - float(M_PI)) <= 0.001f)
++            return;
++        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
++    }
++
+     bool MountCastInProgress(Player const* bot)
+     {
+         Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+@@ -792,7 +825,7 @@
+         return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
+     }
+ 
+-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing)
++    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing, float velocity)
+     {
+         struct Timed
+         {
+@@ -842,6 +875,8 @@
+         init.MoveTo(x, y, z, true);
+         init.SetOrientationFixed(true);
+         init.SetFacing(*facing);        // and for the final tick, on the rare spline that does finish
++        if (velocity > 0.0f)
++            init.SetVelocity(velocity);
+         init.Launch();
+     }
+ 
+@@ -857,7 +892,7 @@
+         init.Launch();
+     }
+ 
+-    void SwimTo(Player* bot, float x, float y, float z, float const* facing)
++    void SwimTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
+     {
+         // Straight there, no pathfinding: the walkable mesh stops at the waterline -- mmaps drops the terrain
+         // under real liquid -- so a pathfound step into a lake has nowhere to land and the seat stands on the
+@@ -881,9 +916,36 @@
+             init.SetOrientationFixed(true);
+             init.SetFacing(*facing);
+         }
++        if (velocity > 0.0f)
++            init.SetVelocity(velocity);
+         init.Launch();
+     }
+ 
++    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
++    {
++        // As MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the spline in
++        // flight, then hold it for the run's whole life.
++        bot->GetMotionMaster()->Clear();
++        bot->DisableSpline();
++        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
++
++        Movement::MoveSplineInit init(bot);
++        init.MovebyPath(points);
++        init.SetOrientationFixed(true);
++        init.SetFacing(facing);
++        if (velocity > 0.0f)
++            init.SetVelocity(velocity);
++        init.Launch();
++    }
++
++    float CourseAhead(Unit const* bot, uint32 aheadMs)
++    {
++        if (std::optional<float> const course = RunCourse(*bot->movespline, aheadMs))
++            return Position::NormalizeOrientation(*course);
++        G3D::Vector3 const end = bot->movespline->FinalDestination();
++        return bot->GetAbsoluteAngle(end.x, end.y);
++    }
++
+     void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)
+     {
+         // MotionMaster::MoveJump would do most of this, and cannot be used: MoveJumpTo refuses players outright
+@@ -978,7 +1040,7 @@
+         return true;
+     }
+ 
+-    void FlyTo(Player* bot, float x, float y, float z, float const* facing)
++    void FlyTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
+     {
+         // Deliberately NOT orientation-fixed, unlike MoveTo and SwimTo. SetFly puts the spline in Catmullrom
+         // mode, and Spline::init_spline places the virtual first control point at
+@@ -991,6 +1053,8 @@
+         if (facing)
+             init.SetFacing(*facing);
+         init.SetFly();
++        if (velocity > 0.0f)
++            init.SetVelocity(velocity);
+         init.Launch();
+     }
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/EncoderSupport.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/EncoderSupport.h
+@@ -82,6 +82,21 @@
+     /// meanwhile. The core only checks this for client casts, so actions check it here.
+     [[nodiscard]] bool CastInProgress(Player const* bot);
+ 
++    /// A cast or a channel under way that moving would cancel: the steering does not launch a spline under it
++    /// (MoveBlock Steer), and a press that started one lets go of the held bearing (ReleaseBearing).
++    [[nodiscard]] bool CastHoldsFeet(Player const* bot);
++    /// Stop the feet and let go of the held bearing and its option, so nothing re-issues the walk under a cast.
++    void ReleaseBearing(SeatView& view);
++
++    /// Turn the unit of a seat whose run is under way to `facing`, so a facing check made by this decision's press
++    /// reads where the seat is looking (movement-smooth A3). Stock AzerothCore cannot turn a run's own head (the
++    /// forge's MoveSpline::ReaimFacing), so the run keeps drawing the facing it was launched with on the next tick,
++    /// and MoveBlock's Steer relaunches it once the two are Options.ShownFacingRelaunchDeg apart. False standing.
++    bool ReaimRun(Player* bot, float facing);
++    /// Turn a seat standing still to `facing`, as a turn on the spot does (UpdatePosition with the same
++    /// coordinates fires AURA_INTERRUPT_FLAG_TURNING); nothing when the angle is unchanged.
++    void TurnOnSpot(Player* bot, float facing);
++
+     /// Whether the cast in flight is a mount.
+     ///
+     /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
+@@ -238,19 +253,36 @@
+     /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
+     /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
+     /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
+-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr);
++    /// `velocity` above 0 is the run's own speed (a bearing walked backwards runs at the run-back speed, A9);
++    /// otherwise the spline takes the unit's speed for how it moves, as before. Ignored without a facing.
++    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr,
++        float velocity = 0.0f);
+     /// A pathfound run to (x, y, z) at `speed` yards a second, walking if `walk`: a follow at its owner's pace.
+     void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk);
+     /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
+     inline std::atomic<uint64> MoveToCalls{ 0 };
+     inline std::atomic<uint64> MoveToNs{ 0 };
++    /// MoveBlock's turns walked as one run (movement-smooth A2): the tries at laying one out, their time since the
++    /// start (a PathGenerator and a line of sight a turning leg), and how many fell back to the straight run.
++    inline std::atomic<uint64> TurnRunCalls{ 0 };
++    inline std::atomic<uint64> TurnRunNs{ 0 };
++    inline std::atomic<uint64> TurnRunFallbacks{ 0 };
+ 
+     /// Move along a straight spline through the air or the water, with no path and no ground under it. Steering in
+     /// three dimensions needs this: a ground move is snapped to the ground by definition, which is exactly what a
+     /// dive or a climb is trying not to be. `facing` as above.
+     /// Straight to a point with no pathfinding and no fly flag: how a seat enters and crosses water,
+     /// where the walkable mesh stops at the surface.
+-    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
++    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
++
++    /// Walk a path already laid out and checked (MoveBlock's turn walked as one run, movement-smooth A2): no
++    /// pathfinding, the points as given from the seat's own position on, facing `facing` the whole way as MoveTo does.
++    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
++    /// The direction of the leg a running spline will be on `aheadMs` from now, radians: where the run is going over
++    /// the next decision, which on a turn walked as one run is not the way to its end. A leg's end is reached a
++    /// millisecond after the decision that should start the next (the spline's timestamps start at 1), so asking
++    /// about the leg under way now would read the previous leg's direction at every boundary.
++    [[nodiscard]] float CourseAhead(Unit const* bot, uint32 aheadMs);
+ 
+     /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
+ 
+@@ -260,7 +292,7 @@
+ 
+         float const* facing = nullptr);
+ 
+-    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
++    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
+ 
+     /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
+     /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/SeatEncoder.cpp
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/SeatEncoder.cpp
+@@ -158,7 +158,10 @@
+         }
+     }
+ 
+-    // Every decision, whatever the action (the no-op included): this is where a running option acts.
++    // Every decision, whatever the action: where the seat looks made true of the unit (Block::BeforePress), then
++    // where a running option acts.
++    for (BlockId id : layout.Blocks)
++        GetBlock(id).BeforePress(view);
+     for (BlockId id : layout.Blocks)
+         GetBlock(id).BeforeApply(view, result);
+ 
+--- a/animus-lib/src/runtime/Scenario/Curriculum/Layout/SeatView.h
++++ b/animus-lib/src/runtime/Scenario/Curriculum/Layout/SeatView.h
+@@ -265,6 +265,27 @@
+         uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
+         uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
+         int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
++        /// What a watching client draws (movement-smooth A2, B2): a run keeps the head it was launched with
++        /// (RunFacing, for the run RunId) however it is re-aimed since, and a seat standing still is shown its turns
++        /// swung across the ticks (ShownFacing) rather than snapped.
++        float RunFacing = 0.0f;
++        uint32 RunId = 0;
++        /// The run (spline id) launched on an incomplete path: it ends where the ground lets the bearing go, and is
++        /// kept to that end (MoveKeep::KeepEdgeRun, movement-smooth A7). 0: none.
++        uint32 EdgeRunId = 0;
++        uint32 EdgeRuns = 0;                    // runs launched on an incomplete path this episode
++        uint32 EdgeHolds = 0;                   // ... and decisions held at the edge with nothing left to walk
++        /// The speed Steer measured when it launched the run RunId (MoveKeep::SpeedChanged), and the one it measured
++        /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
++        float RunSpeed = 0.0f;
++        float LaunchSpeed = 0.0f;
++        bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)
++        /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
++        uint64 FollowAimMs = 0;
++        uint32 FollowRunId = 0;
++        float ShownFacing = 0.0f;
++        bool ShownSeeded = false;
++        uint32 ShownSinceMs = 0;
+ 
+         void Clear() { *this = SteerMemory(); }
+     };
+@@ -470,6 +491,7 @@
+         float EpisodeTime = 0.0f;                   // time into the episode / EPISODE_TIME_SCALE_MS, clamped
+         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
+         uint64 NowMs = 0;                           // the clock Memory was kept with
++        uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
+ 
+         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
+         // a hunter's beasts on offer.
+@@ -635,6 +657,7 @@
+     struct SeatActionResult
+     {
+         uint32 SpellCasts = 0;
++        bool BearingRefresh = false;                // the bearing already held, pressed again: kept, not a press
+         // What a world press did (WorldBlock): the life encounters read these for their rewards and columns.
+         uint32 Interactions = 0;
+         uint32 Wasted = 0;                          // a press that did nothing in the world
+--- a/conf/mod_animus.conf.dist
++++ b/conf/mod_animus.conf.dist
+@@ -824,6 +824,10 @@
+ #   than a bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
+ Animus.Curriculum.Options.FollowMs = 6000
+ 
++#   ... and how many degrees a running companion's run may face away from where it looks before the run is
++#   relaunched so it turns: a run keeps the facing it was launched with on a stock core. Logged once at load.
++Animus.Curriculum.Options.ShownFacingRelaunchDeg = 20
++
+ #   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison
+ #   cloud, a consecration), charged per fraction of maximum health ON TOP of DamageTaken, which already charges it
+ #   once as damage. This is the damage a seat could have walked out of, and the only term that pays for moving its
+--- a/src/Companion/CompanionParty.cpp
++++ b/src/Companion/CompanionParty.cpp
+@@ -758,7 +758,10 @@
+     float const decided = bot->GetOrientation();
+     if (!member.ShownSeeded || !bot->IsAlive() || !bot->movespline->Finalized())
+     {
+-        member.ShownFacing = decided;
++        // Running: a client draws the run's launch facing (MoveBlock's Steer keeps it in SteerMemory), not the unit's
++        // orientation, which this decision's press may have turned; the turn is swung from there once the run ends.
++        bool const run = !bot->movespline->Finalized() && member.Steering.RunId == bot->movespline->GetId();
++        member.ShownFacing = run ? member.Steering.RunFacing : decided;
+         member.ShownSeeded = true;
+         return;
+     }
+@@ -1044,7 +1047,8 @@
+     member.PitchTarget = view.PitchTarget;
+     member.Pitch = view.Pitch;
+     member.Facing = view.Facing;
+-    if (action > 0)
++    // A held bearing pressed again is the key kept down (MoveBlock, movement-smooth A5): no repeat or pacing.
++    if (action > 0 && !result.BearingRefresh)
+         member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, &member.KnownRanks);
+     member.TargetSlot = view.TargetSlot;
+     member.FriendSlot = view.FriendSlot;
+@@ -1119,6 +1123,7 @@
+     view.JumpDropSearch = settings.Actions.JumpDropSearch;
+     view.Options = settings.Options;
+     view.NowMs = _nowMs;
++    view.DecisionMs = settings.DecisionMs;
+     view.LastStepDamage = member.LastStepDamage;
+     view.LastStepPowerDelta = member.LastStepPowerDelta;
+     view.LastStepDamageTaken = member.LastStepDamageTaken;
