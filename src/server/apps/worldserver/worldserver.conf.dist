@@ -6554,8 +6554,9 @@ AnimusForge.Curriculum.Options.MoveTurnMs = 250
 #   60 degree dive to a 60 degree climb) and ends when it gets there.
 AnimusForge.Curriculum.Options.MovePitchMs = 250
 #   ... and how fast a turn, a pitch or a bearing stops weighing on one that undoes it (ms; Actions.Jitter): its
-#   weight is e^(-dt / this), 0.72 a decision later and 0.14 at 1.5 s. Replaced a 1500 ms window charged in full
-AnimusForge.Curriculum.Options.JitterDecayMs = 750
+#   weight is e^(-dt / this): 0.45 two seconds on, 0.30 at three, 0.14 at five, so a slow weave costs and a
+#   deliberate correction little. Replaced a 1500 ms window charged in full and free past it
+AnimusForge.Curriculum.Options.JitterDecayMs = 2500
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
 #   3.5 yd back along its own path at its pace, re-aimed at most once a second; it ends on its own when the seat is

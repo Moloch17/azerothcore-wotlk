@@ -472,6 +472,7 @@ namespace Animus::Curriculum
         uint32 FidgetHeldMs = 0;
         uint32 NeedlessHeldMs = 0;
         uint32 FacingToggles = 0;
+        uint32 Weaves = 0;
         uint32 StepFidgetMs = 0;
         std::array<uint32, AIMLESS_CAUSES> StepAimlessBy{};     // this decision's, by cause (priced at the reward)
         std::array<uint32, AIMLESS_CAUSES> AimlessBy{};         // the episode's
@@ -644,6 +645,7 @@ namespace Animus::Curriculum
             FidgetHeldMs = 0;
             NeedlessHeldMs = 0;
             FacingToggles = 0;
+            Weaves = 0;
             StepFidgetMs = 0;
             StepAimlessBy.fill(0);
             AimlessBy.fill(0);

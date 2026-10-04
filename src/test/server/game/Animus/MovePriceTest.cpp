@@ -33,6 +33,20 @@ TEST(MovePriceTest, RecencyDecaysWithNoEdge)
     EXPECT_GT(MovePrice::Recency(250, 750), MovePrice::Recency(500, 750));
     EXPECT_NEAR(MovePrice::Recency(1499, 750) / MovePrice::Recency(1501, 750), 1.0f, 0.01f);
     EXPECT_FLOAT_EQ(MovePrice::Recency(100, 0), 0.0f);
+    // The default decay (2500 ms): a weave two or three seconds apart still costs, a correction five seconds on
+    // little.
+    EXPECT_NEAR(MovePrice::Recency(2000, 2500), 0.449f, 1e-3f);
+    EXPECT_NEAR(MovePrice::Recency(3000, 2500), 0.301f, 1e-3f);
+    EXPECT_NEAR(MovePrice::Recency(5000, 2500), 0.135f, 1e-3f);
+}
+
+// The columns keep the old window; a weave is a reversal past it and within four seconds.
+TEST(MovePriceTest, ReversalsAndWeavesAreCountedApart)
+{
+    EXPECT_EQ(MovePrice::CountAs(1499), 1u);
+    EXPECT_EQ(MovePrice::CountAs(1500), 2u);
+    EXPECT_EQ(MovePrice::CountAs(3999), 2u);
+    EXPECT_EQ(MovePrice::CountAs(4000), 0u);
 }
 
 // A reversal costs the angle it takes back, in quarter turns; the same way, or about, nothing.

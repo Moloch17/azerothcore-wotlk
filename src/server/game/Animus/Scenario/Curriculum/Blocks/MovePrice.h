@@ -32,6 +32,16 @@
 namespace Animus::Curriculum::MovePrice
 {
     constexpr float QUARTER_TURN = float(M_PI) / 2.0f;     // the unit every steering reversal is priced in
+    /// The columns count reversals as they always did, within the old 1500 ms window, so runs before and after the
+    /// decay compare; a reversal past it but within WEAVE_MS is a weave, the slow wobble the decay now prices.
+    constexpr uint64 COUNT_MS = 1500;
+    constexpr uint64 WEAVE_MS = 4000;
+
+    /// Which column a reversal `sinceMs` after the choice it undoes is counted in: 1 a reversal, 2 a weave, 0 none.
+    [[nodiscard]] inline uint32 CountAs(uint64 sinceMs)
+    {
+        return sinceMs < COUNT_MS ? 1 : sinceMs < WEAVE_MS ? 2 : 0;
+    }
 
     /// How much a choice `sinceMs` ago still weighs: 1 now, e^-1 at `decayMs`. Nothing with no decay.
     [[nodiscard]] inline float Recency(uint64 sinceMs, uint32 decayMs)

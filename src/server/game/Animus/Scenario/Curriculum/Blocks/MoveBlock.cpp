@@ -1547,11 +1547,13 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
                 uint32 const apart = (uint32(bearing) + BEARING_COUNT - steering->Bearing) % BEARING_COUNT;
                 uint64 const since = view.NowMs - std::min(view.NowMs, steering->BearingMs);
                 // Priced per quarter turn swung, as a turn is (MovePrice::BearingSwing), weighed by recency; counted
-                // in half turns within two decay lengths, as the column always was.
+                // in half turns within the old window, as the column always was (MovePrice::CountAs).
                 result.JitterWeight += MovePrice::BearingSwing(apart, BEARING_COUNT)
                     * MovePrice::Recency(since, view.Options.JitterDecayMs);
-                if (since < 2 * uint64(view.Options.JitterDecayMs))
+                uint32 const counted = MovePrice::CountAs(since);
+                if (counted == 1)
                     result.BearingFlip += float(std::min(apart, BEARING_COUNT - apart)) / float(BEARING_COUNT / 2);
+                result.Weaves += counted == 2 ? 1 : 0;
             }
             steering->Bearing = bearing;
             steering->BearingMs = view.NowMs;
@@ -1581,8 +1583,9 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
             if (steering->LastFacingMode == uint8(local))
             {
                 result.JitterWeight += MovePrice::Recency(since, view.Options.JitterDecayMs);
-                if (since < 2 * uint64(view.Options.JitterDecayMs))
-                    ++result.FacingToggles;
+                uint32 const counted = MovePrice::CountAs(since);
+                result.FacingToggles += counted == 1 ? 1 : 0;
+                result.Weaves += counted == 2 ? 1 : 0;
             }
             steering->LastFacingMode = view.FacingMode;
             steering->FacingModeMs = view.NowMs;
@@ -1616,12 +1619,16 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         if (SteerMemory* steering = view.Steering)
         {
             // What it takes back of the last turn (MovePrice::Undone, per quarter turn), weighed by how recent that
-            // was -- as now while it is still under way. Counted, as the column always was, within two decay lengths.
+            // was -- as now while it is still under way. Counted, as the column always was, within the old window.
             uint64 const since = view.TurnLeft != 0.0f ? 0 : view.NowMs - std::min(view.NowMs, steering->TurnMs);
             float const undone = MovePrice::Undone(steering->TurnAngle, angle);
             result.JitterWeight += undone * MovePrice::Recency(since, view.Options.JitterDecayMs);
-            if (undone > 0.0f && since < 2 * uint64(view.Options.JitterDecayMs))
-                ++result.TurnReversals;
+            if (undone > 0.0f)
+            {
+                uint32 const counted = MovePrice::CountAs(since);
+                result.TurnReversals += counted == 1 ? 1 : 0;
+                result.Weaves += counted == 2 ? 1 : 0;
+            }
             steering->TurnSign = sign;
             steering->TurnAngle = angle;
             steering->TurnMs = view.NowMs;
@@ -1655,8 +1662,12 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
                 : view.NowMs - std::min(view.NowMs, steering->PitchMs);
             float const undone = MovePrice::Undone(steering->PitchDelta, target - view.Pitch);
             result.JitterWeight += undone * MovePrice::Recency(since, view.Options.JitterDecayMs);
-            if (undone > 0.0f && since < 2 * uint64(view.Options.JitterDecayMs))
-                ++result.PitchReversals;
+            if (undone > 0.0f)
+            {
+                uint32 const counted = MovePrice::CountAs(since);
+                result.PitchReversals += counted == 1 ? 1 : 0;
+                result.Weaves += counted == 2 ? 1 : 0;
+            }
             steering->PitchSign = sign;
             steering->PitchDelta = target - view.Pitch;
             steering->PitchMs = view.NowMs;

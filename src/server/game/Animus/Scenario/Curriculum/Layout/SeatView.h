@@ -733,12 +733,14 @@ namespace Animus::Curriculum
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
         /// Steering that failed to commit (MoveBlock, Actions.Jitter), counted for the columns as before: a turn or a
-        /// pitch chosen against one chosen within two Options.JitterDecayMs, a bearing pressed within it that swings
-        /// the feet round from the last one -- as the share of a half turn it swings -- and a facing mode taken back.
+        /// pitch chosen against one chosen within 1500 ms (MovePrice::COUNT_MS), a bearing pressed within it that
+        /// swings the feet round from the last one -- as the share of a half turn it swings -- a facing mode taken
+        /// back, and any of them 1.5 to 4 s on (Weaves).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;
         uint32 FacingToggles = 0;
+        uint32 Weaves = 0;
         /// ... and what they cost, in quarter turns undone weighed by how recent the choice undone was
         /// (MovePrice::Undone, Recency): the Actions.Jitter charge.
         float JitterWeight = 0.0f;

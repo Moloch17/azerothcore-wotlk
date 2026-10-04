@@ -1362,7 +1362,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).PitchReversals);
     });
-    // FACE_* modes taken back within two decay lengths, per episode (movement-smooth C).
+    // FACE_* modes taken back within 1500 ms, per episode; and weaves: turns, pitches, bearings or modes taken
+    // back 1.5 to 4 s on, the slow wobble the decay prices and the old window let through (movement-smooth C).
+    _info.Add("weaves", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).Weaves);
+    });
     _info.Add("facing_toggles", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).FacingToggles);
@@ -3434,6 +3439,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.BearingFlips += result.BearingFlip;
     seat.PitchReversals += result.PitchReversals;
     seat.FacingToggles += result.FacingToggles;
+    seat.Weaves += result.Weaves;
     seat.StepJitter += result.JitterWeight;
     if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
     {

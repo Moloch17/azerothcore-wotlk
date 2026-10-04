@@ -902,12 +902,13 @@ namespace Animus::Curriculum
             uint32 MovePitchMs = 250;
             /// How fast a steering choice stops weighing on the one that undoes it (Actions.Jitter): its weight is
             /// e^(-dt / this). Replaces a window, JitterWindowMs (1500), that charged in full up to its edge and
-            /// nothing past it; at 750 a reversal a decision later weighs 0.72, at 1.5 s 0.14 (movement-smooth C).
+            /// nothing past it, so a slow weave (a period of two seconds or more) was free. At 2500 a reversal 2 s on
+            /// weighs 0.45, 3 s 0.30, and a deliberate correction 5 s on 0.14 (movement-smooth C).
             /// The window's history: about three decisions: long enough to catch a head twitching side to side, short
             /// enough that a seat that walked one way for a moment and then chose another is not charged for having
             /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
             /// a second later went uncharged, and bearing flips did not fall.
-            uint32 JitterDecayMs = 750;
+            uint32 JitterDecayMs = 2500;
             /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
             /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
