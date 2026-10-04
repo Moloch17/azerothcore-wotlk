@@ -36,6 +36,9 @@ namespace Animus::Curriculum::MoveKeep
     constexpr float HEADING_SLACK = 0.35f;      // about 20 degrees: a path bent round a rock
     constexpr float PITCH_SLACK = 0.2f;         // about 11 degrees of climb or dive
     constexpr float NOTHING_TO_WALK = 0.5f;     // a path to the edge shorter than this: the seat is already there
+    constexpr float SPEED_SLACK = 0.05f;        // a run launched at a speed more than 5% off the seat's is relaunched
+    constexpr float SWIM_ENTER = 0.75f;         // water this deep (of the seat's height) is swum ...
+    constexpr float SWIM_LEAVE = 0.4f;          // ... and is walked again only once it is this shallow
 
     /// How far a fresh run reaches, at `speed` yards a second.
     [[nodiscard]] inline float Reach(float speed)
@@ -76,6 +79,26 @@ namespace Animus::Curriculum::MoveKeep
     [[nodiscard]] inline bool KeepEdgeRun(float velocity, float headingError, float pitchError)
     {
         return velocity > 0.0f && std::fabs(headingError) < HEADING_SLACK && std::fabs(pitchError) < PITCH_SLACK;
+    }
+
+    /// Whether a run launched at `launched` yards a second is relaunched because the seat now moves at `now`: a
+    /// sprint, a slow, a mount or a form change (movement-smooth A9). A spline keeps the speed it was launched with.
+    [[nodiscard]] inline bool SpeedChanged(float launched, float now)
+    {
+        return launched > 0.0f && std::fabs(now - launched) > SPEED_SLACK * launched;
+    }
+
+    /// Whether the seat is steered as a swimmer (movement-smooth A9): the core says it is in the water and the water
+    /// is deep enough to swim, or it was swimming and the water has not yet got shallow enough to walk. At the shore
+    /// the core's in-water flag flickers as the seat bobs, and each flicker switched a straight swim for a pathfound
+    /// walk and back -- a relaunch each time. Depth and height in yards.
+    [[nodiscard]] inline bool SwimMode(bool wasSwimming, bool coreInWater, float depth, float height)
+    {
+        if (!coreInWater && depth < SWIM_LEAVE * height)
+            return false;
+        if (coreInWater && depth >= SWIM_ENTER * height)
+            return true;
+        return wasSwimming;
     }
 
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least

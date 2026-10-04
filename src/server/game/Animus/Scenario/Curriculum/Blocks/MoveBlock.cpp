@@ -552,7 +552,7 @@ namespace
     /// than every decision of it. Each turning leg's end is put on the ground within MAX_STEP, seen from the last,
     /// dry, and reached by the navmesh without a detour; the rest is pathfound as a straight run is. Any failure
     /// lays nothing out and the caller launches the straight run, never part of a path.
-    bool LayTurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
+    bool LayTurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity)
     {
         Player* bot = view.Bot;
         Map* map = bot->GetMap();
@@ -611,8 +611,37 @@ namespace
         if (points.size() < 2)
             return false;
 
-        Encoding::MoveAlong(bot, points, view.Facing);
+        Encoding::MoveAlong(bot, points, view.Facing, velocity);
         return true;
+    }
+
+    /// Yards of water under its surface at (x, y), seen from height `z` by someone `height` tall; 0 with none, and a
+    /// lot where no floor is found under it.
+    float WaterDepth(Map* map, uint32 phase, float x, float y, float z, float height)
+    {
+        if (!map)
+            return 0.0f;
+        LiquidData const liquid = map->GetLiquidData(phase, x, y, z, height, {});
+        if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT)
+            return 0.0f;
+        float const floor = map->GetHeight(phase, x, y, liquid.Level, true, 100.0f);
+        return floor > INVALID_HEIGHT ? std::max(0.0f, liquid.Level - floor) : 100.0f;
+    }
+
+    /// Whether Steer moves the seat as a swimmer (MoveKeep::SwimMode): the core's in-water flag, held steady at the
+    /// shore by the depth, so a seat bobbing at the waterline is not switched between a swim and a walk every
+    /// decision (movement-smooth A9).
+    bool SwimSteered(Animus::Curriculum::SeatView& view)
+    {
+        Player* bot = view.Bot;
+        bool const inWater = bot->IsInWater();
+        float const height = bot->GetCollisionHeight();
+        float const depth = WaterDepth(bot->GetMap(), bot->GetPhaseMask(), bot->GetPositionX(), bot->GetPositionY(),
+            bot->GetPositionZ(), height);
+        bool const swim = MoveKeep::SwimMode(view.Steering ? view.Steering->Swimming : inWater, inWater, depth, height);
+        if (view.Steering)
+            view.Steering->Swimming = swim;
+        return swim;
     }
 
     /// The straight run, pathfound as Encoding::MoveTo would (movement-smooth A7), so what came back can be read. A
@@ -621,7 +650,7 @@ namespace
     /// it to that end rather than relaunching the same end nearer every decision of its last two, and once there,
     /// with nothing left to walk, the seat holds rather than launching an empty run each decision. False when no
     /// path was found at all: MoveTo's own straight-line fallback then, as before.
-    bool StraightRun(Animus::Curriculum::SeatView& view, Position const& destination)
+    bool StraightRun(Animus::Curriculum::SeatView& view, Position const& destination, float velocity)
     {
         Player* bot = view.Bot;
         auto const started = std::chrono::steady_clock::now();
@@ -641,12 +670,17 @@ namespace
             if (!bot->movespline->Finalized())
                 bot->StopMoving();
             Encoding::TurnOnSpot(bot, view.Facing);
+            if (view.Steering)
+                ++view.Steering->EdgeHolds;
         }
         else
         {
-            Encoding::MoveAlong(bot, points, view.Facing);
+            Encoding::MoveAlong(bot, points, view.Facing, velocity);
             if (view.Steering)
+            {
                 view.Steering->EdgeRunId = edge ? bot->movespline->GetId() : 0;
+                view.Steering->EdgeRuns += edge ? 1 : 0;
+            }
         }
 
         // Counted as MoveTo's own (the status line's "moves"): it is the same launch.
@@ -658,10 +692,10 @@ namespace
 
     /// LayTurnRun, timed and counted for the status line (Encoding::TurnRunCalls): what the curve costs on the map
     /// thread, and how often it is refused for the straight run.
-    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length)
+    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity)
     {
         auto const started = std::chrono::steady_clock::now();
-        bool const laid = LayTurnRun(view, heading, speed, length);
+        bool const laid = LayTurnRun(view, heading, speed, length, velocity);
         Encoding::TurnRunCalls.fetch_add(1, std::memory_order_relaxed);
         Encoding::TurnRunNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
@@ -721,7 +755,19 @@ namespace
         // Re-aimed from where the seat is now, every decision it keeps walking. Aiming once at a point chosen when the
         // key went down would walk it into the first wall the ground put in the way; recomputing lets the path bend.
         float const heading = HeadingOf(view.Facing, view.HeldBearing);
-        bool const airborne = Airborne(bot);
+        bool const airborne = bot->CanFly() || SwimSteered(view);
+
+        // A bearing behind the seat is walked backwards, at the speed the game gives that: run-back, swim-back or
+        // flight-back, slower than forwards (movement-smooth A9). The spline is given it, since it would otherwise
+        // take the forward speed.
+        bool const back = view.HeldBearing == MoveBlock::BEARING_BACK
+            || view.HeldBearing == MoveBlock::BEARING_BACK_LEFT || view.HeldBearing == MoveBlock::BEARING_BACK_RIGHT;
+        UnitMoveType const moveType = !airborne ? (back ? MOVE_RUN_BACK : MOVE_RUN)
+            : bot->CanFly() ? (back ? MOVE_FLIGHT_BACK : MOVE_FLIGHT) : (back ? MOVE_SWIM_BACK : MOVE_SWIM);
+        float const speed = bot->GetSpeed(moveType);
+        float const velocity = back ? speed : 0.0f;
+        if (view.Steering)
+            view.Steering->LaunchSpeed = speed;
 
         // A run still under way that goes where the seat wants with a couple of decisions of travel left at its own
         // speed is left to run (MoveKeep::KeepRun). Re-issuing it every decision restarted the spline four times a
@@ -750,7 +796,11 @@ namespace
                 && MoveKeep::FacingRelaunch(view.Steering->RunFacing, view.Facing,
                     view.Options.ShownFacingRelaunchDeg * float(M_PI) / 180.0f);
             bool const edge = view.Steering && view.Steering->EdgeRunId == bot->movespline->GetId();
-            if (!shownStale
+            // A run launched at another speed than the seat has now -- a sprint, a slow, a mount -- is relaunched at
+            // the new one (MoveKeep::SpeedChanged, A9).
+            bool const resped = view.Steering && view.Steering->RunId == bot->movespline->GetId()
+                && MoveKeep::SpeedChanged(view.Steering->RunSpeed, speed);
+            if (!shownStale && !resped
                 && (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError)
                     || (edge && MoveKeep::KeepEdgeRun(bot->movespline->Velocity(), headingError, pitchError))))
                 return;
@@ -759,7 +809,6 @@ namespace
         float const pitch = airborne ? view.Pitch : 0.0f;
         // About three seconds of travel at the seat's own speed (MoveKeep::Reach): a run that outlasts the keep check
         // by a decision or two, so the spline is not relaunched for want of ground ahead.
-        float const speed = bot->GetSpeed(!airborne ? MOVE_RUN : bot->CanFly() ? MOVE_FLIGHT : MOVE_SWIM);
         uint64 const until = view.Option->Of(SeatOptionKind::MoveBearing).UntilMs;
         float const length = MoveKeep::CappedReach(speed, until > view.NowMs ? until - view.NowMs : 0,
             view.DecisionMs);
@@ -778,9 +827,22 @@ namespace
             if (!bot->CanFly())
             {
                 // In the water. Keep the seat under the surface rather than skimming along the top of it, and swim
-                // rather than fly: a spline with the fly flag on a swimmer is a different animal.
+                // rather than fly: a spline with the fly flag on a swimmer is a different animal. A water-walker is
+                // on the surface and stays there: a dive would push it under water it is walking on (A9).
+                if (bot->HasWaterWalkAura())
+                    if (Map* map = bot->GetMap())
+                    {
+                        LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
+                            bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
+                        if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT)
+                        {
+                            bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
+                            destination.Relocate(destination.GetPositionX(), destination.GetPositionY(),
+                                std::max(destination.GetPositionZ(), liquid.Level + MoveBlock::WATER_WALK_ABOVE));
+                        }
+                    }
                 Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
-                    destination.GetPositionZ(), &facing);
+                    destination.GetPositionZ(), &facing, velocity);
                 return;
             }
 
@@ -790,7 +852,7 @@ namespace
                 std::min(destination.GetPositionZ(), ceiling));
 
             Encoding::FlyTo(bot, destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
-                &facing);
+                &facing, velocity);
             return;
         }
 
@@ -811,9 +873,14 @@ namespace
                 step.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
             // Water and ocean only: stepping into magma or slime is not a crossing, it is a death, and the probe
             // reports it as no reach for that reason.
+            // Deep enough to swim, or walked on: water a seat would only wade is walked into on the ground, or the
+            // seat swims in, finds its feet, walks, and swims again at the shore (MoveKeep::SwimMode, A9).
             if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
                 && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0
-                && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP)
+                && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP
+                && (bot->HasWaterWalkAura() || WaterDepth(map, bot->GetPhaseMask(), step.GetPositionX(),
+                    step.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight())
+                    >= MoveKeep::SWIM_ENTER * bot->GetCollisionHeight()))
             {
                 // With a water-walking aura the lake is a floor: the step lands on the surface, and the movement
                 // flag the core would only set on a client's acknowledgement (Unit::SetWaterWalking sends a packet
@@ -822,11 +889,11 @@ namespace
                 {
                     bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
                     Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
-                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing);
+                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing, velocity);
                     return;
                 }
                 Encoding::SwimTo(bot, step.GetPositionX(), step.GetPositionY(),
-                    liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing);
+                    liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing, velocity);
                 return;
             }
         }
@@ -847,15 +914,15 @@ namespace
                 MoveBlock::STEP_YARDS);
 
         // A turn still to come is walked as one run (TurnRun); where that cannot be laid out, the straight run below.
-        if (std::fabs(view.TurnLeft) >= 1e-4f && TurnRun(view, heading, speed, length))
+        if (std::fabs(view.TurnLeft) >= 1e-4f && TurnRun(view, heading, speed, length, velocity))
             return;
 
         // Pathfinding on, which is the default: a bearing is where the seat wants to go, not a licence to walk through
         // a wall to get there.
-        if (StraightRun(view, destination))
+        if (StraightRun(view, destination, velocity))
             return;
         Encoding::MoveTo(bot, MOVE_POINT_ID, destination.GetPositionX(), destination.GetPositionY(),
-            destination.GetPositionZ(), &view.Facing);
+            destination.GetPositionZ(), &view.Facing, velocity);
     }
 }
 
@@ -1343,6 +1410,7 @@ namespace
         {
             view.Steering->RunId = bot->movespline->GetId();
             view.Steering->RunFacing = bot->GetOrientation();
+            view.Steering->RunSpeed = view.Steering->LaunchSpeed;
         }
     }
 }

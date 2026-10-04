@@ -275,7 +275,10 @@ namespace Animus::Curriculum::Encoding
     /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
     /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
     /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr);
+    /// `velocity` above 0 is the run's own speed (a bearing walked backwards runs at the run-back speed, A9);
+    /// otherwise the spline takes the unit's speed for how it moves, as before. Ignored without a facing.
+    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr,
+        float velocity = 0.0f);
     /// A pathfound run to (x, y, z) at `speed` yards a second, walking if `walk`: a follow at its owner's pace.
     void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk);
     /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
@@ -292,11 +295,11 @@ namespace Animus::Curriculum::Encoding
     /// dive or a climb is trying not to be. `facing` as above.
     /// Straight to a point with no pathfinding and no fly flag: how a seat enters and crosses water,
     /// where the walkable mesh stops at the surface.
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
+    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
 
     /// Walk a path already laid out and checked (MoveBlock's turn walked as one run, movement-smooth A2): no
     /// pathfinding, the points as given from the seat's own position on, facing `facing` the whole way as MoveTo does.
-    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing);
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
     /// The direction of the leg a running spline will be on `aheadMs` from now, radians: where the run is going over
     /// the next decision, which on a turn walked as one run is not the way to its end. A leg's end is reached a
     /// millisecond after the decision that should start the next (the spline's timestamps start at 1), so asking
@@ -311,7 +314,7 @@ namespace Animus::Curriculum::Encoding
 
         float const* facing = nullptr);
 
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
+    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
 
     /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
     /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the

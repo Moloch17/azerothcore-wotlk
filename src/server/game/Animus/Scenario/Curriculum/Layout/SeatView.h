@@ -277,6 +277,16 @@ namespace Animus::Curriculum
         /// The run (spline id) launched on an incomplete path: it ends where the ground lets the bearing go, and is
         /// kept to that end (MoveKeep::KeepEdgeRun, movement-smooth A7). 0: none.
         uint32 EdgeRunId = 0;
+        uint32 EdgeRuns = 0;                    // runs launched on an incomplete path this episode
+        uint32 EdgeHolds = 0;                   // ... and decisions held at the edge with nothing left to walk
+        /// The speed Steer measured when it launched the run RunId (MoveKeep::SpeedChanged), and the one it measured
+        /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
+        float RunSpeed = 0.0f;
+        float LaunchSpeed = 0.0f;
+        bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)
+        /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
+        uint64 FollowAimMs = 0;
+        uint32 FollowRunId = 0;
         float ShownFacing = 0.0f;
         bool ShownSeeded = false;
         uint32 ShownSinceMs = 0;

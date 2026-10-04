@@ -1280,6 +1280,18 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).TurnRestarts) / minutes;
     });
+    // Runs launched on an incomplete path, and decisions held at the edge with nothing left to walk, per minute
+    // (movement-smooth A7): a seat pressing into a wall or off a ledge.
+    _info.Add("edge_runs", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).Steering.EdgeRuns) / minutes;
+    });
+    _info.Add("edge_holds", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).Steering.EdgeHolds) / minutes;
+    });
     // A stop followed by a new start within a second, per minute (movement-smooth): the stutter a lapsing held bearing
     // made. spline_restarts counts relaunches over a running spline; this, the stops between them.
     _info.Add("move_stop_starts", [seat](Env const& env, uint32 index)

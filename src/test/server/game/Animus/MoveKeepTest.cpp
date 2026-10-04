@@ -92,3 +92,24 @@ TEST(MoveKeepTest, ARunToTheEdgeIsKeptToItsEnd)
     EXPECT_FALSE(MoveKeep::KeepEdgeRun(7.0f, 0.0f, MoveKeep::PITCH_SLACK + 0.01f));
     EXPECT_FALSE(MoveKeep::KeepEdgeRun(0.0f, 0.0f, 0.0f));
 }
+
+// A sprint or a slow of more than 5% relaunches the run at the new speed; less is left alone.
+TEST(MoveKeepTest, ASpeedChangeOfMoreThanFivePercentRelaunches)
+{
+    EXPECT_FALSE(MoveKeep::SpeedChanged(7.0f, 7.3f));
+    EXPECT_TRUE(MoveKeep::SpeedChanged(7.0f, 7.4f));
+    EXPECT_TRUE(MoveKeep::SpeedChanged(7.0f, 4.5f));
+    EXPECT_FALSE(MoveKeep::SpeedChanged(0.0f, 7.0f));
+}
+
+// A seat 2 yards tall swims from 1.5 yards of water and walks again below 0.8; between, it keeps what it was doing,
+// whatever the core's flickering in-water flag says.
+TEST(MoveKeepTest, SwimmingAndWalkingChangeOverWithHysteresis)
+{
+    EXPECT_TRUE(MoveKeep::SwimMode(false, true, 1.5f, 2.0f));
+    EXPECT_FALSE(MoveKeep::SwimMode(false, true, 1.2f, 2.0f));      // wading: still walking
+    EXPECT_TRUE(MoveKeep::SwimMode(true, false, 1.2f, 2.0f));       // the flag flickered off: still swimming
+    EXPECT_TRUE(MoveKeep::SwimMode(true, true, 1.0f, 2.0f));
+    EXPECT_FALSE(MoveKeep::SwimMode(true, false, 0.7f, 2.0f));      // shallow and out: walking
+    EXPECT_FALSE(MoveKeep::SwimMode(false, false, 0.0f, 2.0f));
+}

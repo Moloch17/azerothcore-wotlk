@@ -949,7 +949,7 @@ namespace Animus::Curriculum::Encoding
         return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
     }
 
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing)
+    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing, float velocity)
     {
         struct Timed
         {
@@ -999,6 +999,8 @@ namespace Animus::Curriculum::Encoding
         init.MoveTo(x, y, z, true);
         init.SetOrientationFixed(true);
         init.SetFacing(*facing);        // and for the final tick, on the rare spline that does finish
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
     }
 
@@ -1014,7 +1016,7 @@ namespace Animus::Curriculum::Encoding
         init.Launch();
     }
 
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing)
+    void SwimTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
     {
         // Straight there, no pathfinding: the walkable mesh stops at the waterline -- mmaps drops the terrain
         // under real liquid -- so a pathfound step into a lake has nowhere to land and the seat stands on the
@@ -1038,10 +1040,12 @@ namespace Animus::Curriculum::Encoding
             init.SetOrientationFixed(true);
             init.SetFacing(*facing);
         }
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
     }
 
-    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing)
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
     {
         // As MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the spline in
         // flight, then hold it for the run's whole life.
@@ -1053,6 +1057,8 @@ namespace Animus::Curriculum::Encoding
         init.MovebyPath(points);
         init.SetOrientationFixed(true);
         init.SetFacing(facing);
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
     }
 
@@ -1158,7 +1164,7 @@ namespace Animus::Curriculum::Encoding
         return true;
     }
 
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing)
+    void FlyTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
     {
         // Deliberately NOT orientation-fixed, unlike MoveTo and SwimTo. SetFly puts the spline in Catmullrom
         // mode, and Spline::init_spline places the virtual first control point at
@@ -1171,6 +1177,8 @@ namespace Animus::Curriculum::Encoding
         if (facing)
             init.SetFacing(*facing);
         init.SetFly();
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
     }
 
