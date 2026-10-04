@@ -174,6 +174,15 @@ namespace Animus::Curriculum
             case RewardTerm::StepCost:
             case RewardTerm::DeathRun:
             case RewardTerm::EarlyPull:
+            // The prices of noise: a press that did nothing again, a turn and its reversal, a press its goal did not
+            // call for, any press at all, standing in place shuffling. As shaping they faded with the rest, and by a
+            // stage's end spinning, strafing and re-pressing cost nothing: stage5's casters ended at 90-190 turns and
+            // 5-7 presses a cast, its melee at 60-110 strafes, and the next stage was seeded from that (2026-10-04).
+            case RewardTerm::Repeat:
+            case RewardTerm::Jitter:
+            case RewardTerm::Aimless:
+            case RewardTerm::Effort:
+            case RewardTerm::Fidget:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:
@@ -210,11 +219,6 @@ namespace Animus::Curriculum
             case RewardTerm::Stalk:
             case RewardTerm::OpenerDamage:
             case RewardTerm::Clearance:
-            case RewardTerm::Repeat:
-            case RewardTerm::Jitter:
-            case RewardTerm::Aimless:
-            case RewardTerm::Effort:
-            case RewardTerm::Fidget:
             case RewardTerm::Hazard:
             case RewardTerm::HealingMana:
             case RewardTerm::BossProgress:

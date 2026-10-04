@@ -317,6 +317,12 @@ class LayoutSamplingConfig:
     # of them -- the same character and opponent, with fresh combat rolls -- instead of a new draw. Confirmation seeds
     # are never sent, so the gate that moves the stage on stays held out. 0 = off.
     replay_fraction: float = 0.0
+    # A build graded against the others of its role (stage.json spec_roles: tank, healer, damage) on what the role is
+    # for: role -> summary fields, higher is better, a leading "-" for lower is better ("-teammates_died"). A build's
+    # need is the larger of the above and its shortfall on the worst of its role's fields, each in standard deviations
+    # over the role's builds. A party's score is every seat's, so a healer that barely healed scored as well as the
+    # seats that carried it and was never drawn more (2026-10-04, stage6's holy paladins). Empty = off.
+    role_metrics: dict = field(default_factory=dict)
 
 
 @dataclass

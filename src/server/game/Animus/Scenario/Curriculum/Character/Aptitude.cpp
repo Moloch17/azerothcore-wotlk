@@ -323,5 +323,20 @@ Animus::Curriculum::Aptitude Animus::Curriculum::Aptitude::Of(ClassAssets const&
         out.Features[TREE_POINTS_FIRST + tree] = tree < build.TreePoints.size() && spent
             ? float(build.TreePoints[tree]) / float(spent) : 0.0f;
 
+    // Standing in front is the build's, not the class's: mitigation and threat count as far as the points went into
+    // the class's tanking tree. Every paladin has a taunt, threat spells, plate and a shield, so a holy one read
+    // mitigation 1 -- a tank to its party and to itself -- and played its healer's seat as one (2026-10-04, stage6:
+    // Hand of Reckoning four times a fight, two heals). A druid's feral tree is both its cat's and its bear's. No
+    // points spent yet (below 10), or a class with no tanking tree: as before.
+    if (spent && assets.Profile)
+        for (SpecProfile const& spec : assets.Profile->Specs)
+            if (spec.Stats == StatProfile::Tank && spec.TabPage < build.TreePoints.size())
+            {
+                float const share = float(build.TreePoints[spec.TabPage]) / float(spent);
+                out.Features[MITIGATION] *= share;
+                out.Features[THREAT] *= share;
+                break;
+            }
+
     return out;
 }

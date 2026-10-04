@@ -178,19 +178,22 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
-    /// A heal the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
+    /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
     /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
-    /// pressed four to seven heals for each that started (2026-10-04); this says where the rest went.
-    void NoteHealRefused(Player* bot, SpellInfo const* info, Unit const* friendUnit, uint32 reason)
+    /// pressed four to seven heals for each that started, and stage5's casters five to seven spells (2026-10-04);
+    /// this says where the rest went. `unit` is the friend a helpful spell went to, else the enemy target.
+    void NotePressRefused(Player* bot, SpellInfo const* info, Unit const* unit, uint32 reason)
     {
         static std::atomic<uint32> logged{ 0 };
         if (logged.fetch_add(1) >= 600)
             return;
-        LOG_INFO("module.animus", "Heal refused: class {} level {} spell {} reason {} friend {} health {:.0f}% "
-            "distance {:.1f} los {} moving {} casting {} gcd {} combat {}", uint32(bot->getClass()), bot->GetLevel(),
-            info ? info->Id : 0, reason, friendUnit ? (friendUnit == bot ? "self" : "other") : "none",
-            friendUnit ? friendUnit->GetHealthPct() : 0.0f, friendUnit ? bot->GetDistance(friendUnit) : 0.0f,
-            friendUnit ? bot->IsWithinLOSInMap(friendUnit) : false, !bot->movespline->Finalized() || bot->isMoving(),
+        bool const helpful = info && info->IsPositive();
+        LOG_INFO("module.animus", "Press refused: class {} level {} spell {} {} reason {} unit {} health {:.0f}% "
+            "distance {:.1f} los {} infront {} moving {} spline {} casting {} gcd {} combat {}",
+            uint32(bot->getClass()), bot->GetLevel(), info ? info->Id : 0, helpful ? "helpful" : "harmful", reason,
+            unit ? (unit == bot ? "self" : "other") : "none", unit ? unit->GetHealthPct() : 0.0f,
+            unit ? bot->GetDistance(unit) : 0.0f, unit ? bot->IsWithinLOSInMap(unit) : false,
+            unit ? bot->HasInArc(float(M_PI), unit) : false, bot->isMoving(), !bot->movespline->Finalized(),
             bot->IsNonMeleeSpellCast(false, true, true),
             info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
     }
@@ -356,8 +359,7 @@ namespace Animus::Curriculum::Encoding
         SpellInfo const* info = KnownRank(view, def);
         if (!info || !bot->HasActiveSpell(info->Id) || CastInProgress(bot))
         {
-            if (def.Healing)
-                NoteHealRefused(bot, info, nullptr, CastInProgress(bot) ? 1001 : 1000);
+            NotePressRefused(bot, info, nullptr, CastInProgress(bot) ? 1001 : 1000);
             return false;
         }
 
@@ -366,8 +368,7 @@ namespace Animus::Curriculum::Encoding
         Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
         if (info->IsPositive() && !friendUnit)
         {
-            if (def.Healing)
-                NoteHealRefused(bot, info, nullptr, 1002);
+            NotePressRefused(bot, info, nullptr, 1002);
             return false;
         }
 
@@ -383,8 +384,7 @@ namespace Animus::Curriculum::Encoding
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
         if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
         {
-            if (def.Healing)
-                NoteHealRefused(bot, info, friendUnit, uint32(cast));
+            NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
             return false;
         }
 

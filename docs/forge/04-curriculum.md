@@ -694,7 +694,9 @@ again. A pitch is now one of nine angles chosen whole, reached at 30 degrees a d
 swings the feet round from the last one (a reversal 1, a quarter turn 0.5, a neighbouring bearing 0.25). Nothing else
 in the rewards cared how a seat got where it was going, so a wobble that cost nothing was learned as harmless; in
 flight the feet changed bearing every quarter second. `turn_reversals`, `pitch_reversals` and `bearing_flips` (in half
-turns) count what was charged, and `reward_jitter` what it cost.
+turns) count what was charged, and `reward_jitter` what it cost. Jitter, like the repeat, aimless, effort and fidget charges, is a
+cost (`RewardCategory::Cost`): it never fades with the shaping, so spinning and re-pressing stay priced to
+the end of every stage (as shaping they cost nothing once the fade ran out, 2026-10-04).
 - **standby** (`hold_interrupt`): nothing the seat does takes over from it, because waiting for the target's cast is
   not something it stops fighting to do. Cancelled by any press, a hold lasted 0.6 s against casts of 1.5-2.5 s and
   interrupted next to nothing.

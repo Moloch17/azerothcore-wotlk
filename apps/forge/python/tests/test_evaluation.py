@@ -500,6 +500,32 @@ def test_casting_weights_favour_the_layouts_below_baseline():
     assert max(weights.values()) / min(weights.values()) <= 3.0 + 1e-6
 
 
+def test_casting_weights_grade_a_build_against_its_role():
+    """A party's score is every seat's: stage6's holy paladin cast two heals a fight and scored with the seats that
+    carried it. Graded against the other healers on keeping its group up, it is the one drawn most; a tank build is
+    never weighed against a healer's numbers, and the other healers, keeping their groups up, are not drawn more."""
+    summary = {"castings": {
+        "paladin_holy": {"score": 9.0, "teammates_died": 0.9, "group_kept_share": 0.55, "healing_coverage": 0.2},
+        "priest_holy": {"score": 9.0, "teammates_died": 0.3, "group_kept_share": 0.80, "healing_coverage": 0.6},
+        "druid_restoration": {"score": 9.0, "teammates_died": 0.3, "group_kept_share": 0.82, "healing_coverage": 0.7},
+        "paladin_protection": {"score": 9.0, "tank_hold_share": 0.70},
+        "warrior_protection": {"score": 9.0, "tank_hold_share": 0.72},
+    }}
+    roles = {"paladin_holy": "healer", "priest_holy": "healer", "druid_restoration": "healer",
+             "paladin_protection": "tank", "warrior_protection": "tank"}
+    role_metrics = {"healer": ["-teammates_died", "group_kept_share", "healing_coverage"], "tank": ["tank_hold_share"]}
+
+    weights = casting_weights(summary, None, strength=1.0, max_ratio=4.0, roles=roles, role_metrics=role_metrics)
+
+    assert weights["paladin_holy"] == max(weights.values())
+    assert weights["paladin_holy"] > weights["priest_holy"] and weights["paladin_holy"] > weights["druid_restoration"]
+    assert weights["paladin_protection"] > weights["warrior_protection"]   # its role's lower hold
+    assert np.mean(list(weights.values())) == pytest.approx(1.0)
+    # Without role metrics every build scored alike, and every build drew alike.
+    flat = casting_weights(summary, None, strength=1.0, max_ratio=4.0)
+    assert all(weight == pytest.approx(1.0) for weight in flat.values())
+
+
 def test_casting_weights_follow_the_metric_short_of_the_gate_too():
     """stage4_duel's mage beat the scripted mage's score while killing 68% of the time: the baseline gap alone gave
     it less data than a class and build already killing every time."""

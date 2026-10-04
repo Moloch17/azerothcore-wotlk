@@ -26,8 +26,9 @@ eval:
     heldout: 16
   report: [wing_route_share, wing_trash_kills, wing_boss_kills, boss_killed, wing_wipes, wing_rung, wing_probe,
            wing_cleared_share, wing_crowd_seconds, wing_level, teammates_died, teammate_healing, tank_hold_share,
-           tank_form_share, tank_target_share, pulled_off_seconds, idle_seconds_in_combat, director_member_orders,
-           goals_reached, serving_share, aimless_presses, combat_dps, dps_scaled, level]
+           tank_form_share, group_kept_share, healing_coverage, time_to_kill, tank_target_share, pulled_off_seconds,
+           idle_seconds_in_combat, director_member_orders, goals_reached, serving_share, aimless_presses, combat_dps,
+           dps_scaled, level]
 
 mappo:
   # The goal head keeps exploring through the party stages: faded to 5% over a stage, its choices locked in early

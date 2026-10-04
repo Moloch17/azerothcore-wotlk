@@ -566,6 +566,10 @@ namespace Animus::Curriculum
             uint64 TankTargetDamage = 0;
             uint64 DamageDealt = 0;
             uint32 PulledOffMs = 0;
+            // The seat's group while the seat fights, member by member and decision by decision: present, and of
+            // that alive above half health (group_kept_share, a healer's effectiveness).
+            uint32 GroupMemberMs = 0;
+            uint32 GroupKeptMs = 0;
             uint32 TankFightMs = 0;             // the tank alive and in a fight ...
             uint32 TankModeMs = 0;              // ... and of that, in its tanking stance, form or aura
         };

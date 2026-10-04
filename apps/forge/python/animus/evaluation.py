@@ -353,7 +353,8 @@ def action_mask_table(names, layout_names, action_names: dict[str, list[str]], n
 
 
 def casting_weights(summary: dict, baseline: dict | None, strength: float, max_ratio: float,
-                    metric: str = "") -> dict[str, float]:
+                    metric: str = "", roles: dict[str, str] | None = None,
+                    role_metrics: dict | None = None) -> dict[str, float]:
     """How often training episodes should draw each (class, role), from the gap to the baseline's score for it
     and, with `metric`, from how far it falls short on that summary field (higher is better).
 
@@ -382,6 +383,7 @@ def casting_weights(summary: dict, baseline: dict | None, strength: float, max_r
         # The larger of the two needs, not their sum: a wide lead over a weak baseline must not cancel a gate
         # the layout is failing.
         need = np.maximum(need, standardised(-np.array([float(rows[name][metric]) for name in names])))
+    need = np.maximum(need, role_needs(rows, names, roles or {}, role_metrics or {}))
     if not need.any():
         return {name: 1.0 for name in names}
 
@@ -391,6 +393,30 @@ def casting_weights(summary: dict, baseline: dict | None, strength: float, max_r
     weights = np.clip(weights / float(np.exp(np.log(weights).mean())), 1.0 / limit, limit)
     weights /= float(weights.mean())
     return {name: float(weight) for name, weight in zip(names, weights)}
+
+
+def role_needs(rows: dict, names: list[str], roles: dict[str, str], role_metrics: dict) -> np.ndarray:
+    """Each build's shortfall against the other builds of its role (roles: casting name -> role) on that role's fields
+    (role_metrics: role -> names, a leading "-" for lower is better): the worst of them, in standard deviations over
+    the role's builds. A role with one build, or a field a build lacks, adds nothing; a build with no role, nothing."""
+    need = np.full(len(names), -np.inf)
+    for role, fields in role_metrics.items():
+        members = [index for index, name in enumerate(names) if roles.get(name) == role]
+        if len(members) < 2:
+            continue
+        for field_name in fields:
+            sign = -1.0 if field_name.startswith("-") else 1.0
+            key = field_name.lstrip("-")
+            if not all(rows[names[index]].get(key) is not None for index in members):
+                continue
+            values = sign * np.array([float(rows[names[index]][key]) for index in members])
+            spread = float(values.std())
+            if spread <= 1e-9:
+                continue
+            shortfall = -(values - values.mean()) / spread
+            for slot, index in enumerate(members):
+                need[index] = max(need[index], shortfall[slot])
+    return need
 
 
 def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> float:

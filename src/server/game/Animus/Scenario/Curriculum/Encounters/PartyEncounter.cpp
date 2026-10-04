@@ -59,6 +59,21 @@ void Animus::Curriculum::PartyEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     {
         return float(_envs[env.Index].Seats[seat].TeammateHealing);
     });
+    // A healer's effectiveness, not its output: the share of its group's member-time in the seat's fights spent alive
+    // above half health (a dead member counts against it), and the share of the damage its teammates took that its
+    // healing and absorbs undid (1 when they took none). Read for every seat; the learner grades healers on them
+    // (layout_sampling.role_metrics, 2026-10-04).
+    table.Add("group_kept_share", [this](Env const& env, uint32 seat)
+    {
+        SeatParty const& party = _envs[env.Index].Seats[seat];
+        return party.GroupMemberMs ? float(party.GroupKeptMs) / float(party.GroupMemberMs) : 1.0f;
+    });
+    table.Add("healing_coverage", [this](Env const& env, uint32 seat)
+    {
+        SeatParty const& party = _envs[env.Index].Seats[seat];
+        return party.TeammateDamageTaken
+            ? std::min(1.0f, float(party.TeammateHealing) / float(party.TeammateDamageTaken)) : 1.0f;
+    });
     table.Add("threat_on_teammates", [this](Env const& env, uint32 seat)
     {
         return float(_envs[env.Index].Seats[seat].ThreatOnTeammates);
@@ -423,6 +438,18 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
             if (other != seatIndex && !inGroup(other) && data.Seats[other].L && _scenario.SeatBotInWorld(env, other))
                 ++outside;
     float const outsideWeight = outside ? float(GROUP_MEMBERS) / float(outside) : 1.0f;
+
+    // The group's health while the seat fights (group_kept_share): every member of it, the seat too, alive above half
+    // or not -- one that has died counts as not.
+    if (bot->IsInCombat())
+        for (uint32 member = groupFirst; member < groupFirst + GROUP_SEATS && member < _scenario.SeatCount(); ++member)
+        {
+            if (!data.Seats[member].L)
+                continue;
+            Player* mate = _scenario.SeatBotInWorld(env, member);
+            seat.GroupMemberMs += _scenario.DecisionMs();
+            seat.GroupKeptMs += mate && mate->IsAlive() && mate->GetHealthPct() > 50.0f ? _scenario.DecisionMs() : 0;
+        }
 
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
     // raider outside the seat's group is still the party's to keep alive.

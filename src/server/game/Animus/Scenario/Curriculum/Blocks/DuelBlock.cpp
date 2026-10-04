@@ -356,10 +356,15 @@ void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult
     // there, ever. The slot is the move block's; the duel block does not touch it.
     Player* bot = view.Bot;
     Unit* target = view.Target;
+    //
+    // Turned onto the target at once, as the move block turns a seat standing still (Steer): SetFacingToObject
+    // launches an orientation spline, which counts as moving for the decision it runs in, so a cast with a cast time
+    // pressed right after it failed SPELL_FAILED_MOVING. A seat that had turned away was snapped back this way, and
+    // stage5's casters -- 90-190 turns an episode -- pressed 5-7 spells for each that started (2026-10-04).
     if (target && bot->IsAlive() && bot->movespline->Finalized() && !bot->HasInArc(float(M_PI) / 2, target))
     {
-        bot->SetFacingToObject(target);
         view.Facing = bot->GetAngle(target);
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), view.Facing);
     }
 }
 

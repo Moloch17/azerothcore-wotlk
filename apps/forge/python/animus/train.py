@@ -565,6 +565,10 @@ class TrainingRun:
         # And its class's build names, in the order the "spec" episode info column indexes them.
         self.spec_names = {name: layout.get("spec_names", [])
                            for name, layout in (self.stage or {}).get("layouts", {}).items()}
+        # Each build's role by its casting name ("paladin_holy": "healer"), for layout_sampling.role_metrics.
+        self.casting_roles = {f"{name}_{spec}": role
+                              for name, layout in (self.stage or {}).get("layouts", {}).items()
+                              for spec, role in zip(layout.get("spec_names", []), layout.get("spec_roles", []))}
         # An evaluation-only action mask (eval.mask_actions), resolved by name per layout here so that a name no
         # layout has is refused before anything trains.
         self.eval_action_mask = action_mask_table(config.eval.mask_actions, [layout.name for layout in spec.layouts],
@@ -1350,7 +1354,8 @@ class TrainingRun:
         sampling = self.config.layout_sampling
         weights = {}
         if sampling.enabled and summary.get("castings"):
-            weights = casting_weights(summary, baseline, sampling.strength, sampling.max_ratio, sampling.metric)
+            weights = casting_weights(summary, baseline, sampling.strength, sampling.max_ratio, sampling.metric,
+                                      self.casting_roles, sampling.role_metrics)
         hold = self.controller.hold_weights()
         if not weights and all(factor == 1.0 for factor in hold.values()):
             return

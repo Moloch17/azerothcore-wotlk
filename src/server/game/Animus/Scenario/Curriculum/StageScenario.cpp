@@ -1574,6 +1574,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         if (!layout.Director && layout.Profile)
             for (SpecProfile const& spec : layout.Profile->Specs)
                 specNames.push_back(boost::json::string(spec.Name));
+        // And the role each is drawn into a party's seat for (FitsDungeonRole: what it is geared for), so the learner
+        // can grade a build against the others of its role -- a healer on keeping its group up, not on its party's
+        // score, which a holy paladin casting two heals a fight shared with the seats that carried it (2026-10-04).
+        boost::json::array& specRoles = entry["spec_roles"].emplace_array();
+        if (!layout.Director && layout.Profile)
+            for (SpecProfile const& spec : layout.Profile->Specs)
+                specRoles.push_back(boost::json::string(spec.Stats == StatProfile::Tank ? "tank"
+                    : spec.Stats == StatProfile::Healer ? "healer" : "damage"));
 
         // Its entities as sets, for the learner's set encoders and pointer heads (mappo.seat_sets; DescribeSeatSets).
         DescribeSeatSets(layout, entry["sets"].emplace_array());
