@@ -758,14 +758,14 @@ namespace
         bool const airborne = bot->CanFly() || SwimSteered(view);
 
         // A bearing behind the seat is walked backwards, at the speed the game gives that: run-back, swim-back or
-        // flight-back, slower than forwards (movement-smooth A9). The spline is given it, since it would otherwise
-        // take the forward speed.
+        // flight-back, slower than forwards. And every run is launched at the speed of the way Steer moves the seat
+        // (MoveKeep::SteerMoveType): left to itself the spline takes it from the core's swimming flag, which flickers
+        // at the shore, and a swim launched at run speed or a walk at swim speed was the same 4.7 <-> 7 yd/s flicker
+        // the swim hysteresis exists to remove (movement-smooth A9).
         bool const back = view.HeldBearing == MoveBlock::BEARING_BACK
             || view.HeldBearing == MoveBlock::BEARING_BACK_LEFT || view.HeldBearing == MoveBlock::BEARING_BACK_RIGHT;
-        UnitMoveType const moveType = !airborne ? (back ? MOVE_RUN_BACK : MOVE_RUN)
-            : bot->CanFly() ? (back ? MOVE_FLIGHT_BACK : MOVE_FLIGHT) : (back ? MOVE_SWIM_BACK : MOVE_SWIM);
-        float const speed = bot->GetSpeed(moveType);
-        float const velocity = back ? speed : 0.0f;
+        float const speed = bot->GetSpeed(MoveKeep::SteerMoveType(bot->CanFly(), airborne && !bot->CanFly(), back));
+        float const velocity = speed;
         if (view.Steering)
             view.Steering->LaunchSpeed = speed;
 

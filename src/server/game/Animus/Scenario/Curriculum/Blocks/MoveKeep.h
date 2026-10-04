@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_MOVE_KEEP_H
 
 #include "Define.h"
+#include "UnitDefines.h"
 #include <algorithm>
 #include <cmath>
 
@@ -99,6 +100,19 @@ namespace Animus::Curriculum::MoveKeep
         if (coreInWater && depth >= SWIM_ENTER * height)
             return true;
         return wasSwimming;
+    }
+
+    /// The speed a run Steer launches moves at, from how Steer moves the seat: flying, swimming by SwimMode's
+    /// hysteresis (not the core's in-water flag, which flickers at the shore), or on foot; backwards for a bearing
+    /// behind it. Every run is launched at this speed explicitly, so the path type and the speed always agree
+    /// (movement-smooth A9).
+    [[nodiscard]] inline UnitMoveType SteerMoveType(bool flying, bool swimming, bool back)
+    {
+        if (flying)
+            return back ? MOVE_FLIGHT_BACK : MOVE_FLIGHT;
+        if (swimming)
+            return back ? MOVE_SWIM_BACK : MOVE_SWIM;
+        return back ? MOVE_RUN_BACK : MOVE_RUN;
     }
 
     /// Whether a run still under way is kept: `remaining` yards left at `velocity` yards a second last at least

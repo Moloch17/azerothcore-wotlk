@@ -113,3 +113,15 @@ TEST(MoveKeepTest, SwimmingAndWalkingChangeOverWithHysteresis)
     EXPECT_FALSE(MoveKeep::SwimMode(true, false, 0.7f, 2.0f));      // shallow and out: walking
     EXPECT_FALSE(MoveKeep::SwimMode(false, false, 0.0f, 2.0f));
 }
+
+// The speed follows the mode Steer chose, never the core's flag: a swim launched where the flag flickered off is
+// still a swim at swim speed, and a walk in wading water is still a run.
+TEST(MoveKeepTest, TheRunSpeedFollowsTheSteeredMode)
+{
+    EXPECT_EQ(MoveKeep::SteerMoveType(false, MoveKeep::SwimMode(true, false, 1.2f, 2.0f), false), MOVE_SWIM);
+    EXPECT_EQ(MoveKeep::SteerMoveType(false, MoveKeep::SwimMode(false, true, 1.2f, 2.0f), false), MOVE_RUN);
+    EXPECT_EQ(MoveKeep::SteerMoveType(false, true, true), MOVE_SWIM_BACK);
+    EXPECT_EQ(MoveKeep::SteerMoveType(false, false, true), MOVE_RUN_BACK);
+    EXPECT_EQ(MoveKeep::SteerMoveType(true, true, false), MOVE_FLIGHT);
+    EXPECT_EQ(MoveKeep::SteerMoveType(true, false, true), MOVE_FLIGHT_BACK);
+}
