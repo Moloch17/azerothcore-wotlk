@@ -259,6 +259,9 @@ namespace Animus::Curriculum
         uint32 CourseKinks = 0;
         float LastCourse = 0.0f;
         bool HasCourse = false;
+        float CourseX = 0.0f;           // where the body was at the last tick, for its course
+        float CourseY = 0.0f;
+        bool HasCoursePos = false;
         uint32 ControlChanges = 0;
         /// Where the seat is looking, in its own keeping rather than the spline's (SeatView::Facing). Seeded from
         /// the bot when an episode starts, because a default of 0 would aim every seat due east.
@@ -553,6 +556,7 @@ namespace Animus::Curriculum
             StuckRunMs = 0;
             CourseKinks = 0;
             HasCourse = false;
+            HasCoursePos = false;
             ControlChanges = 0;
             Facing = 0.0f;
             Probe = GroundProbe();

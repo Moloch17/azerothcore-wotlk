@@ -45,6 +45,7 @@
 #include "Encounters.h"
 #include "MarkerEncounter.h"
 #include "FollowEncounter.h"
+#include "BuildRetry.h"
 #include "SpellMgr.h"
 #include "Env.h"
 #include "EnvPool.h"
@@ -2089,7 +2090,14 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
         return false;
     }
 
-    if (!Rebuild(env))
+    // As in training (Reset): a failed build draws again -- another arena, another spawn point -- and only a stage
+    // that keeps failing is given up on.
+    bool const built = RetryBuild(SETUP_BUILD_ATTEMPTS, [&] { return Rebuild(env); }, [&](uint32 attempt)
+    {
+        LOG_ERROR("module.animus", "{}: env {} could not build its first episode (try {} of {}); drawing again",
+            Name(), env.Index, attempt + 1, SETUP_BUILD_ATTEMPTS);
+    });
+    if (!built)
         return false;
 
     Data(env).Fresh = true;
@@ -3201,18 +3209,33 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     seat.Link.FallDamage = 0.0f;
     seat.Link.FallDeaths = 0;
 
-    // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees.
-    float const speed = std::sqrt(body.Vx * body.Vx + body.Vy * body.Vy);
-    if (speed > 0.5f)
+    // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees. Read from the
+    // body's way between ticks, not its velocity, which the ground step zeroes every step (only a fall carries one):
+    // read off the velocity, course_kinks was 0 for every seat on the ground (dry check, 2026-10-05).
+    if (CourseKink(seat, body.X, body.Y, diffMs))
+        ++seat.CourseKinks;
+}
+
+bool Animus::Curriculum::StageScenario::CourseKink(SeatState& seat, float x, float y, uint32 diffMs)
+{
+    bool kink = false;
+    float const dx = x - seat.CourseX;
+    float const dy = y - seat.CourseY;
+    float const seconds = float(diffMs) / 1000.0f;
+    // Moving: at least half a yard a second over the tick.
+    if (seat.HasCoursePos && seconds > 0.0f && dx * dx + dy * dy >= (0.5f * seconds) * (0.5f * seconds))
     {
-        float const course = std::atan2(body.Vy, body.Vx);
-        if (seat.HasCourse && std::fabs(std::remainder(course - seat.LastCourse, 2.0f * float(M_PI))) > 0.3490659f)
-            ++seat.CourseKinks;
+        float const course = std::atan2(dy, dx);
+        kink = seat.HasCourse && std::fabs(std::remainder(course - seat.LastCourse, 2.0f * float(M_PI))) > 0.3490659f;
         seat.LastCourse = course;
         seat.HasCourse = true;
     }
-    else
+    else if (seat.HasCoursePos)
         seat.HasCourse = false;
+    seat.CourseX = x;
+    seat.CourseY = y;
+    seat.HasCoursePos = true;
+    return kink;
 }
 
 Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat) const
