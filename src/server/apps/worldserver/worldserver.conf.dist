@@ -5040,7 +5040,8 @@ AnimusForge.OutputDir = ""
 #                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops),
 #                                 "move4_water" (across water, lakebeds, chains longer than a breath),
 #                                 "move5_routes" (one long trip, the way not visible from the start),
-#                                 "move6_mounted" (rides and flights worth mounting for, air-only markers)
+#                                 "move6_mounted" (rides and flights worth mounting for, air-only markers),
+#                                 "move7_follow" (keep within 3-10 yd of a moving leader)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5181,6 +5182,7 @@ AnimusForge.Stage.move3_vertical.TicksPerDecision = 5
 AnimusForge.Stage.move4_water.TicksPerDecision = 5
 AnimusForge.Stage.move5_routes.TicksPerDecision = 5
 AnimusForge.Stage.move6_mounted.TicksPerDecision = 5
+AnimusForge.Stage.move7_follow.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6799,6 +6801,33 @@ AnimusForge.Curriculum.MarkerMounted.FlightFurthestLast = 900.0
 AnimusForge.Curriculum.MarkerMounted.Radius = 2.5
 #   a flight marker has at least SkyOpen yards of open sky over it (no overhang, no cave a flyer cannot enter)
 AnimusForge.Curriculum.MarkerMounted.SkyOpen = 10.0
+
+#
+#    AnimusForge.Curriculum.Follow.*
+#        The follow stage (move7_follow): keep within [BandMin, BandMax] yards of a moving leader. The leader is moved
+#        by the player controller and reports as a client: a script's keys (Seek over the route planner's corners)
+#        walking trips of TripNearest to the rung's furthest (TripFurthestFirst to TripFurthestLast over Rungs rungs),
+#        at a walk below WalkRungs; from CastFromRung up, CastShare percent of training episodes give it to a frozen
+#        checkpoint (the learner's cast.agents.leader). Evaluations keep the script. Paid: Kept per second in the band
+#        (Outcome), Lost per second past LostYards and Aggro per hostile newly attacking the follower (Costs),
+#        Progress on closing to the band (Shaping). A ladder episode is won at WinShare of the time in band; a
+#        catch-up is coming back into the band after CatchUpSeconds out.
+AnimusForge.Curriculum.Follow.BandMin = 3.0
+AnimusForge.Curriculum.Follow.BandMax = 10.0
+AnimusForge.Curriculum.Follow.LostYards = 30.0
+AnimusForge.Curriculum.Follow.Kept = 0.02
+AnimusForge.Curriculum.Follow.Lost = 0.02
+AnimusForge.Curriculum.Follow.Aggro = 0.5
+AnimusForge.Curriculum.Follow.Progress = 1.0
+AnimusForge.Curriculum.Follow.Rungs = 6
+AnimusForge.Curriculum.Follow.TripNearest = 30.0
+AnimusForge.Curriculum.Follow.TripFurthestFirst = 60.0
+AnimusForge.Curriculum.Follow.TripFurthestLast = 200.0
+AnimusForge.Curriculum.Follow.WalkRungs = 2
+AnimusForge.Curriculum.Follow.CastFromRung = 4
+AnimusForge.Curriculum.Follow.CastShare = 50
+AnimusForge.Curriculum.Follow.WinShare = 0.8
+AnimusForge.Curriculum.Follow.CatchUpSeconds = 2.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

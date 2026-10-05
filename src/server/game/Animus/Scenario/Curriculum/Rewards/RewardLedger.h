@@ -159,6 +159,12 @@ namespace Animus::Curriculum
         /// What the water took (the water stage, M4): per share of the seat's maximum health lost to drowning
         /// (MarkerWater.Drowning). A Cost at full price, as FallDamage: running out of breath is a real price.
         Drowning,
+        /// The follow stage (M7, FollowEncounter): per second within the band of the leader (Outcome) -- what the
+        /// stage is for; per second past Follow.LostYards (Cost); per hostile creature newly attacking the seat on the
+        /// way (Cost: keeping clear of aggro while travelling).
+        FollowKept,
+        Lost,
+        Aggro,
         Count
     };
 
@@ -207,6 +213,8 @@ namespace Animus::Curriculum
             case RewardTerm::DrillKeep:
             // A pull drill's pack killed on its own: what the drill is for (2026-10-05; Shaping since 2026-10-03).
             case RewardTerm::PullClean:
+            // The follow stage's band kept (2026-10-05).
+            case RewardTerm::FollowKept:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -234,6 +242,8 @@ namespace Animus::Curriculum
             case RewardTerm::Wall:
             case RewardTerm::FallDamage:
             case RewardTerm::Drowning:
+            case RewardTerm::Lost:
+            case RewardTerm::Aggro:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

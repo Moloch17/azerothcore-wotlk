@@ -1066,6 +1066,8 @@ namespace Animus::Curriculum
         /// Open sky over the place, yards (0: not asked): a flight marker a flyer can come down on, not under an
         /// overhang or in a cave (the controller's Ceiling query from the place's floor).
         float SkyOpen = 0.0f;
+        /// The walking way may take no jump (ControllerReach): a scripted leader's keys never jump.
+        bool NoJump = false;
     };
 
     class TravelEncounter final : public Encounter

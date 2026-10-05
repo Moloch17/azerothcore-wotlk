@@ -1125,6 +1125,37 @@ namespace Animus::Curriculum
             float SkyOpen = 10.0f;
         } MarkerMounted;
 
+        /// The follow stage (Opposition::Follow, M7): keep within [BandMin, BandMax] yards of a moving leader. The
+        /// leader walks trips of the rung's length on the ground (TripNearest to the rung's TripFurthest, from
+        /// TripFurthestFirst to TripFurthestLast over Rungs rungs), at a walk on the rungs below WalkRungs; from
+        /// CastFromRung up a CastShare percent of training episodes give it to a frozen checkpoint (the learner's
+        /// cast.agents.leader -- an M6 policy that rides, swims and jumps as it likes) and the rest keep the script.
+        /// Evaluations always keep the script: the yardstick does not move.
+        ///
+        /// Paid to the follower: Kept per second in the band (FollowKept, Outcome), Lost per second past LostYards
+        /// (Cost), Aggro per hostile creature newly attacking it (Cost), Progress (Shaping) on closing to the band,
+        /// and the ground courses' Stuck, Wall and FallDamage. An episode counts as won on the ladder when the
+        /// in-band share is at least WinShare. A catch-up is coming back into the band after CatchUpSeconds out.
+        struct FollowTuning
+        {
+            float BandMin = 3.0f;
+            float BandMax = 10.0f;
+            float LostYards = 30.0f;
+            float Kept = 0.02f;                 // per second in the band
+            float Lost = 0.02f;                 // per second past LostYards
+            float Aggro = 0.5f;                 // per hostile creature newly attacking the follower
+            float Progress = 1.0f;              // over closing LostYards to the band
+            uint32 Rungs = 6;
+            float TripNearest = 30.0f;
+            float TripFurthestFirst = 60.0f;
+            float TripFurthestLast = 200.0f;
+            uint32 WalkRungs = 2;
+            uint32 CastFromRung = 4;
+            int32 CastShare = 50;               // percent of training episodes at or above CastFromRung
+            float WinShare = 0.8f;
+            float CatchUpSeconds = 2.0f;
+        } Follow;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1723,6 +1754,22 @@ namespace Animus::Curriculum
             f("MarkerMounted.FlightFurthestLast", tuning.MarkerMounted.FlightFurthestLast);
             f("MarkerMounted.Radius", tuning.MarkerMounted.Radius);
             f("MarkerMounted.SkyOpen", tuning.MarkerMounted.SkyOpen);
+            f("Follow.BandMin", tuning.Follow.BandMin);
+            f("Follow.BandMax", tuning.Follow.BandMax);
+            f("Follow.LostYards", tuning.Follow.LostYards);
+            f("Follow.Kept", tuning.Follow.Kept);
+            f("Follow.Lost", tuning.Follow.Lost);
+            f("Follow.Aggro", tuning.Follow.Aggro);
+            f("Follow.Progress", tuning.Follow.Progress);
+            f("Follow.Rungs", tuning.Follow.Rungs);
+            f("Follow.TripNearest", tuning.Follow.TripNearest);
+            f("Follow.TripFurthestFirst", tuning.Follow.TripFurthestFirst);
+            f("Follow.TripFurthestLast", tuning.Follow.TripFurthestLast);
+            f("Follow.WalkRungs", tuning.Follow.WalkRungs);
+            f("Follow.CastFromRung", tuning.Follow.CastFromRung);
+            f("Follow.CastShare", tuning.Follow.CastShare);
+            f("Follow.WinShare", tuning.Follow.WinShare);
+            f("Follow.CatchUpSeconds", tuning.Follow.CatchUpSeconds);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

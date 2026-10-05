@@ -27,7 +27,8 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ move6_mounted ─ M7
+ *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ move6_mounted
+ *              ─ move7_follow
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -442,6 +443,32 @@ namespace
             .HeldOutSpawnPoints = KalimdorFlatsControl(),
         });
 
+        // M7 -- company: moving with someone. Keep within three to ten yards of a leader for the whole episode,
+        // catching up after falling behind, not crowding it, going where it went, and keeping clear of hostile
+        // camps on the way -- no combat yet. The leader is an agent in the owner's slot moved by the player
+        // controller and reported as a client, never a spline: on the early rungs the seek helper's keys walk it
+        // over trips of the ground (at a walk, then running, the trips lengthening), and from Follow.CastFromRung
+        // half the training episodes give it to a frozen M6 checkpoint (cast.agents.leader) that rides, swims and
+        // jumps as it likes. Recorded human trips replace both once capture data exists (plan §8.4).
+        //
+        // Movement only, in the forge: the realm's companions are parked (user, 2026-10-05).
+        stages.push_back({
+            .Name = "move7_follow",
+            .Suffix = "_follow",
+            .Extends = "move6_mounted",
+            .Summary = "keep within 3-10 yd of a moving leader: fall behind, catch up, go where it went",
+            .Blocks = { Core, Move, Travel, Goal },
+            .Arenas = {
+                { .Name = "open", .Weight = 1, .Against = Opposition::Follow, .EpisodeSeconds = 180,
+                    .SpawnPoints = KalimdorFlats(), .HeldOutSpawnPoints = KalimdorFlatsControl() },
+                { .Name = "broken", .Weight = 1, .Against = Opposition::Follow, .EpisodeSeconds = 180,
+                    .SpawnPoints = KalimdorBroken(), .HeldOutSpawnPoints = KalimdorBrokenControl() },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorFlats(),
+            .HeldOutSpawnPoints = KalimdorFlatsControl(),
+        });
+
         return stages;
     }
 
@@ -635,6 +662,16 @@ namespace
         if (!markers && arena.Course != MarkerCourse::Open)
             return "only a marker arena has a course";
 
+        // The follow stage: one seat, a leader in the owner's slot, nothing to fight and none of the travel arena's
+        // kinds of ground.
+        bool const follow = arena.Against == Opposition::Follow;
+        if (follow && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.OnFoot || arena.Flying || arena.AirOnly
+            || arena.Water || arena.Indoors || arena.Ledges || arena.Underwater || arena.Checkpoints))
+            return "a follow arena is one seat and a leader, with nothing to fight";
+        if (follow && !stage.Has(BlockId::Move))
+            return "a leader is followed with the move block";
+
         bool const dummy = arena.Against == Opposition::Dummy;
         if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None))
@@ -690,7 +727,7 @@ namespace
         // A stage with nothing to fight carries no duel block (the movement stages); one that fights needs it.
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
-            return arena.Against != Opposition::Markers;
+            return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";

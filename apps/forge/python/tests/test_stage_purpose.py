@@ -32,6 +32,8 @@ PURPOSE = {
     "move5_routes": ("Arrive", "Stuck", "Wall"),
     # M6: arriving -- mounting and flying are means, reported and never paid for themselves.
     "move6_mounted": ("Arrive",),
+    # M7: keeping within the band of the leader; arriving is not the point.
+    "move7_follow": ("FollowKept",),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -44,11 +46,13 @@ SHAPING = {
     "move4_water": ("Progress",),
     "move5_routes": ("Progress",),
     "move6_mounted": ("Progress",),
+    "move7_follow": ("Progress",),
 }
 
 # Opposition -> the encounter source that pays it.
 ENCOUNTER = {
     "Markers": "Encounters/MarkerEncounter.cpp",
+    "Follow": "Encounters/FollowEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

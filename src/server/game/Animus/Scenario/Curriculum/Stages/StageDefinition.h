@@ -57,6 +57,10 @@ namespace Animus::Curriculum
         Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
         /// Nothing to fight: places to stop on, one after another (MarkerEncounter) -- the movement stages.
         Markers,
+        /// Nothing to fight: a leader to keep up with (FollowEncounter) -- the last movement stage. The leader is an
+        /// agent in the owner's slot, moved by the player controller: a script's keys (Movement::Seek) or a frozen
+        /// checkpoint's (stage.json cast "leader").
+        Follow,
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.

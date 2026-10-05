@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "FollowEncounter.h"
 #include "MarkerEncounter.h"
 #include "MarkerReach.h"
 #include <functional>
@@ -309,4 +310,17 @@ TEST(MarkerEncounterTest, RoutesLadderLengthensTheTripAndCapsTheDetour)
     EXPECT_FLOAT_EQ(last.Furthest, 600.0f);
     EXPECT_NEAR(last.DetourMin, 2.4f, 1e-5f);
     EXPECT_FLOAT_EQ(last.DetourMax, 3.0f);
+}
+
+// M7: where a distance to the leader falls (too close, in the band, behind, lost) and the leader's trips lengthening.
+TEST(MarkerEncounterTest, FollowBandsAndTrips)
+{
+    using Animus::Curriculum::FollowEncounter;
+    EXPECT_EQ(FollowEncounter::Band(2.0f, 3.0f, 10.0f, 30.0f), 0u);
+    EXPECT_EQ(FollowEncounter::Band(3.0f, 3.0f, 10.0f, 30.0f), 1u);
+    EXPECT_EQ(FollowEncounter::Band(10.0f, 3.0f, 10.0f, 30.0f), 1u);
+    EXPECT_EQ(FollowEncounter::Band(20.0f, 3.0f, 10.0f, 30.0f), 2u);
+    EXPECT_EQ(FollowEncounter::Band(31.0f, 3.0f, 10.0f, 30.0f), 3u);
+    EXPECT_FLOAT_EQ(FollowEncounter::TripFurthest(0, 6, 60.0f, 200.0f), 60.0f);
+    EXPECT_FLOAT_EQ(FollowEncounter::TripFurthest(5, 6, 60.0f, 200.0f), 200.0f);
 }

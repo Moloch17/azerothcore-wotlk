@@ -1022,6 +1022,13 @@ class TrainingRun:
         # from the parent the networks seeded from and this run's own league, and any agent the stage declares.
         cast_config = copy.copy(config.cast)
         cast_config.agents = config.cast.resolved_agents(config.runs_dir, config.run_name)
+        # Every agent the stage declares cast has to be played by a checkpoint: a declared row with none would be
+        # played -- and trained -- by the live policy, unpaid (the follow stage's leader standing still or wandering).
+        unplayed = sorted({entry.get("name", "") for entry in (self.stage or {}).get("cast") or []
+                           if "agent" in entry} - set(cast_config.agents))
+        if unplayed:
+            raise ValueError(f"the stage declares cast agents {unplayed} but cast.agents names no checkpoint for "
+                             f"them; set cast.agents.<name> in the stage's config")
         if cast_config.opponents not in ("", "auto", LEAGUE):
             cast_config.opponents = cast_config.opponents.format(runs_dir=config.runs_dir, run_name=config.run_name)
         if cast_config.parent:

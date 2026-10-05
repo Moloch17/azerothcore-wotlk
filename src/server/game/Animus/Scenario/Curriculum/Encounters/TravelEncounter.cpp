@@ -153,7 +153,8 @@ namespace
         // A dive's marker is under the water the walk ends swimming in; every other place is the floor it ends on.
         bool const there = rules.Underwater ? reach.EndSwimming
             : !reach.EndSwimming && std::fabs(reach.EndZ - placeZ) <= Reach::END_FLOOR;
-        return reach.Reachable && there && (rules.RouteMaxDrop <= 0.0f || reach.MaxDrop <= rules.RouteMaxDrop);
+        return reach.Reachable && there && (rules.RouteMaxDrop <= 0.0f || reach.MaxDrop <= rules.RouteMaxDrop)
+            && (!rules.NoJump || reach.Jumps == 0);
     }
 
     /// ControllerWalks over a PathGenerator's points.

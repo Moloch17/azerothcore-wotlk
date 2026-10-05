@@ -43,6 +43,7 @@
 #include "HintBlock.h"
 #include "Encounters.h"
 #include "MarkerEncounter.h"
+#include "FollowEncounter.h"
 #include "SpellMgr.h"
 #include "Env.h"
 #include "EnvPool.h"
@@ -411,7 +412,12 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     }
 
     // The owner's own row, after the seats and the directors, where an arena plays it from a frozen checkpoint.
-    _castOwner = _stage.AnyArena([](ArenaDefinition const& arena) { return arena.Owner && arena.OwnerCast; });
+    // ... or a leader to follow (Opposition::Follow): the same slot, moved by the controller, played by a frozen
+    // checkpoint in the episodes that cast it and by the seek helper's keys in the rest.
+    _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
+    {
+        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::Follow;
+    });
     _spec.AgentsPerEnv = _seatCount + (HasDirectors() ? TEAM_COUNT : 0) + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
     {
@@ -458,6 +464,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasTown = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Town; };
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
+    auto const hasFollow = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Follow; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -502,6 +509,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* markers = nullptr;
     if (_stage.AnyArena(hasMarkers))
         markers = add(std::make_unique<MarkerEncounter>(*this, envs));
+    // The follow stage's leader: built in the owner's slot, nothing else to order against.
+    if (_stage.AnyArena(hasFollow))
+        _follow = add(std::make_unique<FollowEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -518,7 +528,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, flag, director })
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -536,7 +546,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == instance && hasInstance(arena))
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
-                || (encounter == markers && hasMarkers(arena))
+                || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -1545,7 +1555,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     {
         boost::json::object& entry = cast.emplace_back(boost::json::object()).get_object();
         entry["agent"] = OwnerAgent();
-        entry["name"] = "owner";
+        // The learner's cast.agents names it: the follow stage's leader, or the owner.
+        entry["name"] = _follow ? "leader" : "owner";
     }
 
     // The stages a run seeds from, closest first: the learner takes the first one that has been trained.
@@ -1709,7 +1720,11 @@ Player* Animus::Curriculum::StageScenario::Owner(Env const& env) const
 
 bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
 {
-    return _castOwner && Arena(env).OwnerCast && !env.Evaluating && _owner && _owner->IsCast(env);
+    if (!_castOwner || env.Evaluating)
+        return false;
+    ArenaDefinition const& arena = Arena(env);
+    return (arena.OwnerCast && _owner && _owner->IsCast(env))
+        || (arena.Against == Opposition::Follow && _follow && _follow->IsCast(env));
 }
 
 Player* Animus::Curriculum::StageScenario::BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start,
@@ -2564,6 +2579,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     // Where each seat is looking, and its body, start as where the world put it. ResetEpisode cleared them, which
     // would aim every seat due east; this is the first point at which the bots have stopped being teleported about.
+    // The owner's slot too, when it holds someone this episode (a cast owner, the follow stage's leader): its client
+    // is kept across episodes like a seat's, and would otherwise set out from where the last episode left its body.
+    if (_castOwner)
+        if (Player* bot = SeatBot(env, OwnerAgent()); bot && Data(env).Seats[OwnerAgent()].L)
+        {
+            data.Seats[OwnerAgent()].Facing = bot->GetOrientation();
+            StartMover(data.Seats[OwnerAgent()], bot, env.EpisodeElapsedMs);
+        }
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         if (Player* bot = SeatBot(env, seat))
         {
@@ -3086,7 +3109,9 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         tick(seat);
-    if (CastOwnerActive(env))
+    // The owner's slot when it is played through its row, or when it holds the follow stage's leader, whose
+    // scripted keys the controller moves as it moves a seat's.
+    if (CastOwnerActive(env) || (_follow && Arena(env).Against == Opposition::Follow && _follow->HasLeader(env)))
         tick(OwnerAgent());
 }
 
