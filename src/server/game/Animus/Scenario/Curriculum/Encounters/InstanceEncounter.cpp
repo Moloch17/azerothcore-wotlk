@@ -169,7 +169,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout, RewardTerm::Stall,
-        RewardTerm::Readiness, RewardTerm::Threat, RewardTerm::PullClean };
+        RewardTerm::Readiness, RewardTerm::Threat, RewardTerm::PullClean, RewardTerm::PullExtra };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -2697,7 +2697,7 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     {
         float const share = tankSeat ? 1.0f : tuning.PullOthers;
         if (fight.DrillExtra)
-            ledger.Add(RewardTerm::Threat, -tuning.PullExtra * share / tierScale);
+            ledger.Add(RewardTerm::PullExtra, -tuning.PullExtra * share / tierScale);
         else if (fight.DrillCleared)
             ledger.Add(RewardTerm::PullClean, tuning.PullClean * share * tierScale);
         else if (TimeIsUp(env))

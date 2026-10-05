@@ -8,6 +8,11 @@ run_name: stage7_group
 
 total_env_steps: 400000000
 
+# stage6's fade gate (clean kills over 85% of its drills) is a drill measure: the corridor's fights are not drills, so
+# the fade steps on plateaus here (stage8 inherits this).
+fade:
+  gate_metric: ""
+
 eval:
   every_env_steps: 10000000
   # Every second evaluation also plays sampled actions on the same seeds (learner_sampled): stage6's greedy

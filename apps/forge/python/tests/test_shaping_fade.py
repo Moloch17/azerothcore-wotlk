@@ -180,3 +180,13 @@ def test_stage3_fades_on_its_output_and_stage4_keeps_the_plain_plateau():
     assert config.fade.rungs == (1.0, 0.5, 0.25, 0.0)
     stage4 = TrainConfig.load(configs / "stage4_duel.yaml")
     assert stage4.fade.enabled and stage4.fade.gate_metric == ""
+
+
+def test_stage6_fades_once_its_drills_are_won_and_stage7_and_8_on_plateaus():
+    from pathlib import Path
+    configs = Path(__file__).resolve().parents[1] / "configs"
+    stage6 = TrainConfig.load(configs / "stage6_roles.yaml")
+    assert stage6.fade.enabled and stage6.fade.gate_metric == "clean_kill" and stage6.fade.gate_value == 0.85
+    for name in ("stage7_group.yaml", "stage8_ragefire.yaml"):
+        later = TrainConfig.load(configs / name)
+        assert later.fade.enabled and later.fade.gate_metric == "", name

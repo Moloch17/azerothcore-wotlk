@@ -568,6 +568,13 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     ArenaDefinition const& arena = _scenario.Arena(env);
     float const drill = seatIndex == 0 && arena.DrillRole && arena.DrillRole == state.DungeonRole
         ? tuning.DrillWeight : 1.0f;
+    // The drilled seat is paid its role's lesson as the drill's own outcome (RewardTerm::DrillHold/Focus/Keep), every
+    // other seat as the shaping it always was: the same amounts, another column.
+    bool const drilled = seatIndex == 0 && arena.DrillRole && arena.DrillRole == state.DungeonRole;
+    RewardTerm const holdTerm = drilled ? RewardTerm::DrillHold : RewardTerm::Threat;
+    RewardTerm const focusTerm = drilled ? RewardTerm::DrillFocus : RewardTerm::DamageDealt;
+    RewardTerm const pulledTerm = drilled ? RewardTerm::DrillFocus : RewardTerm::Threat;
+    RewardTerm const keepTerm = drilled ? RewardTerm::DrillKeep : RewardTerm::TeammateHealing;
     // The tank in its tanking stance, form or aura while it fights: what a protection warrior, a bear or a paladin with
     // Righteous Fury takes far less from, and holds a pull with.
     if (tank && !arena.Owner && bot->IsInCombat() && InTankingStance(bot))
@@ -582,8 +589,8 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     {
         seat.EnemiesHeld += onBot;
         seat.EnemiesOnParty += onBot + onOthers;
-        ledger.Add(RewardTerm::Threat, drill * tuning.TankHold * float(onBot) * scale);
-        ledger.Add(RewardTerm::Threat, -drill * tuning.TankLoose * float(onOthers) * scale);
+        ledger.Add(holdTerm, drill * tuning.TankHold * float(onBot) * scale);
+        ledger.Add(holdTerm, -drill * tuning.TankLoose * float(onOthers) * scale);
     }
 
     // A damage dealer of a party with a tank: paid for the damage it puts on the tank's target, charged for each
@@ -598,11 +605,11 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             if (tankTarget && own == tankTarget)
             {
                 seat.TankTargetDamage += step.Damage;
-                ledger.Add(RewardTerm::DamageDealt, drill * tuning.TankTarget * state.LastStepDamage);
+                ledger.Add(focusTerm, drill * tuning.TankTarget * state.LastStepDamage);
             }
             if (onBot)
                 seat.PulledOffMs += _scenario.DecisionMs();
-            ledger.Add(RewardTerm::Threat, -drill * tuning.PulledOff * float(onBot) * scale);
+            ledger.Add(pulledTerm, -drill * tuning.PulledOff * float(onBot) * scale);
         }
 
     // A damage dealer or the healer with enemies on it while the party's tank is alive and has not engaged: the pull
@@ -625,7 +632,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         // Members kept above half pay at the protecting share (Party.HealOffGoal); those let fall below 35% are
         // charged in full whatever the goal.
         float const keptPay = kept > 0 ? HealShare(state) * float(kept) : float(kept);
-        ledger.Add(RewardTerm::TeammateHealing, drill * tuning.KeepUp * keptPay * scale);
+        ledger.Add(keepTerm, drill * tuning.KeepUp * keptPay * scale);
 
         // Healing that landed on no missing health: what it cast, less what it healed on itself, its allies and the
         // other seats. Charged at a share of what effective healing pays (Raid.Overheal), so it discounts a heal
@@ -634,7 +641,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         for (uint64 healed : step.AgentHealingBy)
             effective += healed;
         if (step.HealingRaw > effective)
-            ledger.Add(RewardTerm::TeammateHealing, -drill * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
+            ledger.Add(keepTerm, -drill * _scenario.Tuning().Party.TeammateHealing * tuning.Overheal
                 * float(step.HealingRaw - effective) / float(std::max<uint32>(1, bot->GetMaxHealth())));
     }
     else if (raid && !IsTank(state))

@@ -130,6 +130,10 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::DummyOutput:           return "dummy_output";
         case RewardTerm::DummyMana:             return "dummy_mana";
         case RewardTerm::DummyHurt:             return "dummy_hurt";
+        case RewardTerm::DrillHold:             return "drill_hold";
+        case RewardTerm::DrillFocus:            return "drill_focus";
+        case RewardTerm::DrillKeep:             return "drill_keep";
+        case RewardTerm::PullExtra:             return "pull_extra";
         case RewardTerm::Count:                 break;
     }
 

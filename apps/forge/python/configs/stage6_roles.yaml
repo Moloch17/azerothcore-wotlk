@@ -19,6 +19,14 @@ eval:
            overheal_share, healing_per_mana, teammates_died, tank_target_share, pulled_off_seconds, interrupts,
            control_seconds, camp_packs, camp_peak_packs, camp_clean_packs, dps_scaled, level]
 
+# The shaping fade steps down only once the drills are being won (clean kills over 85%): faded on plateaus alone, a run
+# reached x0 and its pull discipline went from 0.41 to 0.14 camp packs pulled clean while the score rose (2026-10-05).
+# The drilled seat's role lesson is paid as the drill's outcome (DrillHold/Focus/Keep), so the fade takes only the
+# helpers. stage7 clears the gate (its fights are not drills).
+fade:
+  gate_metric: clean_kill
+  gate_value: 0.85
+
 # Draws weighted by role as well as by score (inherited from stage4: strength 1, max_ratio 4, clean_kill): each build
 # against the others of its role on what the role is for, so a healer that keeps nobody up is drawn more though its
 # party's score was fine (2026-10-04: stage6's holy paladins cast two heals a fight and were never drawn more).

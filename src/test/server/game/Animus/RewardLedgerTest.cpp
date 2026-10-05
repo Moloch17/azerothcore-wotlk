@@ -131,3 +131,18 @@ TEST(RewardLedgerTest, EveryTermHasItsOwnNameAndACategory)
             category == RewardCategory::Outcome || category == RewardCategory::Cost) << name;
     }
 }
+
+// What a stage is for is paid as its Outcome or Cost, so the shaping fade cannot take it away (2026-10-05: stage3's
+// dummy drills and stage6/stage8's role and pull drills were paid as Shaping, and faded with it).
+TEST(RewardLedgerTest, DrillLessonsAreOutcomesAndTheirChargesCosts)
+{
+    using Animus::Curriculum::RewardTermCategory;
+    for (RewardTerm term : { RewardTerm::DummyOutput, RewardTerm::DummyMana, RewardTerm::DrillHold,
+            RewardTerm::DrillFocus, RewardTerm::DrillKeep, RewardTerm::PullClean, RewardTerm::Kill, RewardTerm::Clear })
+        EXPECT_EQ(RewardTermCategory(term), RewardCategory::Outcome) << Animus::Curriculum::RewardTermName(term);
+    for (RewardTerm term : { RewardTerm::DummyHurt, RewardTerm::PullExtra, RewardTerm::EarlyPull })
+        EXPECT_EQ(RewardTermCategory(term), RewardCategory::Cost) << Animus::Curriculum::RewardTermName(term);
+    // Every other seat's version of a drill's lesson stays the shaping it was.
+    for (RewardTerm term : { RewardTerm::Threat, RewardTerm::DamageDealt, RewardTerm::TeammateHealing })
+        EXPECT_EQ(RewardTermCategory(term), RewardCategory::Shaping) << Animus::Curriculum::RewardTermName(term);
+}

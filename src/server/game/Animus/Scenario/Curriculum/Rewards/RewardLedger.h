@@ -129,6 +129,19 @@ namespace Animus::Curriculum
         DummyOutput,
         DummyMana,
         DummyHurt,
+        /// A role drill's own lesson, paid to the drilled seat only (ArenaDefinition::DrillRole, seat 0; stage6): the
+        /// tank holding the pack (Raid.TankHold/TankLoose), the damage dealer on the tank's target and off its
+        /// enemies (Raid.TankTarget/PulledOff), the healer keeping the party up without waste (Raid.KeepUp, Overheal).
+        /// Every other seat, and every other stage, is paid these as the shaping terms they were (Threat, DamageDealt,
+        /// TeammateHealing): a fight is won by them, so the score already sees what they buy, but a drill is for them.
+        /// Shaping until 2026-10-05, when a stage6 run faded to x0 and its drill lessons drifted (camp packs pulled
+        /// clean 0.41 -> 0.14) while the score rose.
+        DrillHold,
+        DrillFocus,
+        DrillKeep,
+        /// A pull drill's second pack dragged into the fight (Instance.PullExtra): a cost. Paid as Threat (Shaping)
+        /// until 2026-10-05, so a faded stage8 drill charged nothing for a double pull.
+        PullExtra,
         Count
     };
 
@@ -172,6 +185,11 @@ namespace Animus::Curriculum
             case RewardTerm::TownDone:
             case RewardTerm::DummyOutput:
             case RewardTerm::DummyMana:
+            case RewardTerm::DrillHold:
+            case RewardTerm::DrillFocus:
+            case RewardTerm::DrillKeep:
+            // A pull drill's pack killed on its own: what the drill is for (2026-10-05; Shaping since 2026-10-03).
+            case RewardTerm::PullClean:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -184,6 +202,7 @@ namespace Animus::Curriculum
             case RewardTerm::DeathRun:
             case RewardTerm::EarlyPull:
             case RewardTerm::DummyHurt:
+            case RewardTerm::PullExtra:
             // The prices of noise: a press that did nothing again, a turn and its reversal, a press its goal did not
             // call for, any press at all, standing in place shuffling. As shaping they faded with the rest, and by a
             // stage's end spinning, strafing and re-pressing cost nothing: stage5's casters ended at 90-190 turns and
@@ -244,7 +263,6 @@ namespace Animus::Curriculum
             case RewardTerm::CombatClock:
             case RewardTerm::Ranged:
             case RewardTerm::PetTank:
-            case RewardTerm::PullClean:
             case RewardTerm::OrderChurn:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
