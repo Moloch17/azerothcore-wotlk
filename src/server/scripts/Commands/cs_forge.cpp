@@ -24,6 +24,7 @@
 #include "MoveBlock.h"
 #include "ProbeBake.h"
 #include "LayeredField.h"
+#include "MapWorldQuery.h"
 #include "InstanceBosses.h"
 #include "StageDefinition.h"
 #include "World.h"
@@ -98,6 +99,7 @@ namespace
                 { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
+                { "controller", HandleControllerProbe, SEC_ADMINISTRATOR, Console::Yes },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
@@ -142,6 +144,7 @@ namespace
             table.AddRow({ "forge lhfbake <map> <x> <y> [cell] [samples] [radius]", "bake the layered height field "
                 "of the grid holding (x, y) in memory; its size, and the ground probe and flight readings worked out "
                 "from it against live ones (ground within radius of (x, y) if given)" });
+            table.AddRow({ "forge controller <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
                 "their neighbours (kept if already baked, unless rebake)" });
@@ -334,6 +337,55 @@ namespace
             }
             if (!line.empty())
                 handler->SendSysMessage(line);
+            return true;
+        }
+
+        /// `forge controller <map> <x> <y> <z> [facing]`: what the player controller's live world query reads at a point
+        /// (player-controller C2). On the world thread, with nothing training: it creates the grids it reads.
+        static bool HandleControllerProbe(ChatHandler* handler, uint32 mapId, float x, float y, float z,
+            Optional<float> facing)
+        {
+            namespace Mv = Animus::Movement;
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
+                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
+
+            Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
+            Mv::Body const body;
+            float const floor = world.FloorBelow(x, y, z + Mv::STEP_UP, 2.0f * Mv::STEP_UP);
+            bool const hasFloor = floor > Mv::INVALID_FLOOR + 1.0f;
+            float const feet = hasFloor ? floor : z;
+            Mv::Liquid const liquid = world.LiquidAt(x, y, feet);
+            handler->PSendSysMessage("controller at map {} ({:.2f}, {:.2f}, {:.2f}): STEP_UP {:.2f} (provisional, C6)",
+                mapId, x, y, z, Mv::STEP_UP);
+            if (hasFloor)
+                handler->PSendSysMessage("  floor {:.2f} ({:+.2f} from z), normal.z {:.3f} ({}walkable at 50 deg)",
+                    floor, floor - z, world.FloorNormalZ(x, y, floor),
+                    world.FloorNormalZ(x, y, floor) >= Mv::WALKABLE_NORMAL_Z ? "" : "not ");
+            else
+                handler->PSendSysMessage("  no floor within a step of z");
+            if (liquid.Present)
+                handler->PSendSysMessage("  liquid level {:.2f} ({:.2f} deep over the feet){}", liquid.Level,
+                    liquid.Level - feet, liquid.Deadly ? ", deadly" : "");
+            handler->PSendSysMessage("  ceiling {:.1f} yd above the head; feet {}inside the terrain",
+                world.Ceiling(x, y, feet + body.Height, 50.0f), world.InTerrain(x, y, feet) ? "" : "not ");
+            float const yaw = facing.value_or(0.0f);
+            for (int32 heading = 0; heading < 8; ++heading)
+            {
+                float const angle = yaw + float(heading) * float(M_PI) / 4.0f;
+                float const reach = 20.0f;
+                float const share = world.Sweep(x, y, feet, x + reach * std::cos(angle), y + reach * std::sin(angle),
+                    feet, body);
+                handler->PSendSysMessage("  heading {:>3.0f} deg: free {:.1f} of {:.0f} yd", angle * 180.0f / M_PI,
+                    share * reach, reach);
+            }
             return true;
         }
 

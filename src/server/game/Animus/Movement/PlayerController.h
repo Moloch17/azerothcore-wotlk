@@ -171,6 +171,9 @@ namespace Animus::Movement
             Body const& body) const = 0;
         /// Open air above (x, y, z) up to `up` yards (the distance to the first solid, or `up`).
         [[nodiscard]] virtual float Ceiling(float x, float y, float z, float up) const = 0;
+        /// Whether (x, y, z) is inside the terrain (below its surface). The terrain is in no collision tree, so a
+        /// hillside's face is seen only this way; models are walls through Sweep.
+        [[nodiscard]] virtual bool InTerrain(float x, float y, float z) const = 0;
     };
 
     constexpr float INVALID_FLOOR = -200000.0f;

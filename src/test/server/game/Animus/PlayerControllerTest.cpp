@@ -109,6 +109,11 @@ namespace
                     room = std::min(room, b.Z0 - z);
             return room;
         }
+
+        bool InTerrain(float x, float y, float z) const override
+        {
+            return z < Ground(x, y) - 0.05f;
+        }
     };
 
     Mv::BodyState At(float x, float y, float z, float yaw = 0.0f)
@@ -208,6 +213,23 @@ TEST(PlayerControllerTest, AStepIsWalkedOntoAndAHigherRiseIsAWall)
             EXPECT_TRUE(body.AgainstWall);
         }
     }
+}
+
+// A rise in the terrain itself (not a model: the terrain is in no collision tree, so no sweep sees it) higher than a
+// step is a wall, not an edge to fall off.
+TEST(PlayerControllerTest, ATerrainRiseHigherThanAStepIsAWallNotAFall)
+{
+    FakeWorld world;
+    world.Ground = [](float x, float) { return x < 3.0f ? 0.0f : 3.0f; };
+    Mv::Speeds const speeds;
+    Mv::BodyState body = At(0, 0, 0);
+    Mv::ControlState control;
+    control.Forward = 1;
+    Drive(body, control, speeds, world, 1.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_NEAR(body.Z, 0.0f, 1e-4f);
+    EXPECT_LT(body.X, 3.0f);
+    EXPECT_TRUE(body.AgainstWall);
 }
 
 // Up a slope of 40 degrees, refused up one of 55 (walkable: normal.z >= cos 50, the client's 0xa37f0c).

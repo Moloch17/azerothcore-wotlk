@@ -173,7 +173,7 @@ namespace
         return liquid.Level - bottom >= share * shape.Height;
     }
 
-    void Turn(Mv::BodyState& body, Mv::ControlState const& control, Mv::Speeds const& speeds, float dt)
+    void Turn(Mv::BodyState& body, Mv::ControlState const& control, float dt)
     {
         float rate = control.TurnRate;
         bool const moving = control.Forward != 0 || control.Strafe != 0;
@@ -182,7 +182,6 @@ namespace
         body.Yaw = WrapYaw(body.Yaw + rate * dt);
         if (body.Kind == Mv::Mode::Swimming || body.Kind == Mv::Mode::Flying)
             body.Pitch = std::clamp(body.Pitch + control.PitchRate * dt, -Mv::PITCH_LIMIT, Mv::PITCH_LIMIT);
-        (void)speeds;
     }
 
     void FallStep(Mv::BodyState& body, Mv::ControlState& control, Mv::Speeds const& speeds, Mv::Body const& shape,
@@ -226,6 +225,16 @@ namespace
         {
             // Up a slope steeper than 50 degrees: refused, as a wall is.
             body.SteepSlope = true;
+            body.AgainstWall = true;
+            return;
+        }
+
+        float const knee = body.Z + Mv::STEP_UP + 0.05f;
+        if (!HasFloor(floor) && world.InTerrain(nx, ny, knee) && !world.InTerrain(body.X, body.Y, knee))
+        {
+            // No floor within a step, and the knee would be inside the terrain: a rise of the ground too high to step
+            // onto (the terrain is in no collision tree, so no sweep sees a hillside's face). A wall. A body already
+            // under the terrain's surface (a cave) is not walled in by it.
             body.AgainstWall = true;
             return;
         }
@@ -442,7 +451,7 @@ namespace
     void SubStep(Mv::BodyState& body, Mv::ControlState& control, Mv::Speeds const& speeds, Mv::Body const& shape,
         Mv::WorldQuery const& world, float dt)
     {
-        Turn(body, control, speeds, dt);
+        Turn(body, control, dt);
         switch (body.Kind)
         {
             case Mv::Mode::Ground:
