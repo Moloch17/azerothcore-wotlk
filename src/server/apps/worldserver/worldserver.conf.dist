@@ -5038,7 +5038,8 @@ AnimusForge.OutputDir = ""
 #                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them),
 #                                 "move2_ground" (broken ground with something in the way: the way round),
 #                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops),
-#                                 "move4_water" (across water, lakebeds, chains longer than a breath)
+#                                 "move4_water" (across water, lakebeds, chains longer than a breath),
+#                                 "move5_routes" (one long trip, the way not visible from the start)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5177,6 +5178,7 @@ AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_ground.TicksPerDecision = 5
 AnimusForge.Stage.move3_vertical.TicksPerDecision = 5
 AnimusForge.Stage.move4_water.TicksPerDecision = 5
+AnimusForge.Stage.move5_routes.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6749,6 +6751,28 @@ AnimusForge.Curriculum.MarkerWater.DepthMaxLast = 30.0
 AnimusForge.Curriculum.MarkerWater.Radius = 2.0
 AnimusForge.Curriculum.MarkerWater.ArriveRise = 3.0
 AnimusForge.Curriculum.MarkerWater.Drowning = 2.0
+
+#
+#    AnimusForge.Curriculum.MarkerRoutes.*
+#        The routes stage's markers (move5_routes): one long trip an episode across mixed ground, the way not visible
+#        from the start, planned whole by the route planner and walked or swum by the player controller end to end.
+#        The ladder (Rungs rungs) moves the straight distance from [NearestFirst, FurthestFirst] to [NearestLast,
+#        FurthestLast] yards and the detour (the way over the straight line) from DetourFirst to DetourLast, each trip
+#        within DetourSpan above the rung's and never over DetourCap; stopped within Radius yards. Costs: Stuck, Wall
+#        (MarkerGround.*) and FallDamage (MarkerVertical.*). `revisits` counts RevisitCell-yard cells the seat came back
+#        to after RevisitSeconds away.
+AnimusForge.Curriculum.MarkerRoutes.Rungs = 6
+AnimusForge.Curriculum.MarkerRoutes.NearestFirst = 150.0
+AnimusForge.Curriculum.MarkerRoutes.FurthestFirst = 250.0
+AnimusForge.Curriculum.MarkerRoutes.NearestLast = 400.0
+AnimusForge.Curriculum.MarkerRoutes.FurthestLast = 600.0
+AnimusForge.Curriculum.MarkerRoutes.DetourFirst = 1.3
+AnimusForge.Curriculum.MarkerRoutes.DetourLast = 2.4
+AnimusForge.Curriculum.MarkerRoutes.DetourSpan = 0.6
+AnimusForge.Curriculum.MarkerRoutes.DetourCap = 3.0
+AnimusForge.Curriculum.MarkerRoutes.Radius = 2.0
+AnimusForge.Curriculum.MarkerRoutes.RevisitCell = 10.0
+AnimusForge.Curriculum.MarkerRoutes.RevisitSeconds = 10.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

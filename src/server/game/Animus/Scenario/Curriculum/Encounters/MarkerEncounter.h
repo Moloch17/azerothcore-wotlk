@@ -24,6 +24,7 @@
 #include "Position.h"
 #include "RoutePlanner.h"
 #include "StageDefinition.h"
+#include <unordered_map>
 #include <vector>
 
 namespace Animus::Curriculum
@@ -65,7 +66,9 @@ namespace Animus::Curriculum
     /// (TravelPlaceRules::ControllerReach, MarkerReach). Water (M4): across water whose dry way round is the longer one
     /// (both walkable or swimmable), on a lakebed (Underwater), or a chain of lakebeds (Checkpoints) within the rung's
     /// depth window (MarkerWater.*); shaped on the straight distance in three dimensions, stopped as a swimmer, and
-    /// Drowning paid besides Stuck and Wall.
+    /// Drowning paid besides Stuck and Wall. Routes (M5): one long trip, planned whole by the RoutePlanner, in the
+    /// rung's distance band and detour window (MarkerRoutes.*); shaped on the route, priced as the ground and
+    /// vertical courses are.
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -96,6 +99,12 @@ namespace Animus::Curriculum
         [[nodiscard]] static MarkerRung VerticalRungTask(uint32 rung, uint32 rungs, float distanceMin,
             float distanceFirst, float distanceLast, float heightMinFirst, float heightMaxFirst, float heightMinLast,
             float heightMaxLast, float radius);
+
+        /// Rung `rung` of the routes course's ladder: the straight distance band and the detour window move up; the
+        /// detour's ceiling is `detourCap`.
+        [[nodiscard]] static MarkerRung RoutesRungTask(uint32 rung, uint32 rungs, float nearestFirst,
+            float furthestFirst, float nearestLast, float furthestLast, float detourFirst, float detourLast,
+            float detourSpan, float detourCap, float radius);
 
         /// Rung `rung` of a ladder of `rungs` (0 the first), from the tuning's First and Last values.
         [[nodiscard]] static MarkerRung RungTask(uint32 rung, uint32 rungs, float distanceMin, float distanceFirst,
@@ -173,6 +182,11 @@ namespace Animus::Curriculum
             uint32 BanksClimbed = 0;
             bool WasInWater = false;
             float UnderwaterSelfDamage = 0.0f;  // share of maximum health, what Drowning is paid on
+            // The routes course: cells of the ground visited (cell -> when last there), and returns to one after a
+            // while away.
+            std::unordered_map<uint64, uint32> Cells;
+            uint64 LastCell = ~uint64(0);
+            uint32 Revisits = 0;
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

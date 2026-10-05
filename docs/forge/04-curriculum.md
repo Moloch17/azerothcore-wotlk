@@ -5,7 +5,8 @@
 > far: `move1_controls` (markers on open ground, stopped on exactly; MarkerEncounter, `Opposition::Markers`) and
 > `move2_ground` (markers on broken ground with something in the way; `MarkerCourse::Ground`) and `move3_vertical`
 > (above, below a ledge, another storey; `MarkerCourse::Vertical`) and `move4_water` (across water, lakebeds,
-> chains longer than a breath; `MarkerCourse::Water`). Every
+> chains longer than a breath; `MarkerCourse::Water`) and `move5_routes` (one long trip, the way not visible from the
+> start; `MarkerCourse::Routes`). Every
 > movement stage runs 50 ms world ticks (`AnimusForge.Stage.<name>.TicksPerDecision`; `test_stage_ticks.py`).
 >
 > | Stage | Budget | Eval every | Episodes |
@@ -14,6 +15,7 @@
 > | `move2_ground` | 250M | 5M | 2048 |
 > | `move3_vertical` | 300M | 5M | 2048 |
 > | `move4_water` | 250M | 5M | 2048 |
+> | `move5_routes` | 500M | 5M | 1024 |
 >
 > **Archived.** The rest of this chapter describes the first curriculum -- `stage1_move` ... `stage21_ship` --
 > archived when the curriculum was rebuilt. Its stage definitions are on the git tag `curriculum-v1`, its learner

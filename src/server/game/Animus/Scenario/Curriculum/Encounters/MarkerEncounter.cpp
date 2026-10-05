@@ -113,6 +113,21 @@ Animus::Curriculum::MarkerRung Animus::Curriculum::MarkerEncounter::VerticalRung
     return task;
 }
 
+Animus::Curriculum::MarkerRung Animus::Curriculum::MarkerEncounter::RoutesRungTask(uint32 rung, uint32 rungs,
+    float nearestFirst, float furthestFirst, float nearestLast, float furthestLast, float detourFirst,
+    float detourLast, float detourSpan, float detourCap, float radius)
+{
+    float const t = rungs > 1 ? float(std::min(rung, rungs - 1)) / float(rungs - 1) : 1.0f;
+    MarkerRung task;
+    task.Nearest = std::max(1.0f, Lerp(nearestFirst, nearestLast, t));
+    task.Furthest = std::max(task.Nearest, Lerp(furthestFirst, furthestLast, t));
+    task.BearingHalf = float(M_PI);
+    task.Radius = std::max(0.1f, radius);
+    task.DetourMin = std::clamp(Lerp(detourFirst, detourLast, t), 1.0f, detourCap);
+    task.DetourMax = std::clamp(task.DetourMin + std::max(0.05f, detourSpan), task.DetourMin, detourCap);
+    return task;
+}
+
 bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float movedYards, float stopMoved)
 {
     constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING;
@@ -196,6 +211,9 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].UnderwaterSelfDamage;
     });
+    table.Add("revisits", [this](Env const& env, uint32) { return float(_envs[env.Index].Revisits); });
+    // The trip's way (the routes course): its length and its detour over the straight line.
+    table.Add("route_length", [this](Env const& env, uint32) { return _envs[env.Index].LegWalk; });
     table.Add("banks_climbed", [this](Env const& env, uint32) { return float(_envs[env.Index].BanksClimbed); });
     table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
     table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
@@ -212,6 +230,7 @@ uint32 Animus::Curriculum::MarkerEncounter::TopRung(Env const& env) const
     uint32 const rungs = std::max<uint32>(1, course == MarkerCourse::Ground ? _scenario.Tuning().MarkerGround.Rungs
         : course == MarkerCourse::Vertical ? _scenario.Tuning().MarkerVertical.Rungs
         : course == MarkerCourse::Water ? _scenario.Tuning().MarkerWater.Rungs
+        : course == MarkerCourse::Routes ? _scenario.Tuning().MarkerRoutes.Rungs
         : _scenario.Tuning().Markers.Rungs);
     int32 const pinned = _scenario.ArenaMaxRung(env);
     return pinned >= 0 ? std::min<uint32>(uint32(pinned), rungs - 1) : rungs - 1;
@@ -244,7 +263,13 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     // The vertical course: above (a climb), below a ledge, or on another floor, within the rung's height window.
     ArenaDefinition const& arena = _scenario.Arena(env);
     bool const indoors = arena.Indoors;
-    if (markers.Course == MarkerCourse::Water)
+    if (markers.Course == MarkerCourse::Routes)
+    {
+        // One long way, planned whole (PathGenerator stops short at this range); water may be on it, after M4.
+        rules.LongRoute = true;
+        rules.DryOnly = false;
+    }
+    else if (markers.Course == MarkerCourse::Water)
     {
         // Across water whose dry way round is the longer one (both ways walkable or swimmable by the controller),
         // or on a lakebed within the rung's depth window, swum to straight.
@@ -366,7 +391,15 @@ bool Animus::Curriculum::MarkerEncounter::Build(Env& env, Map* map, uint8 /*leve
     DifficultyLadder::Pick const pick = _ladder.Draw(env, markers.Layout, markers.Spec, TopRung(env));
     markers.Rung = pick.Tier;
     markers.Counts = pick.Counts;
-    if (markers.Course == MarkerCourse::Water)
+    if (markers.Course == MarkerCourse::Routes)
+    {
+        CurriculumTuning::MarkerRoutesTuning const& routes = _scenario.Tuning().MarkerRoutes;
+        markers.Task = RoutesRungTask(markers.Rung, std::max<uint32>(1, routes.Rungs), routes.NearestFirst,
+            routes.FurthestFirst, routes.NearestLast, routes.FurthestLast, routes.DetourFirst, routes.DetourLast,
+            routes.DetourSpan, routes.DetourCap, routes.Radius);
+        markers.Wanted = 1;
+    }
+    else if (markers.Course == MarkerCourse::Water)
     {
         CurriculumTuning::MarkerWaterTuning const& water = _scenario.Tuning().MarkerWater;
         markers.Task = VerticalRungTask(markers.Rung, std::max<uint32>(1, water.Rungs), water.DistanceMin,
@@ -489,7 +522,26 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // The vertical course climbs on the ground course's route and pays its costs, and its falls besides.
     // The water course pays Stuck and Wall too, and what the water took; its distance is the straight one, in three
     // dimensions (a lakebed is a point under the surface).
-    bool const routed = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical;
+    bool const routed = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical
+        || markers.Course == MarkerCourse::Routes;
+    if (markers.Course == MarkerCourse::Routes)
+    {
+        // Retracing: a cell of the ground come back to after a while away.
+        CurriculumTuning::MarkerRoutesTuning const& routes = _scenario.Tuning().MarkerRoutes;
+        float const cell = std::max(1.0f, routes.RevisitCell);
+        uint64 const key = (uint64(uint32(int32(std::floor(bot->GetPositionX() / cell)))) << 32)
+            | uint64(uint32(int32(std::floor(bot->GetPositionY() / cell))));
+        if (key != markers.LastCell)
+        {
+            auto const seen = markers.Cells.find(key);
+            if (seen != markers.Cells.end()
+                && env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, seen->second)
+                    >= uint32(routes.RevisitSeconds * 1000.0f))
+                ++markers.Revisits;
+            markers.LastCell = key;
+        }
+        markers.Cells[key] = env.EpisodeElapsedMs;
+    }
     bool const water = markers.Course == MarkerCourse::Water;
     bool const ground = routed || water;
     if (water)
@@ -507,7 +559,7 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         markers.BanksClimbed += markers.WasInWater && !wet ? 1 : 0;
         markers.WasInWater = wet;
     }
-    if (markers.Course == MarkerCourse::Vertical)
+    if (markers.Course == MarkerCourse::Vertical || markers.Course == MarkerCourse::Routes)
     {
         float const took = seat.FallDamage - std::min(seat.FallDamage, markers.LastFallDamage);
         markers.LastFallDamage = seat.FallDamage;

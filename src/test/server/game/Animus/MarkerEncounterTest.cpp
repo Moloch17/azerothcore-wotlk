@@ -293,3 +293,20 @@ TEST(MarkerEncounterTest, ReachSwimsAcrossAndClimbsOutOnABankTheSwimJumpCarries)
     EXPECT_FALSE(Across(Lake(2.5f, false), 20.0f).Reachable);
     EXPECT_FALSE(Across(Lake(0.0f, true), 20.0f).Reachable);
 }
+
+// M5's ladder: the distance band moves out and the detour window up, never over its ceiling.
+TEST(MarkerEncounterTest, RoutesLadderLengthensTheTripAndCapsTheDetour)
+{
+    MarkerRung const first = MarkerEncounter::RoutesRungTask(0, 6, 150.0f, 250.0f, 400.0f, 600.0f, 1.3f, 2.4f, 0.6f,
+        3.0f, 2.0f);
+    MarkerRung const last = MarkerEncounter::RoutesRungTask(5, 6, 150.0f, 250.0f, 400.0f, 600.0f, 1.3f, 2.4f, 0.6f,
+        3.0f, 2.0f);
+    EXPECT_FLOAT_EQ(first.Nearest, 150.0f);
+    EXPECT_FLOAT_EQ(first.Furthest, 250.0f);
+    EXPECT_NEAR(first.DetourMin, 1.3f, 1e-5f);
+    EXPECT_NEAR(first.DetourMax, 1.9f, 1e-5f);
+    EXPECT_FLOAT_EQ(last.Nearest, 400.0f);
+    EXPECT_FLOAT_EQ(last.Furthest, 600.0f);
+    EXPECT_NEAR(last.DetourMin, 2.4f, 1e-5f);
+    EXPECT_FLOAT_EQ(last.DetourMax, 3.0f);
+}

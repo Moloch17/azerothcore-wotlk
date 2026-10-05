@@ -1073,6 +1073,31 @@ namespace Animus::Curriculum
             float Drowning = 2.0f;              // per share of maximum health the water took
         } MarkerWater;
 
+        /// The routes stage's markers (MarkerCourse::Routes, M5): one long trip an episode across mixed ground, where
+        /// the way is not visible from the start -- round lakes, through canyons, out of a dead end. Planned whole
+        /// by the RoutePlanner (TravelPlaceRules::LongRoute) and walked or swum by the controller end to end.
+        ///
+        /// The ladder (Rungs rungs) moves the trip's straight distance from [NearestFirst, FurthestFirst] to
+        /// [NearestLast, FurthestLast] yards and its detour -- the way over the straight line -- from DetourFirst to
+        /// DetourLast, each trip within DetourSpan above the rung's and never over DetourCap. Stopped within Radius.
+        /// The costs are the ground course's (Stuck, Wall) and the vertical one's (FallDamage). `revisits` counts
+        /// RevisitCell-yard cells the seat came back to after RevisitSeconds away: a seat retracing its steps.
+        struct MarkerRoutesTuning
+        {
+            uint32 Rungs = 6;
+            float NearestFirst = 150.0f;
+            float FurthestFirst = 250.0f;
+            float NearestLast = 400.0f;
+            float FurthestLast = 600.0f;
+            float DetourFirst = 1.3f;
+            float DetourLast = 2.4f;
+            float DetourSpan = 0.6f;
+            float DetourCap = 3.0f;
+            float Radius = 2.0f;
+            float RevisitCell = 10.0f;
+            float RevisitSeconds = 10.0f;
+        } MarkerRoutes;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1647,6 +1672,18 @@ namespace Animus::Curriculum
             f("MarkerWater.Radius", tuning.MarkerWater.Radius);
             f("MarkerWater.ArriveRise", tuning.MarkerWater.ArriveRise);
             f("MarkerWater.Drowning", tuning.MarkerWater.Drowning);
+            f("MarkerRoutes.Rungs", tuning.MarkerRoutes.Rungs);
+            f("MarkerRoutes.NearestFirst", tuning.MarkerRoutes.NearestFirst);
+            f("MarkerRoutes.FurthestFirst", tuning.MarkerRoutes.FurthestFirst);
+            f("MarkerRoutes.NearestLast", tuning.MarkerRoutes.NearestLast);
+            f("MarkerRoutes.FurthestLast", tuning.MarkerRoutes.FurthestLast);
+            f("MarkerRoutes.DetourFirst", tuning.MarkerRoutes.DetourFirst);
+            f("MarkerRoutes.DetourLast", tuning.MarkerRoutes.DetourLast);
+            f("MarkerRoutes.DetourSpan", tuning.MarkerRoutes.DetourSpan);
+            f("MarkerRoutes.DetourCap", tuning.MarkerRoutes.DetourCap);
+            f("MarkerRoutes.Radius", tuning.MarkerRoutes.Radius);
+            f("MarkerRoutes.RevisitCell", tuning.MarkerRoutes.RevisitCell);
+            f("MarkerRoutes.RevisitSeconds", tuning.MarkerRoutes.RevisitSeconds);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

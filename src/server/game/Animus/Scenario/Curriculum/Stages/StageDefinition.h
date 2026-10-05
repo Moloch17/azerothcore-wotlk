@@ -66,6 +66,7 @@ namespace Animus::Curriculum
         Ground,         // M2: broken ground, something in the way; the route is the way (MarkerGround.*)
         Vertical,       // M3: above, below, another storey; steps, jumps and drops (MarkerVertical.*)
         Water,          // M4: across water, on a lakebed, a chain of lakebeds; breath (MarkerWater.*)
+        Routes,         // M5: one long trip, the way not visible from the start (MarkerRoutes.*)
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).

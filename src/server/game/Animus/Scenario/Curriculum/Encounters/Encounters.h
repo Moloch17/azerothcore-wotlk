@@ -1060,6 +1060,9 @@ namespace Animus::Curriculum
         /// Indoors, a floor above the seat's (a storey up, by the stairs): the probe scans up through the storeys
         /// within the rise window (MarkerReach::UpperFloors) instead of looking down from a step over the feet.
         bool Upstairs = false;
+        /// A long way (hundreds of yards): planned whole by the RoutePlanner instead of PathGenerator, whose point
+        /// cap answers "incomplete" at that range. Serial, as the ledge and air-only searches are.
+        bool LongRoute = false;
     };
 
     class TravelEncounter final : public Encounter

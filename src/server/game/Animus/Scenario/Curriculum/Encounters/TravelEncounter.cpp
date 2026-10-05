@@ -872,6 +872,33 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
 
             walked = ground.Length;
         }
+        else if (rules.LongRoute)
+        {
+            // A long route (the routes stage, 150-600 yd): PathGenerator's point cap answers "incomplete" for a
+            // ground trip of this length whether the ground allows it or not, so the RoutePlanner plans it, with the
+            // grids along the line loaded first (it can only walk mesh in memory). The whole way has to exist, sit
+            // in the detour window, and be one the controller walks or swims.
+            for (uint32 step = 1; step < WATER_SAMPLES; ++step)
+            {
+                float const along = float(step) / float(WATER_SAMPLES);
+                map->LoadGrid(bot->GetPositionX() + (x - bot->GetPositionX()) * along,
+                    bot->GetPositionY() + (y - bot->GetPositionY()) * along);
+            }
+
+            Route way;
+            Position const from(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0.0f);
+            Position const to(placeX, placeY, placeZ, 0.0f);
+            tally.Paths.fetch_add(1, std::memory_order_relaxed);
+            if (!RoutePlanner::Instance().Plan(map, from, to, way) || !way.Complete)
+                return false;
+            walked = way.Length;
+            if (rules.MaxDetour > 0.0f && walked > distance * rules.MaxDetour)
+                return false;
+            if (rules.MinDetour > 0.0f && attempt < attempts / 2 && walked < distance * rules.MinDetour)
+                return false;
+            if (rules.ControllerReach && !ControllerWalks(bot, map, way.X, way.Y, way.Z, way.Count, placeZ, rules))
+                return false;
+        }
         else if (!flying)
         {
             tally.Paths.fetch_add(1, std::memory_order_relaxed);
@@ -1046,7 +1073,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     };
 
     MapUpdater* updater = sMapMgr->GetMapUpdater();
-    bool const shared = !rules.Fixed && !rules.Ledge && !rules.AirOnly && updater && updater->activated()
+    bool const shared = !rules.Fixed && !rules.Ledge && !rules.AirOnly && !rules.LongRoute && updater
+        && updater->activated()
         && MapMgr::MapTasksRunning.load(std::memory_order_acquire);
     if (!shared)
     {

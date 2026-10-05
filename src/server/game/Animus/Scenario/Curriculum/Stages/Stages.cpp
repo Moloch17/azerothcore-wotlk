@@ -27,7 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ ... ─ move7_follow  (M5-M7 to come)
+ *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ ... ─ move7_follow
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -54,9 +54,9 @@ namespace
     // The highest role a party drill can fix (ArenaDefinition::DrillRole: 1 tank, 2 healer, 3 damage).
     constexpr uint8 DRILL_DAMAGE = 3;
 
-    /// Open, flat ground on Kalimdor for the controls stage (M1): the Barrens' scrub and Mulgore's grass, from the first
-    /// curriculum's training ground (curriculum-v1 KalimdorGround), every point stood on with `forge rays` then. The
-    /// Durotar and Dustwallow points of that list are left out: they are canyon, rock and broken shore, M2's ground.
+    /// Open, flat ground on Kalimdor for the controls stage (M1): the Barrens' scrub and Mulgore's grass, from the
+    /// first curriculum's training ground (curriculum-v1 KalimdorGround), every point stood on with `forge rays` then.
+    /// Its Durotar and Dustwallow points are left out: they are canyon, rock and broken shore, M2's ground.
     std::vector<Position> KalimdorFlats()
     {
         return {
@@ -357,6 +357,36 @@ namespace
                 { .Name = "chain", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 240,
                     .Course = MarkerCourse::Water, .SpawnPoints = StonebullShore(),
                     .HeldOutSpawnPoints = EluneAraShore(), .Underwater = true, .Checkpoints = true },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorBroken(),
+            .HeldOutSpawnPoints = KalimdorBrokenControl(),
+        });
+
+        // M5 -- long routes: one trip an episode, 150 to 600 yards across mixed ground, where the way is not visible
+        // from the start -- round lakes, through canyons and over ridges, out of a pocket the straight line walks
+        // into. The detour climbs from 1.3 to 3.0 times the straight line; the route planner plans the whole way
+        // (a training signal only), and the controller has to be able to walk or swim every yard of it. This is
+        // where the perception plan's local map and route tiers (.agents/plans/local-map-perception/) earn their
+        // keep; until they land the stage runs on today's ground probe and the marker's bearing, and is expected to
+        // plateau lower.
+        //
+        // Kalimdor's validated ground until the dry check: the plan's canyons and valleys (Thousand Needles,
+        // Desolace, Badlands), cities on foot and Stranglethorn need points stood on; Feralas, its held-out ground,
+        // likewise. Human trips (AnimusForge.Human.Trips) join once capture data exists.
+        stages.push_back({
+            .Name = "move5_routes",
+            .Suffix = "_routes",
+            .Extends = "move4_water",
+            .Summary = "one long trip, 150 to 600 yd, the way not visible from the start: find it and arrive",
+            .Blocks = { Core, Move, Goal },
+            .Arenas = {
+                { .Name = "canyons", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 420,
+                    .Course = MarkerCourse::Routes, .SpawnPoints = KalimdorBroken(),
+                    .HeldOutSpawnPoints = KalimdorBrokenControl() },
+                { .Name = "open", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 420,
+                    .Course = MarkerCourse::Routes, .SpawnPoints = KalimdorFlats(),
+                    .HeldOutSpawnPoints = KalimdorFlatsControl() },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorBroken(),
