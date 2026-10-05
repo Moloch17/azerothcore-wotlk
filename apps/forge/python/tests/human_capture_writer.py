@@ -158,3 +158,83 @@ def straight(x0: float, y0: float, heading: float, speed: float, seconds: float,
         y += speed * dt * math.sin(h)
         h += turn_rate * dt
     return out
+
+
+T0 = 1_790_000_000_000      # 2026-09-21, server ms
+HUMAN, COMPANION, OWNER_TARGET = 11, 77, 99
+
+
+def synthetic_hour(root: Path, day: str = "2026-10-05", hour: int = 14, t0: int = T0) -> dict:
+    """One hour shard of one map with one human (a level 23 frost mage) and one companion:
+
+    stand 4 s at A -> run east 10 s at 7 yd/s (a jump at 3 s) -> stand 6 s at B (an interaction there) -> run north
+    8 s while a snapshot says combat and damage flows -> stunned 1 s -> run on 4 s -> teleport -> run 3 s elsewhere.
+    Returns the times and places the tests check against."""
+    d = hour_dir(root, day, hour)
+    moves: list[bytes] = [header("move", t0)]
+    moves.append(record(11, {"ms": t0, "player": HUMAN, "walk": 2.5, "run": 7.0, "run_back": 4.5, "swim": 4.72,
+                             "swim_back": 2.5, "flight": 7.0, "flight_back": 4.5, "turn_rate": 3.14,
+                             "pitch_rate": 3.14}))
+    t = t0
+    # Standing at A: one stop packet, then nothing for 4 s.
+    moves.append(record(10, {"ms": t, "player": HUMAN, "opcode": MSG_MOVE_STOP, "x": 0.0, "y": 0.0, "o": 0.0}))
+    t += 4000
+    east = straight(0.0, 0.0, 0.0, 7.0, 10.0)
+    packets = run_packets(HUMAN, t, east)
+    jump_at = t + 3000
+    moves += packets
+    moves.append(record(10, {"ms": jump_at, "player": HUMAN, "opcode": MSG_MOVE_JUMP, "move_flags": FORWARD,
+                             "x": 21.0, "y": 0.0, "o": 0.0}))
+    t += 10000
+    b = east[-1]
+    interact_ms = t + 2000
+    t += 6000
+    north_start = t
+    north = straight(b[0], b[1], math.pi / 2, 7.0, 8.0)
+    moves += run_packets(HUMAN, t, north, stop=False)
+    t += 8000
+    stun = (t + 100, t + 1100)
+    moves.append(record(12, {"ms": stun[0], "player": HUMAN, "event": 10, "x": north[-1][0], "y": north[-1][1]}))
+    moves.append(record(12, {"ms": stun[1], "player": HUMAN, "event": 11, "x": north[-1][0], "y": north[-1][1]}))
+    on = straight(north[-1][0], north[-1][1], math.pi / 2, 7.0, 5.0)
+    moves += run_packets(HUMAN, t + 100, on)
+    t += 5100
+    teleport_ms = t + 200
+    moves.append(record(12, {"ms": teleport_ms, "player": HUMAN, "event": 5, "arg": 0}))
+    far = straight(5000.0, 5000.0, 0.0, 7.0, 3.0)
+    moves += run_packets(HUMAN, t + 400, far)
+    # The companion: synthesised samples (source 1), never human data.
+    moves += run_packets(COMPANION, t0, straight(10.0, 10.0, 0.0, 7.0, 20.0), source=1)
+    write_gz(d / "move-0.bin.gz", [b"".join(moves[:5]), b"".join(moves[5:])])
+
+    session = [header("session", t0),
+               record(1, {"ms": t0, "player": HUMAN, "session": 1, "class_": 8, "race": 1, "level": 23,
+                          "tree_points": (0, 2, 16), "latency_ms": 80, "kind": 0}),
+               record(1, {"ms": t0, "player": COMPANION, "session": 2, "class_": 1, "level": 23, "kind": 1})]
+    write_gz(d / "session-all.bin.gz", [b"".join(session)])
+
+    snaps = [header("snapshot", t0)]
+    for ms in range(north_start, north_start + 8000, 250):
+        snaps.append(record(30, {"ms": ms, "player": HUMAN, "flags": 1}))
+    for ms in range(north_start + 8000, north_start + 14000, 1000):
+        snaps.append(record(30, {"ms": ms, "player": HUMAN, "flags": 0}))
+    write_gz(d / "snapshot-0.bin.gz", [b"".join(snaps)])
+
+    outcome = [header("outcome", t0)]
+    for k in range(9):
+        outcome.append(record(40, {"ms": north_start + k * 1000, "source": HUMAN, "target": OWNER_TARGET,
+                                   "amount": 100}))
+    outcome.append(record(41, {"ms": north_start + 2000, "source": HUMAN, "target": HUMAN, "amount": 300,
+                               "overheal": 100}))
+    outcome.append(record(43, {"ms": teleport_ms - 50, "player": HUMAN, "cause": 2, "x": 1.0, "y": 2.0, "z": 3.0}))
+    write_gz(d / "outcome-0.bin.gz", [b"".join(outcome)])
+
+    actions = [header("action", t0), record(26, {"ms": interact_ms, "player": HUMAN, "what": 6, "entry": 1})]
+    for k in range(40):
+        actions.append(record(20, {"ms": north_start + k * 2000, "player": HUMAN, "spell": 116}))
+        actions.append(record(21, {"ms": north_start + k * 2000 + 10, "player": HUMAN, "spell": 116,
+                                   "result": 255 if k % 4 else 173}))
+    write_gz(d / "action-0.bin.gz", [b"".join(actions)])
+    write_index(d, f"{day}T{hour:02d}", {}, players=2, sessions=2)
+    return {"a": (0.0, 0.0), "b": (b[0], b[1]), "jump_ms": jump_at, "north_start": north_start, "stun": stun,
+            "teleport_ms": teleport_ms, "interact_ms": interact_ms}
