@@ -1431,11 +1431,11 @@ baseline already arrives every time here, so the trip is the measure, not the ar
 ### `stage1_move`: the `ledges` arena
 
 Down. A place 20-120 yd away below a ledge, 5-80 yd under the seat, with a way round on foot at least twice the
-straight line, for 120 s. The jump drops off the edge and the fall after it is the core's own, with the core's
-own damage: free to fourteen yards, lethal past about seventy. The seat is told how far down the landing is
-(`OBS_JUMP_DROP`) and nothing about what that costs. Slow Fall and Levitate are open, so a mage or priest learns
-when a cast is worth spending to make the deadly drop free; `drops`, `fell`, `fall_deaths` and `feather_falls` say
-what each class chose.
+straight line, for 120 s. The seat walks or jumps off the edge (the player controller's physics) and the server
+lands it with its own damage: free to 13.48 yards, lethal past about seventy. The seat sees the drop along its
+ground rays and nothing about what it costs. Slow Fall and Levitate are open, so a mage or priest learns when a cast
+is worth spending to make the deadly drop free; `drops`, `fell`, `fall_damage` and `fall_deaths` say what each class
+chose.
 
 ### `stage1_move`: the `depths` and `chain` arenas (lakebeds)
 

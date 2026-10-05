@@ -209,6 +209,7 @@ namespace
             // From the ground: up at the client's jump speed, the run frozen at launch (no air control).
             control.Jump = false;
             StartFalling(body, wish.X * wish.Speed, wish.Y * wish.Speed, Mv::JUMP_SPEED);
+            body.Jumped = true;
             FallStep(body, control, speeds, shape, world, dt);
             return;
         }
@@ -362,6 +363,7 @@ namespace
             float const speed = level.Speed > 0.0f ? (control.Forward < 0 ? std::min(speeds.Swim, speeds.SwimBack)
                 : speeds.Swim) : 0.0f;
             StartFalling(body, level.X * speed, level.Y * speed, Mv::SWIM_JUMP_SPEED);
+            body.Jumped = true;
             FallStep(body, control, speeds, shape, world, dt);
             return;
         }
@@ -492,6 +494,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     body.SteepSlope = false;
     body.Landed = false;
     body.LandedInWater = false;
+    body.Jumped = false;
     body.FallHeight = 0.0f;
     body.Moved = 0.0f;
     body.Commanded = 0.0f;
@@ -502,6 +505,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     // A landing is reported for the whole step even if a later sub-step walks on.
     bool landed = false;
     bool landedInWater = false;
+    bool jumped = false;
     float fallHeight = 0.0f;
     bool wall = false;
     bool steep = false;
@@ -510,16 +514,23 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
         SubStep(body, control, speeds, shape, world, sub);
         landed = landed || body.Landed;
         landedInWater = landedInWater || body.LandedInWater;
+        jumped = jumped || body.Jumped;
         fallHeight = std::max(fallHeight, body.FallHeight);
         wall = wall || body.AgainstWall;
         steep = steep || body.SteepSlope;
-        body.Landed = body.LandedInWater = body.AgainstWall = body.SteepSlope = false;
+        body.Landed = body.LandedInWater = body.AgainstWall = body.SteepSlope = body.Jumped = false;
     }
     body.Landed = landed;
+    body.Jumped = jumped;
     body.LandedInWater = landedInWater;
     body.FallHeight = fallHeight;
     body.AgainstWall = wall;
     body.SteepSlope = steep;
+}
+
+void Animus::Movement::Launch(BodyState& body, float vx, float vy, float vz)
+{
+    StartFalling(body, vx, vy, vz);
 }
 
 void Animus::Movement::Resync(BodyState& body, float x, float y, float z, float yaw, Body const& shape,
@@ -569,14 +580,16 @@ uint32_t Animus::Movement::MovementFlags(BodyState const& body, ControlState con
         flags |= Flag::STRAFE_RIGHT;
     else if (control.Strafe < 0)
         flags |= Flag::STRAFE_LEFT;
-    if (control.TurnRate > 0.0f)
+    // Only the turn and pitch keys set LEFT/RIGHT and PITCH_UP/DOWN; the mouse turns the body and reports its facing
+    // (SET_FACING / SET_PITCH, ReportCadence), as the client's mouse-look does.
+    if (control.KeyboardTurn && control.TurnRate > 0.0f)
         flags |= Flag::LEFT;
-    else if (control.TurnRate < 0.0f)
+    else if (control.KeyboardTurn && control.TurnRate < 0.0f)
         flags |= Flag::RIGHT;
     bool const steered = body.Kind == Mode::Swimming || body.Kind == Mode::Flying;
-    if (steered && control.PitchRate > 0.0f)
+    if (steered && control.KeyboardTurn && control.PitchRate > 0.0f)
         flags |= Flag::PITCH_UP;
-    else if (steered && control.PitchRate < 0.0f)
+    else if (steered && control.KeyboardTurn && control.PitchRate < 0.0f)
         flags |= Flag::PITCH_DOWN;
     if (steered && control.Vertical > 0)
         flags |= Flag::ASCENDING;

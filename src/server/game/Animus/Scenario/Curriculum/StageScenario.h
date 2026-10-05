@@ -289,6 +289,10 @@ namespace Animus::Curriculum
 
         /// Seat `seat`'s bot, in or out of the world (see BotSlot::Active).
         [[nodiscard]] Player* SeatBot(Env const& env, uint32 seat) const;
+        /// Start the seat's player controller where the server has the bot, reporting at once (§5A.1 point 4).
+        static void StartMover(SeatState& seat, Player* bot, uint32 nowMs);
+        /// The controller's columns, after a tick (wall, stuck, course kinks).
+        static void TrackController(SeatState& seat, uint32 diffMs);
         /// SeatBot when it is in the world, else null: Env::FindBot's answer for a seat, without the global object
         /// accessor's lock that FindBot takes for every call (seat loops run on every map thread every decision).
         [[nodiscard]] Player* SeatBotInWorld(Env const& env, uint32 seat) const;

@@ -898,12 +898,6 @@ namespace Animus::Curriculum
             /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
             /// seat is there and the owner has stopped.
             uint32 FollowMs = 6000;
-            /// Only while a real client is connected (ForgeCore::HasClients): a run is drawn with the head it was
-            /// launched with, and the sim turns that head on the run itself (MoveSpline::ReaimFacing), which a client
-            /// does not see. A running seat whose drawn head is more than this many degrees off where it looks is
-            /// relaunched once, so the client draws the turn. Training never has a client and never relaunches for
-            /// it; the realm's MoveBlock keeps the same threshold (movement-smooth A3).
-            float ShownFacingRelaunchDeg = 20.0f;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -1508,7 +1502,6 @@ namespace Animus::Curriculum
             f("Markers.StopNear", tuning.Markers.StopNear);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
-            f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

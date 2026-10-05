@@ -55,6 +55,9 @@
 #include "WorldGlobals.h"
 #include "WorldPacket.h"
 #include "WorldSocket.h"
+#include "ClientOrders.h"
+#include "FlagRules.h"
+#include "PlayerLink.h"
 #include "WorldState.h"
 #include <zlib.h>
 
@@ -300,11 +303,24 @@ ObjectGuid::LowType WorldSession::GetGuidLow() const
     return GetPlayer() ? GetPlayer()->GetGUID().GetCounter() : 0;
 }
 
+void WorldSession::EnableMovementOrders()
+{
+    if (!_movementOrders)
+        _movementOrders = std::make_unique<Animus::Client::Inbox>();
+}
+
 /// Send a packet to the client
 void WorldSession::SendPacket(WorldPacket const* packet)
 {
     if (!m_Socket)
+    {
+        // Forge: a sim session keeps its player's movement orders for the player controller to answer
+        // (EnableMovementOrders); every other packet is dropped as before, with nothing read or allocated.
+        uint16 const opcode = packet->GetOpcode();
+        if (_movementOrders && opcode != SMSG_TIME_SYNC_REQ && Animus::Client::Answers(opcode))
+            Animus::Movement::QueueOrder(*_movementOrders, *packet, _player ? _player->GetGUID().GetRawValue() : 0);
         return;
+    }
 
 #if defined(ACORE_DEBUG)
     // Code for network use statistic
@@ -1111,83 +1127,30 @@ void WorldSession::ReadMovementInfo(WorldPacket& data, MovementInfo* mi)
     if (mi->HasMovementFlag(MOVEMENTFLAG_SPLINE_ELEVATION))
         data >> mi->splineElevation;
 
-    //! Anti-cheat checks. Please keep them in seperate if () blocks to maintain a clear overview.
-    //! Might be subject to latency, so just remove improper flags.
-#ifdef ACORE_DEBUG
-#define REMOVE_VIOLATING_FLAGS(check, maskToRemove) \
-    { \
-        if (check) \
-        { \
-            LOG_DEBUG("entities.unit", "WorldSession::ReadMovementInfo: Violation of MovementFlags found ({}). " \
-                "MovementFlags: {}, MovementFlags2: {} for player {}. Mask {} will be removed.", \
-                STRINGIZE(check), mi->GetMovementFlags(), mi->GetExtraMovementFlags(), GetPlayer()->GetGUID().ToString(), maskToRemove); \
-            mi->RemoveMovementFlag((maskToRemove)); \
-        } \
+    //! Anti-cheat checks: improper flags are removed (they may be latency, not cheating). The rules are the shared
+    //! Animus::Movement::SanitizeFlags (FlagRules.h), so the forge's player controller is stripped by the same code.
+    SanitizeMovementFlags(*mi);
+}
+
+void WorldSession::SanitizeMovementFlags(MovementInfo& mi) const
+{
+    Player const* player = GetPlayer();
+    Animus::Movement::FlagFacts facts;
+    if (player)
+    {
+        facts.HoverAura = player->HasHoverAura();
+        facts.WaterWalkAura = player->HasWaterWalkAura();
+        facts.GhostAura = player->HasGhostAura();
+        facts.FeatherFallAura = player->HasFeatherFallAura();
+        facts.FlyAura = player->m_mover->HasFlyAura() || player->m_mover->HasIncreaseMountedFlightSpeedAura();
+        facts.SplineRunning = player->movespline->Initialized() && !player->movespline->Finalized();
     }
-#else
-#define REMOVE_VIOLATING_FLAGS(check, maskToRemove) \
-        if (check) \
-            mi->RemoveMovementFlag((maskToRemove));
-#endif
-
-    /*! This must be a packet spoofing attempt. MOVEMENTFLAG_ROOT sent from the client is not valid
-        in conjunction with any of the moving movement flags such as MOVEMENTFLAG_FORWARD.
-        It will freeze clients that receive this player's movement info.
-    */
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_ROOT),
-        MOVEMENTFLAG_ROOT);
-
-    //! Cannot hover without SPELL_AURA_HOVER
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_HOVER) && !GetPlayer()->HasHoverAura(),
-        MOVEMENTFLAG_HOVER);
-
-    //! Cannot ascend and descend at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_ASCENDING) && mi->HasMovementFlag(MOVEMENTFLAG_DESCENDING),
-        MOVEMENTFLAG_ASCENDING | MOVEMENTFLAG_DESCENDING);
-
-    //! Cannot move left and right at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_LEFT) && mi->HasMovementFlag(MOVEMENTFLAG_RIGHT),
-        MOVEMENTFLAG_LEFT | MOVEMENTFLAG_RIGHT);
-
-    //! Cannot strafe left and right at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_STRAFE_LEFT) && mi->HasMovementFlag(MOVEMENTFLAG_STRAFE_RIGHT),
-        MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT);
-
-    //! Cannot pitch up and down at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_PITCH_UP) && mi->HasMovementFlag(MOVEMENTFLAG_PITCH_DOWN),
-        MOVEMENTFLAG_PITCH_UP | MOVEMENTFLAG_PITCH_DOWN);
-
-    //! Cannot move forwards and backwards at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FORWARD) && mi->HasMovementFlag(MOVEMENTFLAG_BACKWARD),
-        MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD);
-
-    //! Cannot walk on water without SPELL_AURA_WATER_WALK
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_WATERWALKING) &&
-        !GetPlayer()->HasWaterWalkAura() &&
-        !GetPlayer()->HasGhostAura(),
-        MOVEMENTFLAG_WATERWALKING);
-
-    //! Cannot feather fall without SPELL_AURA_FEATHER_FALL
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FALLING_SLOW) && !GetPlayer()->HasFeatherFallAura(),
-        MOVEMENTFLAG_FALLING_SLOW);
-
-    /*! Cannot fly if no fly auras present. Exception is being a GM.
-        Note that we check for account level instead of Player::IsGameMaster() because in some
-        situations it may be feasable to use .gm fly on as a GM without having .gm on,
-        e.g. aerial combat.
-    */
-
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FLYING | MOVEMENTFLAG_CAN_FLY) && GetSecurity() == SEC_PLAYER && !GetPlayer()->m_mover->HasFlyAura() && !GetPlayer()->m_mover->HasIncreaseMountedFlightSpeedAura(),
-        MOVEMENTFLAG_FLYING | MOVEMENTFLAG_CAN_FLY);
-
-    //! Cannot fly and fall at the same time
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_CAN_FLY | MOVEMENTFLAG_DISABLE_GRAVITY) && mi->HasMovementFlag(MOVEMENTFLAG_FALLING),
-        MOVEMENTFLAG_FALLING);
-
-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_SPLINE_ENABLED) &&
-        (!GetPlayer()->movespline->Initialized() || GetPlayer()->movespline->Finalized()), MOVEMENTFLAG_SPLINE_ENABLED);
-
-#undef REMOVE_VIOLATING_FLAGS
+    facts.Privileged = GetSecurity() != SEC_PLAYER;
+    uint32 const flags = Animus::Movement::SanitizeFlags(mi.GetMovementFlags(), facts);
+    if (flags != mi.GetMovementFlags())
+        LOG_DEBUG("entities.unit", "WorldSession::ReadMovementInfo: violating MovementFlags {} of player {}: {} kept",
+            mi.GetMovementFlags(), player ? player->GetGUID().ToString() : std::string("?"), flags);
+    mi.SetMovementFlags(flags);
 }
 
 void WorldSession::WriteMovementInfo(WorldPacket* data, MovementInfo* mi)

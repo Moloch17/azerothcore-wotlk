@@ -32,7 +32,6 @@
 #include "SpellChecks.h"
 #include "Item.h"
 #include "Layout.h"
-#include "RunCourse.h"
 #include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
@@ -183,42 +182,6 @@ namespace Animus::Curriculum::Encoding
     bool CastHoldsFeet(Player const* bot)
     {
         return bot && bot->IsNonMeleeSpellCast(false, false, true);
-    }
-
-    bool ReaimRun(Player* bot, float facing)
-    {
-        if (!bot || !bot->movespline->ReaimFacing(facing))
-            return false;
-        // The spline writes initialOrientation onto the unit only on the next world tick
-        // (Unit::UpdateSplinePosition); a press this decision must not wait for it. Not shown to clients: they are
-        // drawing this unit along a monster-move spline, and a facing packet in the middle of one is unverified --
-        // the realm's TurnShown sends none while a spline runs either. They see the head at the next launch.
-        if (std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI)) - float(M_PI))
-            > 0.001f)
-            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
-        return true;
-    }
-
-    void TurnOnSpot(Player* bot, float facing)
-    {
-        if (!bot || std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI))
-            - float(M_PI)) <= 0.001f)
-            return;
-        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
-    }
-
-    void ShowFacing(Player* bot, float shown)
-    {
-        if (!bot || !ForgeCore::HasClients())
-            return;
-        // The shown angle goes out in an ordinary facing packet; the unit's orientation is put back at once.
-        float const decided = bot->GetOrientation();
-        bot->SetOrientation(shown);
-        WorldPacket data(MSG_MOVE_SET_FACING, 64);
-        data << bot->GetPackGUID();
-        bot->BuildMovementPacket(&data);
-        bot->SetOrientation(decided);
-        bot->SendMessageToSet(&data, false);
     }
 
     /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
@@ -1007,52 +970,6 @@ namespace Animus::Curriculum::Encoding
         init.Launch();
     }
 
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
-    {
-        // Straight there, no pathfinding: the walkable mesh stops at the waterline -- mmaps drops the terrain
-        // under real liquid -- so a pathfound step into a lake has nowhere to land and the seat stands on the
-        // shore instead. That was the whole of why no seat ever swam: swimming needed the seat to be in water
-        // already, and getting in was a ground move the mesh would not take.
-        //
-        // No SetFly: a swimming unit is not a flying one, and telling the client otherwise is a different bug.
-        bot->GetMotionMaster()->Clear();
-        if (facing)
-        {
-            // Same as MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the
-            // spline still in flight, then hold it for the spline's whole life.
-            bot->DisableSpline();
-            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
-        }
-
-        ::Movement::MoveSplineInit init(bot);
-        init.MoveTo(x, y, z, false, true);
-        if (facing)
-        {
-            init.SetOrientationFixed(true);
-            init.SetFacing(*facing);
-        }
-        if (velocity > 0.0f)
-            init.SetVelocity(velocity);
-        init.Launch();
-    }
-
-    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
-    {
-        // As MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the spline in
-        // flight, then hold it for the run's whole life.
-        bot->GetMotionMaster()->Clear();
-        bot->DisableSpline();
-        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
-
-        ::Movement::MoveSplineInit init(bot);
-        init.MovebyPath(points);
-        init.SetOrientationFixed(true);
-        init.SetFacing(facing);
-        if (velocity > 0.0f)
-            init.SetVelocity(velocity);
-        init.Launch();
-    }
-
     void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points)
     {
         bot->GetMotionMaster()->Clear();
@@ -1060,53 +977,6 @@ namespace Animus::Curriculum::Encoding
         path.insert(path.end(), points.begin(), points.end());
         ::Movement::MoveSplineInit init(bot);
         init.MovebyPath(path);
-        init.Launch();
-    }
-
-    float CourseAhead(Unit const* bot, uint32 aheadMs)
-    {
-        if (std::optional<float> const course = RunCourse(*bot->movespline, aheadMs))
-            return Position::NormalizeOrientation(*course);
-        G3D::Vector3 const end = bot->movespline->FinalDestination();
-        return bot->GetAbsoluteAngle(end.x, end.y);
-    }
-
-    float ClimbAhead(Unit const* bot, uint32 aheadMs)
-    {
-        if (std::optional<float> const climb = RunClimb(*bot->movespline, aheadMs))
-            return *climb;
-        G3D::Vector3 const end = bot->movespline->FinalDestination();
-        float const flat = bot->GetExactDist2d(end.x, end.y);
-        return flat > 0.1f ? std::atan2(end.z - bot->GetPositionZ(), flat) : 0.0f;
-    }
-
-    void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)
-    {
-        // MotionMaster::MoveJump would do most of this, and cannot be used: MoveJumpTo refuses players outright
-        // ("this function may make players fall below map") and MoveJump sets no orientation-fixed flag, so the
-        // spline would go back to writing the direction of travel onto the seat's orientation -- the exact bug
-        // that made a held bearing spiral. A jump is built here for the same reason MoveTo is.
-        //
-        // No pathfinding, deliberately: a jump is the one move that leaves the navmesh, and asking the
-        // pathfinder to route it would either refuse it or walk the seat round. Whether there is anywhere to
-        // land is decided before this is called, because nothing here can undo a bad landing.
-        bot->GetMotionMaster()->Clear();
-        bot->DisableSpline();
-        if (facing)
-            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
-
-        float const moveTimeHalf = speedZ / float(::Movement::gravity);
-        float const maxHeight = -::Movement::computeFallElevation(moveTimeHalf, false, -speedZ);
-
-        ::Movement::MoveSplineInit init(bot);
-        init.MoveTo(x, y, z, false);
-        init.SetParabolic(maxHeight, 0.0f);
-        init.SetVelocity(speedXY);
-        if (facing)
-        {
-            init.SetOrientationFixed(true);
-            init.SetFacing(*facing);
-        }
         init.Launch();
     }
 
@@ -1172,53 +1042,6 @@ namespace Animus::Curriculum::Encoding
         if (healthFraction && bot->GetMaxHealth())
             *healthFraction = float(before - std::min(before, bot->GetHealth())) / float(bot->GetMaxHealth());
         return true;
-    }
-
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
-    {
-        if (facing)
-        {
-            FlyAlong(bot, { G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()),
-                G3D::Vector3(x, y, z) }, *facing, velocity);
-            return;
-        }
-        bot->GetMotionMaster()->Clear();
-        ::Movement::MoveSplineInit init(bot);
-        init.MoveTo(x, y, z, false, true);
-        init.SetFly();
-        if (velocity > 0.0f)
-            init.SetVelocity(velocity);
-        init.Launch();
-    }
-
-    void FlyAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
-    {
-        // SetFly puts the spline in Catmullrom mode, and Spline::init_spline places the virtual first control point
-        // at controls[0] - (cos(initialOrientation), sin(initialOrientation)): launched with the head off the way
-        // the path leaves, the start of the flight bends toward the head. So the unit is turned along the first leg
-        // for the launch -- the curve is built then and never again -- and the head is put where the seat looks
-        // straight after (MoveSpline::ReaimFacing), which turns the head and not the path. Flights used to face
-        // along the path for this reason, so a held head in the air was the seat's belief and not the world's.
-        bot->GetMotionMaster()->Clear();
-        bot->DisableSpline();
-        float along = facing;
-        for (std::size_t i = 1; i < points.size(); ++i)
-            if (std::fabs(points[i].x - points[0].x) + std::fabs(points[i].y - points[0].y) > 0.01f)
-            {
-                along = std::atan2(points[i].y - points[0].y, points[i].x - points[0].x);
-                break;
-            }
-        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), along);
-
-        ::Movement::MoveSplineInit init(bot);
-        init.MovebyPath(points);
-        init.SetFly();
-        init.SetOrientationFixed(true);
-        init.SetFacing(facing);
-        if (velocity > 0.0f)
-            init.SetVelocity(velocity);
-        init.Launch();
-        ReaimRun(bot, facing);
     }
 
     bool PetAttack(Player* bot, Unit* target)

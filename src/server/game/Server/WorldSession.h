@@ -53,6 +53,11 @@ class Warden;
 class WorldPacket;
 class WorldSocket;
 class AsynchPetSummon;
+
+namespace Animus::Client
+{
+    class Inbox;
+}
 struct AreaTableEntry;
 struct AuctionEntry;
 struct DeclinedName;
@@ -433,6 +438,9 @@ public:
     void SendAddonsInfo();
 
     void ReadMovementInfo(WorldPacket& data, MovementInfo* mi);
+    /// ReadMovementInfo's removal of violating flags (Animus::Movement::SanitizeFlags), for any report a server takes
+    /// -- the forge's controller reports (PlayerLink) as well as a client's packets.
+    void SanitizeMovementFlags(MovementInfo& mi) const;
     void WriteMovementInfo(WorldPacket* data, MovementInfo* mi);
     void SynchronizeMovement(MovementInfo& movementInfo);
     void HandleMoverRelocation(MovementInfo& movementInfo, Unit* mover);
@@ -492,6 +500,12 @@ public:
     /// writes, which would otherwise pile up in the async queue at the rate bots are rebuilt.
     void SetSimSession(bool sim) { m_simSession = sim; }
     [[nodiscard]] bool IsSimSession() const { return m_simSession; }
+    /// Forge: the server's movement orders to this sim session's player (a root, a speed, a knockback, flying, water
+    /// walking, feather fall, hover, a near teleport), kept as they are sent instead of dropped with the rest of its
+    /// packets, for the player controller to answer as a client would (Animus::Movement::ServerOrders, Client::Order).
+    /// Null until EnableMovementOrders.
+    void EnableMovementOrders();
+    [[nodiscard]] Animus::Client::Inbox* MovementOrders() const { return _movementOrders.get(); }
 
     std::string const& GetRemoteAddress() { return m_Address; }
     void SetPlayer(Player* player);
@@ -1298,6 +1312,7 @@ private:
     bool m_playerRecentlyLogout;
     bool m_playerSave;
     bool m_simSession = false;                          // Forge: see SetSimSession
+    std::unique_ptr<Animus::Client::Inbox> _movementOrders;     // Forge: see EnableMovementOrders
     LocaleConstant m_sessionDbcLocale;
     LocaleConstant m_sessionDbLocaleIndex;
     std::atomic<uint32> m_latency;

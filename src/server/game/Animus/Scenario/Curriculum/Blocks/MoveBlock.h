@@ -288,13 +288,7 @@ namespace Animus::Curriculum
         /// prints is what a seat standing there would sense and not a second implementation of it.
         static std::string RayReport(Map* map, float x, float y, float z, float facing);
 
-        /// Take the body as the core has it now (Movement::Resync over the seat's map): its position, facing and mode,
-        /// none of the controller's velocity. At an episode's start; every decision until the controller steps the
-        /// body itself (C4), and after that whenever the core moved the seat.
-        static void TakeBody(Player const* bot, Movement::BodyState& body);
-
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
-        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 

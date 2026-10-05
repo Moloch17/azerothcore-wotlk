@@ -610,6 +610,9 @@ TEST(PlayerControllerTest, MovementFlagsAreThePlayersOwn)
     control.Forward = 1;
     control.Strafe = -1;
     control.TurnRate = 1.0f;
+    // The mouse turns the body and reports its facing; only the turn keys set LEFT/RIGHT.
+    EXPECT_EQ(Mv::MovementFlags(body, control, speeds), Mv::Flag::FORWARD | Mv::Flag::STRAFE_LEFT);
+    control.KeyboardTurn = true;
     EXPECT_EQ(Mv::MovementFlags(body, control, speeds),
         Mv::Flag::FORWARD | Mv::Flag::STRAFE_LEFT | Mv::Flag::LEFT);
     body.Kind = Mv::Mode::Swimming;
@@ -617,6 +620,8 @@ TEST(PlayerControllerTest, MovementFlagsAreThePlayersOwn)
     control.Forward = -1;
     control.PitchRate = -0.5f;
     control.Vertical = 1;
+    EXPECT_EQ(Mv::MovementFlags(body, control, speeds), Mv::Flag::BACKWARD | Mv::Flag::ASCENDING | Mv::Flag::SWIMMING);
+    control.KeyboardTurn = true;
     EXPECT_EQ(Mv::MovementFlags(body, control, speeds),
         Mv::Flag::BACKWARD | Mv::Flag::PITCH_DOWN | Mv::Flag::ASCENDING | Mv::Flag::SWIMMING);
     body.Kind = Mv::Mode::Falling;

@@ -82,6 +82,9 @@ Player* Animus::BotFactory::Create(BotSpec const& spec, WorldSession* session)
 
         // No account or character rows exist: on the forge core, logout, play time and instance binds write nothing.
         session->SetSimSession(true);
+        // The server's movement orders to the bot are kept for its player controller to answer as a client would
+        // (a root, a speed, a knockback, flying, ...): without a client they were dropped, and never took effect.
+        session->EnableMovementOrders();
     }
 
     Player* bot = new Player(session);

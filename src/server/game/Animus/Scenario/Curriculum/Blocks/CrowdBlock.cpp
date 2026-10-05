@@ -17,7 +17,6 @@
  */
 
 #include "CrowdBlock.h"
-#include "MoveKeep.h"
 #include "MoveSpline.h"
 #include "Creature.h"
 #include "DBCStores.h"
@@ -202,7 +201,10 @@ void Animus::Curriculum::CrowdBlock::BeforeApply(SeatView& view, SeatActionResul
     }
     G3D::Vector3 const end = bot->movespline->FinalDestination();
     float const remaining = bot->GetExactDist(end.x, end.y, end.z);
-    if (MoveKeep::CoastsTooFar(remaining, bot->movespline->Velocity(), view.DecisionMs))
+    // More than two decisions of travel left: stopped rather than left to coast (the old run keep's rule, kept here
+    // until C9 strips this run with the rest of the block's engine moves).
+    float const velocity = bot->movespline->Velocity();
+    if (velocity > 0.0f && remaining / velocity * 1000.0f > float(2 * view.DecisionMs))
         return;
     WalkAdvance(view);
 }

@@ -20,6 +20,7 @@
 #include "GpuRuntime.h"
 #include "LayeredField.h"
 #include "MoveBlock.h"
+#include "ReportCadence.h"
 #include "ProbeBake.h"
 #include "CurriculumTuning.h"
 #include "EncoderSupport.h"
@@ -145,6 +146,14 @@ AnimusForge::Forge* AnimusForge::Forge::Instance()
 void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
+    // The player controller's client constants, once: what training moves and reports seats with (player-controller).
+    LOG_INFO("module.animus", "Player controller: step up {:.4f} yd (the client's max(radius + 1/720, tan 50), "
+        "provisional until C6's replay), jump {:.4f} yd/s, swim jump {:.4f}; reports at the client's cadence -- a change at once, "
+        "a heartbeat {} ms after the last packet while moving, SET_FACING / SET_PITCH at {:.1f} rad from the last "
+        "packet's facing, found at their exact moment in sub-steps of at most {:.0f} ms (independent of the tick)",
+        Animus::Movement::STEP_UP, Animus::Movement::JUMP_SPEED, Animus::Movement::SWIM_JUMP_SPEED,
+        Animus::Movement::Cadence::HEARTBEAT_MS, Animus::Movement::Cadence::MOUSE_FACING_THRESHOLD,
+        Animus::Movement::MAX_SUBSTEP * 1000.0f);
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
     // Fields with tables too: where a seat stands on a grid with no table, the field works the same dense probe out

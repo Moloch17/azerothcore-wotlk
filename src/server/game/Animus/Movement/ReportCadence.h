@@ -19,6 +19,7 @@
 #define ANIMUS_MOVEMENT_REPORT_CADENCE_H
 
 #include "PlayerController.h"
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -34,6 +35,15 @@ namespace Animus::Movement::Cadence
     /// ... while any of these is set (0x6f0b0f: test [mover+0x44], 0xc0100f): moving, falling, ascending or
     /// descending. Turning on the spot alone is not moving: it reports its start and stop, no heartbeats.
     constexpr uint32_t HEARTBEAT_FLAGS = 0x00c0100f;
+
+    /// **The mouse-look's facing report** (client-constants.md "Facing"): a turn by the mouse sends MSG_MOVE_SET_FACING
+    /// on the first update where |yaw - the yaw of the last movement packet of any kind| reaches this (0xa349f0, the
+    /// test at 0x71ae80); SET_PITCH the same, swimming or flying only. No timer: at 90 degrees a second that is every
+    /// 63.7 ms, at 30 every 191 ms. The difference is the raw one, unwrapped, so turning past 0 / 2pi always sends.
+    /// The policy's turn and pitch rates are the mouse's, so this is how they are reported; START/STOP_TURN stay in
+    /// the table for a replayed keyboard player (C6).
+    constexpr float MOUSE_FACING_THRESHOLD = 0.1f;
+    constexpr float TWO_PI = 6.2831853f;
 
     /// The client's movement opcodes (the core's values, Server/Protocol/Opcodes.h), mirrored to stay core-free.
     namespace Op
@@ -96,6 +106,63 @@ namespace Animus::Movement::Cadence
         if (landed)
             ops.push_back(Op::FALL_LAND);
         return ops;
+    }
+
+    /// The first moment, within `horizon` seconds, at which a turn at `rate` (rad/s, + left) from `yaw` (0..2pi) puts
+    /// the facing MOUSE_FACING_THRESHOLD from `reported` (the last packet's), and the facing then; At < 0 when none.
+    /// At 0 when it is already that far. Turning past 0 or 2pi is a crossing at once (the raw difference jumps).
+    struct Crossing
+    {
+        float At = -1.0f;
+        float Value = 0.0f;
+    };
+
+    [[nodiscard]] inline Crossing NextFacingCrossing(float yaw, float rate, float reported, float horizon)
+    {
+        Crossing out;
+        if (std::fabs(yaw - reported) >= MOUSE_FACING_THRESHOLD)
+        {
+            out.At = 0.0f;
+            out.Value = yaw;
+            return out;
+        }
+        if (rate == 0.0f)
+            return out;
+        float const target = rate > 0.0f ? reported + MOUSE_FACING_THRESHOLD : reported - MOUSE_FACING_THRESHOLD;
+        float const threshold = (target - yaw) / rate;
+        float const wrap = rate > 0.0f ? (TWO_PI - yaw) / rate : yaw / -rate;
+        float const at = std::min(threshold, wrap);
+        if (at > horizon)
+            return out;
+        out.At = at;
+        if (at == wrap && wrap <= threshold)
+            out.Value = rate > 0.0f ? 0.0f : std::nextafter(TWO_PI, 0.0f);     // just past the wrap
+        else
+            out.Value = std::fmod(yaw + rate * at + TWO_PI, TWO_PI);
+        return out;
+    }
+
+    /// The same for the pitch (swimming or flying), which does not wrap: held at +-`limit`, it stops crossing.
+    [[nodiscard]] inline Crossing NextPitchCrossing(float pitch, float rate, float reported, float horizon, float limit)
+    {
+        Crossing out;
+        if (std::fabs(pitch - reported) >= MOUSE_FACING_THRESHOLD)
+        {
+            out.At = 0.0f;
+            out.Value = pitch;
+            return out;
+        }
+        if (rate == 0.0f)
+            return out;
+        float const target = rate > 0.0f ? reported + MOUSE_FACING_THRESHOLD : reported - MOUSE_FACING_THRESHOLD;
+        if (target > limit || target < -limit)
+            return out;
+        float const at = (target - pitch) / rate;
+        if (at > horizon)
+            return out;
+        out.At = at;
+        out.Value = target;
+        return out;
     }
 
     /// Whether a heartbeat is due at `nowMs`, the last movement packet having gone at `lastSendMs`.
