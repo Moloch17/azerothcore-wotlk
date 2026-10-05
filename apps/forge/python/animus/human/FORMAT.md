@@ -172,3 +172,18 @@ Bots are sampled once a decision (`AnimusForge.DecisionMs`, 250 ms); humans are 
 | `<out>/human_trips.json` | `animus.human` | forge arenas (TravelEncounter trip pools) | per map: trips `{start:[x,y,z], end:[x,y,z], seconds, mode, path:[[x,y,z],...]}` |
 | `<out>/human_hard_spots.json` | `animus.human` | forge Go-Explore / start pools | per map: `{pos:[x,y,z], kind: death/stuck/fall/drown, count}` |
 | `<run>/eval_motion.npz` | learner (each movement-stage eval) | `animus.human` realism report | bot windows and contexts in the same layout as human_motion_windows |
+
+### human_trips.json and human_hard_spots.json
+
+Both are wrapped as `{"format": 1, "maps": {"<map id as a string>": [entry, ...]}}` and hold nothing else; a reader
+refuses the whole file over one malformed entry, so the writer validates every entry first. Build metadata (time,
+source range, counts, death causes) goes to the sidecars `human_trips.meta.json` / `human_hard_spots.meta.json`.
+
+```
+trip      {"start": [x, y, z], "end": [x, y, z], "seconds": s (>= 0), "mode": "ground"|"swim"|"fly"|"mounted",
+           "path": [[x, y, z], ...] (optional)}
+hard spot {"pos": [x, y, z], "kind": "death"|"stuck"|"fall"|"drown", "count": n (>= 1)}
+```
+
+`mode` is the trip's dominant mode; a ride mostly mounted on the ground is `mounted` (a flight is `fly` mounted or
+not).
