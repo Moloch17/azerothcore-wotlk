@@ -48,4 +48,6 @@ TEST(MapWorldQueryTest, SweepShareStopsTheBodysFrontAtTheWall)
     EXPECT_FLOAT_EQ(Mv::SweepShare(1.5f, 2.0f, 0.5f), 0.5f);
     EXPECT_FLOAT_EQ(Mv::SweepShare(0.3f, 2.0f, 0.5f), 0.0f);
     EXPECT_FLOAT_EQ(Mv::SweepShare(0.0f, 0.0f, 0.5f), 1.0f);
+    // A ray that hit nothing, its length rounded a hair short in float: free, not a wall.
+    EXPECT_FLOAT_EQ(Mv::SweepShare(2.5f - 0.0001f, 2.0f, 0.5f), 1.0f);
 }

@@ -136,7 +136,9 @@ namespace
             { 642.0f, -4185.0f, 15.0f, 0.0f },    { 633.0f, -4298.0f, 18.0f, 0.0f },
             // Dustwallow Marsh: broken shore (the markers' walking way never swims: TravelPlaceRules::DryOnly)
             { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
-            { -2851.0f, -3650.0f, 33.0f, 0.0f },  { -2987.0f, -3940.0f, 39.0f, 0.0f },
+            { -2851.0f, -3650.0f, 33.0f, 0.0f },
+            // (-2987, -3940, 39) at Witch Hill was left out (dry check, 2026-10-05): no floor within a step of it
+            // (the probe), the terrain 10 yd lower under 1.3 yd of marsh water (the map tiles).
             // Cliff feet
             { -2032.2f, -3618.1f, 22.3f, 0.0f },  { -2563.7f, -3798.6f, 7.0f, 0.0f },
             { 190.8f, -4516.5f, 27.1f, 0.0f },    { 479.5f, -4658.7f, 41.7f, 0.0f },

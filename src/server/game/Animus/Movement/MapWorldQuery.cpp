@@ -54,7 +54,12 @@ float Animus::Movement::SweepShare(float free, float length, float radius)
 {
     if (length <= 1e-6f)
         return 1.0f;
-    if (free >= length + radius)
+    // A ray that met nothing comes back as its own length, recomputed from the end point's coordinates; in float at
+    // world coordinates of a few thousand that is a ten-thousandth of a yard short about half the time, and with
+    // six rays a sweep nearly always read as blocked by a hair: every step on open ground was "against a wall"
+    // (wall_seconds 50 of 60 s on the plains, dry check 2026-10-05). Within SWEEP_SLACK of the full reach is free.
+    constexpr float SWEEP_SLACK = 0.001f;
+    if (free >= length + radius - SWEEP_SLACK)
         return 1.0f;
     return std::clamp((free - radius) / length, 0.0f, 1.0f);
 }

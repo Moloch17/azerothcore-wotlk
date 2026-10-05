@@ -40,6 +40,8 @@ namespace
     constexpr float STOREY = 3.0f;
     /// Indoors, a marker on the seat's own floor may sit a stair or two up from its feet.
     constexpr float INDOOR_LEVEL = 2.5f;
+    /// A ledge's drop window is at least this deep, yards.
+    constexpr float LEDGE_WINDOW = 12.0f;
 
     float Lerp(float first, float last, float t)
     {
@@ -328,10 +330,13 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
         {
             // Below a ledge on the straight line: the drop is the shortcut, the way round (at least LedgeDetour times
             // the line) takes no drop past SafeDrop.
+            // The drop window starts where ledges do (Travel.LedgeDropMin) and is at least LEDGE_WINDOW deep: the first
+            // rungs' one-to-six yards found no ledge from the ledge tops (drops of 11-44 yd), and the stage's setup
+            // failed on one (dry check, 2026-10-05).
             rules.Ledge = true;
             rules.LedgeDetour = travel.LedgeDetour;
-            rules.DropMin = std::max(markers.Task.HeightMin, MoveBlock::MAX_STEP);
-            rules.DropMax = markers.Task.HeightMax;
+            rules.DropMin = std::max({ markers.Task.HeightMin, MoveBlock::MAX_STEP, travel.LedgeDropMin });
+            rules.DropMax = std::max(markers.Task.HeightMax, rules.DropMin + LEDGE_WINDOW);
             rules.RouteMaxDrop = vertical.SafeDrop;
         }
         else if (indoors)

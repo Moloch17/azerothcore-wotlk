@@ -18,6 +18,8 @@
 #include "FollowEncounter.h"
 #include "MarkerEncounter.h"
 #include "MarkerReach.h"
+#include "StageScenario.h"
+#include "StageState.h"
 #include <functional>
 #include "UnitDefines.h"
 #include "gtest/gtest.h"
@@ -323,4 +325,24 @@ TEST(MarkerEncounterTest, FollowBandsAndTrips)
     EXPECT_EQ(FollowEncounter::Band(31.0f, 3.0f, 10.0f, 30.0f), 3u);
     EXPECT_FLOAT_EQ(FollowEncounter::TripFurthest(0, 6, 60.0f, 200.0f), 60.0f);
     EXPECT_FLOAT_EQ(FollowEncounter::TripFurthest(5, 6, 60.0f, 200.0f), 200.0f);
+}
+
+// course_kinks reads the body's way between ticks (the ground step zeroes its velocity): a straight run never kinks,
+// a 90 degree turn within a tick does, and standing still forgets the course.
+TEST(MarkerEncounterTest, CourseKinksReadTheWayBetweenTicks)
+{
+    using Animus::Curriculum::SeatState;
+    using Animus::Curriculum::StageScenario;
+    SeatState seat;
+    float x = 0.0f;
+    EXPECT_FALSE(StageScenario::CourseKink(seat, x, 0.0f, 50));
+    for (int tick = 0; tick < 5; ++tick)
+    {
+        x += 0.35f;                                     // 7 yd/s for 50 ms
+        EXPECT_FALSE(StageScenario::CourseKink(seat, x, 0.0f, 50));
+    }
+    EXPECT_TRUE(StageScenario::CourseKink(seat, x, 0.35f, 50));     // a right angle within a tick
+    EXPECT_FALSE(StageScenario::CourseKink(seat, x, 0.70f, 50));    // and on along the new course
+    EXPECT_FALSE(StageScenario::CourseKink(seat, x, 0.70f, 50));    // stopped: no course
+    EXPECT_FALSE(StageScenario::CourseKink(seat, x + 0.35f, 0.70f, 50)); // moving again: a new course, not a kink
 }

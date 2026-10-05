@@ -294,6 +294,9 @@ namespace Animus::Curriculum
         static void StartMover(SeatState& seat, Player* bot, uint32 nowMs);
         /// The controller's columns, after a tick (wall, stuck, course kinks).
         static void TrackController(SeatState& seat, uint32 diffMs);
+        /// Whether the body's course, its way from the last tick to (x, y) over `diffMs`, turned more than 20 degrees
+        /// from the tick before while moving (half a yard a second or more); keeps the course on the seat.
+        static bool CourseKink(SeatState& seat, float x, float y, uint32 diffMs);
         /// When a body began to fall, and the one-off line for a seat falling with no floor anywhere under it.
         static void WatchFall(SeatState& seat, Player* bot, uint32 nowMs, std::string const& arena, bool evaluating);
         /// SeatBot when it is in the world, else null: Env::FindBot's answer for a seat, without the global object
