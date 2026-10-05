@@ -142,8 +142,9 @@ namespace
     }
 }
 
-// The run speeds by the client's rules: forward run, back at run-back, strafe at run, a diagonal no faster (each
-// component times 0.7071), walk at walk speed.
+// The run speeds by the client's rules (fn 0x987570): forward run, back (with or without a strafe) at min(run, run
+// back), strafe at run, a diagonal no faster (each component times 0.7071), and walking caps every direction --
+// backward included -- at min(run, walk).
 TEST(PlayerControllerTest, GroundSpeedsFollowTheClientsRules)
 {
     FakeWorld world;
@@ -151,7 +152,8 @@ TEST(PlayerControllerTest, GroundSpeedsFollowTheClientsRules)
     struct Case { int8_t forward, strafe; bool walk; float yards; float x, y; };
     for (Case c : { Case{ 1, 0, false, 7.0f, 7.0f, 0.0f }, Case{ -1, 0, false, 4.5f, -4.5f, 0.0f },
             Case{ 0, 1, false, 7.0f, 0.0f, -7.0f }, Case{ 0, -1, false, 7.0f, 0.0f, 7.0f },
-            Case{ 1, 1, false, 7.0f, 4.9497f, -4.9497f }, Case{ 1, 0, true, 2.5f, 2.5f, 0.0f } })
+            Case{ 1, 1, false, 7.0f, 4.9497f, -4.9497f }, Case{ 1, 0, true, 2.5f, 2.5f, 0.0f },
+            Case{ -1, 1, false, 4.5f, -3.1820f, -3.1820f }, Case{ -1, 0, true, 2.5f, -2.5f, 0.0f } })
     {
         Mv::BodyState body = At(0, 0, 0);
         Mv::ControlState control;
@@ -189,11 +191,12 @@ TEST(PlayerControllerTest, TurningIsTheHeldRateAndTheKeyboardIsSlowedWhileMoving
     EXPECT_NEAR(keys.Yaw, PI * 0.5f * Mv::KEYBOARD_TURN_WHILE_MOVING, 1e-4f);
 }
 
-// A rise up to STEP_UP is walked onto; a higher one is a wall.
+// A rise up to STEP_UP (the client's 1.1917536, C0c) is walked onto; a higher one is a wall. Was 1.5 climbs / 2.0
+// walls under the provisional 1.6: a 1.5 yd crate now needs a jump (apex 1.640), as the client's step rule says.
 TEST(PlayerControllerTest, AStepIsWalkedOntoAndAHigherRiseIsAWall)
 {
     Mv::Speeds const speeds;
-    for (auto [height, climbs] : { std::pair{ 1.5f, true }, std::pair{ 2.0f, false } })
+    for (auto [height, climbs] : { std::pair{ 1.0f, true }, std::pair{ 1.5f, false } })
     {
         FakeWorld world;
         world.Boxes.push_back({ 3.0f, 20.0f, -5.0f, 5.0f, -10.0f, height });
@@ -347,7 +350,9 @@ TEST(PlayerControllerTest, WaterIsSwumAndLeftAtTheShore)
 {
     FakeWorld world;
     world.Ground = [](float x, float) { return x < 5.0f ? 0.0f : x < 25.0f ? -4.0f : 0.0f; };
-    world.Waters.push_back({ 5.0f, 25.0f, -50.0f, 50.0f, -0.2f });
+    // Level with the banks: a swimmer floats with its feet a yard under, so the far bank is a step (1.0 < STEP_UP).
+    // At -0.2 (before C0c) the bank was 1.2 up, now more than the client's step: a wall, taken with the swim jump.
+    world.Waters.push_back({ 5.0f, 25.0f, -50.0f, 50.0f, 0.0f });
     Mv::Speeds const speeds;
     Mv::BodyState body = At(0, 0, 0);
     Mv::ControlState control;
@@ -357,11 +362,29 @@ TEST(PlayerControllerTest, WaterIsSwumAndLeftAtTheShore)
     float const x0 = body.X;
     Drive(body, control, speeds, world, 1.0f);
     EXPECT_NEAR(body.X - x0, speeds.Swim, 0.2f);
-    EXPECT_LE(body.Z, -0.2f - Mv::FLOAT_DEPTH * Mv::Body{}.Height + 1e-4f);    // floats half under
+    EXPECT_LE(body.Z, 0.0f - Mv::FLOAT_DEPTH * Mv::Body{}.Height + 1e-4f);     // floats half under
     Drive(body, control, speeds, world, 4.0f);
     EXPECT_EQ(body.Kind, Mv::Mode::Ground);
     EXPECT_GT(body.X, 25.0f);
     EXPECT_NEAR(body.Z, 0.0f, 1e-4f);
+}
+
+// A bank of terrain more than a step above a swimmer's feet is a wall, not a way out (and not a fall off it).
+TEST(PlayerControllerTest, AHighBankIsAWallToASwimmer)
+{
+    FakeWorld world;
+    world.Ground = [](float x, float) { return x < 5.0f ? -4.0f : 1.0f; };
+    world.Waters.push_back({ -50.0f, 5.0f, -50.0f, 50.0f, 0.0f });
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    Mv::BodyState body = At(0, 0, -Mv::FLOAT_DEPTH * shape.Height);
+    body.Kind = Mv::Mode::Swimming;
+    Mv::ControlState control;
+    control.Forward = 1;
+    Drive(body, control, speeds, world, 3.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Swimming);
+    EXPECT_LT(body.X, 5.0f);
+    EXPECT_TRUE(body.AgainstWall);
 }
 
 // A jump swimming at the surface is the breach: up at 9.0967 out of the water, and back into it.
@@ -390,10 +413,55 @@ TEST(PlayerControllerTest, ASwimJumpAtTheSurfaceBreachesAndLandsBackInTheWater)
     EXPECT_TRUE(body.LandedInWater);
     EXPECT_EQ(body.Kind, Mv::Mode::Swimming);
 
-    // Deep under the surface, no breach (masked; C6 checks what the client does there).
-    Mv::BodyState deep = At(0, 0, -6.0f);
-    deep.Kind = Mv::Mode::Swimming;
-    EXPECT_FALSE(Mv::CanJump(deep, shape, world));
+}
+
+// The client's swim jump has no depth test (fn 0x9883f0, C0c): six yards down it still launches at 9.0967, rises
+// its apex (2.145 yd) through the water and is swimming again on the way down. Was masked below the surface band
+// before C0c.
+TEST(PlayerControllerTest, ASwimJumpUnderwaterIsAHopThroughTheWater)
+{
+    FakeWorld world;
+    world.Ground = [](float, float) { return -20.0f; };
+    world.Waters.push_back({ -50.0f, 50.0f, -50.0f, 50.0f, 0.0f });
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    Mv::BodyState body = At(0, 0, -6.0f);
+    body.Kind = Mv::Mode::Swimming;
+    ASSERT_TRUE(Mv::CanJump(body, shape, world));
+    Mv::ControlState control;
+    control.Jump = true;
+    float apex = body.Z;
+    for (int i = 0; i < 200 && !body.Landed; ++i)
+    {
+        Mv::Step(body, control, speeds, shape, world, 0.01f);
+        apex = std::max(apex, body.Z);
+    }
+    EXPECT_NEAR(apex - (-6.0f), Mv::SWIM_JUMP_SPEED * Mv::SWIM_JUMP_SPEED / (2.0f * Mv::GRAVITY), 0.05f);
+    EXPECT_TRUE(body.LandedInWater);
+    EXPECT_EQ(body.Kind, Mv::Mode::Swimming);
+}
+
+// Ascending or descending goes at 45 degrees (fn 0x987700): forward and up each 0.7071 of the speed; up alone is
+// straight up at 0.7071 of it (interpreted, C6).
+TEST(PlayerControllerTest, AscendingIsAtFortyFiveDegrees)
+{
+    FakeWorld world;
+    world.Ground = [](float, float) { return -50.0f; };
+    world.Waters.push_back({ -100.0f, 100.0f, -100.0f, 100.0f, 0.0f });
+    Mv::Speeds const speeds;
+    Mv::BodyState body = At(0, 0, -20.0f);
+    body.Kind = Mv::Mode::Swimming;
+    Mv::ControlState control;
+    control.Vertical = 1;
+    Drive(body, control, speeds, world, 1.0f);
+    EXPECT_NEAR(body.Z - (-20.0f), Mv::VERTICAL_SHARE * speeds.Swim, 1e-3f);
+    EXPECT_NEAR(body.X, 0.0f, 1e-4f);
+    Mv::BodyState both = At(0, 0, -20.0f);
+    both.Kind = Mv::Mode::Swimming;
+    control.Forward = 1;
+    Drive(both, control, speeds, world, 1.0f);
+    EXPECT_NEAR(both.X, Mv::VERTICAL_SHARE * speeds.Swim, 1e-3f);
+    EXPECT_NEAR(both.Z - (-20.0f), Mv::VERTICAL_SHARE * speeds.Swim, 1e-3f);
 }
 
 // A breach next to a low shore lands on it.
@@ -524,6 +592,9 @@ TEST(PlayerControllerTest, JumpAndVerticalSteeringAreOnlyWhereTheyDoSomething)
     Mv::BodyState falling = ground;
     falling.Kind = Mv::Mode::Falling;
     EXPECT_FALSE(Mv::CanJump(falling, shape, world));
+    Mv::BodyState swimming = ground;
+    swimming.Kind = Mv::Mode::Swimming;
+    EXPECT_TRUE(Mv::CanJump(swimming, shape, world));             // at any depth (C0c)
     Mv::BodyState flying = ground;
     flying.Kind = Mv::Mode::Flying;
     EXPECT_FALSE(Mv::CanJump(flying, shape, world));

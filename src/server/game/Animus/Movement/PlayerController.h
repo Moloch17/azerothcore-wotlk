@@ -56,19 +56,24 @@ namespace Animus::Movement
     /// Pitch limit, radians (the client clamps the look pitch to a quarter turn either way, 0x9e8d88).
     constexpr float PITCH_LIMIT = 1.5707964f;
 
+    /// tan 50 degrees (0xa37f78): the climb of the steepest walkable slope over a yard.
+    constexpr float TAN_WALKABLE = 1.1917536f;
+    /// The highest rise walked onto without a jump: the client's max(radius + 1/720, B x tan 50) (fn 0x761b00, C0c),
+    /// with the mover's B at its default 1.0 (0x6ebd7f) and a player's radius 1/3 (0x6ebd5c): 1.1917536 yd. The
+    /// value's role as the step limit is read from its use beside the walkable test (interpreted; C6 confirms it on
+    /// 0.5 / 1.0 / 1.5 yd steps). B scales with the model (0x6e9570); a scaled body is C6's.
+    constexpr float STEP_UP = TAN_WALKABLE;
+    /// Ascending or descending in water or the air goes at 45 degrees: the facing direction and the vertical each
+    /// times 0.7071 of the speed in force (fn 0x987700, C0c).
+    constexpr float VERTICAL_SHARE = 0.7071068f;
+
     // ------------------------------------------------------------------------------- calibrated (C6), with reasons
-    /// The highest rise walked onto without a jump. Not found in the client statically: the start value is the
-    /// navmesh's walkableClimb (6 cells of 0.2667 yd, mmaps-config.yaml), just under the jump apex (1.640) so that a
-    /// rise a player has to jump onto stays a jump. Logged at startup; C6 measures it against a real client.
-    constexpr float STEP_UP = 1.6f;
     /// Water this deep (of the body's height) is swum, and is walked again only once it is this shallow (the
     /// shore hysteresis the old Steer used: MoveKeep::SWIM_ENTER / SWIM_LEAVE).
     constexpr float SWIM_ENTER = 0.75f;
     constexpr float SWIM_LEAVE = 0.4f;
-    /// A swimmer floats with this share of its body under the surface, and is "at the surface" (may breach with a
-    /// jump) within SURFACE_BAND yards below that. C6 confirms both.
+    /// A swimmer floats with this share of its body under the surface (not found in the client, C0c: C6 confirms).
     constexpr float FLOAT_DEPTH = 0.5f;
-    constexpr float SURFACE_BAND = 0.5f;
     /// The longest step the integrator takes: a world tick longer than this is cut into equal sub-steps of at most
     /// this much, so a 250 ms tick moves a body exactly as five 50 ms ticks do (no tunnelling, falls timed right).
     constexpr float MAX_SUBSTEP = 0.05f;

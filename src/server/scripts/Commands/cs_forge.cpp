@@ -346,6 +346,12 @@ namespace
             Optional<float> facing)
         {
             namespace Mv = Animus::Movement;
+            // It creates grids on the world thread; the console is shared with live training.
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("the controller probe runs only while the forge is idle");
+                return true;
+            }
             Map* map = sMapMgr->CreateBaseMap(mapId);
             if (!map)
             {

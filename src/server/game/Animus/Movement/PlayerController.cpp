@@ -74,7 +74,15 @@ namespace
         // Forward along the look; strafe right is the body's right (-left), level.
         float x = forward * cp * cy + strafe * sy;
         float y = forward * cp * sy - strafe * cy;
-        float z = forward * sp + (pitched ? float(control.Vertical) : 0.0f);
+        float z = forward * sp;
+        if (pitched && control.Vertical != 0)
+        {
+            // Ascend / descend: the client moves at 45 degrees, the horizontal part and the vertical each 0.7071
+            // (0x987700); a vertical press alone goes straight up or down at that share (interpreted, C6).
+            x *= Mv::VERTICAL_SHARE;
+            y *= Mv::VERTICAL_SHARE;
+            z = z * Mv::VERTICAL_SHARE + float(control.Vertical) * Mv::VERTICAL_SHARE;
+        }
         float const length = std::sqrt(x * x + y * y + z * z);
         if (length < 1e-6f)
             return wish;
@@ -85,17 +93,21 @@ namespace
             z /= length;
         }
         float const scale = std::min(1.0f, length);
+        // The speed in force, the client's choice (fn 0x987570): flying and swimming take the back speed (the lower of
+        // the two) when holding back; on the ground walking caps every direction at min(run, walk), and holding back
+        // (with or without a strafe) runs at min(run, run back).
         bool const back = control.Forward < 0;
         switch (mode)
         {
             case Mv::Mode::Swimming:
-                wish.Speed = back ? speeds.SwimBack : speeds.Swim;
+                wish.Speed = back ? std::min(speeds.Swim, speeds.SwimBack) : speeds.Swim;
                 break;
             case Mv::Mode::Flying:
-                wish.Speed = back ? speeds.FlightBack : speeds.Flight;
+                wish.Speed = back ? std::min(speeds.Flight, speeds.FlightBack) : speeds.Flight;
                 break;
             default:
-                wish.Speed = back ? speeds.RunBack : control.Walk ? speeds.Walk : speeds.Run;
+                wish.Speed = control.Walk ? std::min(speeds.Run, speeds.Walk)
+                    : back ? std::min(speeds.Run, speeds.RunBack) : speeds.Run;
                 break;
         }
         wish.X = x / scale;
@@ -340,23 +352,18 @@ namespace
     void SwimStep(Mv::BodyState& body, Mv::ControlState& control, Mv::Speeds const& speeds, Mv::Body const& shape,
         Mv::WorldQuery const& world, float dt)
     {
-        Mv::Liquid const here = world.LiquidAt(body.X, body.Y, body.Z);
-        float const floatZ = here.Present ? here.Level - Mv::FLOAT_DEPTH * shape.Height : body.Z;
-
         if (control.Jump)
         {
+            // The client's swimming jump (fn 0x9883f0, C0c) has no depth or surface test: at any depth it launches the
+            // body up at the swim-jump speed -- out of the water at the surface, a short hop up through the water below
+            // it -- and back to swimming on the way down.
             control.Jump = false;
-            // At the surface: the breach (the client's swimming jump). Below it the press is spent (C6 checks
-            // whether a submerged swim-jump does anything; the action is masked there until then).
-            if (here.Present && body.Z >= floatZ - Mv::SURFACE_BAND)
-            {
-                Wish const level = WishOf(body, control, speeds, Mv::Mode::Ground);
-                float const speed = control.Forward < 0 ? speeds.SwimBack : speeds.Swim;
-                StartFalling(body, level.X * speed * (level.Speed > 0.0f ? 1.0f : 0.0f),
-                    level.Y * speed * (level.Speed > 0.0f ? 1.0f : 0.0f), Mv::SWIM_JUMP_SPEED);
-                FallStep(body, control, speeds, shape, world, dt);
-                return;
-            }
+            Wish const level = WishOf(body, control, speeds, Mv::Mode::Ground);
+            float const speed = level.Speed > 0.0f ? (control.Forward < 0 ? std::min(speeds.Swim, speeds.SwimBack)
+                : speeds.Swim) : 0.0f;
+            StartFalling(body, level.X * speed, level.Y * speed, Mv::SWIM_JUMP_SPEED);
+            FallStep(body, control, speeds, shape, world, dt);
+            return;
         }
 
         Wish const wish = WishOf(body, control, speeds, Mv::Mode::Swimming);
@@ -371,6 +378,14 @@ namespace
 
         Mv::Liquid const there = world.LiquidAt(nx, ny, nz);
         float const bed = world.FloorBelow(nx, ny, nz + Mv::STEP_UP, 1000.0f);
+        float const knee = body.Z + Mv::STEP_UP + 0.05f;
+        if (!HasFloor(bed) && world.InTerrain(nx, ny, knee) && !world.InTerrain(body.X, body.Y, knee))
+        {
+            // A bank of terrain higher than a step above the swimmer: a wall, as on the ground (out over it takes the
+            // swim jump).
+            body.AgainstWall = true;
+            return;
+        }
         if (there.Present)
             nz = std::min(nz, there.Level - Mv::FLOAT_DEPTH * shape.Height);
         if (HasFloor(bed))
@@ -531,14 +546,11 @@ void Animus::Movement::Resync(BodyState& body, float x, float y, float z, float 
         body.Kind = Mode::Falling;
 }
 
-bool Animus::Movement::CanJump(BodyState const& body, Body const& shape, WorldQuery const& world)
+bool Animus::Movement::CanJump(BodyState const& body, Body const& /*shape*/, WorldQuery const& /*world*/)
 {
-    if (body.Kind == Mode::Ground)
-        return true;
-    if (body.Kind != Mode::Swimming)
-        return false;
-    Liquid const liquid = world.LiquidAt(body.X, body.Y, body.Z);
-    return liquid.Present && body.Z >= liquid.Level - FLOAT_DEPTH * shape.Height - SURFACE_BAND;
+    // The client refuses a jump only when FLYING, ROOT or FALLING (0x2001800, fn 0x9883f0): on the ground and
+    // swimming at any depth it jumps (C0c).
+    return body.Kind == Mode::Ground || body.Kind == Mode::Swimming;
 }
 
 bool Animus::Movement::CanSteerVertically(BodyState const& body, Speeds const& speeds)

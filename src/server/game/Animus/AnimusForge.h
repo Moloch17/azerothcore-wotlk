@@ -101,6 +101,8 @@ namespace AnimusForge
         bool CommandExport(std::string scenario, std::string const& checkpoint, LineSink const& out);
         bool CommandClean(std::string const& target, std::string const& scenario, LineSink const& out);
         void CommandProgress(std::optional<uint32> seconds, LineSink const& out);
+        /// No plan running or paused: what a console command that creates grids or moves the world must wait for.
+        [[nodiscard]] bool IsIdle() const { return _state == State::Idle; }
 
     private:
         enum class State : uint8
