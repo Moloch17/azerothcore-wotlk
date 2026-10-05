@@ -105,7 +105,7 @@ def test_every_stage_name_written_down_exists(path):
 # the docs and the conf template can name them before they land. A reserved number is filled by a stage of exactly
 # this name; delete the entry when it lands.
 RESERVED: dict[int, str] = {
-    2: "move2_ground", 3: "move3_vertical", 4: "move4_water", 5: "move5_routes", 6: "move6_mounted", 7: "move7_follow",
+    3: "move3_vertical", 4: "move4_water", 5: "move5_routes", 6: "move6_mounted", 7: "move7_follow",
 }
 
 

@@ -59,6 +59,13 @@ namespace Animus::Curriculum
         Markers,
     };
 
+    /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
+    enum class MarkerCourse : uint8
+    {
+        Open,           // M1: open flat ground, the straight line is the way (Markers.*)
+        Ground,         // M2: broken ground, something in the way; the route is the way (MarkerGround.*)
+    };
+
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
     enum class DummyDrill : uint8
     {
@@ -179,6 +186,8 @@ namespace Animus::Curriculum
         /// questing alone -- a group of its own with its own quest, no director and no teammates. The solo player a
         /// group meets in the world, and the commonest claim to share a place with. Ignored by every other arena.
         uint32 LoneSeats = 0;
+        /// Opposition::Markers: the kind of ground the markers are on, and with it the ladder and the costs.
+        MarkerCourse Course = MarkerCourse::Open;
         /// Opposition::Dummy: what the dummy does. Ignored by every other arena.
         DummyDrill Drill = DummyDrill::Still;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),

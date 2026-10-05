@@ -1,0 +1,28 @@
+# M2 -- ground (movement-curriculum plan §2): real ground, slopes the client can and cannot climb, rocks, ridges, cliff
+# feet and their ramps, getting round things locally and not getting stuck. Markers 20-120 yd off with something in the
+# way (the walking way 1.0-1.6x the straight line and up, MarkerGround.* in the conf template), stopped on inside a
+# yard. Seeds from move1_controls (stage.json's seed chain) and keeps its hyperparameters; what differs is below.
+extends: move1_controls.yaml
+run_name: move2_ground
+
+# A ceiling (plan §4: 250M, expected 2-3 h).
+total_env_steps: 250000000
+
+# Stuck and Wall join the noise prices here (RewardLedger::PricesNoise): free until markers are stopped on 80% of the
+# time, then in to full price -- the same ladder and gate M1 ends on, started again, since the ground is new.
+costs:
+  enabled: true
+  rungs: [0.0, 0.25, 0.5, 1.0]
+  gate_metric: arrived
+  gate_value: 0.8
+
+# The route shaping fades once markers are reached, as M1's straight-line shaping did.
+fade:
+  gate_metric: arrived
+  gate_value: 0.8
+
+eval:
+  report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, detour, time_ratio, overshoot,
+           stop_distance, stuck_seconds, wall_seconds, jumps, course_kinks, moves_refused, distance_travelled,
+           movement_casts, speed_casts, died, timed_out, reward_arrive, reward_progress, reward_stuck, reward_wall,
+           reward_jitter, reward_effort, reward_repeat]

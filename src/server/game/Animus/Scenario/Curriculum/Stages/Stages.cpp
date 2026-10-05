@@ -27,7 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ ... ─ move7_follow       (M2-M7 land one at a time)
+ *   movement   move1_controls ─ move2_ground ─ ... ─ move7_follow       (M3-M7 land one at a time)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -108,6 +108,38 @@ namespace
         };
     }
 
+    /// Broken ground on Kalimdor for the ground stage (M2; curriculum-v1 BrokenGround): chosen by local relief and then
+    /// stood on with `forge rays` -- at least ~4.5 yd of clearance, short reaches on several bearings, so there is
+    /// something to walk round. The cliff feet at the end are low ground under a plateau 30-50 yd up whose top the
+    /// route reaches by one ramp at 1.3-1.8x the straight line.
+    std::vector<Position> KalimdorBroken()
+    {
+        return {
+            // Mulgore/Barrens ridge, relief 78 over a 179 yard span
+            { -1401.0f, -85.0f, 159.0f, 0.0f },   { -1286.0f, 107.0f, 130.9f, 0.0f },
+            // Barrens ridge, relief 64 over 200
+            { -454.0f, -2419.0f, 93.0f, 0.0f },   { -373.0f, -2323.0f, 94.0f, 0.0f },
+            // Durotar: canyon and rock
+            { -49.4f, -4313.6f, 68.7f, 0.0f },    { -107.5f, -4302.0f, 61.7f, 0.0f },
+            { 642.0f, -4185.0f, 15.0f, 0.0f },    { 633.0f, -4298.0f, 18.0f, 0.0f },
+            // Dustwallow Marsh: broken shore (the markers' walking way never swims: TravelPlaceRules::DryOnly)
+            { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
+            { -2851.0f, -3650.0f, 33.0f, 0.0f },  { -2987.0f, -3940.0f, 39.0f, 0.0f },
+            // Cliff feet
+            { -2032.2f, -3618.1f, 22.3f, 0.0f },  { -2563.7f, -3798.6f, 7.0f, 0.0f },
+            { 190.8f, -4516.5f, 27.1f, 0.0f },    { 479.5f, -4658.7f, 41.7f, 0.0f },
+        };
+    }
+
+    /// The southern Barrens escarpment, relief 47, in no training list (curriculum-v1 BrokenControl).
+    std::vector<Position> KalimdorBrokenControl()
+    {
+        return {
+            { -623.5f, -3166.8f, 91.7f, 0.0f },   { -405.9f, -3207.1f, 186.5f, 0.0f },
+            { -441.9f, -3162.0f, 210.3f, 0.0f },
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -137,6 +169,30 @@ namespace
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorFlats(),
             .HeldOutSpawnPoints = KalimdorFlatsControl(),
+        });
+
+        // M2 -- ground: real ground, slopes the client can and cannot climb, rocks, ridges, cliff feet and their
+        // ramps, getting round things and not getting stuck. Markers 20 to 120 yards off with something in the way:
+        // the walking way is 1.0 to 1.6 times the straight line and more as the ladder climbs, so the straight line
+        // is often not walkable. Stopping on them as M1 taught, inside a yard. Stuck and Wall are charged as noise
+        // prices (MarkerGround.*), and the progress shaping follows the route (a training signal, never seen).
+        //
+        // Kalimdor only for now: the plan's forests and fenced farms (Ashenvale, Duskwood, Westfall, Goldshire) and
+        // its Eastern Kingdoms hills need points stood on first (§7.5's dry check); Hillsbrad, its held-out ground,
+        // likewise -- the first curriculum's Hillsbrad points are map 560's, not Eastern Kingdoms'.
+        stages.push_back({
+            .Name = "move2_ground",
+            .Suffix = "_ground",
+            .Extends = "move1_controls",
+            .Summary = "markers on broken ground with something in the way: find the way round, do not get stuck",
+            .Blocks = { Core, Move, Goal },
+            .Arenas = {
+                { .Name = "broken", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 150,
+                    .Course = MarkerCourse::Ground },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorBroken(),
+            .HeldOutSpawnPoints = KalimdorBrokenControl(),
         });
 
         return stages;
@@ -315,6 +371,8 @@ namespace
             return "a marker arena takes none of the travel arena's kinds of ground yet";
         if (markers && !stage.Has(BlockId::Move))
             return "markers are walked to with the move block";
+        if (!markers && arena.Course != MarkerCourse::Open)
+            return "only a marker arena has a course";
 
         bool const dummy = arena.Against == Opposition::Dummy;
         if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0

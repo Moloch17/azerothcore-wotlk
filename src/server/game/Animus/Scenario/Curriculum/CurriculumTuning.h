@@ -971,6 +971,36 @@ namespace Animus::Curriculum
             float StopNear = 10.0f;
         } Markers;
 
+        /// The ground stage's markers (MarkerCourse::Ground, M2): broken ground with something in the way -- a face
+        /// too steep, a fence line, a rock field, a wood -- so the straight line is often not the way. Arrive,
+        /// StepCost, Death and Progress are Markers.*; Progress is shaped on the route (the route planner's distance,
+        /// a training signal only), and there is no Facing term (the marker's bearing is not the way here).
+        ///
+        /// The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to DistanceLast (the nearest is
+        /// DistanceMin) and the detour -- the walking way over the straight line -- from DetourFirst to DetourLast:
+        /// a marker's detour is at least the rung's and at most DetourSpan more (the floor let go after half the
+        /// placement attempts, so ground without one still builds; the `detour` column says what was got). The stop
+        /// radius is Radius at every rung (M1 has taught the stop).
+        ///
+        /// The costs, noise prices on the cost ladder: Stuck per second of a movement key held with the body getting
+        /// nowhere for a second or more (the controller's stuck_seconds), Wall per second pressing into a wall
+        /// (wall_seconds).
+        struct MarkerGroundTuning
+        {
+            uint32 MarkersMin = 2;
+            uint32 MarkersMax = 4;
+            uint32 Rungs = 6;
+            float DistanceMin = 20.0f;
+            float DistanceFirst = 40.0f;
+            float DistanceLast = 120.0f;
+            float DetourFirst = 1.0f;
+            float DetourLast = 1.6f;
+            float DetourSpan = 0.25f;
+            float Radius = 1.0f;
+            float Stuck = 0.05f;                // per second
+            float Wall = 0.03f;                 // per second
+        } MarkerGround;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1500,6 +1530,18 @@ namespace Animus::Curriculum
             f("Markers.RadiusLast", tuning.Markers.RadiusLast);
             f("Markers.MaxDetour", tuning.Markers.MaxDetour);
             f("Markers.StopNear", tuning.Markers.StopNear);
+            f("MarkerGround.MarkersMin", tuning.MarkerGround.MarkersMin);
+            f("MarkerGround.MarkersMax", tuning.MarkerGround.MarkersMax);
+            f("MarkerGround.Rungs", tuning.MarkerGround.Rungs);
+            f("MarkerGround.DistanceMin", tuning.MarkerGround.DistanceMin);
+            f("MarkerGround.DistanceFirst", tuning.MarkerGround.DistanceFirst);
+            f("MarkerGround.DistanceLast", tuning.MarkerGround.DistanceLast);
+            f("MarkerGround.DetourFirst", tuning.MarkerGround.DetourFirst);
+            f("MarkerGround.DetourLast", tuning.MarkerGround.DetourLast);
+            f("MarkerGround.DetourSpan", tuning.MarkerGround.DetourSpan);
+            f("MarkerGround.Radius", tuning.MarkerGround.Radius);
+            f("MarkerGround.Stuck", tuning.MarkerGround.Stuck);
+            f("MarkerGround.Wall", tuning.MarkerGround.Wall);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

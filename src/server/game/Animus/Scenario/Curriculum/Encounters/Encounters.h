@@ -1041,6 +1041,11 @@ namespace Animus::Curriculum
         /// The ceiling on the walking way over the straight line, when it should be lower than the generator's own
         /// (0 keeps it): a marker in the open is one the straight line reaches.
         float MaxDetour = 0.0f;
+        /// The floor on it (0 none), insisted on for the first half of the attempts and let go after, as Band is: a
+        /// marker with something in the way (the ground stage's detour ladder).
+        float MinDetour = 0.0f;
+        /// The walking way may not swim: planned on NAV_GROUND alone (a movement stage before the water one).
+        bool DryOnly = false;
     };
 
     class TravelEncounter final : public Encounter

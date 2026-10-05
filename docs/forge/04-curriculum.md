@@ -2,12 +2,14 @@
 
 > **The movement curriculum (2026-10-05).** The curriculum is being rebuilt from scratch around the player
 > controller (`.agents/plans/movement-curriculum/`): seven movement stages, M1-M7, landing one at a time. Defined so
-> far: `move1_controls` (markers on open ground, stopped on exactly; MarkerEncounter, `Opposition::Markers`). Every
+> far: `move1_controls` (markers on open ground, stopped on exactly; MarkerEncounter, `Opposition::Markers`) and
+> `move2_ground` (markers on broken ground with something in the way; `MarkerCourse::Ground`). Every
 > movement stage runs 50 ms world ticks (`AnimusForge.Stage.<name>.TicksPerDecision`; `test_stage_ticks.py`).
 >
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 2048 |
+> | `move2_ground` | 250M | 5M | 2048 |
 >
 > **Archived.** The rest of this chapter describes the first curriculum -- `stage1_move` ... `stage21_ship` --
 > archived when the curriculum was rebuilt. Its stage definitions are on the git tag `curriculum-v1`, its learner

@@ -146,6 +146,13 @@ namespace Animus::Curriculum
         /// marker's bearing from the seat's facing, so turning to face it pays and turning away gives it back. A
         /// nudge for the first minutes of M1 (Markers.Facing), Shaping so the fade takes it away.
         Facing,
+        /// Moving nowhere (the movement stages, MarkerEncounter): a movement key held and the unit's position
+        /// still for more than MarkerGround.StuckAfterMs, charged by the second after that (MarkerGround.Stuck). A
+        /// noise price: free until the stage's measure is learned, on the cost ladder after.
+        Stuck,
+        /// Pressing into a wall: a movement key held while the controller's step was blocked (BodyState::AgainstWall),
+        /// charged by the second (MarkerGround.Wall). A noise price, as Stuck.
+        Wall,
         Count
     };
 
@@ -216,6 +223,9 @@ namespace Animus::Curriculum
             case RewardTerm::Aimless:
             case RewardTerm::Effort:
             case RewardTerm::Fidget:
+            // Moving nowhere and pressing into walls (the movement stages, 2026-10-05).
+            case RewardTerm::Stuck:
+            case RewardTerm::Wall:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:
@@ -294,8 +304,9 @@ namespace Animus::Curriculum
     }
 
     /// The Cost terms that price noise rather than the outcome: a repeated press, a turn and its reversal, a press its
-    /// goal did not call for, any press at all, shuffling in place. The learner's cost ladder pays these times its
-    /// rung (RewardLedger::SetCosts); deaths, the clock and the step cost are always paid in full.
+    /// goal did not call for, any press at all, shuffling in place, moving nowhere and pressing into a wall. The
+    /// learner's cost ladder pays these times its rung (RewardLedger::SetCosts); deaths, the clock and the step cost
+    /// are always paid in full.
     [[nodiscard]] constexpr bool PricesNoise(RewardTerm term)
     {
         switch (term)
@@ -305,6 +316,8 @@ namespace Animus::Curriculum
             case RewardTerm::Aimless:
             case RewardTerm::Effort:
             case RewardTerm::Fidget:
+            case RewardTerm::Stuck:
+            case RewardTerm::Wall:
                 return true;
             default:
                 return false;

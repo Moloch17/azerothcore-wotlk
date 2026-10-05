@@ -817,6 +817,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         {
             tally.Paths.fetch_add(1, std::memory_order_relaxed);
             PathGenerator path(bot);
+            if (rules.DryOnly)
+                path.SetIncludeFlags(NAV_GROUND);
             if (!path.CalculatePath(x, y, z) || !(path.GetPathType() & PATHFIND_NORMAL))
                 return false;
 
@@ -873,6 +875,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             else
             {
                 if (walked > distance * (rules.MaxDetour > 0.0f ? rules.MaxDetour : MAX_PATH_DETOUR))
+                    return false;
+                if (rules.MinDetour > 0.0f && attempt < attempts / 2 && walked < distance * rules.MinDetour)
                     return false;
 
                 // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the

@@ -5035,7 +5035,8 @@ AnimusForge.OutputDir = ""
 #                     extend the stage it builds on, which seeds it:
 #                     The movement curriculum (.agents/plans/movement-curriculum/): M1-M7, every stage
 #                     movement alone on the player controller, landing one at a time:
-#                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them)
+#                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them),
+#                                 "move2_ground" (broken ground with something in the way: the way round)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5171,6 +5172,7 @@ AnimusForge.TicksPerDecision = 1
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
+AnimusForge.Stage.move2_ground.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6663,6 +6665,29 @@ AnimusForge.Curriculum.Markers.RadiusFirst = 4.0
 AnimusForge.Curriculum.Markers.RadiusLast = 0.5
 AnimusForge.Curriculum.Markers.MaxDetour = 1.1
 AnimusForge.Curriculum.Markers.StopNear = 10.0
+
+#
+#    AnimusForge.Curriculum.MarkerGround.*
+#        The ground stage's markers (move2_ground): broken ground with something in the way. Arrive, StepCost, Death
+#        and Progress are the Markers.* values; Progress is shaped on the route planner's distance (a training
+#        signal only) and there is no Facing term. The ladder (Rungs rungs) moves the furthest marker from
+#        DistanceFirst to DistanceLast yards (the nearest is DistanceMin) and the detour -- the walking way over the
+#        straight line -- from DetourFirst to DetourLast, each marker within DetourSpan above the rung's (the floor
+#        is let go after half the placement attempts; the `detour` column reports what was got). Every rung stops
+#        within Radius yards. Stuck (per second of a movement key held with the body getting nowhere for a second or
+#        more) and Wall (per second pressing into a wall) are noise prices on the learner's cost ladder.
+AnimusForge.Curriculum.MarkerGround.MarkersMin = 2
+AnimusForge.Curriculum.MarkerGround.MarkersMax = 4
+AnimusForge.Curriculum.MarkerGround.Rungs = 6
+AnimusForge.Curriculum.MarkerGround.DistanceMin = 20.0
+AnimusForge.Curriculum.MarkerGround.DistanceFirst = 40.0
+AnimusForge.Curriculum.MarkerGround.DistanceLast = 120.0
+AnimusForge.Curriculum.MarkerGround.DetourFirst = 1.0
+AnimusForge.Curriculum.MarkerGround.DetourLast = 1.6
+AnimusForge.Curriculum.MarkerGround.DetourSpan = 0.25
+AnimusForge.Curriculum.MarkerGround.Radius = 1.0
+AnimusForge.Curriculum.MarkerGround.Stuck = 0.05
+AnimusForge.Curriculum.MarkerGround.Wall = 0.03
 
 #
 #    AnimusForge.Curriculum.Owner.*

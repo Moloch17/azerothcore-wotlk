@@ -22,6 +22,8 @@ LEDGER = CURRICULUM / "Rewards" / "RewardLedger.h"
 PURPOSE = {
     # M1: stopping on the marker -- Arrive is paid only when the seat is stopped inside the radius.
     "move1_controls": ("Arrive",),
+    # M2: the markers again, now with something in the way; getting stuck and pressing into walls are its costs.
+    "move2_ground": ("Arrive", "Stuck", "Wall"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -29,6 +31,7 @@ PURPOSE = {
 # straight-line distance closed over the leg, both started over at each marker.
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
+    "move2_ground": ("Progress",),
 }
 
 # Opposition -> the encounter source that pays it.

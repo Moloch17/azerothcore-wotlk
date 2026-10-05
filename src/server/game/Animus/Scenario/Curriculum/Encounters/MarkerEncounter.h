@@ -22,6 +22,8 @@
 #include "DifficultyLadder.h"
 #include "Encounter.h"
 #include "Position.h"
+#include "RoutePlanner.h"
+#include "StageDefinition.h"
 #include <vector>
 
 namespace Animus::Curriculum
@@ -33,6 +35,8 @@ namespace Animus::Curriculum
         float Furthest = 10.0f;
         float BearingHalf = 0.0f;   // radians either side of the seat's facing
         float Radius = 4.0f;        // yards to stop within
+        float DetourMin = 0.0f;     // the walking way over the straight line, at least (0: none asked) ...
+        float DetourMax = 0.0f;     // ... and at most (0: the course's own ceiling)
     };
 
     /// **The movement stages' markers** (Opposition::Markers; movement-curriculum plan §2, M1): a place on the ground
@@ -47,6 +51,12 @@ namespace Animus::Curriculum
     ///
     /// Paid: Arrive per marker (Outcome), StepCost and Death (Cost), and two potentials that fade with the stage's
     /// shaping -- Progress on the straight-line distance, and Facing on the cosine of the marker's bearing.
+    ///
+    /// **Courses** (ArenaDefinition::Course): each movement stage's ground. Open (M1) is the above. Ground (M2) is
+    /// broken ground with something in the way: its ladder (MarkerGround.*) widens the distance and the detour, the
+    /// radius is fixed, Progress is shaped on the route planner's distance (re-planned when the seat strays, a
+    /// re-plan paying nothing), there is no Facing term, and the seat pays Stuck and Wall -- noise prices on the cost
+    /// ladder -- per second the controller counts it stuck or pressing into a wall.
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -60,6 +70,11 @@ namespace Animus::Curriculum
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+        /// Rung `rung` of a ground course's ladder of `rungs`: distance and detour window widen, the radius is fixed.
+        [[nodiscard]] static MarkerRung GroundRungTask(uint32 rung, uint32 rungs, float distanceMin,
+            float distanceFirst, float distanceLast, float detourFirst, float detourLast, float detourSpan,
+            float radius);
 
         /// Rung `rung` of a ladder of `rungs` (0 the first), from the tuning's First and Last values.
         [[nodiscard]] static MarkerRung RungTask(uint32 rung, uint32 rungs, float distanceMin, float distanceFirst,
@@ -113,10 +128,27 @@ namespace Animus::Curriculum
             float Travelled = 0.0f;
             uint32 MovementCasts = 0;       // the seat's blinks, leaps, charges and jumps (AgentStats::MovementCasts)
             uint32 SpeedCasts = 0;          // ... and run-speed buffs (Sprint, Dash, Aspect of the Cheetah, ...)
+
+            MarkerCourse Course = MarkerCourse::Open;
+            float LegWalk = 0.0f;           // yards of the walking way when the leg began (the leg's optimum)
+            float DetourSum = 0.0f;         // legs placed: walking way over straight line
+            uint32 Legs = 0;
+            // The ground course's route, shaped on (never seen by the actor), and the costs' last readings.
+            Route Way;
+            uint32 WayMs = 0;
+            bool WayFailed = false;
+            uint32 LastWallMs = 0;
+            uint32 LastStuckMs = 0;
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.
         bool PlaceMarker(Env const& env, EnvMarkers& markers, Player* bot, float facing) const;
+        /// The ground course's route to the marker, re-planned when the seat has strayed or the refresh is due; true
+        /// when it was re-planned (a new potential: nothing is paid for the change).
+        bool RefreshWay(EnvMarkers& markers, Player* bot, uint32 nowMs) const;
+        /// Yards left to the marker: along the route on a ground course (with the gap at a partial route's end), the
+        /// straight line otherwise or without a route.
+        [[nodiscard]] static float WayDistance(EnvMarkers const& markers, Player const* bot);
         /// Tell the ladder how a counting episode went, once: won when every marker was stopped on.
         void RecordRung(Env const& env, EnvMarkers& markers);
         /// The ladder's top rung index: the arena's pinned rung when it has one, else Markers.Rungs - 1.
