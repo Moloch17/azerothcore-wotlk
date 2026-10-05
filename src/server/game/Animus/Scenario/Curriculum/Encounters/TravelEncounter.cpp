@@ -255,12 +255,13 @@ void Animus::Curriculum::TravelEncounter::LoadHumanPools(StageSettings const& se
     if (_hardSpotShare > 0.0f)
         spots = load(settings.HumanHardSpots, "AnimusForge.Human.HardSpots",
             [](std::string_view text) { return HumanPools::ParseHardSpots(text); });
-    if (trips.Maps.empty() && spots.Maps.empty())
-    {
+    // A file that did not load (or holds nothing) switches its own half off, whatever the other did.
+    if (trips.Maps.empty())
         _humanTripShare = 0.0f;
+    if (spots.Maps.empty())
         _hardSpotShare = 0.0f;
+    if (_humanTripShare <= 0.0f && _hardSpotShare <= 0.0f)
         return;
-    }
 
     CurriculumTuning::TravelTuning const& tuning = _scenario.Tuning().Travel;
     _human.resize(stage.Arenas.size());
