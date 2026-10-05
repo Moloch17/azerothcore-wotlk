@@ -128,7 +128,7 @@ def test_progress_carries_the_shaping_and_cost_scales_on_protocol_19():
     """The sim reads PROGRESS as ProgressMsg {f32 progress, f32 shaping scale, f32 cost scale} (Bridge/Protocol.h),
     and refuses a learner of another protocol at HELLO, so a sim that would ignore a scale never runs with one that
     sends it."""
-    assert p.PROTOCOL_VERSION == 19
+    assert p.PROTOCOL_VERSION >= 19
     payload = p.encode_progress(0.25, 0.5, 0.25)
     assert len(payload) == 12 and struct.unpack("<fff", payload) == (0.25, 0.5, 0.25)
     assert struct.unpack("<fff", p.encode_progress(2.0, -1.0, 3.0)) == (1.0, 0.0, 1.0)   # clamped as the sim would

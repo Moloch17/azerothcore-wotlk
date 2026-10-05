@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_SCENARIO_H
 
 #include "Define.h"
+#include "Kinematics.h"
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -126,6 +127,15 @@ namespace Animus
         virtual void AgentPresence(Env const& /*env*/, uint8* present) const
         {
             std::fill(present, present + Spec().AgentsPerEnv, uint8(1));
+        }
+
+        /// kinematics: [AgentsPerEnv * Kinematics::SAMPLE_DIM] each agent's body as it stands after Observe
+        /// (Kinematics.h, protocol 20): what the learner's style reward and realism score read. Called with
+        /// AgentLayouts, on the thread updating the env's map; zeros for an agent without a body, and for every agent
+        /// of a scenario that has no bodies to describe.
+        virtual void AgentKinematics(Env const& /*env*/, float* kinematics) const
+        {
+            std::fill(kinematics, kinematics + Spec().AgentsPerEnv * Kinematics::SAMPLE_DIM, 0.0f);
         }
 
         /// reward: [AgentsPerEnv], from env.StepStats (cleared by EnvPool afterwards).

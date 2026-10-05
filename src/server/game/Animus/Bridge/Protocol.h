@@ -49,6 +49,12 @@
  *                                                     envs (protocol 18; every env's before)
  *                              u32 episode_seed[E]    evaluation seed index of the ended episode (valid if
  *                                                     done); NO_EPISODE_SEED for a training episode
+ *                              f32 kinematics[E*A*M]  each agent's body after the transition, M = SPEC's
+ *                                                     KinematicsDim (Kinematics::SAMPLE_DIM = 10): t (episode
+ *                                                     seconds), x, y, z, yaw, pitch, mode (0 ground, 1 swimming,
+ *                                                     2 flying, 3 airborne), mounted, speed in force (yd/s),
+ *                                                     in_combat; the new episode's first sample where done is 1,
+ *                                                     zeros for an agent without a body (protocol 20)
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
  *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
  *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
@@ -118,7 +124,10 @@ namespace AnimusForge
     // set, as final_obs and final_state do: the others' were most of a STEP's bytes in a wide stage. MODE names a
     // held-out arena for the evaluation to play. EXPLORE_STARTS gives the wings the cells to start from (Go-Explore).
     // 19: PROGRESS carries the cost scale after the shaping scale (the learner's cost ladder on the noise prices).
-    constexpr uint32 PROTOCOL_VERSION = 19;
+    // 20: SPEC ends with the kinematics width and every STEP ends with one kinematic sample per agent (Kinematics.h):
+    // the bodies the learner's style reward and realism score read. A learner of 19 would read the width as the
+    // first episode info name's bytes and every STEP as too long.
+    constexpr uint32 PROTOCOL_VERSION = 20;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -186,7 +195,10 @@ namespace AnimusForge
         uint32 EpisodeSeconds;
         uint32 EnvGroups;       // STEPs per decision: 1, or 2 for half-batch (contiguous halves, the first half first)
         char Scenario[SCENARIO_NAME_SIZE];
+        uint32 KinematicsDim;   // floats per agent of each STEP's kinematics (Kinematics::SAMPLE_DIM; protocol 20)
     };
+    // The learner's SPEC (protocol.py): "<12I32sI".
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4);
 
     struct LayoutMsg
     {

@@ -224,6 +224,9 @@ namespace Animus
         std::vector<uint8> Present;             // per agent: 1 = has a character this episode
         std::vector<float> EpisodeInfo;         // per agent
         std::vector<uint32> EpisodeSeed;        // per env: seed index of the episode that just ended
+        /// Per agent, Kinematics::SAMPLE_DIM floats: its body after the decision (the new episode's first sample where
+        /// one ended), written with Layout and Present (protocol 20).
+        std::vector<float> KinematicSamples;
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.

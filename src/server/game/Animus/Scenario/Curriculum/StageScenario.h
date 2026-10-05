@@ -139,6 +139,7 @@ namespace Animus::Curriculum
         void Observe(Env& env, float* obs, float* state, uint8* mask) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
+        void AgentKinematics(Env const& env, float* kinematics) const override;
         void Reward(Env& env, float* reward) override;
         void EpisodeInfo(Env const& env, float* info) const override;
         [[nodiscard]] std::vector<std::string> EpisodeInfoNames() const override { return _info.Names(); }

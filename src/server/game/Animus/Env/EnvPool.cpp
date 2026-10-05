@@ -70,6 +70,7 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     Layout.assign(agents, 0);
     Present.assign(agents, 1);
     EpisodeSeed.assign(envs, NO_EPISODE_SEED);
+    KinematicSamples.assign(std::size_t(agents) * Kinematics::SAMPLE_DIM, 0.0f);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
     // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head
@@ -449,6 +450,7 @@ void Animus::EnvPool::DescribeAgents(Env const& env)
     uint32 const first = env.Index * _spec.AgentsPerEnv;
     _scenario.AgentLayouts(env, &Layout[first]);
     _scenario.AgentPresence(env, &Present[first]);
+    _scenario.AgentKinematics(env, &KinematicSamples[std::size_t(first) * Kinematics::SAMPLE_DIM]);
 }
 
 bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponentsOnly, uint32 begin, uint32 count)

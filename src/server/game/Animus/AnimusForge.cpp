@@ -2411,6 +2411,7 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.EpisodeSeconds = std::max(RunConfig().EpisodeSeconds, spec.LongestEpisodeSeconds);
     msg.EnvGroups = _pool->GroupCount();
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
+    msg.KinematicsDim = Animus::Kinematics::SAMPLE_DIM;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);
@@ -2589,6 +2590,7 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 ended(_pool->FinalState, _endedState),
                 ended(_pool->EpisodeInfo, _endedInfo),
                 chunk(_pool->EpisodeSeed),
+                chunk(_pool->KinematicSamples),
             }))
             return false;
     }
