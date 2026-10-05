@@ -262,15 +262,18 @@ class FitResult:
     cost: float
 
 
-def beam_fit(space: Space, human: np.ndarray, beam: int = 32) -> FitResult:
+def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_bearings: tuple[int, ...] | None = None,
+             jumps: np.ndarray | None = None) -> FitResult:
     """The action sequence of `space` that best reproduces `human` ([K + 1, SAMPLE_DIM] on space.dt), started at
-    the human's first sample."""
+    the human's first sample with any bearing held (or none), or only `start_bearings` when the start is known.
+    `jumps` ([K] bool, from the MSG_MOVE_JUMP packets) pins the jumps: JUMP where the human jumped (when a jump can
+    be taken there) and nowhere else -- on the ground a jump's carry is otherwise a forward walk's."""
     h = np.asarray(human, dtype=np.float64)
     k_steps = len(h) - 1
     kinds = np.array([a[0] for a in space.actions])
     values = np.array([a[1] for a in space.actions], dtype=np.float64)
     n_act = len(kinds)
-    starts = np.arange(-1, BEARINGS)
+    starts = np.asarray(start_bearings if start_bearings is not None else range(-1, BEARINGS), dtype=np.int64)
     state = State.start(len(starts), h[0, motion.X], h[0, motion.Y], h[0, motion.Z], h[0, motion.YAW],
                         h[0, motion.PITCH], starts)
     total = np.zeros(len(starts))
@@ -291,6 +294,12 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32) -> FitResult:
         yaw = motion.wrap(cand.facing - target[motion.YAW])
         cost = total[rep] + err2 + (YAW_WEIGHT * yaw) ** 2 + PRESS_COST * (kinds[acts] != NOOP)
         cost[~allowed] = np.inf
+        if jumps is not None:
+            is_jump = kinds[acts] == JUMP
+            if jumps[k] and (allowed & is_jump).any():
+                cost[~is_jump] = np.inf
+            else:
+                cost[is_jump] = np.inf
         keep = np.argsort(cost, kind="stable")[:beam]
         keep = keep[np.isfinite(cost[keep])]
         state = cand.take(keep)
