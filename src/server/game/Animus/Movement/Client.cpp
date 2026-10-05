@@ -72,8 +72,17 @@ Mv::Report Mv::Client::Snapshot(uint16_t opcode, uint32_t timeMs, uint32_t flags
 
 void Mv::Client::TakeFromServer(ServerState const& state)
 {
+    // Only with the world the client is stepping in: Finish can refuse before any tick has set it (the body then
+    // takes the server's position as it stands).
     if (_shape && _world)
         Resync(Body, state.X, state.Y, state.Z, state.Yaw, *_shape, *_world);
+    else
+    {
+        Body.X = state.X;
+        Body.Y = state.Y;
+        Body.Z = state.Z;
+        Body.Yaw = state.Yaw;
+    }
     _reportedX = state.X;
     _reportedY = state.Y;
     _reportedZ = state.Z;
@@ -105,8 +114,7 @@ bool Mv::Client::Send(Report const& report, ServerLink& link)
 
 void Mv::Client::Start(ServerLink& link, Movement::Body const& shape, WorldQuery const& world, uint32_t nowMs)
 {
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     TakeFromServer(link.State());
     _started = true;
     uint32_t flags = _granted;
@@ -125,8 +133,7 @@ void Mv::Client::Order(Animus::Client::Order const& order, ServerLink& link, Mov
     WorldQuery const& world, uint32_t nowMs)
 {
     namespace Co = Animus::Client;
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     if (order.Kind == Co::OrderKind::TimeSync)
         return;
     if (order.Kind == Co::OrderKind::Teleport)
@@ -172,8 +179,7 @@ void Mv::Client::Order(Animus::Client::Order const& order, ServerLink& link, Mov
 void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Body const& shape,
     WorldQuery const& world, uint32_t diffMs, uint32_t nowMs, ServerLink& link)
 {
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     TickMoved = TickCommanded = TickFallHeight = 0.0f;
     TickWall = false;
     TickJumps = TickLandings = 0;
@@ -240,7 +246,6 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         float const z0 = Body.Z;
         float const yaw0 = Body.Yaw;
         float const pitch0 = Body.Pitch;
-        uint32_t const fall0 = Body.FallMs;
         bool const steered = Body.Kind == Mode::Swimming || Body.Kind == Mode::Flying;
         float const yawRate = control.KeyboardTurn ? 0.0f : control.TurnRate;
         float const pitchRate = control.KeyboardTurn || !steered ? 0.0f : control.PitchRate;
@@ -269,11 +274,25 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         {
             float const share = h > 0.0f ? std::clamp(t / h, 0.0f, 1.0f) : 1.0f;
             Report report = Snapshot(opcode, startMs + uint32_t(std::lround(t * 1000.0f)), after);
-            report.X = x0 + (Body.X - x0) * share;
-            report.Y = y0 + (Body.Y - y0) * share;
-            report.Z = z0 + (Body.Z - z0) * share;
-            report.Yaw = WrapYaw(yaw0 + TurnBetween(yaw0, Body.Yaw) * share);
-            report.Pitch = pitch0 + (Body.Pitch - pitch0) * share;
+            // At the step's ends exactly the body as it is (no rounding through the interpolation): a recording
+            // replays losslessly (ReplayTest).
+            if (share <= 0.0f || share >= 1.0f)
+            {
+                bool const end = share >= 1.0f;
+                report.X = end ? Body.X : x0;
+                report.Y = end ? Body.Y : y0;
+                report.Z = end ? Body.Z : z0;
+                report.Yaw = end ? Body.Yaw : yaw0;
+                report.Pitch = end ? Body.Pitch : pitch0;
+            }
+            else
+            {
+                report.X = x0 + (Body.X - x0) * share;
+                report.Y = y0 + (Body.Y - y0) * share;
+                report.Z = z0 + (Body.Z - z0) * share;
+                report.Yaw = WrapYaw(yaw0 + TurnBetween(yaw0, Body.Yaw) * share);
+                report.Pitch = pitch0 + (Body.Pitch - pitch0) * share;
+            }
             if (after & Flag::FALLING)
             {
                 uint32_t const before = uint32_t(std::lround((h - t) * 1000.0f));
@@ -333,7 +352,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         if (Body.Landed)
         {
             Report land = Snapshot(Cd::Op::FALL_LAND, startMs + uint32_t(std::lround(h * 1000.0f)), after);
-            land.FallMs = fall0 + uint32_t(std::lround(h * 1000.0f));
+            land.FallMs = Body.FallMs;          // the fall's time at the moment it landed (Step times it)
             ++Counts.Changes;
             if (!Send(land, link))
                 return;

@@ -180,6 +180,19 @@ namespace Animus::Curriculum::Encoding
     /// a second, not every decision.
     [[nodiscard]] bool FindNearestHazard(Unit const* unit, float range, Hazard& out);
 
+    /// How often the nearest hazard is searched for, and how far. A ground effect does not move, so between searches
+    /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
+    constexpr uint32 HAZARD_SEARCH_MS = 1000;
+    constexpr float HAZARD_SEARCH_RANGE = 30.0f;
+
+    /// **The nearest hazard a seat observes** (SeatView::NearestHazard, MoveBlock's OBS_HAZARD_*), kept the same way
+    /// wherever a seat runs -- the forge's scenario and the realm's companion (player-controller F9): searched every
+    /// HAZARD_SEARCH_MS among the effects the server shows `unit` (FindNearestHazard), and measured every call from
+    /// `self` -- the controller's body, where the seat knows it stands -- in the seat's frame (`facing`). `searchedMs`
+    /// is the caller's: when it last searched (0: never).
+    void TrackNearestHazard(Unit const* unit, Position const& self, float facing, uint64 nowMs, Hazard& nearest,
+        uint64& searchedMs);
+
     /// The harmful auras on a unit, summarised: what is on it, what could be taken off, and how long the worst of
     /// it lasts. A seat could always see its own buffs (per catalog action) and never what had been done to it, so
     /// a debuff to dispel, a stack to run from and a snare to break all looked the same as nothing.

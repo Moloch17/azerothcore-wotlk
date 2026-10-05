@@ -106,9 +106,6 @@ namespace
     /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
     /// range, near enough, and beyond it the press was never available anyway.
     constexpr float INTERRUPTIBLE_CAST_RANGE = 30.0f;
-    /// How often the nearest hazard is searched for, and how far. A ground effect does not move, so between searches
-    /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
-    constexpr uint32 HAZARD_SEARCH_MS = 1000;
 
     /// Whether the class itself can make itself stealthed, asked of its trainers' spell list.
     ///
@@ -141,7 +138,6 @@ namespace
     /// teleport reschedules the resurrect (Player::ProcessDelayedOperations), so it does not always finish on
     /// the decision it was accepted on.
     constexpr uint64 RESURRECT_RETRY_MS = 5000;
-    constexpr float HAZARD_SEARCH_RANGE = 30.0f;
     constexpr int32 ABSORB_EXPIRY_SLACK_MS = 500;   // an absorb gone with more than a decision and this left soaked it
 
     /// Version of stage.json (2 adds the stage's arenas, 3 each arena's seat plan and the cast list).
@@ -4975,28 +4971,15 @@ Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatInde
 }
 
 /// The nearest ground effect the seat is not in yet, so it can be walked around rather than only walked out of.
-/// The grid search runs every HAZARD_SEARCH_MS; between searches the cached hazard is measured against the seat's
+/// The grid search runs every Encoding::HAZARD_SEARCH_MS; between searches the cached hazard is measured against the seat's
 /// own position again, which is exact because a ground effect stays where it was cast.
 void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& seat, Player* bot)
 {
-    Hazard& nearest = seat.NearestHazard;
-    if (env.EpisodeElapsedMs >= seat.HazardSearchMs + HAZARD_SEARCH_MS || !seat.HazardSearchMs)
-    {
-        seat.HazardSearchMs = env.EpisodeElapsedMs;
-        nearest = Hazard();
-        // Found among what the server shows the seat (the effects near it on its grid); measured below from the body.
-        nearest.Present = Encoding::FindNearestHazard(bot, HAZARD_SEARCH_RANGE, nearest);
-    }
-
-    if (!nearest.Present)
-        return;
-
-    // Measured from where the seat's body is, as a client knows where it stands relative to the fire on the ground
-    // (§5A.1 point 1), in the seat's own frame: OBS_HAZARD_BEARING_* agrees with every other bearing it observes.
+    // The shared tracker (the realm's companion keeps it the same way), measured from the seat's body (§5A.1).
     Movement::BodyState const& body = seat.Mover.Body;
     Position const self = seat.Mover.Started() ? Position(body.X, body.Y, body.Z) : bot->GetPosition();
-    nearest.Distance = self.GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
-    nearest.Bearing = self.GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY()) - seat.Facing;
+    Encoding::TrackNearestHazard(bot, self, seat.Facing, env.EpisodeElapsedMs, seat.NearestHazard,
+        seat.HazardSearchMs);
 }
 
 /// Whether the seat's legs are getting anywhere, for every arena: how far it moved over about the last second

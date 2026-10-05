@@ -19,13 +19,16 @@
 #define ANIMUS_MOVEMENT_PLAYER_LINK_H
 
 #include "Client.h"
+#include "LinkMemory.h"
 #include "ClientOrders.h"
+#include "Opcodes.h"
 #include "ClientMovement.h"
 #include "Define.h"
 #include <array>
 #include <atomic>
 
 class Player;
+struct MovementInfo;
 class WorldPacket;
 
 /// **The forge's server, to the player controller** (player-controller C4, §5A): a seat's reports are applied by the
@@ -34,23 +37,6 @@ class WorldPacket;
 /// own ServerLink over the packet path; the client logic in front of both is the same (Client).
 namespace Animus::Movement
 {
-    /// What a seat's link remembers between ticks: the last position the server accepted (where an unstick goes), and
-    /// how many reports in a row were refused for an invalid position.
-    struct LinkMemory
-    {
-        float GoodX = 0.0f;
-        float GoodY = 0.0f;
-        float GoodZ = 0.0f;
-        float GoodYaw = 0.0f;
-        bool HasGood = false;
-        uint32 InvalidStreak = 0;
-        /// Landings the server took (MSG_MOVE_FALL_LAND), what they cost (share of maximum health, Player::HandleFall)
-        /// and how many killed; for the fall columns, counted since the link began.
-        uint32 Landings = 0;
-        float FallDamage = 0.0f;
-        uint32 FallDeaths = 0;
-    };
-
     class PlayerLink final : public ServerLink
     {
     public:
@@ -72,8 +58,14 @@ namespace Animus::Movement
         /// The sim sessions' movement-order packets the hook kept (QueueOrder): its hits, for the status line (C8).
         static inline std::atomic<uint64> OrderPackets{ 0 };
 
+        /// Reports relayed to watching clients (only while one is connected).
+        static inline std::atomic<uint64> Relayed{ 0 };
+
     private:
         void Refuse(ClientMovement::Refusal refusal, Report const& report);
+        /// Send what the report's handler sends the players around the mover (SendMessageToSet; a bot has no client
+        /// of its own to leave out).
+        void Relay(Report const& report, MovementInfo& info, Opcodes opcode);
 
         Player* _bot;
         LinkMemory& _memory;

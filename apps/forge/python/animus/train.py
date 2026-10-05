@@ -886,6 +886,8 @@ class TrainingRun:
         self.layout_allowed: dict[int, float] = {}
         self.last_layout_stats: dict[str, dict[str, float]] = {}
         self.difficulty_column = names.index("difficulty") if "difficulty" in names else None
+        # Whether a training episode was at the top of its class's ladder (convergence.top_rung).
+        self.top_rung_column = names.index("at_top_rung") if "at_top_rung" in names else None
         self.apply_holds()
 
     # ------------------------------------------------------------------ setup
@@ -1973,9 +1975,11 @@ class TrainingRun:
             names = [layout.name for layout in spec.layouts]
             episodes = np.asarray(self.finished_episodes)
             layouts = np.asarray(self.finished_layouts)
-            self.controller.observe_training_episodes({
-                names[index]: float(episodes[layouts == index, self.difficulty_column].mean())
-                for index in np.unique(layouts) if index < len(names)})
+            played = [index for index in np.unique(layouts) if index < len(names)]
+            self.controller.observe_training_episodes(
+                {names[index]: float(episodes[layouts == index, self.difficulty_column].mean()) for index in played},
+                None if self.top_rung_column is None else {
+                    names[index]: float(episodes[layouts == index, self.top_rung_column].mean()) for index in played})
         if self.update % config.log_every != 0:
             return
 

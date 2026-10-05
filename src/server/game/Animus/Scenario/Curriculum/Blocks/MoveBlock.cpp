@@ -18,7 +18,6 @@
 
 #include "MoveBlock.h"
 #include "EncoderSupport.h"
-#include "Forge.h"
 #include "GroundSense.h"
 #include "LayeredField.h"
 #include "Layout.h"
