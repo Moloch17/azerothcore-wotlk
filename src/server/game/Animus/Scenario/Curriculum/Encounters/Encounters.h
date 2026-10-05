@@ -28,6 +28,7 @@
 #include "DirectorLayout.h"
 #include "DirectorOrders.h"
 #include "Env.h"
+#include "HumanPools.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
 #include "RoutePlanner.h"
@@ -1029,16 +1030,23 @@ namespace Animus::Curriculum
         bool Underwater = false;
         float DepthMin = 6.0f;
         float DepthMax = 40.0f;
+        /// Judge this one place rather than search for one (a human trip's end): a single try at At, probed from its
+        /// own height, under every other rule above. The band is not insisted on.
+        bool Fixed = false;
+        Position At;
     };
 
     class TravelEncounter final : public Encounter
     {
     public:
-        TravelEncounter(StageScenario& scenario, uint32 envs);
+        TravelEncounter(StageScenario& scenario, uint32 envs, StageSettings const& settings);
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
+        /// A training reset may start at a human trip's start or a human hard spot (AnimusForge.Human.*): the seat's
+        /// spawn is set here, before the seats are placed, and Build validates what it was given.
+        void BeforeLevel(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
         bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
@@ -1182,7 +1190,28 @@ namespace Animus::Curriculum
             uint32 AloftSteps = 0;              // decisions aloft, and how many of them had the FLYING flag set
             uint32 AloftFlagged = 0;
             uint32 LastRewardMs = 0;
+            /// Human play (BeforeLevel): the pool trip this reset was handed (an index into its arena's pool, -1
+            /// none), or that it starts at a hard spot -- and, once Build has validated them, whether the episode
+            /// actually got its trip from the pool (human_trip) or its start from a spot (human_hard_start).
+            int32 HumanTrip = -1;
+            bool HumanHard = false;
+            bool FromHumanTrip = false;
+            bool FromHardStart = false;
         };
+
+        /// The trip distance band an arena draws its objectives in, yards on the ground.
+        static void TripBand(ArenaDefinition const& arena, CurriculumTuning::TravelTuning const& tuning, float& least,
+            float& most);
+        /// Whether a seat may stand at (x, y, z) to start an episode of `arena`: on ground (or, where the arena is
+        /// wet, in water) that the probe finds within a step of z, on the navmesh, dry where the arena is dry and
+        /// inside a building where the arena is indoors. `z` is moved onto the ground found.
+        static bool StandsAt(Map* map, uint32 phaseMask, float x, float y, float& z, ArenaDefinition const& arena);
+        /// Load the human pools for every travel arena the stage trains (constructor): parse, filter, check each
+        /// start stands, create the grids they reach, and log what was kept.
+        void LoadHumanPools(StageSettings const& settings);
+        /// A human start that did not hold up: the seats go back to the episode's own spawn point, as if it had never
+        /// been handed one.
+        void AbandonHumanStart(Env& env, Map* map, EnvTravel& travel);
 
         /// Re-plan the way to the objective if it has gone stale, and say whether it was re-planned.
         ///
@@ -1217,6 +1246,14 @@ namespace Animus::Curriculum
         static inline std::atomic<uint64> PlacePaths{ 0 };
         static inline std::atomic<uint64> PlaceNs{ 0 };
         static inline std::atomic<uint64> PlaceFailed{ 0 };
+        /// Human play: trips and hard starts handed to resets (BeforeLevel), those that held up, and those that fell
+        /// back to the arena's own draw.
+        static inline std::atomic<uint64> HumanTripsDrawn{ 0 };
+        static inline std::atomic<uint64> HumanTripsUsed{ 0 };
+        static inline std::atomic<uint64> HumanTripsFellBack{ 0 };
+        static inline std::atomic<uint64> HardStartsDrawn{ 0 };
+        static inline std::atomic<uint64> HardStartsUsed{ 0 };
+        static inline std::atomic<uint64> HardStartsFellBack{ 0 };
 
     private:
 
@@ -1238,6 +1275,18 @@ namespace Animus::Curriculum
             bool Dive = false;
         };
         bool _pooling = false;          // AnimusForge.TravelPools
+
+        /// Human play, per arena of the stage (by index; empty for one that takes none): the trips and the hard spots
+        /// it may use, filtered once at construction, and the spots' cumulative weights.
+        struct HumanArena
+        {
+            std::vector<HumanPools::Trip> Trips;
+            std::vector<HumanPools::HardSpot> Spots;
+            std::vector<uint64> SpotWeights;
+        };
+        std::vector<HumanArena> _human;
+        float _humanTripShare = 0.0f;   // AnimusForge.Human.TripShare
+        float _hardSpotShare = 0.0f;    // AnimusForge.Human.HardSpotShare
         std::mutex _poolLock;           // resets run on the map threads
         std::unordered_map<uint64, std::vector<PooledTrip>> _pools;
     };

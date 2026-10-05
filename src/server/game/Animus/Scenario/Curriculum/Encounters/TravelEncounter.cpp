@@ -16,6 +16,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "BotFactory.h"
 #include "Config.h"
 #include "Encounters.h"
 #include "Env.h"
@@ -38,7 +39,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <limits>
+#include <set>
 
 namespace
 {
@@ -99,12 +103,330 @@ namespace
     /// run speed; three seconds outlasts a mount cast and a jump, which gain nothing and are not stalls.
     constexpr float STALL_GAIN_YARDS = 2.0f;
     constexpr uint32 STALL_MIN_MS = 3000;
+    /// A human start (StandsAt): the probe looks from this far over the recorded height and searches this far down,
+    /// and the ground it finds has to be within START_SETTLE of the recorded height -- a position logged mid-fall or
+    /// under the terrain is not a place to stand.
+    constexpr float START_RISE = 2.0f;
+    constexpr float START_SEARCH = 10.0f;
+    constexpr float START_SETTLE = 2.5f;
+    constexpr float START_MESH_REACH = 1.5f;
+    /// What a file holds at most before it is refused as not the file it says it is.
+    constexpr std::uintmax_t HUMAN_FILE_MAX = std::uintmax_t(512) << 20;
+
+    /// A file's whole text, or why there is none.
+    bool ReadText(std::string const& path, std::string& text, std::string& error)
+    {
+        std::error_code code;
+        std::uintmax_t const size = std::filesystem::file_size(path, code);
+        if (code)
+        {
+            error = code.message();
+            return false;
+        }
+        if (size > HUMAN_FILE_MAX)
+        {
+            error = "larger than 512 MB";
+            return false;
+        }
+
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+        {
+            error = "cannot be opened";
+            return false;
+        }
+        text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        return true;
+    }
+
+    Animus::Curriculum::HumanPools::Point ToPoint(Position const& position)
+    {
+        return { position.GetPositionX(), position.GetPositionY(), position.GetPositionZ() };
+    }
 }
 
-Animus::Curriculum::TravelEncounter::TravelEncounter(StageScenario& scenario, uint32 envs)
+Animus::Curriculum::TravelEncounter::TravelEncounter(StageScenario& scenario, uint32 envs,
+    StageSettings const& settings)
     : Encounter(scenario), _envs(envs),
     _pooling(sConfigMgr->GetOption<bool>("AnimusForge.TravelPools", false))
 {
+    LoadHumanPools(settings);
+}
+
+void Animus::Curriculum::TravelEncounter::TripBand(ArenaDefinition const& arena,
+    CurriculumTuning::TravelTuning const& tuning, float& least, float& most)
+{
+    // On foot the trip is shorter: the lesson is how well the seat covers ground with what it has, not
+    // whether a ride is worth summoning.
+    least = arena.Indoors ? tuning.IndoorMin
+        : arena.Ledges ? tuning.LedgeMin
+        : arena.Underwater ? tuning.DiveMin
+        : arena.Flying ? tuning.FlyingMin : arena.OnFoot ? tuning.FootMin : tuning.ObjectiveMin;
+    most = arena.Indoors ? tuning.IndoorMax
+        : arena.Ledges ? tuning.LedgeMax
+        : arena.Underwater ? tuning.DiveMax
+        : arena.Flying ? tuning.FlyingMax : arena.OnFoot ? tuning.FootMax : tuning.ObjectiveMax;
+}
+
+bool Animus::Curriculum::TravelEncounter::StandsAt(Map* map, uint32 phaseMask, float x, float y, float& z,
+    ArenaDefinition const& arena)
+{
+    bool const wet = arena.Water || arena.Underwater;
+    float const ground = map->GetHeight(phaseMask, x, y, z + START_RISE, true, START_SEARCH);
+    if (ground <= INVALID_HEIGHT)
+        return false;
+
+    // In the water: a wet arena may start a seat swimming, anywhere over the bed the probe found (never under it).
+    // Everywhere else the seat stands on the ground, which has to be where the position says.
+    bool const swimming = wet && z >= ground - 0.5f && map->IsInWater(phaseMask, x, y, z, BODY_HEIGHT);
+    if (!swimming)
+    {
+        if (std::fabs(z - ground) > START_SETTLE)
+            return false;
+        if (!wet && map->IsInWater(phaseMask, x, y, ground, BODY_HEIGHT))
+            return false;
+
+        // On the mesh, a step from the ground found: what is inside a rock or a wall has no mesh there, and a start
+        // the path finder cannot leave has no trip from it.
+        MMapData& mmap = map->GetMapCollisionData().GetMMapData();
+        MMapData::ThreadQueryScope const ownQuery(mmap);
+        dtNavMeshQuery const* query = mmap.GetNavMeshQuery();
+        if (!query)
+            return false;
+        dtQueryFilterExt filter;
+        filter.setIncludeFlags(wet ? (NAV_GROUND | NAV_WATER) : NAV_GROUND);
+        filter.setExcludeFlags(0);
+        float const at[3] = { y, ground, x };
+        float const extents[3] = { START_MESH_REACH, MoveBlock::MAX_STEP, START_MESH_REACH };
+        float nearest[3] = { 0.0f, 0.0f, 0.0f };
+        dtPolyRef ref = 0;
+        if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &ref, nearest)) || !ref
+            || std::fabs(nearest[1] - ground) > MoveBlock::MAX_STEP)
+            return false;
+        z = ground;
+    }
+
+    // Inside a building where the arena is: the same WMO test the objective is held to (FindPlace).
+    if (arena.Indoors)
+    {
+        uint32 mogpFlags = 0;
+        int32 adtId = 0;
+        int32 rootId = 0;
+        int32 groupId = 0;
+        if (!map->GetAreaInfo(phaseMask, x, y, z, mogpFlags, adtId, rootId, groupId)
+            || (mogpFlags & WMO_GROUP_OUTDOORS) != 0)
+            return false;
+    }
+
+    return true;
+}
+
+void Animus::Curriculum::TravelEncounter::LoadHumanPools(StageSettings const& settings)
+{
+    _humanTripShare = settings.HumanTrips.empty() ? 0.0f : std::clamp(settings.HumanTripShare, 0.0f, 1.0f);
+    _hardSpotShare = settings.HumanHardSpots.empty() ? 0.0f : std::clamp(settings.HumanHardSpotShare, 0.0f, 1.0f);
+    if (_humanTripShare <= 0.0f && _hardSpotShare <= 0.0f)
+        return;
+
+    StageDefinition const& stage = _scenario.Stage();
+    std::string const& name = stage.Name;
+
+    // Each file whole or not at all: a malformed one is an error in the log and the feature off, never a pool built
+    // from the part of it that happened to parse.
+    auto const load = [&name](std::string const& path, char const* key, auto parse)
+    {
+        std::string text;
+        std::string error;
+        decltype(parse(std::string_view())) parsed;
+        if (!ReadText(path, text, error))
+            parsed.Error = error;
+        else
+            parsed = parse(text);
+        if (!parsed.Ok())
+            LOG_ERROR("module.animus", "{}: {} \"{}\" was not loaded ({}); no human {} this stage", name, key, path,
+                parsed.Error, key == std::string_view("AnimusForge.Human.Trips") ? "trips" : "hard starts");
+        return parsed;
+    };
+    HumanPools::Parsed<HumanPools::Trip> trips;
+    HumanPools::Parsed<HumanPools::HardSpot> spots;
+    if (_humanTripShare > 0.0f)
+        trips = load(settings.HumanTrips, "AnimusForge.Human.Trips",
+            [](std::string_view text) { return HumanPools::ParseTrips(text); });
+    if (_hardSpotShare > 0.0f)
+        spots = load(settings.HumanHardSpots, "AnimusForge.Human.HardSpots",
+            [](std::string_view text) { return HumanPools::ParseHardSpots(text); });
+    if (trips.Maps.empty() && spots.Maps.empty())
+    {
+        _humanTripShare = 0.0f;
+        _hardSpotShare = 0.0f;
+        return;
+    }
+
+    CurriculumTuning::TravelTuning const& tuning = _scenario.Tuning().Travel;
+    _human.resize(stage.Arenas.size());
+    for (std::size_t index = 0; index < stage.Arenas.size(); ++index)
+    {
+        ArenaDefinition const& arena = stage.Arenas[index];
+        // Training only: an evaluation-only arena is never handed a human trip, and neither is anything but travel.
+        if (arena.Against != Opposition::Travel || arena.EvalOnly)
+            continue;
+
+        // The arena's ground, as SpawnGroundFor reads it: its own points, else the stage's on the stage's map.
+        bool const own = !arena.SpawnPoints.empty();
+        std::vector<Position> const& training = own ? arena.SpawnPoints : stage.SpawnPoints;
+        std::vector<Position> const& heldOut = own ? arena.HeldOutSpawnPoints : stage.HeldOutSpawnPoints;
+        if (training.empty())
+            continue;
+
+        HumanPools::ArenaTerrain terrain;
+        terrain.MapId = arena.MapId ? arena.MapId : _scenario.SpawnMapId();
+        TripBand(arena, tuning, terrain.Least, terrain.Most);
+        terrain.Modes = HumanPools::ModesFor(arena.Flying, arena.Water, arena.Underwater, arena.OnFoot);
+        for (Position const& point : training)
+            terrain.Training.push_back(ToPoint(point));
+        for (Position const& point : heldOut)
+            terrain.HeldOut.push_back(ToPoint(point));
+        // Within one of the arena's own trips of where it would have started the seat.
+        terrain.Reach = terrain.Most;
+        terrain.Seconds = float(arena.EpisodeSeconds ? arena.EpisodeSeconds : settings.EpisodeSeconds);
+        terrain.Descent = arena.Ledges;
+        terrain.DropMin = tuning.LedgeDropMin;
+        terrain.DropMax = tuning.LedgeDropMax;
+        terrain.Wet = arena.Water || arena.Underwater;
+
+        HumanPools::Tally tripTally;
+        HumanPools::Tally spotTally;
+        std::vector<HumanPools::Trip> arenaTrips = HumanPools::Filter(trips, terrain, tripTally);
+        std::vector<HumanPools::HardSpot> arenaSpots = HumanPools::Filter(spots, terrain, spotTally);
+        if (arenaTrips.empty() && arenaSpots.empty())
+        {
+            if (trips.Count() || spots.Count())
+                LOG_INFO("module.animus", "{}: arena {} (map {}) takes no human trips (of {}: {}) and no hard spots "
+                    "(of {}: {})", name, arena.Name, terrain.MapId, trips.Count(), tripTally.Refusals(),
+                    spots.Count(), spotTally.Refusals());
+            continue;
+        }
+
+        // Every start and end checked against the world once, here, on the world thread -- and their grids created,
+        // with the reach of a trip around them, because a reset on a map thread cannot load one (StageScenario's
+        // constructor does the same for the spawn points) and a trip on a cold grid would fail every time.
+        Map* base = sMapMgr->CreateBaseMap(terrain.MapId);
+        if (!base)
+            continue;
+        std::set<std::pair<uint32, uint32>> grids;
+        auto const reach = [&grids, &terrain](float x, float y)
+        {
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                {
+                    GridCoord const grid = Acore::ComputeGridCoord(x + float(dx) * terrain.Most,
+                        y + float(dy) * terrain.Most);
+                    if (grid.IsCoordValid())
+                        grids.emplace(grid.x_coord, grid.y_coord);
+                }
+        };
+        auto const create = [base](float x, float y)
+        {
+            GridCoord const grid = Acore::ComputeGridCoord(x, y);
+            if (grid.IsCoordValid())
+                base->EnsureGridCreated(grid);
+        };
+
+        HumanArena& pools = _human[index];
+        for (HumanPools::Trip& trip : arenaTrips)
+        {
+            create(trip.Start.X, trip.Start.Y);
+            create(trip.End.X, trip.End.Y);
+            if (!StandsAt(base, PHASEMASK_NORMAL, trip.Start.X, trip.Start.Y, trip.Start.Z, arena))
+            {
+                tripTally.Add(HumanPools::Verdict::Stands);
+                continue;
+            }
+            reach(trip.Start.X, trip.Start.Y);
+            trip.Path.clear();          // the way the human went is not asked for here: only where it began and ended
+            trip.Path.shrink_to_fit();
+            pools.Trips.push_back(std::move(trip));
+        }
+        for (HumanPools::HardSpot& spot : arenaSpots)
+        {
+            create(spot.Pos.X, spot.Pos.Y);
+            if (!StandsAt(base, PHASEMASK_NORMAL, spot.Pos.X, spot.Pos.Y, spot.Pos.Z, arena))
+            {
+                spotTally.Add(HumanPools::Verdict::Stands);
+                continue;
+            }
+            reach(spot.Pos.X, spot.Pos.Y);
+            pools.Spots.push_back(spot);
+        }
+        pools.SpotWeights = HumanPools::Weights(pools.Spots);
+        for (auto const& [x, y] : grids)
+            base->EnsureGridCreated(GridCoord(x, y));
+
+        LOG_INFO("module.animus", "{}: arena {} (map {}): {} human trips of {} kept ({}% of its training trips; "
+            "refused: {}), {} hard spots of {} kept ({}% of its training starts; refused: {}); {} grids created",
+            name, arena.Name, terrain.MapId, pools.Trips.size(), trips.Count(), uint32(_humanTripShare * 100.0f),
+            tripTally.Refusals(), pools.Spots.size(), spots.Count(), uint32(_hardSpotShare * 100.0f),
+            spotTally.Refusals(), grids.size());
+    }
+}
+
+void Animus::Curriculum::TravelEncounter::BeforeLevel(Env& env)
+{
+    // Training resets only: an evaluation, or the replay of a lost episode, is the episode its seed makes, on the
+    // ground it is scored on, and draws nothing here -- not even the roll, so its random numbers are its own.
+    if (env.Evaluating || env.EpisodeSeedIndex != Animus::NO_EPISODE_SEED)
+        return;
+
+    EnvState& data = _scenario.Data(env);
+    if (data.Arena >= _human.size())
+        return;
+
+    HumanArena const& pools = _human[data.Arena];
+    EnvTravel& travel = _envs[env.Index];
+    if (!pools.Trips.empty() && frand(0.0f, 1.0f) < _humanTripShare)
+    {
+        uint32 const pick = urand(0, uint32(pools.Trips.size()) - 1);
+        HumanPools::Point const& start = pools.Trips[pick].Start;
+        travel.HumanTrip = int32(pick);
+        data.EpisodeSpawn.Relocate(start.X, start.Y, start.Z, frand(0.0f, 2.0f * float(M_PI)));
+        data.HasEpisodeSpawn = true;
+        HumanTripsDrawn.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    if (!pools.Spots.empty() && frand(0.0f, 1.0f) < _hardSpotShare)
+    {
+        // Weighted by how many humans came to grief there.
+        uint32 const total = uint32(std::min<uint64>(pools.SpotWeights.back(), std::numeric_limits<uint32>::max()));
+        std::size_t const pick = HumanPools::Pick(pools.SpotWeights, uint64(urand(0, total - 1)));
+        HumanPools::Point const& at = pools.Spots[pick].Pos;
+        travel.HumanHard = true;
+        data.EpisodeSpawn.Relocate(at.X, at.Y, at.Z, frand(0.0f, 2.0f * float(M_PI)));
+        data.HasEpisodeSpawn = true;
+        HardStartsDrawn.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void Animus::Curriculum::TravelEncounter::AbandonHumanStart(Env& env, Map* map, EnvTravel& travel)
+{
+    if (travel.HumanTrip >= 0)
+        HumanTripsFellBack.fetch_add(1, std::memory_order_relaxed);
+    if (travel.HumanHard)
+        HardStartsFellBack.fetch_add(1, std::memory_order_relaxed);
+    travel.HumanTrip = -1;
+    travel.HumanHard = false;
+    travel.FromHumanTrip = false;
+    travel.FromHardStart = false;
+
+    // Cleared first: SpawnPointFor reads it, and so does StageScenario's retry, which would otherwise put the seats
+    // back on the human start every time it moved them.
+    EnvState& data = _scenario.Data(env);
+    data.HasEpisodeSpawn = false;
+    Position const& spawn = _scenario.SpawnPointFor(env);
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        if (Player* bot = _scenario.SeatBot(env, seat))
+            BotFactory::TeleportWithinMap(bot, spawn);
+    _scenario.ScatterSeats(env, map);
 }
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::TravelEncounter::RewardTerms() const
@@ -306,6 +628,14 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     // came up for air on the way is in the scenario's breath columns.
     table.Add("dive", [this](Env const& env, uint32) { return _envs[env.Index].Dive ? 1.0f : 0.0f; });
     table.Add("dive_depth", [this](Env const& env, uint32) { return _envs[env.Index].DiveDepth; });
+    // Human play (AnimusForge.Human.*): the trip was a human's, start and end, or the seat started where humans came
+    // to grief. Training only, so an evaluation reads 0 in both; a training mean split by them is how the pool's
+    // episodes are told from the arena's own draws.
+    table.Add("human_trip", [this](Env const& env, uint32) { return _envs[env.Index].FromHumanTrip ? 1.0f : 0.0f; });
+    table.Add("human_hard_start", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].FromHardStart ? 1.0f : 0.0f;
+    });
 }
 
 float Animus::Curriculum::TravelEncounter::Saved(EnvTravel const& travel)
@@ -359,8 +689,9 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // way round at least MIN_DETOUR_ACROSS longer -- so it gets more tries before it gives up and the arena falls
     // back to an ordinary trip. At 32 it found one in 0.65 of its episodes; the ones it missed were not bad ground
     // but too few throws at it. An air-only place is as narrow: a plateau or an island, not any dry ground.
-    uint32 const attempts = across || rules.AirOnly || rules.Ledge || rules.Underwater
-        ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
+    // A fixed place (a human trip's end) is one try, at it.
+    uint32 const attempts = rules.Fixed ? 1
+        : across || rules.AirOnly || rules.Ledge || rules.Underwater ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
 
     // One try: a place `distance` away at `angle`, validated. Everything it asks of the world is read-only, so tries
     // may run at once on different threads -- except the grids, which are loaded before (LoadGrid creates them).
@@ -387,11 +718,15 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         // high as the seat may fly and searches the same relief downwards.
         // A ledge place is below the seat, never above: the probe starts a step over its feet and searches the
         // deepest drop the arena offers.
-        float const from = indoors ? bot->GetPositionZ() + INDOOR_RISE
+        // A fixed place is probed from its own height instead: a step over where it was recorded, so the ground it
+        // finds is that place's own floor, terrace or plateau and not whatever lies above it.
+        float const from = rules.Fixed ? rules.At.GetPositionZ() + (indoors ? INDOOR_RISE : START_RISE)
+            : indoors ? bot->GetPositionZ() + INDOOR_RISE
             : rules.AirOnly ? bot->GetPositionZ() + TravelBlock::MAX_ALTITUDE
             : rules.Ledge ? bot->GetPositionZ() + MoveBlock::MAX_STEP
             : bot->GetPositionZ() + HEIGHT_SEARCH * 0.5f;
         float const search = indoors ? INDOOR_SEARCH
+            : rules.Fixed ? HEIGHT_SEARCH
             : rules.AirOnly ? TravelBlock::MAX_ALTITUDE + HEIGHT_SEARCH * 0.5f
             : rules.Ledge ? rules.DropMax + 2.0f * MoveBlock::MAX_STEP : HEIGHT_SEARCH;
         float const z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
@@ -618,8 +953,16 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // different count and shift everything drawn after it.
     std::vector<float> distances(attempts);
     std::vector<float> angles(attempts);
-    for (uint32 attempt = 0; attempt < attempts; ++attempt)
-        draw(attempt, distances[attempt], angles[attempt]);
+    if (rules.Fixed)
+    {
+        float const dx = rules.At.GetPositionX() - bot->GetPositionX();
+        float const dy = rules.At.GetPositionY() - bot->GetPositionY();
+        distances[0] = std::sqrt(dx * dx + dy * dy);
+        angles[0] = std::atan2(dy, dx);
+    }
+    else
+        for (uint32 attempt = 0; attempt < attempts; ++attempt)
+            draw(attempt, distances[attempt], angles[attempt]);
     auto const load = [&](uint32 attempt)
     {
         map->LoadGrid(bot->GetPositionX() + distances[attempt] * std::cos(angles[attempt]),
@@ -627,7 +970,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     };
 
     MapUpdater* updater = sMapMgr->GetMapUpdater();
-    bool const shared = !rules.Ledge && !rules.AirOnly && updater && updater->activated()
+    bool const shared = !rules.Fixed && !rules.Ledge && !rules.AirOnly && updater && updater->activated()
         && MapMgr::MapTasksRunning.load(std::memory_order_acquire);
     if (!shared)
     {
@@ -784,16 +1127,9 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     ArenaDefinition const& arena = _scenario.Arena(env);
     bool const flying = arena.Flying;
     float walk = 0.0f;
-    // On foot the trip is shorter: the lesson is how well the seat covers ground with what it has, not
-    // whether a ride is worth summoning.
-    float const least = arena.Indoors ? tuning.IndoorMin
-        : arena.Ledges ? tuning.LedgeMin
-        : arena.Underwater ? tuning.DiveMin
-        : flying ? tuning.FlyingMin : arena.OnFoot ? tuning.FootMin : tuning.ObjectiveMin;
-    float const most = arena.Indoors ? tuning.IndoorMax
-        : arena.Ledges ? tuning.LedgeMax
-        : arena.Underwater ? tuning.DiveMax
-        : flying ? tuning.FlyingMax : arena.OnFoot ? tuning.FootMax : tuning.ObjectiveMax;
+    float least = 0.0f;
+    float most = 0.0f;
+    TripBand(arena, tuning, least, most);
     // A water arena asks for a crossing: an objective whose way round is much longer than the way through, with
     // water in between. Where the ground offers none within reach, fall back to an ordinary trip rather than
     // failing the env -- a scenario that cannot build an episode takes the whole run down with it, and one
@@ -846,92 +1182,148 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // asked to make every time.
     float const budget = float(env.EpisodeLengthMs) / 1000.0f * FEASIBLE_SHARE;
 
-    // A training reset may take a trip found before from the same spot for the same band, instead of searching: the
-    // search draws a point, loads its grid, probes its height and plans a route, attempt after attempt. Seeded builds
-    // (evaluations, and the replays of lost ones) always search, so each is the episode its seed makes whatever was
-    // pooled before it; an arena that scatters its seats searches from where they landed. A share of training resets
-    // search too, which keeps adding to the pools and replacing what is in them.
-    bool const poolable = _pooling && env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED && arena.SpawnScatter <= 0.0f
-        && !flying;
-    uint64 const poolKey = (uint64(data.Arena) << 40) | (uint64(data.Spawn) << 8) | uint64(uint8(rules.Band + 1));
-    bool fromPool = false;
-    if (poolable && frand(0.0f, 1.0f) < POOL_SHARE)
+    // A human trip (AnimusForge.Human.Trips): BeforeLevel put the seat at its start, and its end is now judged by the
+    // arena's own rules, one try at that place -- ground under it, reachable by a route of an ordinary detour within
+    // the clock, a crossing, a ledge, a lakebed or air-only where the arena asks for one. A trip that fails is not
+    // made easier: the seat goes back to the episode's own spawn point and the arena draws as it always does.
+    bool fromHuman = false;
+    if (travel.HumanTrip >= 0 && data.Arena < _human.size()
+        && uint32(travel.HumanTrip) < _human[data.Arena].Trips.size())
     {
-        float const affordable = budget * std::max(1.0f, bot->GetSpeed(MOVE_RUN));
-        std::lock_guard<std::mutex> guard(_poolLock);
-        auto const found = _pools.find(poolKey);
-        if (found != _pools.end() && found->second.size() >= POOL_MIN)
+        HumanPools::Point const& end = _human[data.Arena].Trips[travel.HumanTrip].End;
+        TravelPlaceRules human = rules;
+        human.Band = -1;
+        human.Fixed = true;
+        human.At.Relocate(end.X, end.Y, end.Z);
+        map->LoadGrid(end.X, end.Y);
+        fromHuman = FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, arena.Water,
+            arena.Water ? &travel.DryDistance : nullptr, arena.Indoors, &travel.Shortcut, human,
+            arena.Ledges ? &travel.LedgeDrop : nullptr, arena.Underwater ? &travel.DiveDepth : nullptr);
+        if (fromHuman)
         {
-            PooledTrip const& trip = found->second[urand(0, uint32(found->second.size()) - 1)];
-            if (trip.Walk <= affordable)
+            travel.Crossing = arena.Water;
+            travel.AirOnly = arena.AirOnly;
+            travel.Ledge = arena.Ledges;
+            travel.Dive = arena.Underwater;
+            // The band the trip turned out to be in, by its own detour, where the arena keeps bands at all.
+            if (travel.Band >= 0)
             {
-                travel.Objective = trip.Objective;
-                walk = trip.Walk;
-                travel.DryDistance = trip.DryDistance;
-                travel.DryShortcut = trip.DryShortcut;
-                travel.Shortcut = trip.Shortcut;
-                travel.Crossing = trip.Crossing;
-                travel.AirOnly = trip.AirOnly;
-                travel.Ledge = trip.Ledge;
-                travel.LedgeDrop = trip.LedgeDrop;
-                travel.Dive = trip.Dive;
-                travel.DiveDepth = trip.DiveDepth;
-                travel.Band = trip.Band;
-                fromPool = true;
+                float const detour = walk / std::max(1.0f, bot->GetExactDist2d(&travel.Objective));
+                travel.Band = detour < tuning.DetourEasy ? 0 : detour < tuning.DetourHard ? 1 : 2;
+            }
+            travel.FromHumanTrip = true;
+            HumanTripsUsed.fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+            AbandonHumanStart(env, map, travel);
+    }
+
+    // The arena's own draw. Twice at most: a seat started at a human hard spot that no objective can be found from
+    // goes back to the episode's spawn point and draws again from there, rather than failing the build -- whose
+    // retry would otherwise teleport it straight back to the spot.
+    bool placed = fromHuman;
+    bool poolable = false;
+    uint64 poolKey = 0;
+    bool fromPool = false;
+    for (uint32 round = 0; !placed && round < 2; ++round)
+    {
+        travel.Band = rules.Band;
+        // A training reset may take a trip found before from the same spot for the same band, instead of
+        // searching: the search draws a point, loads its grid, probes its height and plans a route, attempt after
+        // attempt. Seeded builds (evaluations, and the replays of lost ones) always search, so each is the episode
+        // its seed makes whatever was pooled before it; an arena that scatters its seats searches from where they
+        // landed, and so does a seat at a human start, which is not the spawn point the pool is kept for. A share
+        // of training resets search too, which keeps adding to the pools and replacing what is in them.
+        poolable = _pooling && env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED && arena.SpawnScatter <= 0.0f
+            && !flying && !travel.HumanHard;
+        poolKey = (uint64(data.Arena) << 40) | (uint64(data.Spawn) << 8) | uint64(uint8(rules.Band + 1));
+        fromPool = false;
+        if (poolable && frand(0.0f, 1.0f) < POOL_SHARE)
+        {
+            float const affordable = budget * std::max(1.0f, bot->GetSpeed(MOVE_RUN));
+            std::lock_guard<std::mutex> guard(_poolLock);
+            auto const found = _pools.find(poolKey);
+            if (found != _pools.end() && found->second.size() >= POOL_MIN)
+            {
+                PooledTrip const& trip = found->second[urand(0, uint32(found->second.size()) - 1)];
+                if (trip.Walk <= affordable)
+                {
+                    travel.Objective = trip.Objective;
+                    walk = trip.Walk;
+                    travel.DryDistance = trip.DryDistance;
+                    travel.DryShortcut = trip.DryShortcut;
+                    travel.Shortcut = trip.Shortcut;
+                    travel.Crossing = trip.Crossing;
+                    travel.AirOnly = trip.AirOnly;
+                    travel.Ledge = trip.Ledge;
+                    travel.LedgeDrop = trip.LedgeDrop;
+                    travel.Dive = trip.Dive;
+                    travel.DiveDepth = trip.DiveDepth;
+                    travel.Band = trip.Band;
+                    fromPool = true;
+                }
             }
         }
-    }
-    // The search loaded the objective's grid on this map while it looked; a pooled trip has to, or the way to it has
-    // no mesh at its end and the route is planned in vain (RefreshWay).
-    if (fromPool)
-        map->LoadGrid(travel.Objective.GetPositionX(), travel.Objective.GetPositionY());
-    // What the arena asked for first -- a crossing, or a place only the air reaches -- and an ordinary trip when
-    // this spawn point has none within reach, rather than an env that cannot build an episode and takes the run
-    // down with it. `crossing` and `air_only` report what was achieved, not what was asked, so a spawn point
-    // with no plateau in range shows up as an air-only arena that offered none, and can be gated on like the
-    // water arena's crossing.
-    if (fromPool)
-    {
-        // Drawn above: what it was when it was found.
-    }
-    else if (arena.Water
-        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, true, &travel.DryDistance,
-            false, &travel.Shortcut, rules))
-        travel.Crossing = true;
-    else if (arena.AirOnly
-        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
-            &travel.Shortcut, rules))
-        travel.AirOnly = true;
-    else if (arena.Ledges
-        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
-            &travel.Shortcut, rules, &travel.LedgeDrop))
-        travel.Ledge = true;
-    else if (arena.Underwater
-        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
-            &travel.Shortcut, rules, nullptr, &travel.DiveDepth))
-        travel.Dive = true;
-    else
-    {
-        TravelPlaceRules plain = rules;
-        plain.AirOnly = false;
-        plain.Ledge = false;
-        plain.Underwater = false;
-        // A detour band is a wish, not a condition: some spawn points have no hard detour within reach, and the
-        // stage's retries move the seats but keep the band, so four draws of the hard band could all come up empty
-        // and end the env with no episode (stage1_move logged a few a minute). The easiest band then, rather than
-        // nothing; `detour_band` reports the band the episode actually got.
-        if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
-            arena.Indoors, &travel.Shortcut, plain))
+        // The search loaded the objective's grid on this map while it looked; a pooled trip has to, or the way to it
+        // has no mesh at its end and the route is planned in vain (RefreshWay).
+        if (fromPool)
+            map->LoadGrid(travel.Objective.GetPositionX(), travel.Objective.GetPositionY());
+        // What the arena asked for first -- a crossing, or a place only the air reaches -- and an ordinary trip when
+        // this spawn point has none within reach, rather than an env that cannot build an episode and takes the run
+        // down with it. `crossing` and `air_only` report what was achieved, not what was asked, so a spawn point
+        // with no plateau in range shows up as an air-only arena that offered none, and can be gated on like the
+        // water arena's crossing.
+        if (fromPool)
+            placed = true;          // drawn above: what it was when it was found
+        else if (arena.Water
+            && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, true, &travel.DryDistance,
+                false, &travel.Shortcut, rules))
+            placed = travel.Crossing = true;
+        else if (arena.AirOnly
+            && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
+                &travel.Shortcut, rules))
+            placed = travel.AirOnly = true;
+        else if (arena.Ledges
+            && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
+                &travel.Shortcut, rules, &travel.LedgeDrop))
+            placed = travel.Ledge = true;
+        else if (arena.Underwater
+            && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
+                &travel.Shortcut, rules, nullptr, &travel.DiveDepth))
+            placed = travel.Dive = true;
+        else
         {
-            if (plain.Band <= 0)
-                return false;
-            plain.Band = 0;
-            travel.Band = 0;
-            if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
-                arena.Indoors, &travel.Shortcut, plain))
-                return false;
+            TravelPlaceRules plain = rules;
+            plain.AirOnly = false;
+            plain.Ledge = false;
+            plain.Underwater = false;
+            // A detour band is a wish, not a condition: some spawn points have no hard detour within reach, and the
+            // stage's retries move the seats but keep the band, so four draws of the hard band could all come up
+            // empty and end the env with no episode (stage1_move logged a few a minute). The easiest band then,
+            // rather than nothing; `detour_band` reports the band the episode actually got.
+            placed = FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
+                arena.Indoors, &travel.Shortcut, plain);
+            if (!placed && plain.Band > 0)
+            {
+                plain.Band = 0;
+                travel.Band = 0;
+                placed = FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
+                    arena.Indoors, &travel.Shortcut, plain);
+            }
         }
+
+        if (placed && travel.HumanHard)
+        {
+            travel.FromHardStart = true;
+            HardStartsUsed.fetch_add(1, std::memory_order_relaxed);
+        }
+        else if (!placed && travel.HumanHard)
+            AbandonHumanStart(env, map, travel);
+        else
+            break;
     }
+    if (!placed)
+        return false;
 
     // What the way round costs on foot, for every arena rather than only the ones built around a crossing:
     // OBS_DETOUR is how a seat learns that the barrier in front of it runs for two hundred yards, and that is

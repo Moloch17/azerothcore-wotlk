@@ -494,7 +494,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     if (_stage.AnyArena(hasAmbush))
         ambush = add(std::make_unique<AmbushEncounter>(*this, envs));
     if (_stage.AnyArena(hasTravel))
-        travel = add(std::make_unique<TravelEncounter>(*this, envs));
+        travel = add(std::make_unique<TravelEncounter>(*this, envs, settings));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));

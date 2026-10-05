@@ -1939,6 +1939,15 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Travel::PlaceAttempts.load(std::memory_order_relaxed)) / double(searches),
                 double(Travel::PlacePaths.load(std::memory_order_relaxed)) / double(searches),
                 Travel::PlaceFailed.load(std::memory_order_relaxed));
+        // Human play (AnimusForge.Human.*): what the travel arenas were handed, and what held up.
+        uint64 const humanTrips = Travel::HumanTripsDrawn.load(std::memory_order_relaxed);
+        uint64 const hardStarts = Travel::HardStartsDrawn.load(std::memory_order_relaxed);
+        if (humanTrips || hardStarts)
+            sim.ProbeNote += Acore::StringFormat("human trips {} ({} used, {} fell back), hard starts {} ({} used, {} "
+                "fell back); ", humanTrips, Travel::HumanTripsUsed.load(std::memory_order_relaxed),
+                Travel::HumanTripsFellBack.load(std::memory_order_relaxed), hardStarts,
+                Travel::HardStartsUsed.load(std::memory_order_relaxed),
+                Travel::HardStartsFellBack.load(std::memory_order_relaxed));
     }
     if (Animus::Curriculum::ProbeBake::Store::Baked())
     {

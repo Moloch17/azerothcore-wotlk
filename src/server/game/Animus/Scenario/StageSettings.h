@@ -76,6 +76,14 @@ namespace Animus
 
         /// Where a stage writes its layout manifests and stage.json (<LayoutsDir>/<stage>/); empty = nowhere.
         std::string LayoutsDir;
+
+        /// Trips and starts from real human play (TravelEncounter, HumanPools.h): the files `animus.human` writes, and
+        /// the share of a travel arena's training resets that draw from each. An empty path or a share of 0 is off,
+        /// which is what a host that sets neither (mod-animus) gets.
+        std::string HumanTrips;             // human_trips.json
+        float HumanTripShare = 0.0f;
+        std::string HumanHardSpots;         // human_hard_spots.json
+        float HumanHardSpotShare = 0.0f;
     };
 }
 

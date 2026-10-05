@@ -199,6 +199,15 @@ namespace AnimusForge
         std::string DistIface;
         std::vector<std::string> Classes;       // AnimusForge.Classes; empty = every class
 
+        /// AnimusForge.Human.Trips / TripShare: the human trip pool (human_trips.json, resolved; empty = off) and
+        /// the share of travel-arena training trips drawn from it. AnimusForge.Human.HardSpots / HardSpotShare: the
+        /// places humans came to grief (human_hard_spots.json) and the share of travel-arena training resets that
+        /// start at one. Read once here; each stage loads the files when it starts (StageSettings).
+        std::string HumanTrips;
+        float HumanTripShare = 0.0f;
+        std::string HumanHardSpots;
+        float HumanHardSpotShare = 0.0f;
+
         /// AnimusForge.SpawnPoint.*: the instanceable map and position every env's bots start at.
         uint32 SpawnMapId = 560;
         Position SpawnPosition;
