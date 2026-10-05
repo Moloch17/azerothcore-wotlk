@@ -69,7 +69,7 @@ namespace Animus::Movement
 
     // ------------------------------------------------------------------------------- calibrated (C6), with reasons
     /// Water this deep (of the body's height) is swum, and is walked again only once it is this shallow (the
-    /// shore hysteresis the old Steer used: MoveKeep::SWIM_ENTER / SWIM_LEAVE).
+    /// shore hysteresis the old steering used, its 0.75 / 0.4 of the height).
     constexpr float SWIM_ENTER = 0.75f;
     constexpr float SWIM_LEAVE = 0.4f;
     /// A swimmer floats with this share of its body under the surface (not found in the client, C0c: C6 confirms).
@@ -148,6 +148,7 @@ namespace Animus::Movement
         bool SteepSlope = false;    // a rise was refused for its slope
         bool Landed = false;        // a fall ended on a floor this step
         bool LandedInWater = false;
+        bool Jumped = false;        // a jump (or a swim jump) was taken this step
         float FallHeight = 0.0f;    // apex to landing, when Landed
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
@@ -193,6 +194,10 @@ namespace Animus::Movement
     /// step, swimming if in deep water, else falling from there.
     void Resync(BodyState& body, float x, float y, float z, float yaw, Body const& shape, WorldQuery const& world);
 
+    /// Throw the body into a fall with this velocity (yd/s, up positive): a knockback the server ordered, launched by
+    /// the client as SMSG_MOVE_KNOCK_BACK asks, its fall timed from here.
+    void Launch(BodyState& body, float vx, float vy, float vz);
+
     /// Whether a jump would do anything now (the action mask): on the ground, or swimming at the surface.
     [[nodiscard]] bool CanJump(BodyState const& body, Body const& shape, WorldQuery const& world);
     /// Whether the body's height is the policy's to change (ascend / descend / pitch): swimming or flying, or on the
@@ -214,6 +219,7 @@ namespace Animus::Movement
         constexpr uint32_t PITCH_UP = 0x00000040;
         constexpr uint32_t PITCH_DOWN = 0x00000080;
         constexpr uint32_t WALKING = 0x00000100;
+        constexpr uint32_t ROOT = 0x00000800;
         constexpr uint32_t FALLING = 0x00001000;
         constexpr uint32_t SWIMMING = 0x00200000;
         constexpr uint32_t ASCENDING = 0x00400000;
@@ -222,6 +228,7 @@ namespace Animus::Movement
         constexpr uint32_t FLYING = 0x02000000;
         constexpr uint32_t WATERWALKING = 0x10000000;
         constexpr uint32_t FALLING_SLOW = 0x20000000;
+        constexpr uint32_t HOVER = 0x40000000;
     }
 }
 

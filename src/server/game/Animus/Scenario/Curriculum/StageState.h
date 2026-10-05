@@ -22,7 +22,8 @@
 #include "Aptitude.h"
 #include "Block.h"
 #include "BotSlot.h"
-#include "MoveKeep.h"
+#include "Client.h"
+#include "PlayerLink.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "RewardLedger.h"
@@ -231,10 +232,7 @@ namespace Animus::Curriculum
         /// Leaving the ground: jumps launched and refused, drops (a landing more than MAX_STEP below), the deepest,
         /// drops made under a feather-fall aura, and the falls that followed with what they cost.
         uint32 Jumps = 0;
-        uint32 JumpsRefused = 0;
         uint32 Drops = 0;
-        float DropYards = 0.0f;
-        uint32 FeatherFalls = 0;
         uint32 Falls = 0;
         float FallDamage = 0.0f;
         uint32 FallDeaths = 0;
@@ -245,10 +243,23 @@ namespace Animus::Curriculum
         uint32 OptionPresses = 0;
         uint32 OptionMs = 0;
         /// The keys and mouse the seat holds (MoveBlock, MoveControls), carried from decision to decision, and the
-        /// body the player controller moves with them. Mutable like the probe: ViewSeat reads a const seat and hands
-        /// the move block pointers it writes.
+        /// player controller that moves its body with them and reports it to the server as a client would
+        /// (Movement::Client, stepped every world tick by StageScenario::SubTick). Mutable like the probe: ViewSeat
+        /// reads a const seat and hands the move block pointers it writes. The client is kept across episodes, as
+        /// the server state it mirrors (a root, flying, feather fall) is; each episode starts it again.
         mutable MoveControls::SeatControls Controls;
-        mutable Movement::BodyState Body;
+        mutable Movement::Client Mover;
+        mutable Movement::LinkMemory Link;
+        /// The controller's columns: reports refused, ticks pressing into a wall or stuck with a key held, course
+        /// kinks (the course turning more than 20 degrees within a tick), and control changes.
+        Movement::Client::Counters MoverAtStart;
+        uint32 WallMs = 0;
+        uint32 StuckMs = 0;
+        uint32 StuckRunMs = 0;
+        uint32 CourseKinks = 0;
+        float LastCourse = 0.0f;
+        bool HasCourse = false;
+        uint32 ControlChanges = 0;
         /// Where the seat is looking, in its own keeping rather than the spline's (SeatView::Facing). Seeded from
         /// the bot when an episode starts, because a default of 0 would aim every seat due east.
         float Facing = 0.0f;
@@ -464,7 +475,6 @@ namespace Animus::Curriculum
         /// How long the fidget's and the needless move's conditions have held (Actions.SettleGraceMs).
         uint32 FidgetHeldMs = 0;
         uint32 NeedlessHeldMs = 0;
-        uint32 FacingToggles = 0;
         uint32 Weaves = 0;
         uint32 StepFidgetMs = 0;
         std::array<uint32, AIMLESS_CAUSES> StepAimlessBy{};     // this decision's, by cause (priced at the reward)
@@ -496,10 +506,6 @@ namespace Animus::Curriculum
         float FollowDistanceSq = 0.0f;
         uint32 FollowInBand = 0;
         uint32 MoveStarts = 0;
-        uint32 SplineRestarts = 0;          // a decision that launched a move spline over one still running
-        uint32 TurnRestarts = 0;            // ... of them, on a decision with a turn under way or chosen
-        /// ... and every one of them by what let the run go (MoveKeep::Relaunch, restart-causes).
-        std::array<uint32, std::size_t(MoveKeep::Relaunch::Count)> Relaunches{};
         uint32 MoveStopStarts = 0;          // a start within a second of a stop
         bool WasMoving = false;
         uint32 StoppedAtMs = 0;
@@ -530,10 +536,7 @@ namespace Animus::Curriculum
             LastStepSelfDamage = 0.0f;
             DeathLogged = false;
             Jumps = 0;
-            JumpsRefused = 0;
             Drops = 0;
-            DropYards = 0.0f;
-            FeatherFalls = 0;
             Falls = 0;
             FallDamage = 0.0f;
             FallDeaths = 0;
@@ -542,7 +545,13 @@ namespace Animus::Curriculum
             // Facing and the body are seeded from the bot once the seat has been placed (StageScenario::ResetSeats),
             // not here, where there is no bot to ask.
             Controls.Clear();
-            Body = Movement::BodyState();
+            MoverAtStart = Mover.Counts;
+            WallMs = 0;
+            StuckMs = 0;
+            StuckRunMs = 0;
+            CourseKinks = 0;
+            HasCourse = false;
+            ControlChanges = 0;
             Steering.Clear();
             Facing = 0.0f;
             Probe = GroundProbe();
@@ -635,7 +644,6 @@ namespace Animus::Curriculum
             StepEffort = 0.0f;
             FidgetHeldMs = 0;
             NeedlessHeldMs = 0;
-            FacingToggles = 0;
             Weaves = 0;
             StepFidgetMs = 0;
             StepAimlessBy.fill(0);
@@ -664,9 +672,6 @@ namespace Animus::Curriculum
             FollowDistanceSq = 0.0f;
             FollowInBand = 0;
             MoveStarts = 0;
-            SplineRestarts = 0;
-            TurnRestarts = 0;
-            Relaunches.fill(0);
             MoveStopStarts = 0;
             WasMoving = false;
             StoppedAtMs = 0;

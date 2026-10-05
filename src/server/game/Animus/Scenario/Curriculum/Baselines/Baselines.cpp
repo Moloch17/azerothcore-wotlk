@@ -536,7 +536,7 @@ namespace
     /// TurnToward, then held forward. Holding forward alone is what this did before the rays, and why the scripted
     /// baseline arrived in 8% of its episodes against a trained policy's 99%: forward is right only until something
     /// is in front of it.
-    std::optional<int32> Steer(Row const& row, float headingSin, float headingCos)
+    std::optional<int32> Seek(Row const& row, float headingSin, float headingCos)
     {
         namespace MC = MoveControls;
         if (!row.Has(BlockId::Move))
@@ -658,7 +658,7 @@ namespace
 
             // And steer. The objective's direction in the seat's own frame comes from the move block's own pair,
             // because this is the block that owns getting there.
-            if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
+            if (std::optional<int32> go = Seek(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
                 row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
                 return go;
 
@@ -702,7 +702,7 @@ namespace
                 bool const closing = yards > HOLD_RANGE_BEYOND_YARDS
                     || row.Obs(BlockId::Duel, DuelBlock::OBS_TARGET_IN_LINE_OF_SIGHT) == 0.0f;
                 if (closing)
-                    if (std::optional<int32> go = Steer(row, toTargetSin, toTargetCos))
+                    if (std::optional<int32> go = Seek(row, toTargetSin, toTargetCos))
                         return go;
 
                 // A hunter cannot shoot inside melee reach: with its pet on the target, it steps back out and lets
@@ -711,7 +711,7 @@ namespace
                     && row.Obs(BlockId::Duel, DuelBlock::OBS_TARGET_ATTACKS_BOT) > 0.0f
                     && row.Obs(BlockId::Duel, DuelBlock::OBS_PET_ATTACKING) > 0.0f;
                 if (backing)
-                    if (std::optional<int32> back = Steer(row, -toTargetSin, -toTargetCos))
+                    if (std::optional<int32> back = Seek(row, -toTargetSin, -toTargetCos))
                         return back;
 
                 if (!closing && !backing && yards <= HOLD_RANGE_WITHIN_YARDS)
@@ -732,7 +732,7 @@ namespace
 
         // Close in on a held bearing, and stop once in reach.
         if (hasTarget && !inMelee)
-            if (std::optional<int32> go = Steer(row, toTargetSin, toTargetCos))
+            if (std::optional<int32> go = Seek(row, toTargetSin, toTargetCos))
                 return go;
         if (hasTarget && inMelee)
             if (std::optional<int32> halt = Halt(row))
@@ -801,7 +801,7 @@ namespace
                 return Halt(row);
             if (std::optional<int32> turn = TurnToward(row, obs(aim.Sin), obs(aim.Cos)))
                 return turn;
-            return Steer(row, obs(aim.Sin), obs(aim.Cos));
+            return Seek(row, obs(aim.Sin), obs(aim.Cos));
         }
 
         // Nothing sensed: the travel block's objective is where the episode wants the seat (the quest's next place).
@@ -813,7 +813,7 @@ namespace
             float const cos = row.Obs(BlockId::Travel, TravelBlock::OBS_OBJECTIVE_BEARING_COS);
             if (std::optional<int32> turn = TurnToward(row, sin, cos))
                 return turn;
-            return Steer(row, sin, cos);
+            return Seek(row, sin, cos);
         }
 
         return std::nullopt;

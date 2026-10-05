@@ -68,6 +68,9 @@
 #include "Supplies.h"
 #include "TravelBlock.h"
 #include "MoveSpline.h"
+#include "MapWorldQuery.h"
+#include "PlayerLink.h"
+#include "UnitBody.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <boost/json/serialize.hpp>
@@ -912,10 +915,7 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(seat(env, index).BreathingCasts);
     });
     _info.Add("jumps", [seat](Env const& env, uint32 index) { return float(seat(env, index).Jumps); });
-    _info.Add("jumps_refused", [seat](Env const& env, uint32 index) { return float(seat(env, index).JumpsRefused); });
     _info.Add("drops", [seat](Env const& env, uint32 index) { return float(seat(env, index).Drops); });
-    _info.Add("drop_yards", [seat](Env const& env, uint32 index) { return seat(env, index).DropYards; });
-    _info.Add("feather_falls", [seat](Env const& env, uint32 index) { return float(seat(env, index).FeatherFalls); });
     _info.Add("fell", [seat](Env const& env, uint32 index) { return seat(env, index).Falls ? 1.0f : 0.0f; });
     _info.Add("fall_damage", [seat](Env const& env, uint32 index) { return seat(env, index).FallDamage; });
     _info.Add("fall_deaths", [seat](Env const& env, uint32 index) { return float(seat(env, index).FallDeaths); });
@@ -1270,58 +1270,8 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).MoveStarts) / minutes;
     });
-    // Move splines relaunched under a running one, per minute (movement-smooth): each is a hitch a client draws.
-    _info.Add("spline_restarts", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        return float(seat(env, index).SplineRestarts) / minutes;
-    });
-    // Of those, the ones on a decision with a turn under way or chosen, per minute (movement-smooth A2): what walking a
-    // turn as one run removes.
-    _info.Add("turn_restarts", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        return float(seat(env, index).TurnRestarts) / minutes;
-    });
-    // All of them by what let the run go, per minute (restart-causes, MoveKeep::Relaunch): restart_press_bearing,
-    // restart_stop, restart_course, restart_time, ... -- the split that says which fix the stutter needs. And the
-    // presses together as restart_press, the column the first split had, so the two read across.
-    _info.Add("restart_press", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        uint32 presses = 0;
-        for (uint8 cause = 0; cause < uint8(MoveKeep::Relaunch::Count); ++cause)
-            if (MoveKeep::IsPress(MoveKeep::Relaunch(cause)))
-                presses += seat(env, index).Relaunches[cause];
-        return float(presses) / minutes;
-    });
-    for (uint8 cause = uint8(MoveKeep::Relaunch::PressBearing); cause < uint8(MoveKeep::Relaunch::Count); ++cause)
-        _info.Add("restart_" + std::string(MoveKeep::RelaunchName(MoveKeep::Relaunch(cause))),
-            [seat, cause](Env const& env, uint32 index)
-        {
-            float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-            return float(seat(env, index).Relaunches[cause]) / minutes;
-        });
-    // Runs launched on an incomplete path, and decisions held at the edge with nothing left to walk, per minute
-    // (movement-smooth A7): a seat pressing into a wall or off a ledge.
-    _info.Add("edge_runs", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        return float(seat(env, index).Steering.EdgeRuns) / minutes;
-    });
-    _info.Add("edge_holds", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        return float(seat(env, index).Steering.EdgeHolds) / minutes;
-    });
-    // Decisions a run was held at a closed door it would have walked through, per minute (movement-smooth A8).
-    _info.Add("door_holds", [seat](Env const& env, uint32 index)
-    {
-        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
-        return float(seat(env, index).Steering.DoorHolds) / minutes;
-    });
-    // A stop followed by a new start within a second, per minute (movement-smooth): the stutter a lapsing held bearing
-    // made. spline_restarts counts relaunches over a running spline; this, the stops between them.
+    // A stop followed by a new start within a second, per minute (movement-smooth): the body stopping and starting
+    // again, the stutter a player never shows.
     _info.Add("move_stop_starts", [seat](Env const& env, uint32 index)
     {
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
@@ -1375,8 +1325,8 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).RepeatedPresses);
     });
-    // Steering that did not commit (Actions.Jitter): turns chosen against one chosen within the window, and the
-    // bearing swings, in half turns, of feet re-aimed within it.
+    // Steering that did not commit (Actions.Jitter, MoveControls::Press): turn rates reversed within the window, and
+    // the feet reversed within it (forward to back, left to right; bearing_flips).
     _info.Add("turn_reversals", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).TurnReversals);
@@ -1389,15 +1339,43 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).PitchReversals);
     });
-    // FACE_* modes taken back within 1500 ms, per episode; and weaves: turns, pitches, bearings or modes taken
-    // back 1.5 to 4 s on, the slow wobble the decay prices and the old window let through (movement-smooth C).
+    // Weaves: turn or pitch rates, climbs or the feet reversed 1.5 to 4 s on, the slow wobble the decay prices and the
+    // old window let through (movement-smooth C).
     _info.Add("weaves", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).Weaves);
     });
-    _info.Add("facing_toggles", [seat](Env const& env, uint32 index)
+    // The player controller (player-controller C4): reports the server refused, time pressing into a wall and time
+    // stuck with a key held (no motion for a second or more), the course turning more than 20 degrees within a tick
+    // and control changes, per minute; and the movement packets a seat sent, per minute (the client's cadence).
+    _info.Add("moves_refused", [seat](Env const& env, uint32 index)
     {
-        return float(seat(env, index).FacingToggles);
+        SeatState const& state = seat(env, index);
+        return float(state.Mover.Counts.Refused - state.MoverAtStart.Refused);
+    });
+    _info.Add("wall_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).WallMs) / 1000.0f;
+    });
+    _info.Add("stuck_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).StuckMs) / 1000.0f;
+    });
+    _info.Add("course_kinks", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).CourseKinks) / minutes;
+    });
+    _info.Add("control_changes_per_minute", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(seat(env, index).ControlChanges) / minutes;
+    });
+    _info.Add("move_reports_per_minute", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        return float(state.Mover.Counts.Reports - state.MoverAtStart.Reports) / minutes;
     });
 
     // Support: healing and protection done (on itself, the owner and teammates) as fractions of the bot's health, the
@@ -2619,10 +2597,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // Where each seat is looking, and its body, start as where the world put it. ResetEpisode cleared them, which
     // would aim every seat due east; this is the first point at which the bots have stopped being teleported about.
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-        if (Player const* bot = SeatBot(env, seat))
+        if (Player* bot = SeatBot(env, seat))
         {
             data.Seats[seat].Facing = bot->GetOrientation();
-            MoveBlock::TakeBody(bot, data.Seats[seat].Body);
+            StartMover(data.Seats[seat], bot, env.EpisodeElapsedMs);
         }
 
     partMark = std::chrono::steady_clock::now();
@@ -3098,10 +3076,92 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
         ApplySeatAction(env, OwnerAgent(), actions[OwnerAgent()]);
 }
 
-void Animus::Curriculum::StageScenario::SubTick(Env& /*env*/, uint32 /*diffMs*/, bool /*decided*/)
+void Animus::Curriculum::StageScenario::StartMover(SeatState& seat, Player* bot, uint32 nowMs)
 {
-    // Every world tick between decisions. The per-tick FACE_TARGET follow and the shown turns went with the bearing
-    // design (player-controller C3); the player controller steps every seat's body here from C4.
+    if (!bot || !bot->IsInWorld() || !bot->GetMap())
+        return;
+    Movement::PlayerLink link(bot, seat.Link);
+    Movement::MapWorldQuery const world(bot->GetMap(), bot->GetPhaseMask());
+    Movement::Body const shape = Movement::ShapeOf(bot);
+    seat.Mover.Start(link, shape, world, nowMs);
+    seat.Facing = seat.Mover.Body.Yaw;
+}
+
+void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*decided*/)
+{
+    // Every world tick, after the decision's presses when there is one: the player controller moves each seat's
+    // body under the keys it holds and reports it to the server as a client would (Movement::Client, §5A), after
+    // answering whatever the server ordered it since the last tick (a root, a knockback, flying, ...).
+    uint32 const nowMs = env.EpisodeElapsedMs;
+    auto const tick = [&](uint32 index)
+    {
+        SeatState& seat = Data(env).Seats[index];
+        Player* bot = env.FindBot(index);
+        if (!bot || !seat.L || !bot->IsInWorld() || !bot->GetMap())
+            return;
+        Movement::PlayerLink link(bot, seat.Link);
+        Movement::MapWorldQuery const world(bot->GetMap(), bot->GetPhaseMask());
+        Movement::Body const shape = Movement::ShapeOf(bot);
+        if (!seat.Mover.Started())
+            seat.Mover.Start(link, shape, world, nowMs);
+        if (Animus::Client::Inbox* inbox = bot->GetSession() ? bot->GetSession()->MovementOrders() : nullptr)
+        {
+            // Map threads tick envs in parallel: each drains into its own buffer.
+            thread_local std::vector<Animus::Client::Order> orders;
+            inbox->Drain(orders);
+            for (Animus::Client::Order const& order : orders)
+                seat.Mover.Order(order, link, shape, world, nowMs);
+        }
+        seat.Mover.Tick(seat.Controls.Held, Movement::SpeedsOf(bot), shape, world, diffMs, nowMs, link);
+        seat.Facing = seat.Mover.Body.Yaw;
+        TrackController(seat, diffMs);
+    };
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        tick(seat);
+    if (CastOwnerActive(env))
+        tick(OwnerAgent());
+}
+
+void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 diffMs)
+{
+    Movement::BodyState const& body = seat.Mover.Body;
+    Movement::ControlState const& held = seat.Controls.Held;
+    bool const keys = held.Forward || held.Strafe || held.Vertical;
+    // Pressing into a wall, and held keys getting nowhere for a second or more (a wall, a slope, a ledge's lip).
+    if (keys && seat.Mover.TickWall)
+        seat.WallMs += diffMs;
+    bool const stuck = keys && seat.Mover.TickCommanded > 0.01f
+        && seat.Mover.TickMoved < 0.1f * seat.Mover.TickCommanded;
+    // Counted from the second it began, once it has lasted a second.
+    uint32 const before = seat.StuckRunMs;
+    seat.StuckRunMs = stuck ? seat.StuckRunMs + diffMs : 0;
+    if (seat.StuckRunMs >= 1000)
+        seat.StuckMs += before < 1000 ? seat.StuckRunMs : diffMs;
+    // Jumps taken, and the falls the server landed: a drop is a landing from two yards or more; what the landings
+    // cost is the server's own (Player::HandleFall, measured by PlayerLink).
+    seat.Jumps += seat.Mover.TickJumps;
+    if (seat.Mover.TickLandings && seat.Mover.TickFallHeight >= 2.0f)
+    {
+        ++seat.Drops;
+        ++seat.Falls;
+    }
+    seat.FallDamage += seat.Link.FallDamage;
+    seat.FallDeaths += seat.Link.FallDeaths;
+    seat.Link.FallDamage = 0.0f;
+    seat.Link.FallDeaths = 0;
+
+    // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees.
+    float const speed = std::sqrt(body.Vx * body.Vx + body.Vy * body.Vy);
+    if (speed > 0.5f)
+    {
+        float const course = std::atan2(body.Vy, body.Vx);
+        if (seat.HasCourse && std::fabs(std::remainder(course - seat.LastCourse, 2.0f * float(M_PI))) > 0.3490659f)
+            ++seat.CourseKinks;
+        seat.LastCourse = course;
+        seat.HasCourse = true;
+    }
+    else
+        seat.HasCourse = false;
 }
 
 Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat) const
@@ -3178,7 +3238,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // The keys it holds and the body they move, carried over from the last decision: without them a held key is
     // forgotten before it can do anything.
     view.Controls = &seat.Controls;
-    view.Body = &seat.Body;
+    view.Body = &seat.Mover.Body;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
@@ -3304,22 +3364,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     view.Option = &seat.Option;
     SeatActionResult result;
     SeatOptionSet const started = seat.Option;
-    // A spline launched while one was still running is a restart: what a client draws as a hitch in the stride.
-    uint32 const splineBefore = bot->movespline->GetId();
-    bool const splineRunning = !bot->movespline->Finalized();
-    seat.Steering.LaunchCause = 0;
-    seat.Steering.PressKind = 0;
     SeatEncoder::Apply(view, action, result);
-    if (splineRunning && bot->movespline->GetId() != splineBefore)
-    {
-        ++seat.SplineRestarts;
-        // By what let the run go (restart-causes): no cause from Steer's keep means another block launched it.
-        // A stop is a finished Stop spline, not a relaunch; a press outside the keep (a jump) is still its press.
-        uint8 const cause = uint8(MoveKeep::Recorded(bot->movespline->Finalized(),
-            MoveKeep::Relaunch(seat.Steering.LaunchCause), MoveKeep::Relaunch(seat.Steering.PressKind)));
-        if (cause < seat.Relaunches.size())
-            ++seat.Relaunches[cause];
-    }
     // The frame the next decision observes from (the move block keeps the controls and the body in place).
     seat.Facing = view.Facing;
     // Water, the way the core keeps it. A breath is spent under water and comes back ten times as fast above it
@@ -3436,21 +3481,12 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.DownrankedCasts += result.DownrankedCasts;
     seat.SpellCasts += result.SpellCasts;
     seat.BreathingCasts += result.BreathingCasts;
-    seat.Jumps += result.Jumps;
-    seat.JumpsRefused += result.JumpsRefused;
+    seat.ControlChanges += result.ControlChanged ? 1 : 0;
     seat.TurnReversals += result.TurnReversals;
     seat.BearingFlips += result.BearingFlip;
     seat.PitchReversals += result.PitchReversals;
-    seat.FacingToggles += result.FacingToggles;
     seat.Weaves += result.Weaves;
     seat.StepJitter += result.JitterWeight;
-    if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
-    {
-        ++seat.Drops;
-        seat.DropYards = std::max(seat.DropYards, result.JumpDrop);
-        if (result.JumpFeatherFall)
-            ++seat.FeatherFalls;
-    }
     seat.Falls += result.Falls;
     seat.FallDamage += result.FallDamage;
     if (result.Falls && bot && !bot->IsAlive())
@@ -3621,7 +3657,7 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         body.Y = bot->GetPositionY();
         body.Z = bot->GetPositionZ();
         body.Yaw = bot->GetOrientation();
-        body.Pitch = data.Seats[agent].Body.Pitch;
+        body.Pitch = data.Seats[agent].Mover.Body.Pitch;
         body.Motion = K::ModeOf(jumping, inWater, aloft);
         body.Mounted = bot->IsMounted();
         // The speed the body actually moves under, which is what its steps are measured in: a seat flagged flying
@@ -4728,7 +4764,10 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
 
     if (bot && bot->IsAlive())
     {
-        bool const moving = !bot->movespline->Finalized();
+        // Moving: the controlled body is under way (the core's own motion -- a fear, a knockback's spline -- too).
+        Movement::BodyState const& body = seat.Mover.Body;
+        bool const moving = body.Vx * body.Vx + body.Vy * body.Vy + body.Vz * body.Vz > 0.25f
+            || !bot->movespline->Finalized();
         bool const combat = bot->IsInCombat();
         if (combat)
             seat.CombatMs += _decisionMs;
@@ -4901,6 +4940,16 @@ void Animus::Curriculum::StageScenario::SetCostScale(float scale)
 
 void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
 {
+    // The episode's last decision: each seat's controller reports where its body is, so the stretch since its last
+    // report is credited rather than lost (§5A.1 point 4). Episodes ended by an outcome end on the server's reading.
+    if (env.EpisodeElapsedMs >= env.EpisodeLengthMs)
+        for (uint32 index = 0; index < Data(env).Seats.size(); ++index)
+            if (Player* bot = env.FindBot(index); bot && bot->IsInWorld())
+            {
+                Movement::PlayerLink link(bot, Data(env).Seats[index].Link);
+                Data(env).Seats[index].Mover.Finish(link, env.EpisodeElapsedMs);
+            }
+
     // Held until this decision's observation, which pays a goal it sees reached into this row.
     Data(env).StepReward = reward;
     for (Encounter* encounter : ActiveRewardOrder(env))

@@ -255,57 +255,15 @@ namespace Animus::Curriculum
         void Clear() { *this = MovementTrail(); }
     };
 
-    /// The seat's last turn and last bearing: which way and when, kept between decisions so the move block can tell
-    /// a steady course from a wobble (Actions.Jitter). A turn that undoes one chosen moments ago, or a bearing
-    /// swung far round from one just pressed, is the policy failing to commit -- on screen, a head that twitches and
-    /// feet that zigzag.
+    /// The runs the blocks still launch for a seat keep their spline ids here: the party's follow-the-tank and the
+    /// crowd's advance. Both go in player-controller C9, and this with them.
     struct SteerMemory
     {
-        uint64 TurnMs = 0;                      // the clock the last turn was chosen at
-        int8 TurnSign = 0;                      // and which way: +1 left, -1 right, 0 none yet
-        uint64 BearingMs = 0;                   // the clock the last bearing was pressed at
-        uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
-        uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
-        int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
-        /// The angles those were, signed (MovePrice::Undone prices a reversal by what it takes back), and the facing
-        /// mode before the current one with when it was left (a FACE_* back to it is a toggle, movement-smooth C).
-        float TurnAngle = 0.0f;
-        float PitchDelta = 0.0f;
-        uint8 LastFacingMode = 0xFF;
-        uint64 FacingModeMs = 0;
-        /// What a watching client draws (movement-smooth A2, B2): a run keeps the head it was launched with
-        /// (RunFacing, for the run RunId) however it is re-aimed since, and a seat standing still is shown its turns
-        /// swung across the ticks (ShownFacing) rather than snapped.
-        float RunFacing = 0.0f;
-        uint32 RunId = 0;
-        /// The run (spline id) launched on an incomplete path: it ends where the ground lets the bearing go, and is
-        /// kept to that end (MoveKeep::KeepEdgeRun, movement-smooth A7). 0: none.
-        uint32 EdgeRunId = 0;
-        uint32 EdgeRuns = 0;                    // runs launched on an incomplete path this episode
-        uint32 EdgeHolds = 0;                   // ... and decisions held at the edge with nothing left to walk
-        uint32 DoorHolds = 0;                   // decisions held at a closed door a run would have walked through
-        /// The speed Steer measured when it launched the run RunId (MoveKeep::SpeedChanged), and the one it measured
-        /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
-        float RunSpeed = 0.0f;
-        float LaunchSpeed = 0.0f;
-        /// Why this decision relaunched a run under way (MoveKeep::Relaunch, restart-causes): set by the first thing
-        /// that let it go, read once the action is applied. Pressing is up while a movement press is applied, so a
-        /// run let go by the press is the press's and not the keep's. LaunchCapped/RunCapped: the run was launched
-        /// with a reach MoveKeep::CappedReach cut short.
-        uint8 LaunchCause = 0;
-        bool Pressing = false;
-        uint8 PressKind = 0;                    // the movement press applied this decision (MoveKeep::Relaunch Press*)
-        bool LaunchCapped = false;
-        bool RunCapped = false;
-        bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)
         /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
         uint64 FollowAimMs = 0;
         uint32 FollowRunId = 0;
         /// CrowdBlock's ADVANCE: the run it launched, which it carries on before it arrives (movement-smooth A8).
         uint32 AdvanceRunId = 0;
-        float ShownFacing = 0.0f;
-        bool ShownSeeded = false;
-        uint32 ShownSinceMs = 0;
 
         void Clear() { *this = SteerMemory(); }
     };
@@ -697,24 +655,17 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
-        /// The feet leaving the ground (MoveBlock): jumps pressed, whether a feather-fall aura was on at the press;
-        /// and the falls (Encoding::FallToGround), how far and what they cost in health. JumpsRefused and JumpDrop
-        /// were the navmesh jump's landing test, 0 now (the controller's falls replace them in C4).
-        uint32 Jumps = 0;
-        uint32 JumpsRefused = 0;
-        float JumpDrop = 0.0f;
-        bool JumpFeatherFall = false;
+        /// The falls the engine made (Encoding::FallToGround: a dismount in the air), how far and what they cost in
+        /// health. The controller's jumps and landings are counted from its body (StageScenario::TrackController).
         uint32 Falls = 0;
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
         /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a turn or pitch rate, or
         /// a climb, against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to
-        /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves). FacingToggles is
-        /// the retired facing modes', 0 now (stripped with the columns in C4).
+        /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;
-        uint32 FacingToggles = 0;
         uint32 Weaves = 0;
         /// ... and what they cost, in quarter turns undone weighed by how recent the choice undone was
         /// (MovePrice::Undone, Recency): the Actions.Jitter charge.
@@ -737,6 +688,7 @@ namespace Animus::Curriculum
         bool CastTankMode = false;                  // a tank's stance, form, aura or presence
         uint32 RefusedCast = 0;                     // a press that did not start: the core's SpellCastResult
         bool KeyStillHeld = false;                  // the control already held, pressed again: not a press
+        bool ControlChanged = false;                // a move press that changed a held control (MoveBlock)
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

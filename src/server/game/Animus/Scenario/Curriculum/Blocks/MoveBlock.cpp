@@ -95,7 +95,7 @@ namespace
     /// the seat does. Movement is
     /// the trigger that matters -- at seven yards a second a one-second-old march is seven yards stale and its
     /// nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as a backstop.
-    void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, float facing)
+    void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, Position const& self, float facing)
     {
         Animus::Curriculum::GroundProbe* probe = view.Probe;
         if (!probe)
@@ -110,7 +110,7 @@ namespace
         bool stale = !probe->Valid;
         if (probe->Valid)
         {
-            float const moved = bot->GetExactDist(&probe->From);
+            float const moved = self.GetExactDist(&probe->From);
             float const turned = std::fabs(std::atan2(std::sin(facing - probe->Facing),
                 std::cos(facing - probe->Facing)));
             stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
@@ -135,7 +135,7 @@ namespace
         auto probeMark = std::chrono::steady_clock::now();
         auto partMark = probeMark;
 
-        Ground::Origin const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
+        Ground::Origin const at{ self.GetPositionX(), self.GetPositionY(), self.GetPositionZ(), bot->GetPhaseMask(),
             bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
 
@@ -183,7 +183,7 @@ namespace
         bool fromField = false;
         if (!fromTable && fields)
         {
-            if (!probe->CompassValid || bot->GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
+            if (!probe->CompassValid || self.GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
             {
                 Field::Store::Neighbourhood around;
                 Field::Compass compass;
@@ -201,7 +201,7 @@ namespace
                     probe->CompassClearance = compass.Room.Clearance;
                     probe->CompassDirected = compass.Room.Directed;
                     probe->CompassAway = compass.Room.Away;
-                    probe->CompassFrom.Relocate(bot);
+                    probe->CompassFrom.Relocate(self);
                     probe->CompassValid = true;
                 }
                 else
@@ -239,7 +239,7 @@ namespace
         if (!fromTable && !fromField && !Field::Store::Enabled())
             RefreshLive(probe, map, query, at, facing, partMark);
 
-        probe->From.Relocate(bot);
+        probe->From.Relocate(self);
         probe->Facing = facing;
         probe->Ms = view.NowMs;
         probe->Valid = true;
@@ -283,7 +283,7 @@ namespace
     /// from where the seat stands now, in its own frame (ahead, left) over YARD_SCALE, oldest first with the newest
     /// in the last pair, then the share of the samples it is still within DWELL_YARDS of. The first observation of
     /// an episode takes the first sample, so the trail always knows where the seat set out from.
-    void ObserveTrail(Animus::Curriculum::SeatView const& view, Player const* bot, float* out)
+    void ObserveTrail(Animus::Curriculum::SeatView const& view, Position const& self, float* out)
     {
         using Animus::Curriculum::MovementTrail;
         using Animus::Curriculum::TRAIL_SAMPLES;
@@ -295,8 +295,8 @@ namespace
         if (!trail->Started || view.NowMs < trail->LastMs
             || view.NowMs - trail->LastMs >= MovementTrail::INTERVAL_MS)
         {
-            trail->X[trail->Next] = bot->GetPositionX();
-            trail->Y[trail->Next] = bot->GetPositionY();
+            trail->X[trail->Next] = self.GetPositionX();
+            trail->Y[trail->Next] = self.GetPositionY();
             trail->Next = (trail->Next + 1) % TRAIL_SAMPLES;
             trail->Count = std::min(trail->Count + 1, TRAIL_SAMPLES);
             trail->LastMs = view.NowMs;
@@ -310,8 +310,8 @@ namespace
         {
             // Oldest first: with the ring full, the oldest sample is the slot Next points at.
             uint32 const slot = (trail->Next + TRAIL_SAMPLES - trail->Count + i) % TRAIL_SAMPLES;
-            float const dx = trail->X[slot] - bot->GetPositionX();
-            float const dy = trail->Y[slot] - bot->GetPositionY();
+            float const dx = trail->X[slot] - self.GetPositionX();
+            float const dy = trail->Y[slot] - self.GetPositionY();
             // Into the seat's frame: ahead is +x and left is +y, orientation running counter-clockwise.
             float const ahead = dx * cosFacing + dy * sinFacing;
             float const left = dy * cosFacing - dx * sinFacing;
@@ -532,18 +532,6 @@ std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, 
     return local < MC::ACTION_COUNT ? MC::NAMES[local] : std::string();
 }
 
-void Animus::Curriculum::MoveBlock::TakeBody(Player const* bot, Movement::BodyState& body)
-{
-    if (!bot || !bot->IsInWorld())
-        return;
-    Map* map = bot->GetMap();
-    if (!map)
-        return;
-    Mv::MapWorldQuery const world(map, bot->GetPhaseMask());
-    Mv::Resync(body, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetOrientation(),
-        Mv::ShapeOf(bot), world);
-}
-
 void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
     // `obs` and `mask` are already this block's own slice of the seat's row: SeatEncoder::Observe offsets them
@@ -554,6 +542,10 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     Mv::BodyState const* body = view.Body;
     Mv::ControlState const* held = view.Controls ? &view.Controls->Held : nullptr;
     bool const airborne = Airborne(bot);
+    // Where the seat is, for everything it senses of itself: the controller's true body, as a client knows its own
+    // position (§5A.1 point 1); the server's (others read it) lags it by up to a report.
+    Position const self = body ? Position(body->X, body->Y, body->Z, body->Yaw)
+        : bot ? bot->GetPosition() : Position();
 
     // Everything a seat needs to place its feet, and nothing about whether it has an enemy: this block is the one
     // that still works when there is nothing to fight.
@@ -605,19 +597,19 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         // How deep the feet are, the core's own liquid query at the body.
         if (Map* map = bot->GetMap())
         {
-            LiquidData const& liquid = map->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
-                bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), MAP_ALL_LIQUIDS);
+            LiquidData const& liquid = map->GetLiquidData(bot->GetPhaseMask(), self.GetPositionX(),
+                self.GetPositionY(), self.GetPositionZ(), bot->GetCollisionHeight(), MAP_ALL_LIQUIDS);
             if (liquid.Status != LIQUID_MAP_NO_WATER)
-                out[OBS_DEPTH] = std::clamp((liquid.Level - bot->GetPositionZ())
+                out[OBS_DEPTH] = std::clamp((liquid.Level - self.GetPositionZ())
                     / std::max(0.1f, bot->GetCollisionHeight()), 0.0f, 1.0f);
         }
 
         if (Unit const* target = view.Target)
         {
-            float const relative = RelativeBearing(*bot, facing, *target);
+            float const relative = RelativeBearing(self, facing, *target);
             out[OBS_TARGET_BEARING_SIN] = std::sin(relative);
             out[OBS_TARGET_BEARING_COS] = std::cos(relative);
-            out[OBS_TARGET_DISTANCE] = std::min(1.0f, bot->GetExactDist2d(target) / YARD_SCALE);
+            out[OBS_TARGET_DISTANCE] = std::min(1.0f, self.GetExactDist2d(target) / YARD_SCALE);
         }
         // The nearest ground effect it is not standing in, in the same frame: which way it lies and how wide, so
         // the seat can walk round one rather than only out of one. Its bearing is already relative to facing.
@@ -631,11 +623,11 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
 
         if (view.HasObjective)
         {
-            float const relative = RelativeBearing(*bot, facing, view.Objective);
+            float const relative = RelativeBearing(self, facing, view.Objective);
             out[OBS_OBJECTIVE] = 1.0f;
             out[OBS_OBJECTIVE_BEARING_SIN] = std::sin(relative);
             out[OBS_OBJECTIVE_BEARING_COS] = std::cos(relative);
-            float const range = bot->GetExactDist2d(&view.Objective);
+            float const range = self.GetExactDist2d(&view.Objective);
             out[OBS_OBJECTIVE_DISTANCE] = std::min(1.0f, range / OBJECTIVE_SCALE);
             // The same distance again, over forty yards rather than five hundred. Every episode this stage loses
             // ends twenty to forty-five yards short, which is a twelfth of the coarse feature's range and half
@@ -647,7 +639,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         // not what the seat is steering against and the samples would only report the bottom.
         if (!airborne)
         {
-            RefreshProbe(view, bot, facing);
+            RefreshProbe(view, bot, self, facing);
             if (GroundProbe const* probe = view.Probe)
                 for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
                 {
@@ -680,11 +672,11 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // open air. A swimmer's rays stay open, as they were.
             bool const flying = !bot->IsInWater();
             Map* map = bot->GetMap();
-            float const z = bot->GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
+            float const z = self.GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
             bool const fields = LayeredField::Store::Enabled();
             LayeredField::Store::Neighbourhood around;
             bool const fromField = flying && map && fields
-                && LayeredField::Store::Gather(map->GetId(), bot->GetPositionX(), bot->GetPositionY(), around);
+                && LayeredField::Store::Gather(map->GetId(), self.GetPositionX(), self.GetPositionY(), around);
             if (flying && map && fields)
                 (fromField ? LayeredField::Store::Reads : LayeredField::Store::Fallbacks)
                     .fetch_add(1, std::memory_order_relaxed);
@@ -695,19 +687,19 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 if (fromField)
                 {
                     float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::FlightReach(around.View, bot->GetPositionX(),
-                        bot->GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::FlightReach(around.View, bot->GetPositionX(),
-                        bot->GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const level = LayeredField::FlightReach(around.View, self.GetPositionX(),
+                        self.GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::FlightReach(around.View, self.GetPositionX(),
+                        self.GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
                     reach = level / MARCH_MAX;
                     climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
                 }
                 else if (flying && map && !fields)
                 {
                     float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                    float const level = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
                         z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                    float const above = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
                         z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
                     reach = level / MARCH_MAX;
                     climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
@@ -743,7 +735,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // Where it has been, in its own frame, sampled here once a second because this is the one place that runs
     // for every seat every decision, in training and in play alike.
     if (bot)
-        ObserveTrail(view, bot, out);
+        ObserveTrail(view, self, out);
 
     // The masks: only the presses that are physically impossible (MoveControls::Allowed). The jump and the vertical
     // controls read the body the controller moves.
@@ -767,26 +759,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         mask[action] = MC::Allowed(action, state) ? 1 : 0;
 }
 
-void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
-{
-    Player* bot = view.Bot;
-    if (!bot)
-        return;
-
-    // A water-walking flag outlives its aura on a client-controlled player (the core only clears it on a client's
-    // acknowledgement), so it comes off here when the aura has.
-    if (bot->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING) && !bot->HasWaterWalkAura())
-        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
-
-    // Until the controller steps the body every world tick (C4), it is taken from the core every decision: the
-    // observation's body (mode, depth, the masks' jump and vertical tests) is the seat as it stands.
-    if (view.Body)
-    {
-        TakeBody(bot, *view.Body);
-        view.Facing = view.Body->Yaw;
-    }
-}
-
 void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
@@ -801,15 +773,11 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         result.KeyStillHeld = true;
         return;
     }
+    result.ControlChanged = true;
     result.JitterWeight += pressed.JitterWeight;
     result.BearingFlip += pressed.FeetFlip;
     result.TurnReversals += pressed.TurnReversals;
     result.PitchReversals += pressed.PitchReversals;
     result.Weaves += pressed.Weaves;
     result.EffortWeight = pressed.Effort;
-    if (local == MC::ACTION_JUMP)
-    {
-        ++result.Jumps;
-        result.JumpFeatherFall = bot->HasAuraType(SPELL_AURA_FEATHER_FALL) || bot->HasAuraType(SPELL_AURA_HOVER);
-    }
 }
