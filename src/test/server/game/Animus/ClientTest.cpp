@@ -330,6 +330,42 @@ TEST(ClientTest, APersistentRefusalKeepsTheClientsCadence)
     EXPECT_FLOAT_EQ(rig.Client.Body.X, rig.Link.X);
 }
 
+// F8: a client keeps no world between calls (callers build it per tick). Finish refused on a client whose world has
+// since gone, and that has never stepped, must not reach a world query: the body takes the server's position as it is.
+TEST(ClientTest, ARefusedFinishTouchesNoWorld)
+{
+    class Counting final : public Mv::WorldQuery
+    {
+    public:
+        mutable int Calls = 0;
+        [[nodiscard]] float FloorBelow(float, float, float, float) const override { ++Calls; return 0.0f; }
+        [[nodiscard]] float FloorNormalZ(float, float, float) const override { ++Calls; return 1.0f; }
+        [[nodiscard]] Mv::Liquid LiquidAt(float, float, float) const override { ++Calls; return {}; }
+        [[nodiscard]] float Sweep(float, float, float, float, float, float, Mv::Body const&) const override
+        {
+            ++Calls;
+            return 1.0f;
+        }
+        [[nodiscard]] float Ceiling(float, float, float, float up) const override { ++Calls; return up; }
+        [[nodiscard]] bool InTerrain(float, float, float) const override { ++Calls; return false; }
+    };
+    FakeLink link;
+    Mv::Client client;
+    Counting world;
+    {
+        Mv::Body const shape;
+        client.Start(link, shape, world, 1000);       // the shape goes out of scope here, as a tick's does
+    }
+    client.Body.X = 3.0f;                              // somewhere the server was not told of
+    world.Calls = 0;
+    link.Refuse = true;
+    link.X = 1.0f;
+    client.Finish(link, 1500);
+    EXPECT_EQ(world.Calls, 0);
+    EXPECT_EQ(client.Counts.Refused, 1u);
+    EXPECT_FLOAT_EQ(client.Body.X, 1.0f);
+}
+
 // A jump is MSG_MOVE_JUMP at the press: FALLING, the fall's clock at 0, the launch in the jump info (down positive).
 TEST(ClientTest, AJumpIsReportedAtThePress)
 {

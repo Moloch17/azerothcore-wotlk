@@ -18,7 +18,6 @@
 
 #include "EncoderSupport.h"
 #include <atomic>
-#include "Forge.h"
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
@@ -87,14 +86,6 @@ namespace
 
 namespace Animus::Curriculum::Encoding
 {
-    /// How far below a seat the ground is looked for when it may be falling, and how high above it a seat has to
-    /// be before it is: the same two the travel block uses (MAX_GROUND_SEARCH, AIRBORNE_ABOVE).
-    constexpr float FALL_GROUND_SEARCH = 200.0f;
-    constexpr float FALL_ABOVE = 2.0f;
-    /// How far under the surface a seat is put back when it has come up out of the water: enough to be in it
-    /// (LIQUID_MAP_IN_WATER wants the feet below the level), not enough to put the head under.
-    constexpr float SURFACE_SINK = 0.5f;
-
     using SpellChecks::CheckCast;
     using SpellChecks::CooldownFraction;
 
@@ -635,6 +626,21 @@ namespace Animus::Curriculum::Encoding
         }
 
         return nullptr;
+    }
+
+    void TrackNearestHazard(Unit const* unit, Position const& self, float facing, uint64 nowMs, Hazard& nearest,
+        uint64& searchedMs)
+    {
+        if (!searchedMs || nowMs >= searchedMs + HAZARD_SEARCH_MS)
+        {
+            searchedMs = std::max<uint64>(1, nowMs);
+            nearest = Hazard();
+            nearest.Present = unit && FindNearestHazard(unit, HAZARD_SEARCH_RANGE, nearest);
+        }
+        if (!nearest.Present)
+            return;
+        nearest.Distance = self.GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
+        nearest.Bearing = self.GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY()) - facing;
     }
 
     bool FindNearestHazard(Unit const* unit, float range, Hazard& out)

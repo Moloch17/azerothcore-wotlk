@@ -166,7 +166,7 @@ void Animus::Curriculum::CoreBlock::DescribeRescaled(Layout const& layout, boost
         columns["count"] = count;
         out.emplace_back(std::move(columns));
     };
-    add(OBS_APTITUDE_FIRST + Aptitude::TREE_POINTS_FIRST, TalentBuilder::TREE_COUNT);
+    add(uint32(OBS_APTITUDE_FIRST) + uint32(Aptitude::TREE_POINTS_FIRST), TalentBuilder::TREE_COUNT);
     add(TreeObsFirst(layout) - first, TalentBuilder::TREE_COUNT);
 }
 

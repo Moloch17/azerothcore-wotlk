@@ -141,6 +141,32 @@ namespace Animus::Movement
         [[nodiscard]] uint32_t FlagsOf(ControlState const& control, Speeds const& speeds) const;
 
     private:
+        /// The shape and world a call was handed, for as long as that call runs: callers build them per tick (a
+        /// MapWorldQuery on the stack), so between calls the client keeps none -- a later Finish never reaches a
+        /// stale one. Nested (Tick calling Start), the outer call's are restored.
+        class WorldScope
+        {
+        public:
+            WorldScope(Client& client, Movement::Body const& shape, WorldQuery const& world)
+                : _client(client), _shape(client._shape), _world(client._world)
+            {
+                client._shape = &shape;
+                client._world = &world;
+            }
+            ~WorldScope()
+            {
+                _client._shape = _shape;
+                _client._world = _world;
+            }
+            WorldScope(WorldScope const&) = delete;
+            WorldScope& operator=(WorldScope const&) = delete;
+
+        private:
+            Client& _client;
+            Movement::Body const* _shape;
+            WorldQuery const* _world;
+        };
+
         [[nodiscard]] Report Snapshot(uint16_t opcode, uint32_t timeMs, uint32_t flags) const;
         bool Send(Report const& report, ServerLink& link);
         void TakeFromServer(ServerState const& state);

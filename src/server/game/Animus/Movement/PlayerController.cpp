@@ -320,9 +320,21 @@ namespace
             floor = liquid.Level;
 
         body.Moved += std::sqrt(dx * dx + dy * dy + rise * rise);
+        float const z0 = body.Z;
         body.X = nx;
         body.Y = ny;
+        uint32_t const fallBefore = body.FallMs;
         body.FallMs += uint32_t(dt * 1000.0f + 0.5f);
+        // The fall's time to the moment the feet reach `level` inside this step (z0 + vz0 t - g t^2 / 2 = level), as
+        // the client stamps a landing: FALL_LAND's fall time, which the server's fall damage reads with the height.
+        auto landedAt = [&](float level)
+        {
+            float const a = 0.5f * Mv::GRAVITY;
+            float const disc = vz0 * vz0 + 4.0f * a * (z0 - level);
+            float t = disc >= 0.0f ? (vz0 + std::sqrt(disc)) / (2.0f * a) : dt;
+            t = std::clamp(t, 0.0f, dt);
+            body.FallMs = fallBefore + uint32_t(t * 1000.0f + 0.5f);
+        };
 
         // Into deep water on the way down: swimming, no damage. (On the way up -- a breach out of the water -- the feet
         // are still under the surface and must not count as a landing.)
@@ -330,6 +342,7 @@ namespace
             && SwimDepth(liquid, world.FloorBelow(nx, ny, liquid.Level, 1000.0f), nz, shape, Mv::SWIM_ENTER))
         {
             body.Z = std::max(nz, HasFloor(floor) ? floor : nz);
+            landedAt(liquid.Level);
             body.Landed = true;
             body.LandedInWater = true;
             body.FallHeight = std::max(0.0f, body.FallApexZ - liquid.Level);
@@ -340,6 +353,7 @@ namespace
         if (HasFloor(floor) && nz <= floor && body.Vz <= 0.0f)
         {
             body.Z = floor;
+            landedAt(floor);
             body.Landed = true;
             body.FallHeight = std::max(0.0f, body.FallApexZ - floor);
             body.Kind = Mv::Mode::Ground;

@@ -19,6 +19,7 @@
 #define ANIMUS_MOVEMENT_PLAYER_LINK_H
 
 #include "Client.h"
+#include "LinkMemory.h"
 #include "ClientOrders.h"
 #include "Opcodes.h"
 #include "ClientMovement.h"
@@ -36,23 +37,6 @@ class WorldPacket;
 /// own ServerLink over the packet path; the client logic in front of both is the same (Client).
 namespace Animus::Movement
 {
-    /// What a seat's link remembers between ticks: the last position the server accepted (where an unstick goes), and
-    /// how many reports in a row were refused for an invalid position.
-    struct LinkMemory
-    {
-        float GoodX = 0.0f;
-        float GoodY = 0.0f;
-        float GoodZ = 0.0f;
-        float GoodYaw = 0.0f;
-        bool HasGood = false;
-        uint32 InvalidStreak = 0;
-        /// Landings the server took (MSG_MOVE_FALL_LAND), what they cost (share of maximum health, Player::HandleFall)
-        /// and how many killed; for the fall columns, counted since the link began.
-        uint32 Landings = 0;
-        float FallDamage = 0.0f;
-        uint32 FallDeaths = 0;
-    };
-
     class PlayerLink final : public ServerLink
     {
     public:

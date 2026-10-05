@@ -382,11 +382,11 @@ namespace Animus::Curriculum
         /// fights stay the same length).
         uint32 HazardMs = 0;
         uint64 HazardDamage = 0;
-        /// The nearest hazard the seat is not already in, cached: the grid search runs every
-        /// StageScenario::HAZARD_SEARCH_MS, and the distance and bearing are recomputed from the seat's own
-        /// position every decision, since a ground effect stays where it was cast.
+        /// The nearest hazard the seat is not already in, cached (Encoding::TrackNearestHazard): the grid search
+        /// runs every Encoding::HAZARD_SEARCH_MS, and the distance and bearing are recomputed from the seat's body
+        /// every decision, since a ground effect stays where it was cast.
         Hazard NearestHazard;
-        uint32 HazardSearchMs = 0;      // episode time of the last search
+        uint64 HazardSearchMs = 0;      // episode time of the last search (0: never)
         /// Enemy casts the seat could have interrupted: counted when one starts, so the press-to-interrupt ratio
         /// can be read against what was actually there to interrupt rather than against presses alone.
         uint32 InterruptibleCastsSeen = 0;

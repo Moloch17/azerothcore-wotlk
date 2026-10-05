@@ -25,6 +25,18 @@
 #include "ProbeBake.h"
 #include "LayeredField.h"
 #include "MapWorldQuery.h"
+#include "Capture.h"
+#include "GameTime.h"
+#include "MovementHandlerScript.h"
+#include "ObjectAccessor.h"
+#include "Player.h"
+#include "Replay.h"
+#include "UnitBody.h"
+#include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <map>
+#include <mutex>
 #include "InstanceBosses.h"
 #include "StageDefinition.h"
 #include "World.h"
@@ -67,6 +79,77 @@ namespace
         return names;
     }
 
+    /// `forge controller record`: a Playtest player's movement packets, as the server took them (OnPlayerMove: after
+    /// ReadMovementInfo's flag rules, before relocation), kept in the human-capture format (FORMAT.md Move and
+    /// Speeds) until `record stop` writes them. One player at a time.
+    struct MoveRecorder
+    {
+        std::atomic<bool> On{ false };
+        std::mutex Lock;
+        ObjectGuid Player;
+        std::string Path;
+        uint64 OpenedMs = 0;
+        Animus::Movement::Capture::Recording Recording;
+        Animus::Movement::Speeds LastSpeeds;
+        bool HasSpeeds = false;
+    };
+
+    MoveRecorder& Recorder()
+    {
+        static MoveRecorder recorder;
+        return recorder;
+    }
+
+    /// The hook the recorder listens on; costs one atomic load a movement packet while nothing is recorded (bots'
+    /// reports reach it too, through ClientMovement::Apply).
+    class ForgeMoveRecorderScript : public MovementHandlerScript
+    {
+    public:
+        ForgeMoveRecorderScript() : MovementHandlerScript("ForgeMoveRecorderScript", { MOVEMENTHOOK_ON_PLAYER_MOVE })
+        {
+        }
+
+        void OnPlayerMove(Player* player, MovementInfo movementInfo, uint32 opcode) override
+        {
+            MoveRecorder& recorder = Recorder();
+            if (!recorder.On.load(std::memory_order_relaxed) || !player)
+                return;
+            std::lock_guard guard(recorder.Lock);
+            if (player->GetGUID() != recorder.Player)
+                return;
+            namespace Cap = Animus::Movement::Capture;
+            uint64 const ms = uint64(GameTime::GetGameTimeMS().count());
+            uint64 const id = player->GetGUID().GetCounter();
+            // The unit's speeds whenever they change (mount, form, snare), as the capture's Speeds record does.
+            Animus::Movement::Speeds const speeds = Animus::Movement::SpeedsOf(player);
+            if (!recorder.HasSpeeds || std::memcmp(&speeds, &recorder.LastSpeeds, sizeof(speeds)) != 0)
+            {
+                recorder.Recording.Speeds.push_back(Cap::FromSpeeds(speeds, ms, id));
+                recorder.LastSpeeds = speeds;
+                recorder.HasSpeeds = true;
+            }
+            Cap::MoveRecord record;
+            record.Ms = ms;
+            record.Player = id;
+            record.ClientMs = movementInfo.time;
+            record.Opcode = uint16(opcode);
+            record.Flags = movementInfo.GetMovementFlags();
+            record.Flags2 = movementInfo.GetExtraMovementFlags();
+            record.X = movementInfo.pos.GetPositionX();
+            record.Y = movementInfo.pos.GetPositionY();
+            record.Z = movementInfo.pos.GetPositionZ();
+            record.O = movementInfo.pos.GetOrientation();
+            record.Pitch = movementInfo.pitch;
+            record.FallMs = movementInfo.fallTime;
+            record.JumpZSpeed = movementInfo.jump.zspeed;
+            record.JumpSin = movementInfo.jump.sinAngle;
+            record.JumpCos = movementInfo.jump.cosAngle;
+            record.JumpXYSpeed = movementInfo.jump.xyspeed;
+            record.Map = player->GetMapId();
+            recorder.Recording.Moves.push_back(record);
+        }
+    };
+
     AnimusForge::LineSink Reply(ChatHandler* handler)
     {
         return [handler](std::string const& line) { handler->SendSysMessage(line); };
@@ -79,6 +162,13 @@ namespace
 
         ChatCommandTable GetCommands() const override
         {
+            static ChatCommandTable controllerCommandTable =
+            {
+                { "probe",  HandleControllerProbe,  SEC_ADMINISTRATOR, Console::Yes },
+                { "record", HandleControllerRecord, SEC_ADMINISTRATOR, Console::Yes },
+                { "replay", HandleControllerReplay, SEC_ADMINISTRATOR, Console::Yes },
+            };
+
             static ChatCommandTable forgeCommandTable =
             {
                 { "help",      HandleHelp,      SEC_ADMINISTRATOR, Console::Yes },
@@ -99,7 +189,7 @@ namespace
                 { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
-                { "controller", HandleControllerProbe, SEC_ADMINISTRATOR, Console::Yes },
+                { "controller", controllerCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
@@ -144,7 +234,9 @@ namespace
             table.AddRow({ "forge lhfbake <map> <x> <y> [cell] [samples] [radius]", "bake the layered height field "
                 "of the grid holding (x, y) in memory; its size, and the ground probe and flight readings worked out "
                 "from it against live ones (ground within radius of (x, y) if given)" });
-            table.AddRow({ "forge controller <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
+            table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
+            table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
+            table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
                 "their neighbours (kept if already baked, unless rebake)" });
@@ -340,7 +432,8 @@ namespace
             return true;
         }
 
-        /// `forge controller <map> <x> <y> <z> [facing]`: what the player controller's live world query reads at a point
+        /// `forge controller probe <map> <x> <y> <z> [facing]`: what the player controller's live world query reads at
+        /// a point
         /// (player-controller C2). On the world thread, with nothing training: it creates the grids it reads.
         static bool HandleControllerProbe(ChatHandler* handler, uint32 mapId, float x, float y, float z,
             Optional<float> facing)
@@ -391,6 +484,146 @@ namespace
                     feet, body);
                 handler->PSendSysMessage("  heading {:>3.0f} deg: free {:.1f} of {:.0f} yd", angle * 180.0f / M_PI,
                     share * reach, reach);
+            }
+            return true;
+        }
+
+        /// `forge controller record <player> <file>` starts recording that player's movement packets (a Playtest
+        /// client's); `forge controller record stop` writes them (player-controller C6). One player at a time.
+        static bool HandleControllerRecord(ChatHandler* handler, std::string name, Optional<std::string> file)
+        {
+            namespace Cap = Animus::Movement::Capture;
+            MoveRecorder& recorder = Recorder();
+            if (name == "stop")
+            {
+                Cap::Recording recording;
+                std::string path;
+                uint64 opened = 0;
+                {
+                    std::lock_guard guard(recorder.Lock);
+                    if (!recorder.On.exchange(false))
+                    {
+                        handler->SendSysMessage("nothing is being recorded");
+                        return true;
+                    }
+                    recording = std::move(recorder.Recording);
+                    path = recorder.Path;
+                    opened = recorder.OpenedMs;
+                    recorder.Recording = Cap::Recording();
+                }
+                std::string error;
+                if (!Cap::WriteFile(path, recording, opened, error))
+                {
+                    handler->PSendSysMessage("could not write the recording: {}", error);
+                    return true;
+                }
+                handler->PSendSysMessage("wrote {} movement packets and {} speed records to {}; read it with `forge "
+                    "controller replay {}`", recording.Moves.size(), recording.Speeds.size(), path, path);
+                return true;
+            }
+            if (!file || file->empty())
+            {
+                handler->SendSysMessage("usage: forge controller record <player> <file> | forge controller record "
+                    "stop");
+                return true;
+            }
+            Player* player = ObjectAccessor::FindPlayerByName(name, false);
+            if (!player || !player->GetSession() || player->GetSession()->IsSimSession())
+            {
+                handler->PSendSysMessage("no player named {} with a client is online", name);
+                return true;
+            }
+            std::lock_guard guard(recorder.Lock);
+            recorder.Player = player->GetGUID();
+            recorder.Path = *file;
+            recorder.OpenedMs = uint64(GameTime::GetGameTimeMS().count());
+            recorder.Recording = Cap::Recording();
+            recorder.HasSpeeds = false;
+            recorder.On = true;
+            handler->PSendSysMessage("recording {}'s movement packets; `forge controller record stop` writes them to "
+                "{}", name, *file);
+            return true;
+        }
+
+        /// `forge controller replay <file> [player]`: the recording's packets fed through the player controller over
+        /// the live world (MapWorldQuery on the recording's map), and the report (Animus::Movement::Replay). Idle
+        /// only: it creates the grids it reads. A realm capture's move file holds many players: the one with the most
+        /// packets, unless one is named by its capture id.
+        static bool HandleControllerReplay(ChatHandler* handler, std::string file, Optional<uint64> player)
+        {
+            namespace Mv = Animus::Movement;
+            namespace Cap = Animus::Movement::Capture;
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("the controller replay runs only while the forge is idle");
+                return true;
+            }
+            Cap::Recording recording;
+            std::string error;
+            if (!Cap::ReadFile(file, recording, error))
+            {
+                handler->PSendSysMessage("could not read {}: {}", file, error);
+                return true;
+            }
+            uint64 chosen = player.value_or(0);
+            if (!player)
+            {
+                std::map<uint64, uint32> counts;
+                for (Cap::MoveRecord const& move : recording.Moves)
+                    ++counts[move.Player];
+                for (auto const& [id, count] : counts)
+                    if (!chosen || count > counts[chosen])
+                        chosen = id;
+            }
+            std::vector<Cap::MoveRecord> moves;
+            for (Cap::MoveRecord const& move : recording.Moves)
+                if (move.Player == chosen && move.Source == 0)
+                    moves.push_back(move);
+            if (moves.empty())
+            {
+                handler->PSendSysMessage("{} has no client packets of player {}", file, chosen);
+                return true;
+            }
+            // One map: the first packet's (a recording that crosses maps is replayed on the first).
+            uint32 const mapId = moves.front().Map;
+            std::erase_if(moves, [mapId](Cap::MoveRecord const& move) { return move.Map != mapId; });
+            std::stable_sort(moves.begin(), moves.end(), [](Cap::MoveRecord const& a, Cap::MoveRecord const& b)
+            {
+                return a.Ms < b.Ms;
+            });
+            std::vector<Cap::SpeedsRecord> speeds;
+            for (Cap::SpeedsRecord const& s : recording.Speeds)
+                if (s.Player == chosen)
+                    speeds.push_back(s);
+
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+            std::set<std::pair<uint32, uint32>> grids;
+            for (Cap::MoveRecord const& move : moves)
+                for (int32 dx = -1; dx <= 1; ++dx)
+                    for (int32 dy = -1; dy <= 1; ++dy)
+                        grids.emplace(Animus::Curriculum::ProbeBake::GridIndex(move.X) + dx,
+                            Animus::Curriculum::ProbeBake::GridIndex(move.Y) + dy);
+            for (auto const& [gx, gy] : grids)
+                map->EnsureGridCreated(CoreGrid(gx, gy));
+
+            Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
+            Mv::Body const shape;   // a player's own cylinder is not in the capture: the controller's default
+            Mv::Replay::Report const report = Mv::Replay::Run(moves, speeds, shape, world);
+            handler->PSendSysMessage("player {} on map {}, {} speed records:", chosen, mapId, speeds.size());
+            std::string const text = report.Text();
+            std::size_t start = 0;
+            while (start < text.size())
+            {
+                std::size_t const end = text.find('\n', start);
+                handler->SendSysMessage(text.substr(start, end == std::string::npos ? std::string::npos : end - start));
+                if (end == std::string::npos)
+                    break;
+                start = end + 1;
             }
             return true;
         }
@@ -848,4 +1081,5 @@ namespace
 void AddSC_forge_commandscript()
 {
     new ForgeCommandScript();
+    new ForgeMoveRecorderScript();
 }
