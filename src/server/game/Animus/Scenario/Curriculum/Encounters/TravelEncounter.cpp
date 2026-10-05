@@ -779,6 +779,12 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             return false;
         if (rules.HasRise && (z - bot->GetPositionZ() < rules.RiseMin || z - bot->GetPositionZ() > rules.RiseMax))
             return false;
+        if (rules.SkyOpen > 0.0f)
+        {
+            Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
+            if (world.Ceiling(x, y, z, rules.SkyOpen) < rules.SkyOpen)
+                return false;
+        }
 
         // A place inside has to actually be inside. The probe can still land in a courtyard or on a roof edge
         // through a doorway, and only the WMO data tells them apart: GetAreaInfo returns false where no building

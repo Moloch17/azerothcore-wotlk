@@ -11,6 +11,7 @@ total_env_steps: 300000000
 eval:
   episodes: 2048
   report: [arrived, difficulty, at_top_rung, mounted_share, flying_share, takeoffs, landings, air_only_legs,
+           ground_mount_on_air_leg,
            route_length, time_ratio, stop_distance, overshoot, stuck_seconds, wall_seconds, falls, fall_damage,
            course_kinks, moves_refused, movement_casts, speed_casts, spell_casts, died, timed_out, reward_arrive,
            reward_progress, reward_stuck, reward_wall, reward_fall_damage, reward_jitter, reward_effort]

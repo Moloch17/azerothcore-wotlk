@@ -1063,6 +1063,9 @@ namespace Animus::Curriculum
         /// A long way (hundreds of yards): planned whole by the RoutePlanner instead of PathGenerator, whose point
         /// cap answers "incomplete" at that range. Serial, as the ledge and air-only searches are.
         bool LongRoute = false;
+        /// Open sky over the place, yards (0: not asked): a flight marker a flyer can come down on, not under an
+        /// overhang or in a cave (the controller's Ceiling query from the place's floor).
+        float SkyOpen = 0.0f;
     };
 
     class TravelEncounter final : public Encounter

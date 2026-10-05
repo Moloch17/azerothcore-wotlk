@@ -69,8 +69,8 @@ namespace Animus::Curriculum
     /// Drowning paid besides Stuck and Wall. Routes (M5): one long trip, planned whole by the RoutePlanner, in the
     /// rung's distance band and detour window (MarkerRoutes.*); shaped on the route, priced as the ground and
     /// vertical courses are. Mounted (M6): a trip worth mounting for -- a ride on the ground, or a flight (Flying),
-    /// air-only where the arena asks (the ground mount masked for such a leg); arriving is landing and stopping on it
-    /// (MarkerMounted.*).
+    /// air-only where the arena asks (the ground mount pressable there, only useless); arriving is landing and
+    /// stopping on it (MarkerMounted.*).
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -190,7 +190,8 @@ namespace Animus::Curriculum
             uint64 LastCell = ~uint64(0);
             uint32 Revisits = 0;
             // The mounted course.
-            bool LegAirOnly = false;        // the leg's marker only the air reaches: the ground mount is masked
+            bool LegAirOnly = false;        // the leg's marker only the air reaches
+            uint32 GroundMountAirMs = 0;    // ... and time on a mount that cannot fly, on such a leg
             uint32 AirOnlyLegs = 0;
             uint32 LastMountMs = 0;
             uint32 MountedMs = 0;

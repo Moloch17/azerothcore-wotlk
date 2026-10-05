@@ -6782,7 +6782,8 @@ AnimusForge.Curriculum.MarkerRoutes.RevisitSeconds = 10.0
 #        [RideNearestFirst, RideFurthestFirst] to [RideNearestLast, RideFurthestLast] yards over Rungs rungs, its way
 #        at most RideMaxDetour times the line; a flight's (a flying arena, a map that flies) from [FlightNearestFirst,
 #        FlightFurthestFirst] to [FlightNearestLast, FlightFurthestLast], air-only arenas only where the ground route
-#        does not reach (Travel.AirDetour), the ground mount masked. Arriving is stopping on it, landed, within Radius.
+#        does not reach (Travel.AirDetour); the ground mount is not masked there, only useless (ground_mount_on_air_leg
+#        reports it). Arriving is stopping on it, landed, within Radius.
 #        Mounting is a cast a move or a hit interrupts. Costs: Stuck, Wall (MarkerGround.*), FallDamage
 #        (MarkerVertical.*; a dismount in the air is a fall).
 AnimusForge.Curriculum.MarkerMounted.Rungs = 6
@@ -6796,6 +6797,8 @@ AnimusForge.Curriculum.MarkerMounted.FlightFurthestFirst = 350.0
 AnimusForge.Curriculum.MarkerMounted.FlightNearestLast = 500.0
 AnimusForge.Curriculum.MarkerMounted.FlightFurthestLast = 900.0
 AnimusForge.Curriculum.MarkerMounted.Radius = 2.5
+#   a flight marker has at least SkyOpen yards of open sky over it (no overhang, no cave a flyer cannot enter)
+AnimusForge.Curriculum.MarkerMounted.SkyOpen = 10.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

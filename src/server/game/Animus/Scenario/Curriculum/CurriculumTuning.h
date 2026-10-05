@@ -1120,6 +1120,9 @@ namespace Animus::Curriculum
             float FlightNearestLast = 500.0f;
             float FlightFurthestLast = 900.0f;
             float Radius = 2.5f;
+            /// A flight marker has at least this much open sky over it (no overhang, no cave a flyer cannot enter
+            /// from above).
+            float SkyOpen = 10.0f;
         } MarkerMounted;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -1719,6 +1722,7 @@ namespace Animus::Curriculum
             f("MarkerMounted.FlightNearestLast", tuning.MarkerMounted.FlightNearestLast);
             f("MarkerMounted.FlightFurthestLast", tuning.MarkerMounted.FlightFurthestLast);
             f("MarkerMounted.Radius", tuning.MarkerMounted.Radius);
+            f("MarkerMounted.SkyOpen", tuning.MarkerMounted.SkyOpen);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

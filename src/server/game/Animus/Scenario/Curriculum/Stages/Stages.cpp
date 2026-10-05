@@ -414,7 +414,8 @@ namespace
         // M6 -- riding and flight: mounting when it pays, steering at mount speed, dismounting where it must, and
         // flying -- take off, climb over what is in the way, cruise, land on the marker. A ride across Kalimdor's
         // flats (150-500 yd, the ground mount from level 20), flights in Outland (200-900 yd, a flying mount from
-        // 60), and air-only markers there that the ground route does not reach (the ground mount masked). Mounting is
+        // 60, under open sky), and air-only markers the ground route does not reach (a ground mount there is only
+        // useless, never masked: ground_mount_on_air_leg). Mounting is
         // a cast the seat must stand still for, and a hit interrupts it (ruling f: the game's own rules). The travel
         // block joins the layout here, with the mounts; arriving is landing and stopping on the marker.
         //

@@ -211,8 +211,9 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].UnderwaterSelfDamage;
     });
-    // The mounted course: the share of the episode on a mount and in the air, take-offs and landings, and the legs
-    // whose marker only the air reaches. Reported, never converged on (the measure is arrived).
+    // The mounted course: the share of the episode on a mount and in the air, take-offs and landings, the legs whose
+    // marker only the air reaches, and the seconds spent on a ground mount on one of them. Reported, never converged
+    // on (the measure is arrived).
     table.Add("mounted_share", [this](Env const& env, uint32)
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].MountedMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -223,6 +224,10 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
     table.Add("takeoffs", [this](Env const& env, uint32) { return float(_envs[env.Index].Takeoffs); });
     table.Add("landings", [this](Env const& env, uint32) { return float(_envs[env.Index].Landings); });
+    table.Add("ground_mount_on_air_leg", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].GroundMountAirMs) / 1000.0f;
+    });
     table.Add("air_only_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].AirOnlyLegs); });
     table.Add("revisits", [this](Env const& env, uint32) { return float(_envs[env.Index].Revisits); });
     // The trip's way (the routes course): its length and its detour over the straight line.
@@ -294,6 +299,7 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
         rules.DryOnly = false;
         rules.AirOnly = arena.AirOnly;
         rules.AirDetour = _scenario.Tuning().Travel.AirDetour;
+        rules.SkyOpen = _scenario.Tuning().MarkerMounted.SkyOpen;
         airOnly = arena.AirOnly;
     }
     else if (markers.Course == MarkerCourse::Water)
@@ -509,7 +515,9 @@ void Animus::Curriculum::MarkerEncounter::View(Env const& env, uint32 /*seat*/, 
     view.Objective = markers.Marker;
     // Mounting is the mounted stage's: every other course is on foot (it carries no travel block either).
     view.MountsAllowed = markers.Course == MarkerCourse::Mounted;
-    view.GroundMountAllowed = view.MountsAllowed && !markers.LegAirOnly;
+    // An air-only leg leaves the ground mount pressable: it is possible, only useless, and what it costs is the time
+    // it wastes (intent, not masks). ground_mount_on_air_leg reports whether the policy learned that.
+    view.GroundMountAllowed = view.MountsAllowed;
     // The rung's radius, for any block that reads it (TravelBlock's OBS_AT_OBJECTIVE). The move block, which is what
     // M1 carries, sees the marker's bearing and distance but not the radius: the rung is learned from the reward.
     view.ArriveWithin = markers.Task.Radius;
@@ -585,6 +593,9 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         markers.LastMountMs = env.EpisodeElapsedMs;
         bool const aloft = bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING);
         markers.MountedMs += bot->IsMounted() ? stepMs : 0;
+        // On a mount that cannot fly here, on a leg only the air reaches.
+        if (markers.LegAirOnly && bot->IsMounted() && !bot->CanFly())
+            markers.GroundMountAirMs += stepMs;
         markers.FlyingMs += aloft ? stepMs : 0;
         markers.Takeoffs += aloft && !markers.WasAloft ? 1 : 0;
         markers.Landings += !aloft && markers.WasAloft ? 1 : 0;
