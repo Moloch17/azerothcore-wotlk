@@ -76,6 +76,13 @@ namespace Animus::Curriculum
             float distanceFirst, float distanceLast, float detourFirst, float detourLast, float detourSpan,
             float radius);
 
+        /// What pressing into a wall costs over a decision: `wallSeconds` of it (the controller's count, slides
+        /// included), the unit having moved `moved` yards against the `asked` its held keys ask over the decision.
+        /// Nothing while moved / asked is at least `slideShare` (a slide that makes good progress is the right way
+        /// round a corner); in proportion to the shortfall below it, the full `price` a second at no movement.
+        [[nodiscard]] static float WallCharge(float wallSeconds, float moved, float asked, float price,
+            float slideShare);
+
         /// Rung `rung` of a ladder of `rungs` (0 the first), from the tuning's First and Last values.
         [[nodiscard]] static MarkerRung RungTask(uint32 rung, uint32 rungs, float distanceMin, float distanceFirst,
             float distanceLast, float bearingFirstDeg, float bearingLastDeg, float radiusFirst, float radiusLast);

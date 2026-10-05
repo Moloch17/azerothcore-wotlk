@@ -82,6 +82,17 @@ Animus::Curriculum::MarkerRung Animus::Curriculum::MarkerEncounter::GroundRungTa
     return task;
 }
 
+float Animus::Curriculum::MarkerEncounter::WallCharge(float wallSeconds, float moved, float asked, float price,
+    float slideShare)
+{
+    if (wallSeconds <= 0.0f || price <= 0.0f)
+        return 0.0f;
+    float const share = std::clamp(slideShare, 0.0f, 1.0f);
+    float const ratio = asked > 1e-4f ? std::clamp(moved / asked, 0.0f, 1.0f) : 0.0f;
+    float const blocked = share > 0.0f ? std::clamp((share - ratio) / share, 0.0f, 1.0f) : 0.0f;
+    return price * wallSeconds * blocked;
+}
+
 bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float movedYards, float stopMoved)
 {
     constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING;
@@ -341,7 +352,17 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         if (stuckMs)
             ledger.Add(RewardTerm::Stuck, -costs.Stuck * float(stuckMs) / 1000.0f);
         if (wallMs)
-            ledger.Add(RewardTerm::Wall, -costs.Wall * float(wallMs) / 1000.0f);
+        {
+            // What the held keys ask over the decision, at the speed they move at: a slide along the wall that keeps
+            // most of it is the way round, not pressing into the wall.
+            Movement::ControlState const& held = seat.Controls.Held;
+            UnitMoveType const kind = held.Walk ? MOVE_WALK
+                : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
+            float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
+            float const charge = WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall, costs.WallSlide);
+            if (charge > 0.0f)
+                ledger.Add(RewardTerm::Wall, -charge);
+        }
     }
 
     // The potentials, each started over with every new marker (a new potential function: the jump in distance to

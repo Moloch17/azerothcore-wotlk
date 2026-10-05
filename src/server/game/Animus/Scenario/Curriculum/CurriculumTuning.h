@@ -998,7 +998,12 @@ namespace Animus::Curriculum
             float DetourSpan = 0.25f;
             float Radius = 1.0f;
             float Stuck = 0.05f;                // per second
-            float Wall = 0.03f;                 // per second
+            float Wall = 0.03f;                 // per second, scaled by how blocked the seat was (WallSlide)
+            /// The controller's wall seconds count every tick a step met a wall, a slide along it too, which is the
+            /// right way round a corner's inside. So Wall is charged only for the part of the decision's ground not
+            /// covered: nothing while the unit moved at least WallSlide of what its held keys ask, rising to the full
+            /// price at no movement (MarkerEncounter::WallCharge).
+            float WallSlide = 0.5f;
         } MarkerGround;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -1542,6 +1547,7 @@ namespace Animus::Curriculum
             f("MarkerGround.Radius", tuning.MarkerGround.Radius);
             f("MarkerGround.Stuck", tuning.MarkerGround.Stuck);
             f("MarkerGround.Wall", tuning.MarkerGround.Wall);
+            f("MarkerGround.WallSlide", tuning.MarkerGround.WallSlide);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

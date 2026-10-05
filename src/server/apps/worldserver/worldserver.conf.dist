@@ -6675,7 +6675,9 @@ AnimusForge.Curriculum.Markers.StopNear = 10.0
 #        straight line -- from DetourFirst to DetourLast, each marker within DetourSpan above the rung's (the floor
 #        is let go after half the placement attempts; the `detour` column reports what was got). Every rung stops
 #        within Radius yards. Stuck (per second of a movement key held with the body getting nowhere for a second or
-#        more) and Wall (per second pressing into a wall) are noise prices on the learner's cost ladder.
+#        more) and Wall (per second pressing into a wall) are noise prices on the learner's cost ladder. A slide along
+#        a wall is not pressing into it: Wall is charged only for the decision's ground not covered -- nothing while
+#        the unit moved at least WallSlide of what its held keys ask, the full price at no movement.
 AnimusForge.Curriculum.MarkerGround.MarkersMin = 2
 AnimusForge.Curriculum.MarkerGround.MarkersMax = 4
 AnimusForge.Curriculum.MarkerGround.Rungs = 6
@@ -6688,6 +6690,7 @@ AnimusForge.Curriculum.MarkerGround.DetourSpan = 0.25
 AnimusForge.Curriculum.MarkerGround.Radius = 1.0
 AnimusForge.Curriculum.MarkerGround.Stuck = 0.05
 AnimusForge.Curriculum.MarkerGround.Wall = 0.03
+AnimusForge.Curriculum.MarkerGround.WallSlide = 0.5
 
 #
 #    AnimusForge.Curriculum.Owner.*
