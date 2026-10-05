@@ -59,7 +59,7 @@ namespace
         }
     }
 
-    struct Stats
+    struct Sample
     {
         std::vector<float> Values;
         void Add(float value) { if (std::isfinite(value)) Values.push_back(value); }
@@ -228,19 +228,19 @@ Rp::Report Rp::Run(std::vector<Capture::MoveRecord> const& moves, std::vector<Ca
         report.Drift.push_back(horizon);
     }
 
-    Stats launch;
-    Stats swimLaunch;
-    Stats gravity;
-    Stats airTime;
+    Sample launch;
+    Sample swimLaunch;
+    Sample gravity;
+    Sample airTime;
     std::vector<float> landing;
-    Stats heartbeat;
-    Stats facing;
-    Stats keyboardMoving;
-    Stats keyboardStill;
-    Stats stepWalked;
-    Stats slopeWalked;
-    Stats floatDepth;
-    Stats verticalShare;
+    Sample heartbeat;
+    Sample facing;
+    Sample keyboardMoving;
+    Sample keyboardStill;
+    Sample stepWalked;
+    Sample slopeWalked;
+    Sample floatDepth;
+    Sample verticalShare;
     float steepest = 0.0f;
     for (std::size_t k = 1; k < moves.size(); ++k)
     {
