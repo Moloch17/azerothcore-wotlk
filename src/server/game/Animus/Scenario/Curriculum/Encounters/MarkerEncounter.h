@@ -26,8 +26,6 @@
 
 namespace Animus::Curriculum
 {
-    struct SeatState;
-
     /// The rung's task (MarkerEncounter::RungTask): how far, how far round and how tight.
     struct MarkerRung
     {
@@ -67,10 +65,13 @@ namespace Animus::Curriculum
         [[nodiscard]] static MarkerRung RungTask(uint32 rung, uint32 rungs, float distanceMin, float distanceFirst,
             float distanceLast, float bearingFirstDeg, float bearingLastDeg, float radiusFirst, float radiusLast);
 
-        /// Whether a seat is stopped, as arriving means it: no forward, back, strafe or vertical key held, no jump
-        /// pending, on the ground, and the feet moved under `stopMoved` yards since the last decision. A held turn
-        /// does not count against it -- turning on the spot is standing still.
-        [[nodiscard]] static bool Stopped(SeatState const& seat, float movedYards, float stopMoved);
+        /// Whether a seat is stopped, as arriving means it, read from the server's applied state (player-controller
+        /// §5A.1: what is judged is what the server holds; the client sends MOVE_STOP at once, so at a stop the two
+        /// agree): `movementFlags` is the unit's MovementInfo flags -- no forward, back, strafe, pitch, ascend or
+        /// descend, not falling (a jump is), not swimming or flying -- and the unit's position moved under
+        /// `stopMoved` yards since the last decision. A turn (MOVEMENTFLAG_LEFT/RIGHT, or the mouse's facing alone)
+        /// does not count against it: turning on the spot is standing still (ratified 2026-10-05).
+        [[nodiscard]] static bool Stopped(uint32 movementFlags, float movedYards, float stopMoved);
 
     private:
         struct EnvMarkers
@@ -110,6 +111,8 @@ namespace Animus::Curriculum
             float StopDistanceSum = 0.0f;   // stops within StopNear of the marker
             uint32 Stops = 0;
             float Travelled = 0.0f;
+            uint32 MovementCasts = 0;       // the seat's blinks, leaps, charges and jumps (AgentStats::MovementCasts)
+            uint32 SpeedCasts = 0;          // ... and run-speed buffs (Sprint, Dash, Aspect of the Cheetah, ...)
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

@@ -24,6 +24,13 @@ PURPOSE = {
     "move1_controls": ("Arrive",),
 }
 
+# Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
+# file exists for, the other way round. M1's Facing is half the change in cos(bearing to the marker), and Progress the
+# straight-line distance closed over the leg, both started over at each marker.
+SHAPING = {
+    "move1_controls": ("Progress", "Facing"),
+}
+
 # Opposition -> the encounter source that pays it.
 ENCOUNTER = {
     "Markers": "Encounters/MarkerEncounter.cpp",
@@ -89,3 +96,11 @@ def test_the_purpose_is_an_outcome_or_cost_the_stage_pays(stage):
         paying = [s for s in sources if term in listed_terms(s)
                   and re.search(rf"ledger\.Add\(RewardTerm::{term}\b", (CURRICULUM / s).read_text())]
         assert paying, f"{stage}: no encounter its arenas use lists and pays {term}"
+
+
+@pytest.mark.parametrize("stage", sorted(SHAPING))
+def test_the_stage_nudges_stay_shaping(stage):
+    parsed = categories()
+    for term in SHAPING[stage]:
+        assert parsed.get(term) == "Shaping", f"{stage}'s nudge {term} is {parsed.get(term)}, not Shaping"
+        assert term not in PURPOSE.get(stage, ()), f"{stage} names its nudge {term} as its purpose"

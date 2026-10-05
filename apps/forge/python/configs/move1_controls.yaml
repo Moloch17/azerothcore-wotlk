@@ -93,8 +93,8 @@ eval:
   sampled_every: 3
   trace_episodes: 64
   report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, marker_radius, time_ratio,
-           overshoot, stop_distance, stops_near, distance_travelled, died, timed_out, reward_arrive, reward_progress,
-           reward_facing, reward_jitter, reward_effort, reward_repeat]
+           overshoot, stop_distance, stops_near, distance_travelled, movement_casts, speed_casts, died, timed_out,
+           reward_arrive, reward_progress, reward_facing, reward_jitter, reward_effort, reward_repeat]
 
 convergence:
   patience: 3

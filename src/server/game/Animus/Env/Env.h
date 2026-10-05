@@ -97,6 +97,11 @@ namespace Animus
         uint32 CastsMoved = 0;          // the caster was moving
         uint32 CastsTargetLost = 0;     // the cast's unit target died or is gone
         uint32 CastsOther = 0;          // anything else: interrupts, silences, stuns, form changes, death
+        /// The agent's own spells that move it (any cast, instant or not, once it went off): a blink, leap, charge
+        /// or jump -- the server moving the body, which the movement stages read to tell walking from blinking --
+        /// and a run-speed buff (Sprint, Dash, Aspect of the Cheetah, Travel Form and the like).
+        uint32 MovementCasts = 0;
+        uint32 SpeedCasts = 0;
 
         void Add(AgentStats const& other)
         {
@@ -139,6 +144,8 @@ namespace Animus
             CastsMoved += other.CastsMoved;
             CastsTargetLost += other.CastsTargetLost;
             CastsOther += other.CastsOther;
+            MovementCasts += other.MovementCasts;
+            SpeedCasts += other.SpeedCasts;
         }
     };
 

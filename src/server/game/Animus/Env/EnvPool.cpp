@@ -856,7 +856,7 @@ void Animus::EnvPool::RecordHealCast(Unit const* healer, Unit const* receiver, u
 
 void Animus::EnvPool::RecordCastCompleted(Unit const* caster, Spell* spell)
 {
-    if (!caster || !spell || spell->IsTriggered() || spell->GetCastTime() <= 0 || spell->m_spellInfo->IsChanneled())
+    if (!caster || !spell || spell->IsTriggered())
         return;
 
     auto const agent = _agents.find(caster->GetGUID());
@@ -864,6 +864,21 @@ void Animus::EnvPool::RecordCastCompleted(Unit const* caster, Spell* spell)
         return;
 
     AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
+
+    // A spell that moves the caster, instant ones included: what the movement stages count beside the walking.
+    SpellInfo const* info = spell->m_spellInfo;
+    if (info->HasEffect(SPELL_EFFECT_TELEPORT_UNITS) || info->HasEffect(SPELL_EFFECT_LEAP)
+        || info->HasEffect(SPELL_EFFECT_LEAP_BACK) || info->HasEffect(SPELL_EFFECT_CHARGE)
+        || info->HasEffect(SPELL_EFFECT_CHARGE_DEST) || info->HasEffect(SPELL_EFFECT_JUMP)
+        || info->HasEffect(SPELL_EFFECT_JUMP_DEST))
+        ++stats.MovementCasts;
+    else if (info->HasAura(SPELL_AURA_MOD_INCREASE_SPEED) || info->HasAura(SPELL_AURA_MOD_SPEED_ALWAYS)
+        || info->HasAura(SPELL_AURA_MOD_SPEED_NOT_STACK))
+        ++stats.SpeedCasts;
+
+    if (spell->GetCastTime() <= 0 || info->IsChanneled())
+        return;
+
     ++stats.CastsCompleted;
     stats.CastMsCompleted += uint32(spell->GetCastTime());
 }

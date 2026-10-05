@@ -26,6 +26,7 @@
 #include "SeatView.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "UnitDefines.h"
 #include <algorithm>
 #include <cmath>
 
@@ -66,11 +67,10 @@ Animus::Curriculum::MarkerRung Animus::Curriculum::MarkerEncounter::RungTask(uin
     return task;
 }
 
-bool Animus::Curriculum::MarkerEncounter::Stopped(SeatState const& seat, float movedYards, float stopMoved)
+bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float movedYards, float stopMoved)
 {
-    Movement::ControlState const& held = seat.Controls.Held;
-    return held.Forward == 0 && held.Strafe == 0 && held.Vertical == 0 && !held.Jump
-        && seat.Body.Kind == Movement::Mode::Ground && movedYards < stopMoved;
+    constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING;
+    return (movementFlags & MOVING) == 0 && movedYards < stopMoved;
 }
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::MarkerEncounter::RewardTerms() const
@@ -120,6 +120,11 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
     table.Add("stops_near", [this](Env const& env, uint32) { return float(_envs[env.Index].Stops); });
     table.Add("distance_travelled", [this](Env const& env, uint32) { return _envs[env.Index].Travelled; });
+    // Whether the markers are reached by walking or by the class's movement spells: a blink is the server moving the
+    // body (imposed motion, which the controller yields to and resyncs from), so a stage learned by blinking reads
+    // here and not in the walking columns.
+    table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
+    table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
 }
 
 void Animus::Curriculum::MarkerEncounter::ResetEpisode(Env& env)
@@ -231,8 +236,12 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     if (!bot)
         return;
 
-    // How far the feet went since the last decision: "still" is read from it, since the body's own velocity is the
-    // controller's and may be reset by a resync.
+    markers.MovementCasts += env.StepStats[seatIndex].MovementCasts;
+    markers.SpeedCasts += env.StepStats[seatIndex].SpeedCasts;
+
+    // How far the unit went since the last decision, on the server's applied position (§5A.1): arrival, the marker's
+    // distance and "still" are judged on what the server holds. Only the seat's own view of the marker (the move
+    // block's bearing and distance, and the Facing shaping) reads its body and facing.
     float moved = 0.0f;
     if (markers.HasLastPos)
     {
@@ -295,7 +304,7 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // A stop is the decision the seat came to rest on after moving; one near the marker is measured whether or not it
     // was in. The first look has no last position to measure "still" from: the seat starts at rest, so it is read as
     // stopped there, and only a stop after moving counts.
-    bool const stopped = firstLook || Stopped(seat, moved, tuning.StopMoved);
+    bool const stopped = firstLook || Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
     if (!firstLook && stopped && !markers.WasStopped && distance <= tuning.StopNear)
     {
         markers.StopDistanceSum += distance;

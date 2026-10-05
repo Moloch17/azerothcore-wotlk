@@ -101,7 +101,10 @@ namespace
     std::vector<Position> NagrandPlateausControl()
     {
         return {
-            { -533.9f, 8870.4f, 209.0f, 0.0f },   { -974.2f, 8136.0f, -93.8f, 0.0f },
+            { -533.9f, 8870.4f, 209.0f, 0.0f },
+            // UNVERIFIED as open plateau ground: at z -93.8 it is far below Nagrand's grass. It was a flight
+            // stage's take-off point; the §7.5 dry check, before M1's first run, keeps or replaces it.
+            { -974.2f, 8136.0f, -93.8f, 0.0f },
         };
     }
 
