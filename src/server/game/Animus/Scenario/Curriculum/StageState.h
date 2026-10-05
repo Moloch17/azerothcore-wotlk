@@ -303,6 +303,13 @@ namespace Animus::Curriculum
         uint32 AquaticMs = 0;           // time in a druid's Aquatic Form (FORM_AQUA)
         float LastStepSelfDamage = 0.0f;    // AgentStats::SelfDamage over the last step, as a fraction of max health
         bool DeathLogged = false;           // the death diagnostic line was written for this episode
+        /// When and from where the body last began to fall (episode ms, z, the mode it fell from), and whether the
+        /// fall-into-the-void line was written this episode (StageScenario::WatchFall).
+        uint32 FallStartMs = 0;
+        float FallStartZ = 0.0f;
+        uint8 FallFrom = 0;
+        uint8 LastKind = 0;
+        bool VoidFallLogged = false;
         uint32 BreathingCasts = 0;      // water-breathing spells started (ActionCatalog::Action::WaterBreathing)
         uint32 ItemUses = 0;
         bool InCombat = false;
@@ -524,6 +531,11 @@ namespace Animus::Curriculum
             BreathingCasts = 0;
             LastStepSelfDamage = 0.0f;
             DeathLogged = false;
+            FallStartMs = 0;
+            FallStartZ = 0.0f;
+            FallFrom = 0;
+            LastKind = 0;
+            VoidFallLogged = false;
             Jumps = 0;
             Drops = 0;
             Falls = 0;

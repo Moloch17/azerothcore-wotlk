@@ -3110,6 +3110,7 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
         seat.Mover.Tick(seat.Controls.Held, Movement::SpeedsOf(bot), shape, world, diffMs, nowMs, link);
         seat.Facing = seat.Mover.Body.Yaw;
         TrackController(seat, diffMs);
+        WatchFall(seat, bot, nowMs, Arena(env).Name, env.Evaluating);
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         tick(seat);
@@ -3120,6 +3121,56 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
     if (seatTicks)
         Movement::ControllerCost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - started).count()), seatTicks);
+}
+
+void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, uint32 nowMs, std::string const& arena,
+    bool evaluating)
+{
+    Movement::BodyState const& body = seat.Mover.Body;
+    uint8 const kind = uint8(body.Kind);
+    if (kind == uint8(Movement::Mode::Falling) && seat.LastKind != kind)
+    {
+        seat.FallStartMs = nowMs;
+        seat.FallStartZ = body.Z;
+        seat.FallFrom = seat.LastKind;
+    }
+    seat.LastKind = kind;
+
+    // Three seconds down with no floor anywhere under it, a seat falls until the map kills it at its floor (z -500):
+    // the M1 dry check lost shaman seats so (2026-10-05). The first few are logged with what explains them.
+    constexpr uint32 VOID_FALL_MS = 3000;
+    if (seat.VoidFallLogged || kind != uint8(Movement::Mode::Falling) || nowMs - seat.FallStartMs < VOID_FALL_MS)
+        return;
+    Map* map = bot->GetMap();
+    if (map->GetHeight(bot->GetPhaseMask(), body.X, body.Y, body.Z, true, 2000.0f) > INVALID_HEIGHT)
+        return;
+    seat.VoidFallLogged = true;
+    static std::atomic<uint32> logged{ 0 };
+    if (logged.fetch_add(1) >= 20)
+        return;
+
+    std::string auras;
+    uint32 shown = 0;
+    for (auto const& [spell, application] : bot->GetAppliedAuras())
+        if (shown++ < 16)
+            auras += Acore::StringFormat("{}{}", auras.empty() ? "" : " ", spell);
+    Movement::Speeds const speeds = Movement::SpeedsOf(bot);
+    Movement::Client::Counters const& counts = seat.Mover.Counts;
+    LOG_WARN("module.animus", "Player controller: {} ({}, class {} race {} level {}) has fallen {:.1f} s with no floor "
+        "under it ({} arena, {}): body ({:.1f}, {:.1f}, {:.1f}) map {} instance {} phase {}, the server's z {:.1f}; it "
+        "began to fall at {} ms from z {:.1f} out of mode {} (terrain {:.1f} there, a floor from just above that "
+        "height {:.1f}); client: last order {} at {} ms, granted 0x{:X}, rooted {}, {} resyncs, {} acks, {} yield "
+        "ticks, {} refused; fly {} slow fall {} water walk {}, radius {:.2f} height {:.2f}, form {}; auras {}",
+        bot->GetName(), seat.L ? seat.L->ModelName() : "?", uint32(bot->getClass()), uint32(bot->getRace()),
+        uint32(bot->GetLevel()), float(nowMs - seat.FallStartMs) / 1000.0f, arena,
+        evaluating ? "evaluating" : "training", body.X, body.Y, body.Z, map->GetId(), map->GetInstanceId(),
+        bot->GetPhaseMask(), bot->GetPositionZ(), seat.FallStartMs, seat.FallStartZ,
+        uint32(seat.FallFrom), map->GetGridHeight(body.X, body.Y),
+        map->GetHeight(bot->GetPhaseMask(), body.X, body.Y, seat.FallStartZ + 2.0f, true, 10.0f),
+        uint32(seat.Mover.LastOrder), seat.Mover.LastOrderMs, seat.Mover.Granted(), seat.Mover.Rooted(),
+        counts.Resyncs, counts.Acks, counts.YieldTicks, counts.Refused, speeds.CanFly, speeds.SlowFall,
+        speeds.WaterWalk, Movement::ShapeOf(bot).Radius, Movement::ShapeOf(bot).Height,
+        uint32(bot->GetShapeshiftForm()), auras);
 }
 
 void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 diffMs)

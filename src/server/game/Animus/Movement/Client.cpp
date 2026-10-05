@@ -136,6 +136,8 @@ void Mv::Client::Order(Animus::Client::Order const& order, ServerLink& link, Mov
     WorldScope const scope(*this, shape, world);
     if (order.Kind == Co::OrderKind::TimeSync)
         return;
+    LastOrder = uint8_t(order.Kind);
+    LastOrderMs = nowMs;
     if (order.Kind == Co::OrderKind::Teleport)
     {
         // The server has put the seat somewhere: take the body from there.
