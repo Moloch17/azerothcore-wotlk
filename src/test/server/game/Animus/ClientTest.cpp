@@ -185,6 +185,50 @@ TEST(ClientTest, StartReportsAtOnceAndFinishCreditsTheLastStretch)
     EXPECT_FLOAT_EQ(rig.Link.X, rig.Client.Body.X);
 }
 
+// A seat the server spawned a little under the ground (a spawn point read low off the terrain) starts standing on it,
+// and its first report puts the server there too: it does not fall through the world (the M1 dry check).
+TEST(ClientTest, ASpawnJustUnderTheGroundStandsOnIt)
+{
+    Rig rig;
+    rig.Start(0.0f, -0.8f);
+    EXPECT_EQ(rig.Client.Body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
+    ASSERT_EQ(rig.Link.Reports.size(), 1u);
+    EXPECT_FLOAT_EQ(rig.Link.Z, 0.0f);
+    EXPECT_EQ(rig.Link.Reports[0].Flags & Mv::Flag::FALLING, 0u);
+    rig.Run(15000);
+    EXPECT_EQ(rig.Client.Body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::FALL_LAND), 0u);
+}
+
+// A new episode stops the client: until it is started again it reports nothing and keeps no claim on the last
+// episode's body, and started again it takes the body from wherever the server has the seat now -- not from where the
+// last episode left it (a failed build put a seat on map 1 holding Nagrand's coordinates; the M1 dry check).
+TEST(ClientTest, ANewEpisodeTakesTheBodyFromTheServerAgain)
+{
+    Rig rig;
+    rig.Start();
+    rig.Control.Forward = 1;
+    rig.Run(1000);
+    ASSERT_GT(rig.Client.Body.X, 6.0f);
+
+    rig.Client.Stop();
+    EXPECT_FALSE(rig.Client.Started());
+    rig.Link.X = -1160.0f;                                  // the episode put the seat elsewhere
+    rig.Link.Z = 0.0f;
+    size_t const reports = rig.Link.Reports.size();
+    rig.Run(500);
+    EXPECT_EQ(rig.Link.Reports.size(), reports);            // a stopped client steps and reports nothing
+    EXPECT_FLOAT_EQ(rig.Link.X, -1160.0f);
+
+    rig.Control = Mv::ControlState();
+    rig.Client.Start(rig.Link, rig.Shape, rig.World, rig.Now);
+    EXPECT_FLOAT_EQ(rig.Client.Body.X, -1160.0f);
+    EXPECT_FLOAT_EQ(rig.Link.X, -1160.0f);
+    EXPECT_EQ(rig.Client.Body.Vx, 0.0f);
+}
+
 // Point 5: what the server imposes is read every tick; the client yields at once to the server's position (here the
 // stale report's, mid-heartbeat), sends nothing while it lasts, and starts again with the keys it still holds.
 TEST(ClientTest, ImposedMotionStopsTheBodyAtTheServersPosition)

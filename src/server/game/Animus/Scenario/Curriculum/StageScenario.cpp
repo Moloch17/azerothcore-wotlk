@@ -3289,7 +3289,8 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // The keys it holds and the body they move, carried over from the last decision: without them a held key is
     // forgotten before it can do anything.
     view.Controls = &seat.Controls;
-    view.Body = &seat.Mover.Body;
+    // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
+    view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
@@ -4784,7 +4785,7 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
     {
         // Moving: the controlled body is under way (the core's own motion -- a fear, a knockback's spline -- too).
         Movement::BodyState const& body = seat.Mover.Body;
-        bool const moving = body.Vx * body.Vx + body.Vy * body.Vy + body.Vz * body.Vz > 0.25f
+        bool const moving = (seat.Mover.Started() && body.Vx * body.Vx + body.Vy * body.Vy + body.Vz * body.Vz > 0.25f)
             || !bot->movespline->Finalized();
         bool const combat = bot->IsInCombat();
         if (combat)

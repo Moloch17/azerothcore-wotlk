@@ -576,6 +576,39 @@ TEST(PlayerControllerTest, AfterImposedMotionTheBodyIsTakenBackWhereTheCoreLeftI
     EXPECT_NEAR(body.Z, 0.0f, 1e-4f);
 }
 
+// A body the server put a little under the walkable surface stands on it (the M1 dry check, 2026-10-05: the held-out
+// plains point (4012, -788) put seats 0.8 yd under the terrain, and every one fell through the world). Within a step
+// either way it is on the ground; more than a step under, the surface is out of reach as it is to the client.
+TEST(PlayerControllerTest, ABodyPutJustUnderTheSurfaceStandsOnIt)
+{
+    FakeWorld world;
+    world.Ground = [](float, float) { return 286.2f; };
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    Mv::BodyState body;
+    Mv::Resync(body, 4012.0f, -788.0f, 285.4f, 0.0f, shape, world);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 286.2f);
+
+    Mv::ControlState control;
+    Drive(body, control, speeds, world, 15.0f);             // the dry check's seats were dead by now
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 286.2f);
+    control.Forward = 1;
+    Drive(body, control, speeds, world, 1.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_NEAR(body.X, 4019.0f, 0.01f);
+
+    // A box's top a step and a bit above the feet is not reached: the body is under it, not on it.
+    FakeWorld cave;
+    cave.Boxes.push_back({ -5.0f, 5.0f, -5.0f, 5.0f, 2.0f, 3.0f });
+    Mv::Resync(body, 0.0f, 0.0f, 0.0f, 0.0f, shape, cave);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 0.0f);
+    Mv::Resync(body, 0.0f, 0.0f, 3.0f - Mv::STEP_UP - 0.1f, 0.0f, shape, cave);
+    EXPECT_NE(body.Z, 3.0f);
+}
+
 // What the action mask asks: jump on the ground (and at the surface), not in the air; height steered in water and
 // air, or on the ground with flight to take off into.
 TEST(PlayerControllerTest, JumpAndVerticalSteeringAreOnlyWhereTheyDoSomething)

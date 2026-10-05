@@ -546,6 +546,7 @@ namespace Animus::Curriculum
             // Facing and the body are seeded from the bot once the seat has been placed (StageScenario::ResetSeats),
             // not here, where there is no bot to ask.
             Controls.Clear();
+            Mover.Stop();
             MoverAtStart = Mover.Counts;
             WallMs = 0;
             StuckMs = 0;

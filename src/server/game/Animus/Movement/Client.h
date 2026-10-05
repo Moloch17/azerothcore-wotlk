@@ -136,6 +136,11 @@ namespace Animus::Movement
         /// stretch is credited (§5A.1 point 4).
         void Finish(ServerLink& link, uint32_t nowMs);
 
+        /// A new episode: the body is the server's again before it is stepped, reported or read -- the next Start (the
+        /// episode's, or the first tick's) takes it from wherever the episode put the seat. A build that failed after
+        /// the seats were placed never reached its Start, and a client still started stepped and reported the last
+        /// episode's body there: another map's coordinates (the M1 dry check read Nagrand's held-out point on map 1).
+        void Stop() { _started = false; }
         [[nodiscard]] bool Started() const { return _started; }
         [[nodiscard]] bool Rooted() const { return _rooted; }
         [[nodiscard]] uint32_t Granted() const { return _granted; }

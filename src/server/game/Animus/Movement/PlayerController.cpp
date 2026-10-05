@@ -557,12 +557,17 @@ void Animus::Movement::Resync(BodyState& body, float x, float y, float z, float 
     body.Vx = body.Vy = body.Vz = 0.0f;
     body.FallMs = 0;
     body.FallApexZ = z;
-    float const floor = world.FloorBelow(x, y, z + SNAP, STEP_UP + SNAP);
+    // The floor is looked for from a step above the feet, as a ground step looks (GroundStep): a body the server put a
+    // little under the walkable surface -- a spawn point or a teleport's landing read off the terrain a few tenths low,
+    // as the M1 dry check's held-out plains point (4012, -788) was, 0.8 yd under -- stands on it, as a client's does,
+    // where searched from the feet down it saw nothing and fell through the world. STEP_UP is the reach because it is
+    // the most the client climbs without a jump: nothing is taken that it could not have walked onto.
+    float const floor = world.FloorBelow(x, y, z + STEP_UP, 2.0f * STEP_UP);
     Liquid const liquid = world.LiquidAt(x, y, z);
     if (liquid.Present && !liquid.Deadly && z <= liquid.Level
         && SwimDepth(liquid, world.FloorBelow(x, y, liquid.Level, 1000.0f), z, shape, SWIM_ENTER))
         body.Kind = Mode::Swimming;
-    else if (HasFloor(floor) && z - floor <= STEP_UP)
+    else if (HasFloor(floor) && std::fabs(z - floor) <= STEP_UP)
     {
         body.Z = floor;
         body.Kind = Mode::Ground;
