@@ -22,7 +22,9 @@
 #include "Map.h"
 #include "MapCollisionData.h"
 #include "MapDefines.h"
+#include "ResetTiming.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -173,6 +175,20 @@ Animus::Curriculum::RoutePlanner::~RoutePlanner() = default;   // each thread fr
 
 bool Animus::Curriculum::RoutePlanner::Plan(Map* map, Position const& from, Position const& to, Route& out)
 {
+    // Its time goes to the reset that asked (CurrentReset, zeroed before each): planned whole on the thread that
+    // resets, a long trip's plan is the reset's stall (player-controller C8). A plan outside a reset is counted
+    // there too, and forgotten when the next reset zeroes it.
+    struct Timed
+    {
+        std::chrono::steady_clock::time_point Start = std::chrono::steady_clock::now();
+        ~Timed()
+        {
+            CurrentReset.RouteNs += uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - Start).count());
+            ++CurrentReset.Routes;
+        }
+    } const timed;
+
     out.Clear();
 
     dtNavMeshQuery* query = QueryFor(map);

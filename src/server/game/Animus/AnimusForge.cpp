@@ -30,6 +30,10 @@
 #include "Forge.h"
 #include "Protocol.h"
 #include "AnimusHooks.h"
+#include "ClientMovement.h"
+#include "ControllerCost.h"
+#include "MapWorldQuery.h"
+#include "PlayerLink.h"
 #include "Config.h"
 #include "Log.h"
 #include "MapMgr.h"
@@ -694,6 +698,7 @@ bool AnimusForge::Forge::StartCurrent()
         ApplyMapThreads(entry.MapThreads);
 
     _pool = std::make_unique<Animus::EnvPool>(*_scenario, config.Stage(entry.Scenario));
+    Animus::RecentResets.Clear();
     if (!_pool->Setup())
         return false;
 
@@ -776,6 +781,9 @@ bool AnimusForge::Forge::StartCurrent()
     _collect = Animus::EnvPool::CollectTiming();
     _rateCollect = Animus::EnvPool::CollectTiming();
     _collectMs = SimSnapshot::CollectMs();
+    _rateController = ReadControllerMarks();
+    _startUnsticks = _rateController.Unsticks;
+    _controller = SimSnapshot::ControllerStats();
     _mapTasks = SimSnapshot::MapTasksMs();
     _scenarioStarted = now;
     _lastReport = now;
@@ -1096,11 +1104,14 @@ void AnimusForge::Forge::PollCluster()
             _scenario->FollowClusterRung(_clusterRung);
             tally = _scenario->TakeClusterTally();
         }
+        Animus::ResetSamples::Summary const resets = Animus::RecentResets.Summarise();
         _cluster.Report(Acore::StringFormat("state={} scenario={} envs={} env_steps_per_s={:.0f} decision_ms={:.1f} "
-            "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f}{}", StateName(), _current.empty() ? "-" : _current,
+            "world_ms={:.1f} sim_ms={:.1f} learner_ms={:.1f} reset_p95_ms={:.1f} place_p95_ms={:.1f}{}", StateName(),
+            _current.empty() ? "-" : _current,
             envs, ticksPerSecond * double(envs) * double(agents), ticksPerSecond > 0.0 ? 1000.0 / ticksPerSecond : 0.0,
             ticks ? since(_worldNs, last.WorldNs) / perTick : 0.0, ticks ? since(_simNs, last.SimNs) / perTick : 0.0,
-            ticks ? since(_learnerNs, last.LearnerNs) / perTick : 0.0, tally.empty() ? "" : " wing=" + tally));
+            ticks ? since(_learnerNs, last.LearnerNs) / perTick : 0.0, resets.Reset.P95Ms, resets.Placement.P95Ms,
+            tally.empty() ? "" : " wing=" + tally));
         last = { now, _ticks, _worldNs, _simNs, _learnerNs };
     }
 
@@ -1175,6 +1186,24 @@ void AnimusForge::Forge::PollCluster()
                 _request = Request::Cancel;
         }
     }
+}
+
+AnimusForge::Forge::ControllerMarks AnimusForge::Forge::ReadControllerMarks()
+{
+    namespace Movement = Animus::Movement;
+    ControllerMarks marks;
+    marks.Ns = Movement::ControllerCost::Ns.load(std::memory_order_relaxed);
+    marks.SeatTicks = Movement::ControllerCost::SeatTicks.load(std::memory_order_relaxed);
+    marks.Rays = Movement::MapWorldQuery::Rays.load(std::memory_order_relaxed);
+    marks.Heights = Movement::MapWorldQuery::Heights.load(std::memory_order_relaxed);
+    marks.Applied = Movement::PlayerLink::Applied.load(std::memory_order_relaxed);
+    marks.Orders = Movement::PlayerLink::OrderPackets.load(std::memory_order_relaxed);
+    marks.Relayed = Movement::PlayerLink::Relayed.load(std::memory_order_relaxed);
+    marks.Unsticks = Movement::PlayerLink::Unsticks.load(std::memory_order_relaxed);
+    marks.Refused.reserve(Movement::PlayerLink::Refused.size());
+    for (auto const& count : Movement::PlayerLink::Refused)
+        marks.Refused.push_back(count.load(std::memory_order_relaxed));
+    return marks;
 }
 
 void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::string const& scenario, bool resume,
@@ -1471,6 +1500,11 @@ void AnimusForge::Forge::BenchTick()
     trial.ObjectsMs = double(objectsNs - std::min(objectsNs, _benchObjectsNs)) / ticks / 1e6;
     trial.ResetMs = double(_collect.ResetNs - std::min(_collect.ResetNs, _benchResetNs)) / ticks / 1e6;
     {
+        Animus::ResetSamples::Summary const resets = Animus::RecentResets.Summarise();
+        trial.ResetP95Ms = resets.Reset.P95Ms;
+        trial.PlacementP95Ms = resets.Placement.P95Ms;
+    }
+    {
         Map::UpdateTiming const& now = sMapMgr->GetUpdateTiming();
         auto const since = [](uint64 later, uint64 earlier) { return double(later - std::min(later, earlier)); };
         trial.SpawnUpdates = since(now.SpawnUpdates, _benchMapTiming.SpawnUpdates) / ticks;
@@ -1726,6 +1760,8 @@ void AnimusForge::Forge::BenchSave() const
         entry["memory_mb"] = trial.MemoryMb;
         entry["objects_ms"] = trial.ObjectsMs;
         entry["reset_ms"] = trial.ResetMs;
+        entry["reset_p95_ms"] = trial.ResetP95Ms;
+        entry["placement_p95_ms"] = trial.PlacementP95Ms;
         entry["spawn_updates"] = trial.SpawnUpdates;
         entry["unseen_spawns"] = trial.UnseenSpawns;
         entry["other_updates"] = trial.OtherUpdates;
@@ -1874,6 +1910,36 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _collectMs.MapResetsPerTick = since(_collect.MapResets, _rateCollect.MapResets) / double(ticks);
             _collectMs.ReusedPerTick = since(_collect.Reused, _rateCollect.Reused) / double(ticks);
         }
+
+        // The player controller over the same window (C8).
+        ControllerMarks const marks = ReadControllerMarks();
+        ControllerMarks const& last = _rateController;
+        auto const delta = [](uint64 now, uint64 then) { return double(now - std::min(now, then)); };
+        double const seatTicks = delta(marks.SeatTicks, last.SeatTicks);
+        _controller.UsPerDecision = ticks ? delta(marks.Ns, last.Ns) / 1e3 / double(ticks) : 0.0;
+        _controller.UsPerSeatTick = seatTicks > 0.0 ? delta(marks.Ns, last.Ns) / 1e3 / seatTicks : 0.0;
+        _controller.RaysPerSeatTick = seatTicks > 0.0 ? delta(marks.Rays, last.Rays) / seatTicks : 0.0;
+        _controller.HeightsPerSeatTick = seatTicks > 0.0 ? delta(marks.Heights, last.Heights) / seatTicks : 0.0;
+        _controller.SeatTicksPerSecond = seatTicks / seconds;
+        _controller.AppliedPerSecond = delta(marks.Applied, last.Applied) / seconds;
+        _controller.OrdersPerSecond = delta(marks.Orders, last.Orders) / seconds;
+        _controller.RelayedPerSecond = delta(marks.Relayed, last.Relayed) / seconds;
+        _controller.Unsticks = marks.Unsticks - std::min(marks.Unsticks, _startUnsticks);
+        std::vector<std::pair<uint64, std::string>> refused;
+        double refusedTotal = 0.0;
+        for (std::size_t reason = 1; reason < marks.Refused.size(); ++reason)
+            if (uint64 const count = uint64(delta(marks.Refused[reason],
+                reason < last.Refused.size() ? last.Refused[reason] : 0)))
+            {
+                refused.emplace_back(count, ClientMovement::RefusalName(ClientMovement::Refusal(reason)));
+                refusedTotal += double(count);
+            }
+        std::sort(refused.begin(), refused.end(), [](auto const& a, auto const& b) { return a.first > b.first; });
+        _controller.RefusedPerSecond = refusedTotal / seconds;
+        _controller.Refusals.clear();
+        for (auto const& [count, name] : refused)
+            _controller.Refusals += Acore::StringFormat("{}{} {}", _controller.Refusals.empty() ? "" : ", ", name,
+                count);
     }
 
     if (advanceRates)
@@ -1885,6 +1951,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _rateSimNs = _simNs;
         _rateLearnerNs = _learnerNs;
         _rateCollect = _collect;
+        _rateController = ReadControllerMarks();
         for (std::size_t slot = 0; slot < _rateObserveNs.size(); ++slot)
             _rateObserveNs[slot] = Animus::Curriculum::SeatEncoder::ObserveTotal(slot);
         _rateMapTiming = sMapMgr->GetUpdateTiming();
@@ -1951,6 +2018,8 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     sim.Collect = _collectMs;
     sim.World = _worldMs;
     sim.MapTasks = _mapTasks;
+    sim.Controller = _controller;
+    sim.Resets = Animus::RecentResets.Summarise();
 
     sim.LearnerRunning = _learner.IsRunning();
     sim.LearnerPid = _learner.IsRunning() ? int32(_learner.Pid()) : -1;

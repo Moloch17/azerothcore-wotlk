@@ -21,6 +21,7 @@
 #include <set>
 #include <span>
 #include "ResetTiming.h"
+#include "ControllerCost.h"
 #include "Baselines.h"
 #include "CharmInfo.h"
 #include "Battleground.h"
@@ -3054,12 +3055,15 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
     // body under the keys it holds and reports it to the server as a client would (Movement::Client, §5A), after
     // answering whatever the server ordered it since the last tick (a root, a knockback, flying, ...).
     uint32 const nowMs = env.EpisodeElapsedMs;
+    auto const started = std::chrono::steady_clock::now();
+    uint64 seatTicks = 0;
     auto const tick = [&](uint32 index)
     {
         SeatState& seat = Data(env).Seats[index];
         Player* bot = env.FindBot(index);
         if (!bot || !seat.L || !bot->IsInWorld() || !bot->GetMap())
             return;
+        ++seatTicks;
         Movement::PlayerLink link(bot, seat.Link);
         Movement::MapWorldQuery const world(bot->GetMap(), bot->GetPhaseMask());
         Movement::Body const shape = Movement::ShapeOf(bot);
@@ -3081,6 +3085,9 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
         tick(seat);
     if (CastOwnerActive(env))
         tick(OwnerAgent());
+    if (seatTicks)
+        Movement::ControllerCost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count()), seatTicks);
 }
 
 void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 diffMs)

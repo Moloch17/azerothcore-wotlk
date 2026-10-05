@@ -46,6 +46,47 @@ namespace
             collect.ResetsPerTick, collect.ReusedPerTick);
     }
 
+    /// The player controller and the resets one by one (player-controller C8): what the controller costs per seat
+    /// tick and what the server made of its reports, and the p50 / p95 of placement, its route plans and the whole
+    /// reset over the last resets -- a mean per decision hides the reset that stalls.
+    void ControllerRows(AnimusForge::TextTable& table, AnimusForge::SimSnapshot const& sim)
+    {
+        AnimusForge::SimSnapshot::ControllerStats const& controller = sim.Controller;
+        if (controller.SeatTicksPerSecond > 0.0)
+            table.AddRow({ "controller", Acore::StringFormat("{:.1f} us/tick", controller.UsPerSeatTick),
+                Acore::StringFormat("per seat tick (thread time; {:.0f} us per decision, every seat), {:.1f} rays and "
+                    "{:.1f} heights/tick; {:.0f} reports applied/s, {:.1f} refused/s{}, {} unsticks; {:.1f} orders/s "
+                    "(the SendPacket hook), {:.1f} relayed/s", controller.UsPerDecision, controller.RaysPerSeatTick,
+                    controller.HeightsPerSeatTick, controller.AppliedPerSecond, controller.RefusedPerSecond,
+                    controller.Refusals.empty() ? "" : " (" + controller.Refusals + ")", controller.Unsticks,
+                    controller.OrdersPerSecond, controller.RelayedPerSecond) });
+        Animus::ResetSamples::Summary const& resets = sim.Resets;
+        if (resets.Count)
+            table.AddRow({ "placement", Acore::StringFormat("{:.1f} ms p95", resets.Placement.P95Ms),
+                Acore::StringFormat("per reset over the last {}: placement p50 {:.1f}, max {:.1f}; route plans "
+                    "p50 {:.1f}, p95 {:.1f}, max {:.1f} ({:.1f} a reset); whole reset p50 {:.1f}, p95 {:.1f}, max "
+                    "{:.1f} ms",
+                    resets.Count, resets.Placement.P50Ms, resets.Placement.MaxMs, resets.Route.P50Ms,
+                    resets.Route.P95Ms, resets.Route.MaxMs, resets.RoutesPerReset, resets.Reset.P50Ms,
+                    resets.Reset.P95Ms, resets.Reset.MaxMs) });
+    }
+
+    /// The warning for resets that stall the sim (Animus::Stall), empty when they do not.
+    std::string StallWarning(AnimusForge::SimSnapshot const& sim)
+    {
+        double const decisionMs = sim.WorldMsPerTick + sim.SimMsPerTick + sim.LearnerMsPerTick;
+        Animus::StallCause const cause = Animus::Stall(sim.Resets, decisionMs);
+        if (cause == Animus::StallCause::None)
+            return {};
+        char const* const on = cause == Animus::StallCause::Routes
+            ? "route planning (RoutePlanner, serial on the thread that resets: long trips)"
+            : cause == Animus::StallCause::Placement
+            ? "placement (the encounters' Build less its routes: objective and ledge searches, spawn retries)"
+            : "the reset's characters, kit and despawns";
+        return Acore::StringFormat("Resets stall the sim: one in twenty takes {:.1f} ms or more (a decision is "
+            "{:.1f} ms), mostly {}; see the placement row", sim.Resets.Reset.P95Ms, decisionMs, on);
+    }
+
     /// The rest of the observation's blocks after the largest, as "name ms", largest first.
     std::string ObserveBlocksNote(std::vector<std::pair<std::string, double>> const& blocks)
     {
@@ -418,6 +459,9 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         table.AddRow({ "ground probe", "", sim.ProbeNote });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
+    ControllerRows(table, sim);
+    if (std::string stall = StallWarning(sim); !stall.empty())
+        warnings.push_back(std::move(stall));
 
     if (!progress)
     {
@@ -587,6 +631,9 @@ void AnimusForge::ProgressMonitor::ReportLocal(SimSnapshot const& sim, LineSink 
         table.AddRow({ "ground probe", "", sim.ProbeNote });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
+    ControllerRows(table, sim);
+    if (std::string const stall = StallWarning(sim); !stall.empty())
+        table.AddRow({ "reset stall", "", stall });
 
     std::string episodes = Format::Count(sim.Episodes);
     std::string note = Acore::StringFormat("{:.1f}/s", sim.EpisodesPerSecond);

@@ -20,6 +20,7 @@
 #define MOD_ANIMUS_FORGE_PROGRESS_H
 
 #include "Define.h"
+#include "ResetTiming.h"
 #include "TextTable.h"
 #include <filesystem>
 #include <optional>
@@ -138,6 +139,27 @@ namespace AnimusForge
         };
 
         MapTasksMs MapTasks;
+
+        /// The player controller (player-controller C8): its thread time and world queries per seat tick, and the
+        /// server's side of what it sent, per second over the last interval.
+        struct ControllerStats
+        {
+            double UsPerDecision = 0.0;     // thread time, every seat on every map, per decision
+            double UsPerSeatTick = 0.0;     // ... per seat per world tick
+            double RaysPerSeatTick = 0.0;   // collision rays (MapWorldQuery::Rays)
+            double HeightsPerSeatTick = 0.0;
+            double SeatTicksPerSecond = 0.0;
+            double AppliedPerSecond = 0.0;  // reports PlayerLink applied
+            double RefusedPerSecond = 0.0;  // ... and refused
+            double OrdersPerSecond = 0.0;   // movement orders WorldSession::SendPacket's hook kept
+            double RelayedPerSecond = 0.0;  // reports relayed to watching clients
+            uint64 Unsticks = 0;            // since the scenario started
+            std::string Refusals;           // the interval's refusals by reason, most first
+        };
+
+        ControllerStats Controller;
+        /// The last resets one by one (Animus::RecentResets): placement, its route plans, the reset as a whole.
+        Animus::ResetSamples::Summary Resets;
         /// Observation thread time per decision by block (and "view", the seat's work before its blocks), largest
         /// first.
         std::vector<std::pair<std::string, double>> ObserveBlocks;
