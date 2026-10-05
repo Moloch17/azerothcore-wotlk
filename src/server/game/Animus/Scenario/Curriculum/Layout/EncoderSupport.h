@@ -316,7 +316,15 @@ namespace Animus::Curriculum::Encoding
 
         float const* facing = nullptr);
 
+    /// Fly straight to a point. With `facing` the head is held there for the whole flight, as MoveTo and SwimTo
+    /// hold it, rather than turned along the path (movement-smooth A3 in the air): see FlyAlong.
     void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
+    /// Fly a path already laid out and checked (MoveBlock's turn or climb flown as one run, movement-smooth A2 in
+    /// the air), the seat's own position first, the head held at `facing` the whole way.
+    void FlyAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
+    /// The climb (radians, up positive) of the leg a running spline will be on `aheadMs` from now, or that of the
+    /// way to its end: CourseAhead's companion for a swim or a flight.
+    [[nodiscard]] float ClimbAhead(Unit const* bot, uint32 aheadMs);
 
     /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
     /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the

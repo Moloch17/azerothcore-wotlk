@@ -76,6 +76,61 @@ namespace Animus::Curriculum::MoveTurnPath
         }
         return legs;
     }
+
+    struct AirLeg
+    {
+        float Heading = 0.0f;       // radians, 0..2pi
+        float Pitch = 0.0f;         // radians, up positive
+        float Length = 0.0f;        // yards along the leg, not over the ground
+    };
+
+    /// The legs of a run through the water or the air (movement-smooth A2 off the ground): as Legs, with a pitch
+    /// still to come stepped beside the turn -- `pitchLeft` radians from `pitch` (SeatView::PitchTarget less
+    /// SeatView::Pitch, after this decision's step) at most `pitchRate` a decision, StepPitch's arithmetic -- one leg
+    /// a decision while either lasts, then one straight leg at the heading and pitch they end on. A run with neither
+    /// left is one straight leg.
+    [[nodiscard]] inline std::vector<AirLeg> AirLegs(float heading, float turnLeft, float turnRate, float pitch,
+        float pitchLeft, float pitchRate, float spacing, float reach)
+    {
+        auto const wrap = [](float angle)
+        {
+            float const twoPi = 2.0f * float(M_PI);
+            float const wrapped = std::fmod(angle, twoPi);
+            return wrapped < 0.0f ? wrapped + twoPi : wrapped;
+        };
+
+        std::vector<AirLeg> legs;
+        if (reach <= 0.0f)
+            return legs;
+        float turn = std::fabs(turnLeft) < 1e-4f || turnRate <= 0.0f ? 0.0f : turnLeft;
+        float tilt = std::fabs(pitchLeft) < 1e-4f || pitchRate <= 0.0f ? 0.0f : pitchLeft;
+        if (spacing <= 0.0f)
+            turn = tilt = 0.0f;
+
+        float course = heading;
+        float climb = pitch;
+        float walked = 0.0f;
+        while (walked < reach)
+        {
+            bool const turning = turn != 0.0f || tilt != 0.0f;
+            float const length = turning ? std::min(spacing, reach - walked) : reach - walked;
+            legs.push_back({ wrap(course), climb, length });
+            walked += length;
+            if (!turning)
+                break;
+            float const step = std::clamp(turn, -turnRate, turnRate);
+            course += step;
+            turn -= step;
+            if (std::fabs(turn) < 1e-4f)
+                turn = 0.0f;
+            float const lift = std::clamp(tilt, -pitchRate, pitchRate);
+            climb += lift;
+            tilt -= lift;
+            if (std::fabs(tilt) < 1e-4f)
+                tilt = 0.0f;
+        }
+        return legs;
+    }
 }
 
 #endif

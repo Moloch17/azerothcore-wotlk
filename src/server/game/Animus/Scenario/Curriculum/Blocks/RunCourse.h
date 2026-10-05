@@ -43,6 +43,24 @@ namespace Animus::Curriculum
             return std::nullopt;
         return std::atan2(to.y - from.y, to.x - from.x);
     }
+
+    /// The climb (radians, up positive) of the leg a running spline will be on `aheadMs` from now, read as RunCourse
+    /// reads its direction; none for a leg with no length. What the keep check holds a swim or a flight's pitch to:
+    /// on a turn or a pitch laid out as one run, the run's end is not where the coming decision goes.
+    [[nodiscard]] inline std::optional<float> RunClimb(Movement::MoveSpline const& run, uint32 aheadMs)
+    {
+        auto const& spline = run._Spline();
+        int32 const at = std::min(run.timePassed() + int32(aheadMs), run.Duration());
+        int32 leg = spline.first();
+        while (leg + 1 < spline.last() && spline.length(leg + 1) <= at)
+            ++leg;
+        G3D::Vector3 const& from = spline.getPoint(leg);
+        G3D::Vector3 const& to = spline.getPoint(std::min(leg + 1, spline.last()));
+        float const flat = std::hypot(to.x - from.x, to.y - from.y);
+        if (flat + std::fabs(to.z - from.z) < 0.01f)
+            return std::nullopt;
+        return std::atan2(to.z - from.z, flat);
+    }
 }
 
 #endif

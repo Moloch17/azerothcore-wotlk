@@ -75,3 +75,38 @@ TEST(MoveTurnPathTest, NoTurnIsOneStraightLegAndNoReachIsNone)
     EXPECT_TRUE(MoveTurnPath::Legs(1.0f, RATE, RATE, SPACING, 0.0f).empty());
     EXPECT_EQ(MoveTurnPath::Legs(1.0f, RATE, RATE, 0.0f, 21.0f).size(), 1u);
 }
+
+// Off the ground (movement-smooth A2 in the water and the air): a turn and a climb stepped side by side, one leg a
+// decision while either lasts, then straight on at the heading and pitch they end on.
+TEST(MoveTurnPathTest, AirLegsStepTheTurnAndTheClimbTogether)
+{
+    constexpr float PITCH_RATE = 0.5235988f;    // MoveBlock::PITCH_RATE, 30 degrees a decision
+    // 90 degrees of turn (two steps) and 60 of climb (two steps) from level.
+    auto const legs = MoveTurnPath::AirLegs(0.0f, 2.0f * RATE, RATE, 0.0f, 2.0f * PITCH_RATE, PITCH_RATE, SPACING,
+        21.0f);
+    ASSERT_EQ(legs.size(), 3u);
+    EXPECT_NEAR(legs[0].Heading, 0.0f, 1e-5f);
+    EXPECT_NEAR(legs[0].Pitch, 0.0f, 1e-5f);
+    EXPECT_NEAR(legs[1].Heading, RATE, 1e-5f);
+    EXPECT_NEAR(legs[1].Pitch, PITCH_RATE, 1e-5f);
+    EXPECT_NEAR(legs[2].Heading, 2.0f * RATE, 1e-5f);
+    EXPECT_NEAR(legs[2].Pitch, 2.0f * PITCH_RATE, 1e-5f);
+    EXPECT_NEAR(legs[2].Length, 21.0f - 2.0f * SPACING, 1e-4f);
+}
+
+// The longer of the two sets the legs: a dive of three steps under a turn of one, then straight on.
+TEST(MoveTurnPathTest, AirLegsLastAsLongAsTheLongerOfTurnAndClimb)
+{
+    constexpr float PITCH_RATE = 0.5235988f;
+    auto const legs = MoveTurnPath::AirLegs(1.0f, -RATE, RATE, 0.5f, -3.0f * PITCH_RATE, PITCH_RATE, SPACING, 21.0f);
+    ASSERT_EQ(legs.size(), 4u);
+    EXPECT_NEAR(legs[1].Heading, 1.0f - RATE, 1e-5f);
+    EXPECT_NEAR(legs[3].Heading, 1.0f - RATE, 1e-5f);           // the turn is done after one step
+    EXPECT_NEAR(legs[3].Pitch, 0.5f - 3.0f * PITCH_RATE, 1e-5f);
+    // A pitch alone is a curve too; neither left is one straight leg at the pitch the seat has.
+    EXPECT_EQ(MoveTurnPath::AirLegs(0.0f, 0.0f, RATE, 0.0f, PITCH_RATE, PITCH_RATE, SPACING, 21.0f).size(), 2u);
+    auto const straight = MoveTurnPath::AirLegs(0.0f, 0.0f, RATE, 0.3f, 0.0f, PITCH_RATE, SPACING, 21.0f);
+    ASSERT_EQ(straight.size(), 1u);
+    EXPECT_NEAR(straight[0].Pitch, 0.3f, 1e-6f);
+    EXPECT_FLOAT_EQ(straight[0].Length, 21.0f);
+}

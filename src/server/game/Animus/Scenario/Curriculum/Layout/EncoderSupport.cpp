@@ -1080,6 +1080,15 @@ namespace Animus::Curriculum::Encoding
         return bot->GetAbsoluteAngle(end.x, end.y);
     }
 
+    float ClimbAhead(Unit const* bot, uint32 aheadMs)
+    {
+        if (std::optional<float> const climb = RunClimb(*bot->movespline, aheadMs))
+            return *climb;
+        G3D::Vector3 const end = bot->movespline->FinalDestination();
+        float const flat = bot->GetExactDist2d(end.x, end.y);
+        return flat > 0.1f ? std::atan2(end.z - bot->GetPositionZ(), flat) : 0.0f;
+    }
+
     void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)
     {
         // MotionMaster::MoveJump would do most of this, and cannot be used: MoveJumpTo refuses players outright
@@ -1176,20 +1185,49 @@ namespace Animus::Curriculum::Encoding
 
     void FlyTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
     {
-        // Deliberately NOT orientation-fixed, unlike MoveTo and SwimTo. SetFly puts the spline in Catmullrom
-        // mode, and Spline::init_spline places the virtual first control point at
-        // controls[0] - (cos(initialOrientation), sin(initialOrientation)): a facing off the direction of travel
-        // would bend the start of the flight path rather than only turn the seat's head. Flying seats therefore
-        // keep the old face-along-the-path behaviour until a stage needs to strafe in the air.
+        if (facing)
+        {
+            FlyAlong(bot, { G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()),
+                G3D::Vector3(x, y, z) }, *facing, velocity);
+            return;
+        }
         bot->GetMotionMaster()->Clear();
         Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
-        if (facing)
-            init.SetFacing(*facing);
         init.SetFly();
         if (velocity > 0.0f)
             init.SetVelocity(velocity);
         init.Launch();
+    }
+
+    void FlyAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
+    {
+        // SetFly puts the spline in Catmullrom mode, and Spline::init_spline places the virtual first control point
+        // at controls[0] - (cos(initialOrientation), sin(initialOrientation)): launched with the head off the way
+        // the path leaves, the start of the flight bends toward the head. So the unit is turned along the first leg
+        // for the launch -- the curve is built then and never again -- and the head is put where the seat looks
+        // straight after (MoveSpline::ReaimFacing), which turns the head and not the path. Flights used to face
+        // along the path for this reason, so a held head in the air was the seat's belief and not the world's.
+        bot->GetMotionMaster()->Clear();
+        bot->DisableSpline();
+        float along = facing;
+        for (std::size_t i = 1; i < points.size(); ++i)
+            if (std::fabs(points[i].x - points[0].x) + std::fabs(points[i].y - points[0].y) > 0.01f)
+            {
+                along = std::atan2(points[i].y - points[0].y, points[i].x - points[0].x);
+                break;
+            }
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), along);
+
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(points);
+        init.SetFly();
+        init.SetOrientationFixed(true);
+        init.SetFacing(facing);
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
+        init.Launch();
+        ReaimRun(bot, facing);
     }
 
     bool PetAttack(Player* bot, Unit* target)

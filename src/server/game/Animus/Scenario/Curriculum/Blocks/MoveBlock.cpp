@@ -552,8 +552,9 @@ namespace
     /// Cut a run (`points`, the seat's own position first) where it first walks into a closed door near a dungeon
     /// wing's party (SeatView::ClosedDoors, RouteShortcut::CutAtDoors): Steer's runs are pathfound on a navmesh that
     /// knows no doors, and a spline walks through anything. False when nothing is left to walk: the seat then holds
-    /// at the door (SteerMemory::DoorHolds) and opens it, or goes another way.
-    bool CutAtDoors(Animus::Curriculum::SeatView& view, std::vector<G3D::Vector3>& points)
+    /// at the door (SteerMemory::DoorHolds) and opens it, or goes another way. A run on the ground ends on the
+    /// ground at the cut; one through the water or the air (`ground` false) keeps the height it had there.
+    bool CutAtDoors(Animus::Curriculum::SeatView& view, std::vector<G3D::Vector3>& points, bool ground = true)
     {
         if (!view.ClosedDoors || view.ClosedDoors->empty() || points.size() < 2)
             return true;
@@ -571,13 +572,22 @@ namespace
                 ++view.Steering->DoorHolds;
             return false;
         }
+        G3D::Vector3 const from = points[kept - 1];
         points.resize(kept + 1);
         G3D::Vector3& last = points.back();
         if (last.x != path[kept - 1].X || last.y != path[kept - 1].Y)
         {
-            float const ground = view.Bot->GetMap()->GetHeight(view.Bot->GetPhaseMask(), path[kept - 1].X,
+            if (!ground)
+            {
+                float const whole = std::hypot(last.x - from.x, last.y - from.y);
+                float const part = std::hypot(path[kept - 1].X - from.x, path[kept - 1].Y - from.y);
+                float const z = whole > 0.01f ? from.z + (last.z - from.z) * std::min(1.0f, part / whole) : last.z;
+                last = G3D::Vector3(path[kept - 1].X, path[kept - 1].Y, z);
+                return true;
+            }
+            float const floor = view.Bot->GetMap()->GetHeight(view.Bot->GetPhaseMask(), path[kept - 1].X,
                 path[kept - 1].Y, last.z + 2.0f, true, 6.0f);
-            last = G3D::Vector3(path[kept - 1].X, path[kept - 1].Y, ground > INVALID_HEIGHT ? ground : last.z);
+            last = G3D::Vector3(path[kept - 1].X, path[kept - 1].Y, floor > INVALID_HEIGHT ? floor : last.z);
         }
         return true;
     }
@@ -650,6 +660,70 @@ namespace
             return true;
 
         Encoding::MoveAlong(bot, points, view.Facing, velocity);
+        return true;
+    }
+
+    /// A turn or a climb under a held bearing in the water or the air, swum or flown as one run (movement-smooth A2
+    /// off the ground): the legs StepTurn's and StepPitch's remaining steps will give the seat a decision apart
+    /// (MoveTurnPath::AirLegs), then straight on, launched once rather than every decision of the turn. Every leg's
+    /// end is seen from the last and has room: a swim stays under the surface and over the bed -- coming up, going
+    /// ashore and diving into the ground are the straight run's own cases -- and a flight stays over the ground and
+    /// under the ceiling the air has (TravelBlock::MAX_ALTITUDE). Any failure lays nothing out and the caller
+    /// launches the straight run.
+    bool LayAirTurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity,
+        bool flying)
+    {
+        Player* bot = view.Bot;
+        Map* map = bot->GetMap();
+        if (!map)
+            return false;
+        float const spacing = speed * float(view.DecisionMs) / 1000.0f;
+        auto const legs = MoveTurnPath::AirLegs(heading, view.TurnLeft, MoveBlock::TURN_RATE, view.Pitch,
+            view.PitchTarget - view.Pitch, MoveBlock::PITCH_RATE, spacing, length);
+        if (legs.size() < 2)
+            return false;
+
+        uint32 const phase = bot->GetPhaseMask();
+        float const height = bot->GetCollisionHeight();
+        float const eye = height * 0.5f;
+        std::vector<G3D::Vector3> points{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
+        for (MoveTurnPath::AirLeg const& leg : legs)
+        {
+            G3D::Vector3 const& at = points.back();
+            float const flat = leg.Length * std::cos(leg.Pitch);
+            G3D::Vector3 next(at.x + flat * std::cos(leg.Heading), at.y + flat * std::sin(leg.Heading),
+                at.z + leg.Length * std::sin(leg.Pitch));
+            float const floor = map->GetHeight(phase, next.x, next.y, next.z + height, true, 200.0f);
+            if (flying)
+            {
+                if (floor > INVALID_HEIGHT)
+                {
+                    if (next.z < floor + height)
+                        return false;           // into the ground: the straight run's landing
+                    next.z = std::min(next.z, floor + TravelBlock::MAX_ALTITUDE);
+                }
+            }
+            else
+            {
+                LiquidData const liquid = map->GetLiquidData(phase, next.x, next.y, next.z, height, {});
+                if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT
+                    || next.z > liquid.Level - eye)
+                    return false;               // out of the water, or up through its surface
+                if (floor > INVALID_HEIGHT && next.z < floor + eye)
+                    return false;               // into the bed
+            }
+            if (!map->isInLineOfSight(at.x, at.y, at.z + eye, next.x, next.y, next.z + eye, phase,
+                    LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+                return false;
+            points.push_back(next);
+        }
+        if (!CutAtDoors(view, points, false))
+            return true;
+
+        if (flying)
+            Encoding::FlyAlong(bot, points, view.Facing, velocity);
+        else
+            Encoding::MoveAlong(bot, points, view.Facing, velocity);
         return true;
     }
 
@@ -730,12 +804,15 @@ namespace
         return true;
     }
 
-    /// LayTurnRun, timed and counted for the status line (Encoding::TurnRunCalls): what the curve costs on the map
-    /// thread, and how often it is refused for the straight run.
-    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity)
+    /// LayTurnRun, or LayAirTurnRun for a seat swimming or flying (`airborne`), timed and counted for the status line
+    /// (Encoding::TurnRunCalls): what the curve costs on the map thread, and how often it is refused for the straight
+    /// run.
+    bool TurnRun(Animus::Curriculum::SeatView& view, float heading, float speed, float length, float velocity,
+        bool airborne = false)
     {
         auto const started = std::chrono::steady_clock::now();
-        bool const laid = LayTurnRun(view, heading, speed, length, velocity);
+        bool const laid = airborne ? LayAirTurnRun(view, heading, speed, length, velocity, view.Bot->CanFly())
+            : LayTurnRun(view, heading, speed, length, velocity);
         Encoding::TurnRunCalls.fetch_add(1, std::memory_order_relaxed);
         Encoding::TurnRunNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
@@ -814,8 +891,8 @@ namespace
         // second, and a client draws each restart as a hitch in the stride (in-game testing, 2026-09-28); the old
         // "half an 8-yard step" still let go every ~750 ms on foot, and in water and the air there was no keep at
         // all (movement-smooth A1). Where it looks is turned on the run itself (Encoding::ReaimRun), so facing alone
-        // never relaunches it -- FACE_TARGET round a moving target used to restart every decision (A3). Flying faces
-        // along its path (FlyTo) and is not turned.
+        // never relaunches it -- FACE_TARGET round a moving target used to restart every decision (A3). A flight
+        // holds a head of its own too (Encoding::FlyAlong).
         if (!bot->movespline->Finalized())
         {
             Encoding::ReaimRun(bot, view.Facing);
@@ -827,11 +904,14 @@ namespace
             // run bending round a rock still points at. Either keeps it; a new mind matches neither.
             float const headingError = std::min(AngleBetween(Encoding::CourseAhead(bot, view.DecisionMs / 2),
                 heading), AngleBetween(bot->GetAbsoluteAngle(end.x, end.y), heading));
-            float const pitchError = airborne && flat > 0.1f
-                ? std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch : 0.0f;
+            // Its climb the same way (Encoding::ClimbAhead): a climb or a dive swum or flown as one run is not
+            // pointed at its end until its last leg.
+            float const pitchError = airborne && flat > 0.1f ? std::min(
+                std::fabs(Encoding::ClimbAhead(bot, view.DecisionMs / 2) - view.Pitch),
+                std::fabs(std::atan2(end.z - bot->GetPositionZ(), flat) - view.Pitch)) : 0.0f;
             // A watching client draws the run with the head it was launched with; past the threshold it is
             // relaunched once so the turn is seen (Options.ShownFacingRelaunchDeg). Never in training: no client.
-            bool const shownStale = ForgeCore::HasClients() && view.Steering && !(airborne && bot->CanFly())
+            bool const shownStale = ForgeCore::HasClients() && view.Steering
                 && view.Steering->RunId == bot->movespline->GetId()
                 && MoveKeep::FacingRelaunch(view.Steering->RunFacing, view.Facing,
                     view.Options.ShownFacingRelaunchDeg * float(M_PI) / 180.0f);
@@ -864,6 +944,22 @@ namespace
             // Swimming and flying are steered in three dimensions and must not be snapped to the ground: the whole
             // point of a pitch is to leave it. A climb still stops at the ceiling the air has.
             float const facing = view.Facing;
+            // A turn or a climb still to come is swum or flown as one run (TurnRun), as one is walked on the ground;
+            // a water-walker is on the surface, where a swim's legs would take it under, so it is left straight.
+            bool const tilting = std::fabs(view.PitchTarget - view.Pitch) >= 1e-4f;
+            if ((std::fabs(view.TurnLeft) >= 1e-4f || tilting) && !bot->HasWaterWalkAura()
+                && TurnRun(view, heading, speed, length, velocity, true))
+                return;
+            // A closed door cuts a swim or a flight as it cuts a walk (a spline goes through anything).
+            if (view.ClosedDoors && !view.ClosedDoors->empty())
+            {
+                std::vector<G3D::Vector3> line{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(),
+                    bot->GetPositionZ()), G3D::Vector3(destination.GetPositionX(), destination.GetPositionY(),
+                    destination.GetPositionZ()) };
+                if (!CutAtDoors(view, line, false))
+                    return;
+                destination.Relocate(line.back().x, line.back().y, line.back().z);
+            }
             if (!bot->CanFly())
             {
                 // In the water. Keep the seat under the surface rather than skimming along the top of it, and swim

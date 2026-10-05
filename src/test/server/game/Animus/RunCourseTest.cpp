@@ -41,3 +41,24 @@ TEST(RunCourseTest, HalfADecisionAheadReadsTheLegTheComingDecisionWalks)
     run.updateState(250);
     EXPECT_NEAR(*Animus::Curriculum::RunCourse(run, 125), float(M_PI) / 2.0f, 1e-4f);  // and the straight rest
 }
+
+// A climb swum as one run: a level leg, then one rising at 30 degrees. Half a decision ahead of the boundary reads
+// the rising leg, which is what keeps the run while the seat's pitch steps up to it.
+TEST(RunCourseTest, RunClimbReadsTheClimbOfTheLegAhead)
+{
+    float const rise = 1.75f * std::tan(float(M_PI) / 6.0f);
+    Movement::MoveSplineInitArgs args;
+    args.path = { G3D::Vector3(0.0f, 0.0f, 0.0f), G3D::Vector3(1.75f, 0.0f, 0.0f),
+        G3D::Vector3(3.5f, 0.0f, rise), G3D::Vector3(10.0f, 0.0f, rise + 6.5f * std::tan(float(M_PI) / 6.0f)) };
+    args.velocity = 7.0f;
+    args.splineId = 1;
+    args.walk = false;
+    args.flags.orientationFixed = true;
+    Movement::MoveSpline run;
+    run.Initialize(args);
+
+    EXPECT_NEAR(*Animus::Curriculum::RunClimb(run, 125), 0.0f, 1e-4f);              // launched: level
+    run.updateState(250);
+    ASSERT_FALSE(run.Finalized());
+    EXPECT_NEAR(*Animus::Curriculum::RunClimb(run, 125), float(M_PI) / 6.0f, 1e-3f);  // the next leg climbs
+}
