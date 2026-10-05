@@ -85,8 +85,12 @@ namespace
         return {
             { -1637.9f, 3082.9f, 31.9f, 0.0f },   { -1168.4f, 2713.1f, 112.1f, 0.0f },
             { -561.0f, 2069.0f, 90.0f, 0.0f },    { 4012.0f, -788.0f, 286.0f, 0.0f },
-            { 1969.6f, -2339.0f, 89.4f, 0.0f },   { 1813.0f, -2424.0f, 93.0f, 0.0f },
-            { 1965.0f, -2559.0f, 86.0f, 0.0f },
+            { 1969.6f, -2339.0f, 89.4f, 0.0f },
+            // (1813, -2424, 93) and (1965, -2559, 86), by the Dor'Danil Barrow Den, were left out (dry check,
+            // 2026-10-05): M1's evaluations could not build an episode from either. They are the roughest of the
+            // list -- the terrain within 40 yd rises and falls 9 and 17 yd (the map tiles), and the points stand 3.5
+            // and 4.8 yd over it -- where M1's first rungs ask for a marker 5-10 yd off within 20 degrees of the
+            // facing, its way within 1.1 times the straight line and walkable by the controller: open ground's task.
         };
     }
 
