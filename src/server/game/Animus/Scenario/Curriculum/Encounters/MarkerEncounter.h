@@ -172,6 +172,7 @@ namespace Animus::Curriculum
             uint32 Crossings = 0;
             uint32 BanksClimbed = 0;
             bool WasInWater = false;
+            float UnderwaterSelfDamage = 0.0f;  // share of maximum health, what Drowning is paid on
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

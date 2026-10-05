@@ -1062,8 +1062,12 @@ namespace Animus::Curriculum
             float DistanceLast = 90.0f;
             float DepthMinFirst = 3.0f;
             float DepthMaxFirst = 8.0f;
-            float DepthMinLast = 20.0f;
-            float DepthMaxLast = 40.0f;
+            /// The top rung's window is what the lakes hold (map tiles, 2026-10-05, every water sample 15-90 yd from
+            /// the spawns): Stonebull's bed is 32.1 yd at its deepest, p90 26.9, p95 28.5; Elune'ara's 61.8, p90
+            /// 42.3. [18, 30] is 12% of uniform draws round Stonebull and 8% round Elune'ara, so the placer's 192
+            /// tries find one; the first rung's [3, 8] is 7% and 15%.
+            float DepthMinLast = 18.0f;
+            float DepthMaxLast = 30.0f;
             float Radius = 2.0f;
             float ArriveRise = 3.0f;            // a swimmer over a lakebed marker floats a little above it
             float Drowning = 2.0f;              // per share of maximum health the water took

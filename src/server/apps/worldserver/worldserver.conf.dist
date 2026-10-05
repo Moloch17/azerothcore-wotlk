@@ -6742,8 +6742,10 @@ AnimusForge.Curriculum.MarkerWater.DistanceFirst = 30.0
 AnimusForge.Curriculum.MarkerWater.DistanceLast = 90.0
 AnimusForge.Curriculum.MarkerWater.DepthMinFirst = 3.0
 AnimusForge.Curriculum.MarkerWater.DepthMaxFirst = 8.0
-AnimusForge.Curriculum.MarkerWater.DepthMinLast = 20.0
-AnimusForge.Curriculum.MarkerWater.DepthMaxLast = 40.0
+#   the top window is what the lakes hold: Stonebull's bed is 32.1 yd at its deepest (p90 26.9, p95 28.5), and
+#   [18, 30] is 12% of uniform draws round it (8% round Lake Elune'ara), enough for the placer's 192 tries
+AnimusForge.Curriculum.MarkerWater.DepthMinLast = 18.0
+AnimusForge.Curriculum.MarkerWater.DepthMaxLast = 30.0
 AnimusForge.Curriculum.MarkerWater.Radius = 2.0
 AnimusForge.Curriculum.MarkerWater.ArriveRise = 3.0
 AnimusForge.Curriculum.MarkerWater.Drowning = 2.0

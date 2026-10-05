@@ -17,6 +17,7 @@ costs:
 
 eval:
   report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, marker_rise, crossings,
-           banks_climbed, swim_seconds, breaths, drowned, time_ratio, overshoot, stop_distance, jumps, stuck_seconds,
-           wall_seconds, course_kinks, moves_refused, movement_casts, speed_casts, died, timed_out, reward_arrive,
-           reward_progress, reward_drowning, reward_stuck, reward_wall, reward_jitter, reward_effort]
+           banks_climbed, swim_seconds, breaths, drowned, underwater_self_damage, time_ratio, overshoot, stop_distance,
+           jumps, stuck_seconds, wall_seconds, course_kinks, moves_refused, movement_casts, speed_casts, died,
+           timed_out, reward_arrive, reward_progress, reward_drowning, reward_stuck, reward_wall, reward_jitter,
+           reward_effort]

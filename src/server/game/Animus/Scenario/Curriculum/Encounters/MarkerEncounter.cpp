@@ -190,6 +190,12 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     // The water course: crossings placed (a dry way round existed and was the longer), and the seat's climbs out of
     // the water onto land. swim_seconds, breaths and drowned are the scenario's own columns.
     table.Add("crossings", [this](Env const& env, uint32) { return float(_envs[env.Index].Crossings); });
+    // What Drowning is paid on: the share of maximum health the seat's own damage (no attacker: drowning, mostly,
+    // and a fall that ends under the surface) took while it was under the water.
+    table.Add("underwater_self_damage", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].UnderwaterSelfDamage;
+    });
     table.Add("banks_climbed", [this](Env const& env, uint32) { return float(_envs[env.Index].BanksClimbed); });
     table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
     table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
@@ -492,8 +498,11 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         // charged while under the surface.
         uint64 const self = env.StepStats[seatIndex].SelfDamage;
         if (self && bot->IsUnderWater())
-            ledger.Add(RewardTerm::Drowning, -_scenario.Tuning().MarkerWater.Drowning * float(self)
-                / float(std::max<uint32>(1, bot->GetMaxHealth())));
+        {
+            float const share = float(self) / float(std::max<uint32>(1, bot->GetMaxHealth()));
+            markers.UnderwaterSelfDamage += share;
+            ledger.Add(RewardTerm::Drowning, -_scenario.Tuning().MarkerWater.Drowning * share);
+        }
         bool const wet = bot->IsInWater();
         markers.BanksClimbed += markers.WasInWater && !wet ? 1 : 0;
         markers.WasInWater = wet;
