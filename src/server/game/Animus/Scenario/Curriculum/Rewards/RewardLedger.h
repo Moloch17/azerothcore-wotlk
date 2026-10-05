@@ -153,6 +153,9 @@ namespace Animus::Curriculum
         /// Pressing into a wall: a movement key held while the controller's step was blocked (BodyState::AgainstWall),
         /// charged by the second (MarkerGround.Wall). A noise price, as Stuck.
         Wall,
+        /// What a fall took (the movement stages from M3, MarkerEncounter): per share of the seat's maximum health
+        /// (MarkerVertical.FallDamage). A Cost at full price, never on the cost ladder: a drop's price is real.
+        FallDamage,
         Count
     };
 
@@ -226,6 +229,7 @@ namespace Animus::Curriculum
             // Moving nowhere and pressing into walls (the movement stages, 2026-10-05).
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
+            case RewardTerm::FallDamage:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

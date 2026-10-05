@@ -37,6 +37,8 @@ namespace Animus::Curriculum
         float Radius = 4.0f;        // yards to stop within
         float DetourMin = 0.0f;     // the walking way over the straight line, at least (0: none asked) ...
         float DetourMax = 0.0f;     // ... and at most (0: the course's own ceiling)
+        float HeightMin = 0.0f;     // the vertical course: the height window, yards (up for a climb, the drop for a
+        float HeightMax = 0.0f;     // ledge, either way indoors); both 0 for no window
     };
 
     /// **The movement stages' markers** (Opposition::Markers; movement-curriculum plan §2, M1): a place on the ground
@@ -56,7 +58,11 @@ namespace Animus::Curriculum
     /// broken ground with something in the way: its ladder (MarkerGround.*) widens the distance and the detour, the
     /// radius is fixed, Progress is shaped on the route planner's distance (re-planned when the seat strays, a
     /// re-plan paying nothing), there is no Facing term, and the seat pays Stuck and Wall -- noise prices on the cost
-    /// ladder -- per second the controller counts it stuck or pressing into a wall.
+    /// ladder -- per second the controller counts it stuck or pressing into a wall. Vertical (M3) is up and down: by
+    /// the arena's ground a marker above (a climb), below a ledge (ArenaDefinition::Ledges) or on another floor
+    /// (Indoors), within the rung's height window (MarkerVertical.*); the costs are the ground course's and
+    /// FallDamage. Every course's markers are placed only where the player controller can walk to them
+    /// (TravelPlaceRules::ControllerReach, MarkerReach).
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -82,6 +88,11 @@ namespace Animus::Curriculum
         /// round a corner); in proportion to the shortfall below it, the full `price` a second at no movement.
         [[nodiscard]] static float WallCharge(float wallSeconds, float moved, float asked, float price,
             float slideShare);
+
+        /// Rung `rung` of the vertical course's ladder: the height window and the distance widen, the radius is fixed.
+        [[nodiscard]] static MarkerRung VerticalRungTask(uint32 rung, uint32 rungs, float distanceMin,
+            float distanceFirst, float distanceLast, float heightMinFirst, float heightMaxFirst, float heightMinLast,
+            float heightMaxLast, float radius);
 
         /// Rung `rung` of a ladder of `rungs` (0 the first), from the tuning's First and Last values.
         [[nodiscard]] static MarkerRung RungTask(uint32 rung, uint32 rungs, float distanceMin, float distanceFirst,
@@ -146,6 +157,10 @@ namespace Animus::Curriculum
             bool WayFailed = false;
             uint32 LastWallMs = 0;
             uint32 LastStuckMs = 0;
+            // The vertical course: the falls' cost read off the controller's count, and what the markers asked.
+            float LastFallDamage = 0.0f;
+            float RiseSum = 0.0f;           // legs placed: |the marker's height over the seat's| at the leg's start
+            uint32 StoreyLegs = 0;          // ... of which a storey or more (3 yd) up or down
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

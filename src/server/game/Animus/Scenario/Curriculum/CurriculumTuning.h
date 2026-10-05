@@ -969,6 +969,9 @@ namespace Animus::Curriculum
             float MaxDetour = 1.1f;
             /// How near a stop has to be to count in stop_distance (a stop far from the marker is a pause, not a try).
             float StopNear = 10.0f;
+            /// Arriving is on the marker's own floor too: the unit within this many yards of its height (a seat under
+            /// a ledge, or a storey below, is not on it).
+            float ArriveRise = 2.0f;
         } Markers;
 
         /// The ground stage's markers (MarkerCourse::Ground, M2): broken ground with something in the way -- a face
@@ -1005,6 +1008,34 @@ namespace Animus::Curriculum
             /// price at no movement (MarkerEncounter::WallCharge).
             float WallSlide = 0.5f;
         } MarkerGround;
+
+        /// The vertical stage's markers (MarkerCourse::Vertical, M3): up and down. By the arena's ground: above the
+        /// seat from a cliff foot or a terrace (the way up a ramp, a stair or a jump), below it from a ledge top (the
+        /// drop the shortcut, the way round the safe one; ArenaDefinition::Ledges), or on another floor of a building
+        /// (ArenaDefinition::Indoors). No interactions and no closed doors: a marker whose way the controller cannot
+        /// walk -- a closed door is a wall to it -- is never placed (TravelPlaceRules::ControllerReach).
+        ///
+        /// The ladder (Rungs rungs) moves the height window from [HeightMinFirst, HeightMaxFirst] to
+        /// [HeightMinLast, HeightMaxLast] yards (above for a climb, the drop for a ledge, either way indoors) and the
+        /// furthest distance from DistanceFirst to DistanceLast (the nearest DistanceMin). A ledge's way round takes
+        /// no drop deeper than SafeDrop. FallDamage is charged per share of the seat's health a fall took (a Cost,
+        /// always at full price): what a drop costs is the seat's to learn, and the deep ones kill (Death).
+        struct MarkerVerticalTuning
+        {
+            uint32 MarkersMin = 2;
+            uint32 MarkersMax = 4;
+            uint32 Rungs = 6;
+            float DistanceMin = 10.0f;
+            float DistanceFirst = 30.0f;
+            float DistanceLast = 80.0f;
+            float HeightMinFirst = 1.0f;
+            float HeightMaxFirst = 6.0f;
+            float HeightMinLast = 15.0f;
+            float HeightMaxLast = 45.0f;
+            float Radius = 1.0f;
+            float SafeDrop = 6.0f;
+            float FallDamage = 2.0f;            // per share of maximum health a fall took
+        } MarkerVertical;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
@@ -1535,6 +1566,7 @@ namespace Animus::Curriculum
             f("Markers.RadiusLast", tuning.Markers.RadiusLast);
             f("Markers.MaxDetour", tuning.Markers.MaxDetour);
             f("Markers.StopNear", tuning.Markers.StopNear);
+            f("Markers.ArriveRise", tuning.Markers.ArriveRise);
             f("MarkerGround.MarkersMin", tuning.MarkerGround.MarkersMin);
             f("MarkerGround.MarkersMax", tuning.MarkerGround.MarkersMax);
             f("MarkerGround.Rungs", tuning.MarkerGround.Rungs);
@@ -1548,6 +1580,19 @@ namespace Animus::Curriculum
             f("MarkerGround.Stuck", tuning.MarkerGround.Stuck);
             f("MarkerGround.Wall", tuning.MarkerGround.Wall);
             f("MarkerGround.WallSlide", tuning.MarkerGround.WallSlide);
+            f("MarkerVertical.MarkersMin", tuning.MarkerVertical.MarkersMin);
+            f("MarkerVertical.MarkersMax", tuning.MarkerVertical.MarkersMax);
+            f("MarkerVertical.Rungs", tuning.MarkerVertical.Rungs);
+            f("MarkerVertical.DistanceMin", tuning.MarkerVertical.DistanceMin);
+            f("MarkerVertical.DistanceFirst", tuning.MarkerVertical.DistanceFirst);
+            f("MarkerVertical.DistanceLast", tuning.MarkerVertical.DistanceLast);
+            f("MarkerVertical.HeightMinFirst", tuning.MarkerVertical.HeightMinFirst);
+            f("MarkerVertical.HeightMaxFirst", tuning.MarkerVertical.HeightMaxFirst);
+            f("MarkerVertical.HeightMinLast", tuning.MarkerVertical.HeightMinLast);
+            f("MarkerVertical.HeightMaxLast", tuning.MarkerVertical.HeightMaxLast);
+            f("MarkerVertical.Radius", tuning.MarkerVertical.Radius);
+            f("MarkerVertical.SafeDrop", tuning.MarkerVertical.SafeDrop);
+            f("MarkerVertical.FallDamage", tuning.MarkerVertical.FallDamage);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

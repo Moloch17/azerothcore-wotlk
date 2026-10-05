@@ -34,6 +34,9 @@
 #include "Random.h"
 #include "SeatView.h"
 #include "MoveBlock.h"
+#include "MapWorldQuery.h"
+#include "MarkerReach.h"
+#include "UnitBody.h"
 #include "TravelBlock.h"
 #include <algorithm>
 #include <atomic>
@@ -137,6 +140,18 @@ namespace
         }
         text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
         return true;
+    }
+
+    /// Whether the player controller can walk the route (xs, ys, zs) to a place whose floor is at `placeZ`, taking no
+    /// drop past rules.RouteMaxDrop (TravelPlaceRules::ControllerReach, MarkerReach::Walk).
+    bool ControllerWalks(Player const* bot, Map* map, float const* xs, float const* ys, float const* zs, uint32 count,
+        float placeZ, Animus::Curriculum::TravelPlaceRules const& rules)
+    {
+        namespace Reach = Animus::Curriculum::MarkerReach;
+        Animus::Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
+        Reach::Result const reach = Reach::Walk(world, Animus::Movement::ShapeOf(bot), xs, ys, zs, count);
+        return reach.Reachable && std::fabs(reach.EndZ - placeZ) <= Reach::END_FLOOR
+            && (rules.RouteMaxDrop <= 0.0f || reach.MaxDrop <= rules.RouteMaxDrop);
     }
 
     Animus::Curriculum::HumanPools::Point ToPoint(Position const& position)
@@ -735,6 +750,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             return false;
         if (rules.Ledge && (bot->GetPositionZ() - z < rules.DropMin || bot->GetPositionZ() - z > rules.DropMax))
             return false;
+        if (rules.HasRise && (z - bot->GetPositionZ() < rules.RiseMin || z - bot->GetPositionZ() > rules.RiseMax))
+            return false;
 
         // A place inside has to actually be inside. The probe can still land in a courtyard or on a roof edge
         // through a doorway, and only the WMO data tells them apart: GetAreaInfo returns false where no building
@@ -810,6 +827,11 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 return false;
             if (!LedgeOnLine(bot, map, placeX, placeY, placeZ, rules, edgeDrop))
                 return false;
+            // The way round has to be one the player controller walks, with no drop past the rules' own: it is the
+            // safe way, and the arrival a class without Slow Fall needs.
+            if (rules.ControllerReach
+                && !ControllerWalks(bot, map, ground.X, ground.Y, ground.Z, ground.Count, placeZ, rules))
+                return false;
 
             walked = ground.Length;
         }
@@ -878,6 +900,25 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                     return false;
                 if (rules.MinDetour > 0.0f && attempt < attempts / 2 && walked < distance * rules.MinDetour)
                     return false;
+
+                // The player controller has to be able to walk it: the navmesh's slope and climb are not the
+                // client's. Every rise a step or a jump, ending on the place's own floor.
+                if (rules.ControllerReach)
+                {
+                    ::Movement::PointsArray const& points = path.GetPath();
+                    std::vector<float> xs(points.size());
+                    std::vector<float> ys(points.size());
+                    std::vector<float> zs(points.size());
+                    for (std::size_t i = 0; i < points.size(); ++i)
+                    {
+                        xs[i] = points[i].x;
+                        ys[i] = points[i].y;
+                        zs[i] = points[i].z;
+                    }
+                    if (!ControllerWalks(bot, map, xs.data(), ys.data(), zs.data(), uint32(points.size()), placeZ,
+                        rules))
+                        return false;
+                }
 
                 // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the
                 // attempts and let go after, so an arena whose ground has no long way round still builds. The

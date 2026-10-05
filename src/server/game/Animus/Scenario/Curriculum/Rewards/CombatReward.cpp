@@ -137,6 +137,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Facing:                return "facing";
         case RewardTerm::Stuck:                 return "stuck";
         case RewardTerm::Wall:                  return "wall";
+        case RewardTerm::FallDamage:            return "fall_damage";
         case RewardTerm::Count:                 break;
     }
 

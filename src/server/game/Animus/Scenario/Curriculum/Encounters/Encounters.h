@@ -1046,6 +1046,17 @@ namespace Animus::Curriculum
         float MinDetour = 0.0f;
         /// The walking way may not swim: planned on NAV_GROUND alone (a movement stage before the water one).
         bool DryOnly = false;
+        /// The walking way must be one the player controller can walk (MarkerReach::Walk: every rise a step or a
+        /// jump, no face steeper than the client walks for more than a jump), ending on the place's own floor. The
+        /// navmesh's slope and climb are not the client's, so its route alone is no promise. RouteMaxDrop (0: any)
+        /// caps the deepest drop the way may take.
+        bool ControllerReach = false;
+        float RouteMaxDrop = 0.0f;
+        /// The place's height over the seat's must be within [RiseMin, RiseMax] (yards, signed: up positive) when
+        /// HasRise; a marker above or below by the vertical stage's rung.
+        bool HasRise = false;
+        float RiseMin = 0.0f;
+        float RiseMax = 0.0f;
     };
 
     class TravelEncounter final : public Encounter

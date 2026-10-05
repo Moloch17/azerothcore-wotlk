@@ -27,6 +27,7 @@
 #include "StageScenario.h"
 #include "StageState.h"
 #include "UnitDefines.h"
+#include "MoveBlock.h"
 #include <algorithm>
 #include <cmath>
 
@@ -35,6 +36,8 @@ namespace
     constexpr float TWO_PI = 2.0f * float(M_PI);
     /// The fastest turn the move block offers (MoveControls::TURN_RATES_DEG's 360), for the leg's optimum.
     constexpr float FASTEST_TURN = TWO_PI;
+    /// A storey's height: a marker this far up or down is on another floor (storey_legs).
+    constexpr float STOREY = 3.0f;
 
     float Lerp(float first, float last, float t)
     {
@@ -93,6 +96,21 @@ float Animus::Curriculum::MarkerEncounter::WallCharge(float wallSeconds, float m
     return price * wallSeconds * blocked;
 }
 
+Animus::Curriculum::MarkerRung Animus::Curriculum::MarkerEncounter::VerticalRungTask(uint32 rung, uint32 rungs,
+    float distanceMin, float distanceFirst, float distanceLast, float heightMinFirst, float heightMaxFirst,
+    float heightMinLast, float heightMaxLast, float radius)
+{
+    float const t = rungs > 1 ? float(std::min(rung, rungs - 1)) / float(rungs - 1) : 1.0f;
+    MarkerRung task;
+    task.Nearest = distanceMin;
+    task.Furthest = std::max(distanceMin, Lerp(distanceFirst, distanceLast, t));
+    task.BearingHalf = float(M_PI);
+    task.Radius = std::max(0.1f, radius);
+    task.HeightMin = std::max(0.0f, Lerp(heightMinFirst, heightMinLast, t));
+    task.HeightMax = std::max(task.HeightMin + 1.0f, Lerp(heightMaxFirst, heightMaxLast, t));
+    return task;
+}
+
 bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float movedYards, float stopMoved)
 {
     constexpr uint32 MOVING = MOVEMENTFLAG_MASK_MOVING | MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING;
@@ -102,7 +120,7 @@ bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float mo
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::MarkerEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::Progress, RewardTerm::Facing,
-        RewardTerm::Stuck, RewardTerm::Wall };
+        RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::FallDamage };
 }
 
 void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -157,6 +175,14 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         EnvMarkers const& markers = _envs[env.Index];
         return markers.Legs ? markers.DetourSum / float(markers.Legs) : 0.0f;
     });
+    // The vertical course: how far up or down the markers were (mean |height over the seat| at each leg's start),
+    // and how many legs changed a storey (3 yd or more).
+    table.Add("marker_rise", [this](Env const& env, uint32)
+    {
+        EnvMarkers const& markers = _envs[env.Index];
+        return markers.Legs ? markers.RiseSum / float(markers.Legs) : 0.0f;
+    });
+    table.Add("storey_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyLegs); });
     table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
     table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
 }
@@ -168,8 +194,9 @@ void Animus::Curriculum::MarkerEncounter::ResetEpisode(Env& env)
 
 uint32 Animus::Curriculum::MarkerEncounter::TopRung(Env const& env) const
 {
-    bool const ground = _scenario.Arena(env).Course == MarkerCourse::Ground;
-    uint32 const rungs = std::max<uint32>(1, ground ? _scenario.Tuning().MarkerGround.Rungs
+    MarkerCourse const course = _scenario.Arena(env).Course;
+    uint32 const rungs = std::max<uint32>(1, course == MarkerCourse::Ground ? _scenario.Tuning().MarkerGround.Rungs
+        : course == MarkerCourse::Vertical ? _scenario.Tuning().MarkerVertical.Rungs
         : _scenario.Tuning().Markers.Rungs);
     int32 const pinned = _scenario.ArenaMaxRung(env);
     return pinned >= 0 ? std::min<uint32>(uint32(pinned), rungs - 1) : rungs - 1;
@@ -188,8 +215,38 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     rules.ArcHalf = markers.Task.BearingHalf;
     rules.MaxDetour = markers.Task.DetourMax > 0.0f ? markers.Task.DetourMax : tuning.MaxDetour;
     rules.MinDetour = markers.Task.DetourMin > 1.0f ? markers.Task.DetourMin : 0.0f;
-    // No swimming before the water stage: the walking way is planned on dry ground alone.
+    // No swimming before the water stage: the walking way is planned on dry ground alone, and it has to be one the
+    // player controller can walk (every rise a step or a jump): no marker is placed where the seat cannot get.
     rules.DryOnly = true;
+    rules.ControllerReach = true;
+
+    // The vertical course: above (a climb), below a ledge, or on another floor, within the rung's height window.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    bool const indoors = arena.Indoors;
+    if (markers.Course == MarkerCourse::Vertical)
+    {
+        CurriculumTuning::TravelTuning const& travel = _scenario.Tuning().Travel;
+        CurriculumTuning::MarkerVerticalTuning const& vertical = _scenario.Tuning().MarkerVertical;
+        // Up a ramp, a stair or a slope may be the long way round: the route's detour is the ground's to decide.
+        rules.MaxDetour = 0.0f;
+        rules.MinDetour = 0.0f;
+        if (arena.Ledges)
+        {
+            // Below a ledge on the straight line: the drop is the shortcut, the way round (at least LedgeDetour times
+            // the line) takes no drop past SafeDrop.
+            rules.Ledge = true;
+            rules.LedgeDetour = travel.LedgeDetour;
+            rules.DropMin = std::max(markers.Task.HeightMin, MoveBlock::MAX_STEP);
+            rules.DropMax = markers.Task.HeightMax;
+            rules.RouteMaxDrop = vertical.SafeDrop;
+        }
+        else
+        {
+            rules.HasRise = true;
+            rules.RiseMin = indoors ? -markers.Task.HeightMax : markers.Task.HeightMin;
+            rules.RiseMax = markers.Task.HeightMax;
+        }
+    }
 
     // Within what is left of the clock: TravelEncounter::FindPlace holds the walk to the share of it a trip may need.
     uint32 const leftMs = env.EpisodeLengthMs > env.EpisodeElapsedMs ? env.EpisodeLengthMs - env.EpisodeElapsedMs : 0;
@@ -200,7 +257,7 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     Position place;
     float walk = 0.0f;
     if (!TravelEncounter::FindPlace(bot, map, markers.Task.Nearest, markers.Task.Furthest, false, place, budget,
-        &walk, false, nullptr, false, nullptr, rules))
+        &walk, false, nullptr, indoors, nullptr, rules))
         return false;
 
     markers.HasMarker = true;
@@ -211,6 +268,9 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     markers.LegWalk = walk > 0.0f ? walk : markers.LegStraight;
     markers.DetourSum += markers.LegWalk / std::max(1.0f, markers.LegStraight);
     ++markers.Legs;
+    float const rise = std::fabs(place.GetPositionZ() - bot->GetPositionZ());
+    markers.RiseSum += rise;
+    markers.StoreyLegs += rise >= STOREY ? 1 : 0;
     markers.Way.Clear();
     markers.WayFailed = false;
     markers.LegBearing = std::fabs(BearingFrom(bot, facing, place));
@@ -241,7 +301,16 @@ bool Animus::Curriculum::MarkerEncounter::Build(Env& env, Map* map, uint8 /*leve
     DifficultyLadder::Pick const pick = _ladder.Draw(env, markers.Layout, markers.Spec, TopRung(env));
     markers.Rung = pick.Tier;
     markers.Counts = pick.Counts;
-    if (markers.Course == MarkerCourse::Ground)
+    if (markers.Course == MarkerCourse::Vertical)
+    {
+        CurriculumTuning::MarkerVerticalTuning const& vertical = _scenario.Tuning().MarkerVertical;
+        markers.Task = VerticalRungTask(markers.Rung, std::max<uint32>(1, vertical.Rungs), vertical.DistanceMin,
+            vertical.DistanceFirst, vertical.DistanceLast, vertical.HeightMinFirst, vertical.HeightMaxFirst,
+            vertical.HeightMinLast, vertical.HeightMaxLast, vertical.Radius);
+        markers.Wanted = urand(std::min(vertical.MarkersMin, vertical.MarkersMax), std::max(vertical.MarkersMin,
+            vertical.MarkersMax));
+    }
+    else if (markers.Course == MarkerCourse::Ground)
     {
         CurriculumTuning::MarkerGroundTuning const& ground = _scenario.Tuning().MarkerGround;
         markers.Task = GroundRungTask(markers.Rung, std::max<uint32>(1, ground.Rungs), ground.DistanceMin,
@@ -341,7 +410,15 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
 
     // The ground course's costs, read off the controller's own counts (StageScenario::TrackController): the
     // seconds since the last decision it was stuck with a key held, or pressing into a wall.
-    bool const ground = markers.Course == MarkerCourse::Ground;
+    // The vertical course climbs on the ground course's route and pays its costs, and its falls besides.
+    bool const ground = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical;
+    if (markers.Course == MarkerCourse::Vertical)
+    {
+        float const took = seat.FallDamage - std::min(seat.FallDamage, markers.LastFallDamage);
+        markers.LastFallDamage = seat.FallDamage;
+        if (took > 0.0f)
+            ledger.Add(RewardTerm::FallDamage, -_scenario.Tuning().MarkerVertical.FallDamage * took);
+    }
     if (ground)
     {
         CurriculumTuning::MarkerGroundTuning const& costs = _scenario.Tuning().MarkerGround;
@@ -385,7 +462,8 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     }
 
     // Running through: how far past the radius the seat went after first being inside it.
-    bool const inside = distance <= markers.Task.Radius;
+    bool const inside = distance <= markers.Task.Radius
+        && std::fabs(bot->GetPositionZ() - markers.Marker.GetPositionZ()) <= tuning.ArriveRise;
     if (inside)
         markers.Entered = true;
     else if (markers.Entered)

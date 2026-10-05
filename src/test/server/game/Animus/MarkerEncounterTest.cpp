@@ -15,8 +15,9 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "MarkerEncounter.h"
+#include "MarkerReach.h"
+#include <functional>
 #include "UnitDefines.h"
 #include "gtest/gtest.h"
 #include <cmath>
@@ -74,4 +75,96 @@ TEST(MarkerEncounterTest, GroundLadderWidensTheDetour)
     EXPECT_FLOAT_EQ(last.DetourMin, 1.6f);
     EXPECT_FLOAT_EQ(last.Furthest, 120.0f);
     EXPECT_FLOAT_EQ(first.Radius, last.Radius);
+}
+
+// M3's ladder: the height window and the distance climb, the radius stays.
+TEST(MarkerEncounterTest, VerticalLadderRaisesTheHeight)
+{
+    MarkerRung const first = MarkerEncounter::VerticalRungTask(0, 6, 10.0f, 30.0f, 80.0f, 1.0f, 6.0f, 15.0f, 45.0f,
+        1.0f);
+    MarkerRung const last = MarkerEncounter::VerticalRungTask(5, 6, 10.0f, 30.0f, 80.0f, 1.0f, 6.0f, 15.0f, 45.0f,
+        1.0f);
+    EXPECT_FLOAT_EQ(first.HeightMin, 1.0f);
+    EXPECT_FLOAT_EQ(first.HeightMax, 6.0f);
+    EXPECT_FLOAT_EQ(last.HeightMin, 15.0f);
+    EXPECT_FLOAT_EQ(last.HeightMax, 45.0f);
+    EXPECT_FLOAT_EQ(last.Furthest, 80.0f);
+}
+
+namespace
+{
+    namespace Mv = Animus::Movement;
+    namespace Reach = Animus::Curriculum::MarkerReach;
+
+    /// Ground that rises along x only: height(x), and the floor's normal there. No models, no water.
+    class Ridge final : public Mv::WorldQuery
+    {
+    public:
+        Ridge(std::function<float(float)> height, std::function<float(float)> normal)
+            : _height(std::move(height)), _normal(std::move(normal)) { }
+
+        [[nodiscard]] float FloorBelow(float x, float /*y*/, float z, float search) const override
+        {
+            float const h = _height(x);
+            return h <= z + 1e-4f && z - h <= search ? h : Mv::INVALID_FLOOR;
+        }
+        [[nodiscard]] float FloorNormalZ(float x, float /*y*/, float /*z*/) const override { return _normal(x); }
+        [[nodiscard]] Mv::Liquid LiquidAt(float, float, float) const override { return {}; }
+        [[nodiscard]] float Sweep(float, float, float, float, float, float, Mv::Body const&) const override
+        {
+            return 1.0f;
+        }
+        [[nodiscard]] float Ceiling(float, float, float, float up) const override { return up; }
+        [[nodiscard]] bool InTerrain(float x, float /*y*/, float z) const override { return z < _height(x) - 1e-4f; }
+
+    private:
+        std::function<float(float)> _height;
+        std::function<float(float)> _normal;
+    };
+
+    Reach::Result WalkAlongX(Ridge const& ridge, float to)
+    {
+        float const xs[] = { 0.0f, to };
+        float const ys[] = { 0.0f, 0.0f };
+        float const zs[] = { ridge.FloorBelow(0.0f, 0.0f, 1000.0f, 2000.0f), ridge.FloorBelow(to, 0.0f, 1000.0f,
+            2000.0f) };
+        return Reach::Walk(ridge, Mv::Body(), xs, ys, zs, 2);
+    }
+
+    float Flat(float) { return 1.0f; }
+}
+
+// Every rise a step (<= 1.19 yd) or a jump (<= the 1.64 yd apex); a drop of any height is allowed; a face steeper
+// than the client walks only for one jump's worth; anything else is not a way the controller can go.
+TEST(MarkerEncounterTest, ReachWalksStepsJumpsAndDropsAndRefusesTheRest)
+{
+    EXPECT_NEAR(Reach::JUMP_APEX, 1.640f, 0.01f);
+
+    Reach::Result const flat = WalkAlongX(Ridge([](float) { return 0.0f; }, Flat), 20.0f);
+    EXPECT_TRUE(flat.Reachable);
+    EXPECT_EQ(flat.Jumps, 0u);
+
+    Reach::Result const step = WalkAlongX(Ridge([](float x) { return x >= 5.0f ? 1.0f : 0.0f; }, Flat), 20.0f);
+    EXPECT_TRUE(step.Reachable);
+    EXPECT_EQ(step.Jumps, 0u);
+
+    Reach::Result const hop = WalkAlongX(Ridge([](float x) { return x >= 5.0f ? 1.5f : 0.0f; }, Flat), 20.0f);
+    EXPECT_TRUE(hop.Reachable);
+    EXPECT_EQ(hop.Jumps, 1u);
+
+    EXPECT_FALSE(WalkAlongX(Ridge([](float x) { return x >= 5.0f ? 2.0f : 0.0f; }, Flat), 20.0f).Reachable);
+
+    Reach::Result const drop = WalkAlongX(Ridge([](float x) { return x >= 5.0f ? -10.0f : 0.0f; }, Flat), 20.0f);
+    EXPECT_TRUE(drop.Reachable);
+    EXPECT_NEAR(drop.MaxDrop, 10.0f, 1e-3f);
+
+    // 55 degrees for five yards up: too steep to walk, more than a jump. 40 degrees: walked.
+    auto const slope = [](float tangent) { return [tangent](float x) { return std::clamp(x - 5.0f, 0.0f, 5.0f / tangent)
+        * tangent; }; };
+    EXPECT_FALSE(WalkAlongX(Ridge(slope(std::tan(55.0f * float(M_PI) / 180.0f)),
+        [](float x) { return x > 5.0f && x < 8.6f ? std::cos(55.0f * float(M_PI) / 180.0f) : 1.0f; }), 20.0f)
+        .Reachable);
+    EXPECT_TRUE(WalkAlongX(Ridge(slope(std::tan(40.0f * float(M_PI) / 180.0f)),
+        [](float x) { return x > 5.0f && x < 11.0f ? std::cos(40.0f * float(M_PI) / 180.0f) : 1.0f; }), 20.0f)
+        .Reachable);
 }

@@ -5036,7 +5036,8 @@ AnimusForge.OutputDir = ""
 #                     The movement curriculum (.agents/plans/movement-curriculum/): M1-M7, every stage
 #                     movement alone on the player controller, landing one at a time:
 #                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them),
-#                                 "move2_ground" (broken ground with something in the way: the way round)
+#                                 "move2_ground" (broken ground with something in the way: the way round),
+#                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5173,6 +5174,7 @@ AnimusForge.TicksPerDecision = 1
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_ground.TicksPerDecision = 5
+AnimusForge.Stage.move3_vertical.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6665,6 +6667,8 @@ AnimusForge.Curriculum.Markers.RadiusFirst = 4.0
 AnimusForge.Curriculum.Markers.RadiusLast = 0.5
 AnimusForge.Curriculum.Markers.MaxDetour = 1.1
 AnimusForge.Curriculum.Markers.StopNear = 10.0
+#   arriving is on the marker's own floor too: the unit within ArriveRise yards of its height
+AnimusForge.Curriculum.Markers.ArriveRise = 2.0
 
 #
 #    AnimusForge.Curriculum.MarkerGround.*
@@ -6691,6 +6695,29 @@ AnimusForge.Curriculum.MarkerGround.Radius = 1.0
 AnimusForge.Curriculum.MarkerGround.Stuck = 0.05
 AnimusForge.Curriculum.MarkerGround.Wall = 0.03
 AnimusForge.Curriculum.MarkerGround.WallSlide = 0.5
+
+#
+#    AnimusForge.Curriculum.MarkerVertical.*
+#        The vertical stage's markers (move3_vertical): up and down -- above the seat from a cliff foot or terrace,
+#        below it from a ledge top (the drop the shortcut, the way round no deeper than SafeDrop), or on another floor
+#        of a building. No interactions and no closed doors: a marker whose way the player controller cannot walk
+#        (every rise a step or a jump; a closed door is a wall) is never placed. The ladder (Rungs rungs) moves the
+#        height window from [HeightMinFirst, HeightMaxFirst] to [HeightMinLast, HeightMaxLast] yards and the furthest
+#        distance from DistanceFirst to DistanceLast (the nearest DistanceMin); every rung stops within Radius yards.
+#        FallDamage is charged per share of the seat's health a fall took (a Cost at full price).
+AnimusForge.Curriculum.MarkerVertical.MarkersMin = 2
+AnimusForge.Curriculum.MarkerVertical.MarkersMax = 4
+AnimusForge.Curriculum.MarkerVertical.Rungs = 6
+AnimusForge.Curriculum.MarkerVertical.DistanceMin = 10.0
+AnimusForge.Curriculum.MarkerVertical.DistanceFirst = 30.0
+AnimusForge.Curriculum.MarkerVertical.DistanceLast = 80.0
+AnimusForge.Curriculum.MarkerVertical.HeightMinFirst = 1.0
+AnimusForge.Curriculum.MarkerVertical.HeightMaxFirst = 6.0
+AnimusForge.Curriculum.MarkerVertical.HeightMinLast = 15.0
+AnimusForge.Curriculum.MarkerVertical.HeightMaxLast = 45.0
+AnimusForge.Curriculum.MarkerVertical.Radius = 1.0
+AnimusForge.Curriculum.MarkerVertical.SafeDrop = 6.0
+AnimusForge.Curriculum.MarkerVertical.FallDamage = 2.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

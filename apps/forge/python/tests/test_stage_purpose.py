@@ -24,6 +24,8 @@ PURPOSE = {
     "move1_controls": ("Arrive",),
     # M2: the markers again, now with something in the way; getting stuck and pressing into walls are its costs.
     "move2_ground": ("Arrive", "Stuck", "Wall"),
+    # M3: up and down; what a fall takes is its own cost.
+    "move3_vertical": ("Arrive", "FallDamage"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -32,6 +34,7 @@ PURPOSE = {
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
     "move2_ground": ("Progress",),
+    "move3_vertical": ("Progress",),
 }
 
 # Opposition -> the encounter source that pays it.

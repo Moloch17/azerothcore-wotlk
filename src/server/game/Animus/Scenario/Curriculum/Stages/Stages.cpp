@@ -27,7 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ ... ─ move7_follow       (M3-M7 land one at a time)
+ *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ ... ─ move7_follow       (M4-M7 to come)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -140,6 +140,77 @@ namespace
         };
     }
 
+    /// Cliff feet under plateaus 30-50 yd up whose tops the route reaches by one ramp at 1.3-1.8x the straight line
+    /// (curriculum-v1 BrokenGround's last four): the vertical stage's climbs.
+    std::vector<Position> CliffFeet()
+    {
+        return {
+            { -2032.2f, -3618.1f, 22.3f, 0.0f },  // southern Barrens, plateau +40..50
+            { -2563.7f, -3798.6f, 7.0f, 0.0f },   // Barrens/Dustwallow edge, +41..49
+            { 190.8f, -4516.5f, 27.1f, 0.0f },    // Durotar canyon, +30..37
+            { 479.5f, -4658.7f, 41.7f, 0.0f },    // Durotar canyon, +28..34
+        };
+    }
+
+    /// The foot of the southern Barrens escarpment, whose top LedgeTopsControl holds out (curriculum-v1 BrokenControl).
+    std::vector<Position> CliffFeetControl()
+    {
+        return {
+            { -623.5f, -3166.8f, 91.7f, 0.0f },
+        };
+    }
+
+    /// Plateau tops above the cliff feet (curriculum-v1 LedgeTops), stood on with `forge rays` facing the edge; the way
+    /// round 1.9-12x the straight line, drops of 11-44 yd.
+    std::vector<Position> LedgeTops()
+    {
+        return {
+            { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618): 44 yd
+            { -2094.8f, -3644.6f, 72.4f, 0.0f },   // beside it: 11 yd
+            { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659): 23 yd
+            { 85.4f, -4543.8f, 58.4f, 0.0f },      // Durotar canyon: 18 yd
+            { -519.0f, -4076.9f, 69.9f, 0.0f },    // southern Barrens: 27 yd
+            { -2379.6f, 459.2f, 76.8f, 0.0f },     // Mulgore: 16-25 yd
+            { -4052.7f, -2145.5f, 90.2f, 0.0f },   // Thousand Needles: 40 yd
+            { -4449.9f, -2914.0f, 40.0f, 0.0f },   // Thousand Needles: 16-18 yd
+        };
+    }
+
+    /// The southern Barrens escarpment's top (curriculum-v1 LedgeControl); the deep ones kill without Slow Fall.
+    std::vector<Position> LedgeTopsControl()
+    {
+        return {
+            { -545.9f, -3054.0f, 138.1f, 0.0f },   // 46 yd
+            { -515.9f, -3149.0f, 161.5f, 0.0f },   // 67 yd
+            { -481.2f, -3249.9f, 164.5f, 0.0f },   // 70 yd
+        };
+    }
+
+    /// Inns on Kalimdor (curriculum-v1 Inns): on the mesh, inside by their WMO group, z on the floor; clearance 1.7-6.6
+    /// yd. Feralas and Thousand Needles are among the plan's arenas.
+    std::vector<Position> Inns()
+    {
+        return {
+            { -3182.4f, -2920.8f, 33.56f, 0.0f },  // Brackenwall Village
+            { -4461.9f, 242.6f, 39.11f, 0.0f },    // Feralas
+            { -4622.3f, -3172.1f, 34.81f, 0.0f },  // Mudsprocket
+            { -2366.7f, -346.0f, -8.96f, 0.0f },   // Mulgore
+            { -1051.4f, -3653.8f, 23.88f, 0.0f },  // The Barrens
+            { -5477.9f, -2460.3f, 89.28f, 0.0f },  // Thousand Needles
+            { 6688.0f, -4670.1f, 721.69f, 0.0f },  // Winterspring
+        };
+    }
+
+    /// Rooms no training episode stands in (curriculum-v1 InnsControl): Tanaris is the plan's held-out ground; Desolace
+    /// never once built an episode in the first curriculum (too tight for its objectives) and is left out.
+    std::vector<Position> InnsControl()
+    {
+        return {
+            { -3615.5f, -4467.3f, 21.10f, 0.0f },  // Theramore Isle
+            { -7162.1f, -3845.9f, 9.51f, 0.0f },   // Tanaris
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -189,6 +260,34 @@ namespace
             .Arenas = {
                 { .Name = "broken", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 150,
                     .Course = MarkerCourse::Ground },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorBroken(),
+            .HeldOutSpawnPoints = KalimdorBrokenControl(),
+        });
+
+        // M3 -- verticality: up and down. Markers above the seat from a cliff foot (the way up a ramp, a stair or a
+        // jump), below it from a ledge top (the drop is the shortcut, the way round the safe one, at least LedgeDetour
+        // times the line with no drop past SafeDrop), or on another floor of an inn. The height window climbs from a
+        // step or two to 15-45 yd (MarkerVertical.*), so the drops come to cost health and then to kill. Movement
+        // only (user, 2026-10-05): no interactions, no closed doors -- a marker the player controller cannot walk to
+        // is never placed, and a closed door is a wall to it.
+        stages.push_back({
+            .Name = "move3_vertical",
+            .Suffix = "_vertical",
+            .Extends = "move2_ground",
+            .Summary = "markers above, below and on other floors: steps, jumps, safe drops and the long way round",
+            .Blocks = { Core, Move, Goal },
+            .Arenas = {
+                { .Name = "climb", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
+                    .Course = MarkerCourse::Vertical, .SpawnPoints = CliffFeet(),
+                    .HeldOutSpawnPoints = CliffFeetControl() },
+                { .Name = "ledges", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
+                    .Course = MarkerCourse::Vertical, .SpawnPoints = LedgeTops(),
+                    .HeldOutSpawnPoints = LedgeTopsControl(), .Ledges = true },
+                { .Name = "rooms", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 90,
+                    .Course = MarkerCourse::Vertical, .Indoors = true, .SpawnPoints = Inns(),
+                    .HeldOutSpawnPoints = InnsControl(), .SpawnScatter = 4.0f },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorBroken(),
@@ -366,9 +465,13 @@ namespace
         if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None || arena.Directed))
             return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
-        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly || arena.Water || arena.Indoors || arena.Ledges
-            || arena.Underwater || arena.Checkpoints))
-            return "a marker arena takes none of the travel arena's kinds of ground yet";
+        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly || arena.Water || arena.Underwater
+            || arena.Checkpoints))
+            return "a marker arena takes none of the travel arena's kinds of ground but ledges and rooms yet";
+        if (markers && (arena.Ledges || arena.Indoors) && arena.Course != MarkerCourse::Vertical)
+            return "ledges and rooms are the vertical course's ground";
+        if (markers && arena.Ledges && arena.Indoors)
+            return "a marker arena is ledges or rooms, not both";
         if (markers && !stage.Has(BlockId::Move))
             return "markers are walked to with the move block";
         if (!markers && arena.Course != MarkerCourse::Open)
