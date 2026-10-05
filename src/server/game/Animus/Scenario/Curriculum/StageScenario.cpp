@@ -1281,9 +1281,19 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
         return float(seat(env, index).TurnRestarts) / minutes;
     });
-    // All of them by what let the run go, per minute (restart-causes, MoveKeep::Relaunch): restart_press,
-    // restart_course, restart_time, restart_time_capped, ... -- the split that says which fix the stutter needs.
-    for (uint8 cause = uint8(MoveKeep::Relaunch::Press); cause < uint8(MoveKeep::Relaunch::Count); ++cause)
+    // All of them by what let the run go, per minute (restart-causes, MoveKeep::Relaunch): restart_press_bearing,
+    // restart_stop, restart_course, restart_time, ... -- the split that says which fix the stutter needs. And the
+    // presses together as restart_press, the column the first split had, so the two read across.
+    _info.Add("restart_press", [seat](Env const& env, uint32 index)
+    {
+        float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
+        uint32 presses = 0;
+        for (uint8 cause = 0; cause < uint8(MoveKeep::Relaunch::Count); ++cause)
+            if (MoveKeep::IsPress(MoveKeep::Relaunch(cause)))
+                presses += seat(env, index).Relaunches[cause];
+        return float(presses) / minutes;
+    });
+    for (uint8 cause = uint8(MoveKeep::Relaunch::PressBearing); cause < uint8(MoveKeep::Relaunch::Count); ++cause)
         _info.Add("restart_" + std::string(MoveKeep::RelaunchName(MoveKeep::Relaunch(cause))),
             [seat, cause](Env const& env, uint32 index)
         {
@@ -3320,6 +3330,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     bool const splineRunning = !bot->movespline->Finalized();
     bool const turning = std::fabs(seat.TurnLeft) >= 1e-4f;
     seat.Steering.LaunchCause = 0;
+    seat.Steering.PressKind = 0;
     SeatEncoder::Apply(view, action, result);
     if (splineRunning && bot->movespline->GetId() != splineBefore)
     {
@@ -3327,7 +3338,9 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         if (turning || std::fabs(view.TurnLeft) >= 1e-4f)
             ++seat.TurnRestarts;
         // By what let the run go (restart-causes): no cause from Steer's keep means another block launched it.
-        uint8 const cause = seat.Steering.LaunchCause ? seat.Steering.LaunchCause : uint8(MoveKeep::Relaunch::Other);
+        // A stop is a finished Stop spline, not a relaunch; a press outside the keep (a jump) is still its press.
+        uint8 const cause = uint8(MoveKeep::Recorded(bot->movespline->Finalized(),
+            MoveKeep::Relaunch(seat.Steering.LaunchCause), MoveKeep::Relaunch(seat.Steering.PressKind)));
         if (cause < seat.Relaunches.size())
             ++seat.Relaunches[cause];
     }

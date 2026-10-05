@@ -131,14 +131,23 @@ namespace Animus::Curriculum::MoveKeep
 
     /// **Why a run under way was relaunched** (restart-causes): stage1's seats relaunched their run ~68 times a minute
     /// with almost none of it on a turn (2026-10-04, turn_restarts 0.6), so spline_restarts is split by what let the
-    /// run go. Press: a movement press changed what the seat wants. Shown: a watching client's stale head. Speed: a
-    /// sprint, slow, mount or form. Course and Climb: the run no longer goes where the seat wants. Time: under
-    /// KEEP_DECISIONS of travel left; TimeCapped the same for a run launched short by CappedReach. Other: a run
-    /// launched by anything but Steer's keep (a follow, an advance, a death walk).
+    /// run go. Press*: a movement press changed what the seat wants, by kind -- a bearing, a whole turn, a facing mode,
+    /// a pitch, or anything else the move block takes (HALT, a jump); stage2's argmax evaluations still had ~18 of
+    /// these a minute (2026-10-04), so the split says which presses are worth pricing. Stop: the run was stopped, not
+    /// relaunched -- Unit::StopMoving launches a Stop spline that is born finished, so a stop changed the spline id
+    /// like a relaunch and was counted as one (most of the first split's "other"). Shown: a watching client's stale
+    /// head. Speed: a sprint, slow, mount or form. Course and Climb: the run no longer goes where the seat wants.
+    /// Time: under KEEP_DECISIONS of travel left; TimeCapped the same for a run launched short by CappedReach. Other:
+    /// a run launched by anything but the move block (a follow, an advance, a death walk).
     enum class Relaunch : uint8
     {
         None,
-        Press,
+        PressBearing,
+        PressTurn,
+        PressFacing,
+        PressPitch,
+        PressOther,
+        Stop,
         Shown,
         Speed,
         Course,
@@ -149,20 +158,44 @@ namespace Animus::Curriculum::MoveKeep
         Count
     };
 
+    [[nodiscard]] inline bool IsPress(Relaunch cause)
+    {
+        return cause >= Relaunch::PressBearing && cause <= Relaunch::PressOther;
+    }
+
     [[nodiscard]] inline char const* RelaunchName(Relaunch cause)
     {
         switch (cause)
         {
-            case Relaunch::Press:       return "press";
-            case Relaunch::Shown:       return "shown";
-            case Relaunch::Speed:       return "speed";
-            case Relaunch::Course:      return "course";
-            case Relaunch::Climb:       return "climb";
-            case Relaunch::Time:        return "time";
-            case Relaunch::TimeCapped:  return "time_capped";
-            case Relaunch::Other:       return "other";
-            default:                    return "none";
+            case Relaunch::PressBearing:    return "press_bearing";
+            case Relaunch::PressTurn:       return "press_turn";
+            case Relaunch::PressFacing:     return "press_facing";
+            case Relaunch::PressPitch:      return "press_pitch";
+            case Relaunch::PressOther:      return "press_other";
+            case Relaunch::Stop:            return "stop";
+            case Relaunch::Shown:           return "shown";
+            case Relaunch::Speed:           return "speed";
+            case Relaunch::Course:          return "course";
+            case Relaunch::Climb:           return "climb";
+            case Relaunch::Time:            return "time";
+            case Relaunch::TimeCapped:      return "time_capped";
+            case Relaunch::Other:           return "other";
+            default:                        return "none";
         }
+    }
+
+    /// What a decision that changed a seat's running spline is counted as: a stop when the spline is finished after
+    /// it (a Stop spline is launched done), else what Steer's keep said let the run go, else the movement press
+    /// applied this decision (a jump launches outside the keep), else another block's launch.
+    [[nodiscard]] inline Relaunch Recorded(bool stoppedAfter, Relaunch launchCause, Relaunch pressKind)
+    {
+        if (stoppedAfter)
+            return Relaunch::Stop;
+        if (launchCause != Relaunch::None)
+            return launchCause;
+        if (IsPress(pressKind))
+            return pressKind;
+        return Relaunch::Other;
     }
 
     /// What let a run go that Steer's keep did not keep, in the order the keep asks: the two forced relaunches, then

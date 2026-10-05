@@ -302,6 +302,7 @@ namespace Animus::Curriculum
         /// with a reach MoveKeep::CappedReach cut short.
         uint8 LaunchCause = 0;
         bool Pressing = false;
+        uint8 PressKind = 0;                    // the movement press applied this decision (MoveKeep::Relaunch Press*)
         bool LaunchCapped = false;
         bool RunCapped = false;
         bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)

@@ -928,7 +928,7 @@ namespace
             // press owns any it causes (restart-causes).
             if (Animus::Curriculum::SteerMemory* steering = view.Steering; steering && !steering->LaunchCause)
             {
-                MoveKeep::Relaunch const why = steering->Pressing ? MoveKeep::Relaunch::Press
+                MoveKeep::Relaunch const why = steering->Pressing ? MoveKeep::Relaunch(steering->PressKind)
                     : MoveKeep::WhyRelaunched(shownStale, resped, remaining, bot->movespline->Velocity(),
                         view.DecisionMs, headingError, pitchError,
                         steering->RunId == bot->movespline->GetId() && steering->RunCapped);
@@ -1715,8 +1715,16 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
     if (!bot || !view.Option)
         return;
 
-    // A run this press lets go is the press's (MoveKeep::Relaunch::Press), not the keep's: up for the whole press,
-    // down on every way out of it (restart-causes).
+    // A run this press lets go is the press's (MoveKeep::Relaunch Press*, by the kind of press), not the keep's: up
+    // for the whole press, down on every way out of it (restart-causes).
+    if (view.Steering)
+        view.Steering->PressKind = uint8(local < ACTION_HALT ? MoveKeep::Relaunch::PressBearing
+            : (local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT) || IsFineTurn(local)
+                ? MoveKeep::Relaunch::PressTurn
+            : local == ACTION_FACE_TARGET || local == ACTION_FACE_HEADING || local == ACTION_FACE_HOLD
+                ? MoveKeep::Relaunch::PressFacing
+            : local >= ACTION_PITCH_FIRST && local < ACTION_PITCH_FIRST + PITCH_COUNT ? MoveKeep::Relaunch::PressPitch
+            : MoveKeep::Relaunch::PressOther);
     struct Pressing
     {
         SteerMemory* Steering;

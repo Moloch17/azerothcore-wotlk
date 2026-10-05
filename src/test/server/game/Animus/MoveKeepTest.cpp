@@ -148,3 +148,24 @@ TEST(MoveKeepTest, ARunLetGoIsGivenTheCauseThatLetItGo)
                     == Relaunch::None, MoveKeep::KeepRun(remaining, 7.0f, 250, heading, pitch));
     EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::TimeCapped), "time_capped");
 }
+
+// A decision that changed the spline is a stop when it left the spline finished (Unit::StopMoving's Stop spline is
+// born done), whatever let it go; else the keep's cause; else the press applied (a jump launches outside the keep);
+// else another block's launch. The presses are the five Press* kinds, and only they.
+TEST(MoveKeepTest, AChangedSplineIsCountedAsAStopACauseAPressOrOther)
+{
+    using MoveKeep::Relaunch;
+    EXPECT_EQ(MoveKeep::Recorded(true, Relaunch::Course, Relaunch::PressBearing), Relaunch::Stop);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::Time, Relaunch::PressTurn), Relaunch::Time);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::PressPitch, Relaunch::PressPitch), Relaunch::PressPitch);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::None, Relaunch::PressOther), Relaunch::PressOther);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::None, Relaunch::None), Relaunch::Other);
+
+    uint32 presses = 0;
+    for (uint8 cause = 0; cause < uint8(Relaunch::Count); ++cause)
+        presses += MoveKeep::IsPress(Relaunch(cause)) ? 1 : 0;
+    EXPECT_EQ(presses, 5u);
+    EXPECT_FALSE(MoveKeep::IsPress(Relaunch::Stop));
+    EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::PressFacing), "press_facing");
+    EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::Stop), "stop");
+}
