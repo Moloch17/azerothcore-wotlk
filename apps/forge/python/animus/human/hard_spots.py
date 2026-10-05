@@ -24,7 +24,6 @@ from pathlib import Path
 
 import numpy as np
 
-from animus.human import reader as r
 from animus.human.tracks import MSG_MOVE_FALL_LAND
 
 FORMAT = 1

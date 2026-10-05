@@ -120,10 +120,11 @@ def _costs(space: fit.Space, state: fit.State, kinds: np.ndarray, values: np.nda
 
 def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int = 32,
                  lookahead: int = LOOKAHEAD, start_bearing: int | None = None,
-                 jumps: np.ndarray | None = None) -> MovementMapping:
+                 jumps: np.ndarray | None = None, confidence: bool = True) -> MovementMapping:
     """Per decision of a clip (on space.dt), the nearest move action and its confidence. Where the clip begins
     the bearing held is unknown and any is tried, unless `start_bearing` says (validation knows it). `jumps`
-    ([K] bool per decision, a track's jump packets) pins where the jumps were."""
+    ([K] bool per decision, a track's jump packets) pins where the jumps were. Without `confidence` (the costly
+    part: every alternative replayed a few decisions on) the confidences are nan."""
     space = space or fit.SPACES["lattice"]
     h = np.asarray(samples, dtype=np.float64)
     seg = int(round(SEGMENT_SECONDS / space.dt))
@@ -143,6 +144,10 @@ def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int 
         # Replay to each decision's state, and price every alternative there.
         state = fit.State.start(1, part[0, motion.X], part[0, motion.Y], part[0, motion.Z], part[0, motion.YAW],
                                 part[0, motion.PITCH], got.start_bearing)
+        if not confidence:
+            actions += got.actions
+            conf += [float("nan")] * len(got.actions)
+            continue
         for k, a in enumerate(got.actions):
             rows = state.take(np.zeros(len(space.actions), dtype=np.int64))
             costs = _costs(space, rows, akinds, avalues, part, k, got.actions[k + 1:], lookahead)

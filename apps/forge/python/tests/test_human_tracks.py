@@ -122,6 +122,11 @@ def test_build_writes_the_four_files(capture, tmp_path, monkeypatch):
     out = tmp_path / "out"
     result = build.build(root, out, stride=1)
     assert result.tracks == 2 and result.windows > 0 and result.trips >= 1
+    # As the learner loads it (style.py: allow_pickle=False): meta is JSON text, not a pickled object.
+    with np.load(out / "human_motion_windows.npz", allow_pickle=False) as raw:
+        assert raw["meta"].dtype.kind == "U" and raw["meta"].shape == ()
+        assert json.loads(str(raw["meta"]))["window"] == motion.WINDOW
+        assert raw["weight"].dtype == np.float32
     data = dataset.load(out / "human_motion_windows.npz")
     assert data["windows"].shape[1:] == (motion.WINDOW, motion.F)
     assert data["windows"].dtype == np.float32 and data["context"].dtype == np.int16

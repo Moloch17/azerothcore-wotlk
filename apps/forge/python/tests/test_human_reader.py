@@ -192,7 +192,9 @@ def test_capture_dir_walks_hours_in_range_and_reports_the_index(tmp_path):
 
 SAMPLE_DIRS = [Path(os.environ.get("ANIMUS_CAPTURE_SAMPLE", "")),
                Path(__file__).resolve().parents[2] / "tools" / "capture-sample.bin",
-               Path(__file__).resolve().parents[1] / "tools" / "capture-sample.bin"]
+               Path(__file__).resolve().parents[1] / "tools" / "capture-sample.bin",
+               Path(__file__).resolve().parents[4] / "tools" / "capture-sample.bin",
+               Path(__file__).resolve().parents[4] / "modules" / "mod-animus" / "tools" / "capture-sample.bin"]
 
 
 def test_reads_the_cpp_serializers_sample_when_present():

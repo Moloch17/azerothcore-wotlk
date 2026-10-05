@@ -287,7 +287,8 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_bearings: tu
                              float(h[k, motion.SPEED]) if h[k, motion.SPEED] > 0.1 else motion.DEFAULT_SPEED, space)
         target = h[k + 1]
         if int(target[motion.MODE]) in (motion.MODE_SWIM, motion.MODE_FLY):
-            err2 = (cand.x - target[motion.X]) ** 2 + (cand.y - target[motion.Y]) ** 2 + (cand.z - target[motion.Z]) ** 2
+            err2 = ((cand.x - target[motion.X]) ** 2 + (cand.y - target[motion.Y]) ** 2
+                    + (cand.z - target[motion.Z]) ** 2)
         else:
             cand.z[:] = target[motion.Z]
             err2 = (cand.x - target[motion.X]) ** 2 + (cand.y - target[motion.Y]) ** 2
