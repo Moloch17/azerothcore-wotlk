@@ -18,6 +18,7 @@
 #ifndef _LFGMGR_H
 #define _LFGMGR_H
 
+#include <mutex>
 #include <utility>
 
 #include "ByteBuffer.h"
@@ -646,6 +647,13 @@ namespace lfg
         LfgPlayerBootContainer BootsStore;                 ///< Current player kicks
         LfgPlayerDataContainer PlayersStore;               ///< Player data
         LfgGroupDataContainer GroupsStore;                 ///< Group data
+        /// Guards the two stores' trees. Bots are placed and grouped on the map threads in parallel (the forge's
+        /// env resets), and every lookup below inserts: two at once corrupted the tree (a segfault in GetGroup from
+        /// OnPlayerMapChanged, 2026-10-04). Held for the lookup only, never across a call out; an entry's address is
+        /// stable under inserts, and one player's or group's data is only touched from the map it is on.
+        std::mutex _storeLock;
+        LfgPlayerData& PlayerData(ObjectGuid guid);
+        LfgGroupData& GroupData(ObjectGuid guid);
         bool m_Testing;
 
         // Dungeon cooldown system - prevents same dungeon being assigned in a row

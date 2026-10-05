@@ -347,8 +347,15 @@ namespace lfg
         {
             CachedDungeonMapStore.clear();
             // Recalculate locked dungeons
-            for (LfgPlayerDataContainer::const_iterator it = PlayersStore.begin(); it != PlayersStore.end(); ++it)
-                if (Player* player = ObjectAccessor::FindConnectedPlayer(it->first))
+            GuidVector guids;
+            {
+                std::lock_guard<std::mutex> guard(_storeLock);
+                guids.reserve(PlayersStore.size());
+                for (auto const& entry : PlayersStore)
+                    guids.push_back(entry.first);
+            }
+            for (ObjectGuid const& guid : guids)
+                if (Player* player = ObjectAccessor::FindConnectedPlayer(guid))
                     InitializeLockedDungeons(player, nullptr);
         }
     }
@@ -2480,9 +2487,9 @@ namespace lfg
     {
         LfgState state;
         if (guid.IsGroup())
-            state = GroupsStore[guid].GetState();
+            state = GroupData(guid).GetState();
         else
-            state = PlayersStore[guid].GetState();
+            state = PlayerData(guid).GetState();
 
         LOG_DEBUG("lfg", "LFGMgr::GetState: [{}] = {}", guid.ToString(), state);
         return state;
@@ -2492,9 +2499,9 @@ namespace lfg
     {
         LfgState state;
         if (guid.IsGroup())
-            state = GroupsStore[guid].GetOldState();
+            state = GroupData(guid).GetOldState();
         else
-            state = PlayersStore[guid].GetOldState();
+            state = PlayerData(guid).GetOldState();
 
         LOG_DEBUG("lfg", "LFGMgr::GetOldState: [{}] = {}", guid.ToString(), state);
         return state;
@@ -2502,14 +2509,14 @@ namespace lfg
 
     uint32 LFGMgr::GetDungeon(ObjectGuid guid, bool asId /*= true */)
     {
-        uint32 dungeon = GroupsStore[guid].GetDungeon(asId);
+        uint32 dungeon = GroupData(guid).GetDungeon(asId);
         LOG_DEBUG("lfg", "LFGMgr::GetDungeon: [{}] asId: {} = {}", guid.ToString(), asId, dungeon);
         return dungeon;
     }
 
     uint32 LFGMgr::GetDungeonMapId(ObjectGuid guid)
     {
-        uint32 dungeonId = GroupsStore[guid].GetDungeon(true);
+        uint32 dungeonId = GroupData(guid).GetDungeon(true);
         uint32 mapId = 0;
         if (dungeonId)
             if (LFGDungeonData const* dungeon = GetLFGDungeon(dungeonId))
@@ -2521,32 +2528,32 @@ namespace lfg
 
     uint8 LFGMgr::GetRoles(ObjectGuid guid)
     {
-        uint8 roles = PlayersStore[guid].GetRoles();
+        uint8 roles = PlayerData(guid).GetRoles();
         LOG_DEBUG("lfg", "LFGMgr::GetRoles: [{}] = {}", guid.ToString(), roles);
         return roles;
     }
 
     std::string const& LFGMgr::GetComment(ObjectGuid guid)
     {
-        LOG_DEBUG("lfg", "LFGMgr::GetComment: [{}] = {}", guid.ToString(), PlayersStore[guid].GetComment());
-        return PlayersStore[guid].GetComment();
+        LOG_DEBUG("lfg", "LFGMgr::GetComment: [{}] = {}", guid.ToString(), PlayerData(guid).GetComment());
+        return PlayerData(guid).GetComment();
     }
 
     LfgDungeonSet const& LFGMgr::GetSelectedDungeons(ObjectGuid guid)
     {
         LOG_DEBUG("lfg", "LFGMgr::GetSelectedDungeons: [{}]", guid.ToString());
-        return PlayersStore[guid].GetSelectedDungeons();
+        return PlayerData(guid).GetSelectedDungeons();
     }
 
     LfgLockMap const& LFGMgr::GetLockedDungeons(ObjectGuid guid)
     {
         LOG_DEBUG("lfg", "LFGMgr::GetLockedDungeons: [{}]", guid.ToString());
-        return PlayersStore[guid].GetLockedDungeons();
+        return PlayerData(guid).GetLockedDungeons();
     }
 
     uint8 LFGMgr::GetKicksLeft(ObjectGuid guid)
     {
-        uint8 kicks = GroupsStore[guid].GetKicksLeft();
+        uint8 kicks = GroupData(guid).GetKicksLeft();
         LOG_DEBUG("lfg", "LFGMgr::GetKicksLeft: [{}] = {}", guid.ToString(), kicks);
         return kicks;
     }
@@ -2555,7 +2562,7 @@ namespace lfg
     {
         if (guid.IsGroup())
         {
-            LfgGroupData& data = GroupsStore[guid];
+            LfgGroupData& data = GroupData(guid);
             /*if (sLog->ShouldLog(LOG_FILTER_LFG, LOG_LEVEL_DEBUG))
             {
                 std::string const& ps = GetStateString(data.GetState());
@@ -2568,7 +2575,7 @@ namespace lfg
         }
         else
         {
-            LfgPlayerData& data = PlayersStore[guid];
+            LfgPlayerData& data = PlayerData(guid);
             /*if (sLog->ShouldLog(LOG_FILTER_LFG, LOG_LEVEL_DEBUG))
             {
                 std::string const& ps = GetStateString(data.GetState());
@@ -2584,7 +2591,7 @@ namespace lfg
     {
         if (guid.IsGroup())
         {
-            LfgGroupData& data = GroupsStore[guid];
+            LfgGroupData& data = GroupData(guid);
             std::string ns = GetStateString(state);
             std::string ps = GetStateString(data.GetState());
             std::string os = GetStateString(data.GetOldState());
@@ -2593,7 +2600,7 @@ namespace lfg
         }
         else
         {
-            LfgPlayerData& data = PlayersStore[guid];
+            LfgPlayerData& data = PlayerData(guid);
             std::string ns = GetStateString(state);
             std::string ps = GetStateString(data.GetState());
             std::string os = GetStateString(data.GetOldState());
@@ -2604,25 +2611,25 @@ namespace lfg
 
     void LFGMgr::SetCanOverrideRBState(ObjectGuid guid, bool val)
     {
-        PlayersStore[guid].SetCanOverrideRBState(val);
+        PlayerData(guid).SetCanOverrideRBState(val);
     }
 
     void LFGMgr::SetDungeon(ObjectGuid guid, uint32 dungeon)
     {
         LOG_DEBUG("lfg", "LFGMgr::SetDungeon: [{}] dungeon {}", guid.ToString(), dungeon);
-        GroupsStore[guid].SetDungeon(dungeon);
+        GroupData(guid).SetDungeon(dungeon);
     }
 
     void LFGMgr::SetRoles(ObjectGuid guid, uint8 roles)
     {
         LOG_DEBUG("lfg", "LFGMgr::SetRoles: [{}] roles: {}", guid.ToString(), roles);
-        PlayersStore[guid].SetRoles(roles);
+        PlayerData(guid).SetRoles(roles);
     }
 
     void LFGMgr::SetComment(ObjectGuid guid, std::string const& comment)
     {
         LOG_DEBUG("lfg", "LFGMgr::SetComment: [{}] comment: {}", guid.ToString(), comment);
-        PlayersStore[guid].SetComment(comment);
+        PlayerData(guid).SetComment(comment);
     }
 
     void LFGMgr::LfrSetComment(Player* p, std::string comment)
@@ -2641,31 +2648,36 @@ namespace lfg
     void LFGMgr::SetSelectedDungeons(ObjectGuid guid, LfgDungeonSet const& dungeons)
     {
         LOG_DEBUG("lfg", "LFGMgr::SetLockedDungeons: [{}]", guid.ToString());
-        PlayersStore[guid].SetSelectedDungeons(dungeons);
+        PlayerData(guid).SetSelectedDungeons(dungeons);
     }
 
     void LFGMgr::SetLockedDungeons(ObjectGuid guid, LfgLockMap const& lock)
     {
         LOG_DEBUG("lfg", "LFGMgr::SetLockedDungeons: [{}]", guid.ToString());
-        PlayersStore[guid].SetLockedDungeons(lock);
+        PlayerData(guid).SetLockedDungeons(lock);
     }
 
     void LFGMgr::DecreaseKicksLeft(ObjectGuid guid)
     {
         LOG_DEBUG("lfg", "LFGMgr::DecreaseKicksLeft: [{}]", guid.ToString());
-        GroupsStore[guid].DecreaseKicksLeft();
+        GroupData(guid).DecreaseKicksLeft();
     }
 
     void LFGMgr::RemoveGroupData(ObjectGuid guid)
     {
         LOG_DEBUG("lfg", "LFGMgr::RemoveGroupData: [{}]", guid.ToString());
-        LfgGroupDataContainer::iterator it = GroupsStore.find(guid);
-        if (it == GroupsStore.end())
-            return;
+        LfgGroupData* data = nullptr;
+        {
+            std::lock_guard<std::mutex> guard(_storeLock);
+            LfgGroupDataContainer::iterator it = GroupsStore.find(guid);
+            if (it == GroupsStore.end())
+                return;
+            data = &it->second;
+        }
 
         LfgState state = GetState(guid);
         // If group is being formed after proposal success do nothing more
-        LfgGuidSet const& players = it->second.GetPlayers();
+        LfgGuidSet const& players = data->GetPlayers();
         for (auto iterator = players.begin(); iterator != players.end(); ++iterator)
         {
             ObjectGuid objectGuid = (*iterator);
@@ -2676,22 +2688,23 @@ namespace lfg
                 SendLfgUpdateParty(objectGuid, LfgUpdateData(LFG_UPDATETYPE_REMOVED_FROM_QUEUE));
             }
         }
-        GroupsStore.erase(it);
+        std::lock_guard<std::mutex> guard(_storeLock);
+        GroupsStore.erase(guid);
     }
 
     TeamId LFGMgr::GetTeam(ObjectGuid guid)
     {
-        return PlayersStore[guid].GetTeam();
+        return PlayerData(guid).GetTeam();
     }
 
     uint8 LFGMgr::RemovePlayerFromGroup(ObjectGuid gguid, ObjectGuid guid)
     {
-        return GroupsStore[gguid].RemovePlayer(guid);
+        return GroupData(gguid).RemovePlayer(guid);
     }
 
     void LFGMgr::AddPlayerToGroup(ObjectGuid gguid, ObjectGuid guid)
     {
-        GroupsStore[gguid].AddPlayer(guid);
+        GroupData(gguid).AddPlayer(guid);
     }
 
     void LFGMgr::AddPlayerQueuedForRandomDungeonToGroup(ObjectGuid gguid, ObjectGuid guid)
@@ -2703,12 +2716,12 @@ namespace lfg
         uint32 dungeonId = *dungeons.begin();
         LFGDungeonData const* dungeon = GetLFGDungeon(dungeonId);
         if (dungeon && (dungeon->type == LFG_TYPE_RANDOM))
-            GroupsStore[gguid].AddRandomQueuedPlayer(guid);
+            GroupData(gguid).AddRandomQueuedPlayer(guid);
     }
 
     void LFGMgr::SetLeader(ObjectGuid gguid, ObjectGuid leader)
     {
-        GroupsStore[gguid].SetLeader(leader);
+        GroupData(gguid).SetLeader(leader);
     }
 
     void LFGMgr::SetTeam(ObjectGuid guid, TeamId teamId)
@@ -2716,42 +2729,54 @@ namespace lfg
         if (sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_INTERACTION_GROUP))
             teamId = TEAM_ALLIANCE; // @Not Sure About That TeamId is supposed to be uint8 Team = 0(@TrinityCore)
 
-        PlayersStore[guid].SetTeam(teamId);
+        PlayerData(guid).SetTeam(teamId);
+    }
+
+    LfgPlayerData& LFGMgr::PlayerData(ObjectGuid guid)
+    {
+        std::lock_guard<std::mutex> guard(_storeLock);
+        return PlayersStore[guid];
+    }
+
+    LfgGroupData& LFGMgr::GroupData(ObjectGuid guid)
+    {
+        std::lock_guard<std::mutex> guard(_storeLock);
+        return GroupsStore[guid];
     }
 
     ObjectGuid LFGMgr::GetGroup(ObjectGuid guid)
     {
-        return PlayersStore[guid].GetGroup();
+        return PlayerData(guid).GetGroup();
     }
 
     void LFGMgr::SetGroup(ObjectGuid guid, ObjectGuid group)
     {
-        PlayersStore[guid].SetGroup(group);
+        PlayerData(guid).SetGroup(group);
     }
 
     LfgGuidSet const& LFGMgr::GetPlayers(ObjectGuid guid)
     {
-        return GroupsStore[guid].GetPlayers();
+        return GroupData(guid).GetPlayers();
     }
 
     uint8 LFGMgr::GetPlayerCount(ObjectGuid guid)
     {
-        return GroupsStore[guid].GetPlayerCount();
+        return GroupData(guid).GetPlayerCount();
     }
 
     ObjectGuid LFGMgr::GetLeader(ObjectGuid guid)
     {
-        return GroupsStore[guid].GetLeader();
+        return GroupData(guid).GetLeader();
     }
 
     void LFGMgr::SetRandomPlayersCount(ObjectGuid guid, uint8 count)
     {
-        PlayersStore[guid].SetRandomPlayersCount(count);
+        PlayerData(guid).SetRandomPlayersCount(count);
     }
 
     uint8 LFGMgr::GetRandomPlayersCount(ObjectGuid guid)
     {
-        return PlayersStore[guid].GetRandomPlayersCount();
+        return PlayerData(guid).GetRandomPlayersCount();
     }
 
     bool LFGMgr::HasIgnore(ObjectGuid guid1, ObjectGuid guid2)
@@ -2811,7 +2836,7 @@ namespace lfg
 
     bool LFGMgr::IsLfgGroup(ObjectGuid guid)
     {
-        return guid && guid.IsGroup() && GroupsStore[guid].IsLfgGroup();
+        return guid && guid.IsGroup() && GroupData(guid).IsLfgGroup();
     }
 
     LFGQueue& LFGMgr::GetQueue(ObjectGuid guid)
@@ -2875,7 +2900,7 @@ namespace lfg
 
     LfgUpdateData LFGMgr::GetLfgStatus(ObjectGuid guid)
     {
-        LfgPlayerData& playerData = PlayersStore[guid];
+        LfgPlayerData& playerData = PlayerData(guid);
         return LfgUpdateData(LFG_UPDATETYPE_UPDATE_STATUS, playerData.GetState(), playerData.GetSelectedDungeons());
     }
 
@@ -2968,6 +2993,6 @@ namespace lfg
         if (!gguid)
             return false;
 
-        return GroupsStore[gguid].IsRandomQueuedPlayer(guid);
+        return GroupData(gguid).IsRandomQueuedPlayer(guid);
     }
 } // namespace lfg
