@@ -126,8 +126,9 @@ namespace
             { -1401.0f, -85.0f, 159.0f, 0.0f },   { -1286.0f, 107.0f, 130.9f, 0.0f },
             // Barrens ridge, relief 64 over 200
             { -454.0f, -2419.0f, 93.0f, 0.0f },   { -373.0f, -2323.0f, 94.0f, 0.0f },
-            // Durotar: canyon and rock
-            { -49.4f, -4313.6f, 68.7f, 0.0f },    { -107.5f, -4302.0f, 61.7f, 0.0f },
+            // Durotar: canyon and rock. (-49.4, -4313.6, 68.7) and (-107.5, -4302.0, 61.7) were left out (dry check,
+            // 2026-10-05): 58 and 72 yd under the terrain, and `forge controller probe` read caves at both (feet
+            // inside the terrain, ceilings 15-18 yd, 5-10 yd free on most headings).
             { 642.0f, -4185.0f, 15.0f, 0.0f },    { 633.0f, -4298.0f, 18.0f, 0.0f },
             // Dustwallow Marsh: broken shore (the markers' walking way never swims: TravelPlaceRules::DryOnly)
             { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
@@ -194,12 +195,13 @@ namespace
         };
     }
 
-    /// Inns on Kalimdor (curriculum-v1 Inns): on the mesh, inside by their WMO group, z on the floor; clearance 1.7-6.6
-    /// yd. Feralas and Thousand Needles are among the plan's arenas.
+    /// Inns on Kalimdor (curriculum-v1 Inns): on the mesh, inside by their WMO group, z on the floor; clearance 2.3-6.6
+    /// yd. Feralas and Thousand Needles are among the plan's arenas. Brackenwall Village's, (-3182.4, -2920.8, 33.56),
+    /// was left out (dry check, 2026-10-05): its floor reads normal.z 0.659 there (49 degrees, at the walkable limit)
+    /// -- a ramp or a stair's edge, not a room's floor; a flat spot in the same building can come back once probed.
     std::vector<Position> Inns()
     {
         return {
-            { -3182.4f, -2920.8f, 33.56f, 0.0f },  // Brackenwall Village
             { -4461.9f, 242.6f, 39.11f, 0.0f },    // Feralas
             { -4622.3f, -3172.1f, 34.81f, 0.0f },  // Mudsprocket
             { -2366.7f, -346.0f, -8.96f, 0.0f },   // Mulgore
