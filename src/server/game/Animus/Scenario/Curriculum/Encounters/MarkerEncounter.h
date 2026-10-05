@@ -62,7 +62,10 @@ namespace Animus::Curriculum
     /// the arena's ground a marker above (a climb), below a ledge (ArenaDefinition::Ledges) or on another floor
     /// (Indoors), within the rung's height window (MarkerVertical.*); the costs are the ground course's and
     /// FallDamage. Every course's markers are placed only where the player controller can walk to them
-    /// (TravelPlaceRules::ControllerReach, MarkerReach).
+    /// (TravelPlaceRules::ControllerReach, MarkerReach). Water (M4): across water whose dry way round is the longer one
+    /// (both walkable or swimmable), on a lakebed (Underwater), or a chain of lakebeds (Checkpoints) within the rung's
+    /// depth window (MarkerWater.*); shaped on the straight distance in three dimensions, stopped as a swimmer, and
+    /// Drowning paid besides Stuck and Wall.
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -163,6 +166,12 @@ namespace Animus::Curriculum
             uint32 StoreyLegs = 0;          // ... of which a storey or more (3 yd) up or down
             uint32 StoreyUpLegs = 0;        // ... up
             uint32 StoreyDownLegs = 0;      // ... down
+            // The water course.
+            float LegDry = 0.0f;            // the dry way round of a crossing (0: none or not a crossing)
+            bool LegUnder = false;          // the leg's marker is on a lakebed
+            uint32 Crossings = 0;
+            uint32 BanksClimbed = 0;
+            bool WasInWater = false;
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

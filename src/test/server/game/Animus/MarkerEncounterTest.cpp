@@ -228,3 +228,68 @@ TEST(MarkerEncounterTest, AnUpstairsMarkerIsFoundAndReachable)
     EXPECT_EQ(up.Jumps, 0u);
     EXPECT_NEAR(up.EndZ, TwoStoreys::UPPER, 1e-4f);
 }
+
+namespace
+{
+    /// A lake along x: dry ground at 0 before x = 5, a bed at -5 under water at 0 from 5 to 15, and a far bank of
+    /// `bank` yards over the surface from 15 on. `deadly` makes the liquid magma.
+    class Lake final : public Mv::WorldQuery
+    {
+    public:
+        Lake(float bank, bool deadly) : _bank(bank), _deadly(deadly) { }
+
+        [[nodiscard]] float FloorBelow(float x, float /*y*/, float z, float search) const override
+        {
+            float const h = Height(x);
+            return h <= z + 1e-4f && z - h <= search ? h : Mv::INVALID_FLOOR;
+        }
+        [[nodiscard]] float FloorNormalZ(float, float, float) const override { return 1.0f; }
+        [[nodiscard]] Mv::Liquid LiquidAt(float x, float, float) const override
+        {
+            Mv::Liquid liquid;
+            liquid.Present = x >= 5.0f && x < 15.0f;
+            liquid.Level = 0.0f;
+            liquid.Deadly = _deadly;
+            return liquid;
+        }
+        [[nodiscard]] float Sweep(float, float, float, float, float, float, Mv::Body const&) const override
+        {
+            return 1.0f;
+        }
+        [[nodiscard]] float Ceiling(float, float, float, float up) const override { return up; }
+        [[nodiscard]] bool InTerrain(float x, float, float z) const override { return z < Height(x) - 1e-4f; }
+
+    private:
+        [[nodiscard]] float Height(float x) const { return x < 5.0f ? 0.0f : x < 15.0f ? -5.0f : _bank; }
+        float _bank;
+        bool _deadly;
+    };
+
+    Reach::Result Across(Lake const& lake, float to)
+    {
+        float const xs[] = { 0.0f, to };
+        float const ys[] = { 0.0f, 0.0f };
+        float const zs[] = { 0.0f, 0.0f };
+        return Reach::Walk(lake, Mv::Body(), xs, ys, zs, 2);
+    }
+}
+
+// Water deep enough is swum at its surface; a bank is climbed out on if the swim jump (2.145 yd) carries it, though a
+// jump from the ground (1.64) would not; a taller bank, or magma, is no way at all.
+TEST(MarkerEncounterTest, ReachSwimsAcrossAndClimbsOutOnABankTheSwimJumpCarries)
+{
+    EXPECT_NEAR(Reach::SWIM_JUMP_APEX, 2.145f, 0.01f);
+
+    Reach::Result const swim = Across(Lake(1.8f, false), 20.0f);
+    EXPECT_TRUE(swim.Reachable);
+    EXPECT_EQ(swim.Swims, 1u);
+    EXPECT_EQ(swim.BanksClimbed, 1u);
+    EXPECT_FALSE(swim.EndSwimming);
+
+    Reach::Result const dive = Across(Lake(1.8f, false), 10.0f);
+    EXPECT_TRUE(dive.Reachable);
+    EXPECT_TRUE(dive.EndSwimming);                      // a lakebed marker is under the water the walk ends in
+
+    EXPECT_FALSE(Across(Lake(2.5f, false), 20.0f).Reachable);
+    EXPECT_FALSE(Across(Lake(0.0f, true), 20.0f).Reachable);
+}

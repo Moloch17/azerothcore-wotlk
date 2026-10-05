@@ -26,6 +26,8 @@ PURPOSE = {
     "move2_ground": ("Arrive", "Stuck", "Wall"),
     # M3: up and down; what a fall takes is its own cost.
     "move3_vertical": ("Arrive", "FallDamage"),
+    # M4: water; what the water takes is its own cost.
+    "move4_water": ("Arrive", "Drowning"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -35,6 +37,7 @@ SHAPING = {
     "move1_controls": ("Progress", "Facing"),
     "move2_ground": ("Progress",),
     "move3_vertical": ("Progress",),
+    "move4_water": ("Progress",),
 }
 
 # Opposition -> the encounter source that pays it.

@@ -1041,6 +1041,34 @@ namespace Animus::Curriculum
             float UpstairsRise = 12.0f;
         } MarkerVertical;
 
+        /// The water stage's markers (MarkerCourse::Water, M4). By the arena's ground: a marker across water (Water:
+        /// a crossing whose dry way round is the longer one, so swimming is a choice with a price either way), on a
+        /// lakebed (Underwater: arriving is stopping there, swimming, within the radius and ArriveRise of it), or a
+        /// chain of lakebeds (Underwater and Checkpoints: ChainMin to ChainMax of them, longer than a breath).
+        ///
+        /// The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to DistanceLast (the nearest
+        /// DistanceMin) and a lakebed's depth window from [DepthMinFirst, DepthMaxFirst] to [DepthMinLast,
+        /// DepthMaxLast] yards. Drowning is charged per share of the seat's health the water took (a Cost at full
+        /// price); a drowned seat's death is Markers.Death.
+        struct MarkerWaterTuning
+        {
+            uint32 MarkersMin = 2;
+            uint32 MarkersMax = 3;
+            uint32 ChainMin = 4;
+            uint32 ChainMax = 6;
+            uint32 Rungs = 6;
+            float DistanceMin = 15.0f;
+            float DistanceFirst = 30.0f;
+            float DistanceLast = 90.0f;
+            float DepthMinFirst = 3.0f;
+            float DepthMaxFirst = 8.0f;
+            float DepthMinLast = 20.0f;
+            float DepthMaxLast = 40.0f;
+            float Radius = 2.0f;
+            float ArriveRise = 3.0f;            // a swimmer over a lakebed marker floats a little above it
+            float Drowning = 2.0f;              // per share of maximum health the water took
+        } MarkerWater;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1600,6 +1628,21 @@ namespace Animus::Curriculum
             f("MarkerVertical.FallDamage", tuning.MarkerVertical.FallDamage);
             f("MarkerVertical.RoomUpShare", tuning.MarkerVertical.RoomUpShare);
             f("MarkerVertical.UpstairsRise", tuning.MarkerVertical.UpstairsRise);
+            f("MarkerWater.MarkersMin", tuning.MarkerWater.MarkersMin);
+            f("MarkerWater.MarkersMax", tuning.MarkerWater.MarkersMax);
+            f("MarkerWater.ChainMin", tuning.MarkerWater.ChainMin);
+            f("MarkerWater.ChainMax", tuning.MarkerWater.ChainMax);
+            f("MarkerWater.Rungs", tuning.MarkerWater.Rungs);
+            f("MarkerWater.DistanceMin", tuning.MarkerWater.DistanceMin);
+            f("MarkerWater.DistanceFirst", tuning.MarkerWater.DistanceFirst);
+            f("MarkerWater.DistanceLast", tuning.MarkerWater.DistanceLast);
+            f("MarkerWater.DepthMinFirst", tuning.MarkerWater.DepthMinFirst);
+            f("MarkerWater.DepthMaxFirst", tuning.MarkerWater.DepthMaxFirst);
+            f("MarkerWater.DepthMinLast", tuning.MarkerWater.DepthMinLast);
+            f("MarkerWater.DepthMaxLast", tuning.MarkerWater.DepthMaxLast);
+            f("MarkerWater.Radius", tuning.MarkerWater.Radius);
+            f("MarkerWater.ArriveRise", tuning.MarkerWater.ArriveRise);
+            f("MarkerWater.Drowning", tuning.MarkerWater.Drowning);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

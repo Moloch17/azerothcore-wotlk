@@ -27,7 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ ... ─ move7_follow       (M4-M7 to come)
+ *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ ... ─ move7_follow  (M5-M7 to come)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -211,6 +211,45 @@ namespace
         };
     }
 
+    /// The banks of the Barrens oases (curriculum-v1 OasisShore), on the shore, not in the pool: a crossing whose dry
+    /// way round is the longer one.
+    std::vector<Position> OasisShore()
+    {
+        return {
+            { -3923.0f, -2981.0f, 31.0f, 0.0f }, { -3952.0f, -2947.0f, 40.0f, 0.0f },
+            { -3964.0f, -3068.0f, 39.0f, 0.0f }, { -3879.0f, -3004.0f, 37.0f, 0.0f },
+            { -4048.0f, -3051.0f, 43.0f, 0.0f }, { -3985.0f, -2911.0f, 37.0f, 0.0f },
+        };
+    }
+
+    /// The far side of the same pond, held out (curriculum-v1 OasisControl): no second pond wide enough was found.
+    std::vector<Position> OasisControl()
+    {
+        return {
+            { -4017.0f, -3086.0f, 37.0f, 0.0f }, { -3926.0f, -2911.0f, 39.0f, 0.0f },
+        };
+    }
+
+    /// Stonebull Lake's banks in Mulgore (curriculum-v1 StonebullShore): 33 yd deep in the middle, banks that slope in
+    /// at the water line, chosen from the map tiles so a tenth to a third of 20-120 yd draws land on a bed under 6-40
+    /// yd of water.
+    std::vector<Position> StonebullShore()
+    {
+        return {
+            { -1946.0f, -558.0f, -11.9f, 0.0f }, { -1954.0f, -521.0f, -11.1f, 0.0f },
+            { -2192.0f, -712.0f, -14.5f, 0.0f }, { -2192.0f, -571.0f, -14.9f, 0.0f },
+            { -2196.0f, -175.0f, -13.1f, 0.0f }, { -2254.0f, -137.0f, -10.8f, 0.0f },
+        };
+    }
+
+    /// Lake Elune'ara in Moonglade, held out from the lakebeds (curriculum-v1 EluneAraShore): up to 66 yd deep.
+    std::vector<Position> EluneAraShore()
+    {
+        return {
+            { 7675.0f, -2775.0f, 454.5f, 0.0f }, { 7508.0f, -2617.0f, 453.3f, 0.0f },
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -288,6 +327,36 @@ namespace
                 { .Name = "rooms", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 90,
                     .Course = MarkerCourse::Vertical, .Indoors = true, .SpawnPoints = Inns(),
                     .HeldOutSpawnPoints = InnsControl(), .SpawnScatter = 4.0f },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorBroken(),
+            .HeldOutSpawnPoints = KalimdorBrokenControl(),
+        });
+
+        // M4 -- water: getting in, swimming, the surface and the swim jump, diving to the bed, breath, getting out
+        // onto banks (a bank taller than a step takes the swim jump), and choosing between swimming and going round.
+        // A crossing at the Barrens oases (the dry way round always the longer, both ways ones the controller makes),
+        // lakebeds in Stonebull Lake down to forty yards as the ladder climbs, and a chain of four to six lakebeds
+        // longer than a breath. Drowning is a cost at full price; a drowned seat dies (Markers.Death).
+        //
+        // Kalimdor only until the dry check: the plan's Loch Modan, coasts, Stormwind's canals and Zoram Strand need
+        // points stood on, and its held-out Lake Everstill likewise; Lake Elune'ara is the held-out lake here.
+        stages.push_back({
+            .Name = "move4_water",
+            .Suffix = "_water",
+            .Extends = "move3_vertical",
+            .Summary = "markers across water, on lakebeds and in chains longer than a breath: swim, dive, climb out",
+            .Blocks = { Core, Move, Goal },
+            .Arenas = {
+                { .Name = "crossing", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
+                    .Course = MarkerCourse::Water, .Water = true, .SpawnPoints = OasisShore(),
+                    .HeldOutSpawnPoints = OasisControl() },
+                { .Name = "lakebed", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
+                    .Course = MarkerCourse::Water, .SpawnPoints = StonebullShore(),
+                    .HeldOutSpawnPoints = EluneAraShore(), .Underwater = true },
+                { .Name = "chain", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 240,
+                    .Course = MarkerCourse::Water, .SpawnPoints = StonebullShore(),
+                    .HeldOutSpawnPoints = EluneAraShore(), .Underwater = true, .Checkpoints = true },
             },
             .MapId = MAP_KALIMDOR,
             .SpawnPoints = KalimdorBroken(),
@@ -465,9 +534,14 @@ namespace
         if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None || arena.Directed))
             return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
-        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly || arena.Water || arena.Underwater
-            || arena.Checkpoints))
-            return "a marker arena takes none of the travel arena's kinds of ground but ledges and rooms yet";
+        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly))
+            return "a marker arena takes none of the travel arena's kinds of ground but ledges, rooms and water yet";
+        if (markers && (arena.Water || arena.Underwater || arena.Checkpoints) && arena.Course != MarkerCourse::Water)
+            return "water, lakebeds and their chains are the water course's ground";
+        if (markers && arena.Course == MarkerCourse::Water && arena.Water == arena.Underwater)
+            return "a water marker arena is a crossing (Water) or lakebeds (Underwater)";
+        if (markers && arena.Checkpoints && !arena.Underwater)
+            return "a chain of markers is a chain of lakebeds";
         if (markers && (arena.Ledges || arena.Indoors) && arena.Course != MarkerCourse::Vertical)
             return "ledges and rooms are the vertical course's ground";
         if (markers && arena.Ledges && arena.Indoors)

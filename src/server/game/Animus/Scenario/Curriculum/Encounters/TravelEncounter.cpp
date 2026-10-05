@@ -150,8 +150,26 @@ namespace
         namespace Reach = Animus::Curriculum::MarkerReach;
         Animus::Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
         Reach::Result const reach = Reach::Walk(world, Animus::Movement::ShapeOf(bot), xs, ys, zs, count);
-        return reach.Reachable && std::fabs(reach.EndZ - placeZ) <= Reach::END_FLOOR
-            && (rules.RouteMaxDrop <= 0.0f || reach.MaxDrop <= rules.RouteMaxDrop);
+        // A dive's marker is under the water the walk ends swimming in; every other place is the floor it ends on.
+        bool const there = rules.Underwater ? reach.EndSwimming
+            : !reach.EndSwimming && std::fabs(reach.EndZ - placeZ) <= Reach::END_FLOOR;
+        return reach.Reachable && there && (rules.RouteMaxDrop <= 0.0f || reach.MaxDrop <= rules.RouteMaxDrop);
+    }
+
+    /// ControllerWalks over a PathGenerator's points.
+    bool ControllerWalksPath(Player const* bot, Map* map, ::Movement::PointsArray const& points, float placeZ,
+        Animus::Curriculum::TravelPlaceRules const& rules)
+    {
+        std::vector<float> xs(points.size());
+        std::vector<float> ys(points.size());
+        std::vector<float> zs(points.size());
+        for (std::size_t i = 0; i < points.size(); ++i)
+        {
+            xs[i] = points[i].x;
+            ys[i] = points[i].y;
+            zs[i] = points[i].z;
+        }
+        return ControllerWalks(bot, map, xs.data(), ys.data(), zs.data(), uint32(points.size()), placeZ, rules);
     }
 
     Animus::Curriculum::HumanPools::Point ToPoint(Position const& position)
@@ -812,6 +830,16 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             // (about two thirds of running) over the straight line plus the way down.
             float const swim = std::max(1.0f, bot->GetSpeed(MOVE_SWIM));
             walked = (distance + depth) * (speed / swim);
+            // The straight swim has to be one the controller makes: off the shore and into the water, nothing
+            // taller than a jump on the way in.
+            if (rules.ControllerReach)
+            {
+                float const xs[] = { bot->GetPositionX(), placeX };
+                float const ys[] = { bot->GetPositionY(), placeY };
+                float const zs[] = { bot->GetPositionZ(), placeZ };
+                if (!ControllerWalks(bot, map, xs, ys, zs, 2, placeZ, rules))
+                    return false;
+            }
         }
         else if (rules.Ledge)
         {
@@ -902,6 +930,12 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 // The floor keeps trips of both kinds, which is what makes the crossing a decision.
                 if (dryWalk < distance * MIN_DETOUR_ACROSS)
                     return false;                      // the way round is barely longer: nothing to decide
+
+                // Both ways have to be ones the controller makes: across (in, swum, out over a bank the swim jump
+                // clears) and round.
+                if (rules.ControllerReach && (!ControllerWalksPath(bot, map, path.GetPath(), placeZ, rules)
+                    || !ControllerWalksPath(bot, map, dry.GetPath(), placeZ, rules)))
+                    return false;
             }
             else
             {
@@ -912,22 +946,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
 
                 // The player controller has to be able to walk it: the navmesh's slope and climb are not the
                 // client's. Every rise a step or a jump, ending on the place's own floor.
-                if (rules.ControllerReach)
-                {
-                    ::Movement::PointsArray const& points = path.GetPath();
-                    std::vector<float> xs(points.size());
-                    std::vector<float> ys(points.size());
-                    std::vector<float> zs(points.size());
-                    for (std::size_t i = 0; i < points.size(); ++i)
-                    {
-                        xs[i] = points[i].x;
-                        ys[i] = points[i].y;
-                        zs[i] = points[i].z;
-                    }
-                    if (!ControllerWalks(bot, map, xs.data(), ys.data(), zs.data(), uint32(points.size()), placeZ,
-                        rules))
-                        return false;
-                }
+                if (rules.ControllerReach && !ControllerWalksPath(bot, map, path.GetPath(), placeZ, rules))
+                    return false;
 
                 // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the
                 // attempts and let go after, so an arena whose ground has no long way round still builds. The

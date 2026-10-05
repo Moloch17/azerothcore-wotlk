@@ -156,6 +156,9 @@ namespace Animus::Curriculum
         /// What a fall took (the movement stages from M3, MarkerEncounter): per share of the seat's maximum health
         /// (MarkerVertical.FallDamage). A Cost at full price, never on the cost ladder: a drop's price is real.
         FallDamage,
+        /// What the water took (the water stage, M4): per share of the seat's maximum health lost to drowning
+        /// (MarkerWater.Drowning). A Cost at full price, as FallDamage: running out of breath is a real price.
+        Drowning,
         Count
     };
 
@@ -230,6 +233,7 @@ namespace Animus::Curriculum
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
             case RewardTerm::FallDamage:
+            case RewardTerm::Drowning:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

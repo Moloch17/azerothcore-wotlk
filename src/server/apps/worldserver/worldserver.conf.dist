@@ -5037,7 +5037,8 @@ AnimusForge.OutputDir = ""
 #                     movement alone on the player controller, landing one at a time:
 #                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them),
 #                                 "move2_ground" (broken ground with something in the way: the way round),
-#                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops)
+#                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops),
+#                                 "move4_water" (across water, lakebeds, chains longer than a breath)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5175,6 +5176,7 @@ AnimusForge.TicksPerDecision = 1
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_ground.TicksPerDecision = 5
 AnimusForge.Stage.move3_vertical.TicksPerDecision = 5
+AnimusForge.Stage.move4_water.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6720,6 +6722,31 @@ AnimusForge.Curriculum.MarkerVertical.FallDamage = 2.0
 #   the seat, the floor found under the storey above it); the rest are down or on the seat's own floor
 AnimusForge.Curriculum.MarkerVertical.RoomUpShare = 0.5
 AnimusForge.Curriculum.MarkerVertical.UpstairsRise = 12.0
+
+#
+#    AnimusForge.Curriculum.MarkerWater.*
+#        The water stage's markers (move4_water): across water (a crossing whose dry way round is the longer one, both
+#        ways ones the player controller makes), on a lakebed (arriving is stopping there, swimming, within Radius
+#        and ArriveRise of it), or a chain of ChainMin to ChainMax lakebeds, longer than a breath. MarkersMin to
+#        MarkersMax markers otherwise. The ladder (Rungs rungs) moves the furthest distance from DistanceFirst to
+#        DistanceLast yards (the nearest DistanceMin) and a lakebed's depth window from [DepthMinFirst,
+#        DepthMaxFirst] to [DepthMinLast, DepthMaxLast] yards. Drowning is charged per share of the seat's health the
+#        water took (a Cost at full price).
+AnimusForge.Curriculum.MarkerWater.MarkersMin = 2
+AnimusForge.Curriculum.MarkerWater.MarkersMax = 3
+AnimusForge.Curriculum.MarkerWater.ChainMin = 4
+AnimusForge.Curriculum.MarkerWater.ChainMax = 6
+AnimusForge.Curriculum.MarkerWater.Rungs = 6
+AnimusForge.Curriculum.MarkerWater.DistanceMin = 15.0
+AnimusForge.Curriculum.MarkerWater.DistanceFirst = 30.0
+AnimusForge.Curriculum.MarkerWater.DistanceLast = 90.0
+AnimusForge.Curriculum.MarkerWater.DepthMinFirst = 3.0
+AnimusForge.Curriculum.MarkerWater.DepthMaxFirst = 8.0
+AnimusForge.Curriculum.MarkerWater.DepthMinLast = 20.0
+AnimusForge.Curriculum.MarkerWater.DepthMaxLast = 40.0
+AnimusForge.Curriculum.MarkerWater.Radius = 2.0
+AnimusForge.Curriculum.MarkerWater.ArriveRise = 3.0
+AnimusForge.Curriculum.MarkerWater.Drowning = 2.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

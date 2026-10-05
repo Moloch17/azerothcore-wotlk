@@ -122,7 +122,7 @@ bool Animus::Curriculum::MarkerEncounter::Stopped(uint32 movementFlags, float mo
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::MarkerEncounter::RewardTerms() const
 {
     return { RewardTerm::Arrive, RewardTerm::StepCost, RewardTerm::Death, RewardTerm::Progress, RewardTerm::Facing,
-        RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::FallDamage };
+        RewardTerm::Stuck, RewardTerm::Wall, RewardTerm::FallDamage, RewardTerm::Drowning };
 }
 
 void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -187,6 +187,10 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     table.Add("storey_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyLegs); });
     table.Add("storey_up_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyUpLegs); });
     table.Add("storey_down_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyDownLegs); });
+    // The water course: crossings placed (a dry way round existed and was the longer), and the seat's climbs out of
+    // the water onto land. swim_seconds, breaths and drowned are the scenario's own columns.
+    table.Add("crossings", [this](Env const& env, uint32) { return float(_envs[env.Index].Crossings); });
+    table.Add("banks_climbed", [this](Env const& env, uint32) { return float(_envs[env.Index].BanksClimbed); });
     table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
     table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
 }
@@ -201,6 +205,7 @@ uint32 Animus::Curriculum::MarkerEncounter::TopRung(Env const& env) const
     MarkerCourse const course = _scenario.Arena(env).Course;
     uint32 const rungs = std::max<uint32>(1, course == MarkerCourse::Ground ? _scenario.Tuning().MarkerGround.Rungs
         : course == MarkerCourse::Vertical ? _scenario.Tuning().MarkerVertical.Rungs
+        : course == MarkerCourse::Water ? _scenario.Tuning().MarkerWater.Rungs
         : _scenario.Tuning().Markers.Rungs);
     int32 const pinned = _scenario.ArenaMaxRung(env);
     return pinned >= 0 ? std::min<uint32>(uint32(pinned), rungs - 1) : rungs - 1;
@@ -221,18 +226,34 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     rules.MinDetour = markers.Task.DetourMin > 1.0f ? markers.Task.DetourMin : 0.0f;
     // No swimming before the water stage: the walking way is planned on dry ground alone, and it has to be one the
     // player controller can walk (every rise a step or a jump): no marker is placed where the seat cannot get.
-    rules.DryOnly = true;
+    rules.DryOnly = markers.Course != MarkerCourse::Water;
     rules.ControllerReach = true;
     // Drops are allowed on the way, never a near-fatal one: 20 yd takes 12% of maximum health (Markers.RouteMaxDrop).
     rules.RouteMaxDrop = tuning.RouteMaxDrop;
     float nearest = markers.Task.Nearest;
     float furthest = markers.Task.Furthest;
     bool upstairs = false;
+    bool across = false;
 
     // The vertical course: above (a climb), below a ledge, or on another floor, within the rung's height window.
     ArenaDefinition const& arena = _scenario.Arena(env);
     bool const indoors = arena.Indoors;
-    if (markers.Course == MarkerCourse::Vertical)
+    if (markers.Course == MarkerCourse::Water)
+    {
+        // Across water whose dry way round is the longer one (both ways walkable or swimmable by the controller),
+        // or on a lakebed within the rung's depth window, swum to straight.
+        rules.MaxDetour = 0.0f;
+        rules.MinDetour = 0.0f;
+        if (arena.Underwater)
+        {
+            rules.Underwater = true;
+            rules.DepthMin = markers.Task.HeightMin;
+            rules.DepthMax = markers.Task.HeightMax;
+        }
+        else
+            across = true;
+    }
+    else if (markers.Course == MarkerCourse::Vertical)
     {
         CurriculumTuning::TravelTuning const& travel = _scenario.Tuning().Travel;
         CurriculumTuning::MarkerVerticalTuning const& vertical = _scenario.Tuning().MarkerVertical;
@@ -276,6 +297,7 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
 
     Position place;
     float walk = 0.0f;
+    float dry = 0.0f;
     bool placed = false;
     if (upstairs)
     {
@@ -288,8 +310,8 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
         placed = TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, false, nullptr,
             indoors, nullptr, up);
     }
-    if (!placed && !TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, false,
-        nullptr, indoors, nullptr, rules))
+    if (!placed && !TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, across,
+        &dry, indoors, nullptr, rules))
         return false;
 
     markers.HasMarker = true;
@@ -298,6 +320,9 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     markers.LegStartMs = env.EpisodeElapsedMs;
     markers.LegStraight = bot->GetExactDist2d(&place);
     markers.LegWalk = walk > 0.0f ? walk : markers.LegStraight;
+    markers.LegDry = dry;
+    markers.LegUnder = arena.Underwater;
+    markers.Crossings += across && dry > 0.0f ? 1 : 0;
     markers.DetourSum += markers.LegWalk / std::max(1.0f, markers.LegStraight);
     ++markers.Legs;
     float const rise = std::fabs(place.GetPositionZ() - bot->GetPositionZ());
@@ -335,7 +360,18 @@ bool Animus::Curriculum::MarkerEncounter::Build(Env& env, Map* map, uint8 /*leve
     DifficultyLadder::Pick const pick = _ladder.Draw(env, markers.Layout, markers.Spec, TopRung(env));
     markers.Rung = pick.Tier;
     markers.Counts = pick.Counts;
-    if (markers.Course == MarkerCourse::Vertical)
+    if (markers.Course == MarkerCourse::Water)
+    {
+        CurriculumTuning::MarkerWaterTuning const& water = _scenario.Tuning().MarkerWater;
+        markers.Task = VerticalRungTask(markers.Rung, std::max<uint32>(1, water.Rungs), water.DistanceMin,
+            water.DistanceFirst, water.DistanceLast, water.DepthMinFirst, water.DepthMaxFirst, water.DepthMinLast,
+            water.DepthMaxLast, water.Radius);
+        bool const chain = _scenario.Arena(env).Checkpoints;
+        uint32 const least = chain ? water.ChainMin : water.MarkersMin;
+        uint32 const most = chain ? water.ChainMax : water.MarkersMax;
+        markers.Wanted = urand(std::min(least, most), std::max(least, most));
+    }
+    else if (markers.Course == MarkerCourse::Vertical)
     {
         CurriculumTuning::MarkerVerticalTuning const& vertical = _scenario.Tuning().MarkerVertical;
         markers.Task = VerticalRungTask(markers.Rung, std::max<uint32>(1, vertical.Rungs), vertical.DistanceMin,
@@ -445,7 +481,23 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // The ground course's costs, read off the controller's own counts (StageScenario::TrackController): the
     // seconds since the last decision it was stuck with a key held, or pressing into a wall.
     // The vertical course climbs on the ground course's route and pays its costs, and its falls besides.
-    bool const ground = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical;
+    // The water course pays Stuck and Wall too, and what the water took; its distance is the straight one, in three
+    // dimensions (a lakebed is a point under the surface).
+    bool const routed = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical;
+    bool const water = markers.Course == MarkerCourse::Water;
+    bool const ground = routed || water;
+    if (water)
+    {
+        // What the water took: drowning is the agent's damage with no attacker behind it (AgentStats::SelfDamage),
+        // charged while under the surface.
+        uint64 const self = env.StepStats[seatIndex].SelfDamage;
+        if (self && bot->IsUnderWater())
+            ledger.Add(RewardTerm::Drowning, -_scenario.Tuning().MarkerWater.Drowning * float(self)
+                / float(std::max<uint32>(1, bot->GetMaxHealth())));
+        bool const wet = bot->IsInWater();
+        markers.BanksClimbed += markers.WasInWater && !wet ? 1 : 0;
+        markers.WasInWater = wet;
+    }
     if (markers.Course == MarkerCourse::Vertical)
     {
         float const took = seat.FallDamage - std::min(seat.FallDamage, markers.LastFallDamage);
@@ -480,9 +532,9 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // the next one is not ground given back). On the ground course the distance shaped on is the route's -- a
     // re-plan is a new potential too, and pays nothing -- and arrival is still judged on the straight distance.
     float const distance = bot->GetExactDist2d(&markers.Marker);
-    bool const replanned = ground && RefreshWay(markers, bot, env.EpisodeElapsedMs);
-    float const shaped = ground ? WayDistance(markers, bot) : distance;
-    float const leg = std::max(ground ? markers.LegWalk : markers.LegStraight, markers.Task.Radius);
+    bool const replanned = routed && RefreshWay(markers, bot, env.EpisodeElapsedMs);
+    float const shaped = routed ? WayDistance(markers, bot) : water ? bot->GetExactDist(&markers.Marker) : distance;
+    float const leg = std::max(routed ? markers.LegWalk : markers.LegStraight, markers.Task.Radius);
     if (markers.LastDistance >= 0.0f && !replanned)
         ledger.Add(RewardTerm::Progress, tuning.Progress * (markers.LastDistance - shaped) / leg);
     markers.LastDistance = shaped;
@@ -496,8 +548,9 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     }
 
     // Running through: how far past the radius the seat went after first being inside it.
+    float const rise = water ? _scenario.Tuning().MarkerWater.ArriveRise : tuning.ArriveRise;
     bool const inside = distance <= markers.Task.Radius
-        && std::fabs(bot->GetPositionZ() - markers.Marker.GetPositionZ()) <= tuning.ArriveRise;
+        && std::fabs(bot->GetPositionZ() - markers.Marker.GetPositionZ()) <= rise;
     if (inside)
         markers.Entered = true;
     else if (markers.Entered)
@@ -506,7 +559,9 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // A stop is the decision the seat came to rest on after moving; one near the marker is measured whether or not it
     // was in. The first look has no last position to measure "still" from: the seat starts at rest, so it is read as
     // stopped there, and only a stop after moving counts.
-    bool const stopped = firstLook || Stopped(bot->GetUnitMovementFlags(), moved, tuning.StopMoved);
+    // In the water a stop is a swimmer holding no key and still: SWIMMING is where it is, not a key it holds.
+    uint32 const flags = bot->GetUnitMovementFlags() & ~(water ? uint32(MOVEMENTFLAG_SWIMMING) : 0u);
+    bool const stopped = firstLook || Stopped(flags, moved, tuning.StopMoved);
     if (!firstLook && stopped && !markers.WasStopped && distance <= tuning.StopNear)
     {
         markers.StopDistanceSum += distance;
@@ -526,10 +581,18 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     ledger.Add(RewardTerm::Arrive, tuning.Arrive);
     float const seconds = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, markers.LegStartMs)) / 1000.0f;
     float const run = std::max(1.0f, bot->GetSpeed(MOVE_RUN));
-    // The optimum: the walking way (the straight line on open ground) at run speed, and the first turn.
-    float const way = ground ? markers.LegWalk : markers.LegStraight;
-    float const optimum = std::max(0.25f, std::max(0.0f, way - markers.Task.Radius) / run
-        + markers.LegBearing / FASTEST_TURN);
+    // The optimum: the walking way (the straight line on open ground) at run speed, and the first turn. Across water,
+    // the better of swimming straight and running round; to a lakebed, the swim (FindPlace's run-equivalent).
+    float const way = routed || (water && markers.LegUnder) ? markers.LegWalk : markers.LegStraight;
+    float travel = std::max(0.0f, way - markers.Task.Radius) / run;
+    if (water && !markers.LegUnder)
+    {
+        float const swim = std::max(1.0f, bot->GetSpeed(MOVE_SWIM));
+        travel = std::max(0.0f, markers.LegStraight - markers.Task.Radius) / swim;
+        if (markers.LegDry > 0.0f)
+            travel = std::min(travel, std::max(0.0f, markers.LegDry - markers.Task.Radius) / run);
+    }
+    float const optimum = std::max(0.25f, travel + markers.LegBearing / FASTEST_TURN);
     markers.TimeRatioSum += seconds / optimum;
     if (markers.Entered)
     {
