@@ -128,6 +128,61 @@ namespace Animus::Curriculum::MoveKeep
         return leftMs >= float(KEEP_DECISIONS * decisionMs) && std::fabs(headingError) < HEADING_SLACK
             && std::fabs(pitchError) < PITCH_SLACK;
     }
+
+    /// **Why a run under way was relaunched** (restart-causes): stage1's seats relaunched their run ~68 times a minute
+    /// with almost none of it on a turn (2026-10-04, turn_restarts 0.6), so spline_restarts is split by what let the
+    /// run go. Press: a movement press changed what the seat wants. Shown: a watching client's stale head. Speed: a
+    /// sprint, slow, mount or form. Course and Climb: the run no longer goes where the seat wants. Time: under
+    /// KEEP_DECISIONS of travel left; TimeCapped the same for a run launched short by CappedReach. Other: a run
+    /// launched by anything but Steer's keep (a follow, an advance, a death walk).
+    enum class Relaunch : uint8
+    {
+        None,
+        Press,
+        Shown,
+        Speed,
+        Course,
+        Climb,
+        Time,
+        TimeCapped,
+        Other,
+        Count
+    };
+
+    [[nodiscard]] inline char const* RelaunchName(Relaunch cause)
+    {
+        switch (cause)
+        {
+            case Relaunch::Press:       return "press";
+            case Relaunch::Shown:       return "shown";
+            case Relaunch::Speed:       return "speed";
+            case Relaunch::Course:      return "course";
+            case Relaunch::Climb:       return "climb";
+            case Relaunch::Time:        return "time";
+            case Relaunch::TimeCapped:  return "time_capped";
+            case Relaunch::Other:       return "other";
+            default:                    return "none";
+        }
+    }
+
+    /// What let a run go that Steer's keep did not keep, in the order the keep asks: the two forced relaunches, then
+    /// course and climb (the seat wants somewhere else), then time (it is running out). `capped` is whether the run
+    /// was launched with a reach CappedReach cut short. None only when KeepRun would have kept it.
+    [[nodiscard]] inline Relaunch WhyRelaunched(bool shownStale, bool resped, float remaining, float velocity,
+        uint32 decisionMs, float headingError, float pitchError, bool capped)
+    {
+        if (shownStale)
+            return Relaunch::Shown;
+        if (resped)
+            return Relaunch::Speed;
+        if (std::fabs(headingError) >= HEADING_SLACK)
+            return Relaunch::Course;
+        if (std::fabs(pitchError) >= PITCH_SLACK)
+            return Relaunch::Climb;
+        if (KeepRun(remaining, velocity, decisionMs, headingError, pitchError))
+            return Relaunch::None;
+        return capped ? Relaunch::TimeCapped : Relaunch::Time;
+    }
 }
 
 #endif

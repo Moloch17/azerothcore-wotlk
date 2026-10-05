@@ -924,6 +924,16 @@ namespace
                 && (MoveKeep::KeepRun(remaining, bot->movespline->Velocity(), view.DecisionMs, headingError, pitchError)
                     || (edge && MoveKeep::KeepEdgeRun(bot->movespline->Velocity(), headingError, pitchError))))
                 return;
+            // Not kept: say why, once a decision -- the first thing that let it go owns the relaunch, and a movement
+            // press owns any it causes (restart-causes).
+            if (Animus::Curriculum::SteerMemory* steering = view.Steering; steering && !steering->LaunchCause)
+            {
+                MoveKeep::Relaunch const why = steering->Pressing ? MoveKeep::Relaunch::Press
+                    : MoveKeep::WhyRelaunched(shownStale, resped, remaining, bot->movespline->Velocity(),
+                        view.DecisionMs, headingError, pitchError,
+                        steering->RunId == bot->movespline->GetId() && steering->RunCapped);
+                steering->LaunchCause = uint8(why);
+            }
         }
 
         float const pitch = airborne ? view.Pitch : 0.0f;
@@ -932,6 +942,8 @@ namespace
         uint64 const until = view.Option->Of(SeatOptionKind::MoveBearing).UntilMs;
         float const length = MoveKeep::CappedReach(speed, until > view.NowMs ? until - view.NowMs : 0,
             view.DecisionMs);
+        if (view.Steering)
+            view.Steering->LaunchCapped = length + 0.01f < MoveKeep::Reach(speed);
         float const reach = length * std::cos(pitch);
 
         Position destination = *bot;
@@ -1589,6 +1601,7 @@ namespace
             view.Steering->RunId = bot->movespline->GetId();
             view.Steering->RunFacing = bot->GetOrientation();
             view.Steering->RunSpeed = view.Steering->LaunchSpeed;
+            view.Steering->RunCapped = view.Steering->LaunchCapped;
         }
     }
 }
@@ -1701,6 +1714,15 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
     Player* bot = view.Bot;
     if (!bot || !view.Option)
         return;
+
+    // A run this press lets go is the press's (MoveKeep::Relaunch::Press), not the keep's: up for the whole press,
+    // down on every way out of it (restart-causes).
+    struct Pressing
+    {
+        SteerMemory* Steering;
+        explicit Pressing(SteerMemory* steering) : Steering(steering) { if (Steering) Steering->Pressing = true; }
+        ~Pressing() { if (Steering) Steering->Pressing = false; }
+    } const pressing(view.Steering);
 
     if (local < ACTION_HALT)
     {
