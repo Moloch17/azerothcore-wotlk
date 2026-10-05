@@ -27,7 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ ... ─ move7_follow
+ *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ move6_mounted ─ M7
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -250,6 +250,24 @@ namespace
         };
     }
 
+    /// Outland's ground to take off from (curriculum-v1 OutlandGround): Hellfire's broken flats, Zangarmarsh's mushroom
+    /// basins and Shadowmoon's ridges. Terokkar's two points are held out (the plan's held-out flight ground).
+    std::vector<Position> OutlandGround()
+    {
+        return {
+            { 170.0f, 2589.0f, 93.0f, 0.0f },     { 169.0f, 2708.0f, 101.0f, 0.0f },     // Hellfire Peninsula
+            { -3260.0f, 2690.0f, 85.0f, 0.0f },   { -3293.0f, 2832.0f, 125.0f, 0.0f },   // Zangarmarsh
+            { -3631.0f, 3741.0f, 298.0f, 0.0f },  { -3721.0f, 3746.0f, 284.0f, 0.0f },   // Shadowmoon Valley
+        };
+    }
+
+    std::vector<Position> OutlandControl()
+    {
+        return {
+            { -1750.0f, 5154.0f, -37.0f, 0.0f },  { -1730.0f, 5282.0f, -32.0f, 0.0f },   // Terokkar Forest
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -393,6 +411,36 @@ namespace
             .HeldOutSpawnPoints = KalimdorBrokenControl(),
         });
 
+        // M6 -- riding and flight: mounting when it pays, steering at mount speed, dismounting where it must, and
+        // flying -- take off, climb over what is in the way, cruise, land on the marker. A ride across Kalimdor's
+        // flats (150-500 yd, the ground mount from level 20), flights in Outland (200-900 yd, a flying mount from
+        // 60), and air-only markers there that the ground route does not reach (the ground mount masked). Mounting is
+        // a cast the seat must stand still for, and a hit interrupts it (ruling f: the game's own rules). The travel
+        // block joins the layout here, with the mounts; arriving is landing and stopping on the marker.
+        //
+        // Outland's held-out ground is Terokkar (the plan's); Northrend's flight-only plateaus need points stood on.
+        stages.push_back({
+            .Name = "move6_mounted",
+            .Suffix = "_mounted",
+            .Extends = "move5_routes",
+            .Summary = "trips worth mounting for: ride, fly over what is in the way, land on the marker",
+            .Blocks = { Core, Move, Travel, Goal },
+            .Arenas = {
+                { .Name = "ride", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 240,
+                    .Course = MarkerCourse::Mounted, .SpawnPoints = KalimdorFlats(), .MinLevel = 20,
+                    .HeldOutSpawnPoints = KalimdorFlatsControl() },
+                { .Name = "flight", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 240,
+                    .Course = MarkerCourse::Mounted, .Flying = true, .SpawnPoints = OutlandGround(),
+                    .MapId = MAP_OUTLAND, .MinLevel = 60, .HeldOutSpawnPoints = OutlandControl() },
+                { .Name = "flight_air", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 240,
+                    .Course = MarkerCourse::Mounted, .Flying = true, .AirOnly = true, .SpawnPoints = OutlandGround(),
+                    .MapId = MAP_OUTLAND, .MinLevel = 60, .HeldOutSpawnPoints = OutlandControl() },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorFlats(),
+            .HeldOutSpawnPoints = KalimdorFlatsControl(),
+        });
+
         return stages;
     }
 
@@ -513,7 +561,8 @@ namespace
             return "only a scripted enemy player takes a level bonus or range";
         if (arena.OpponentLevelRange < 0)
             return "a level range is how far either way, not negative";
-        if (arena.Flying && !travel)
+        bool const mountedMarkers = arena.Against == Opposition::Markers && arena.Course == MarkerCourse::Mounted;
+        if (arena.Flying && !travel && !mountedMarkers)
             return "only a travel arena flies";
         if (arena.Indoors && !travel)
             return "only a travel arena can be indoors: being inside changes where an objective may be put and "
@@ -564,8 +613,12 @@ namespace
         if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None || arena.Directed))
             return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
-        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly))
-            return "a marker arena takes none of the travel arena's kinds of ground but ledges, rooms and water yet";
+        if (markers && arena.OnFoot)
+            return "a marker arena is on foot unless it is the mounted course's: OnFoot is the travel arena's";
+        if (markers && (arena.Flying || arena.AirOnly) && arena.Course != MarkerCourse::Mounted)
+            return "flying and air-only markers are the mounted course's";
+        if (markers && arena.Course == MarkerCourse::Mounted && !stage.Has(BlockId::Travel))
+            return "the mounted course mounts with the travel block";
         if (markers && (arena.Water || arena.Underwater || arena.Checkpoints) && arena.Course != MarkerCourse::Water)
             return "water, lakebeds and their chains are the water course's ground";
         if (markers && arena.Course == MarkerCourse::Water && arena.Water == arena.Underwater)

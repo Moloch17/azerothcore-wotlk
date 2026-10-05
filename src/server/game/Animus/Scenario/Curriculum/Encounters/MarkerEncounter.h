@@ -68,7 +68,9 @@ namespace Animus::Curriculum
     /// depth window (MarkerWater.*); shaped on the straight distance in three dimensions, stopped as a swimmer, and
     /// Drowning paid besides Stuck and Wall. Routes (M5): one long trip, planned whole by the RoutePlanner, in the
     /// rung's distance band and detour window (MarkerRoutes.*); shaped on the route, priced as the ground and
-    /// vertical courses are.
+    /// vertical courses are. Mounted (M6): a trip worth mounting for -- a ride on the ground, or a flight (Flying),
+    /// air-only where the arena asks (the ground mount masked for such a leg); arriving is landing and stopping on it
+    /// (MarkerMounted.*).
     class MarkerEncounter final : public Encounter
     {
     public:
@@ -187,6 +189,15 @@ namespace Animus::Curriculum
             std::unordered_map<uint64, uint32> Cells;
             uint64 LastCell = ~uint64(0);
             uint32 Revisits = 0;
+            // The mounted course.
+            bool LegAirOnly = false;        // the leg's marker only the air reaches: the ground mount is masked
+            uint32 AirOnlyLegs = 0;
+            uint32 LastMountMs = 0;
+            uint32 MountedMs = 0;
+            uint32 FlyingMs = 0;
+            uint32 Takeoffs = 0;
+            uint32 Landings = 0;
+            bool WasAloft = false;
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

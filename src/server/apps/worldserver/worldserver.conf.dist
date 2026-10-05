@@ -5039,7 +5039,8 @@ AnimusForge.OutputDir = ""
 #                                 "move2_ground" (broken ground with something in the way: the way round),
 #                                 "move3_vertical" (above, below, other floors: steps, jumps, safe drops),
 #                                 "move4_water" (across water, lakebeds, chains longer than a breath),
-#                                 "move5_routes" (one long trip, the way not visible from the start)
+#                                 "move5_routes" (one long trip, the way not visible from the start),
+#                                 "move6_mounted" (rides and flights worth mounting for, air-only markers)
 #                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
 #                     definitions on the git tag curriculum-v1, its learner configs in
 #                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
@@ -5179,6 +5180,7 @@ AnimusForge.Stage.move2_ground.TicksPerDecision = 5
 AnimusForge.Stage.move3_vertical.TicksPerDecision = 5
 AnimusForge.Stage.move4_water.TicksPerDecision = 5
 AnimusForge.Stage.move5_routes.TicksPerDecision = 5
+AnimusForge.Stage.move6_mounted.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6773,6 +6775,27 @@ AnimusForge.Curriculum.MarkerRoutes.DetourCap = 3.0
 AnimusForge.Curriculum.MarkerRoutes.Radius = 2.0
 AnimusForge.Curriculum.MarkerRoutes.RevisitCell = 10.0
 AnimusForge.Curriculum.MarkerRoutes.RevisitSeconds = 10.0
+
+#
+#    AnimusForge.Curriculum.MarkerMounted.*
+#        The mounted stage's markers (move6_mounted): a trip worth mounting for. A ride's straight distance moves from
+#        [RideNearestFirst, RideFurthestFirst] to [RideNearestLast, RideFurthestLast] yards over Rungs rungs, its way
+#        at most RideMaxDetour times the line; a flight's (a flying arena, a map that flies) from [FlightNearestFirst,
+#        FlightFurthestFirst] to [FlightNearestLast, FlightFurthestLast], air-only arenas only where the ground route
+#        does not reach (Travel.AirDetour), the ground mount masked. Arriving is stopping on it, landed, within Radius.
+#        Mounting is a cast a move or a hit interrupts. Costs: Stuck, Wall (MarkerGround.*), FallDamage
+#        (MarkerVertical.*; a dismount in the air is a fall).
+AnimusForge.Curriculum.MarkerMounted.Rungs = 6
+AnimusForge.Curriculum.MarkerMounted.RideNearestFirst = 150.0
+AnimusForge.Curriculum.MarkerMounted.RideFurthestFirst = 250.0
+AnimusForge.Curriculum.MarkerMounted.RideNearestLast = 300.0
+AnimusForge.Curriculum.MarkerMounted.RideFurthestLast = 500.0
+AnimusForge.Curriculum.MarkerMounted.RideMaxDetour = 1.8
+AnimusForge.Curriculum.MarkerMounted.FlightNearestFirst = 200.0
+AnimusForge.Curriculum.MarkerMounted.FlightFurthestFirst = 350.0
+AnimusForge.Curriculum.MarkerMounted.FlightNearestLast = 500.0
+AnimusForge.Curriculum.MarkerMounted.FlightFurthestLast = 900.0
+AnimusForge.Curriculum.MarkerMounted.Radius = 2.5
 
 #
 #    AnimusForge.Curriculum.Owner.*

@@ -1098,6 +1098,30 @@ namespace Animus::Curriculum
             float RevisitSeconds = 10.0f;
         } MarkerRoutes;
 
+        /// The mounted stage's markers (MarkerCourse::Mounted, M6): a trip worth mounting for. On the ground
+        /// (a ride: the route planner's way, the controller's walk of it) the straight distance moves from
+        /// [RideNearestFirst, RideFurthestFirst] to [RideNearestLast, RideFurthestLast] yards over the Rungs rungs,
+        /// its way at most RideMaxDetour times the line; in a flying arena (ArenaDefinition::Flying, on a map that
+        /// flies) from [FlightNearestFirst, FlightFurthestFirst] to [FlightNearestLast, FlightFurthestLast], placed on
+        /// ground anywhere -- or, in an air-only arena, only where the ground route does not reach (Travel.AirDetour),
+        /// the ground mount masked. Arriving is stopping on it as everywhere: landed, dismounted or not, within Radius.
+        /// Mounting is a cast, interrupted by moving and by damage, as a player's is. The costs are the ground and
+        /// vertical courses' (Stuck, Wall, FallDamage: a dismount in the air is a fall).
+        struct MarkerMountedTuning
+        {
+            uint32 Rungs = 6;
+            float RideNearestFirst = 150.0f;
+            float RideFurthestFirst = 250.0f;
+            float RideNearestLast = 300.0f;
+            float RideFurthestLast = 500.0f;
+            float RideMaxDetour = 1.8f;
+            float FlightNearestFirst = 200.0f;
+            float FlightFurthestFirst = 350.0f;
+            float FlightNearestLast = 500.0f;
+            float FlightFurthestLast = 900.0f;
+            float Radius = 2.5f;
+        } MarkerMounted;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1684,6 +1708,17 @@ namespace Animus::Curriculum
             f("MarkerRoutes.Radius", tuning.MarkerRoutes.Radius);
             f("MarkerRoutes.RevisitCell", tuning.MarkerRoutes.RevisitCell);
             f("MarkerRoutes.RevisitSeconds", tuning.MarkerRoutes.RevisitSeconds);
+            f("MarkerMounted.Rungs", tuning.MarkerMounted.Rungs);
+            f("MarkerMounted.RideNearestFirst", tuning.MarkerMounted.RideNearestFirst);
+            f("MarkerMounted.RideFurthestFirst", tuning.MarkerMounted.RideFurthestFirst);
+            f("MarkerMounted.RideNearestLast", tuning.MarkerMounted.RideNearestLast);
+            f("MarkerMounted.RideFurthestLast", tuning.MarkerMounted.RideFurthestLast);
+            f("MarkerMounted.RideMaxDetour", tuning.MarkerMounted.RideMaxDetour);
+            f("MarkerMounted.FlightNearestFirst", tuning.MarkerMounted.FlightNearestFirst);
+            f("MarkerMounted.FlightFurthestFirst", tuning.MarkerMounted.FlightFurthestFirst);
+            f("MarkerMounted.FlightNearestLast", tuning.MarkerMounted.FlightNearestLast);
+            f("MarkerMounted.FlightFurthestLast", tuning.MarkerMounted.FlightFurthestLast);
+            f("MarkerMounted.Radius", tuning.MarkerMounted.Radius);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

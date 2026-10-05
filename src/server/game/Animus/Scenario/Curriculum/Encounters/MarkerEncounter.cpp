@@ -211,6 +211,19 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].UnderwaterSelfDamage;
     });
+    // The mounted course: the share of the episode on a mount and in the air, take-offs and landings, and the legs
+    // whose marker only the air reaches. Reported, never converged on (the measure is arrived).
+    table.Add("mounted_share", [this](Env const& env, uint32)
+    {
+        return env.EpisodeElapsedMs ? float(_envs[env.Index].MountedMs) / float(env.EpisodeElapsedMs) : 0.0f;
+    });
+    table.Add("flying_share", [this](Env const& env, uint32)
+    {
+        return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMs) / float(env.EpisodeElapsedMs) : 0.0f;
+    });
+    table.Add("takeoffs", [this](Env const& env, uint32) { return float(_envs[env.Index].Takeoffs); });
+    table.Add("landings", [this](Env const& env, uint32) { return float(_envs[env.Index].Landings); });
+    table.Add("air_only_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].AirOnlyLegs); });
     table.Add("revisits", [this](Env const& env, uint32) { return float(_envs[env.Index].Revisits); });
     // The trip's way (the routes course): its length and its detour over the straight line.
     table.Add("route_length", [this](Env const& env, uint32) { return _envs[env.Index].LegWalk; });
@@ -231,6 +244,7 @@ uint32 Animus::Curriculum::MarkerEncounter::TopRung(Env const& env) const
         : course == MarkerCourse::Vertical ? _scenario.Tuning().MarkerVertical.Rungs
         : course == MarkerCourse::Water ? _scenario.Tuning().MarkerWater.Rungs
         : course == MarkerCourse::Routes ? _scenario.Tuning().MarkerRoutes.Rungs
+        : course == MarkerCourse::Mounted ? _scenario.Tuning().MarkerMounted.Rungs
         : _scenario.Tuning().Markers.Rungs);
     int32 const pinned = _scenario.ArenaMaxRung(env);
     return pinned >= 0 ? std::min<uint32>(uint32(pinned), rungs - 1) : rungs - 1;
@@ -263,11 +277,24 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     // The vertical course: above (a climb), below a ledge, or on another floor, within the rung's height window.
     ArenaDefinition const& arena = _scenario.Arena(env);
     bool const indoors = arena.Indoors;
-    if (markers.Course == MarkerCourse::Routes)
+    bool const flying = markers.Course == MarkerCourse::Mounted && arena.Flying;
+    bool airOnly = false;
+    if (markers.Course == MarkerCourse::Routes || (markers.Course == MarkerCourse::Mounted && !flying))
     {
         // One long way, planned whole (PathGenerator stops short at this range); water may be on it, after M4.
         rules.LongRoute = true;
         rules.DryOnly = false;
+    }
+    else if (flying)
+    {
+        // A flight: the marker anywhere on ground in reach, or -- air-only -- only where the ground route does not
+        // reach, so the wings are the way (the ground mount masked for the leg).
+        rules.MaxDetour = 0.0f;
+        rules.MinDetour = 0.0f;
+        rules.DryOnly = false;
+        rules.AirOnly = arena.AirOnly;
+        rules.AirDetour = _scenario.Tuning().Travel.AirDetour;
+        airOnly = arena.AirOnly;
     }
     else if (markers.Course == MarkerCourse::Water)
     {
@@ -341,9 +368,22 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
         placed = TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, false, nullptr,
             indoors, nullptr, up);
     }
-    if (!placed && !TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, across,
+    if (!placed && airOnly)
+    {
+        // A spawn with no air-only place in reach builds an ordinary flight, and says so (air_only_legs).
+        placed = TravelEncounter::FindPlace(bot, map, nearest, furthest, true, place, budget, &walk, false, nullptr,
+            false, nullptr, rules);
+        if (!placed)
+        {
+            rules.AirOnly = false;
+            airOnly = false;
+        }
+    }
+    if (!placed && !TravelEncounter::FindPlace(bot, map, nearest, furthest, flying, place, budget, &walk, across,
         &dry, indoors, nullptr, rules))
         return false;
+    markers.LegAirOnly = airOnly;
+    markers.AirOnlyLegs += airOnly ? 1 : 0;
 
     markers.HasMarker = true;
     markers.Marker.Relocate(place);
@@ -391,7 +431,19 @@ bool Animus::Curriculum::MarkerEncounter::Build(Env& env, Map* map, uint8 /*leve
     DifficultyLadder::Pick const pick = _ladder.Draw(env, markers.Layout, markers.Spec, TopRung(env));
     markers.Rung = pick.Tier;
     markers.Counts = pick.Counts;
-    if (markers.Course == MarkerCourse::Routes)
+    if (markers.Course == MarkerCourse::Mounted)
+    {
+        CurriculumTuning::MarkerMountedTuning const& mounted = _scenario.Tuning().MarkerMounted;
+        bool const flight = _scenario.Arena(env).Flying;
+        markers.Task = RoutesRungTask(markers.Rung, std::max<uint32>(1, mounted.Rungs),
+            flight ? mounted.FlightNearestFirst : mounted.RideNearestFirst,
+            flight ? mounted.FlightFurthestFirst : mounted.RideFurthestFirst,
+            flight ? mounted.FlightNearestLast : mounted.RideNearestLast,
+            flight ? mounted.FlightFurthestLast : mounted.RideFurthestLast, 1.0f, 1.0f,
+            std::max(0.05f, mounted.RideMaxDetour - 1.0f), std::max(1.0f, mounted.RideMaxDetour), mounted.Radius);
+        markers.Wanted = 1;
+    }
+    else if (markers.Course == MarkerCourse::Routes)
     {
         CurriculumTuning::MarkerRoutesTuning const& routes = _scenario.Tuning().MarkerRoutes;
         markers.Task = RoutesRungTask(markers.Rung, std::max<uint32>(1, routes.Rungs), routes.NearestFirst,
@@ -455,8 +507,9 @@ void Animus::Curriculum::MarkerEncounter::View(Env const& env, uint32 /*seat*/, 
     EnvMarkers const& markers = _envs[env.Index];
     view.HasObjective = markers.HasMarker;
     view.Objective = markers.Marker;
-    view.MountsAllowed = false;
-    view.GroundMountAllowed = false;
+    // Mounting is the mounted stage's: every other course is on foot (it carries no travel block either).
+    view.MountsAllowed = markers.Course == MarkerCourse::Mounted;
+    view.GroundMountAllowed = view.MountsAllowed && !markers.LegAirOnly;
     // The rung's radius, for any block that reads it (TravelBlock's OBS_AT_OBJECTIVE). The move block, which is what
     // M1 carries, sees the marker's bearing and distance but not the radius: the rung is learned from the reward.
     view.ArriveWithin = markers.Task.Radius;
@@ -522,8 +575,21 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // The vertical course climbs on the ground course's route and pays its costs, and its falls besides.
     // The water course pays Stuck and Wall too, and what the water took; its distance is the straight one, in three
     // dimensions (a lakebed is a point under the surface).
+    bool const flight = markers.Course == MarkerCourse::Mounted && _scenario.Arena(env).Flying;
     bool const routed = markers.Course == MarkerCourse::Ground || markers.Course == MarkerCourse::Vertical
-        || markers.Course == MarkerCourse::Routes;
+        || markers.Course == MarkerCourse::Routes || (markers.Course == MarkerCourse::Mounted && !flight);
+    if (markers.Course == MarkerCourse::Mounted)
+    {
+        // How the trip was made: on a mount, in the air, the take-offs and the landings.
+        uint32 const stepMs = env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, markers.LastMountMs);
+        markers.LastMountMs = env.EpisodeElapsedMs;
+        bool const aloft = bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING);
+        markers.MountedMs += bot->IsMounted() ? stepMs : 0;
+        markers.FlyingMs += aloft ? stepMs : 0;
+        markers.Takeoffs += aloft && !markers.WasAloft ? 1 : 0;
+        markers.Landings += !aloft && markers.WasAloft ? 1 : 0;
+        markers.WasAloft = aloft;
+    }
     if (markers.Course == MarkerCourse::Routes)
     {
         // Retracing: a cell of the ground come back to after a while away.
@@ -543,7 +609,7 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         markers.Cells[key] = env.EpisodeElapsedMs;
     }
     bool const water = markers.Course == MarkerCourse::Water;
-    bool const ground = routed || water;
+    bool const ground = routed || water || markers.Course == MarkerCourse::Mounted;
     if (water)
     {
         // What the water took: drowning is the agent's damage with no attacker behind it (AgentStats::SelfDamage),
@@ -559,7 +625,8 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
         markers.BanksClimbed += markers.WasInWater && !wet ? 1 : 0;
         markers.WasInWater = wet;
     }
-    if (markers.Course == MarkerCourse::Vertical || markers.Course == MarkerCourse::Routes)
+    if (markers.Course == MarkerCourse::Vertical || markers.Course == MarkerCourse::Routes
+        || markers.Course == MarkerCourse::Mounted)
     {
         float const took = seat.FallDamage - std::min(seat.FallDamage, markers.LastFallDamage);
         markers.LastFallDamage = seat.FallDamage;
@@ -594,7 +661,8 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // re-plan is a new potential too, and pays nothing -- and arrival is still judged on the straight distance.
     float const distance = bot->GetExactDist2d(&markers.Marker);
     bool const replanned = routed && RefreshWay(markers, bot, env.EpisodeElapsedMs);
-    float const shaped = routed ? WayDistance(markers, bot) : water ? bot->GetExactDist(&markers.Marker) : distance;
+    float const shaped = routed ? WayDistance(markers, bot)
+        : water || flight ? bot->GetExactDist(&markers.Marker) : distance;
     float const leg = std::max(routed ? markers.LegWalk : markers.LegStraight, markers.Task.Radius);
     if (markers.LastDistance >= 0.0f && !replanned)
         ledger.Add(RewardTerm::Progress, tuning.Progress * (markers.LastDistance - shaped) / leg);
