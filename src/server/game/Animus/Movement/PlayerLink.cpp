@@ -16,6 +16,7 @@
  */
 
 #include "PlayerLink.h"
+#include "Forge.h"
 #include "GameTime.h"
 #include "Log.h"
 #include "MoveSpline.h"
@@ -116,6 +117,8 @@ bool Animus::Movement::PlayerLink::Apply(Report const& report)
         case CMSG_MOVE_FEATHER_FALL_ACK:
         case CMSG_MOVE_WATER_WALK_ACK:
         case CMSG_MOVE_SET_CAN_FLY_ACK:
+        case CMSG_MOVE_GRAVITY_DISABLE_ACK:
+        case CMSG_MOVE_GRAVITY_ENABLE_ACK:
             // HandleMovementFlagChangeToggleAck.
             sScriptMgr->AnticheatSetCanFlybyServer(bot, info.HasMovementFlag(MOVEMENTFLAG_CAN_FLY));
             bot->m_movementInfo.flags = info.GetMovementFlags();
@@ -159,6 +162,11 @@ bool Animus::Movement::PlayerLink::Apply(Report const& report)
             ++_memory.FallDeaths;
     }
 
+    // Watching clients see it as they see a player's (C5): the relay each handler makes, only while a real client
+    // is connected (ForgeCore::HasClients) -- training builds nothing.
+    if (ForgeCore::HasClients())
+        Relay(report, info, opcode);
+
     ++Applied;
     _memory.GoodX = report.X;
     _memory.GoodY = report.Y;
@@ -193,6 +201,52 @@ void Animus::Movement::PlayerLink::Refuse(ClientMovement::Refusal refusal, Repor
         ++Unsticks;
         _bot->NearTeleportTo(_memory.GoodX, _memory.GoodY, _memory.GoodZ, _memory.GoodYaw);
     }
+}
+
+void Animus::Movement::PlayerLink::Relay(Report const& report, MovementInfo& info, Opcodes opcode)
+{
+    Player* bot = _bot;
+    WorldSession* session = bot->GetSession();
+    Opcodes relay = opcode;
+    switch (opcode)
+    {
+        case CMSG_FORCE_MOVE_ROOT_ACK: relay = MSG_MOVE_ROOT; break;                    // HandleMoveRootAck
+        case CMSG_FORCE_MOVE_UNROOT_ACK: relay = MSG_MOVE_UNROOT; break;
+        case CMSG_MOVE_KNOCK_BACK_ACK:                                                  // HandleMoveKnockBackAck
+        {
+            WorldPacket data(MSG_MOVE_KNOCK_BACK, 66);
+            session->WriteMovementInfo(&data, &info);
+            data << info.jump.sinAngle;
+            data << info.jump.cosAngle;
+            data << info.jump.xyspeed;
+            data << info.jump.zspeed;
+            bot->SendMessageToSet(&data, false);
+            ++Relayed;
+            return;
+        }
+        case CMSG_MOVE_HOVER_ACK: relay = MSG_MOVE_HOVER; break;                      // ...FlagChangeToggleAck
+        case CMSG_MOVE_FEATHER_FALL_ACK: relay = MSG_MOVE_FEATHER_FALL; break;
+        case CMSG_MOVE_WATER_WALK_ACK: relay = MSG_MOVE_WATER_WALK; break;
+        case CMSG_MOVE_SET_CAN_FLY_ACK: relay = MSG_MOVE_UPDATE_CAN_FLY; break;
+        case CMSG_MOVE_GRAVITY_DISABLE_ACK:
+        case CMSG_MOVE_GRAVITY_ENABLE_ACK: relay = MSG_MOVE_GRAVITY_CHNG; break;
+        default:
+            if (UnitMoveType const type = SpeedAckType(report.Opcode); type != UnitMoveType(MAX_MOVE_TYPE))
+            {
+                // HandleForceSpeedChangeAck: MSG_MOVE_SET_*_SPEED with the new speed.
+                WorldPacket data(SetSpeed2Opc_table[type][static_cast<size_t>(SpeedOpcodeIndex::ACK_RESPONSE)], 18);
+                session->WriteMovementInfo(&data, &info);
+                data << report.Speed;
+                bot->SendMessageToSet(&data, false);
+                ++Relayed;
+                return;
+            }
+            break;          // a movement opcode: relayed as itself (HandleMovementOpcodes)
+    }
+    WorldPacket data(relay, 64);
+    session->WriteMovementInfo(&data, &info);
+    bot->SendMessageToSet(&data, false);
+    ++Relayed;
 }
 
 Animus::Movement::ServerState Animus::Movement::PlayerLink::State() const

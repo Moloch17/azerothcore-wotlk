@@ -20,12 +20,14 @@
 
 #include "Client.h"
 #include "ClientOrders.h"
+#include "Opcodes.h"
 #include "ClientMovement.h"
 #include "Define.h"
 #include <array>
 #include <atomic>
 
 class Player;
+struct MovementInfo;
 class WorldPacket;
 
 /// **The forge's server, to the player controller** (player-controller C4, §5A): a seat's reports are applied by the
@@ -72,8 +74,14 @@ namespace Animus::Movement
         /// The sim sessions' movement-order packets the hook kept (QueueOrder): its hits, for the status line (C8).
         static inline std::atomic<uint64> OrderPackets{ 0 };
 
+        /// Reports relayed to watching clients (only while one is connected).
+        static inline std::atomic<uint64> Relayed{ 0 };
+
     private:
         void Refuse(ClientMovement::Refusal refusal, Report const& report);
+        /// Send what the report's handler sends the players around the mover (SendMessageToSet; a bot has no client
+        /// of its own to leave out).
+        void Relay(Report const& report, MovementInfo& info, Opcodes opcode);
 
         Player* _bot;
         LinkMemory& _memory;

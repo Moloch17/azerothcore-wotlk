@@ -25,7 +25,9 @@
 /// **The seek helper** (player-controller C9): the keys a scripted actor holds to get to a point -- turn toward it
 /// with a mouse rate in proportion to how far off it is, hold forward once it is roughly ahead, let go on arrival. For
 /// scripted actors only (a scripted leader, a scripted opponent driven by the controller); never a learning seat or a
-/// companion, whose movement is the policy's. Pure, so it is tested on its own (SeekTest).
+/// companion, whose movement is the policy's. The scripted baselines (Baselines.cpp, its row-based Seek) only
+/// *suggest* a move-block press for imitation (the learner's hint_coef, off by default); they never move a learning
+/// seat either -- the policy's own press does. Pure, so it is tested on its own (SeekTest).
 namespace Animus::Movement
 {
     struct SeekTuning
