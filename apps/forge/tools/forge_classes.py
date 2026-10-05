@@ -40,11 +40,12 @@ import time
 from pathlib import Path
 
 CLASSES = ("warrior", "paladin", "hunter", "rogue", "priest", "deathknight", "shaman", "mage", "warlock", "druid")
-# A class's fighting line: stage8_duel through stage19_triage (docs/manual/04-curriculum.md, "Training one class at
-# a time"); the movement root before it is trained once for every class, in the shared instance.
-CLASS_QUEUE = ("stage8_duel", "stage9_pack", "stage10_gauntlet", "stage11_endurance", "stage12_pvp", "stage13_evade",
-               "stage14_hide", "stage15_stealth", "stage16_companion", "stage17_party", "stage18_tanking",
-               "stage19_triage")
+# A class's own line: the stages each class trains on its own, after the shared ones. The first curriculum's line
+# (archived 2026-10-05, git tag curriculum-v1) is gone, and the movement curriculum trains every class together, so
+# there is no per-class line to default to: name one in ANIMUS_FORGE_CLASS_QUEUE (comma-separated stage names, as
+# AnimusForge.Queue takes them) when the curriculum has one again.
+CLASS_QUEUE = tuple(stage.strip() for stage in os.environ.get("ANIMUS_FORGE_CLASS_QUEUE", "").split(",")
+                    if stage.strip())
 OUTPUT_ROOT = "/azerothcore/var/animus-forge"       # inside the container; var/animus-forge on the host
 INSTANCES = Path("env/instances")
 COMPOSE = Path("docker-compose.yml")
@@ -154,6 +155,11 @@ def run(classes: list[str], parallel: int) -> int:
         return 2
     if not COMPOSE.exists():
         print("run this from the AzerothCore checkout root (docker-compose.yml)", file=sys.stderr)
+        return 2
+    if not CLASS_QUEUE:
+        print("no per-class line to train: the movement curriculum trains every class together (`forge start`), and "
+              "the first curriculum's per-class line is archived (git tag curriculum-v1). Name the stages in "
+              "ANIMUS_FORGE_CLASS_QUEUE to run one.", file=sys.stderr)
         return 2
 
     pending = [c for c in classes if not finished(c, CLASS_QUEUE)]

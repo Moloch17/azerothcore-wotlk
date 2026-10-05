@@ -26,7 +26,9 @@ REPO = Path(__file__).resolve().parents[4]
 STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
 SIBLING_ANIMUS = REPO / "modules" / "mod-animus"
 
-TOKEN = re.compile(r"\bstage\d+[a-z]?_[a-z_]+\b")
+# A stage name: the archived curriculum's `stageN_name` and the movement curriculum's `moveN_name` (plan §2, the names
+# approved 2026-10-05).
+TOKEN = re.compile(r"\b(?:stage|move)\d+[a-z]?_[a-z_]+\b")
 DATED = re.compile(r"20\d\d-\d\d-\d\d|\bat \d+(\.\d+)?M\b")
 # A conf template line that sets a value: the one place an archived name is still a stray.
 SETTING = re.compile(r"^\s*AnimusForge\.\S+\s*=")
@@ -38,7 +40,11 @@ def defined_names() -> set[str]:
     """The stages Stages.cpp defines (none between the archive and the movement stages): a `.Name` followed by
     a `.Suffix`, which an arena's never is."""
     assert STAGES_CPP.is_file()
-    return set(re.findall(r'\.Name = "(\w+)",\s*\.Suffix', STAGES_CPP.read_text()))
+    names = set(re.findall(r'\.Name = "(\w+)",\s*\.Suffix', STAGES_CPP.read_text()))
+    # Never vacuous: a live stage config means a definition this parse has to find.
+    if {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}:
+        assert names, "stage configs exist but no stage definition was parsed from Stages.cpp"
+    return names
 
 
 def archived_names() -> set[str]:
@@ -91,8 +97,26 @@ def strays(path: Path, names: set[str], archived: set[str], root: Path = REPO) -
 
 @pytest.mark.parametrize("path", scanned_files(), ids=lambda p: str(p.relative_to(REPO)))
 def test_every_stage_name_written_down_exists(path):
-    found = strays(path, defined_names(), archived_names())
+    found = strays(path, defined_names() | set(RESERVED.values()), archived_names())
     assert found == [], "stage names that no longer exist:\n" + "\n".join(found)
+
+
+# The movement curriculum's stages that are planned (approved 2026-10-05, plan §2) but not yet defined, by number, so
+# the docs and the conf template can name them before they land. A reserved number is filled by a stage of exactly
+# this name; delete the entry when it lands.
+RESERVED: dict[int, str] = {
+    2: "move2_ground", 3: "move3_vertical", 4: "move4_water", 5: "move5_routes", 6: "move6_mounted", 7: "move7_follow",
+}
+
+
+def test_movement_numbers_are_contiguous_and_reserved_names_are_kept():
+    """The movement stages are numbered 1..N with no gap (a reserved number counts as filled), and a defined stage
+    whose number is reserved has the reserved name."""
+    defined = {int(m.group(1)): name for name in defined_names() if (m := re.fullmatch(r"move(\d+)_\w+", name))}
+    for number, name in RESERVED.items():
+        assert defined.get(number, name) == name, f"move{number} is reserved for {name}, not {defined[number]}"
+    numbers = sorted(set(defined) | set(RESERVED))
+    assert numbers == list(range(1, len(numbers) + 1)), f"movement stage numbers are not contiguous: {numbers}"
 
 
 def test_an_archived_name_is_a_stray_where_a_value_is_set_from_it(tmp_path):

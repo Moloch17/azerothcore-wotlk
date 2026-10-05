@@ -55,6 +55,8 @@ namespace Animus::Curriculum
         Gather,         // a field of the band's herb and ore nodes, with the zone's creatures (GatherEncounter)
         Town,           // a town's traders: sell, repair, restock, dress (TownEncounter)
         Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
+        /// Nothing to fight: places to stop on, one after another (MarkerEncounter) -- the movement stages.
+        Markers,
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).

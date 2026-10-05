@@ -142,6 +142,10 @@ namespace Animus::Curriculum
         /// A pull drill's second pack dragged into the fight (Instance.PullExtra): a cost. Paid as Threat (Shaping)
         /// until 2026-10-05, so a faded stage8 drill charged nothing for a double pull.
         PullExtra,
+        /// Turning toward the marker (MarkerEncounter, the movement stages): potential shaping on the cosine of the
+        /// marker's bearing from the seat's facing, so turning to face it pays and turning away gives it back. A
+        /// nudge for the first minutes of M1 (Markers.Facing), Shaping so the fade takes it away.
+        Facing,
         Count
     };
 
@@ -264,6 +268,7 @@ namespace Animus::Curriculum
             case RewardTerm::Ranged:
             case RewardTerm::PetTank:
             case RewardTerm::OrderChurn:
+            case RewardTerm::Facing:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;

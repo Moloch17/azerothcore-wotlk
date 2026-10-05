@@ -20,12 +20,18 @@
  * The curriculum: every stage the forge can train, each extending one earlier stage and seeding from it, keeping the
  * base's blocks it needs and adding its own.
  *
- * **Empty since 2026-10-05.** The first curriculum (stage1_move ... stage21_ship: movement, classes, parties and
- * raids, PvP, life, ship) was archived when it was rebuilt from scratch around the player controller: its
- * definitions are on the git tag `curriculum-v1`, its learner configs in apps/forge/python/configs/archive/, its runs
- * in var/animus-forge/shared/archive/curriculum-v1-2026-10-05/. The movement stages (M1-M7,
- * .agents/plans/movement-curriculum/) come next, one entry here each. Until then there is nothing to train: `forge
- * start` says no stages are defined and refuses.
+ * **The movement curriculum** (.agents/plans/movement-curriculum/, approved 2026-10-05): seven stages, M1-M7, in the
+ * order a player learns to move -- controls, ground, verticality, water, long routes, riding and flight, company --
+ * every one of them movement alone, on the player controller (the move block's keys and mouse), on real terrain. The
+ * first curriculum (stage1_move ... stage21_ship) is archived: its definitions on the git tag `curriculum-v1`, its
+ * learner configs in apps/forge/python/configs/archive/, its runs in
+ * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
+ *
+ *   movement   move1_controls ─ ... ─ move7_follow       (M2-M7 land one at a time)
+ *
+ * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
+ * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
+ * the server's facing staler than a client's.
  *
  * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix
  * situations, or several kinds of ground, over the union of their blocks.
@@ -38,6 +44,7 @@
 #include "StageDefinition.h"
 #include "QuestPlanner.h"
 #include "Log.h"
+#include "AreaDefines.h"
 #include <algorithm>
 
 namespace
@@ -47,10 +54,89 @@ namespace
     // The highest role a party drill can fix (ArenaDefinition::DrillRole: 1 tank, 2 healer, 3 damage).
     constexpr uint8 DRILL_DAMAGE = 3;
 
-    /// Every stage, every base before the stages that extend it. None until the movement stages land.
+    /// Open, flat ground on Kalimdor for the controls stage (M1): the Barrens' scrub and Mulgore's grass, from the first
+    /// curriculum's training ground (curriculum-v1 KalimdorGround), every point stood on with `forge rays` then. The
+    /// Durotar and Dustwallow points of that list are left out: they are canyon, rock and broken shore, M2's ground.
+    std::vector<Position> KalimdorFlats()
+    {
+        return {
+            // The Barrens
+            { -872.0f, -2642.0f, 92.0f, 0.0f },   { -2298.0f, -1948.0f, 96.0f, 0.0f },
+            { -1967.0f, -2544.0f, 94.0f, 0.0f },  { -2605.0f, -2286.0f, 92.0f, 0.0f },
+            { -609.0f, -1614.0f, 94.0f, 0.0f },   { -881.0f, -3221.0f, 92.0f, 0.0f },
+            { -3077.0f, -1786.0f, 92.0f, 0.0f },  { -3115.0f, -2352.0f, 94.0f, 0.0f },
+            // Northern Barrens
+            { -652.0f, -2060.0f, 87.0f, 0.0f },   { -767.0f, -2062.0f, 81.0f, 0.0f },
+            { -579.6f, -2070.5f, 54.9f, 0.0f },   { -2068.0f, -2106.0f, 93.0f, 0.0f },
+            { -1942.0f, -1985.0f, 92.0f, 0.0f },  { -1991.0f, -2090.0f, 92.0f, 0.0f },
+            // Mulgore (its other point, (-1210, -93), is on the ridge the broken list climbs)
+            { -1225.2f, 106.6f, 131.4f, 0.0f },
+        };
+    }
+
+    /// Kalimdor's control ground (curriculum-v1 KalimdorControl): three regions in no training list, each point with
+    /// five of its eight bearings open for forty yards. The plan named the Durotar flats for this; the Durotar points
+    /// the first curriculum validated are canyon and rock, so the open control ground it held out stands in until
+    /// flat Durotar points are stood on.
+    std::vector<Position> KalimdorFlatsControl()
+    {
+        return {
+            { -1637.9f, 3082.9f, 31.9f, 0.0f },   { -1168.4f, 2713.1f, 112.1f, 0.0f },
+            { -561.0f, 2069.0f, 90.0f, 0.0f },    { 4012.0f, -788.0f, 286.0f, 0.0f },
+            { 1969.6f, -2339.0f, 89.4f, 0.0f },   { 1813.0f, -2424.0f, 93.0f, 0.0f },
+            { 1965.0f, -2559.0f, 86.0f, 0.0f },
+        };
+    }
+
+    /// Nagrand's plateaus (map 530; curriculum-v1 NagrandControl): the Throne of the Elements' grass trains, the
+    /// two points far off to the east and south are held out.
+    std::vector<Position> NagrandPlateaus()
+    {
+        return {
+            { -850.6f, 6517.2f, 172.6f, 0.0f },   { -842.4f, 6578.1f, 172.7f, 0.0f },
+            { -652.9f, 6576.9f, 170.4f, 0.0f },   { -685.5f, 6609.0f, 176.6f, 0.0f },
+        };
+    }
+
+    std::vector<Position> NagrandPlateausControl()
+    {
+        return {
+            { -533.9f, 8870.4f, 209.0f, 0.0f },   { -974.2f, 8136.0f, -93.8f, 0.0f },
+        };
+    }
+
+    /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
-        return {};
+        using enum BlockId;
+
+        std::vector<StageDefinition> stages;
+
+        // M1 -- controls: what a new player learns in the first minute. Forward, turning, strafing, and stopping
+        // where it meant to: a marker 5 to 60 yards off, anywhere round (behind included, by the last rung), stopped
+        // on inside a radius that tightens from four yards to half a yard (the user's "stop exactly on the marker",
+        // 2026-10-05), then the next, three to eight an episode. Open ground only: the straight line is the way.
+        //
+        // Core and the goal block stay as the layout's frame (the character and its kit, the goal head the learner
+        // sizes from the goal block); Move is the whole lesson. Nothing to fight, so no duel block.
+        stages.push_back({
+            .Name = "move1_controls",
+            .Suffix = "_controls",
+            .Extends = "",
+            .Summary = "markers on open ground, 5 to 60 yd off and anywhere round: get there and stop exactly on them",
+            .Blocks = { Core, Move, Goal },
+            .Arenas = {
+                { .Name = "plains", .Weight = 3, .Against = Opposition::Markers, .EpisodeSeconds = 120 },
+                { .Name = "nagrand", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 120,
+                    .SpawnPoints = NagrandPlateaus(), .MapId = MAP_OUTLAND,
+                    .HeldOutSpawnPoints = NagrandPlateausControl() },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorFlats(),
+            .HeldOutSpawnPoints = KalimdorFlatsControl(),
+        });
+
+        return stages;
     }
 
     /// Why `arena` cannot be played with `stage`'s blocks, or empty.
@@ -214,6 +300,19 @@ namespace
             }))
             return "the world block wants a life arena to be read in";
 
+        // The movement stages' markers: one seat on its own with nothing else in the episode, on the stage's ground.
+        // The travel arena's kinds of ground (water, rooms, ledges, lakebeds, the air) are not markers' yet: each
+        // comes with the stage that asks for it.
+        bool const markers = arena.Against == Opposition::Markers;
+        if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed))
+            return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
+        if (markers && (arena.OnFoot || arena.Flying || arena.AirOnly || arena.Water || arena.Indoors || arena.Ledges
+            || arena.Underwater || arena.Checkpoints))
+            return "a marker arena takes none of the travel arena's kinds of ground yet";
+        if (markers && !stage.Has(BlockId::Move))
+            return "markers are walked to with the move block";
+
         bool const dummy = arena.Against == Opposition::Dummy;
         if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None))
@@ -266,8 +365,13 @@ namespace
                 return "it merges " + merge + ", which is not an earlier valid stage";
         }
 
-        if (!stage.Has(BlockId::Duel))
-            return "every stage fights something that fights back, which needs the duel block";
+        // A stage with nothing to fight carries no duel block (the movement stages); one that fights needs it.
+        bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
+        {
+            return arena.Against != Opposition::Markers;
+        });
+        if (fights && !stage.Has(BlockId::Duel))
+            return "a stage that fights something needs the duel block";
 
         if (stage.Arenas.empty() || stage.Arenas.size() > MAX_ARENAS)
             return "it needs 1 to " + std::to_string(MAX_ARENAS) + " arenas";

@@ -134,6 +134,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::DrillFocus:            return "drill_focus";
         case RewardTerm::DrillKeep:             return "drill_keep";
         case RewardTerm::PullExtra:             return "pull_extra";
+        case RewardTerm::Facing:                return "facing";
         case RewardTerm::Count:                 break;
     }
 

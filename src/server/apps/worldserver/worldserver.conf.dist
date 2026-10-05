@@ -5033,13 +5033,14 @@ AnimusForge.OutputDir = ""
 #                     every role it can play: what the model is told is its role and its talents, never
 #                     its spec, so it learns to play the character it was handed. Each stage's layouts
 #                     extend the stage it builds on, which seeds it:
-#                     No stages are defined at the moment: the first curriculum (stage1_move ...
-#                     stage21_ship) was archived on 2026-10-05 -- its definitions on the git tag
-#                     curriculum-v1, its learner configs in apps/forge/python/configs/archive/ -- and the
-#                     movement stages that replace it (.agents/plans/movement-curriculum/) are not in yet.
-#                     Until they are, `forge start` says no stages are defined and starts nothing.
-#                     Stages that need their own env count set it with AnimusForge.Stage.<name>.Envs.
-#        Example:     "<stage>" - (train a single scenario)
+#                     The movement curriculum (.agents/plans/movement-curriculum/): M1-M7, every stage
+#                     movement alone on the player controller, landing one at a time:
+#                       movement  "move1_controls" (markers on open ground: get there, stop exactly on them)
+#                     The first curriculum (stage1_move ... stage21_ship) was archived on 2026-10-05 -- its
+#                     definitions on the git tag curriculum-v1, its learner configs in
+#                     apps/forge/python/configs/archive/. Stages that need their own env count set it with
+#                     AnimusForge.Stage.<name>.Envs.
+#        Example:     "move1_controls" - (train a single scenario)
 #        Default:     "" - (the whole curriculum, first stage to last)
 
 AnimusForge.Queue = ""
@@ -5158,11 +5159,18 @@ AnimusForge.TicksPerDecision = 1
 #                     worldserver takes the stage's tick while it runs and the configured one again after, so
 #                     no restart is needed. It must divide AnimusForge.DecisionMs; one that does not is dropped
 #                     with an error. Under AnimusForge.HalfBatch such a stage runs as one group.
-#                     Suggested for the movement stages: 5 (50 ms ticks, a live server's own rate -- 4 does
-#                     not divide 250 ms), at roughly the cost above. None are set: the first curriculum's
-#                     movement stages, which ran at 5, were archived (git tag curriculum-v1); the new
-#                     movement stages set theirs when they land.
+#                     Every movement stage (move1_controls ... move7_follow) runs 50 ms world ticks:
+#                     DecisionMs / 50, so 5 at the default 250 ms decisions (4 does not divide 250 ms). Not
+#                     smoothness this time but correctness: the player controller's mouse-look facing rule (a
+#                     facing report once the yaw has moved 0.1 rad) and its heartbeat are checked once a world
+#                     tick, so a coarser tick leaves the server's view of a seat's facing staler than a real
+#                     client's. The decision cadence is a separate, open question (movement-curriculum plan 8.5:
+#                     decisions at 250, 125 or 100 ms are compared with the world tick held at 50 ms); a change
+#                     of AnimusForge.DecisionMs changes these to DecisionMs / 50. A test refuses a movement
+#                     stage whose world tick is over 50 ms (test_stage_ticks.py).
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
+
+AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6630,6 +6638,37 @@ AnimusForge.Curriculum.Dummy.Resource = 0.5
 #   the moving drill: another dummy to switch to about every AddEveryMs, up to MaxAdds
 AnimusForge.Curriculum.Dummy.AddEveryMs = 15000
 AnimusForge.Curriculum.Dummy.MaxAdds = 2
+
+#
+#    AnimusForge.Curriculum.Markers.*
+#        The movement stages' markers (MarkerEncounter; move1_controls): a place on open ground to stop on, then
+#        the next, MarkersMin to MarkersMax an episode. Arrive is paid per marker the seat stopped on -- no forward,
+#        back, strafe or vertical key held, no jump, on the ground, the feet moved under StopMoved yards since the
+#        last decision, inside the rung's radius. Progress (the straight-line distance, per leg) and Facing (the
+#        cosine of the marker's bearing from the facing) are potential shaping and fade with the stage's shaping.
+#        The ladder (per class and build, Difficulty.*) has Rungs rungs; each moves the furthest distance from
+#        DistanceFirst to DistanceLast (the nearest is always DistanceMin), the bearing span either side of the
+#        facing from BearingFirst to BearingLast degrees, and the stop radius from RadiusFirst to RadiusLast yards.
+#        A marker's way on the navmesh is at most MaxDetour times the straight line. stop_distance averages the
+#        distance at every stop within StopNear yards of the marker.
+AnimusForge.Curriculum.Markers.Arrive = 3.0
+AnimusForge.Curriculum.Markers.StepCost = 0.0002
+AnimusForge.Curriculum.Markers.Death = 3.0
+AnimusForge.Curriculum.Markers.Progress = 1.0
+AnimusForge.Curriculum.Markers.Facing = 0.25
+AnimusForge.Curriculum.Markers.StopMoved = 0.05
+AnimusForge.Curriculum.Markers.MarkersMin = 3
+AnimusForge.Curriculum.Markers.MarkersMax = 8
+AnimusForge.Curriculum.Markers.Rungs = 8
+AnimusForge.Curriculum.Markers.DistanceMin = 5.0
+AnimusForge.Curriculum.Markers.DistanceFirst = 10.0
+AnimusForge.Curriculum.Markers.DistanceLast = 60.0
+AnimusForge.Curriculum.Markers.BearingFirst = 20.0
+AnimusForge.Curriculum.Markers.BearingLast = 180.0
+AnimusForge.Curriculum.Markers.RadiusFirst = 4.0
+AnimusForge.Curriculum.Markers.RadiusLast = 0.5
+AnimusForge.Curriculum.Markers.MaxDetour = 1.1
+AnimusForge.Curriculum.Markers.StopNear = 10.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

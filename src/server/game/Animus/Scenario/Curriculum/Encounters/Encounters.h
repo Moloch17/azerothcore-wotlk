@@ -1034,6 +1034,13 @@ namespace Animus::Curriculum
         /// own height, under every other rule above. The band is not insisted on.
         bool Fixed = false;
         Position At;
+        /// Only bearings within ArcHalf radians either side of ArcCentre (world yaw) are drawn; pi or more is the whole
+        /// circle, which is every arena but the markers' (whose ladder widens the arc from ahead to behind).
+        float ArcCentre = 0.0f;
+        float ArcHalf = float(M_PI);
+        /// The ceiling on the walking way over the straight line, when it should be lower than the generator's own
+        /// (0 keeps it): a marker in the open is one the straight line reaches.
+        float MaxDetour = 0.0f;
     };
 
     class TravelEncounter final : public Encounter

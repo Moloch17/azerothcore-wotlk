@@ -42,6 +42,7 @@
 #include "GoalBlock.h"
 #include "HintBlock.h"
 #include "Encounters.h"
+#include "MarkerEncounter.h"
 #include "SpellMgr.h"
 #include "Env.h"
 #include "EnvPool.h"
@@ -457,6 +458,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasGather = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Gather; };
     auto const hasTown = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Town; };
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
+    auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -497,6 +499,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         ambush = add(std::make_unique<AmbushEncounter>(*this, envs));
     if (_stage.AnyArena(hasTravel))
         travel = add(std::make_unique<TravelEncounter>(*this, envs, settings));
+    // The movement stages' markers: nothing to fight, nothing else to order against.
+    Encounter* markers = nullptr;
+    if (_stage.AnyArena(hasMarkers))
+        markers = add(std::make_unique<MarkerEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -513,7 +519,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, flag, director })
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -531,6 +537,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == instance && hasInstance(arena))
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
+                || (encounter == markers && hasMarkers(arena))
                 || (encounter == director && directed(arena));
         };
 

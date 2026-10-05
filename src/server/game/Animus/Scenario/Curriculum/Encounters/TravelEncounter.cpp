@@ -872,7 +872,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             }
             else
             {
-                if (walked > distance * MAX_PATH_DETOUR)
+                if (walked > distance * (rules.MaxDetour > 0.0f ? rules.MaxDetour : MAX_PATH_DETOUR))
                     return false;
 
                 // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the
@@ -942,7 +942,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     {
         float const reach = attempt < attempts / 2 ? furthest : (nearest + furthest) * 0.5f;
         distance = frand(nearest, std::max(nearest, reach));
-        angle = frand(0.0f, 2.0f * float(M_PI));
+        angle = rules.ArcHalf >= float(M_PI) ? frand(0.0f, 2.0f * float(M_PI))
+            : rules.ArcCentre + frand(-rules.ArcHalf, rules.ArcHalf);
     };
 
     // The tries at once, on the map threads that are free, when a map update is running (the resets of the envs

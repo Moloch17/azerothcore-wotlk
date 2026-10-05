@@ -939,6 +939,44 @@ namespace Animus::Curriculum
             uint32 MaxAdds = 2;
         } Dummy;
 
+        /// The movement stages' markers (Opposition::Markers, MarkerEncounter): a place to stop on, then the next.
+        ///
+        /// The ladder is per class and build (DifficultyLadder, Difficulty.*), Rungs rungs from the first to the last,
+        /// each of the three things it tightens moving linearly between its First and Last value: how far the marker
+        /// is (DistanceMin up to Distance*), how far round from the seat's facing it may be (Bearing*, degrees either
+        /// side: 180 is behind as well) and the radius the seat has to stop in (Radius*). A rung counts as won when
+        /// every marker of the episode was reached before the clock.
+        struct MarkerTuning
+        {
+            float Arrive = 3.0f;                // per marker stopped on (Outcome)
+            float StepCost = 0.0002f;           // per decision (Cost)
+            float Death = 3.0f;
+            /// Potential shaping on the straight-line distance to the marker, spread over the leg so closing the
+            /// whole of it pays Progress once (Shaping: M1's ground is open, the straight line is the way).
+            float Progress = 1.0f;
+            /// Potential shaping on the cosine of the marker's bearing from the seat's facing: Facing for turning
+            /// from dead away to dead ahead (Shaping).
+            float Facing = 0.25f;
+            /// Stopped: no forward, back, strafe or vertical key held, no jump pending, on the ground, and the feet
+            /// moved less than this many yards since the last decision.
+            float StopMoved = 0.05f;
+            uint32 MarkersMin = 3;              // markers an episode (drawn per episode)
+            uint32 MarkersMax = 8;
+            uint32 Rungs = 8;                   // rungs on the ladder, the last of which is the stage's real task
+            float DistanceMin = 5.0f;           // yards: the nearest a marker is, at every rung
+            float DistanceFirst = 10.0f;        // the furthest, on the first rung ...
+            float DistanceLast = 60.0f;         // ... and the last
+            float BearingFirst = 20.0f;         // degrees either side of the facing a marker may be, first rung
+            float BearingLast = 180.0f;
+            float RadiusFirst = 4.0f;           // yards: the radius to stop in, first rung (user, 2026-10-05: 4 -> 0.5)
+            float RadiusLast = 0.5f;
+            /// The way to a marker on the navmesh may be at most this many times the straight line: M1's markers are
+            /// in the open, where the straight line is the way.
+            float MaxDetour = 1.1f;
+            /// How near a stop has to be to count in stop_distance (a stop far from the marker is a pause, not a try).
+            float StopNear = 10.0f;
+        } Markers;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1450,6 +1488,24 @@ namespace Animus::Curriculum
             f("Dummy.Resource", tuning.Dummy.Resource);
             f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
             f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
+            f("Markers.Arrive", tuning.Markers.Arrive);
+            f("Markers.StepCost", tuning.Markers.StepCost);
+            f("Markers.Death", tuning.Markers.Death);
+            f("Markers.Progress", tuning.Markers.Progress);
+            f("Markers.Facing", tuning.Markers.Facing);
+            f("Markers.StopMoved", tuning.Markers.StopMoved);
+            f("Markers.MarkersMin", tuning.Markers.MarkersMin);
+            f("Markers.MarkersMax", tuning.Markers.MarkersMax);
+            f("Markers.Rungs", tuning.Markers.Rungs);
+            f("Markers.DistanceMin", tuning.Markers.DistanceMin);
+            f("Markers.DistanceFirst", tuning.Markers.DistanceFirst);
+            f("Markers.DistanceLast", tuning.Markers.DistanceLast);
+            f("Markers.BearingFirst", tuning.Markers.BearingFirst);
+            f("Markers.BearingLast", tuning.Markers.BearingLast);
+            f("Markers.RadiusFirst", tuning.Markers.RadiusFirst);
+            f("Markers.RadiusLast", tuning.Markers.RadiusLast);
+            f("Markers.MaxDetour", tuning.Markers.MaxDetour);
+            f("Markers.StopNear", tuning.Markers.StopNear);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);

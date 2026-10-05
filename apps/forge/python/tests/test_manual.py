@@ -9,6 +9,10 @@ of trusted.
 import re
 from pathlib import Path
 
+import pytest
+
+from animus.config import TrainConfig
+
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 REPO = Path(__file__).resolve().parents[4]
 MANUAL = REPO / "docs" / "forge" / "04-curriculum.md"
@@ -38,10 +42,22 @@ def test_the_table_covers_every_stage_config():
     assert on_disk - set(documented()) == set(), "these configs have no row in the manual's budget table"
 
 
-# The budget table's other checks -- each row against its config, an evaluation's sim-time cost from Stages.cpp's
-# episode lengths, and the queue total -- covered the first curriculum only, and went with it to the archive
-# (2026-10-05, git tag curriculum-v1). The table they read now documents that archive; the movement stages bring a
-# table of their own, and the checks come back against it.
+def _live_configs() -> list[str]:
+    return sorted({p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"})
+
+
+@pytest.mark.parametrize("name", _live_configs())
+def test_the_manual_matches_the_config(name):
+    """Each live stage's row (the movement curriculum's table at the head of chapter 4) against its config. The
+    archived curriculum's rows are history and are not checked: their configs are in configs/archive/."""
+    config = TrainConfig.load(CONFIGS / f"{name}.yaml")
+    configured = {"total_env_steps": config.total_env_steps, "every_env_steps": config.eval.every_env_steps,
+                  "episodes": config.eval.episodes}
+    assert documented()[name] == configured, f"04-curriculum.md disagrees with configs/{name}.yaml"
+
+
+# The archived checks of an evaluation's sim-time cost (from Stages.cpp's episode lengths) and of the queue total
+# covered the first curriculum only and went with it to the archive (2026-10-05, git tag curriculum-v1).
 
 
 # --------------------------------------------------------------------------- 8.2 tuning defaults

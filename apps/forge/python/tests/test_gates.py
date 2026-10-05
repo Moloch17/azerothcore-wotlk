@@ -57,7 +57,7 @@ def sim_stage_columns() -> dict[str, set[str]]:
         ("pulls", "PullsEncounter"), ("creature", "CreatureEncounter"), ("hazards", "HazardEncounter"),
         ("ambush", "AmbushEncounter"), ("travel", "TravelEncounter"), ("flag", "FlagEncounter"),
         ("director", "DirectorEncounter"), ("instance", "InstanceEncounter"), ("quest", "QuestEncounter"),
-        ("gather", "GatherEncounter"), ("town", "TownEncounter"))}
+        ("gather", "GatherEncounter"), ("town", "TownEncounter"), ("markers", "MarkerEncounter"))}
     # The three life encounters share a base whose columns every one of them emits.
     for life in ("quest", "gather", "town"):
         per_encounter[life] |= columns("Encounters/LifeEncounter.cpp")
@@ -84,7 +84,8 @@ def sim_stage_columns() -> dict[str, set[str]]:
                 active.add("opponent")
             for opposition, encounter in (("Pulls", "pulls"), ("Creature", "creature"), ("Hazards", "hazards"),
                                           ("Travel", "travel"), ("Flag", "flag"), ("Instance", "instance"),
-                                          ("Quest", "quest"), ("Gather", "gather"), ("Town", "town")):
+                                          ("Quest", "quest"), ("Gather", "gather"), ("Town", "town"),
+                                          ("Markers", "markers")):
                 if against == opposition:
                     active.add(encounter)
             if ".Owner = true" in arena:
@@ -96,15 +97,22 @@ def sim_stage_columns() -> dict[str, set[str]]:
             if re.search(r"\.Ambushers = [1-9]", arena):
                 active.add("ambush")
         out[name.group(1)] = set(always).union(*(per_encounter[e] for e in active)) if active else set(always)
-    # Empty is a valid curriculum: none is defined between the archive (2026-10-05) and the movement stages.
+    # Never vacuous: a live stage config means a stage definition this parse has to have found.
+    if _live_stage_configs():
+        assert out, "stage configs exist but no stage definition was parsed from Stages.cpp"
     return out
+
+
+def _live_stage_configs() -> set[str]:
+    """The stage configs in configs/ (fast.yaml is an overlay, archive/ the archived curriculum's)."""
+    return {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}
 
 
 def test_layout_sampling_metric_must_exist():
     """Every stage's config samples layouts by a column the stage can emit (configs/<stage>.yaml; none while the
     curriculum is empty)."""
     columns = sim_stage_columns()
-    assert {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"} <= set(columns), "a config with no stage"
+    assert _live_stage_configs() <= set(columns), "a config with no stage"
     for name, emitted in columns.items():
         config = TrainConfig.load(CONFIGS / f"{name}.yaml")
         assert config.layout_sampling.metric in (*DERIVED_METRICS, *emitted), name
@@ -133,9 +141,11 @@ def stage_definitions() -> dict[str, dict]:
             return found.group(1) if found else default
         out[name.group(1)] = dict(
             extends=field(r'\.Extends = "([^"]*)"'),
-            merges=re.findall(r'"(stage[0-9a-z_]+)"', field(r"\.Merges = \{([^}]*)\}")),
+            merges=re.findall(r'"((?:stage|move)[0-9a-z_]+)"', field(r"\.Merges = \{([^}]*)\}")),
             blocks={b.strip() for b in field(r"\.Blocks = \{([^}]*)\}").split(",") if b.strip()},
         )
+    if _live_stage_configs():
+        assert out, "stage configs exist but no stage definition was parsed from Stages.cpp"
     return out
 
 

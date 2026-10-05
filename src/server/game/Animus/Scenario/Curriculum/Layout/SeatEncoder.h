@@ -34,10 +34,12 @@
 namespace Animus::Curriculum::SeatEncoder
 {
     /// Whether the layout also acts without a target (between gauntlet pulls: food, drink, sustain spells; travel;
-    /// the world outside a fight).
+    /// the world outside a fight; and a layout with nothing to fight at all -- no duel block, as the movement
+    /// stages', whose seats never have a target).
     [[nodiscard]] inline bool ActsWithoutTarget(Layout const& layout)
     {
-        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Travel) || layout.Has(BlockId::World);
+        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Travel) || layout.Has(BlockId::World)
+            || !layout.Has(BlockId::Duel);
     }
 
     /// Write the layout's observation (view.L->ObsDim values) and action mask (view.L->NumActions). Action 0 is always
