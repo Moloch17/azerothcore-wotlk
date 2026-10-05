@@ -40,12 +40,16 @@ namespace Animus::Curriculum
     /// trip, at a walk on the first rungs; from Follow.CastFromRung a share of training episodes hand it to a frozen
     /// checkpoint (stage.json cast "leader": an M6 policy that rides, swims and jumps as it likes), whose objective is
     /// the trip's end. Evaluations always keep the script. The scripted leader's trips are dry and need no jump
-    /// (TravelPlaceRules::NoJump): its keys never jump.
+    /// (TravelPlaceRules::NoJump): its keys never jump. A cast leader's may swim and jump (M5/M6's rules).
     ///
     /// The follower sees the leader as its objective (SeatView's objective bearing and distance). It is paid
     /// FollowKept per second in the band (Outcome), Lost per second past Follow.LostYards and Aggro per hostile
     /// creature newly on it (Costs), Progress on closing to the band (Shaping), and the ground courses' Stuck, Wall
     /// and FallDamage.
+    ///
+    /// **Aggro is dormant as built:** each env's phase hides the world's creatures, so nothing attacks the follower
+    /// and aggro_pulled reads 0. Whether hostile camps are spawned into the env's phase on M7's roads, or the term
+    /// waits for a later stage, is the user's to decide (2026-10-05); the term stays wired and audited until then.
     class FollowEncounter final : public Encounter
     {
     public:
@@ -91,6 +95,8 @@ namespace Animus::Curriculum
             uint32 TripStartMs = 0;
             uint32 TripStuckMs = 0;         // the leader's controller-stuck time when the trip began
             uint32 Trips = 0;
+            uint32 LeaderSwims = 0;         // the leader's entries into the water
+            bool LeaderWasWet = false;
 
             // The follower.
             uint32 InBandMs = 0;

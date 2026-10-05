@@ -34,7 +34,8 @@ layout_sampling:
 
 eval:
   report: [follow_in_band_share, follow_distance_mean, follow_distance_sd, catch_ups, lost_seconds, aggro_pulled,
-           leader_cast, leader_trips, difficulty, at_top_rung, stuck_seconds, wall_seconds, swim_seconds, jumps,
+           leader_cast, leader_trips, leader_swims, leader_jumps, difficulty, at_top_rung, stuck_seconds,
+           wall_seconds, swim_seconds, jumps,
            fall_damage, course_kinks, moves_refused, movement_casts, speed_casts, died, timed_out,
            reward_follow_kept, reward_lost, reward_aggro, reward_progress, reward_stuck, reward_wall, reward_jitter,
            reward_effort]

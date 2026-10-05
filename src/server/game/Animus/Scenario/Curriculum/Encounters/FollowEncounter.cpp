@@ -94,6 +94,13 @@ void Animus::Curriculum::FollowEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     table.Add("lost_seconds", [this](Env const& env, uint32) { return float(_envs[env.Index].LostMs) / 1000.0f; });
     table.Add("aggro_pulled", [this](Env const& env, uint32) { return float(_envs[env.Index].AggroPulled); });
     table.Add("leader_cast", [this](Env const& env, uint32) { return _envs[env.Index].Cast ? 1.0f : 0.0f; });
+    // How the leader went: into the water, and jumps (the controller's count). A scripted leader does neither; a cast
+    // one may, and the follower has to follow it there.
+    table.Add("leader_swims", [this](Env const& env, uint32) { return float(_envs[env.Index].LeaderSwims); });
+    table.Add("leader_jumps", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].Built ? float(_scenario.Data(env).Seats[_scenario.OwnerAgent()].Jumps) : 0.0f;
+    });
     table.Add("leader_trips", [this](Env const& env, uint32) { return float(_envs[env.Index].Trips); });
     table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
     table.Add("at_top_rung", [this](Env const& env, uint32)
@@ -155,12 +162,16 @@ bool Animus::Curriculum::FollowEncounter::NextTrip(Env const& env, EnvFollow& fo
     CurriculumTuning::FollowTuning const& tuning = _scenario.Tuning().Follow;
     float const furthest = std::max(tuning.TripNearest, TripFurthest(follow.Rung, std::max<uint32>(1, tuning.Rungs),
         tuning.TripFurthestFirst, tuning.TripFurthestLast));
+    // The whole way planned by the RoutePlanner (PathGenerator stops short at the long trips), walkable by the
+    // controller with no drop past RouteMaxDrop. A scripted leader's keys never jump or climb out of water, so its
+    // trips are dry and jump-free; a cast leader (an M6 policy) gets M5/M6's ground -- swims and jumps allowed -- and
+    // the follower learns to follow it there.
     TravelPlaceRules rules;
-    rules.DryOnly = true;
+    rules.LongRoute = true;
     rules.ControllerReach = true;
     rules.RouteMaxDrop = _scenario.Tuning().Markers.RouteMaxDrop;
-    // A scripted leader's keys never jump; a cast one plays the same trips and may take what it likes.
-    rules.NoJump = true;
+    rules.DryOnly = !follow.Cast;
+    rules.NoJump = !follow.Cast;
     Position place;
     if (!TravelEncounter::FindPlace(leader, map, tuning.TripNearest, furthest, false, place, 0.0f, nullptr, false,
         nullptr, false, nullptr, rules))
@@ -184,6 +195,9 @@ void Animus::Curriculum::FollowEncounter::Update(Env& env)
         return;
 
     SeatState& seat = _scenario.Data(env).Seats[agent];
+    bool const wet = leader->IsInWater();
+    follow.LeaderSwims += wet && !follow.LeaderWasWet ? 1 : 0;
+    follow.LeaderWasWet = wet;
     bool const arrived = follow.HasTrip && leader->GetExactDist2d(&follow.Trip) <= LEADER_ARRIVE;
     bool const stuck = follow.HasTrip && seat.StuckMs - std::min(seat.StuckMs, follow.TripStuckMs)
         >= LEADER_GIVE_UP_MS;

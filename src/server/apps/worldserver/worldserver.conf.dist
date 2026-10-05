@@ -6810,7 +6810,8 @@ AnimusForge.Curriculum.MarkerMounted.SkyOpen = 10.0
 #        at a walk below WalkRungs; from CastFromRung up, CastShare percent of training episodes give it to a frozen
 #        checkpoint (the learner's cast.agents.leader). Evaluations keep the script. Paid: Kept per second in the band
 #        (Outcome), Lost per second past LostYards and Aggro per hostile newly attacking the follower (Costs),
-#        Progress on closing to the band (Shaping). A ladder episode is won at WinShare of the time in band; a
+#        Progress on closing to the band (Shaping); Aggro is dormant until hostiles are spawned into the env's phase
+#        (the user's decision). A ladder episode is won at WinShare of the time in band; a
 #        catch-up is coming back into the band after CatchUpSeconds out.
 AnimusForge.Curriculum.Follow.BandMin = 3.0
 AnimusForge.Curriculum.Follow.BandMax = 10.0
