@@ -284,9 +284,6 @@ namespace Animus::Curriculum
         float MotionMarkRange = -1.0f;
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        /// The movement-smooth steering memory (SteerMemory), read only by the blocks still launching seat runs
-        /// (player-controller C4, C9 strip it). Mutable like the probe.
-        mutable SteerMemory Steering;
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
         /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
         uint32 SubmergedSinceMs = 0;
@@ -497,14 +494,6 @@ namespace Animus::Curriculum
         bool PendingRepeat = false;             // this press was past the free ones; the verdict decides the charge
         bool MoveRepeat = false;                // ... and it was a step, settled with the step's verdict
         int8 FromBehind = -1;                   // the kit has a from-behind spell (1), not (0), not looked yet (-1)
-        // Following (CompanionBlock): runs started or re-aimed, decisions spent following, and the yards to the owner
-        // over them (sum, sum of squares, and how many were within the 3-6 yard band a player keeps).
-        uint32 FollowAims = 0;
-        uint32 FollowStarts = 0;                // a follow begun while none was running: the run restarted
-        uint32 FollowDecisions = 0;
-        float FollowDistanceSum = 0.0f;
-        float FollowDistanceSq = 0.0f;
-        uint32 FollowInBand = 0;
         uint32 MoveStarts = 0;
         uint32 MoveStopStarts = 0;          // a start within a second of a stop
         bool WasMoving = false;
@@ -552,7 +541,6 @@ namespace Animus::Curriculum
             CourseKinks = 0;
             HasCourse = false;
             ControlChanges = 0;
-            Steering.Clear();
             Facing = 0.0f;
             Probe = GroundProbe();
             Trail.Clear();
@@ -665,12 +653,6 @@ namespace Animus::Curriculum
             PendingRepeat = false;
             MoveRepeat = false;
             FromBehind = -1;
-            FollowAims = 0;
-            FollowStarts = 0;
-            FollowDecisions = 0;
-            FollowDistanceSum = 0.0f;
-            FollowDistanceSq = 0.0f;
-            FollowInBand = 0;
             MoveStarts = 0;
             MoveStopStarts = 0;
             WasMoving = false;

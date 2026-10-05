@@ -1796,8 +1796,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     {
         _ticksPerSecond = double(ticks) / seconds;
         _episodesPerSecond = double(sim.Episodes - std::min(sim.Episodes, _rateEpisodes)) / seconds;
-        uint64 const turnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
-        _turnRunsPerSecond = double(turnRuns - std::min(turnRuns, _rateTurnRuns)) / seconds;
 
         // Where those decisions' wall time went, per decision.
         if (ticks)
@@ -1882,7 +1880,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     {
         _rateTime = now;
         _rateTicks = _ticks;
-        _rateTurnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
         _rateEpisodes = sim.Episodes;
         _rateWorldNs = _worldNs;
         _rateSimNs = _simNs;
@@ -1904,17 +1901,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Travel::WayPlanNs.load(std::memory_order_relaxed)) / double(plans) / 1e6,
                 Travel::WayPlansFailed.load(std::memory_order_relaxed),
                 Travel::WayPlansPartial.load(std::memory_order_relaxed));
-        uint64 const moves = Animus::Curriculum::Encoding::MoveToCalls.load(std::memory_order_relaxed);
-        if (moves)
-            sim.ProbeNote += Acore::StringFormat("moves {} ({:.3f} ms each); ", moves,
-                double(Animus::Curriculum::Encoding::MoveToNs.load(std::memory_order_relaxed)) / double(moves) / 1e6);
-        // A turn walked as one run (MoveBlock): what laying it out costs, how often, and how often it fell back.
-        uint64 const turnRuns = Animus::Curriculum::Encoding::TurnRunCalls.load(std::memory_order_relaxed);
-        if (turnRuns)
-            sim.ProbeNote += Acore::StringFormat("turn runs {} ({:.3f} ms each, {:.1f}/s, {} fell back straight); ",
-                turnRuns, double(Animus::Curriculum::Encoding::TurnRunNs.load(std::memory_order_relaxed))
-                / double(turnRuns) / 1e6, _turnRunsPerSecond,
-                Animus::Curriculum::Encoding::TurnRunFallbacks.load(std::memory_order_relaxed));
         uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
         if (searches)
             sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths "

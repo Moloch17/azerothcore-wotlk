@@ -478,8 +478,6 @@ namespace AnimusForge
 
         std::chrono::steady_clock::time_point _rateTime;
         uint64 _rateTicks = 0;
-        uint64 _rateTurnRuns = 0;           // Encoding::TurnRunCalls at _rateTime
-        double _turnRunsPerSecond = 0.0;
         uint64 _rateEpisodes = 0;
         uint64 _rateWorldNs = 0;
         uint64 _rateSimNs = 0;

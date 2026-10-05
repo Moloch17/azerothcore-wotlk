@@ -28,7 +28,6 @@
 #include "Item.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
-#include "MotionMaster.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "QuestDef.h"
@@ -118,9 +117,8 @@ namespace
         if (!info || !bot->IsAlive() || bot->IsNonMeleeSpellCast(false))
             return false;
 
-        // A gathering cast is a cast: standing still first, as the mount cast does (TravelBlock::Apply).
-        bot->GetMotionMaster()->Clear();
-        bot->StopMoving();
+        // A gathering cast is a cast: standing still for it is the seat's own (its keys), as a player's is -- the core
+        // refuses one from a moving caster.
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
         return spell->prepare(&targets) == SPELL_CAST_OK;
     }

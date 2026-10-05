@@ -29,26 +29,11 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    constexpr uint32 FOLLOW_TANK_MOVE_POINT_ID = 4;
-    constexpr float FOLLOW_TANK_DISTANCE = 4.0f;
-    constexpr float FOLLOW_TANK_MIN_DISTANCE = 8.0f;
-    /// A follow re-aimed no more than once a second while its run is under way, unless the tank has moved this far
-    /// from where it was aimed (movement-smooth A9): each press relaunched the run, a hitch a decision.
-    constexpr uint64 FOLLOW_TANK_AIM_MS = 1000;
-    constexpr float FOLLOW_TANK_REAIM_YARDS = 3.0f;
-
     bool IsAllowed(SeatView const& view, uint32 action)
     {
         Player* bot = view.Bot;
         if (!bot->IsAlive())
             return false;
-
-        if (action == PartyBlock::ACTION_FOLLOW_TANK)
-        {
-            Player* tank = view.Tank;
-            return tank && tank != bot && !bot->IsNonMeleeSpellCast(false, false, true)
-                && !bot->HasUnitState(Encoding::IMMOBILE_STATES) && bot->GetDistance(tank) > FOLLOW_TANK_MIN_DISTANCE;
-        }
 
         if (action < PartyBlock::ACTION_GUARD_FIRST)
         {
@@ -108,8 +93,6 @@ std::string Animus::Curriculum::PartyBlock::ActionName(Layout const& layout, uin
             : Acore::StringFormat("spotlight_{}", member - GROUP_MEMBERS);
     };
 
-    if (local == ACTION_FOLLOW_TANK)
-        return "follow_tank";
     if (local < ACTION_GUARD_FIRST)
         return "assist_" + slotName(local - ACTION_ASSIST_FIRST);
     if (local < ACTION_REVIVE_FIRST)
@@ -213,33 +196,6 @@ void Animus::Curriculum::PartyBlock::Apply(SeatView& view, uint32 local, SeatAct
 {
     if (!IsAllowed(view, local))
         return;
-
-    Player* bot = view.Bot;
-
-    if (local == ACTION_FOLLOW_TANK)
-    {
-        Player* tank = view.Tank;
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        tank->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_TANK_DISTANCE,
-            Position::NormalizeOrientation(tank->GetOrientation() + float(M_PI)));
-        if (SteerMemory* steering = view.Steering)
-        {
-            if (!bot->movespline->Finalized() && bot->movespline->GetId() == steering->FollowRunId
-                && view.NowMs < steering->FollowAimMs + FOLLOW_TANK_AIM_MS)
-            {
-                G3D::Vector3 const end = bot->movespline->FinalDestination();
-                if ((end - G3D::Vector3(x, y, z)).length() < FOLLOW_TANK_REAIM_YARDS)
-                    return;
-            }
-            steering->FollowAimMs = view.NowMs;
-        }
-        Encoding::MoveTo(bot, FOLLOW_TANK_MOVE_POINT_ID, x, y, z);
-        if (view.Steering)
-            view.Steering->FollowRunId = bot->movespline->GetId();
-        return;
-    }
 
     if (local < ACTION_REVIVE_FIRST)
     {

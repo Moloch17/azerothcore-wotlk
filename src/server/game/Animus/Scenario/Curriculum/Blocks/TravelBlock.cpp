@@ -19,8 +19,6 @@
 #include "TravelBlock.h"
 #include "EncoderSupport.h"
 #include "Map.h"
-#include "MotionMaster.h"
-#include "MoveSpline.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "Spell.h"
@@ -148,13 +146,6 @@ bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position co
         && std::fabs(bot->GetPositionZ() - objective.GetPositionZ()) <= maxRise;
 }
 
-void Animus::Curriculum::TravelBlock::FallIfAirborne(Player* bot)
-{
-    // The fall itself is Encoding::FallToGround, shared with the move block's drop jump so that a fall is one
-    // thing wherever it starts. The guards are its own; this stays as the name the mount code calls.
-    Encoding::FallToGround(bot);
-}
-
 void Animus::Curriculum::TravelBlock::LearnRiding(Player* bot)
 {
     uint8 const level = bot->GetLevel();
@@ -195,7 +186,7 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
     obs[OBS_INDOORS] = bot->IsOutdoors() ? 0.0f : 1.0f;
     obs[OBS_HEIGHT] = std::min(1.0f, HeightAboveGround(bot) / 50.0f);
     obs[OBS_IN_COMBAT] = bot->IsInCombat() ? 1.0f : 0.0f;
-    obs[OBS_MOVING] = bot->movespline->Finalized() ? 0.0f : 1.0f;
+    obs[OBS_MOVING] = bot->isMoving() ? 1.0f : 0.0f;
 
     UnitMoveType const moveType = bot->CanFly() ? MOVE_FLIGHT : MOVE_RUN;
     obs[OBS_SPEED] = std::min(1.0f, bot->GetSpeed(moveType) / TravelBlock::BASE_RUN_SPEED / 4.0f);
@@ -228,54 +219,6 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
         mask[action] = IsAllowed(view, action) ? 1 : 0;
 }
 
-void Animus::Curriculum::TravelBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
-{
-    AllowFlight(view.Bot);
-    // A cast, a dismount or a lost flying mount leaves no one hanging in the air.
-    FallIfAirborne(view.Bot);
-}
-
-void Animus::Curriculum::TravelBlock::AllowFlight(Player* bot)
-{
-    // Unit::SetCanFly hands a client-controlled unit the flag by packet and waits to be told it took; a seat on an
-    // idle session never answers, so MOVEMENTFLAG_CAN_FLY was never set and CanFly() stayed false for its whole
-    // life. A gryphon was then a mount that could not fly: no FlyTo, no ascending, and the ground speed of a
-    // flying mount (60%) against Journeyman Riding's 100%, which is why every seat sensibly rode the ground one.
-    // The aura says what the flag should be -- IsFreeFlying() is the core's own aura-side answer -- so keep the
-    // flag with it, exactly as SetCanFly does for a unit no client controls.
-    bool const mounted = bot->IsFreeFlying();
-    if (mounted != bot->CanFly())
-    {
-        if (mounted)
-            bot->AddUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
-        else
-            bot->RemoveUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
-    }
-
-    // CAN_FLY is only permission. The speed comes from MOVEMENTFLAG_FLYING: MoveSplineInit::Launch asks
-    // MovementInfo::GetSpeedType for the spline's velocity, and that returns MOVE_FLIGHT only when FLYING is set,
-    // falling through to MOVE_RUN otherwise. A client sets it on take-off; a seat has none, so every flight was
-    // launched at run speed with the gryphon's ground bonus -- 11.2 yd/s against a ground mount's 14, which is
-    // why riding beat flying and the policy kept choosing it. The core works around the same thing for charmed
-    // flyers: "Xinef: If creature can fly, add normal player flying flag (fixes speed)", Unit.cpp.
-    //
-    // Set it with the mount, not with altitude. Tying it to being off the ground made flight speed conditional on
-    // the one behaviour that ruins a trip: MOVE_TO_OBJECTIVE flies to ground + 1, so the best trip -- mount, fly
-    // the straight line, land -- sits below the threshold and crawled at run speed, and the only way to earn
-    // flight speed was to climb first. Seats duly climbed to eighty and a hundred yards, spending their air time
-    // going up and down at zero yards across: 23 yd/s available, 4 achieved. Nothing is ever in the way either,
-    // since a spline does not collide, so the climb bought nothing. A seat on a flying mount moves by flight
-    // spline whenever it moves at all, so the mount is the honest condition.
-    bool const aloft = mounted;
-    if (aloft == bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING))
-        return;
-
-    if (aloft)
-        bot->AddUnitMovementFlag(MOVEMENTFLAG_FLYING);
-    else
-        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FLYING);
-}
-
 void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     if (!IsAllowed(view, local))
@@ -289,9 +232,8 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
         case ACTION_MOUNT_FLYING:
         {
             SpellInfo const* mount = local == ACTION_MOUNT_GROUND ? GroundMount(bot) : FlyingMount(bot);
-            // A mount has a cast time, and Spell::prepare refuses one from a moving caster: stand still first.
-            bot->GetMotionMaster()->Clear();
-            bot->StopMoving();
+            // A mount has a cast time, and Spell::prepare refuses one from a moving caster: standing still for it is
+            // the seat's own (its keys), as a player's is.
             SpellCastTargets targets;
             targets.SetUnitTarget(bot);
             Spell* spell = new Spell(bot, mount, TRIGGERED_NONE);
@@ -304,9 +246,9 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             return;
         }
         case ACTION_DISMOUNT:
-            // As CMSG_CANCEL_MOUNT_AURA.
+            // As CMSG_CANCEL_MOUNT_AURA. In the air, the controller falls from there (its flight is gone) and the
+            // server lands it with its own damage.
             bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
-            FallIfAirborne(bot);
             return;
         default:
             return;

@@ -56,10 +56,12 @@ namespace Animus::Curriculum
         {
             ACTION_RELEASE          = 0,    // release the spirit
             ACTION_ACCEPT           = 1,    // accept a friend's resurrection
-            ACTION_RUN_TO_CORPSE    = 2,    // a ghost runs back to its corpse
-            ACTION_RISE_AT_CORPSE   = 3,    // a ghost in reach of its corpse rises there
-            ACTION_SPIRIT_HEALER    = 4,    // a ghost at the graveyard takes the spirit healer's resurrection
-            ACTION_COUNT            = 5
+            // The engine's run back to the corpse is gone (player-controller C9, revision 1), with no stand-in: a
+            // ghost walks back on the move block's keys, and companions learn the corpse run in a stage of its own
+            // later (movement-curriculum §6). The corpse's distance and bearing above are what it walks by.
+            ACTION_RISE_AT_CORPSE   = 2,    // a ghost in reach of its corpse rises there
+            ACTION_SPIRIT_HEALER    = 3,    // a ghost at the graveyard takes the spirit healer's resurrection
+            ACTION_COUNT            = 4
         };
 
         /// Resurrection sickness.
@@ -74,7 +76,8 @@ namespace Animus::Curriculum
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_RUN_TO_CORPSE; }
+        /// 1: the corpse run is gone (player-controller C9).
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 
         /// Living hostile creatures within `range` of `at` (aggroOnly: only those whose aggro radius for `bot`, plus

@@ -295,13 +295,6 @@ namespace Animus::Curriculum
         /// Every action is movement: it is never charged for repeating (Actions.Repeat is not levied on movement), and
         /// a held key re-pressed is a no-op anyway.
         [[nodiscard]] bool IsMovement(uint32 /*local*/) const override { return true; }
-
-        /// The turn and pitch rates aim the seat without moving its feet: a press of one leaves a positioning option
-        /// (the companion's follow) running, which is what turning while walking is.
-        [[nodiscard]] bool IsAiming(uint32 local) const override
-        {
-            return MoveControls::IsTurn(local) || MoveControls::IsPitch(local);
-        }
     };
 }
 

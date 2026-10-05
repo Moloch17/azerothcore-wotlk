@@ -358,11 +358,6 @@ namespace Animus::Curriculum
         /// rather than RepeatMs: steering has to be re-issued more often than a spell or an order.
         [[nodiscard]] virtual bool IsMovement(uint32 /*local*/) const { return false; }
 
-        /// Whether action `local` aims the seat rather than moving its feet: a held turn or pitch (MoveBlock). Aiming
-        /// is movement for pacing, and it is the one kind of movement that does not take the feet over -- a player
-        /// looks round while walking -- so SeatEncoder::Apply asks this before it ends a held bearing.
-        [[nodiscard]] virtual bool IsAiming(uint32 /*local*/) const { return false; }
-
         /// The kind of standing choice action `local` makes, if any (ModeGroup).
         [[nodiscard]] virtual ModeGroup ModeGroupOf(Layout const& /*layout*/, uint32 /*local*/) const
         {

@@ -80,10 +80,9 @@ namespace Animus::Curriculum
 
         enum Action : uint32
         {
-            ACTION_FOLLOW_TANK          = 0,
-            ACTION_ASSIST_FIRST         = 1,                        // + member
-            ACTION_GUARD_FIRST          = 1 + PARTY_MEMBERS,        // + member
-            ACTION_REVIVE_FIRST         = 1 + 2 * PARTY_MEMBERS     // + member * revives + revive
+            ACTION_ASSIST_FIRST         = 0,                        // + member
+            ACTION_GUARD_FIRST          = PARTY_MEMBERS,            // + member
+            ACTION_REVIVE_FIRST         = 2 * PARTY_MEMBERS         // + member * revives + revive
         };
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
@@ -91,7 +90,9 @@ namespace Animus::Curriculum
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_FOLLOW_TANK; }
+        /// 1: the engine-run follow-the-tank action is gone (player-controller C9); keeping up with the party is the
+        /// move block's keys, so every action after it moved down by one.
+        [[nodiscard]] uint32 Revision() const override { return 1; }
     };
 }
 
