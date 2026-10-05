@@ -1,47 +1,39 @@
 """The executor-fit study (plan §2.3): how much of human motion can the bot's movement actions express?
 
-A Python kinematic emulator of MoveBlock's semantics (src/server/game/Animus/Scenario/Curriculum/Blocks/
-MoveBlock.h/.cpp), and a beam search per human clip for the action sequence that best reproduces it at the decision
-rate. Per context it reports how far the best reproduction drifts and how its motion's distributions differ from
-the human's, for the current action space and the alternatives a change might adopt.
+A Python kinematic emulator of the move block's action space -- a player's keys and mouse driving the player
+controller (src/server/game/Animus/Scenario/Curriculum/Blocks/MoveControls.h, Animus/Movement/PlayerController.h) --
+and a beam search per human clip for the action sequence that best reproduces it at the decision rate. Per context it
+reports how far the best reproduction drifts and how its motion's distributions differ from the human's.
 
-**The emulator** (one action a decision, as the policy has):
-- Bearings are egocentric and durative: BEARING b walks heading `facing - b * 45 deg` until another bearing or HALT,
-  at the run speed in force, or the back speed (run_back / run, swim_back / swim, flight_back / flight from the
-  core's base speeds) for the three bearings behind. A held bearing is assumed refreshed for free (re-pressing is
-  uncharged and keeps it from lapsing after Options.MoveBearingMs).
-- TURN_ANGLES (+-15, +-45, +-90, +-135, 180 deg; left positive) set what is left of a turn, carried out at TURN_RATE
-  (45 deg) a decision; exactly one turn step a decision (MoveBlock's TurnStepped): a turn under way steps before the
-  action, a turn chosen on a decision with none under way steps at once. Revision 1 adds FINE_TURN (+-5 deg).
-- PITCH_ANGLES (-60..60 every 15 deg) set the pitch target, reached at PITCH_RATE (30 deg) a decision, the same way;
-  only swimming or flying (masked on the ground), and the target already chosen is masked.
-- FACE_HEADING snaps the facing onto the held bearing's heading and makes the bearing forward, every decision it is
-  the mode; FACE_HOLD keeps the facing; the mode already held is masked. FACE_TARGET needs the target's position,
-  which the fit does not have: it is left out (an under-statement for fights, where it is the strafe-circle).
-- JUMP (ground only, not mid-jump) clears the bearing and carries the body JUMP_SECONDS (2 * 7.955 / 19.29) along
-  the facing at the run speed, bearings masked meanwhile.
-- Within a decision the body moves along the heading half-way through that decision's turn step: the chord of the
-  arc a TurnRun spline walks.
+**The emulator** (one action a decision, as the policy has; MoveControls.h's 25 actions):
+- Held controls persist until changed: forward / back / stop, strafe left / right / stop, a turn rate (+-360, 180, 90,
+  30 deg/s or 0, left positive -- the mouse's, not slowed while moving), a pitch rate (+-90, 30 or 0 deg/s, water and
+  air only), ascend / descend / stop (water and air), walk (a toggle). Pressing the value already held does nothing.
+- The speed in force (the sample's) is the run, swim or flight speed; back is that times the back ratio (run_back /
+  run, ...); walking caps everything at the walk speed; forward or back held with a strafe is a diagonal, each
+  component x 0.7071, at the back speed when back is held (the client's rules, fn 0x987570).
+- Swimming or flying, the forward direction is the look direction (pitch); a held ascend or descend moves at 45
+  degrees (0.7071 of the speed each way, fn 0x987700).
+- JUMP (ground or water, not mid-jump) freezes the horizontal velocity for JUMP_SECONDS (2 x 7.9555 / 19.2911): no
+  air control, the turn rate still turns the body.
+- Within a decision the body moves along the heading half-way through the decision's turn: the chord of the arc a
+  steady turn rate walks.
 
-**Limits.** Terrain and collision are ignored (human tracks are already feasible, so this measures the action space
-and not the pathfinder); on the ground only planar error counts (the ground owns z), swimming and flying are 3D.
-Splines' acceleration, MoveKeep's relaunch rules and corner smoothing are not modelled. The human's mode, speed
-and mount are given to the emulator per decision, not chosen.
+**Limits.** Terrain and collision are ignored (human tracks are already feasible, so this measures the action space,
+not the world); on the ground only planar error counts (the ground owns z), swimming and flying are 3D. The human's
+mode, speed and mount are given per decision, not chosen. A human turns the mouse at any rate; the policy has nine,
+held a decision at least -- what the fit measures.
 
-**Search.** Per chunk of CHUNK_SECONDS, re-anchored at the human's position, facing and pitch with each of the
-nine bearing states (none or one of eight) as a start, a beam of `beam` states expands every action each decision
-and keeps the cheapest by cumulative cost: squared position error (yards) + (YAW_WEIGHT * heading error in
-radians)^2 + PRESS_COST per press (the tie-break that prefers one 90-degree turn to two 45s, and no press to a
-re-press). **Drift at 1/2/5 s** is the best path's position error that long after the chunk's anchor; **heading
-error** its mean absolute facing error. **Distribution distances** are motion.histogram_distance between the
-emulated and the human steps' motion.features per context: yaw_rate (curvature), planar and accel (the speed
-profile), fwd and lat. A chunk is **expressible** when its 2 s drift is within EXPRESSIBLE_YARDS and its heading
-error within EXPRESSIBLE_DEGREES.
+**Search.** Per chunk of CHUNK_SECONDS, re-anchored at the human's position, facing and pitch with each of the nine
+start states of the feet (forward/back/none x strafe left/right/none) held, a beam of `beam` states expands every
+action each decision and keeps the cheapest by cumulative cost: squared position error (yards) + (YAW_WEIGHT * heading
+error in radians)^2 + PRESS_COST per press. **Drift at 1/2/5 s** is the best path's position error that long after
+the chunk's anchor; **heading error** its mean absolute facing error. **Distribution distances** are
+motion.histogram_distance between the emulated and the human steps' motion.features per context. A chunk is
+**expressible** when its 2 s drift is within EXPRESSIBLE_YARDS and its heading error within EXPRESSIBLE_DEGREES.
 
-**Action spaces** evaluated (`SPACES`): `lattice` (revision 0), `lattice_fine` (+ the revision 1 fine turns),
-`turn_rate` (the turns replaced by a held turn rate of -180, -60, 0, 60 or 180 deg/s, which also makes strafe+turn
-arcs a single held state), and `lattice_125ms` (the lattice at a 125 ms decision, its turn and pitch steps halved
-so the rates per second are the game's).
+**Action spaces** evaluated (`SPACES`): `controller` (the move block at the 250 ms decision) and `controller_125ms`
+(the same at a 125 ms decision, for the decision-cadence question).
 """
 
 from __future__ import annotations
@@ -56,22 +48,19 @@ import numpy as np
 
 from animus.human import motion
 
-# MoveBlock.h
-TURN_ANGLES = (0.2617994, -0.2617994, 0.7853982, -0.7853982, 1.5707963, -1.5707963, 2.3561945, -2.3561945,
-               3.1415927)
-PITCH_ANGLES = (-1.0471976, -0.7853982, -0.5235988, -0.2617994, 0.0, 0.2617994, 0.5235988, 0.7853982, 1.0471976)
-TURN_RATE = 0.7853982           # per 250 ms decision
-PITCH_RATE = 0.5235988
-FINE_TURN = 0.0872665
-JUMP_SPEED_Z = 7.955
-GRAVITY = 19.29111              # Movement::gravity
+# PlayerController.h / MoveControls.h
+JUMP_SPEED_Z = 7.9555473
+GRAVITY = 19.2911053
 JUMP_SECONDS = 2.0 * JUMP_SPEED_Z / GRAVITY
-BEARINGS = 8
-BACK_BEARINGS = (3, 4, 5)
+DIAGONAL = 0.7071068
+VERTICAL_SHARE = 0.7071068
+PITCH_LIMIT = math.pi / 2
+WALK_RATIO = 2.5 / 7.0          # walk / run (Unit.cpp baseMoveSpeed)
 # Back speed over forward speed per mode (Unit.cpp baseMoveSpeed): run_back/run, swim_back/swim, flight_back/flight.
 BACK_RATIO = {motion.MODE_GROUND: 4.5 / 7.0, motion.MODE_SWIM: 2.5 / 4.722222, motion.MODE_FLY: 4.5 / 7.0,
               motion.MODE_AIRBORNE: 4.5 / 7.0}
-TURN_RATES = (-math.pi, -math.pi / 3.0, 0.0, math.pi / 3.0, math.pi)   # rad/s, the turn_rate space
+TURN_RATES_DEG = (-360.0, -180.0, -90.0, -30.0, 0.0, 30.0, 90.0, 180.0, 360.0)
+PITCH_RATES_DEG = (-90.0, -30.0, 0.0, 30.0, 90.0)
 
 CHUNK_SECONDS = 5.0
 YAW_WEIGHT = 2.0                # yards per radian of heading error in the cost
@@ -80,46 +69,54 @@ EXPRESSIBLE_YARDS = 1.0
 EXPRESSIBLE_DEGREES = 10.0
 DIST_FEATURES = ("yaw_rate", "planar", "accel", "fwd", "lat")
 
-# Action kinds.
-NOOP, BEARING, HALT, FACE_HEADING, FACE_HOLD, TURN, PITCH, JUMP, RATE = range(9)
-KIND_NAMES = ("noop", "bearing", "halt", "face_heading", "face_hold", "turn", "pitch", "jump", "rate")
-FACE_MODE_HOLD, FACE_MODE_HEADING = 0, 1
+# Action kinds: the held control an action sets, and the value it sets it to.
+NOOP, FORWARD, STRAFE, TURN, PITCH, VERTICAL, JUMP, WALK = range(8)
+KIND_NAMES = ("noop", "forward", "strafe", "turn", "pitch", "vertical", "jump", "walk")
+#: The feet's start states a chunk is anchored with: (forward, strafe).
+FEET = tuple((f, st) for f in (0, 1, -1) for st in (0, -1, 1))
 
 
 @dataclass(frozen=True)
 class Space:
-    """An action space: its actions as (kind, value) and its decision interval."""
+    """An action space: its actions as (kind, value) and its decision interval. Action i + 1 is the move block's local
+    action i (MoveControls.h's order); action 0 is no press."""
 
     name: str
     actions: tuple[tuple[int, float], ...]
     dt: float = motion.DECISION_SECONDS
-    turn_step: float = TURN_RATE
-    pitch_step: float = PITCH_RATE
 
     def label(self, index: int) -> str:
         kind, value = self.actions[index]
-        if kind == BEARING:
-            return f"bearing_{int(value)}"
-        if kind in (TURN, PITCH):
-            return f"{KIND_NAMES[kind]}_{round(math.degrees(value)):+d}"
-        if kind == RATE:
-            return f"rate_{round(math.degrees(value)):+d}"
+        if kind == FORWARD:
+            return {1.0: "move_forward", -1.0: "move_back", 0.0: "move_stop"}[value]
+        if kind == STRAFE:
+            return {-1.0: "strafe_left", 1.0: "strafe_right", 0.0: "strafe_stop"}[value]
+        if kind == VERTICAL:
+            return {1.0: "ascend", -1.0: "descend", 0.0: "vertical_stop"}[value]
+        if kind == TURN:
+            degrees = round(math.degrees(value))
+            return "turn_stop" if degrees == 0 else f"turn_{'left' if degrees > 0 else 'right'}_{abs(degrees)}"
+        if kind == PITCH:
+            degrees = round(math.degrees(value))
+            return "pitch_stop" if degrees == 0 else f"pitch_{'up' if degrees > 0 else 'down'}_{abs(degrees)}"
+        if kind == WALK:
+            return "walk_toggle"
         return KIND_NAMES[kind]
 
 
-def _base(turns: tuple[float, ...] = TURN_ANGLES, rates: tuple[float, ...] = ()) -> tuple:
-    acts = [(NOOP, 0.0)] + [(BEARING, float(b)) for b in range(BEARINGS)] + [(HALT, 0.0), (FACE_HEADING, 0.0),
-                                                                             (FACE_HOLD, 0.0)]
-    acts += [(TURN, a) for a in turns] + [(RATE, r) for r in rates]
-    acts += [(PITCH, p) for p in PITCH_ANGLES] + [(JUMP, 0.0)]
+def _controller() -> tuple:
+    """No press, then MoveControls.h's 25 actions in their order."""
+    acts = [(NOOP, 0.0), (FORWARD, 1.0), (FORWARD, -1.0), (FORWARD, 0.0), (STRAFE, -1.0), (STRAFE, 1.0),
+            (STRAFE, 0.0)]
+    acts += [(TURN, math.radians(r)) for r in TURN_RATES_DEG]
+    acts += [(PITCH, math.radians(r)) for r in PITCH_RATES_DEG]
+    acts += [(VERTICAL, 1.0), (VERTICAL, -1.0), (VERTICAL, 0.0), (JUMP, 0.0), (WALK, 0.0)]
     return tuple(acts)
 
 
 SPACES = {
-    "lattice": Space("lattice", _base()),
-    "lattice_fine": Space("lattice_fine", _base(TURN_ANGLES + (FINE_TURN, -FINE_TURN))),
-    "turn_rate": Space("turn_rate", _base(turns=(), rates=TURN_RATES)),
-    "lattice_125ms": Space("lattice_125ms", _base(), dt=0.125, turn_step=TURN_RATE / 2, pitch_step=PITCH_RATE / 2),
+    "controller": Space("controller", _controller()),
+    "controller_125ms": Space("controller_125ms", _controller(), dt=0.125),
 }
 
 
@@ -132,21 +129,24 @@ class State:
     z: np.ndarray
     facing: np.ndarray
     pitch: np.ndarray
-    pitch_target: np.ndarray
-    turn_left: np.ndarray
-    bearing: np.ndarray          # -1: none held
-    face_mode: np.ndarray
-    jump_left: np.ndarray
-    jump_heading: np.ndarray
-    rate: np.ndarray
+    forward: np.ndarray
+    strafe: np.ndarray
+    turn: np.ndarray            # rad/s
+    pitch_rate: np.ndarray
+    vertical: np.ndarray
+    walk: np.ndarray
+    jump_left: np.ndarray       # seconds of a jump still in the air
+    jump_vx: np.ndarray
+    jump_vy: np.ndarray
 
     @staticmethod
     def start(n: int, x: float, y: float, z: float, facing: float, pitch: float = 0.0,
-              bearing: np.ndarray | int = -1) -> "State":
+              feet: tuple[int, int] | np.ndarray = (0, 0)) -> "State":
         f = lambda v: np.full(n, v, dtype=np.float64)  # noqa: E731
-        return State(f(x), f(y), f(z), f(facing), f(pitch), f(pitch), f(0.0),
-                     np.broadcast_to(np.asarray(bearing, dtype=np.int64), (n,)).copy(),
-                     np.zeros(n, dtype=np.int64), f(0.0), f(0.0), f(0.0))
+        held = np.broadcast_to(np.asarray(feet, dtype=np.int64).reshape(-1, 2), (n, 2))
+        return State(f(x), f(y), f(z), f(facing), f(pitch), held[:, 0].astype(np.float64).copy(),
+                     held[:, 1].astype(np.float64).copy(), f(0.0), f(0.0), f(0.0), np.zeros(n, dtype=bool),
+                     f(0.0), f(0.0), f(0.0))
 
     def take(self, index: np.ndarray) -> "State":
         return State(*(getattr(self, name)[index] for name in self.__dataclass_fields__))
@@ -154,95 +154,75 @@ class State:
 
 def step(state: State, kinds: np.ndarray, values: np.ndarray, mode: int, speed: float, space: Space
          ) -> tuple[State, np.ndarray]:
-    """One decision for a batch: the action (kind, value) of each state, then the decision's motion. Returns the
-    new states and which actions were allowed (MoveBlock's mask)."""
+    """One decision for a batch: the action (kind, value) of each state, then the decision's motion. Returns the new
+    states and which actions were allowed (MoveControls::Allowed: pitch rates, ascend and descend only swimming or
+    flying, the stops everywhere; jump not mid-jump nor flying)."""
     s = State(*(getattr(state, name).copy() for name in state.__dataclass_fields__))
     n = len(kinds)
-    airborne = mode in (motion.MODE_SWIM, motion.MODE_FLY)
+    steered = mode in (motion.MODE_SWIM, motion.MODE_FLY)
     jumping = s.jump_left > 1e-9
-    held = s.bearing >= 0
     allowed = np.ones(n, dtype=bool)
-    allowed[(kinds == BEARING) & jumping] = False
-    allowed[(kinds == HALT) & (~held | jumping)] = False
-    allowed[(kinds == FACE_HEADING) & (s.face_mode == FACE_MODE_HEADING)] = False
-    allowed[(kinds == FACE_HOLD) & (s.face_mode == FACE_MODE_HOLD)] = False
-    allowed[(kinds == PITCH) & (not airborne)] = False
-    allowed[(kinds == PITCH) & (np.abs(values - s.pitch_target) <= 1e-3)] = False
-    allowed[(kinds == JUMP) & (airborne or mode == motion.MODE_AIRBORNE)] = False
-    allowed[(kinds == JUMP) & jumping] = False
+    allowed[(kinds == PITCH) & (values != 0.0) & (not steered)] = False
+    allowed[(kinds == VERTICAL) & (values != 0.0) & (not steered)] = False
+    allowed[(kinds == JUMP) & (jumping | (mode in (motion.MODE_FLY, motion.MODE_AIRBORNE)))] = False
 
-    before = s.facing.copy()
-    # A held turn rate (the turn_rate space) is chosen first and turns the whole decision.
-    is_rate = kinds == RATE
-    s.rate[is_rate] = values[is_rate]
-    s.facing += s.rate * space.dt
-    # A turn under way steps before the action; a new one replaces what is left and steps now only if none did.
-    stepped = np.abs(s.turn_left) > 1e-6
-    turn = np.clip(s.turn_left, -space.turn_step, space.turn_step) * stepped
-    s.facing += turn
-    s.turn_left -= turn
-    is_turn = kinds == TURN
-    s.turn_left[is_turn] = values[is_turn]
-    fresh = is_turn & ~stepped
-    turn = np.clip(s.turn_left, -space.turn_step, space.turn_step) * fresh
-    s.facing += turn
-    s.turn_left -= turn
-    s.turn_left[np.abs(s.turn_left) < 1e-6] = 0.0
-    # Pitch the same way, off the ground only.
-    if airborne:
-        pstepped = np.abs(s.pitch_target - s.pitch) > 1e-6
-        dp = np.clip(s.pitch_target - s.pitch, -space.pitch_step, space.pitch_step) * pstepped
-        s.pitch += dp
-        is_pitch = kinds == PITCH
-        s.pitch_target[is_pitch] = values[is_pitch]
-        pfresh = is_pitch & ~pstepped
-        s.pitch += np.clip(s.pitch_target - s.pitch, -space.pitch_step, space.pitch_step) * pfresh
-    else:
+    for kind, field_name in ((FORWARD, "forward"), (STRAFE, "strafe"), (TURN, "turn"), (PITCH, "pitch_rate"),
+                             (VERTICAL, "vertical")):
+        mask = kinds == kind
+        getattr(s, field_name)[mask] = values[mask]
+    toggle = kinds == WALK
+    s.walk[toggle] = ~s.walk[toggle]
+    if not steered:
         s.pitch[:] = 0.0
-        s.pitch_target[:] = 0.0
-    # Feet and facing modes.
-    is_bearing = (kinds == BEARING) & allowed
-    s.bearing[is_bearing] = values[is_bearing].astype(np.int64)
-    s.bearing[(kinds == HALT) & allowed] = -1
-    s.face_mode[kinds == FACE_HEADING] = FACE_MODE_HEADING
-    s.face_mode[kinds == FACE_HOLD] = FACE_MODE_HOLD
+
+    # The turn (and pitch) over the decision, and the heading half-way through it.
+    before = s.facing.copy()
+    s.facing = s.facing + s.turn * space.dt
+    if steered:
+        s.pitch = np.clip(s.pitch + s.pitch_rate * space.dt, -PITCH_LIMIT, PITCH_LIMIT)
+    heading = before + s.turn * space.dt / 2.0
+
+    # The wish: forward/back and strafe in the body frame, the client's speed rules.
+    back = s.forward < 0
+    speed_now = np.where(back, speed * BACK_RATIO.get(mode, 1.0), speed)
+    speed_now = np.where(s.walk, np.minimum(speed_now, speed * WALK_RATIO), speed_now)
+    moving = (s.forward != 0) | (s.strafe != 0)
+    diagonal = (s.forward != 0) & (s.strafe != 0)
+    fwd = s.forward * np.where(diagonal, DIAGONAL, 1.0)
+    side = -s.strafe * np.where(diagonal, DIAGONAL, 1.0)            # strafe right is clockwise: -left
+    vx = (fwd * np.cos(heading) - side * np.sin(heading)) * speed_now * moving
+    vy = (fwd * np.sin(heading) + side * np.cos(heading)) * speed_now * moving
+    vz = np.zeros(n)
+    if steered:
+        vx = vx * np.cos(s.pitch)
+        vy = vy * np.cos(s.pitch)
+        vz = fwd * np.sin(s.pitch) * speed_now * moving
+        climbing = s.vertical != 0
+        share = np.where(climbing & moving, VERTICAL_SHARE, 1.0)
+        vx, vy, vz = vx * share, vy * share, vz * share + s.vertical * VERTICAL_SHARE * speed
+
+    # A jump freezes the horizontal velocity it was launched with for its time in the air.
     launch = (kinds == JUMP) & allowed
-    s.bearing[launch] = -1
     s.jump_left[launch] = JUMP_SECONDS
-    s.jump_heading[launch] = s.facing[launch]
-    snap = (s.face_mode == FACE_MODE_HEADING) & (s.bearing > 0)
-    s.facing[snap] = s.facing[snap] - s.bearing[snap] * (2 * math.pi / BEARINGS)
-    s.bearing[snap] = 0
-    # Moving: along the heading half-way through the decision's turn (a snap is a snap, not a turn).
-    swing = motion.wrap(s.facing - before)
-    mid = np.where(snap, s.facing, before + swing / 2.0)
-    walking = (s.bearing >= 0) & (s.jump_left <= 1e-9)
-    heading = mid - np.maximum(s.bearing, 0) * (2 * math.pi / BEARINGS)
-    back = np.isin(s.bearing, BACK_BEARINGS)
-    v = speed * np.where(back, BACK_RATIO.get(mode, 1.0), 1.0) * walking
-    dist = v * space.dt
-    if airborne:
-        pitch = np.where(back, -s.pitch, s.pitch)
-        s.x += dist * np.cos(pitch) * np.cos(heading)
-        s.y += dist * np.cos(pitch) * np.sin(heading)
-        s.z += dist * np.sin(pitch)
-    else:
-        s.x += dist * np.cos(heading)
-        s.y += dist * np.sin(heading)
-    flying = s.jump_left > 1e-9
-    hop = np.minimum(s.jump_left, space.dt) * speed * flying
-    s.x += hop * np.cos(s.jump_heading)
-    s.y += hop * np.sin(s.jump_heading)
+    s.jump_vx[launch] = vx[launch]
+    s.jump_vy[launch] = vy[launch]
+    air = s.jump_left > 1e-9
+    held_time = np.minimum(s.jump_left, space.dt)
+    vx = np.where(air, s.jump_vx, vx)
+    vy = np.where(air, s.jump_vy, vy)
+    s.x += np.where(air, vx * held_time, vx * space.dt)
+    s.y += np.where(air, vy * held_time, vy * space.dt)
+    s.z += vz * space.dt
     s.jump_left = np.maximum(0.0, s.jump_left - space.dt)
     s.facing = np.remainder(s.facing, 2 * math.pi)
     return s, allowed
 
 
 def rollout(space: Space, actions: list[int], start: dict, modes: np.ndarray, speeds: np.ndarray) -> np.ndarray:
-    """Emulate one action sequence from `start` (x, y, z, facing, pitch, bearing): [len(actions) + 1, 5] rows of
-    x, y, z, facing, pitch."""
+    """Emulate one action sequence from `start` (x, y, z, facing, pitch, feet = (forward, strafe)): [len(actions) +
+    1, 5] rows of x, y, z, facing, pitch."""
     s = State.start(1, start["x"], start["y"], start.get("z", 0.0), start["facing"], start.get("pitch", 0.0),
-                    start.get("bearing", -1))
+                    start.get("feet", (0, 0)))
     out = [[s.x[0], s.y[0], s.z[0], s.facing[0], s.pitch[0]]]
     for k, a in enumerate(actions):
         kind, value = space.actions[a]
@@ -255,17 +235,17 @@ def rollout(space: Space, actions: list[int], start: dict, modes: np.ndarray, sp
 @dataclass
 class FitResult:
     actions: list[int]
-    start_bearing: int
+    start_feet: tuple[int, int]
     path: np.ndarray                # [K + 1, 5] x, y, z, facing, pitch
     pos_err: np.ndarray             # [K + 1]
     yaw_err: np.ndarray             # [K + 1] radians, absolute
     cost: float
 
 
-def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_bearings: tuple[int, ...] | None = None,
+def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_feet: tuple[tuple[int, int], ...] | None = None,
              jumps: np.ndarray | None = None) -> FitResult:
     """The action sequence of `space` that best reproduces `human` ([K + 1, SAMPLE_DIM] on space.dt), started at
-    the human's first sample with any bearing held (or none), or only `start_bearings` when the start is known.
+    the human's first sample with any of the feet's states held (FEET), or only `start_feet` when the start is known.
     `jumps` ([K] bool, from the MSG_MOVE_JUMP packets) pins the jumps: JUMP where the human jumped (when a jump can
     be taken there) and nowhere else -- on the ground a jump's carry is otherwise a forward walk's."""
     h = np.asarray(human, dtype=np.float64)
@@ -273,7 +253,7 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_bearings: tu
     kinds = np.array([a[0] for a in space.actions])
     values = np.array([a[1] for a in space.actions], dtype=np.float64)
     n_act = len(kinds)
-    starts = np.asarray(start_bearings if start_bearings is not None else range(-1, BEARINGS), dtype=np.int64)
+    starts = np.asarray(start_feet if start_feet is not None else FEET, dtype=np.int64).reshape(-1, 2)
     state = State.start(len(starts), h[0, motion.X], h[0, motion.Y], h[0, motion.Z], h[0, motion.YAW],
                         h[0, motion.PITCH], starts)
     total = np.zeros(len(starts))
@@ -314,15 +294,15 @@ def beam_fit(space: Space, human: np.ndarray, beam: int = 32, start_bearings: tu
         actions.append(int(acts[idx]))
         idx = int(parents[idx])
     actions.reverse()
-    start_bearing = int(starts[idx])
+    start_feet = (int(starts[idx][0]), int(starts[idx][1]))
     path = rollout(space, actions, {"x": h[0, motion.X], "y": h[0, motion.Y], "z": h[0, motion.Z],
                                     "facing": h[0, motion.YAW], "pitch": h[0, motion.PITCH],
-                                    "bearing": start_bearing}, h[:, motion.MODE], h[:, motion.SPEED])
+                                    "feet": start_feet}, h[:, motion.MODE], h[:, motion.SPEED])
     ground = ~np.isin(h[:, motion.MODE].astype(int), (motion.MODE_SWIM, motion.MODE_FLY))
     path[ground, 2] = h[ground, motion.Z]
     pos_err = np.linalg.norm(path[:, :3] - h[:, motion.X:motion.Z + 1], axis=1)
     yaw_err = np.abs(motion.wrap(path[:, 3] - h[:, motion.YAW]))
-    return FitResult(actions, start_bearing, path, pos_err, yaw_err, float(total[best]) if len(total) else math.inf)
+    return FitResult(actions, start_feet, path, pos_err, yaw_err, float(total[best]) if len(total) else math.inf)
 
 
 def emulated_samples(human: np.ndarray, fit: FitResult) -> np.ndarray:
@@ -378,10 +358,8 @@ class FitStudy:
                                "emd": "motion.histogram_distance, emulated vs human steps, per motion feature"},
                "limits": ["terrain and collision ignored: human tracks are already feasible",
                           "ground error is planar (the ground owns z); swim/fly error is 3D",
-                          "FACE_TARGET left out (no target positions)",
-                          "a held bearing is assumed refreshed for free (no MoveBearingMs lapse)",
-                          "within a decision the body moves on the mid-turn heading (a TurnRun chord)",
-                          "spline acceleration, MoveKeep relaunches and corner smoothing not modelled"],
+                          "within a decision the body moves on the mid-turn heading (a steady turn's chord)",
+                          "the human's turns quantised to the policy's nine held rates, a decision at least"],
                "spaces": {}}
         for name, per_ctx in self.rows.items():
             space_out = {"dt": SPACES[name].dt, "actions": [SPACES[name].label(i)

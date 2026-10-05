@@ -1,10 +1,10 @@
 """The inverse action mapper (plan §6.5): per decision, the nearest bot action to what a human did, with a confidence.
 
-**Movement.** A clip on the decision grid is reproduced through the fit emulator (fit.beam_fit, MoveBlock's
-semantics, segments of SEGMENT_SECONDS re-anchored on the human), and each decision's chosen action is the mapping:
-a bearing, HALT, a facing mode, a turn, a pitch, a jump, or no movement press at all. The action is reported as
-MoveBlock's local action index (MOVE_LOCAL: bearings 0-7, HALT 8, FACE_TARGET 9, FACE_HEADING 10, FACE_HOLD 11,
-turns 12-20 in TURN_ANGLES order, pitches 21-29, JUMP 30, revision 1's fine turns 31-32), or None for no press.
+**Movement.** A clip on the decision grid is reproduced through the fit emulator (fit.beam_fit, the player
+controller's held keys and mouse, segments of SEGMENT_SECONDS re-anchored on the human), and each decision's chosen
+action is the mapping: a key or mouse-rate press, or no movement press at all. The action is reported as the move
+block's local action index (MoveControls.h, revision 2: move_forward 0 ... walk_toggle 24; fit's action i + 1), or
+None for no press.
 The **confidence** of a decision is how much worse the best alternative action would have done there, the rest of
 the sequence kept, over the next LOOKAHEAD decisions: (c_alt - c_fit) / (c_alt + c_fit + CONF_SCALE), in [0, 1].
 
@@ -49,40 +49,20 @@ CONF_SCALE = 0.05
 DB_CONTAINER = "ac-animus-forge-database"
 WORLD_DB = "acore_world"
 
-# MoveBlock::Action, local to the move block.
-MOVE_HALT, MOVE_FACE_TARGET, MOVE_FACE_HEADING, MOVE_FACE_HOLD = 8, 9, 10, 11
-MOVE_TURN_FIRST, MOVE_PITCH_FIRST, MOVE_JUMP, MOVE_FINE_LEFT, MOVE_FINE_RIGHT = 12, 21, 30, 31, 32
+# MoveControls.h: the move block's local actions (revision 2).
+MOVE_ACTIONS = 25
 
 
 def move_local(space: fit.Space, index: int) -> int | None:
-    """MoveBlock's local action for an emulator action (None for no press, and for a turn_rate action, which
-    MoveBlock does not have)."""
-    kind, value = space.actions[index]
-    if kind == fit.NOOP or kind == fit.RATE:
-        return None
-    if kind == fit.BEARING:
-        return int(value)
-    if kind == fit.HALT:
-        return MOVE_HALT
-    if kind == fit.FACE_HEADING:
-        return MOVE_FACE_HEADING
-    if kind == fit.FACE_HOLD:
-        return MOVE_FACE_HOLD
-    if kind == fit.JUMP:
-        return MOVE_JUMP
-    if kind == fit.PITCH:
-        return MOVE_PITCH_FIRST + int(np.argmin(np.abs(np.asarray(fit.PITCH_ANGLES) - value)))
-    if abs(value - fit.FINE_TURN) < 1e-6:
-        return MOVE_FINE_LEFT
-    if abs(value + fit.FINE_TURN) < 1e-6:
-        return MOVE_FINE_RIGHT
-    return MOVE_TURN_FIRST + int(np.argmin(np.abs(np.asarray(fit.TURN_ANGLES) - value)))
+    """The move block's local action for an emulator action: its index less one (the emulator's action 0 is no
+    press, None)."""
+    return None if space.actions[index][0] == fit.NOOP else index - 1
 
 
 @dataclass
 class MovementMapping:
     actions: list[int]              # emulator action per decision (space.actions index)
-    local: list[int | None]         # MoveBlock local action per decision
+    local: list[int | None]         # the move block's local action per decision
     confidence: np.ndarray          # [K]
     pos_err: np.ndarray             # [K + 1]
 
@@ -119,13 +99,14 @@ def _costs(space: fit.Space, state: fit.State, kinds: np.ndarray, values: np.nda
 
 
 def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int = 32,
-                 lookahead: int = LOOKAHEAD, start_bearing: int | None = None,
+                 lookahead: int = LOOKAHEAD, start_feet: tuple[int, int] | None = None,
                  jumps: np.ndarray | None = None, confidence: bool = True) -> MovementMapping:
     """Per decision of a clip (on space.dt), the nearest move action and its confidence. Where the clip begins
-    the bearing held is unknown and any is tried, unless `start_bearing` says (validation knows it). `jumps`
-    ([K] bool per decision, a track's jump packets) pins where the jumps were. Without `confidence` (the costly
-    part: every alternative replayed a few decisions on) the confidences are nan."""
-    space = space or fit.SPACES["lattice"]
+    the keys held are unknown and every state of the feet is tried, unless `start_feet` says (validation knows it).
+    `jumps`
+    ([K] bool per decision, a track's jump packets) pins where the jumps were. Without `confidence` (the costly part:
+    every alternative replayed a few decisions on) the confidences are nan."""
+    space = space or fit.SPACES["controller"]
     h = np.asarray(samples, dtype=np.float64)
     seg = int(round(SEGMENT_SECONDS / space.dt))
     actions: list[int] = []
@@ -137,13 +118,13 @@ def map_movement(samples: np.ndarray, space: fit.Space | None = None, beam: int 
         part = h[first:first + seg + 1]
         if len(part) < 2:
             break
-        known = (start_bearing,) if first == 0 and start_bearing is not None else None
+        known = (start_feet,) if first == 0 and start_feet is not None else None
         got = fit.beam_fit(space, part, beam, known,
                            None if jumps is None else np.asarray(jumps[first:first + len(part) - 1], dtype=bool))
         errs += list(got.pos_err[1:])
         # Replay to each decision's state, and price every alternative there.
         state = fit.State.start(1, part[0, motion.X], part[0, motion.Y], part[0, motion.Z], part[0, motion.YAW],
-                                part[0, motion.PITCH], got.start_bearing)
+                                part[0, motion.PITCH], got.start_feet)
         if not confidence:
             actions += got.actions
             conf += [float("nan")] * len(got.actions)
@@ -268,15 +249,14 @@ def export_spell_ranks(out_csv: str | Path, container: str = DB_CONTAINER, env_f
 # Validation.
 
 def random_sequence(space: fit.Space, n: int, rng: np.random.Generator, mode: int = motion.MODE_GROUND
-                    ) -> tuple[list[int], int]:
-    """A policy-like movement sequence: mostly holding, sometimes a new bearing, a turn (none while one is under
-    way), a halt, a facing mode or a jump; presses that would be no-ops (the held bearing again) are not made.
-    Returns the actions and the start bearing."""
+                    ) -> tuple[list[int], tuple[int, int]]:
+    """A policy-like movement sequence: mostly holding, sometimes a key (forward, back, a strafe or their stops), a
+    mouse rate, a walk toggle or a jump; presses that change nothing (the value already held, a stop with nothing
+    held) are not made, nor any press mid-jump. Returns the actions and the feet's start state."""
     index = {space.actions[i]: i for i in range(len(space.actions))}
     noop = index[(fit.NOOP, 0.0)]
-    bearing = start = int(rng.integers(-1, fit.BEARINGS))
-    face = fit.FACE_MODE_HOLD
-    turning = 0
+    forward, strafe = start = fit.FEET[int(rng.integers(len(fit.FEET)))]
+    turn = 0.0
     jumping = 0
     out = []
     for _ in range(n):
@@ -284,49 +264,38 @@ def random_sequence(space: fit.Space, n: int, rng: np.random.Generator, mode: in
         a = noop
         if jumping > 0:
             pass
-        elif roll < 0.15:
-            choices = [b for b in range(fit.BEARINGS) if b != bearing and not (face == fit.FACE_MODE_HEADING)]
-            if choices:
-                bearing = int(rng.choice(choices))
-                a = index[(fit.BEARING, float(bearing))]
-        elif roll < 0.30 and turning == 0 and face == fit.FACE_MODE_HOLD:
-            turns = [v for k, v in space.actions if k == fit.TURN]
-            if turns:
-                angle = float(rng.choice(turns))
-                a = index[(fit.TURN, angle)]
-                turning = int(math.ceil(abs(angle) / space.turn_step - 1e-3))
-        elif roll < 0.33 and bearing >= 0:
-            a = index[(fit.HALT, 0.0)]
-            bearing = -1
-        elif roll < 0.35 and mode == motion.MODE_GROUND:
+        elif roll < 0.10:
+            value = float(rng.choice([v for v in (1.0, -1.0, 0.0) if v != forward]))
+            forward, a = value, index[(fit.FORWARD, value)]
+        elif roll < 0.18:
+            value = float(rng.choice([v for v in (-1.0, 1.0, 0.0) if v != strafe]))
+            strafe, a = value, index[(fit.STRAFE, value)]
+        elif roll < 0.33:
+            rates = [v for k, v in space.actions if k == fit.TURN and abs(v - turn) > 1e-9]
+            turn = float(rng.choice(rates))
+            a = index[(fit.TURN, turn)]
+        elif roll < 0.35 and (forward or strafe):
+            a = index[(fit.WALK, 0.0)]
+        elif roll < 0.37 and mode == motion.MODE_GROUND:
             a = index[(fit.JUMP, 0.0)]
-            bearing = -1
             jumping = int(math.ceil(fit.JUMP_SECONDS / space.dt)) + 1
-        elif roll < 0.37 and turning == 0:
-            face = fit.FACE_MODE_HEADING if face == fit.FACE_MODE_HOLD else fit.FACE_MODE_HOLD
-            a = index[(fit.FACE_HEADING if face == fit.FACE_MODE_HEADING else fit.FACE_HOLD, 0.0)]
-            if face == fit.FACE_MODE_HEADING and bearing > 0:
-                bearing = 0
         out.append(a)
-        turning = max(0, turning - 1)
         jumping = max(0, jumping - 1)
-        if face == fit.FACE_MODE_HEADING and bearing > 0:
-            bearing = 0
-    return out, start
+    return out, (int(start[0]), int(start[1]))
 
 
 def validate_movement(space: fit.Space | None = None, sequences: int = 20, length: int = 40, noise_yards: float = 0.0,
                       noise_radians: float = 0.0, seed: int = 0, beam: int = 32) -> dict:
     """Mapper accuracy on emulated sequences with known actions."""
-    space = space or fit.SPACES["lattice"]
+    space = space or fit.SPACES["controller"]
     rng = np.random.default_rng(seed)
     total = correct = pressed = pressed_ok = unobservable = 0
     confusions: dict[str, int] = {}
     for _ in range(sequences):
-        acts, start_bearing = random_sequence(space, length, rng)
+        acts, start_feet = random_sequence(space, length, rng)
         n = len(acts) + 1
         start = {"x": float(rng.normal(0, 100)), "y": float(rng.normal(0, 100)),
-                 "facing": float(rng.uniform(0, 2 * math.pi)), "bearing": start_bearing}
+                 "facing": float(rng.uniform(0, 2 * math.pi)), "feet": start_feet}
         path = fit.rollout(space, acts, start, np.zeros(n), np.full(n, 7.0))
         h = np.zeros((n, motion.SAMPLE_DIM))
         h[:, motion.T] = np.arange(n) * space.dt
@@ -334,12 +303,12 @@ def validate_movement(space: fit.Space | None = None, sequences: int = 20, lengt
         h[:, motion.YAW] = path[:, 3] + rng.normal(0, noise_radians, n) * (noise_radians > 0)
         h[:, motion.SPEED] = 7.0
         jumps = np.array([space.actions[a][0] == fit.JUMP for a in acts])
-        got = map_movement(h, space, beam=beam, start_bearing=start_bearing, jumps=jumps)
+        got = map_movement(h, space, beam=beam, start_feet=start_feet, jumps=jumps)
         truth = [move_local(space, a) for a in acts]
         noop = next(i for i, (k, _) in enumerate(space.actions) if k == fit.NOOP)
         for i, (t, g) in enumerate(zip(truth, got.local)):
             if t is not None:
-                # A press with no effect on the motion (a facing mode with nothing to snap, say) cannot be seen.
+                # A press with no effect on the motion (a walk toggle while standing, say) cannot be seen.
                 alt = fit.rollout(space, acts[:i] + [noop] + acts[i + 1:], start, np.zeros(n), np.full(n, 7.0))
                 if np.abs(alt - path).max() < 1e-6:
                     unobservable += 1

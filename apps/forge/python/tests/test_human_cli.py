@@ -59,9 +59,10 @@ def test_summary_build_realism_companions(capture, tmp_path, capsys):
 
 def test_fit_prices_and_mapper_validate(capture, tmp_path, capsys):
     out = tmp_path / "out"
-    got = run(capsys, "fit", "--capture", capture, "--out", out, "--beam", "8", "--spaces", "lattice", "turn_rate")
-    assert got["clips"] >= 1 and set(got["expressible"]) == {"lattice", "turn_rate"}
-    assert "| lattice |" in (out / "human_fit.md").read_text()
+    got = run(capsys, "fit", "--capture", capture, "--out", out, "--beam", "8", "--spaces", "controller",
+              "controller_125ms")
+    assert got["clips"] >= 1 and set(got["expressible"]) == {"controller", "controller_125ms"}
+    assert "| controller |" in (out / "human_fit.md").read_text()
     priced = run(capsys, "prices", "--capture", capture, "--out", out, "--beam", "8")
     assert "Actions.Jitter" in priced["proposed"] or json.loads((out / "human_prices.json").read_text())["units"] == 0
     val = run(capsys, "mapper-validate", "--out", out, "--sequences", "3", "--length", "20")
@@ -75,16 +76,23 @@ def test_spell_ranks_command_from_a_dump(tmp_path, capsys):
     assert got["rows"] == 2 and (tmp_path / "spell_ranks.csv").is_file()
 
 
-def test_prices_follow_moveprice_and_meet_the_budget():
-    assert prices.undone(math.pi / 4, -math.pi / 12) == pytest.approx((math.pi / 12) / (math.pi / 2))
-    assert prices.undone(math.pi / 4, math.pi / 4) == 0.0 and prices.undone(0.3, -math.pi) == 0.0
-    assert prices.bearing_swing(4) == pytest.approx(2.0) and prices.bearing_swing(1) == pytest.approx(0.5)
-    space = fit.SPACES["lattice"]
-    index = {space.actions[i]: i for i in range(len(space.actions))}
-    left, right = index[(fit.TURN, fit.TURN_ANGLES[2])], index[(fit.TURN, fit.TURN_ANGLES[3])]
+def test_prices_follow_press_and_meet_the_budget():
+    space = fit.SPACES["controller"]
+    index = {space.label(i): i for i in range(len(space.actions))}
+    # MoveControls::Press: a turn rate reversed while held takes back the smaller rate over a quarter turn a second,
+    # at once (since 0); the feet reversed are two quarters, at their recency; a rate's effort is its size over the
+    # full press, a key's a whole one; the value already held again is no press.
+    tally = prices.UnitTally()
+    acts = [index[n] for n in ("turn_left_90", "noop", "turn_right_30", "move_forward", "move_forward", "move_stop",
+                               "noop", "noop", "noop", "move_back")]
+    prices.tally_movement(tally, np.zeros((len(acts) + 1, motion.SAMPLE_DIM)), acts, space)
+    assert tally.jitter_amount == pytest.approx([(math.pi / 6) / (math.pi / 2), 2.0])
+    assert tally.jitter_since == pytest.approx([0.0, 1.0])
+    assert tally.effort == pytest.approx(0.5 + 1 / 6 + 1 + 1 + 1)
+    left, right = index["turn_left_90"], index["turn_right_90"]
     units = []
     for jitter_every in (8, 12, 16):
-        acts = [index[(fit.BEARING, 0.0)]] + [0] * 239
+        acts = [index["move_forward"]] + [0] * 239
         for k in range(4, 240, jitter_every):
             acts[k] = left
             acts[k + 2] = right

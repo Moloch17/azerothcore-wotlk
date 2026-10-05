@@ -147,6 +147,14 @@ class ConvergenceConfig:
     # Hold both learning rates at full until the overall score first plateaus, then anneal: an anneal that starts
     # at step 0 makes the KL fall with the schedule, which read as convergence when it was not.
     lr_hold_until_plateau: bool = True
+    # A ladder stage converges only at the top of its ladder (user, 2026-10-05; movement-curriculum M1): a class's
+    # convergence reads its evaluation episodes at the top rung only (episode info `at_top_rung`, else the highest
+    # `difficulty` tier), and it cannot converge until its own training episodes have been at the top rung for the
+    # whole window (a share of TOP_RUNG_SHARE). A stage with no ladder is unaffected.
+    top_rung: bool = True
+    # The stage's own measure, if not the evaluation score: an episode info column the per-class plateau reads (M1:
+    # "arrived"), at the top rung on a ladder stage. Empty: the score.
+    measure: str = ""
 
 
 @dataclass

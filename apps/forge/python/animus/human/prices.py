@@ -1,13 +1,14 @@
 """Proposed noise prices from human play (plan §2.6): a report only; it never writes config.
 
 The forge charges steering that does not commit and presses that do nothing (CurriculumTuning.h ActionTuning,
-MovePrice.h): **Actions.Jitter** per quarter turn a turn, pitch or bearing takes back of the one before, weighed by
-recency e^(-dt / **Options.JitterDecayMs**), plus a facing mode taken back and a start after a stop at their
-recency; **Actions.Effort** per press (a steering press by its angle, EffortOf); **Actions.Repeat** per press of
+MoveControls.h's Press): **Actions.Jitter** per quarter turn a press takes back of the choice before it, weighed by
+recency e^(-dt / **Options.JitterDecayMs**) -- a reversal of the feet (forward to back, left to right) or of a climb
+half a turn, of a turn or pitch rate the smaller rate over a quarter turn a second; **Actions.Effort** per press
+(a rate by its size, EffortOf over 180 deg/s turning, 90 deg/s pitching); **Actions.Repeat** per press of
 one action past RepeatFree (3) within RepeatWindowMs (10 s); **Actions.Fidget** per second moving in a fight while
 already at the wanted range, once held **Actions.SettleGraceMs**.
 
-Human presses come from the inverse mapper (movement, lattice space) and the CastRequests (casts); the same
+Human presses come from the inverse mapper (movement, controller space) and the CastRequests (casts); the same
 quantities are tallied per unit (one player in one hour shard, at least MIN_MINUTES of clip time) and the prices
 are proposed so that the **median human pays at most `budget`** per minute for each term:
 
@@ -43,17 +44,8 @@ MIN_MINUTES = 0.5
 QUARTER_TURN = math.pi / 2
 
 
-def undone(previous: float, now: float) -> float:
-    """MovePrice::Undone: the quarter turns `now` takes back of `previous`."""
-    if previous == 0.0 or now == 0.0 or (previous > 0) == (now > 0) or abs(now) >= math.pi - 0.01:
-        return 0.0
-    return min(abs(previous), abs(now)) / QUARTER_TURN
-
-
-def bearing_swing(apart: int, count: int = fit.BEARINGS) -> float:
-    """MovePrice::BearingSwing."""
-    apart %= count
-    return min(apart, count - apart) * (2 * math.pi / count) / QUARTER_TURN
+TURN_FULL = math.pi              # Press's full turn press: TURN_RATE_MAX / 2, 180 deg/s
+PITCH_FULL = math.pi / 2        # ... and pitch press: PITCH_RATE_MAX, 90 deg/s
 
 
 @dataclass
@@ -77,71 +69,58 @@ class UnitTally:
         return float((a * np.exp(-s * 1000.0 / decay_ms)).sum()) / self.minutes if len(a) else 0.0
 
 
+@dataclass
+class _Axis:
+    """One held control as MoveControls' SeatControls remembers it: the value held, the last non-zero one, and when
+    the held value was last let go."""
+
+    held: float = 0.0
+    last: float = 0.0
+    let_go: float = -1e9
+
+
+def _press(tally: UnitTally, axis: _Axis, value: float, now: float, rate: float | None) -> None:
+    """MoveControls::Press on one axis: a change to `value` at `now`; `rate` is the full press of a rate axis (None
+    for a key). A reversal's since is 0 while the reversed value is still held (Detail::Change). The jitter is
+    tallied as (amount, since) so jitter_per_min can price it at any decay."""
+    if value == axis.held:
+        return
+    opposite = value != 0.0 and axis.last != 0.0 and (value > 0) != (axis.last > 0)
+    since = 0.0 if axis.held != 0.0 else now - axis.let_go
+    if rate is None:
+        tally.effort += 1.0
+        amount = 2.0
+    else:
+        tally.effort += min(1.0, abs(value if value != 0.0 else axis.held) / rate)
+        amount = min(abs(value), abs(axis.last)) / QUARTER_TURN
+    if opposite:
+        tally.jitter_amount.append(amount)
+        tally.jitter_since.append(max(0.0, since))
+    if axis.held != 0.0:
+        axis.let_go = now
+    if value != 0.0:
+        axis.last = value
+    axis.held = value
+
+
 def tally_movement(tally: UnitTally, samples: np.ndarray, actions: list[int], space: fit.Space | None = None) -> None:
-    """Add one clip's mapped movement presses (`actions` per decision of `samples`) to a unit."""
-    space = space or fit.SPACES["lattice"]
+    """Add one clip's mapped movement presses (`actions` per decision of `samples`) to a unit, priced as
+    MoveControls::Press prices them."""
+    space = space or fit.SPACES["controller"]
     dt_s = space.dt
     tally.minutes += (len(samples) - 1) * dt_s / 60.0
-    last_turn = 0.0
-    turn_t = -1e9
-    turn_until = -1e9
-    last_bearing = -1
-    bearing_t = -1e9
-    pitch_delta = 0.0
-    pitch_t = -1e9
-    pitch_until = -1e9
-    mode, last_mode, mode_t = fit.FACE_MODE_HOLD, None, -1e9
+    axes = {kind: _Axis() for kind in (fit.FORWARD, fit.STRAFE, fit.VERTICAL, fit.TURN, fit.PITCH)}
+    full = {fit.TURN: TURN_FULL, fit.PITCH: PITCH_FULL}
     for k, a in enumerate(actions):
-        now = k * dt_s
         kind, value = space.actions[a]
         if kind == fit.NOOP:
             continue
-        if kind == fit.TURN:
-            since = 0.0 if now < turn_until else now - turn_t
-            u = undone(last_turn, value)
-            if u > 0:
-                tally.jitter_amount.append(u)
-                tally.jitter_since.append(since)
-            last_turn, turn_t = value, now
-            turn_until = now + math.ceil(abs(value) / space.turn_step - 1e-3) * dt_s
-            tally.effort += min(1.0, abs(value) / fit.TURN_RATE)
-        elif kind == fit.BEARING:
-            b = int(value)
-            if last_bearing >= 0 and b != last_bearing:
-                tally.jitter_amount.append(bearing_swing(b - last_bearing))
-                tally.jitter_since.append(now - bearing_t)
-            last_bearing, bearing_t = b, now
-            tally.effort += 1.0
-        elif kind == fit.PITCH:
-            delta = value - float(samples[k, motion.PITCH])
-            since = 0.0 if now < pitch_until else now - pitch_t
-            u = undone(pitch_delta, delta)
-            if u > 0:
-                tally.jitter_amount.append(u)
-                tally.jitter_since.append(since)
-            pitch_delta, pitch_t = delta, now
-            pitch_until = now + max(1, math.ceil(abs(delta) / space.pitch_step - 1e-3)) * dt_s
-            tally.effort += min(1.0, abs(delta) / fit.TURN_RATE)
-        elif kind in (fit.FACE_HEADING, fit.FACE_HOLD):
-            new = fit.FACE_MODE_HEADING if kind == fit.FACE_HEADING else fit.FACE_MODE_HOLD
-            if new != mode:
-                if last_mode == new:
-                    tally.jitter_amount.append(1.0)
-                    tally.jitter_since.append(now - mode_t)
-                last_mode, mode, mode_t = mode, new, now
-            tally.effort += 1.0
+        if kind in axes:
+            _press(tally, axes[kind], value, k * dt_s, full.get(kind))
         else:
-            tally.effort += 1.0
-    # Starts after a stop, at their recency (StageScenario: every start after a stop).
+            tally.effort += 1.0             # JUMP, WALK_TOGGLE: a full press
     feats = motion.features(samples)
     moving = feats[:, motion.INDEX["moving"]] > 0.5
-    stopped_at = None
-    for k in range(1, len(moving)):
-        if moving[k] and not moving[k - 1] and stopped_at is not None:
-            tally.jitter_amount.append(1.0)
-            tally.jitter_since.append((k - stopped_at) * dt_s)
-        if not moving[k] and moving[k - 1]:
-            stopped_at = k
     # Fidget proxy: moving in combat, charged once a run has held the grace.
     combat = samples[1:, motion.IN_COMBAT] > 0.5
     run = 0

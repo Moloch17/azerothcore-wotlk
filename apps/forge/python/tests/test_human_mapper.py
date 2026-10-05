@@ -1,6 +1,8 @@
 """animus.human.mapper: movement mapped back through the emulator, casts through rank chains, selections to slots."""
 
 import json
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -25,7 +27,7 @@ def manifest(tmp_path):
         "blocks": [{"name": "core", "actions": [0, 4], "catalog": [
             {"kind": "noop"}, {"kind": "cancel_queued"}, {"kind": "spell", "first_rank": 116},
             {"kind": "spell", "first_rank": 133}]},
-                   {"name": "move", "actions": [4, 33]}]}))
+                   {"name": "move", "actions": [4, 29]}]}))
     return path
 
 
@@ -36,25 +38,29 @@ def test_movement_mapping_meets_the_target_on_known_sequences():
     assert noisy["accuracy"] >= 0.95
 
 
-def test_move_local_indices_follow_moveblock():
-    space = fit.SPACES["lattice_fine"]
-    labels = {space.label(i): mapper.move_local(space, i) for i in range(len(space.actions))}
-    assert labels["noop"] is None and labels["bearing_0"] == 0 and labels["bearing_7"] == 7
-    assert labels["halt"] == 8 and labels["face_heading"] == 10 and labels["face_hold"] == 11
-    assert labels["turn_+15"] == 12 and labels["turn_+180"] == 20 and labels["pitch_-60"] == 21
-    assert labels["pitch_+60"] == 29 and labels["jump"] == 30 and labels["turn_+5"] == 31 and labels["turn_-5"] == 32
+def test_move_local_indices_follow_movecontrols():
+    """Every emulator action is the move block's action of the same name (MoveControls::NAMES, read from the header)."""
+    header = (Path(__file__).resolve().parents[4]
+              / "src/server/game/Animus/Scenario/Curriculum/Blocks/MoveControls.h").read_text()
+    body = re.search(r"NAMES\s*=\s*\{(.*?)\};", header, re.S).group(1)
+    names = re.findall(r'"([a-z_0-9]+)"', body)
+    assert len(names) == mapper.MOVE_ACTIONS == 25
+    for space in fit.SPACES.values():
+        labels = {space.label(i): mapper.move_local(space, i) for i in range(len(space.actions))}
+        assert labels.pop("noop") is None
+        assert labels == {name: local for local, name in enumerate(names)}
 
 
 def test_confidence_is_high_where_the_motion_decides(tmp_path):
-    space = fit.SPACES["lattice"]
-    acts = [1] + [0] * 6
+    space = fit.SPACES["controller"]
+    acts = [1] + [0] * 6                    # move_forward, then holding it
     path = fit.rollout(space, acts, {"x": 0.0, "y": 0.0, "facing": 0.0}, np.zeros(8), np.full(8, 7.0))
     h = np.zeros((8, 10))
     h[:, 0] = np.arange(8) * 0.25
     h[:, 1:4] = path[:, :3]
     h[:, 4] = path[:, 3]
     h[:, 8] = 7.0
-    got = mapper.map_movement(h, space, start_bearing=-1)
+    got = mapper.map_movement(h, space, start_feet=(0, 0))
     assert got.local[0] == 0 and got.confidence[0] > 0.9
 
 

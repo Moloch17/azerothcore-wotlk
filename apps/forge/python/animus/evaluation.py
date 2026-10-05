@@ -323,6 +323,21 @@ class EvalResult:
                             if picked.any():
                                 group["specs"][f"{layout}_{spec}"] = means(picked)
                 result["up_to"][str(tier)] = group
+        # The top of a ladder stage's ladder (episode info `at_top_rung`, else the highest of several difficulty
+        # tiers): the episodes a ladder stage converges on (convergence.top_rung). Present, perhaps empty, on every
+        # ladder stage, so an evaluation that never reached the top still says it is one.
+        top = self.column("at_top_rung")
+        top_rows = None
+        if top is not None:
+            top_rows = top > 0.5
+        elif tiers is not None and len(set(tiers.tolist())) > 1:
+            top_rows = tiers == max(tiers.tolist())
+        if top_rows is not None:
+            group = means(top_rows)
+            names = np.array(self.layouts) if len(self.layouts) == self.episodes else None
+            group["layouts"] = {} if names is None else {
+                layout: means(top_rows & (names == layout)) for layout in sorted(set(self.layouts))}
+            result["top_rung"] = group
         plans = self.column("talent_plan")
         if plans is not None and len(set(plans.tolist())) > 1:
             for index, plan in enumerate(TALENT_PLANS):

@@ -21,6 +21,10 @@ the last ``convergence.window`` evaluations:
 4. **The ladder settled** -- on a ladder stage, its training rung (the mean ``difficulty`` of its training
    episodes) has not moved by half a rung; on a league stage, the live policy's win rate against the hardest league
    member has moved by less than 0.05. A stage with neither has nothing to settle.
+5. **At the top rung** (``convergence.top_rung``, every ladder stage) -- its training episodes have been at the top of
+   their ladder (episode info ``at_top_rung``) for the whole window, and the score the plateau reads is its
+   evaluation episodes' at the top rung only: a stage converges on its real task, never on an easier rung it has
+   settled on. The score is the stage's own measure when ``convergence.measure`` names one (M1: ``arrived``).
 
 A class that has converged **leaves the training draw**: its layout weight drops to ``convergence.hold_share`` and
 its adapter and head are frozen (animus.train, MappoTrainer.freeze_layouts), so the rest of the budget goes to the
@@ -44,7 +48,8 @@ from .evaluation import ConvergenceTracker
 from .mappo.trainer import schedule
 
 CONTINUE, ADVANCE = "continue", "advance"
-SIGNALS = ("score", "kl", "entropy", "ladder")
+SIGNALS = ("score", "kl", "entropy", "ladder", "top_rung")
+TOP_RUNG_SHARE = 0.9  # of a class's training episodes at the top rung, every evaluation interval of the window
 RUNG_SETTLED = 0.5  # rungs a class's training difficulty may drift over the window
 LEAGUE_SETTLED = 0.05  # win rate against the hardest league member, likewise
 
@@ -66,6 +71,9 @@ class LayoutState:
     entropy: list[float] = field(default_factory=list)  # entropy / ln(allowed actions), likewise
     rung: list[float | None] = field(default_factory=list)  # mean training difficulty, likewise (None: no ladder)
     league: list[float | None] = field(default_factory=list)  # win rate vs the hardest member (None: no league)
+    top: list[float | None] = field(default_factory=list)  # share of training episodes at the top rung (None: none)
+    ladder: bool = False  # a ladder stage's class (it has a top rung): convergence waits for it
+    top_scored: bool = False  # the latest evaluation scored it at the top rung
     scores: list[float] = field(default_factory=list)
     converged: bool = False
     converged_score: float | None = None
@@ -77,6 +85,8 @@ class LayoutState:
     updates: int = 0
     rung_sum: float = 0.0
     rung_count: int = 0
+    top_sum: float = 0.0
+    top_count: int = 0
     league_latest: float | None = None
     played: bool = False  # had evaluation rows at some evaluation: a class the run never plays is not waited for
 
@@ -105,6 +115,14 @@ class LayoutState:
             out.append("ladder")
         elif len(leagues) > 1 and max(leagues) - min(leagues) > LEAGUE_SETTLED:
             out.append("ladder")
+        if c.top_rung and self.ladder:
+            # The training share is read where the sim reports it (at_top_rung); a stage that reports only its
+            # difficulty tiers is judged on the evaluation's top tier alone.
+            tops = self.top[-evals_needed:]
+            reported = any(value is not None for value in self.top)
+            if not self.top_scored or (reported and (len(tops) < evals_needed or any(
+                    value is None or value < TOP_RUNG_SHARE for value in tops))):
+                out.append("top_rung")
         return out
 
 
@@ -365,12 +383,18 @@ class ConvergenceController:
             state.entropy_sum += float(stats.get("entropy", 0.0)) / math.log(allowed) if allowed > 1.0 else 0.0
             state.updates += 1
 
-    def observe_training_episodes(self, rungs: dict[str, float]) -> None:
-        """Mean training difficulty per class over the episodes an update finished (a ladder stage)."""
+    def observe_training_episodes(self, rungs: dict[str, float], tops: dict[str, float] | None = None) -> None:
+        """Mean training difficulty per class over the episodes an update finished (a ladder stage), and the share of
+        them at the top rung (episode info at_top_rung, when the sim reports it)."""
         for name, rung in rungs.items():
             if (state := self.layouts.get(name)) is not None:
                 state.rung_sum += float(rung)
                 state.rung_count += 1
+        for name, share in (tops or {}).items():
+            if (state := self.layouts.get(name)) is not None:
+                state.top_sum += float(share)
+                state.top_count += 1
+                state.ladder = True
 
     def observe_league(self, hardest_win_rate: dict[str, float]) -> None:
         """The live policy's win rate against the hardest league member, per class (a league stage)."""
@@ -437,23 +461,38 @@ class ConvergenceController:
                                               anneal_starting)
 
         rows = summary.get("layouts", {})
+        if not rows and len(self.layouts) == 1:
+            rows = {next(iter(self.layouts)): summary}      # one class: the summary is its row
+        top = summary.get("top_rung") if self.config.convergence.top_rung else None
+        top_rows = (top.get("layouts") or ({next(iter(self.layouts)): top} if len(self.layouts) == 1 else {})
+                    ) if top is not None else {}
         for name, state in self.layouts.items():
             row = rows.get(name)
             interval_kl = state.kl_sum / state.updates if state.updates else 0.0
             interval_entropy = state.entropy_sum / state.updates if state.updates else 0.0
             rung = state.rung_sum / state.rung_count if state.rung_count else None
-            state.kl_sum = state.entropy_sum = state.rung_sum = 0.0
-            state.updates = state.rung_count = 0
+            interval_top = state.top_sum / state.top_count if state.top_count else None
+            state.kl_sum = state.entropy_sum = state.rung_sum = state.top_sum = 0.0
+            state.updates = state.rung_count = state.top_count = 0
             if row is None or row.get("score") is None:
                 continue
             state.played = True
-            score = float(row["score"])
-            state.scores.append(score)
-            state.tracker.observe(score, env_steps, float(row.get("stderr", 0.0) or 0.0))
+            if top is not None:
+                state.ladder = True
             state.kl.append(interval_kl)
             state.entropy.append(interval_entropy)
             state.rung.append(rung)
             state.league.append(state.league_latest)
+            state.top.append(interval_top)
+            # A ladder stage's class is judged at the top rung only (convergence.top_rung), on the stage's own measure;
+            # an evaluation with none of its episodes there adds no score (it cannot converge on another rung's).
+            judged = top_rows.get(name) if state.ladder and top is not None else row
+            state.top_scored = judged is not None and judged.get("score") is not None
+            if not state.top_scored:
+                continue
+            score, stderr = self._judged_score(judged)
+            state.scores.append(score)
+            state.tracker.observe(score, env_steps, stderr)
 
             if state.converged:
                 # Re-entry: the trunk moved it back below where it converged.
@@ -461,14 +500,27 @@ class ConvergenceController:
                     state.converged = False
                     state.reentries += 1
                     state.tracker = self._tracker(self.config.convergence.window)
-                    state.tracker.observe(score, env_steps, float(row.get("stderr", 0.0) or 0.0))
+                    state.tracker.observe(score, env_steps, stderr)
                     state.scores, state.kl, state.entropy = [score], [interval_kl], [interval_entropy]
-                    state.rung, state.league = [rung], [state.league_latest]
+                    state.rung, state.league, state.top = [rung], [state.league_latest], [interval_top]
             elif costs_ready and not state.missing(self.config, self.config.convergence.window):
                 state.converged = True
                 state.converged_score = score
-                state.converged_margin = state.tracker.margin(float(row.get("stderr", 0.0) or 0.0))
+                state.converged_margin = state.tracker.margin(stderr)
         return improved
+
+    def _judged_score(self, row: dict) -> tuple[float, float]:
+        """A class's convergence score from its evaluation row: the stage's own measure when convergence.measure
+        names a column the row has (a share's standard error from its episodes), else the score."""
+        measure = self.config.convergence.measure
+        if measure and row.get(measure) is not None:
+            value = float(row[measure])
+            episodes = max(1, int(row.get("episodes", 1) or 1))
+            share = min(1.0, max(0.0, value))
+            stderr = math.sqrt(max(share * (1.0 - share), 1e-4) / episodes) if 0.0 <= value <= 1.0 else float(
+                row.get("stderr", 0.0) or 0.0)
+            return value, stderr
+        return float(row["score"]), float(row.get("stderr", 0.0) or 0.0)
 
     def ladders_settled(self) -> bool:
         """The played classes' difficulty ladders (a ladder stage's rungs) have settled over the window, all but at most
@@ -517,6 +569,7 @@ class ConvergenceController:
             "entropy": state.entropy[-1] if state.entropy else None,
             "rung": state.rung[-1] if state.rung else None,
             "league": state.league[-1] if state.league else None,
+            "top_rung": state.top[-1] if state.top else None,
         } for name, state in self.layouts.items()}
 
     def after_eval(self, env_steps: int) -> Outcome:
@@ -565,6 +618,7 @@ class ConvergenceController:
             "layouts": {name: {
                 "tracker": state.tracker.state_dict(),
                 "kl": state.kl, "entropy": state.entropy, "rung": state.rung, "league": state.league,
+                "top": state.top, "ladder": state.ladder, "top_scored": state.top_scored,
                 "scores": state.scores, "converged": state.converged, "converged_score": state.converged_score,
                 "converged_margin": state.converged_margin, "reentries": state.reentries, "played": state.played,
             } for name, state in self.layouts.items()},
@@ -584,8 +638,10 @@ class ConvergenceController:
             if layout is None:
                 continue
             layout.tracker.load_state_dict(saved.get("tracker"))
-            for key in ("kl", "entropy", "rung", "league", "scores"):
+            for key in ("kl", "entropy", "rung", "league", "top", "scores"):
                 setattr(layout, key, list(saved.get(key, [])))
+            layout.ladder = bool(saved.get("ladder", False))
+            layout.top_scored = bool(saved.get("top_scored", False))
             layout.converged = bool(saved.get("converged", False))
             layout.converged_score = saved.get("converged_score")
             layout.converged_margin = float(saved.get("converged_margin", 0.0))

@@ -106,7 +106,7 @@ def cmd_fit(args) -> dict:
 
 def cmd_mapper_validate(args) -> dict:
     out: dict = {"movement": []}
-    for name in ("lattice", "lattice_fine"):
+    for name in fit.SPACES:
         for noise in (0.0, 0.05):
             out["movement"].append(mapper.validate_movement(fit.SPACES[name], sequences=args.sequences,
                                                             length=args.length, noise_yards=noise,
@@ -130,7 +130,7 @@ def cmd_spell_ranks(args) -> dict:
 def cmd_prices(args) -> dict:
     units: dict[tuple, prices.UnitTally] = {}
     casts_done: set = set()
-    space = fit.SPACES["lattice"]
+    space = fit.SPACES["controller"]
     clips_done = 0
     for shard, track, clip in _clips(args, motion.DECISION_SECONDS, motion.WINDOW + 1):
         key = (track.player, track.hour)
