@@ -48,6 +48,8 @@ def test_summary_build_realism_companions(capture, tmp_path, capsys):
     np.savez(bot / "eval_motion.npz", windows=data["windows"], context=data["context"])
     real = run(capsys, "realism", "--out", out, "--run", bot)
     assert real["mean_emd"] is not None and real["mean_emd"] < 0.2
+    # The headline is the evaluations' own number (realism.score): the players against themselves are near 0.
+    assert real["realism_emd"] < 0.2 and real["contexts"]
     comp = run(capsys, "companions", "--capture", capture, "--out", out)
     report = json.loads((out / "human_companions.json").read_text())["models"]["warrior_companion"]
     assert comp["models"] == ["warrior_companion"] and report["decisions"] == 10 and report["dismissals"] == 1

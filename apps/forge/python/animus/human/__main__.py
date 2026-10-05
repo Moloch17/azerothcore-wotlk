@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from animus.human import build as build_mod
-from animus.human import companions, dataset, fit, mapper, motion, prices
+from animus.human import companions, dataset, fit, mapper, motion, prices, realism
 from animus.human import reader as r
 from animus.human import reference as ref
 from animus.human import segment, tracks
@@ -158,16 +158,25 @@ def cmd_companions(args) -> dict:
 
 
 def cmd_realism(args) -> dict:
-    reference = ref.load(args.reference or Path(args.out) / "human_reference.json")
+    reference_path = args.reference or Path(args.out) / "human_reference.json"
+    reference = ref.load(reference_path)
     bot_path = Path(args.bot) if args.bot else Path(args.run) / "eval_motion.npz"
     bot = dataset.load(bot_path)
     result = ref.realism(reference, bot["windows"])
+    # The headline is the number the forge's evaluations report (realism.score: contexts weighted by the bot's steps),
+    # over each window's last step -- every step once, as the eval scores its tracks -- so this report and eval.csv's
+    # realism_emd agree; the per-feature breakdown above is kept beside it.
+    windows = np.asarray(bot["windows"])
+    headline = realism.score(windows[:, -1, :], np.asarray(bot["context"]), realism.load_reference(reference_path))
+    result["realism_emd"] = headline["realism_emd"]
+    result["realism_emd_contexts"] = {key[len("realism_emd_"):]: value for key, value in headline.items()
+                                      if key.startswith("realism_emd_")}
     result["bot"] = str(bot_path)
     path = Path(args.out) / "realism.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=1))
-    return {"file": str(path), "mean_emd": result["mean_emd"],
-            "contexts": {k: v["mean_emd"] for k, v in result["contexts"].items()}}
+    path.write_text(json.dumps(result, indent=1, default=float))
+    return {"file": str(path), "realism_emd": result["realism_emd"], "mean_emd": result["mean_emd"],
+            "contexts": result["realism_emd_contexts"]}
 
 
 def main(argv: list[str] | None = None) -> int:
