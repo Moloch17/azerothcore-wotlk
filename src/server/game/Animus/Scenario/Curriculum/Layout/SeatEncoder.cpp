@@ -115,11 +115,10 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
                 option = SeatOption();
 
     // A durative action runs until the policy does something else: anything but the no-op takes over from it,
-    // except that a positioning option (IsPositioning: the held bearing) survives everything but the seat moving
-    // its feet another way -- casting and swinging are what it keeps walking through -- an aiming option
-    // (IsAiming: a held turn or pitch) survives everything but its own contradiction, and a standby (IsStandby)
-    // survives everything, since waiting for the target's cast is not a thing the seat stops fighting to do. Each
-    // option's own action is masked while it runs, so this cannot cancel a fresh press.
+    // except that a positioning option (IsPositioning: the companion's follow) survives everything but the seat
+    // moving its feet another way -- casting, swinging and turning are what it keeps going through -- and a standby
+    // (IsStandby) survives everything, since waiting for the target's cast is not a thing the seat stops fighting
+    // to do. The move block's held keys are not options: they are held until the seat changes them.
     if (action > 0 && view.Option)
     {
         bool const movement = block && GetBlock(*block).IsMovement(local);
@@ -129,23 +128,14 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
             if (option.Kind == SeatOptionKind::None || IsStandby(option.Kind))
                 continue;
 
-            // A held turn or pitch ends only on the press that contradicts it -- its opposite, or levelling off --
-            // which the move block does itself when it applies that press. Ending it on any press meant a seat
-            // could not turn while it did anything else, and turning while walking is the one gait this design
-            // exists to allow.
-            if (IsAiming(option.Kind))
-                continue;
-
             if (!IsPositioning(option.Kind))
             {
                 option = SeatOption();
                 continue;
             }
 
-            // A bearing is the seat steering, so any other movement of the feet ends it -- there is no direction
-            // that agrees with a compass point the seat chose for itself. A fresh bearing ends it here and Apply
-            // starts the new one straight after, which is how one bearing replaces another. Aiming is not the
-            // feet: a turn under a held bearing curves the walk rather than stopping it.
+            // A follow is the seat's feet, so any other movement of them ends it. Aiming is not the feet: a turn
+            // or a pitch under a follow leaves it running.
             if (movement && !aiming)
                 option = SeatOption();
         }

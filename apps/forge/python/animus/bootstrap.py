@@ -61,8 +61,9 @@ def _seed_head(new: dict, old: dict, prefix: str) -> None:
 # action in action order, then the talents and trees. When a catalog loses or gains spells (a spell rule changed), the
 # core block is seeded action by action by name (stage.json action_names). Must equal CoreBlock::OBS_GLOBAL_COUNT
 # (tests/test_bootstrap.py reads the header): it was 67 long after the globals had grown to 94, which seeded every
-# changed catalog's action features 27 columns off.
-CORE_GLOBAL_FEATURES = 94
+# changed catalog's action features 27 columns off. 91 since the move block's option clocks left (core revision 1,
+# player-controller C3); a checkpoint from before is a revision-0 core block, which starts fresh rather than matched.
+CORE_GLOBAL_FEATURES = 91
 # Per catalog action (CoreBlock::ACTION_FEATURES): 6 until ready and affordable joined them (2026-10-04). A stage.json
 # says its own (the core block's "action_features"); one that does not is from before, and had 6.
 CORE_ACTION_FEATURES = 8

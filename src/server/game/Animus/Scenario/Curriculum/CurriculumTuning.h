@@ -696,11 +696,6 @@ namespace Animus::Curriculum
             uint32 SettleGraceMs = 500;
             /// How much the gap to the wanted range has to change for a step to count as closing or opening it.
             float IntentSlackYards = 0.5f;
-            /// How far below where a jump would come down the ground is looked for before the jump is refused.
-            /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
-            /// nothing with Slow Fall, health past fourteen yards, death past about seventy -- is the seat's to
-            /// learn from OBS_JUMP_DROP and from what happens. Only the void is masked.
-            float JumpDropSearch = 200.0f;
         } Actions;
 
         /// Packs and the gauntlet's pull after pull.
@@ -889,17 +884,6 @@ namespace Animus::Curriculum
         {
             uint32 RestMaxMs = 30000;           // eat and drink until health and mana are back
             uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
-            /// How long a chosen bearing keeps being walked before it lapses (MoveBlock). Shorter than the two
-            /// above on purpose: resting and holding an interrupt are standing instructions that stay true while
-            /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
-            /// covered it. The policy re-presses to keep going, which is what a held key is.
-            uint32 MoveBearingMs = 3000;
-            /// How long each MoveBlock::TURN_RATE step of a chosen turn stands on the option clock: the decision
-            /// interval, so the clock the core block reports runs out as the turn does. A turn itself ends when it
-            /// has turned, not on this.
-            uint32 MoveTurnMs = 250;
-            /// The same for each MoveBlock::PITCH_RATE step of a chosen pitch: the decision interval.
-            uint32 MovePitchMs = 250;
             /// How fast a steering choice stops weighing on the one that undoes it (Actions.Jitter): its weight is
             /// e^(-dt / this). Replaces a window, JitterWindowMs (1500), that charged in full up to its edge and
             /// nothing past it, so a slow weave (a period of two seconds or more) was free. At 2500 a reversal 2 s on
@@ -1334,7 +1318,6 @@ namespace Animus::Curriculum
             f("Actions.Fidget", tuning.Actions.Fidget);
             f("Actions.SettleGraceMs", tuning.Actions.SettleGraceMs);
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
-            f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
             f("Goals.Reached", tuning.Goals.Reached);
             f("Goals.Switch", tuning.Goals.Switch);
@@ -1467,9 +1450,6 @@ namespace Animus::Curriculum
             f("Dummy.Resource", tuning.Dummy.Resource);
             f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
             f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
-            f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
-            f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
-            f("Options.MovePitchMs", tuning.Options.MovePitchMs);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Options.FollowMs", tuning.Options.FollowMs);
             f("Options.ShownFacingRelaunchDeg", tuning.Options.ShownFacingRelaunchDeg);

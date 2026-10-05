@@ -87,14 +87,11 @@ namespace Animus::Curriculum
             OBS_TARGET_HEALTH_TREND     = 88,   // the same for its target
             /// Per durative action (SeatOptionKind without None): how much of its clock is left / 30 s, 0 when it is
             /// not running. Without them a running option is hidden state: the policy could not tell that it is
-            /// already resting, holding an interrupt or walking a bearing -- and the seat runs several at once (a
-            /// positioning option, a standby, a turn and a pitch), so one slot with one clock could not say which.
-            /// Five: rest, the held interrupt, the held bearing, the held turn and the held pitch. The companion's
-            /// follow is an option too, reported by the companion block so that only its layouts carry it. The
-            /// direction of the last target-relative move used to sit before these; there are no target-relative
-            /// moves now.
+            /// already resting or holding an interrupt. Two: rest and the held interrupt. The companion's follow is
+            /// an option too, reported by the companion block so that only its layouts carry it. The held bearing,
+            /// turn and pitch had clocks here too, until the move block's keys stopped being options (revision 1).
             OBS_OPTION_FIRST            = 89,
-            OBS_GLOBAL_COUNT            = 94
+            OBS_GLOBAL_COUNT            = 91
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
             // stacks, time since the seat pressed it / 10 s, ready, affordable). Then per talent of the class: rank /
@@ -121,6 +118,9 @@ namespace Animus::Curriculum
         [[nodiscard]] bool PressesFirst(Layout const& layout, uint32 local) const override;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        /// 1: the option clocks are two (rest, the held interrupt), not five -- the move block's bearing, turn and pitch
+        /// clocks went with its options (player-controller C3), so every column after them moved up by three.
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void DescribeRescaled(Layout const& layout, boost::json::array& out) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;

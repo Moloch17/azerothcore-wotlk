@@ -145,11 +145,6 @@ AnimusForge::Forge* AnimusForge::Forge::Instance()
 void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
-    // The move block's layout for every seat, before any layout is built (movement-smooth D).
-    Animus::Curriculum::MoveBlock::SetRevision(_config.MoveRevision);
-    if (_config.MoveRevision)
-        LOG_INFO("module.animus", "AnimusForge.MoveRevision = {}: the move block's steering memory and fine turns",
-            _config.MoveRevision);
     Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
         _config.ProbeCacheGrids);
     // Fields with tables too: where a seat stands on a grid with no table, the field works the same dense probe out
@@ -643,8 +638,6 @@ bool AnimusForge::Forge::StartCurrent()
     while (!_scenario)
     {
         PlanEntry const& skipped = _plan.Entries[_plan.Index];
-        // The layouts are built with the scenario: its move block revision first (a cluster worker's is the host's).
-        Animus::Curriculum::MoveBlock::SetRevision(RunConfig().MoveRevision);
         std::unique_ptr<Animus::Scenario> scenario = Animus::CreateScenario(skipped.Scenario,
             RunConfig().Stage(skipped.Scenario));
         if (!scenario)
@@ -1139,14 +1132,6 @@ void AnimusForge::Forge::PollCluster()
                 if (std::sscanf(at, " ticks=%u", &count) == 1 && count)
                     ticks = count;
             }
-            // The host's move block revision: the layout widths its learner was given (WorkerPlan).
-            std::optional<uint32> moveRevision;
-            if (char const* at = std::strstr(order->c_str(), " moverev="))
-            {
-                unsigned revision = 0;
-                if (std::sscanf(at, " moverev=%u", &revision) == 1)
-                    moveRevision = revision;
-            }
             // Already running it (only the link to the host was lost): its sim goes on, and the learner reconnects.
             // (Not after a STOP in the same poll: a host restarting this worker's learner sends STOP, then START.)
             // Never for a cluster rank: a rank's learner cannot rejoin its learners' group once the host has
@@ -1163,7 +1148,7 @@ void AnimusForge::Forge::PollCluster()
             LOG_INFO("module.animus", "Cluster: the host orders {}{}{}", scenario, fast ? " (fast)" : "",
                 rank.World > 1 ? Acore::StringFormat(", with this machine's learner as rank {} of {}", rank.Rank,
                     rank.World) : "");
-            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs, ticks, moveRevision);
+            _clusterOrder = WorkerPlan(scenario, resume != 0, fast != 0, rank, envs, ticks);
             if (_state != State::Idle)
                 _request = Request::Cancel;
         }
@@ -1193,7 +1178,7 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
     // And the stage's world ticks a decision, which a worker runs whatever its own conf says: the learner's spec
     // (TickMs, DecisionTicks) is this machine's, so a worker ticking differently would train a different world.
     std::string const cap = (envs ? Acore::StringFormat(" envs={}", *envs) : "")
-        + Acore::StringFormat(" ticks={} moverev={}", learnerConfig.TicksFor(scenario), learnerConfig.MoveRevision);
+        + Acore::StringFormat(" ticks={}", learnerConfig.TicksFor(scenario));
     std::string const start = Acore::StringFormat("START {} {} {}{}", scenario, resume ? 1 : 0, _plan.Fast ? 1 : 0,
         cap);
     _clusterStart = Acore::StringFormat("START {} 0 {}{}", scenario, _plan.Fast ? 1 : 0, cap);
@@ -1251,8 +1236,7 @@ void AnimusForge::Forge::DealClusterLearners(ForgeConfig& learnerConfig, std::st
 }
 
 AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scenario, bool resume, bool fast,
-    ClusterRank const& rank, std::optional<uint32> envs, std::optional<uint32> ticks,
-    std::optional<uint32> moveRevision) const
+    ClusterRank const& rank, std::optional<uint32> envs, std::optional<uint32> ticks) const
 {
     // A fast run's scenarios are built from the fast profile (its classes, levels, envs): the host's learner refuses a
     // worker whose sim is not the same scenario as its own.
@@ -1288,15 +1272,6 @@ AnimusForge::Forge::Plan AnimusForge::Forge::WorkerPlan(std::string const& scena
                 own, scenario);
         config.StageTicks[scenario] = *ticks;
         LOG_INFO("module.animus", "Cluster: {} runs {} world ticks a decision (the host's)", scenario, *ticks);
-    }
-    // The move block's layout is the host's too: a worker of another revision would build seats of other widths.
-    if (moveRevision)
-    {
-        static std::atomic<bool> warned{ false };
-        if (*moveRevision != config.MoveRevision && !warned.exchange(true))
-            LOG_WARN("module.animus", "Cluster: the host's AnimusForge.MoveRevision {} is used; this machine's own {} "
-                "is ignored", *moveRevision, config.MoveRevision);
-        config.MoveRevision = std::min<uint32>(1, *moveRevision);
     }
 
     Plan plan;

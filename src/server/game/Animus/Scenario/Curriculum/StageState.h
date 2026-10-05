@@ -244,16 +244,11 @@ namespace Animus::Curriculum
         SeatOptionSet Option;
         uint32 OptionPresses = 0;
         uint32 OptionMs = 0;
-        /// How the seat is steering, carried from decision to decision (MoveBlock). The compass point its feet are
-        /// walking, how it is holding its head, which way it is turning, and how far up or down it is looking.
-        ///
-        /// These used to live only on SeatView, which is rebuilt every decision -- so they reset before every
-        /// observation and every apply. A held bearing was therefore never re-issued (an eight-yard step, not a held
-        /// key), OBS_BEARING_HELD never fired, ACTION_HALT was masked off in every decision of every episode because
-        /// nothing was ever recorded as being walked, and FACE_TARGET and FACE_HEADING did nothing at all, because
-        /// FaceWhile only ever saw the "leave it where it is" default. Steering has to be remembered to work.
-        uint8 HeldBearing = 0xFF;
-        uint8 FacingMode = 0xFF;
+        /// The keys and mouse the seat holds (MoveBlock, MoveControls), carried from decision to decision, and the
+        /// body the player controller moves with them. Mutable like the probe: ViewSeat reads a const seat and hands
+        /// the move block pointers it writes.
+        mutable MoveControls::SeatControls Controls;
+        mutable Movement::BodyState Body;
         /// Where the seat is looking, in its own keeping rather than the spline's (SeatView::Facing). Seeded from
         /// the bot when an episode starts, because a default of 0 would aim every seat due east.
         float Facing = 0.0f;
@@ -278,12 +273,9 @@ namespace Animus::Curriculum
         float MotionMarkRange = -1.0f;
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        float TurnLeft = 0.0f;                  // radians of a chosen turn still to come, + left (SeatView::TurnLeft)
-        /// The last turn and bearing (SteerMemory), for the jitter charge. Mutable like the probe: ViewSeat reads
-        /// a const seat and hands the move block a pointer it writes on Apply.
+        /// The movement-smooth steering memory (SteerMemory), read only by the blocks still launching seat runs
+        /// (player-controller C4, C9 strip it). Mutable like the probe.
         mutable SteerMemory Steering;
-        float PitchTarget = 0.0f;               // the pitch chosen (SeatView::PitchTarget), radians
-        float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
         /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
         uint32 SubmergedSinceMs = 0;
@@ -546,16 +538,12 @@ namespace Animus::Curriculum
             FallDamage = 0.0f;
             FallDeaths = 0;
             Option = SeatOptionSet();
-            // Steering is state, and it used to be the only state that outlived its episode. A FACE_* is masked
-            // once chosen, so a mode picked in one episode latched for the rest of the run and could never be
-            // pressed again; a bearing and a turn carried over the same way. Facing is seeded from the bot once
-            // the seat has been placed (StageScenario::ResetSeats), not here, where there is no bot to ask.
-            HeldBearing = 0xFF;
-            FacingMode = 0xFF;
-            TurnLeft = 0.0f;
+            // The held keys are state, and must not outlive their episode: a seat would set out holding the last one's.
+            // Facing and the body are seeded from the bot once the seat has been placed (StageScenario::ResetSeats),
+            // not here, where there is no bot to ask.
+            Controls.Clear();
+            Body = Movement::BodyState();
             Steering.Clear();
-            PitchTarget = 0.0f;
-            Pitch = 0.0f;
             Facing = 0.0f;
             Probe = GroundProbe();
             Trail.Clear();

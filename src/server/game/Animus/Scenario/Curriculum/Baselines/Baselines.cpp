@@ -52,11 +52,13 @@ namespace
     constexpr float HOLD_RANGE_BEYOND_YARDS = 28.0f;    // ranged specs close in from beyond this ...
     constexpr float HOLD_RANGE_WITHIN_YARDS = 24.0f;    // ... and stop once inside this
     constexpr float MOUNT_BEYOND_YARDS = 80.0f;
-    /// Nearer than half a bearing to straight ahead, a bearing does the aiming; further off, the held turn does.
+    /// Nearer than this to straight ahead the seat holds forward and stops turning; further off, it turns first.
     constexpr float TURN_WITHIN_RADIANS = 0.3926991f;
+    /// The decision the turn rate is chosen for: the rate whose swing over one decision best fits the error.
+    constexpr float DECISION_SECONDS = 0.25f;
     constexpr float CRUISE_HEIGHT_YARDS = 20.0f;
-    /// How much walkable ground is worth against pointing the right way, when choosing a bearing. At 1.0 a
-    /// bearing onto ground the seat can cross beats one aimed straight at the objective and into a cliff, and a
+    /// How much walkable ground is worth against pointing the right way, when choosing a heading among the rays. At
+    /// 1.0 a ray onto ground the seat can cross beats one aimed straight at the objective and into a cliff, and a
     /// 45-degree detour onto good ground beats a blocked straight line -- which is the whole difference between
     /// steering and holding forward.
     constexpr float GROUND_OVER_AIM = 1.0f;
@@ -494,82 +496,89 @@ namespace
         return std::nullopt;
     }
 
-    /// The bearing that takes the seat towards its objective over ground it can actually cross, or nothing to
-    /// carry on with the one it is already walking.
-    ///
-    /// Holding BEARING_FORWARD was what this did before, and it is why the scripted baseline arrived in 8% of its
-    /// episodes against a trained policy's 99%: forward is the right way only until something is in front of it,
-    /// and a baseline that cannot steer is a yardstick anything clears. Bearing b points at
-    /// -b*45 degrees in the seat's own frame (MoveBlock::HeadingOf), so its alignment with an objective lying at
-    /// `heading` is cos(heading + b*45). Weighed against OBS_GROUND_FIRST, that is a seat that walks round a
-    /// cliff instead of into it -- and, now that the probe reports water as ground it can cross, one that swims a
-    /// crossing rather than stopping at the shore.
-    std::optional<int32> Steer(Row const& row, float headingSin, float headingCos)
+    /// The keys the seat holds (MoveBlock's OBS_HELD_*), read back off its row.
+    float Held(Row const& row, uint32 feature)
     {
+        return row.Has(BlockId::Move) ? row.Obs(BlockId::Move, feature) : 0.0f;
+    }
+
+    /// **The seek helper** (player-controller criterion C): turn toward `heading` (sin, cos in the seat's own frame)
+    /// with a held turn rate -- the one whose swing over a decision best fits the error -- and let go of it once
+    /// within TURN_WITHIN_RADIANS. Nothing when it already holds the right rate, or is aimed and not turning.
+    std::optional<int32> TurnToward(Row const& row, float headingSin, float headingCos)
+    {
+        namespace MC = MoveControls;
         if (!row.Has(BlockId::Move))
             return std::nullopt;
 
         float const heading = std::atan2(headingSin, headingCos);
+        float const held = Held(row, MoveBlock::OBS_HELD_TURN) * MC::TURN_RATE_MAX;
+        if (std::fabs(heading) <= TURN_WITHIN_RADIANS)
+            return held != 0.0f ? row.Allowed(BlockId::Move, MC::ACTION_TURN_STOP) : std::nullopt;
 
-        uint32 best = MoveBlock::BEARING_COUNT;
-        float bestScore = 0.0f;
-        for (uint32 bearing = 0; bearing < MoveBlock::BEARING_COUNT; ++bearing)
+        uint32 best = MC::TURN_STOP_INDEX;
+        for (uint32 turn = 0; turn < MC::TURN_COUNT; ++turn)
         {
-            float const aim = std::cos(heading + float(bearing) * float(M_PI) / 4.0f);
-            // Ray 2 * b lies along bearing b: the block senses twice as many rays as it can walk bearings.
-            float const reach = row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + 2 * bearing);
-            float const score = aim + GROUND_OVER_AIM * reach;
-            if (best == MoveBlock::BEARING_COUNT || score > bestScore)
+            float const rate = MC::TURN_RATES_DEG[turn] * MC::DEG;
+            if (rate == 0.0f || (rate > 0.0f) != (heading > 0.0f))
+                continue;
+            if (best == MC::TURN_STOP_INDEX || std::fabs(rate * DECISION_SECONDS - heading)
+                < std::fabs(MC::TURN_RATES_DEG[best] * MC::DEG * DECISION_SECONDS - heading))
+                best = turn;
+        }
+        if (std::fabs(MC::TURN_RATES_DEG[best] * MC::DEG - held) < 1e-3f)
+            return std::nullopt;
+        return row.Allowed(BlockId::Move, MC::ACTION_TURN_FIRST + best);
+    }
+
+    /// Steer toward `heading` over ground it can actually cross: the ray (sixteen round the seat, ray r at r * 22.5
+    /// degrees clockwise of ahead) that best weighs pointing the right way against walkable reach, turned to with
+    /// TurnToward, then held forward. Holding forward alone is what this did before the rays, and why the scripted
+    /// baseline arrived in 8% of its episodes against a trained policy's 99%: forward is right only until something
+    /// is in front of it.
+    std::optional<int32> Steer(Row const& row, float headingSin, float headingCos)
+    {
+        namespace MC = MoveControls;
+        if (!row.Has(BlockId::Move))
+            return std::nullopt;
+
+        float const heading = std::atan2(headingSin, headingCos);
+        float best = heading;
+        float bestScore = -1e9f;
+        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+        {
+            float const angle = -float(ray) * 2.0f * float(M_PI) / float(MoveBlock::RAY_COUNT);
+            float const score = std::cos(heading - angle)
+                + GROUND_OVER_AIM * row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + ray);
+            if (score > bestScore)
             {
                 bestScore = score;
-                best = bearing;
+                best = angle;
             }
         }
 
-        if (best == MoveBlock::BEARING_COUNT)
+        if (std::optional<int32> turn = TurnToward(row, std::sin(best), std::cos(best)))
+            return turn;
+        if (std::fabs(std::remainder(best, 2.0f * float(M_PI))) > TURN_WITHIN_RADIANS)
+            return std::nullopt;            // still turning: the feet wait
+        if (Held(row, MoveBlock::OBS_HELD_FORWARD) > 0.0f)
             return std::nullopt;
-
-        // Already walking the best one: it is masked for that reason, and pressing the second best instead would
-        // set the seat zig-zagging between two bearings for as long as the objective sat between them.
-        if (row.Obs(BlockId::Move, MoveBlock::OBS_BEARING_HELD + best) > 0.0f)
-            return std::nullopt;
-
-        return row.Allowed(BlockId::Move, MoveBlock::ACTION_BEARING_FIRST + best);
+        return row.Allowed(BlockId::Move, MC::ACTION_MOVE_FORWARD);
     }
 
-    /// Stop the feet, if they are walking: the bearing one-hot is the sign that they are.
+    /// Stop the feet, then the turn, if either is held.
     std::optional<int32> Halt(Row const& row)
     {
-        if (!row.Has(BlockId::Move) || row.Obs(BlockId::Move, MoveBlock::OBS_BEARING_NONE) > 0.0f)
-            return std::nullopt;
-
-        return row.Allowed(BlockId::Move, MoveBlock::ACTION_HALT);
-    }
-
-    /// Turn towards `heading` (sin, cos in the seat's own frame) when it lies more than half a bearing off straight
-    /// ahead: the mouse-look, where FACE_OBJECTIVE used to snap the head in one press. The turn is chosen whole --
-    /// the one of MoveBlock::TURN_ANGLES nearest the heading -- and not again while one is under way, so the feet
-    /// get the decisions in between. Left is counter-clockwise, the positive way round in WoW's orientation.
-    std::optional<int32> TurnToward(Row const& row, float headingSin, float headingCos)
-    {
+        namespace MC = MoveControls;
         if (!row.Has(BlockId::Move))
             return std::nullopt;
-
-        float const heading = std::atan2(headingSin, headingCos);
-        if (std::fabs(heading) <= TURN_WITHIN_RADIANS)
-            return std::nullopt;
-
-        if (row.Obs(BlockId::Move, MoveBlock::OBS_TURNING_LEFT) > 0.0f
-            || row.Obs(BlockId::Move, MoveBlock::OBS_TURNING_RIGHT) > 0.0f)
-            return std::nullopt;
-
-        uint32 nearest = 0;
-        for (uint32 turn = 1; turn < MoveBlock::TURN_COUNT; ++turn)
-            if (std::fabs(MoveBlock::TURN_ANGLES[turn] - heading)
-                < std::fabs(MoveBlock::TURN_ANGLES[nearest] - heading))
-                nearest = turn;
-
-        return row.Allowed(BlockId::Move, MoveBlock::ACTION_TURN_FIRST + nearest);
+        if (Held(row, MoveBlock::OBS_HELD_FORWARD) != 0.0f)
+            return row.Allowed(BlockId::Move, MC::ACTION_MOVE_STOP);
+        if (Held(row, MoveBlock::OBS_HELD_STRAFE) != 0.0f)
+            return row.Allowed(BlockId::Move, MC::ACTION_STRAFE_STOP);
+        if (Held(row, MoveBlock::OBS_HELD_TURN) != 0.0f)
+            return row.Allowed(BlockId::Move, MC::ACTION_TURN_STOP);
+        return std::nullopt;
     }
 
     std::optional<int32> Fight(Row const& row, Layout const& layout)
@@ -625,22 +634,26 @@ namespace
                 row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
                 return turn;
 
-            // In the air, climb to cruising height for the crossing and nose down for the arrival: a 30 degree
-            // climb or dive, chosen once (the one already chosen is masked), and level between.
+            // In the air, climb to cruising height for the crossing and descend for the arrival with the ascend and
+            // descend keys, held once, and let go of between.
             if (flying)
             {
+                float const vertical = Held(row, MoveBlock::OBS_HELD_VERTICAL);
                 if (yards > MOUNT_BEYOND_YARDS * 0.5f && height < CRUISE_HEIGHT_YARDS)
                 {
-                    if (std::optional<int32> up = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL + 2))
-                        return up;
+                    if (vertical <= 0.0f)
+                        if (std::optional<int32> up = row.Allowed(BlockId::Move, MoveControls::ACTION_ASCEND))
+                            return up;
                 }
                 else if (yards < MOUNT_BEYOND_YARDS * 0.5f && height > 1.0f)
                 {
-                    if (std::optional<int32> down = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL - 2))
-                        return down;
+                    if (vertical >= 0.0f)
+                        if (std::optional<int32> down = row.Allowed(BlockId::Move, MoveControls::ACTION_DESCEND))
+                            return down;
                 }
-                else if (std::optional<int32> level = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL))
-                    return level;
+                else if (vertical != 0.0f)
+                    if (std::optional<int32> level = row.Allowed(BlockId::Move, MoveControls::ACTION_VERTICAL_STOP))
+                        return level;
             }
 
             // And steer. The objective's direction in the seat's own frame comes from the move block's own pair,

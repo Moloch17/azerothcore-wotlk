@@ -201,7 +201,6 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Actions.RepeatWindowMs` | 10000 | | | |
 | `Actions.RepeatFree` | 3 | | | |
 | `Actions.Jitter` | 0.05 | | | |
-| `Actions.JumpDropSearch` | 200 | | | |
 | `Actions.ModeLockMs` | 5000 | | | |
 | `Difficulty.MaxTier` | 6 | | | |
 | `Difficulty.EliteTier` | 4 | | | |
@@ -245,9 +244,6 @@ for every key with a default and no warning, so an undocumented one quietly keep
 |---|---|---|---|---|
 | `Options.RestMaxMs` | 30000 | | | |
 | `Options.HoldInterruptMs` | 10000 | | | |
-| `Options.MoveBearingMs` | 3000 | | | |
-| `Options.MoveTurnMs` | 250 | | | |
-| `Options.MovePitchMs` | 250 | | | |
 | `Options.JitterDecayMs` | 2500 | | | |
 | `Options.FollowMs` | 6000 | | | |
 

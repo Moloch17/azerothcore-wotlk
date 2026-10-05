@@ -482,13 +482,9 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
     bool const started = Encoding::ApplySpellAction(view, view.Target, def, result);
     if (started && def.From == ActionCatalog::Group::Sustain)
         ++result.SustainCasts;
-
-    // A cast under way holds the feet. The press lands before the decision's steering (PressesFirst), and a held
-    // bearing is re-issued by the option machinery every decision without being asked -- so the spline came straight
-    // back under the cast and killed it (cancelled_moved). Only a cast that started lets go: a refused press (charged
-    // Aimless.Cast*) leaves the bearing, so the seat keeps walking (2026-10-04, movement-smooth A4).
-    if (started && Encoding::CastHoldsFeet(view.Bot))
-        Encoding::ReleaseBearing(view);
+    // The keys the seat holds are its own (MoveBlock): a cast does not let go of them for it, as no client lets go of
+    // a player's. Casting while moving is refused or cancelled by the core's own rules, read off the real movement
+    // state (player-controller §5), and the seat learns to stop first.
 }
 
 bool Animus::Curriculum::CoreBlock::PressesFirst(Layout const& layout, uint32 local) const

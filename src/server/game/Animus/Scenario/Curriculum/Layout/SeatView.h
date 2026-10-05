@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
 #include "RouteShortcut.h"
+#include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
@@ -157,9 +158,6 @@ namespace Animus::Curriculum
         None = 0,
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
-        MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
-        MoveTurn,           // turning to a chosen heading at the turn rate, while the feet do whatever they are doing
-        MovePitch,          // looking further up or down, the same way; only off the ground
         /// Running to just behind the owner (CompanionBlock), re-aimed at where the owner is now every decision
         /// until the seat is there and the owner has stopped, or the feet are told something else. Last on
         /// purpose: the core block reports the clocks of every kind before it (CoreBlock's OPTION_KINDS), and a
@@ -169,7 +167,7 @@ namespace Animus::Curriculum
         Count
     };
 
-    /// A positioning option owns the feet: the held bearing, or the companion's follow. Only the seat moving its feet
+    /// A positioning option owns the feet: the companion's follow. Only the seat moving its feet
     /// another way takes over from it: a fight is spells and swings between steps, and ending it on those left a
     /// melee seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every
     /// 0.39 s while it stood in melee reach 96% of the time). Aiming does not end it either (IsAiming): a player
@@ -182,7 +180,7 @@ namespace Animus::Curriculum
     /// after one; the three-second hold was a one-decision hold and the "held key" was never trained on).
     [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
     {
-        return kind == SeatOptionKind::MoveBearing || kind == SeatOptionKind::Follow;
+        return kind == SeatOptionKind::Follow;
     }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
@@ -205,20 +203,14 @@ namespace Animus::Curriculum
     /// already uses, with the triggers that matter here. A plain clock will not do, because at seven yards a
     /// second a one-second-old march is seven yards stale and the nearest cell it reports is six.
     ///
-    /// Sixteen rays rather than the eight bearings the seat can walk: a gully's mouth or a doorway sits between
-    /// two 45-degree rays as often as on one, and a seat that cannot see it cannot choose the turn that lines it
-    /// up. Ray 2 * b lies along bearing b.
+    /// Sixteen rays: a gully's mouth or a doorway sits between two 45-degree rays as often as on one, and a seat
+    /// that cannot see it cannot choose the turn that lines it up.
     struct GroundProbe
     {
         float Reach[SENSE_RAYS] = {};           // distance to the first obstruction along each ray / MARCH_MAX
         float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
         float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
         float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
-        bool CanJump = false;                   // a jump along Facing had somewhere to land when measured
-        Position JumpLanding;                   // where, when it had: the ground under the end of the arc
-        float JumpDrop = 0.0f;                  // and how far below the seat that ground is (negative: a step up)
-        bool JumpDropPending = false;           // the arc has been launched over a drop; the fall is still to come
-        uint64 JumpUntilMs = 0;                 // a jump launched from here is still in the air until this clock
         float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
         float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
         float ClearanceCos = 0.0f;
@@ -342,30 +334,15 @@ namespace Animus::Curriculum
     /// Which option a kind occupies: a seat runs one positioning option and one standby option at a time. Keeping a
     /// caster at range and waiting for its cast are not alternatives, and with a single slot each press of one threw
     /// the other away -- a melee seat holding an interrupt stopped staying on its target.
-    /// Aiming is not positioning. A player runs one way and looks another, and turning shares no slot with the feet
-    /// -- if it did, choosing a direction to look would cancel the direction being walked, and a strafe could not be
-    /// expressed. Yaw and pitch are separate again for the same reason a mouse moves in two axes at once.
-    [[nodiscard]] constexpr bool IsAiming(SeatOptionKind kind)
-    {
-        return kind == SeatOptionKind::MoveTurn || kind == SeatOptionKind::MovePitch;
-    }
-
     enum class SeatOptionSlot : uint8
     {
         Positioning = 0,
         Standby,
-        Turn,
-        Pitch,
         Count
     };
 
     [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind kind)
     {
-        if (kind == SeatOptionKind::MoveTurn)
-            return SeatOptionSlot::Turn;
-        if (kind == SeatOptionKind::MovePitch)
-            return SeatOptionSlot::Pitch;
-
         return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
     }
 
@@ -450,7 +427,6 @@ namespace Animus::Curriculum
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
-        float JumpDropSearch = 200.0f;      // Actions.JumpDropSearch: how deep a landing is looked for
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
@@ -469,44 +445,22 @@ namespace Animus::Curriculum
         uint8 Race = 0;
         uint8 Spec = 0;
         Aptitude Apt;                               // what this character can do (SeatState::Apt)
-        /// The compass point the seat is walking (MoveBlock::Bearing), or BEARING_COUNT for none, and how it is
-        /// holding its head while it does (MoveBlock::ACTION_FACE_*). Feet and eyes are chosen apart, which is what
-        /// lets a seat strafe or back away without turning round.
-        uint8 HeldBearing = 0xFF;
-        uint8 FacingMode = 0xFF;
-        /// **Where the seat believes it is looking**, and the frame every bearing is measured off.
-        ///
-        /// Not bot->GetOrientation(), which is not the seat's to own: a spline writes the direction of travel
-        /// onto it every tick, and a knockback, a fall or another block's move overwrite it outright. Steering
-        /// off it meant the frame moved under the seat between one decision and the next, so a held bearing
-        /// rotated 45 degrees a decision and the seat spiralled instead of walking a line. This is the policy's
-        /// own heading: the spline is told to hold it, so the two normally agree, but when they disagree this is
-        /// the one that decides where "forward" is.
+        /// **Where the seat is looking**: the frame every bearing it observes is measured off. The controlled body's
+        /// yaw (Movement::BodyState::Yaw) once the controller steps it; seeded from the bot at an episode's start.
         float Facing = 0.0f;
         /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
         /// refreshed in place, exactly as the hazard search is.
         GroundProbe* Probe = nullptr;
         /// Where it has been, the same way: sampled in place by the move block once a second.
         MovementTrail* Trail = nullptr;
-        /// How much of a chosen turn is still to come, in radians: positive is left (orientation runs
-        /// counter-clockwise, so left is the positive way round), 0 not turning. A turn is chosen whole
-        /// (MoveBlock::ACTION_TURN_FIRST) and carried out at MoveBlock::TURN_RATE a decision, so a quarter turn
-        /// is one decision's choice rather than six held taps each able to overshoot.
-        float TurnLeft = 0.0f;
-        /// The head already moved TURN_RATE this decision (MoveBlock's StepTurn), so a turn chosen on the same
-        /// decision waits for the next: no seat turns 90 degrees in 250 ms by changing its mind. Per decision,
-        /// never carried.
-        bool TurnStepped = false;
-        /// The last turn and bearing, for the jitter charge (SteerMemory). Borrowed like the probe; null for a
-        /// view without one, which charges nothing.
+        /// **The keys and mouse it holds** (MoveControls::SeatControls, MoveBlock), and the body the player
+        /// controller moves with them (Movement::BodyState). Borrowed like the probe; null for a view without them,
+        /// which holds nothing and moves nowhere.
+        MoveControls::SeatControls* Controls = nullptr;
+        Movement::BodyState* Body = nullptr;
+        /// The movement-smooth steering memory (SteerMemory): only the blocks still launching seat runs read it, and
+        /// it goes with them (player-controller C4, C9). Borrowed like the probe; null for a view without one.
         SteerMemory* Steering = nullptr;
-        /// The pitch the seat has chosen (MoveBlock::PITCH_ANGLES) and the one it has reached, in radians above (+)
-        /// or below (-) level. Two fields because they are two things: where it was told to look, and where it is
-        /// looking on the way there (MoveBlock::PITCH_RATE a decision).
-        float PitchTarget = 0.0f;
-        float Pitch = 0.0f;
-        /// The head already tilted PITCH_RATE this decision, as TurnStepped. Per decision, never carried.
-        bool PitchStepped = false;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
@@ -743,9 +697,9 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
-        /// The feet leaving the ground (MoveBlock): jumps launched, jumps pressed with nowhere to land, how far
-        /// below the seat the landing was, whether a feather-fall aura was on at the launch; and the falls that
-        /// followed (Encoding::FallToGround), how far and what they cost in health.
+        /// The feet leaving the ground (MoveBlock): jumps pressed, whether a feather-fall aura was on at the press;
+        /// and the falls (Encoding::FallToGround), how far and what they cost in health. JumpsRefused and JumpDrop
+        /// were the navmesh jump's landing test, 0 now (the controller's falls replace them in C4).
         uint32 Jumps = 0;
         uint32 JumpsRefused = 0;
         float JumpDrop = 0.0f;
@@ -753,10 +707,10 @@ namespace Animus::Curriculum
         uint32 Falls = 0;
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
-        /// Steering that failed to commit (MoveBlock, Actions.Jitter), counted for the columns as before: a turn or a
-        /// pitch chosen against one chosen within 1500 ms (MovePrice::COUNT_MS), a bearing pressed within it that
-        /// swings the feet round from the last one -- as the share of a half turn it swings -- a facing mode taken
-        /// back, and any of them 1.5 to 4 s on (Weaves).
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a turn or pitch rate, or
+        /// a climb, against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to
+        /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves). FacingToggles is
+        /// the retired facing modes', 0 now (stripped with the columns in C4).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
         uint32 PitchReversals = 0;
@@ -782,7 +736,7 @@ namespace Animus::Curriculum
         bool CastTaunt = false;                     // a taunt (Taunt, Growl, Hand of Reckoning, Dark Command, ...)
         bool CastTankMode = false;                  // a tank's stance, form, aura or presence
         uint32 RefusedCast = 0;                     // a press that did not start: the core's SpellCastResult
-        bool BearingRefresh = false;                // the bearing already held, pressed again: kept, not a press
+        bool KeyStillHeld = false;                  // the control already held, pressed again: not a press
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

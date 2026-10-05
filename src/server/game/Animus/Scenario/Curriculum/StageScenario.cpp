@@ -2616,11 +2616,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     CurrentReset.EncounterNs += ResetSinceNs(partMark);
 
-    // Where each seat is looking starts as where the world put it. ResetEpisode cleared it to 0, which would aim
-    // every seat due east; this is the first point at which the bots have stopped being teleported about.
+    // Where each seat is looking, and its body, start as where the world put it. ResetEpisode cleared them, which
+    // would aim every seat due east; this is the first point at which the bots have stopped being teleported about.
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         if (Player const* bot = SeatBot(env, seat))
+        {
             data.Seats[seat].Facing = bot->GetOrientation();
+            MoveBlock::TakeBody(bot, data.Seats[seat].Body);
+        }
 
     partMark = std::chrono::steady_clock::now();
     StockSeats(env);
@@ -3095,32 +3098,10 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
         ApplySeatAction(env, OwnerAgent(), actions[OwnerAgent()]);
 }
 
-void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool decided)
+void Animus::Curriculum::StageScenario::SubTick(Env& /*env*/, uint32 /*diffMs*/, bool /*decided*/)
 {
-    // Between decisions a seat facing its target keeps facing it (MoveBlock::FaceTargetBetween): the decision chose
-    // to look at the target, not at where it stood when the decision was made. With a watching client, every tick,
-    // what the client is shown of each seat's turns (MoveBlock::ShowTurn). Neither at TicksPerDecision 1 in training.
-    bool const shown = ForgeCore::HasClients();
-    if (decided && !shown)
-        return;
-
-    auto const tick = [&](uint32 index)
-    {
-        SeatState& seat = Data(env).Seats[index];
-        Player* bot = env.FindBot(index);
-        if (!bot || !seat.L || !bot->IsInWorld())
-            return;
-        if (!decided && seat.FacingMode == MoveBlock::ACTION_FACE_TARGET && !seat.DecisionTarget.IsEmpty())
-            if (Unit* target = Encoding::UnitThrough(*bot, seat.DecisionTarget))
-                if (target->IsInWorld() && !target->IsDuringRemoveFromWorld() && target->GetMap() == bot->GetMap())
-                    MoveBlock::FaceTargetBetween(bot, target, seat.Facing);
-        if (shown)
-            MoveBlock::ShowTurn(bot, seat.Steering, diffMs, _decisionMs);
-    };
-    for (uint32 seat = 0; seat < _seatCount; ++seat)
-        tick(seat);
-    if (CastOwnerActive(env))
-        tick(OwnerAgent());
+    // Every world tick between decisions. The per-tick FACE_TARGET follow and the shown turns went with the bearing
+    // design (player-controller C3); the player controller steps every seat's body here from C4.
 }
 
 Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat) const
@@ -3194,13 +3175,10 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Goal = seat.Holds[0].Goal;
     view.Goal2 = seat.Holds[1].Goal;
     view.GoalEnded = seat.Holds[0].Ended;
-    // How it is steering, carried over from the last decision: without this a held bearing is forgotten before it
-    // can be walked a second time, and the facing actions have nothing to act on.
-    view.HeldBearing = seat.HeldBearing;
-    view.FacingMode = seat.FacingMode;
-    view.TurnLeft = seat.TurnLeft;
-    view.PitchTarget = seat.PitchTarget;
-    view.Pitch = seat.Pitch;
+    // The keys it holds and the body they move, carried over from the last decision: without them a held key is
+    // forgotten before it can do anything.
+    view.Controls = &seat.Controls;
+    view.Body = &seat.Body;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
@@ -3218,7 +3196,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // Observing only reads the durative action; applying an action starts, runs and stops it (ApplySeatAction hands
     // the same seat's own).
     view.Options = _tuning.Options;
-    view.JumpDropSearch = _tuning.Actions.JumpDropSearch;
     view.NowMs = env.EpisodeElapsedMs;
     view.DecisionMs = _decisionMs;
     view.LastStepDamage = seat.LastStepDamage;
@@ -3330,15 +3307,12 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     // A spline launched while one was still running is a restart: what a client draws as a hitch in the stride.
     uint32 const splineBefore = bot->movespline->GetId();
     bool const splineRunning = !bot->movespline->Finalized();
-    bool const turning = std::fabs(seat.TurnLeft) >= 1e-4f;
     seat.Steering.LaunchCause = 0;
     seat.Steering.PressKind = 0;
     SeatEncoder::Apply(view, action, result);
     if (splineRunning && bot->movespline->GetId() != splineBefore)
     {
         ++seat.SplineRestarts;
-        if (turning || std::fabs(view.TurnLeft) >= 1e-4f)
-            ++seat.TurnRestarts;
         // By what let the run go (restart-causes): no cause from Steer's keep means another block launched it.
         // A stop is a finished Stop spline, not a relaunch; a press outside the keep (a jump) is still its press.
         uint8 const cause = uint8(MoveKeep::Recorded(bot->movespline->Finalized(),
@@ -3346,13 +3320,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         if (cause < seat.Relaunches.size())
             ++seat.Relaunches[cause];
     }
-    // Steering is state, not a one-off order: what the feet and the head were told is what the next decision
-    // continues from.
-    seat.HeldBearing = view.HeldBearing;
-    seat.FacingMode = view.FacingMode;
-    seat.TurnLeft = view.TurnLeft;
-    seat.PitchTarget = view.PitchTarget;
-    seat.Pitch = view.Pitch;
+    // The frame the next decision observes from (the move block keeps the controls and the body in place).
     seat.Facing = view.Facing;
     // Water, the way the core keeps it. A breath is spent under water and comes back ten times as fast above it
     // (Player::HandleDrowning), so bobbing up for a decision buys a fraction of one rather than a whole one; under
@@ -3422,8 +3390,8 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
                 seat.SubmergedMs / 1000, action);
         }
     }
-    // A held bearing pressed again is the key kept down (MoveBlock, movement-smooth A5): no repeat, effort or verdict.
-    if (action > 0 && !result.BearingRefresh)
+    // A held control pressed again is the key kept down (MoveBlock): no repeat, effort or verdict.
+    if (action > 0 && !result.KeyStillHeld)
     {
         Press(env, seat, bot, uint32(action), result.DidSomething());
         JudgePress(env, seat, bot, target, uint32(action), result);
@@ -3653,7 +3621,7 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         body.Y = bot->GetPositionY();
         body.Z = bot->GetPositionZ();
         body.Yaw = bot->GetOrientation();
-        body.Pitch = data.Seats[agent].Pitch;
+        body.Pitch = data.Seats[agent].Body.Pitch;
         body.Motion = K::ModeOf(jumping, inWater, aloft);
         body.Mounted = bot->IsMounted();
         // The speed the body actually moves under, which is what its steps are measured in: a seat flagged flying
@@ -4367,14 +4335,15 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
 
     if (*block == BlockId::Move)
     {
-        // A step (a bearing or a jump) is judged at the reward, by the gap it closed or opened (SettleIntent).
-        // Turns, facing and halting are neutral: the jitter charge already prices a head that cannot settle.
-        bool const step = local < MoveBlock::ACTION_HALT || local == MoveBlock::ACTION_JUMP;
+        // A step (forward, back, a strafe, a climb or dive, a jump) is judged at the reward, by the gap it closed or
+        // opened (SettleIntent). Rates, stops and walk are neutral: the jitter charge prices a head that cannot
+        // settle.
+        bool const step = MoveControls::IsStep(local);
         if (step && !Encoding::StandingInHazards(bot, nullptr))
             seat.MoveGap = GoalGap(seat, bot, target);
-        // A repeated step waits for its verdict; a repeated halt or facing order served nothing. Turns and pitches
-        // are steering corrections, which come in runs: the jitter charge prices the ones that undo each other.
-        bool const steer = local >= MoveBlock::ACTION_TURN_FIRST && local < MoveBlock::ACTION_JUMP;
+        // A repeated step waits for its verdict; a repeated stop served nothing. Turn and pitch rates are steering
+        // corrections, which come in runs: the jitter charge prices the ones that undo each other.
+        bool const steer = MoveControls::IsTurn(local) || MoveControls::IsPitch(local);
         if (seat.PendingRepeat && seat.MoveGap < 0.0f && !steer)
             chargeRepeat();
         seat.MoveRepeat = seat.PendingRepeat && seat.MoveGap >= 0.0f;

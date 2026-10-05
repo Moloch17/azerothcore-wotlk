@@ -298,16 +298,8 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             if (spell->prepare(&targets) == SPELL_CAST_OK)
             {
                 ++result.SpellCasts;
-
-                // And the feet let go of whatever they were holding.
-                //
-                // Stopping the bot is not enough on its own: a held bearing is re-issued by the option machinery
-                // every decision without being asked, so the spline would come straight back under the cast and
-                // kill it. Masking movement stops the policy pressing anything; this stops the machinery doing it
-                // on the policy's behalf. ACTION_JUMP lets go of the same two things for the same reason.
-                view.HeldBearing = 0xFF;
-                if (view.Option)
-                    view.Option->Stop(SeatOptionKind::MoveBearing);
+                // The keys stay the seat's own (MoveBlock): a mount cast with one held is cancelled by the core,
+                // as a player's is, and the seat learns to stand still for it.
             }
             return;
         }

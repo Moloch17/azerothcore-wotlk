@@ -5327,21 +5327,6 @@ AnimusForge.Human.HardSpots = ""
 AnimusForge.Human.HardSpotShare = 0
 
 ###################################################################################################
-# MOVE BLOCK REVISION
-#
-#    AnimusForge.MoveRevision
-#        Description: The move block's layout. 1 adds the steering's recent past to what a seat sees --
-#                     the last turn, bearing and pitch and how much each still weighs on the jitter
-#                     charge's decay (Options.JitterDecayMs), and the held bearing's clock on a 3-second
-#                     scale -- and two fine turns of 5 degrees either way. A different layout: a fresh
-#                     start, not a resume or a seed from a revision-0 checkpoint; a model trained on it
-#                     carries "revision": 1 in its manifest. Logged at startup when on. The realm runs such a
-#                     model with the module's Animus.MoveRevision = 1.
-#        Default:     1 (since the 2026-10-04 fresh start from stage1)
-
-AnimusForge.MoveRevision = 1
-
-###################################################################################################
 # GROUND PROBE
 #
 #    AnimusForge.Probe.Source
@@ -6433,11 +6418,6 @@ AnimusForge.Curriculum.Actions.Fidget = 0.01
 AnimusForge.Curriculum.Actions.SettleGraceMs = 500
 #   how much a step must close or open the gap to the wanted range to count as serving or aimless (yards)
 AnimusForge.Curriculum.Actions.IntentSlackYards = 0.5
-#   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
-#   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
-#   or Levitate, health past fourteen yards, death past about seventy -- is the seat's to learn. Only the void is
-#   masked
-AnimusForge.Curriculum.Actions.JumpDropSearch = 200
 #   a stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change of its
 #   kind (ms)
 AnimusForge.Curriculum.Actions.ModeLockMs = 5000
@@ -6605,30 +6585,17 @@ AnimusForge.Curriculum.Pulls.OwnerWinPulls = 5
 #
 #    AnimusForge.Curriculum.Options.*
 #        Description: How long a durative action may run before the seat has to choose again (ms). One press of
-#                     one stands for many decisions: resting until health and mana are back, holding an interrupt
-#                     for the target's next cast, or walking a bearing. They also end on their own conditions,
-#                     and any other action the policy takes cancels them -- except that only the feet end a held
-#                     bearing, and a turn or a pitch ends when it gets there (or another replaces it).
-#        Default:     30000 / 10000 / 3000 / 250 / 250 / 750
+#                     one stands for many decisions: resting until health and mana are back, or holding an
+#                     interrupt for the target's next cast. They also end on their own conditions, and any other
+#                     action the policy takes cancels them. (The move block's keys are held, not options.)
+#        Default:     30000 / 10000 / 2500
 #
 AnimusForge.Curriculum.Options.RestMaxMs = 30000
 AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
-#   ... and how long a bearing chosen with the move block keeps being walked before it lapses (ms). Shorter than the
-#   two above on purpose: those are standing instructions that stay true while the fight does, where a direction
-#   chosen against the ground goes stale as soon as the seat has covered it. Re-pressing keeps it going, which is
-#   what a held key is.
-AnimusForge.Curriculum.Options.MoveBearingMs = 3000
-
-#   ... and how long each 45-degree step of a chosen turn stands on the option clock (ms): the decision interval, so
-#   the clock the seat observes runs out as the turn does. A turn is chosen whole (15, 45, 90 or 135 degrees either
-#   way, or about) and ends when it has turned, not on this.
-AnimusForge.Curriculum.Options.MoveTurnMs = 250
-#   ... and the same for each 30-degree step of a chosen pitch (ms). A pitch is chosen whole (every 15 degrees from a
-#   60 degree dive to a 60 degree climb) and ends when it gets there.
-AnimusForge.Curriculum.Options.MovePitchMs = 250
-#   ... and how fast a turn, a pitch or a bearing stops weighing on one that undoes it (ms; Actions.Jitter): its
-#   weight is e^(-dt / this): 0.45 two seconds on, 0.30 at three, 0.14 at five, so a slow weave costs and a
-#   deliberate correction little. Replaced a 1500 ms window charged in full and free past it
+#   how fast a turn or pitch rate, a climb or the feet stop weighing on a press that reverses them (ms;
+#   Actions.Jitter, MoveControls::Press): its weight is e^(-dt / this): 0.45 two seconds on, 0.30 at three, 0.14 at
+#   five, so a slow weave costs and a deliberate correction little. Replaced a 1500 ms window charged in full and
+#   free past it
 AnimusForge.Curriculum.Options.JitterDecayMs = 2500
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
