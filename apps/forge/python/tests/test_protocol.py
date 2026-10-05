@@ -26,6 +26,7 @@ SPEC = p.Spec(
     scenario="fake",
     layouts=(p.Layout("warrior_dps", 4, 3), p.Layout("priest_heal", 2, 2)),
     episode_info_names=("damage", "dps"),
+    kinematics_dim=10,
 )
 
 
@@ -48,6 +49,7 @@ def make_step(decision: int, rng: np.random.Generator, spec: p.Spec = SPEC, envs
         final_state=rng.random((e, spec.state_dim), dtype=np.float32),
         episode_info=rng.random((e, a, spec.episode_info_dim), dtype=np.float32),
         episode_seed=rng.integers(0, 2**32, size=e, dtype=np.uint32),
+        kinematics=rng.random((e, a, spec.kinematics_dim), dtype=np.float32),
     )
 
 
@@ -70,8 +72,9 @@ def test_spec_round_trip():
 
 
 def test_spec_matches_cpp_layout():
-    # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them) and a 32-byte name, packed.
-    assert p.SPEC.size == 12 * 4 + 32
+    # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them), a 32-byte name and the
+    # kinematics width (protocol 20), packed.
+    assert p.SPEC.size == 12 * 4 + 32 + 4
     assert p.HEADER.size == 8
     # StepHeader: uint64 decision, uint32 first env, uint32 env count. ActHeader: uint32 first env, uint32 count.
     assert p.STEP_HEADER.size == 16
@@ -300,4 +303,29 @@ def test_episode_info_travels_for_the_ended_envs_only():
     decoded = p.decode_step(spec, payload)
     np.testing.assert_array_equal(decoded.episode_info[[2, 6]], step.episode_info[[2, 6]])
     assert not decoded.episode_info[[0, 1, 3, 4, 5, 7]].any()
-    assert "episode_info" in p.ENDED_ONLY and p.PROTOCOL_VERSION == 19
+    assert "episode_info" in p.ENDED_ONLY and p.PROTOCOL_VERSION >= 19
+
+
+def test_kinematics_travel_with_every_step():
+    """Protocol 20: each STEP ends with one SAMPLE (FORMAT.md section 3) per agent, every env's, done or not; the
+    SPEC says how wide. The bytes are the last E * A * 10 floats of the payload, env-major then agent."""
+    from animus.human import motion
+
+    assert p.PROTOCOL_VERSION == 20 and SPEC.kinematics_dim == motion.SAMPLE_DIM
+    assert p.decode_spec(p.encode_spec(SPEC)).kinematics_dim == motion.SAMPLE_DIM
+    step = make_step(2, np.random.default_rng(4))
+    payload = p.encode_step(SPEC, step)
+    tail = np.frombuffer(payload[-SPEC.num_envs * SPEC.agents_per_env * 10 * 4:], dtype="<f4")
+    np.testing.assert_array_equal(tail.reshape(step.kinematics.shape), step.kinematics)
+    decoded = p.decode_step(SPEC, payload)
+    np.testing.assert_array_equal(decoded.kinematics, step.kinematics)
+    # A step built without them (an older fixture) sends zeros, and the halves of a decision keep their rows.
+    bare = dataclasses.replace(step, kinematics=None)
+    assert not p.decode_step(SPEC, p.encode_step(SPEC, bare)).kinematics.any()
+    halves = [p.rows_of(step, 0, 1), p.rows_of(step, 1, SPEC.num_envs - 1)]
+    np.testing.assert_array_equal(p.join_steps(halves).kinematics, step.kinematics)
+    mixed = p.join_steps([dataclasses.replace(halves[0], kinematics=None), halves[1]])
+    assert not mixed.kinematics[0].any() and np.array_equal(mixed.kinematics[1:], step.kinematics[1:])
+    # A sim without kinematics (width 0) costs nothing on the wire.
+    none = dataclasses.replace(SPEC, kinematics_dim=0)
+    assert none.step_payload_size() == SPEC.step_payload_size() - SPEC.num_envs * SPEC.agents_per_env * 10 * 4

@@ -66,6 +66,8 @@
 #include <numeric>
 #include "StringFormat.h"
 #include "Supplies.h"
+#include "TravelBlock.h"
+#include "MoveSpline.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <boost/json/serialize.hpp>
@@ -3590,6 +3592,51 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
     // scripted-share owner are the script's, and the learner neither runs the cast actor nor trains on the row.
     if (_castOwner)
         present[OwnerAgent()] = CastOwnerActive(env) ? 1 : 0;
+}
+
+void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* kinematics) const
+{
+    namespace K = Animus::Kinematics;
+    EnvState const& data = Data(env);
+    uint32 const agents = Spec().AgentsPerEnv;
+    float const seconds = float(env.EpisodeElapsedMs) / float(IN_MILLISECONDS);
+    for (uint32 agent = 0; agent < agents; ++agent)
+    {
+        float* out = kinematics + std::size_t(agent) * K::SAMPLE_DIM;
+        // A seat's body, or the owner's when an arena plays it through its row; a director has none.
+        bool const seat = agent < _seatCount || (_castOwner && agent == OwnerAgent());
+        Player const* bot = seat && data.Seats[agent].L ? SeatBotInWorld(env, agent) : nullptr;
+        if (!bot)
+        {
+            K::Clear(out);
+            continue;
+        }
+
+        // Airborne is a jump or fall spline on its way (Unit::IsFalling reads MOVEMENTFLAG_FALLING, which no client
+        // ever clears on a seat); water is the unit's own test, as MoveBlock reads it; flight is a flying mount off
+        // the ground -- TravelBlock flags a seat flying from the moment it mounts one.
+        bool const spline = bot->movespline->Initialized() && !bot->movespline->Finalized();
+        bool const jumping = spline && (bot->movespline->isFalling() || bot->movespline->isParabolic());
+        bool const inWater = bot->Unit::IsInWater();
+        bool const flyingMount = bot->IsMounted() && bot->CanFly();
+        bool const aloft = flyingMount && TravelBlock::HeightAboveGround(bot) > 2.0f;
+
+        K::Body body;
+        body.X = bot->GetPositionX();
+        body.Y = bot->GetPositionY();
+        body.Z = bot->GetPositionZ();
+        body.Yaw = bot->GetOrientation();
+        body.Pitch = data.Seats[agent].Pitch;
+        body.Motion = K::ModeOf(jumping, inWater, aloft);
+        body.Mounted = bot->IsMounted();
+        // The speed the body actually moves under, which is what its steps are measured in: a seat flagged flying
+        // launches every spline at flight speed, on the ground too (TravelBlock::Apply), and one in water swims.
+        UnitMoveType const moveType = bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING) ? MOVE_FLIGHT
+            : inWater ? MOVE_SWIM : MOVE_RUN;
+        body.Speed = bot->GetSpeed(moveType);
+        body.InCombat = bot->IsInCombat();
+        K::Write(seconds, body, out);
+    }
 }
 
 bool Animus::Curriculum::StageScenario::DirectorsActive(Env const& env) const

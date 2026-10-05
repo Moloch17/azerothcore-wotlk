@@ -49,3 +49,16 @@ eval:
 
 layout_sampling:
   metric: arrived
+
+# The movement-style reward (animus.style, human-play-data plan 2.4): a discriminator trained on players' motion pays
+# each decision up to `coef` for motion it cannot tell from a player's, on the cost ladder's scale. Off until the
+# offline pipeline (animus.human) has written a dataset; then, to enable it:
+#   style:
+#     enabled: true
+#     dataset: "{runs_dir}/human/human_motion_windows.npz"
+#     reference: "{runs_dir}/human/human_reference.json"   # the realism columns in eval.csv
+# Kept under the runs directory, the leader serves both to asynchronous learners on other machines (async_sync);
+# anywhere else every machine needs its own copy at that path.
+# `reference` alone (enabled false) scores realism without paying for it. stage2_travel inherits this section.
+style:
+  enabled: false

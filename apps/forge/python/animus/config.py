@@ -14,6 +14,7 @@ from typing import Union, get_args, get_origin, get_type_hints
 
 import yaml
 
+from .human.motion import WINDOW as MOTION_WINDOW
 from .mappo.trainer import MappoConfig
 from .stages import merges, seed_chain
 
@@ -223,6 +224,55 @@ class CostLadderConfig:
         if self.give_up < 1:
             raise ValueError(f"costs.give_up: expected at least 1 fall, got {self.give_up!r}")
         self.rungs = rungs
+
+
+@dataclass
+class StyleConfig:
+    """The movement-style reward (animus.style, human-play-data plan 2.4): an adversarial motion prior. A small
+    discriminator learns to tell `window`-step windows of human motion (`dataset`, the human_motion_windows.npz the
+    offline animus.human pipeline writes) from the seats' own, per context (on foot, swimming, flying, airborne;
+    mounted; in combat), and every decision whose window it cannot tell from a human's is paid up to `coef`:
+    r = max(0, 1 - 0.25 (D - 1)^2). A kept, Cost-like term, not faded shaping: with `ladder` it is paid times the cost
+    ladder's scale (costs), so it arrives with the noise prices once the outcome is learned; without one, or with the
+    cost ladder off, in full. It never enters the outcome score, which the sim computes.
+
+    `reference` (human_reference.json, the same pipeline's) adds the realism columns to every evaluation: per context
+    the earth mover's distance between the seats' motion histograms and the players' (animus.human.realism). It
+    works with the reward off. Paths take {runs_dir}, {run_name} and {shared_runs}."""
+
+    enabled: bool = False
+    dataset: str = ""
+    reference: str = ""
+    coef: float = 0.02          # per decision at D = 1: next to the noise prices, not the outcome
+    lr: float = 1e-4
+    hidden: tuple[int, ...] = (256, 256)
+    grad_penalty: float = 10.0  # times half the mean squared gradient norm on the human windows (AMP's w_gp)
+    window: int = MOTION_WINDOW  # steps a window holds (motion.WINDOW); must be the dataset's
+    minibatches: int = 4        # discriminator steps an update
+    batch: int = 512            # bot windows a step (and as many human windows, matched per context)
+    ladder: bool = True
+    eval_windows: int = 200000  # most windows eval_motion.npz keeps (a uniform draw, its weight the inverse share)
+
+    def __post_init__(self) -> None:
+        if self.enabled and not self.dataset:
+            raise ValueError("style.dataset: the style reward needs the human windows (human_motion_windows.npz)")
+        if not self.coef >= 0.0:
+            raise ValueError(f"style.coef: expected 0 or more, got {self.coef!r}")
+        if not self.lr > 0.0:
+            raise ValueError(f"style.lr: expected more than 0, got {self.lr!r}")
+        hidden = tuple(int(width) for width in self.hidden)
+        if not hidden or any(width < 1 for width in hidden):
+            raise ValueError(f"style.hidden: expected one or more layer widths above 0, got {self.hidden!r}")
+        self.hidden = hidden
+        if not self.grad_penalty >= 0.0:
+            raise ValueError(f"style.grad_penalty: expected 0 or more, got {self.grad_penalty!r}")
+        if self.window < 2:
+            raise ValueError(f"style.window: expected at least 2 steps, got {self.window!r}")
+        if self.minibatches < 1 or self.batch < 1:
+            raise ValueError(f"style.minibatches and style.batch: expected at least 1, got {self.minibatches!r} and "
+                             f"{self.batch!r}")
+        if self.eval_windows < 0:
+            raise ValueError(f"style.eval_windows: expected 0 or more, got {self.eval_windows!r}")
 
 
 @dataclass
@@ -466,6 +516,7 @@ class TrainConfig:
     cast: CastConfig = field(default_factory=CastConfig)
     fade: FadeConfig = field(default_factory=FadeConfig)
     costs: CostLadderConfig = field(default_factory=CostLadderConfig)
+    style: StyleConfig = field(default_factory=StyleConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     exploit: ExploitConfig = field(default_factory=ExploitConfig)
 

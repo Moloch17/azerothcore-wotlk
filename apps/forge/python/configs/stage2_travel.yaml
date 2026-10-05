@@ -26,3 +26,6 @@ eval:
   report: [arrived, spl, lost, wedged, stall_seconds, travel_seconds, mounted_fraction, flying_fraction,
            flying_mount_fraction, knows_flying_mount, could_mount_flying, flew, air_only, saved_if_flew,
            saved_if_ground, flight_height, dry_detour, saved, died]
+
+# The movement-style reward (animus.style) comes from stage1_move's `style:` section, off until a human dataset
+# exists; enabling it there enables it here. A `style:` section here would override it for the trips alone.

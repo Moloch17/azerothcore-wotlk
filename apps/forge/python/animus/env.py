@@ -303,7 +303,8 @@ class ClusterEnv:
             terminated=np.zeros(count, bool), final_obs=np.zeros((count, agents, spec.obs_dim), np.float32),
             final_state=np.zeros((count, spec.state_dim), np.float32),
             episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
-            episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32))
+            episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32),
+            kinematics=np.zeros((count, agents, spec.kinematics_dim), np.float32))
 
     def _seen(self, index: int, part: p.Step) -> p.Step:
         self._layouts[index][part.env_begin:part.env_begin + part.done.shape[0]] = part.layout

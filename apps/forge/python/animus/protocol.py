@@ -11,7 +11,9 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 19
+PROTOCOL_VERSION = 20
+# 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
+# agent (FORMAT.md section 3, animus.human.motion): the body the style reward and the realism score read.
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -38,7 +40,7 @@ class MsgType(IntEnum):
 
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s")
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}sI")  # ..., scenario name, kinematics width (20)
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
@@ -92,6 +94,8 @@ class Spec:
     # A learner may still answer both halves together (ForgeEnv.step); answering each as it comes (the rollout's
     # pipelined loop) is what lets its inference run while the other half's maps tick.
     env_groups: int = 1
+    # Floats per agent of each STEP's kinematics (protocol 20): motion.SAMPLE_DIM from a sim that sends them, 0 none.
+    kinematics_dim: int = 0
 
     @property
     def decision_ms(self) -> int:
@@ -127,6 +131,9 @@ class Spec:
             ("final_state", f32, (d, self.state_dim)),
             ("episode_info", f32, (d, a, self.episode_info_dim)),
             ("episode_seed", u32, (e,)),
+            # Each agent's body after the transition (protocol 20): [t, x, y, z, yaw, pitch, mode, mounted, speed,
+            # in_combat], the new episode's first sample where done is set; zeros for an agent without a body.
+            ("kinematics", f32, (e, a, self.kinematics_dim)),
         ]
         return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
 
@@ -153,6 +160,9 @@ class Step:
     episode_info: np.ndarray  # [E, A, K] float32, valid where done
     episode_seed: np.ndarray  # [E] uint32, evaluation seed index where done; NO_EPISODE_SEED for training
     env_begin: int = 0  # the first env these rows are: a half-batch STEP covers envs [env_begin, env_begin + E)
+    # [E, A, K] float32 kinematic samples (protocol 20, Spec.kinematics_dim); None where nobody made any (a step built
+    # by hand), which encodes as zeros.
+    kinematics: np.ndarray | None = None
 
 
 def rows_of(step: Step, begin: int, count: int) -> Step:
@@ -161,7 +171,8 @@ def rows_of(step: Step, begin: int, count: int) -> Step:
         return step
     names = [name for name in Step.__dataclass_fields__ if name not in ("decision", "env_begin")]
     return Step(decision=step.decision, env_begin=step.env_begin + begin,
-                **{name: getattr(step, name)[begin:begin + count] for name in names})
+                **{name: None if getattr(step, name) is None else getattr(step, name)[begin:begin + count]
+                   for name in names})
 
 
 def join_steps(parts: list[Step]) -> Step:
@@ -170,7 +181,18 @@ def join_steps(parts: list[Step]) -> Step:
         return parts[0]
     names = [name for name in Step.__dataclass_fields__ if name not in ("decision", "env_begin")]
     return Step(decision=parts[0].decision, env_begin=0,
-                **{name: _concatenate([getattr(part, name) for part in parts]) for name in names})
+                **{name: _join_field([getattr(part, name) for part in parts], parts) for name in names})
+
+
+def _join_field(arrays, parts: list[Step]):
+    """One field of every group, joined; an optional field (kinematics) some groups lack is zeros in their rows."""
+    if all(array is None for array in arrays):
+        return None
+    if any(array is None for array in arrays):
+        like = next(array for array in arrays if array is not None)
+        arrays = [np.zeros((part.done.shape[0], *like.shape[1:]), like.dtype) if array is None else array
+                  for array, part in zip(arrays, parts)]
+    return _concatenate(arrays)
 
 
 def _concatenate(arrays):
@@ -197,6 +219,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.episode_seconds,
         spec.env_groups,
         spec.scenario.encode("ascii"),
+        spec.kinematics_dim,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -219,6 +242,7 @@ def decode_spec(payload: bytes) -> Spec:
         *fields[:11],
         env_groups=fields[11],
         scenario=fields[12].split(b"\0", 1)[0].decode("ascii"),
+        kinematics_dim=fields[13],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -235,6 +259,8 @@ def encode_step(spec: Spec, step: Step) -> bytes:
     parts = [STEP_HEADER.pack(step.decision, step.env_begin, envs)]
     for name, dtype, shape in spec.step_layout(envs, int(done.sum())):
         array = getattr(step, name)
+        if array is None:
+            array = np.zeros(shape, dtype)
         if name in ENDED_ONLY:
             array = np.asarray(array)[done]
         parts.append(np.ascontiguousarray(array, dtype=dtype).reshape(shape).tobytes())
