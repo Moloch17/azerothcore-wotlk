@@ -26,7 +26,8 @@
  *   client -> server  HELLO  { u32 version }
  *   server -> client  SPEC   SpecMsg, then u32 layout count and that many LayoutMsg, then the episode info
  *                            column names as comma-separated ASCII filling the rest of the payload
- *                            (no terminator). ObsDim and NumActions are the largest layout's.
+ *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
+ *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
