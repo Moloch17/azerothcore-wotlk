@@ -296,6 +296,15 @@ namespace Animus::Curriculum
         /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
         float RunSpeed = 0.0f;
         float LaunchSpeed = 0.0f;
+        /// Why this decision relaunched a run under way (MoveKeep::Relaunch, restart-causes): set by the first thing
+        /// that let it go, read once the action is applied. Pressing is up while a movement press is applied, so a
+        /// run let go by the press is the press's and not the keep's. LaunchCapped/RunCapped: the run was launched
+        /// with a reach MoveKeep::CappedReach cut short.
+        uint8 LaunchCause = 0;
+        bool Pressing = false;
+        uint8 PressKind = 0;                    // the movement press applied this decision (MoveKeep::Relaunch Press*)
+        bool LaunchCapped = false;
+        bool RunCapped = false;
         bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)
         /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
         uint64 FollowAimMs = 0;

@@ -125,3 +125,47 @@ TEST(MoveKeepTest, TheRunSpeedFollowsTheSteeredMode)
     EXPECT_EQ(MoveKeep::SteerMoveType(true, true, false), MOVE_FLIGHT);
     EXPECT_EQ(MoveKeep::SteerMoveType(true, false, true), MOVE_FLIGHT_BACK);
 }
+
+// Every run the keep lets go has a cause, in the keep's own order: the forced relaunches first, then the course and
+// the climb, then the time left -- split by whether CappedReach launched the run short (restart-causes).
+TEST(MoveKeepTest, ARunLetGoIsGivenTheCauseThatLetItGo)
+{
+    using MoveKeep::Relaunch;
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 10.0f, 7.0f, 250, 0.0f, 0.0f, false), Relaunch::None);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(true, true, 10.0f, 7.0f, 250, 1.0f, 1.0f, true), Relaunch::Shown);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, true, 10.0f, 7.0f, 250, 1.0f, 1.0f, true), Relaunch::Speed);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 1.0f, 7.0f, 250, 0.4f, 0.0f, true), Relaunch::Course);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 1.0f, 7.0f, 250, 0.0f, 0.3f, true), Relaunch::Climb);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 3.4f, 7.0f, 250, 0.0f, 0.0f, false), Relaunch::Time);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 3.4f, 7.0f, 250, 0.0f, 0.0f, true), Relaunch::TimeCapped);
+    EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, 3.4f, 0.0f, 250, 0.0f, 0.0f, false), Relaunch::Time);
+
+    // Never None where KeepRun refuses, and None wherever it keeps.
+    for (float remaining : { 0.5f, 3.4f, 3.6f, 20.0f })
+        for (float heading : { 0.0f, 0.3f, -0.4f })
+            for (float pitch : { 0.0f, 0.25f })
+                EXPECT_EQ(MoveKeep::WhyRelaunched(false, false, remaining, 7.0f, 250, heading, pitch, false)
+                    == Relaunch::None, MoveKeep::KeepRun(remaining, 7.0f, 250, heading, pitch));
+    EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::TimeCapped), "time_capped");
+}
+
+// A decision that changed the spline is a stop when it left the spline finished (Unit::StopMoving's Stop spline is
+// born done), whatever let it go; else the keep's cause; else the press applied (a jump launches outside the keep);
+// else another block's launch. The presses are the five Press* kinds, and only they.
+TEST(MoveKeepTest, AChangedSplineIsCountedAsAStopACauseAPressOrOther)
+{
+    using MoveKeep::Relaunch;
+    EXPECT_EQ(MoveKeep::Recorded(true, Relaunch::Course, Relaunch::PressBearing), Relaunch::Stop);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::Time, Relaunch::PressTurn), Relaunch::Time);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::PressPitch, Relaunch::PressPitch), Relaunch::PressPitch);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::None, Relaunch::PressOther), Relaunch::PressOther);
+    EXPECT_EQ(MoveKeep::Recorded(false, Relaunch::None, Relaunch::None), Relaunch::Other);
+
+    uint32 presses = 0;
+    for (uint8 cause = 0; cause < uint8(Relaunch::Count); ++cause)
+        presses += MoveKeep::IsPress(Relaunch(cause)) ? 1 : 0;
+    EXPECT_EQ(presses, 5u);
+    EXPECT_FALSE(MoveKeep::IsPress(Relaunch::Stop));
+    EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::PressFacing), "press_facing");
+    EXPECT_STREQ(MoveKeep::RelaunchName(Relaunch::Stop), "stop");
+}
