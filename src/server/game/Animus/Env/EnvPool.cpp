@@ -173,7 +173,11 @@ void Animus::EnvPool::ResetAll()
 
     for (Env& env : _envs)
     {
+        // A scenario's first resets are every env's at once: the status line's placement p95 counts them too.
+        auto mark = std::chrono::steady_clock::now();
+        CurrentReset = {};
         ResetEnv(env);
+        RecentResets.Add({ CurrentReset.EncounterNs, CurrentReset.RouteNs, CurrentReset.Routes, ResetSinceNs(mark) });
 
         uint32 const e = env.Index;
         _scenario.Observe(env, &Obs[e * _spec.AgentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
@@ -281,7 +285,8 @@ void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
     CurrentReset = {};
     ResetEnv(env);
     ++timing.Resets;
-    timing.ResetNs += Since(mark);
+    uint64 const resetNs = Since(mark);
+    timing.ResetNs += resetNs;
     timing.ResetCreateNs += CurrentReset.CreateNs;
     timing.ResetPlaceNs += CurrentReset.PlaceNs;
     timing.ResetConfigureNs += CurrentReset.ConfigureNs;
@@ -293,6 +298,7 @@ void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
     timing.ResetSeatsNs += CurrentReset.SeatsNs;
     timing.ResetDespawnNs += CurrentReset.DespawnNs;
     timing.ResetScenarioNs += CurrentReset.ScenarioNs;
+    RecentResets.Add({ CurrentReset.EncounterNs, CurrentReset.RouteNs, CurrentReset.Routes, resetNs });
 
     _scenario.Observe(env, &Obs[e * agentsPerEnv * _spec.ObsDim], &State[e * _spec.StateDim],
         &Mask[e * agentsPerEnv * _spec.NumActions]);

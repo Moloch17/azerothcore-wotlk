@@ -162,6 +162,8 @@ namespace AnimusForge
             uint32 Groups = 1;              // groups the pool was sent in: 2 when half-batch applied, else 1
             double ObjectsMs = 0.0;         // UpdateNonPlayerObjects, thread time per decision over every map
             double ResetMs = 0.0;           // rebuilding ended episodes on the world thread, per decision
+            double ResetP95Ms = 0.0;        // one reset (either thread) at its p95, and its placement's (C8)
+            double PlacementP95Ms = 0.0;
             double SpawnUpdates = 0.0;      // world spawns updated per decision, over every map
             double UnseenSpawns = 0.0;      // world spawns left alone per decision (no player shares their phase)
             double OtherUpdates = 0.0;      // other non-player objects updated per decision
@@ -491,6 +493,24 @@ namespace AnimusForge
         SimSnapshot::WorldMs _worldMs;
         SimSnapshot::MapTasksMs _mapTasks;
         SimSnapshot::CollectMs _collectMs;
+        /// The player controller's process-wide counters (ControllerCost, MapWorldQuery, PlayerLink) at the last
+        /// rate window and at the scenario's start, and the rates between (C8).
+        struct ControllerMarks
+        {
+            uint64 Ns = 0;
+            uint64 SeatTicks = 0;
+            uint64 Rays = 0;
+            uint64 Heights = 0;
+            uint64 Applied = 0;
+            uint64 Orders = 0;
+            uint64 Relayed = 0;
+            uint64 Unsticks = 0;
+            std::vector<uint64> Refused;    // by ClientMovement::Refusal
+        };
+        [[nodiscard]] static ControllerMarks ReadControllerMarks();
+        ControllerMarks _rateController;
+        uint64 _startUnsticks = 0;
+        SimSnapshot::ControllerStats _controller;
         /// SeatEncoder::ObserveNs at the last report, and per decision since it (for `forge status`).
         std::array<uint64, Animus::Curriculum::SeatEncoder::OBSERVE_SLOTS> _rateObserveNs{};
         std::vector<std::pair<std::string, double>> _observeBlockMs;
