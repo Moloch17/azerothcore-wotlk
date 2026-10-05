@@ -161,6 +161,8 @@ namespace Animus::Curriculum
             float LastFallDamage = 0.0f;
             float RiseSum = 0.0f;           // legs placed: |the marker's height over the seat's| at the leg's start
             uint32 StoreyLegs = 0;          // ... of which a storey or more (3 yd) up or down
+            uint32 StoreyUpLegs = 0;        // ... up
+            uint32 StoreyDownLegs = 0;      // ... down
         };
 
         /// Place the next marker from where the seat stands, on the episode's rung; false when none could be found.

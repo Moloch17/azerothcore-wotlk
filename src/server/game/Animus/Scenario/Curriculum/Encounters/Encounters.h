@@ -1057,6 +1057,9 @@ namespace Animus::Curriculum
         bool HasRise = false;
         float RiseMin = 0.0f;
         float RiseMax = 0.0f;
+        /// Indoors, a floor above the seat's (a storey up, by the stairs): the probe scans up through the storeys
+        /// within the rise window (MarkerReach::UpperFloors) instead of looking down from a step over the feet.
+        bool Upstairs = false;
     };
 
     class TravelEncounter final : public Encounter

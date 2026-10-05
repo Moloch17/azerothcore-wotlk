@@ -745,7 +745,16 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             : rules.Fixed ? HEIGHT_SEARCH
             : rules.AirOnly ? TravelBlock::MAX_ALTITUDE + HEIGHT_SEARCH * 0.5f
             : rules.Ledge ? rules.DropMax + 2.0f * MoveBlock::MAX_STEP : HEIGHT_SEARCH;
-        float const z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
+        float z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
+        // Upstairs indoors: the lowest floor with headroom a storey or two above the seat's, found under the storey
+        // over it rather than on the roof.
+        if (indoors && rules.Upstairs)
+        {
+            Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
+            float floors[4];
+            z = MarkerReach::UpperFloors(world, x, y, bot->GetPositionZ(), rules.RiseMin, rules.RiseMax, floors, 4)
+                ? floors[0] : INVALID_HEIGHT;
+        }
         if (z <= INVALID_HEIGHT)
             return false;
         if (rules.Ledge && (bot->GetPositionZ() - z < rules.DropMin || bot->GetPositionZ() - z > rules.DropMax))

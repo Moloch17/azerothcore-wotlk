@@ -38,6 +38,8 @@ namespace
     constexpr float FASTEST_TURN = TWO_PI;
     /// A storey's height: a marker this far up or down is on another floor (storey_legs).
     constexpr float STOREY = 3.0f;
+    /// Indoors, a marker on the seat's own floor may sit a stair or two up from its feet.
+    constexpr float INDOOR_LEVEL = 2.5f;
 
     float Lerp(float first, float last, float t)
     {
@@ -183,6 +185,8 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         return markers.Legs ? markers.RiseSum / float(markers.Legs) : 0.0f;
     });
     table.Add("storey_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyLegs); });
+    table.Add("storey_up_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyUpLegs); });
+    table.Add("storey_down_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].StoreyDownLegs); });
     table.Add("movement_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].MovementCasts); });
     table.Add("speed_casts", [this](Env const& env, uint32) { return float(_envs[env.Index].SpeedCasts); });
 }
@@ -219,6 +223,11 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     // player controller can walk (every rise a step or a jump): no marker is placed where the seat cannot get.
     rules.DryOnly = true;
     rules.ControllerReach = true;
+    // Drops are allowed on the way, never a near-fatal one: 20 yd takes 12% of maximum health (Markers.RouteMaxDrop).
+    rules.RouteMaxDrop = tuning.RouteMaxDrop;
+    float nearest = markers.Task.Nearest;
+    float furthest = markers.Task.Furthest;
+    bool upstairs = false;
 
     // The vertical course: above (a climb), below a ledge, or on another floor, within the rung's height window.
     ArenaDefinition const& arena = _scenario.Arena(env);
@@ -240,10 +249,21 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
             rules.DropMax = markers.Task.HeightMax;
             rules.RouteMaxDrop = vertical.SafeDrop;
         }
+        else if (indoors)
+        {
+            // A room's markers: a share of them a storey or two up the stairs, the rest down or on the seat's floor
+            // (the first curriculum's indoor trip lengths: a building is twenty to forty yards across).
+            nearest = travel.IndoorMin;
+            furthest = std::max(travel.IndoorMin, std::min(markers.Task.Furthest, travel.IndoorMax));
+            upstairs = frand(0.0f, 1.0f) < vertical.RoomUpShare;
+            rules.HasRise = true;
+            rules.RiseMin = -markers.Task.HeightMax;
+            rules.RiseMax = INDOOR_LEVEL;
+        }
         else
         {
             rules.HasRise = true;
-            rules.RiseMin = indoors ? -markers.Task.HeightMax : markers.Task.HeightMin;
+            rules.RiseMin = markers.Task.HeightMin;
             rules.RiseMax = markers.Task.HeightMax;
         }
     }
@@ -256,8 +276,20 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
 
     Position place;
     float walk = 0.0f;
-    if (!TravelEncounter::FindPlace(bot, map, markers.Task.Nearest, markers.Task.Furthest, false, place, budget,
-        &walk, false, nullptr, indoors, nullptr, rules))
+    bool placed = false;
+    if (upstairs)
+    {
+        // Up the stairs: the lowest floor with headroom a storey or two over the seat's, and the stairs walkable.
+        // A building with no such floor in reach (a single-storey inn) takes a down-or-level marker instead.
+        TravelPlaceRules up = rules;
+        up.Upstairs = true;
+        up.RiseMin = STOREY;
+        up.RiseMax = std::max(STOREY + 1.0f, _scenario.Tuning().MarkerVertical.UpstairsRise);
+        placed = TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, false, nullptr,
+            indoors, nullptr, up);
+    }
+    if (!placed && !TravelEncounter::FindPlace(bot, map, nearest, furthest, false, place, budget, &walk, false,
+        nullptr, indoors, nullptr, rules))
         return false;
 
     markers.HasMarker = true;
@@ -271,6 +303,8 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     float const rise = std::fabs(place.GetPositionZ() - bot->GetPositionZ());
     markers.RiseSum += rise;
     markers.StoreyLegs += rise >= STOREY ? 1 : 0;
+    markers.StoreyUpLegs += place.GetPositionZ() - bot->GetPositionZ() >= STOREY ? 1 : 0;
+    markers.StoreyDownLegs += bot->GetPositionZ() - place.GetPositionZ() >= STOREY ? 1 : 0;
     markers.Way.Clear();
     markers.WayFailed = false;
     markers.LegBearing = std::fabs(BearingFrom(bot, facing, place));

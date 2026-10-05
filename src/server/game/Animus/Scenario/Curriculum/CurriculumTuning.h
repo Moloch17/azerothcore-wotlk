@@ -967,6 +967,10 @@ namespace Animus::Curriculum
             /// Arriving is on the marker's own floor too: the unit within this many yards of its height (a seat under
             /// a ledge, or a storey below, is not on it).
             float ArriveRise = 2.0f;
+            /// The deepest single drop a marker's walking way may take, every course (TravelPlaceRules::RouteMaxDrop;
+            /// a ledge's way round takes MarkerVertical.SafeDrop instead). Placement never asks for a near-fatal
+            /// fall: at 20 yd a fall takes 0.018 x 20 - 0.2426 = 12% of maximum health (nothing under 13.48 yd).
+            float RouteMaxDrop = 20.0f;
         } Markers;
 
         /// The ground stage's markers (MarkerCourse::Ground, M2): broken ground with something in the way -- a face
@@ -1030,6 +1034,11 @@ namespace Animus::Curriculum
             float Radius = 1.0f;
             float SafeDrop = 6.0f;
             float FallDamage = 2.0f;            // per share of maximum health a fall took
+            /// Rooms: the share of legs whose marker is a storey or two up (by the stairs, UpstairsRise yards over
+            /// the seat at most); the rest are down or on the seat's own floor. Stairs are the commonest vertical
+            /// move a player makes, so they are asked for, not left to where a spawn lands.
+            float RoomUpShare = 0.5f;
+            float UpstairsRise = 12.0f;
         } MarkerVertical;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -1562,6 +1571,7 @@ namespace Animus::Curriculum
             f("Markers.MaxDetour", tuning.Markers.MaxDetour);
             f("Markers.StopNear", tuning.Markers.StopNear);
             f("Markers.ArriveRise", tuning.Markers.ArriveRise);
+            f("Markers.RouteMaxDrop", tuning.Markers.RouteMaxDrop);
             f("MarkerGround.MarkersMin", tuning.MarkerGround.MarkersMin);
             f("MarkerGround.MarkersMax", tuning.MarkerGround.MarkersMax);
             f("MarkerGround.Rungs", tuning.MarkerGround.Rungs);
@@ -1588,6 +1598,8 @@ namespace Animus::Curriculum
             f("MarkerVertical.Radius", tuning.MarkerVertical.Radius);
             f("MarkerVertical.SafeDrop", tuning.MarkerVertical.SafeDrop);
             f("MarkerVertical.FallDamage", tuning.MarkerVertical.FallDamage);
+            f("MarkerVertical.RoomUpShare", tuning.MarkerVertical.RoomUpShare);
+            f("MarkerVertical.UpstairsRise", tuning.MarkerVertical.UpstairsRise);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

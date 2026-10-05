@@ -168,3 +168,63 @@ TEST(MarkerEncounterTest, ReachWalksStepsJumpsAndDropsAndRefusesTheRest)
         [](float x) { return x > 5.0f && x < 11.0f ? std::cos(40.0f * float(M_PI) / 180.0f) : 1.0f; }), 20.0f)
         .Reachable);
 }
+
+namespace
+{
+    /// A two-storey building along x: the ground floor at 0 everywhere, a slab (the upper floor) at 4 for x >= 10 with
+    /// a roof at 8 over all of it, and stairs from x = 4 to 10 rising to the slab, 0.67 yd a yard.
+    class TwoStoreys final : public Mv::WorldQuery
+    {
+    public:
+        static constexpr float UPPER = 4.0f;
+        static constexpr float ROOF = 8.0f;
+
+        [[nodiscard]] float FloorBelow(float x, float /*y*/, float z, float search) const override
+        {
+            float best = Mv::INVALID_FLOOR;
+            for (float floor : { 0.0f, Stair(x), x >= 10.0f ? UPPER : Mv::INVALID_FLOOR, ROOF })
+                if (floor > Mv::INVALID_FLOOR && floor <= z + 1e-4f && z - floor <= search)
+                    best = std::max(best, floor);
+            return best;
+        }
+        [[nodiscard]] float FloorNormalZ(float, float, float) const override { return 1.0f; }
+        [[nodiscard]] Mv::Liquid LiquidAt(float, float, float) const override { return {}; }
+        [[nodiscard]] float Sweep(float, float, float, float, float, float, Mv::Body const&) const override
+        {
+            return 1.0f;
+        }
+        [[nodiscard]] float Ceiling(float x, float /*y*/, float z, float up) const override
+        {
+            float const over = x >= 10.0f && z < UPPER - 1e-3f ? UPPER : ROOF;
+            return std::clamp(over - z, 0.0f, up);
+        }
+        [[nodiscard]] bool InTerrain(float, float, float) const override { return false; }
+
+    private:
+        static float Stair(float x)
+        {
+            return x >= 4.0f && x < 10.0f ? std::floor(x - 4.0f + 1.0f) * UPPER / 6.0f : Mv::INVALID_FLOOR;
+        }
+    };
+}
+
+// Up the stairs: the upper storey is found under the roof over it, not on the roof, and the way up the stairs is one
+// the controller walks (every stair under STEP_UP), ending on the upper floor.
+TEST(MarkerEncounterTest, AnUpstairsMarkerIsFoundAndReachable)
+{
+    TwoStoreys const building;
+    float floors[4];
+    uint32_t const found = Reach::UpperFloors(building, 12.0f, 0.0f, 0.0f, 3.0f, 12.0f, floors, 4);
+    ASSERT_GE(found, 1u);
+    EXPECT_FLOAT_EQ(floors[0], TwoStoreys::UPPER);
+    for (uint32_t i = 0; i < found; ++i)
+        EXPECT_LT(floors[i], TwoStoreys::ROOF);         // the roof has no headroom over it in here: never a floor
+
+    float const xs[] = { 0.0f, 4.0f, 10.0f, 12.0f };
+    float const ys[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float const zs[] = { 0.0f, 0.0f, TwoStoreys::UPPER, TwoStoreys::UPPER };
+    Reach::Result const up = Reach::Walk(building, Mv::Body(), xs, ys, zs, 4);
+    EXPECT_TRUE(up.Reachable);
+    EXPECT_EQ(up.Jumps, 0u);
+    EXPECT_NEAR(up.EndZ, TwoStoreys::UPPER, 1e-4f);
+}

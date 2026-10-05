@@ -6663,6 +6663,10 @@ AnimusForge.Curriculum.Markers.MaxDetour = 1.1
 AnimusForge.Curriculum.Markers.StopNear = 10.0
 #   arriving is on the marker's own floor too: the unit within ArriveRise yards of its height
 AnimusForge.Curriculum.Markers.ArriveRise = 2.0
+#   the deepest single drop a marker's walking way may take (a ledge's way round: MarkerVertical.SafeDrop): at 20 yd
+#   a fall takes 12% of maximum health (0.018 x h - 0.2426; nothing under 13.48 yd), so no marker needs a
+#   near-fatal fall
+AnimusForge.Curriculum.Markers.RouteMaxDrop = 20.0
 
 #
 #    AnimusForge.Curriculum.MarkerGround.*
@@ -6712,6 +6716,10 @@ AnimusForge.Curriculum.MarkerVertical.HeightMaxLast = 45.0
 AnimusForge.Curriculum.MarkerVertical.Radius = 1.0
 AnimusForge.Curriculum.MarkerVertical.SafeDrop = 6.0
 AnimusForge.Curriculum.MarkerVertical.FallDamage = 2.0
+#   rooms: RoomUpShare of the legs ask for a marker a storey or two up the stairs (at most UpstairsRise yards over
+#   the seat, the floor found under the storey above it); the rest are down or on the seat's own floor
+AnimusForge.Curriculum.MarkerVertical.RoomUpShare = 0.5
+AnimusForge.Curriculum.MarkerVertical.UpstairsRise = 12.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

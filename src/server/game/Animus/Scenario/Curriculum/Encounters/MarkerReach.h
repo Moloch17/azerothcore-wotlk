@@ -50,6 +50,36 @@ namespace Animus::Curriculum::MarkerReach
         float EndZ = 0.0f;              // the floor the walk ended on
     };
 
+    /// Headroom a floor needs to be stood on (a body's height and a little): a floor under a slab closer than this is a
+    /// gap between storeys, not a floor.
+    constexpr float HEADROOM = 2.0f;
+    /// The probe's step up through the storeys.
+    constexpr float FLOOR_SCAN = 0.5f;
+
+    /// The floors above (x, y, z) whose height over z is within [riseMin, riseMax], lowest first, each with headroom:
+    /// probed from just under each height on the way up (WorldQuery::FloorBelow returns the highest floor at or below
+    /// the probe), so an upper storey is found under the storey above it rather than the roof over all of them.
+    /// Writes at most `max` heights into `out` and returns how many.
+    inline uint32_t UpperFloors(Movement::WorldQuery const& world, float x, float y, float z, float riseMin,
+        float riseMax, float* out, uint32_t max)
+    {
+        uint32_t count = 0;
+        float last = Movement::INVALID_FLOOR;
+        for (float probe = z + std::max(riseMin, FLOOR_SCAN); probe <= z + riseMax + FLOOR_SCAN && count < max;
+            probe += FLOOR_SCAN)
+        {
+            float const floor = world.FloorBelow(x, y, probe, probe - z);
+            if (floor <= Movement::INVALID_FLOOR || floor - z < riseMin || floor - z > riseMax
+                || std::fabs(floor - last) < LEVEL)
+                continue;
+            last = floor;
+            if (world.Ceiling(x, y, floor, HEADROOM) < HEADROOM)
+                continue;
+            out[count++] = floor;
+        }
+        return count;
+    }
+
     /// Walk the route (xs, ys, zs; `count` corners, the first where the seat stands) with a body of `shape`.
     inline Result Walk(Movement::WorldQuery const& world, Movement::Body const& shape, float const* xs, float const* ys,
         float const* zs, uint32_t count)
