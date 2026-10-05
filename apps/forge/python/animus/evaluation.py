@@ -93,6 +93,9 @@ class EvalResult:
     # before any rung's tier (RewardLedger::Score), so the yardstick does not move when shaping is turned down or a
     # ladder steps. "" -- or a stage.json from before the column -- scores the return, as before.
     score_column: str = SCORE_COLUMN
+    # The scored seats' kinematic samples (protocol 20), one [T, SAMPLE_DIM] track per seat and episode, when the
+    # evaluation was asked to keep them (run_evaluation's collect_motion): the realism score's input.
+    motion_tracks: list = field(default_factory=list)
 
     @property
     def episodes(self) -> int:
@@ -187,7 +190,8 @@ class EvalResult:
             seconds=max(part.seconds for part in parts), decisions=sum(part.decisions for part in parts),
             action_counts=stacked("action_counts"), allowed_counts=stacked("allowed_counts"),
             action_names=first.action_names, spec_names=first.spec_names,
-            trace=[row for part in parts for row in part.trace], score_column=first.score_column)
+            trace=[row for part in parts for row in part.trace], score_column=first.score_column,
+            motion_tracks=[track for part in parts for track in part.motion_tracks])
 
     def failed_seeds(self, metric: str) -> list[int]:
         """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 field per episode: a
@@ -443,7 +447,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    spec_names: dict[str, list[str]] | None = None,
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None,
-                   score_column: str = SCORE_COLUMN, arena: int = 0) -> tuple[EvalResult, p.Step]:
+                   score_column: str = SCORE_COLUMN, arena: int = 0,
+                   collect_motion: bool = False) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -456,6 +461,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     `score_column` is the episode info column the result is scored on (EvalResult.score_column; "" = the return).
     `arena` pins the evaluation to a held-out arena (stage.json's index + 1; eval.heldout).
+
+    `collect_motion` keeps the scored seats' kinematic samples, a track per seat and episode (EvalResult.motion_tracks;
+    the sample the episode ended on is the next episode's, so a track stops one decision short of the end).
 
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
@@ -491,6 +499,11 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     # Against a scripted opponent its seats are not the learner's (nor, for the baseline, the seat being scored).
     opponent_seat = info_names.index("opponent_seat") if opponents and "opponent_seat" in info_names else None
     decisions = 0
+    # Per env, its episode's samples so far ([A, SAMPLE_DIM] a decision), for the realism score.
+    collect_motion = collect_motion and getattr(step, "kinematics", None) is not None \
+        and np.shape(step.kinematics)[-1] > 0
+    moving: list[list[np.ndarray]] = [[np.array(step.kinematics[e])] for e in range(envs)] if collect_motion else []
+    motion_tracks: list[np.ndarray] = []
 
     def playing() -> bool:
         mine = len(finished) < episodes and decisions < max_decisions
@@ -522,9 +535,23 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         decisions += 1
 
         running += step.reward
+        if collect_motion:
+            for e in np.flatnonzero(~np.asarray(step.done, dtype=bool)):
+                moving[e].append(np.array(step.kinematics[e]))
         for e in np.flatnonzero(step.done):
             index = int(step.episode_seed[e])
-            if index != p.NO_EPISODE_SEED and first_seed <= index < first_seed + episodes and index not in finished:
+            counted = (index != p.NO_EPISODE_SEED and first_seed <= index < first_seed + episodes
+                       and index not in finished)
+            if collect_motion:
+                if counted:
+                    track = np.stack(moving[e], axis=1)  # [A, T, SAMPLE_DIM]
+                    motion_tracks.extend(
+                        track[a] for a in range(agents)
+                        if (present is None or step.episode_info[e, a, present] > 0.0)
+                        and (opponent_seat is None or step.episode_info[e, a, opponent_seat] <= 0.0)
+                        and len(track[a]) > 1)
+                moving[e] = [np.array(step.kinematics[e])]
+            if counted:
                 finished[index] = [
                     (float(running[e, a]), step.episode_info[e, a].copy(), names[int(layout[e, a])], taken[e, a].copy(),
                      allowed[e, a].copy())
@@ -569,6 +596,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         # empty), and the layout weights that read it had nothing to weight.
         spec_names=dict(spec_names or {}),
         score_column=score_column,
+        motion_tracks=motion_tracks,
     )
 
     training_step = env.set_mode(False)

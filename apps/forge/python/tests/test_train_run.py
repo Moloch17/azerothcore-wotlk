@@ -93,7 +93,20 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                 final_state=np.zeros((e_count, spec.state_dim), np.float32),
                 episode_info=np.zeros((e_count, a_count, spec.episode_info_dim), np.float32),
                 episode_seed=np.full(e_count, p.NO_EPISODE_SEED, np.uint32),
+                kinematics=bodies(range(e_count)),
             )
+
+        def bodies(envs, kinematics=None):
+            """Protocol 20 kinematics, when the spec has them: every seat runs along x at run speed, its clock the
+            episode's."""
+            if kinematics is None:
+                kinematics = np.zeros((e_count, a_count, spec.kinematics_dim), np.float32)
+            if spec.kinematics_dim:
+                for e in envs:
+                    kinematics[e, :, 0] = env_time[e] * 0.25
+                    kinematics[e, :, 1] = env_time[e] * 1.75
+                    kinematics[e, :, 8] = 7.0
+            return kinematics
 
         def send(step, begin, count):
             payload = p.encode_step(spec, p.rows_of(step, begin, count))
@@ -142,6 +155,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                         step.episode_seed[e] = env_seed[e]
                         step.episode_info[e, :, 0] = step.present[e]
                         reset(e)
+                bodies(range(begin, begin + count), step.kinematics)
                 send(step, begin, count)
                 turn = (turn + 1) % len(groups)
             except (ConnectionError, OSError):
@@ -198,6 +212,65 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
 
     assert (run_dir / "latest.pt").exists() and (run_dir / "best.pt").exists()
     assert json.loads((run_dir / "progress.json").read_text())["phase"] == "finished"
+
+
+def test_a_run_with_the_style_reward_and_the_realism_score(tmp_path):
+    """style.enabled with a human dataset and a reference: the reward is logged, the realism columns are in eval.csv,
+    the evaluation's motion is in eval_motion.npz, and the discriminator is in the checkpoint."""
+    import torch
+
+    from animus.human import motion
+
+    spec = dataclasses.replace(SPEC, kinematics_dim=motion.SAMPLE_DIM)
+    track = np.zeros((20, motion.SAMPLE_DIM), np.float32)
+    track[:, 0] = np.arange(20) * 0.25
+    track[:, 1] = np.arange(20) * 1.75
+    track[:, 8] = 7.0
+    feats, contexts = motion.features(track), motion.step_contexts(track)
+    windows, context = motion.windows(feats, contexts, 2)
+    human = tmp_path / "human_motion_windows.npz"
+    np.savez(human, windows=windows, context=context, weight=np.ones(len(context), np.float32),
+             meta=np.asarray("{}"))
+    hists = motion.histograms(feats, contexts)
+    reference = tmp_path / "human_reference.json"
+    reference.write_text(json.dumps({"format": 1, "motion": {
+        str(c): {"name": motion.context_name(c), "steps": 19, "hist": {k: v.tolist() for k, v in h.items()}}
+        for c, h in hists.items()}}))
+
+    path = str(tmp_path / "forge.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    listener.listen(1)
+    server = sim_thread(fake_sim, listener, [], [], spec)
+    server.start()
+    steps_per_update = 4 * spec.num_envs * spec.agents_per_env
+    config = TrainConfig.load(Path(__file__).parent.parent / "configs" / "stage4_duel.yaml", [
+        f"socket={path}", f"runs_dir={tmp_path / 'runs'}", f"layouts_dir={tmp_path / 'layouts'}", "run_name=fake",
+        "rollout_length=4", f"total_env_steps={2 * steps_per_update}", "checkpoint_every=1", "init_from=''",
+        "train_device=cpu", "mappo.hidden=[8, 8]", "mappo.epochs=1", "mappo.minibatches=1",
+        f"eval.every_env_steps={steps_per_update}", "eval.episodes=2", "eval.baseline=''", "eval.sampled_every=0",
+        "convergence.patience=0", "style.enabled=true", f"style.dataset={human}", f"style.reference={reference}",
+        "style.window=2", "style.hidden=[8]", "style.batch=8", "style.minibatches=2",
+    ])
+    assert TrainingRun(config, resume=False).run() == 0
+    joined(server, 10)
+    listener.close()
+
+    run_dir = tmp_path / "runs" / "fake"
+    with (run_dir / "metrics.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert all(0.0 < float(row["style_reward"]) <= 1.0 for row in rows)
+    assert all(row["style_disc_human"] != "" and row["style_reward_ground"] != "" for row in rows)
+    # The style term is in the rollout's reward on top of the sim's 1 a decision; the cost ladder is off, so in full.
+    assert all(float(row["reward_per_decision"]) > 1.0 and float(row["style_scale"]) == 1.0 for row in rows)
+    with (run_dir / "eval.csv").open() as f:
+        evals = list(csv.DictReader(f))
+    assert all(row["realism_emd"] != "" and row["realism_disc"] != "" for row in evals)
+    assert float(evals[0]["realism_emd"]) == pytest.approx(0.0, abs=1e-9)   # the players' own motion
+    with np.load(run_dir / "eval_motion.npz") as data:
+        assert data["windows"].shape[1:] == (2, motion.F) and len(data["context"]) == len(data["weight"])
+    checkpoint = torch.load(run_dir / "latest.pt", weights_only=False)
+    assert set(checkpoint["style"]) >= {"disc", "optimizer"}
 
 
 @pytest.mark.slow

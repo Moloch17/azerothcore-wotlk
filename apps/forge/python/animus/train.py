@@ -54,6 +54,8 @@ from .async_sync import Hub, Link, fetch_shared, shared_listing
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
 from .rewards import WARN_EVERY, audit, describe, outcome_terms, reward_mix
+from .human import motion, realism
+from .style import HumanWindows, StyleReward, startup_line as style_line
 
 #: A run whose approx_kl stays under this for STALL_WINDOW updates is told it has stopped moving. Measured
 #: against the stages that do stall (they end around 0.001) and those that do not (0.003 to 0.010).
@@ -192,13 +194,17 @@ class EvalLog:
     COLUMNS = ["update", "env_steps", "policy", "episodes", "score", "stderr", "margin", "best", "evals_since_best",
                "seconds"]
 
-    def __init__(self, run_dir: Path, tb):
+    def __init__(self, run_dir: Path, tb, extra_columns: list[str] | tuple[str, ...] = ()):
+        """`extra_columns`: summary values eval.csv carries after the fixed ones (the realism score's, with
+        style.reference). A file under other columns is moved aside first (_rotate), so its rows never misalign."""
         self.csv_path = run_dir / "eval.csv"
         self.jsonl_path = run_dir / "eval.jsonl"
         self.episodes_path = run_dir / "eval_episodes.jsonl"
         self.trace_path = run_dir / "eval_trace.jsonl"
         self.stage_path = run_dir / "stage.jsonl"
         self.tb = tb
+        self.columns = [*self.COLUMNS, *extra_columns]
+        _rotate(self.csv_path, self.columns)
 
     def write(self, update: int, env_steps: int, result: EvalResult, summary: dict, tracker: ConvergenceTracker) -> None:
         row = {
@@ -213,14 +219,18 @@ class EvalLog:
             "evals_since_best": tracker.evals_since_best,
             "seconds": round(result.seconds, 1),
         }
+        for name in self.columns[len(self.COLUMNS):]:
+            value = summary.get(name)
+            row[name] = value if isinstance(value, (int, float)) else ""
         new_file = not self.csv_path.exists()
         with self.csv_path.open("a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=self.COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=self.columns)
             if new_file:
                 writer.writeheader()
             writer.writerow(row)
         with self.jsonl_path.open("a") as f:
-            f.write(json.dumps({**row, "summary": summary}) + "\n")
+            f.write(json.dumps({**{name: value for name, value in row.items() if value != ""}, "summary": summary})
+                    + "\n")
 
         # The episodes behind the summary, every episode info column of each: which seeds a class failed, not
         # just that its mean is low, and what those episodes have in common.
@@ -698,6 +708,8 @@ class TrainingRun:
         # checkpoints, the league -- so it sets up from the same files (async_sync.fetch_shared).
         if self.async_ranks and not leader:
             fetch_shared(config.dist_address, config.rank, Path(config.runs_dir), config.dist_timeout)
+        # The style reward before the networks load: a resumed run restores its discriminator with them.
+        self.style, self.style_stats, self.realism_reference = self._make_style()
         self._load_or_seed()
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
@@ -715,11 +727,15 @@ class TrainingRun:
         # stop, evaluate and schedule together.
         self.update, self.env_steps = self.ranks.broadcast((self.update, self.env_steps))
         # Every rank starts as the leader's networks: whatever each seeded or resumed from, one network.
-        for module in (self.trainer.actor, self.trainer.critic, self.trainer.value_norm):
+        # The style discriminator too (animus.style): the ranks average its gradients from here on, so they stay one D.
+        for module in (self.trainer.actor, self.trainer.critic, self.trainer.value_norm,
+                       self.style.disc if self.style is not None else None):
             if module is not None:
                 self.ranks.broadcast_module(module)
         if self.async_ranks:
-            networks = [self.trainer.actor, self.trainer.critic, self.trainer.value_norm]
+            # Asynchronous ranks trade D with the policy's networks, elastic-averaged like them (async_sync).
+            networks = [self.trainer.actor, self.trainer.critic, self.trainer.value_norm,
+                        *((self.style.disc,) if self.style is not None else ())]
             if leader:
                 self.hub = Hub(config.dist_address, networks, shared_listing(Path(config.runs_dir), self.shared_files))
                 self.hub.center_steps = self.env_steps
@@ -786,6 +802,12 @@ class TrainingRun:
             *(f"hint_match_{block}" for block in ("core", "move", "duel", "pack", "party", "support", "crowd", "pet",
                                                   "gauntlet", "companion")),
         ]
+        if self.style is not None:
+            # The style reward (animus.style): what it paid a decision, the scale it was paid at, and the
+            # discriminator's view of both sides; per context the players have.
+            columns += ["style_reward", "style_scale", "style_disc_human", "style_disc_bot", "style_gp",
+                        "style_disc_loss",
+                        *(f"style_reward_{motion.context_name(c)}" for c in self.style.human.context_set)]
         if self.trainer.sil is not None:
             # Self-imitation (mappo.sil_coef): the episodes kept and their scores, what this update took, its terms.
             columns += ["sil_episodes", "sil_best_score", "sil_floor_score", "sil_collected", "sil_policy_loss",
@@ -820,7 +842,9 @@ class TrainingRun:
                         "forecast_goal_reached_16_brier"]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
         self.report = tuple(config.eval.report)
-        self.eval_log = EvalLog(self.run_dir, self.logger.tb) if leader else Silent()
+        self.eval_log = EvalLog(self.run_dir, self.logger.tb,
+                                realism.columns(self.realism_reference) if self.realism_reference else ()) \
+            if leader else Silent()
         # Self-play arenas scored against the baseline as their opponent (eval.opponent_baseline).
         self.opponents = config.eval.baseline if config.eval.opponent_baseline else ""
         self.baselines: dict[tuple[int, int], dict] = {}
@@ -866,6 +890,40 @@ class TrainingRun:
 
     # ------------------------------------------------------------------ setup
 
+    def _make_style(self) -> tuple[StyleReward | None, dict, dict | None]:
+        """The style reward (style.enabled) and the realism reference (style.reference), from their files; the line
+        that says what they do. A sim that sends no kinematics (protocol 20) cannot have either."""
+        config, spec = self.config, self.spec
+        style_config = config.style
+        dataset = config.format_path(style_config.dataset) if style_config.dataset else ""
+        reference = config.format_path(style_config.reference) if style_config.reference else ""
+        if (style_config.enabled or reference) and spec.kinematics_dim != motion.SAMPLE_DIM:
+            raise SystemExit(f"style: the sim sends {spec.kinematics_dim} kinematic floats an agent, not "
+                             f"{motion.SAMPLE_DIM}: no style reward or realism score without them")
+        style = None
+        if style_config.enabled:
+            if not Path(dataset).is_file():
+                raise SystemExit(f"style.dataset: no human windows at {dataset}")
+            human = HumanWindows.load(dataset, style_config.window)
+            if not human.context_set:
+                raise SystemExit(f"style.dataset: {dataset} holds no weighted windows")
+            style = StyleReward(style_config, human, spec.num_envs, spec.agents_per_env, config.rollout_length,
+                                device=config.resolved_train_device(),
+                                ranks=self.ranks if self.ranks.active else None, seed=config.seed + config.rank)
+            missing = [motion.context_name(c) for c in range(motion.CONTEXTS) if c not in human.context_set]
+            if missing:
+                print(f"Style: no human motion in {', '.join(missing)}; the seats' is neither paid nor trained on "
+                      f"there", flush=True)
+        reference_data = None
+        if reference:
+            if not Path(reference).is_file():
+                raise SystemExit(f"style.reference: no human reference at {reference}")
+            reference_data = realism.load_reference(reference)
+        if self.ranks.leader:
+            print(f"{config.run_name}: {style_line(style_config, style.human if style else None, config.costs.enabled)}"
+                  + (f"; realism scored against {reference}" if reference_data else ""), flush=True)
+        return style, {}, reference_data
+
     def _load_or_seed(self) -> None:
         """Resume the run's latest.pt, or seed the fresh networks from the stage this one extends and a merge stage's
         further parents; either way the parents teach a distilled run (self.distiller)."""
@@ -885,6 +943,9 @@ class TrainingRun:
                 raise SystemExit(f"cannot resume {config.run_name}: the layouts changed since {self.resume_path} was "
                                  f"saved -- {' | '.join(changes)}; start it fresh (it seeds from the stage before)")
             self.trainer.load_state_dict(checkpoint["trainer"])
+            if self.style is not None and not self.style.load_state_dict(checkpoint.get("style")):
+                print(f"Resuming {config.run_name}: the checkpoint has no style discriminator of this shape; it "
+                      f"starts fresh", flush=True)
             if self.explore is not None and checkpoint.get("explore"):
                 self.explore.load_state_dict(checkpoint["explore"])
             self.exploit_resume = checkpoint.get("exploit")
@@ -986,6 +1047,10 @@ class TrainingRun:
         league = self.run_dir / LEAGUE
         if league.is_dir():
             self.shared_files += sorted(league.iterdir())
+        # The human data, for a follower on another machine (served only from under the runs directory).
+        for path in (config.style.dataset, config.style.reference):
+            if path:
+                self.shared_files.append(Path(config.format_path(path)))
 
     @staticmethod
     def seed_candidate(candidates: list[str], prefer: str, spec, auto: bool,
@@ -1097,6 +1162,7 @@ class TrainingRun:
         return {"convergence": self.tracker.state_dict(), "controller": self.controller.state_dict(),
                 "stage": self.stage, "score_kind": self.score_kind,
                 **({"explore": self.explore.state_dict()} if self.explore is not None else {}),
+                **({"style": self.style.state_dict()} if getattr(self, "style", None) is not None else {}),
                 **({"exploit": self.exploit.state_dict()} if getattr(self, "exploit", None) is not None else {})}
 
     def _save(self, path: Path) -> None:
@@ -1220,7 +1286,8 @@ class TrainingRun:
         self.progress.write("evaluating", self.update, self.env_steps)
         result = self._evaluate_share(self.learner_actions(), config.eval.episodes, config.eval.seed,
                                       opponents=self.opponents, arenas=self.arena_names,
-                                      action_names=self.action_names, trace_episodes=config.eval.trace_episodes)
+                                      action_names=self.action_names, trace_episodes=config.eval.trace_episodes,
+                                      collect_motion=self.spec.kinematics_dim == motion.SAMPLE_DIM)
         if self.cast is not None:
             self._reset_far_side()
         self.last_eval_env_steps = self.env_steps
@@ -1231,6 +1298,7 @@ class TrainingRun:
             if self.cast is not None:
                 controller.observe_league(self.cast.league_stats([layout.name for layout in self.spec.layouts]))
             improved = controller.observe(summary, self.env_steps)
+            self.score_motion(result, summary)
             self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
             self.progress.evaluated(self.env_steps, result.score,
                                     baseline_summary["score"] if baseline_summary else None, tracker, controller)
@@ -1279,6 +1347,37 @@ class TrainingRun:
         if leader:
             self.send_layout_weights(summary, baseline_summary)
             self.send_replay(result)
+
+    def score_motion(self, result: EvalResult, summary: dict) -> None:
+        """The evaluation's motion (protocol 20 kinematics of the scored seats): its windows to eval_motion.npz for the
+        offline realism report, and with style.reference the realism columns into `summary` -- per context the
+        distance from the players' motion (animus.human.realism), and the discriminator's mean output when there is
+        one. Read after the controller has seen the summary: realism informs, it decides nothing yet."""
+        if not result.motion_tracks:
+            return
+        style = self.config.style
+        feats, contexts, per_track, per_context = realism.tracks_features(result.motion_tracks)
+        windows, context, weight = realism.motion_windows(per_track, per_context, style.window, style.eval_windows,
+                                                          np.random.default_rng(self.update))
+        realism.write_motion(self.run_dir / "eval_motion.npz", windows, context, weight, {
+            "source": "eval", "run": self.config.run_name, "scenario": self.spec.scenario, "update": self.update,
+            "env_steps": self.env_steps, "tracks": len(result.motion_tracks), "steps": int(len(feats)),
+            "step_seconds": self.spec.decision_ms / 1000.0, "window": style.window})
+        line = []
+        if self.realism_reference is not None:
+            scored = realism.score(feats, contexts, self.realism_reference)
+            summary.update({name: value for name, value in scored.items() if name.startswith("realism_emd")})
+            summary["realism"] = {name: scored[name] for name in ("features", "steps", "unscored")}
+            line.append(f"realism EMD {scored['realism_emd']:.3g} over {len(feats)} steps"
+                        + (f" ({', '.join(scored['unscored'])} unscored: no human motion)" if scored["unscored"]
+                           else ""))
+        if self.style is not None:
+            disc = self.style.disc_mean(windows, context)
+            if disc is not None:
+                summary["realism_disc"] = disc
+                line.append(f"discriminator {disc:.3g} (+1 a player, -1 a bot)")
+        if line:
+            print(f"Motion: {'; '.join(line)}", flush=True)
 
     def apply_holds(self, converged: list[str] | None = None) -> None:
         """Freeze the classes that have converged (animus.stage) and keep them out of the rollout's samples. An
@@ -1516,6 +1615,8 @@ class TrainingRun:
                 return part
             return self.env.step(sent["actions"], sent["goals"])
 
+        if self.style is not None:
+            self.style.begin(self.step)
         decision = self._act_on_rows_of(self.step, groups, send)
         while True:
             buffer.add_decision(*decision.recorded())
@@ -1529,6 +1630,8 @@ class TrainingRun:
                 part = receive(begin, count)
                 parts.append(part)
                 rows = slice(begin, begin + count)
+                if self.style is not None:
+                    self.style.record(buffer.cursor, rows, part)
                 value_ended = self._take_outcome_of(part, rows, decision, outcome)
                 if following is not None:
                     self._act_on_rows(part, rows, following, send)
@@ -1551,6 +1654,7 @@ class TrainingRun:
         if trainer.rollout_stream is not None:
             trainer.rollout_stream.synchronize()
         rollout_seconds = time.perf_counter() - started
+        self.add_style(buffer)
         buffer.finish(trainer.value(self.step.state, self.step.obs, self.step.layout, self.acting.goal,
                                     self.acting.critic_memory),
                       *self.discounts,
@@ -1652,6 +1756,20 @@ class TrainingRun:
         # it waited too, and so on: every update was joined where it was submitted and overlap_updates never
         # overlapped anything.
         return stats if stats is not None else {}, started, rollout_seconds
+
+    def style_scale(self) -> float:
+        """What the style reward is paid times: the cost ladder's scale in force (style.ladder), else 1."""
+        return float(self.cost_scale_now) if self.config.style.ladder else 1.0
+
+    def add_style(self, buffer: RolloutBuffer) -> None:
+        """The style reward of the rollout just collected, into its rewards before its advantages are taken
+        (animus.style), and its discriminator trained on it. The sim's outcome score never sees it."""
+        if self.style is None:
+            return
+        reward, stats = self.style.finish(buffer.dones, buffer.valid, self.step)
+        scale = self.style_scale()
+        buffer.rewards += np.float32(self.config.style.coef * scale) * reward
+        self.style_stats = {**stats, "style_scale": scale}
 
     def _act_on_rows_of(self, step: protocol.Step, groups: list[tuple[int, int]], send) -> DecisionRows:
         """Act on every group of a decision already received whole (the one a rollout starts from)."""
@@ -1881,6 +1999,7 @@ class TrainingRun:
             **(self.explore.summary() if self.explore is not None else {}),
             **(self.exploit.stats() if self.exploit is not None else {}),
             **getattr(self, "exploit_stats", {}),
+            **getattr(self, "style_stats", {}),
         }
         if self.finished_episodes:
             means = np.mean(self.finished_episodes, axis=0)

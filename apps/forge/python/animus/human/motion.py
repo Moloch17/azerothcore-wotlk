@@ -174,3 +174,28 @@ def histogram_distance(a: np.ndarray, b: np.ndarray, bins: np.ndarray) -> float:
         return float("nan")
     width = float(bins[1] - bins[0])
     return float(np.abs(np.cumsum(a / a.sum()) - np.cumsum(b / b.sum())).sum() * width)
+
+
+def features_of_tracks(samples: np.ndarray, starts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """`features` of many tracks laid end to end, in one call: [N, SAMPLE_DIM] samples and `starts` [N], True where a
+    sample begins a new track (the first sample always does) -> [N, F] features and [N] whether each row is a step.
+
+    Row i is the step from sample i-1 to sample i, exactly as `features(track)` gives it for the track it belongs to;
+    a row whose sample starts a track is no step (zeros, False). This is how the bot side reads every seat's motion at
+    once (animus.style, animus.human.realism): only acceleration looks across a step, and a track's first step has
+    none, as `features` gives it."""
+    s = np.asarray(samples, dtype=np.float64)
+    n = len(s)
+    starts = np.asarray(starts, dtype=bool).reshape(n).copy()
+    out = np.zeros((n, F), dtype=np.float32)
+    if n:
+        starts[0] = True
+    steps = ~starts
+    if n < 2:
+        return out, steps
+    out[1:] = features(s)
+    first = np.zeros(n, dtype=bool)
+    first[1:] = starts[:-1]
+    out[first, INDEX["accel"]] = 0.0
+    out[starts] = 0.0
+    return out, steps
