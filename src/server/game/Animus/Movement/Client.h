@@ -109,6 +109,9 @@ namespace Animus::Movement
         /// The body as the client knows it: the truth, which self observations read (§5A.1 point 1).
         BodyState Body;
         Counters Counts;
+        /// The last of the server's orders the client took, and when (episode ms): what a diagnostic names.
+        uint8_t LastOrder = UINT8_MAX;
+        uint32_t LastOrderMs = 0;
         /// The last tick, over its sub-steps: yards moved, yards the held controls asked for, whether it met a wall;
         /// jumps taken and landings, and the highest fall landed.
         float TickMoved = 0.0f;
