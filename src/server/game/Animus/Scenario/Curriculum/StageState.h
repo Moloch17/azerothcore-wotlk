@@ -236,6 +236,8 @@ namespace Animus::Curriculum
         uint32 Falls = 0;
         float FallDamage = 0.0f;
         uint32 FallDeaths = 0;
+        uint32 VoidDeaths = 0;              // ... of which under the map's floor (the core's out-of-bounds kill)
+        uint32 IntoTerrain = 0;             // ticks that ended with the feet inside the terrain from above it
         /// The durative actions the seat is running (SeatOptionSet: a positioning one and a standby), how many it
         /// started and how long any of them ran: one press that stands for many decisions of resting, holding an
         /// interrupt or keeping range.
@@ -314,6 +316,7 @@ namespace Animus::Curriculum
         uint8 LastKind = 0;
         bool VoidFallLogged = false;
         bool UnburiedLogged = false;        // the buried-placement line was written this episode
+        bool IntoTerrainLogged = false;     // the into-the-terrain line was written this episode
         uint32 BreathingCasts = 0;      // water-breathing spells started (ActionCatalog::Action::WaterBreathing)
         uint32 ItemUses = 0;
         bool InCombat = false;
@@ -541,11 +544,14 @@ namespace Animus::Curriculum
             LastKind = 0;
             VoidFallLogged = false;
             UnburiedLogged = false;
+            IntoTerrainLogged = false;
             Jumps = 0;
             Drops = 0;
             Falls = 0;
             FallDamage = 0.0f;
             FallDeaths = 0;
+            VoidDeaths = 0;
+            IntoTerrain = 0;
             Option = SeatOptionSet();
             // The held keys are state, and must not outlive their episode: a seat would set out holding the last one's.
             // Facing and the body are seeded from the bot once the seat has been placed (StageScenario::ResetSeats),

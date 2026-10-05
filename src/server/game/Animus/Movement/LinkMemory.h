@@ -37,6 +37,7 @@ namespace Animus::Movement
         uint32_t Landings = 0;
         float FallDamage = 0.0f;
         uint32_t FallDeaths = 0;
+        uint32_t VoidDeaths = 0;        // ... of which the core's kill under the map's floor (DAMAGE_FALL_TO_VOID)
     };
 }
 

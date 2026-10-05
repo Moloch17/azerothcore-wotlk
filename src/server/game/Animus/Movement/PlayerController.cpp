@@ -122,10 +122,57 @@ namespace
     /// Move (dx, dy, dz) from the body with the wall rule: the whole move if it is free; else the turned variants of
     /// it (SLIDE_ANGLES, shortened by the cosine) kept for the most progress along the original; else as far as the
     /// original goes. Returns the move made.
+    /// The share of a move along which the knee stays out of the terrain, when it starts above the terrain's surface:
+    /// the terrain is in no collision tree, so the sweep's rays do not see a hillside, and a step up it that the floor
+    /// search answered with something else -- a rock model buried in the hill, whose top Map::GetHeight hands back once
+    /// the terrain is out of reach above -- walked the body into the hill (the M1/M2 dry check: seats 20-60 yd under
+    /// Kalimdor's hills, then off the buried floor's edge and down to the map's floor). As the client's terrain
+    /// collision does, the surface is crossed from above only: a move that starts over a hole (a cave's mouth: the
+    /// terrain has no height there) or already under the surface (inside the cave) is the cave's own and goes on.
+    /// 1 when the knee does not cross; else where it does, found by halving.
+    float TerrainShare(Mv::BodyState const& body, float dx, float dy, float dz, Mv::WorldQuery const& world)
+    {
+        float const knee = Mv::STEP_UP + 0.05f;
+        if (!HasFloor(world.TerrainHeight(body.X, body.Y)) || world.InTerrain(body.X, body.Y, body.Z + knee)
+            || !world.InTerrain(body.X + dx, body.Y + dy, body.Z + dz + knee))
+            return 1.0f;
+        float lo = 0.0f;
+        float hi = 1.0f;
+        for (int i = 0; i < 10; ++i)
+        {
+            float const mid = 0.5f * (lo + hi);
+            if (world.InTerrain(body.X + dx * mid, body.Y + dy * mid, body.Z + dz * mid + knee))
+                hi = mid;
+            else
+                lo = mid;
+        }
+        return lo;
+    }
+
+    /// The share of a move that is free: the collision trees' sweep, and the terrain's surface (TerrainShare).
+    float FreeShare(Mv::BodyState const& body, float dx, float dy, float dz, Mv::Body const& shape,
+        Mv::WorldQuery const& world)
+    {
+        float const swept = world.Sweep(body.X, body.Y, body.Z, body.X + dx, body.Y + dy, body.Z + dz, shape);
+        return std::min(swept, TerrainShare(body, dx, dy, dz, world));
+    }
+
+    /// Whether a move to (x, y) with the feet ending at z goes through the terrain's surface: the feet would be inside
+    /// the terrain there while the body now stands, swims or flies above a surface. The ground step's floor search
+    /// reaches a step up and its knee test starts just above that, so a rise of the terrain between the two (1.19 to
+    /// ~1.29 yd within one sub-step, on a steep hillside) found neither a floor nor a wall and was taken for an edge:
+    /// the body fell from under the surface and on under the hill (the M1/M2 dry check, 2026-10-05). A body over a
+    /// hole (a cave's mouth: no terrain height there) or already under the surface (a cave) is not crossing it.
+    bool IntoTerrain(Mv::BodyState const& body, float x, float y, float z, Mv::WorldQuery const& world)
+    {
+        return world.InTerrain(x, y, z + SNAP) && HasFloor(world.TerrainHeight(body.X, body.Y))
+            && !world.InTerrain(body.X, body.Y, body.Z + SNAP);
+    }
+
     void SweptMove(Mv::BodyState& body, float dx, float dy, float dz, Mv::Body const& shape,
         Mv::WorldQuery const& world, float& outX, float& outY, float& outZ)
     {
-        float const free = world.Sweep(body.X, body.Y, body.Z, body.X + dx, body.Y + dy, body.Z + dz, shape);
+        float const free = FreeShare(body, dx, dy, dz, shape, world);
         if (free >= 1.0f)
         {
             outX = dx;
@@ -149,7 +196,7 @@ namespace
             float const s = std::sin(a);
             float const rx = (dx * c - dy * s) * c;
             float const ry = (dx * s + dy * c) * c;
-            float const f = world.Sweep(body.X, body.Y, body.Z, body.X + rx, body.Y + ry, body.Z + dz, shape);
+            float const f = FreeShare(body, rx, ry, dz, shape, world);
             // Only a turned move that is clear all the way is a slide along the wall: one that also runs into it
             // is the same wall met at another angle (square on, every turn of the move is blocked too).
             if (f < 1.0f)
@@ -236,6 +283,14 @@ namespace
             && (!HasFloor(floor) || liquid.Level > floor))
             floor = liquid.Level;
 
+        if (IntoTerrain(body, nx, ny, HasFloor(floor) ? floor : body.Z, world))
+        {
+            // The step would leave the feet inside the terrain -- no floor found up a rise just over a step, or a model
+            // buried in the hill answering for the floor: a hillside, a wall.
+            body.AgainstWall = true;
+            return;
+        }
+
         if (HasFloor(floor) && floor > body.Z + SNAP && world.FloorNormalZ(nx, ny, floor) < Mv::WALKABLE_NORMAL_Z)
         {
             // Up a slope steeper than 50 degrees: refused, as a wall is.
@@ -309,9 +364,16 @@ namespace
                 body.Vz = 0.0f;
             }
         }
+        float const nz = body.Z + rise;
+        if ((dx != 0.0f || dy != 0.0f) && IntoTerrain(body, body.X + dx, body.Y + dy, std::max(body.Z, nz), world))
+        {
+            // Sideways into a hillside in the air: the run stops against it, the fall goes on (down onto the slope).
+            dx = dy = 0.0f;
+            body.Vx = body.Vy = 0.0f;
+            body.AgainstWall = true;
+        }
         float const nx = body.X + dx;
         float const ny = body.Y + dy;
-        float const nz = body.Z + rise;
 
         // Landing: a floor between where the feet were and where they are going.
         float const top = std::max(body.Z, nz) + SNAP;
@@ -408,6 +470,11 @@ namespace
             nz = std::min(nz, there.Level - Mv::FLOAT_DEPTH * shape.Height);
         if (HasFloor(bed))
             nz = std::max(nz, bed);
+        if (IntoTerrain(body, nx, ny, nz, world))
+        {
+            body.AgainstWall = true;
+            return;
+        }
 
         body.Moved += std::sqrt(dx * dx + dy * dy + (nz - body.Z) * (nz - body.Z));
         body.X = nx;
@@ -456,6 +523,11 @@ namespace
             float const room = world.Ceiling(nx, ny, body.Z + shape.Height, dz);
             if (room < dz)
                 nz = body.Z + std::max(0.0f, room);
+        }
+        if (IntoTerrain(body, nx, ny, nz, world))
+        {
+            body.AgainstWall = true;
+            return;
         }
 
         body.Moved += std::sqrt(dx * dx + dy * dy + (nz - body.Z) * (nz - body.Z));

@@ -752,9 +752,14 @@ void Animus::Curriculum::StageScenario::ScatterSeats(Env const& env, Map* map) c
         // FindPlace is the same validation the objective gets -- on the mesh, reachable, and inside the building
         // when the arena is -- which is the reason to spend a pathfind here rather than offset blindly into a
         // wall. A room that has no room for one keeps the spawn point; Relocate leaves the facing alone.
+        // A place with no height, or off the spawn's own level (the dry check: a seat scattered off a Nagrand plateau's
+        // edge into the valley 230 yd below, and the next scatter from there asked for z -200000) is no place: the
+        // seat keeps its own.
+        constexpr float SCATTER_LEVEL_MAX = 20.0f;
         Position place;
         if (TravelEncounter::FindPlace(bot, map, SCATTER_MIN, arena.SpawnScatter, false, place, 0.0f, nullptr,
-            false, nullptr, arena.Indoors))
+            false, nullptr, arena.Indoors) && place.GetPositionZ() > INVALID_HEIGHT
+            && std::fabs(place.GetPositionZ() - bot->GetPositionZ()) <= SCATTER_LEVEL_MAX)
             where.Relocate(place.GetPositionX(), place.GetPositionY(), place.GetPositionZ());
 
         BotFactory::TeleportWithinMap(bot, where);
@@ -933,6 +938,10 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("fell", [seat](Env const& env, uint32 index) { return seat(env, index).Falls ? 1.0f : 0.0f; });
     _info.Add("fall_damage", [seat](Env const& env, uint32 index) { return seat(env, index).FallDamage; });
     _info.Add("fall_deaths", [seat](Env const& env, uint32 index) { return float(seat(env, index).FallDeaths); });
+    // Of the fall deaths, the core's kill under the map's floor; and ticks that ended inside the terrain from above it
+    // (the controller's own rule forbids it: any is a bug to report).
+    _info.Add("void_deaths", [seat](Env const& env, uint32 index) { return float(seat(env, index).VoidDeaths); });
+    _info.Add("into_terrain", [seat](Env const& env, uint32 index) { return float(seat(env, index).IntoTerrain); });
     // Durative actions: how many the seat started and how long they ran.
     _info.Add("options_started", [seat](Env const& env, uint32 index)
     {
@@ -3115,10 +3124,16 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
             for (Animus::Client::Order const& order : orders)
                 seat.Mover.Order(order, link, shape, world, nowMs);
         }
+        // Standing (or swimming, flying) above the terrain's surface before the tick, and inside it after: the
+        // controller walked or fell through a hillside, which it must not (PlayerController's IntoTerrain).
+        Movement::BodyState const& body = seat.Mover.Body;
+        bool const above = world.TerrainHeight(body.X, body.Y) > Movement::INVALID_FLOOR + 1.0f
+            && !world.InTerrain(body.X, body.Y, body.Z + 0.1f);
         seat.Mover.Tick(seat.Controls.Held, Movement::SpeedsOf(bot), shape, world, diffMs, nowMs, link);
+        bool const intoTerrain = above && world.InTerrain(body.X, body.Y, body.Z + 0.1f);
         seat.Facing = seat.Mover.Body.Yaw;
         TrackController(seat, diffMs);
-        WatchFall(seat, bot, nowMs, Arena(env).Name, env.Evaluating);
+        WatchFall(seat, bot, nowMs, Arena(env).Name, env.Evaluating, intoTerrain);
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         tick(seat);
@@ -3131,8 +3146,22 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
             std::chrono::steady_clock::now() - started).count()), seatTicks);
 }
 
+namespace
+{
+    constexpr uint32 LOG_DEATH = 0;
+    constexpr uint32 LOG_VOID_FALL = 1;
+    constexpr uint32 LOG_BURIED = 2;
+    constexpr uint32 LOG_INTO_TERRAIN = 3;
+}
+
+bool Animus::Curriculum::StageScenario::MayLog(SeatState const& seat, uint32 kind, uint32 cap) const
+{
+    uint32 const layout = seat.L ? std::min<uint32>(seat.L->Index, LOG_LAYOUTS - 1) : LOG_LAYOUTS - 1;
+    return _logged[std::min(kind, LOG_KINDS - 1)][layout].fetch_add(1, std::memory_order_relaxed) < cap;
+}
+
 void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, uint32 nowMs, std::string const& arena,
-    bool evaluating)
+    bool evaluating, bool intoTerrain) const
 {
     Movement::BodyState const& body = seat.Mover.Body;
     uint8 const kind = uint8(body.Kind);
@@ -3149,10 +3178,28 @@ void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, 
     if (seat.Mover.Counts.Unburied > seat.MoverAtStart.Unburied && !seat.UnburiedLogged)
     {
         seat.UnburiedLogged = true;
-        LOG_WARN("module.animus", "Player controller: {} ({} arena, {}) was put inside the ground at ({:.1f}, {:.1f}, "
-            "{:.1f}) on map {} with nothing under it, and was stood on the terrain at z {:.1f}: the spawn point or the "
-            "server's position is buried", bot->GetName(), arena, evaluating ? "evaluating" : "training", body.X,
-            body.Y, seat.Mover.UnburiedFromZ, bot->GetMapId(), body.Z);
+        if (MayLog(seat, LOG_BURIED, 8))
+            LOG_WARN("module.animus", "Player controller: {} ({} arena, {}) was put inside the ground at ({:.1f}, "
+                "{:.1f}, {:.1f}) on map {} with nothing under it, and was stood on the terrain at z {:.1f}: the spawn "
+                "point or the server's position is buried", bot->GetName(), arena,
+                evaluating ? "evaluating" : "training", body.X, body.Y, seat.Mover.UnburiedFromZ, bot->GetMapId(),
+                body.Z);
+    }
+
+    // Through the terrain's surface from above in one tick: never, by the controller's own rule (IntoTerrain). Counted
+    // (the into_terrain column), and logged once a seat an episode if it ever happens.
+    if (intoTerrain)
+    {
+        ++seat.IntoTerrain;
+        if (!seat.IntoTerrainLogged && MayLog(seat, LOG_INTO_TERRAIN, 8))
+        {
+            seat.IntoTerrainLogged = true;
+            Map const* map = bot->GetMap();
+            LOG_WARN("module.animus", "Player controller: {} ({} arena, {}) ended a tick with its feet inside the "
+                "terrain, from above it: body ({:.1f}, {:.1f}, {:.1f}) mode {} map {}, the terrain {:.1f} there",
+                bot->GetName(), arena, evaluating ? "evaluating" : "training", body.X, body.Y, body.Z,
+                uint32(body.Kind), map->GetId(), map->GetGridHeight(body.X, body.Y));
+        }
     }
 
     // Three seconds down with no floor anywhere under it, a seat falls until the map kills it at its floor (z -500):
@@ -3164,8 +3211,7 @@ void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, 
     if (map->GetHeight(bot->GetPhaseMask(), body.X, body.Y, body.Z, true, 2000.0f) > INVALID_HEIGHT)
         return;
     seat.VoidFallLogged = true;
-    static std::atomic<uint32> logged{ 0 };
-    if (logged.fetch_add(1) >= 20)
+    if (!MayLog(seat, LOG_VOID_FALL, 4))
         return;
 
     std::string auras;
@@ -3217,8 +3263,10 @@ void Animus::Curriculum::StageScenario::TrackController(SeatState& seat, uint32 
     }
     seat.FallDamage += seat.Link.FallDamage;
     seat.FallDeaths += seat.Link.FallDeaths;
+    seat.VoidDeaths += seat.Link.VoidDeaths;
     seat.Link.FallDamage = 0.0f;
     seat.Link.FallDeaths = 0;
+    seat.Link.VoidDeaths = 0;
 
     // The course turning more than 20 degrees within a tick while moving: a kink a watcher sees. Read from the
     // body's way between ticks, not its velocity, which the ground step zeroes every step (only a fall carries one):
@@ -3498,27 +3546,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     {
         seat.Drowned = true;
         seat.SubmergedSinceMs = 0;
-    }
-    // Every death, once, with the state that explains it -- written for the chain drill, whose first evaluation
-    // lost a quarter of its seats to something no tally could see. Capped per process so a bad stage cannot
-    // flood the log.
-    if (bot && !bot->IsAlive() && !seat.DeathLogged)
-    {
-        seat.DeathLogged = true;
-        static std::atomic<uint32> logged{ 0 };
-        if (logged.fetch_add(1) < 40)
-        {
-            LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
-                bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
-            LOG_INFO("module.animus", "Seat died: {} level {} at {:.0f} s, under {} swimming {} liquid status {} "
-                "z {:.1f} level {:.1f} form {}, breath mirror {:.2f} submerged since {} ms, self damage this step "
-                "{:.2f} taken {:.2f}, breaths {} submerged {} s, action {}",
-                seat.L ? seat.L->ModelName() : "?", bot->GetLevel(), float(env.EpisodeElapsedMs) / 1000.0f,
-                bot->IsUnderWater(), bot->Unit::IsInWater(), uint32(liquid.Status), bot->GetPositionZ(),
-                liquid.Level, uint32(bot->GetShapeshiftForm()), float(seat.BreathSpentMs) / float(BreathMs()),
-                seat.SubmergedSinceMs, seat.LastStepSelfDamage, seat.LastStepDamageTaken, seat.Breaths,
-                seat.SubmergedMs / 1000, action);
-        }
     }
     // A held control pressed again is the key kept down (MoveBlock): no repeat, effort or verdict.
     if (action > 0 && !result.KeyStillHeld)
@@ -4738,6 +4765,35 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
 /// The corpse run, where death runs on (ArenaDefinition::DeathRuns): the time dead costs, a death soon after rising
 /// costs more, a rise at the corpse with nothing waiting to kill it again pays, and the spirit healer's sickness
 /// costs. Dying itself is the arena's own death term.
+/// Every death, once, with the state that explains it -- written for the chain drill, whose first evaluation lost a
+/// quarter of its seats to something no tally could see. From the reward step, which every seat takes every decision:
+/// read where the seat acted it saw only deaths an episode outlived -- a shaman's, whose Reincarnation keeps it from
+/// being dead for good (DeadForGood), while every other class's death ended the episode first (the M1 dry check's
+/// "all shamans"). Capped per layout and stage (MayLog), so neither one class nor one stage can hide another.
+void Animus::Curriculum::StageScenario::LogDeath(Env const& env, SeatState& seat, Player* bot) const
+{
+    if (bot && !bot->IsAlive() && !seat.DeathLogged)
+    {
+        seat.DeathLogged = true;
+        if (MayLog(seat, LOG_DEATH, 8))
+        {
+            LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
+                bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
+            LOG_INFO("module.animus", "Seat died: {} level {} at {:.0f} s (env {}, {} arena, {}, map {} at ({:.1f}, "
+                "{:.1f}); void deaths {} fall deaths {} this episode), under {} swimming {} liquid status {} "
+                "z {:.1f} level {:.1f} form {}, breath mirror {:.2f} submerged since {} ms, self damage this step "
+                "{:.2f} taken {:.2f}, breaths {} submerged {} s, action {}",
+                seat.L ? seat.L->ModelName() : "?", bot->GetLevel(), float(env.EpisodeElapsedMs) / 1000.0f, env.Index,
+                Arena(env).Name, env.Evaluating ? "evaluating" : "training", bot->GetMapId(), bot->GetPositionX(),
+                bot->GetPositionY(), seat.VoidDeaths + seat.Link.VoidDeaths, seat.FallDeaths + seat.Link.FallDeaths,
+                bot->IsUnderWater(), bot->Unit::IsInWater(), uint32(liquid.Status), bot->GetPositionZ(),
+                liquid.Level, uint32(bot->GetShapeshiftForm()), float(seat.BreathSpentMs) / float(BreathMs()),
+                seat.SubmergedSinceMs, seat.LastStepSelfDamage, seat.LastStepDamageTaken, seat.Breaths,
+                seat.SubmergedMs / 1000, seat.Pressed);
+        }
+    }
+}
+
 void Animus::Curriculum::StageScenario::SettleDeath(Env& env, SeatState& seat, Player* bot)
 {
     CurriculumTuning::DeathTuning const& tuning = _tuning.Death;
@@ -5354,6 +5410,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     if (bot && bot->IsAlive())
         seat.Combat.DeathCounted = false;
 
+    LogDeath(env, seat, bot);
     if (Arena(env).DeathRuns)
         SettleDeath(env, seat, bot);
 

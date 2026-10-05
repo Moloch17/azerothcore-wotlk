@@ -298,7 +298,12 @@ namespace Animus::Curriculum
         /// from the tick before while moving (half a yard a second or more); keeps the course on the seat.
         static bool CourseKink(SeatState& seat, float x, float y, uint32 diffMs);
         /// When a body began to fall, and the one-off line for a seat falling with no floor anywhere under it.
-        static void WatchFall(SeatState& seat, Player* bot, uint32 nowMs, std::string const& arena, bool evaluating);
+        void WatchFall(SeatState& seat, Player* bot, uint32 nowMs, std::string const& arena, bool evaluating,
+            bool intoTerrain) const;
+        /// Whether a diagnostic line of `kind` may still be written for `seat`'s layout: each kind has a cap per layout
+        /// in each stage, so one class's lines cannot use up another's, nor one stage's another's.
+        [[nodiscard]] bool MayLog(SeatState const& seat, uint32 kind, uint32 cap) const;
+        void LogDeath(Env const& env, SeatState& seat, Player* bot) const;
         /// SeatBot when it is in the world, else null: Env::FindBot's answer for a seat, without the global object
         /// accessor's lock that FindBot takes for every call (seat loops run on every map thread every decision).
         [[nodiscard]] Player* SeatBotInWorld(Env const& env, uint32 seat) const;
@@ -466,6 +471,10 @@ namespace Animus::Curriculum
         CurriculumTuning _tuning;
         std::atomic<uint64> _reused{ 0 };       // characters kept across episodes (CharactersReused)
         bool _resetsStayOnMap = false;          // ResetsStayOnMap: worked out once, from the stage's arenas
+        /// Diagnostic lines written, per kind and layout (MayLog): deaths, void falls, burials, into the terrain.
+        static constexpr uint32 LOG_KINDS = 4;
+        static constexpr uint32 LOG_LAYOUTS = 64;
+        mutable std::array<std::array<std::atomic<uint32>, LOG_LAYOUTS>, LOG_KINDS> _logged{};
         uint32 _spawnMapId;
         Position _spawnPoint;
         bool _continent = false;

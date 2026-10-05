@@ -136,6 +136,7 @@ bool Animus::Movement::PlayerLink::Apply(Report const& report)
 
     BotMovementClient client;
     uint32 const health = bot->GetHealth();
+    bool const wasAlive = bot->IsAlive();
     ClientMovement::Refusal const refusal = ClientMovement::Apply(bot, info, bot, bot, opcode, client);
     if (refusal != ClientMovement::Refusal::None)
     {
@@ -158,8 +159,17 @@ bool Animus::Movement::PlayerLink::Apply(Report const& report)
         ++_memory.Landings;
         if (bot->GetMaxHealth() && bot->GetHealth() < health)
             _memory.FallDamage += float(health - bot->GetHealth()) / float(bot->GetMaxHealth());
-        if (!bot->IsAlive())
+    }
+    // A death in the movement itself is the fall's: a landing that killed, or the core's kill of a body under the
+    // map's floor (ClientMovement::Apply: DAMAGE_FALL_TO_VOID, PLAYER_FLAGS_IS_OUT_OF_BOUNDS), which no landing
+    // reports.
+    if (wasAlive && !bot->IsAlive())
+    {
+        bool const fellOut = bot->HasPlayerFlag(PLAYER_FLAGS_IS_OUT_OF_BOUNDS);
+        if (opcode == MSG_MOVE_FALL_LAND || fellOut)
             ++_memory.FallDeaths;
+        if (fellOut)
+            ++_memory.VoidDeaths;
     }
 
     // Watching clients see it as they see a player's (C5): the relay each handler makes, only while a real client

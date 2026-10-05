@@ -645,6 +645,91 @@ TEST(PlayerControllerTest, ABodyBuriedInTheGroundStandsOnTheTerrain)
     EXPECT_FLOAT_EQ(body.Z, 36.0f);
 }
 
+// A hillside is a wall: the body never ends a tick with its feet inside the terrain, and never falls under it (the
+// M1/M2 dry check, 2026-10-05: seats 20-60 yd under Kalimdor's hills). The terrain-only rises are the overseer's: just
+// over a step (1.21 yd: the floor search, from a step up, found nothing, and the knee test, just above that, missed it
+// -- taken for an edge, the body fell from under the surface), 1.5 yd, and a 70 degree face. Then the same faces over a
+// model buried in the hill, whose top Map::GetHeight hands back once the terrain is out of reach above: an 85 degree
+// face and a 3 yd cliff. Each approached at run speed in 50 ms ticks, square on and at 30 degrees.
+TEST(PlayerControllerTest, AHillsideIsAWall)
+{
+    struct Case
+    {
+        char const* Name;
+        std::function<float(float, float)> Ground;
+        bool Buried;
+    };
+    float const face70 = std::tan(70.0f * PI / 180.0f);
+    float const face85 = std::tan(85.0f * PI / 180.0f);
+    std::vector<Case> const cases = {
+        { "a 1.21 yd rise", [](float x, float) { return x < 10.0f ? 0.0f : 1.21f; }, false },
+        { "a 1.5 yd rise", [](float x, float) { return x < 10.0f ? 0.0f : 1.5f; }, false },
+        { "a 70 degree face", [face70](float x, float) { return x < 10.0f ? 0.0f : (x - 10.0f) * face70; }, false },
+        { "an 85 degree face over a buried floor",
+            [face85](float x, float) { return x < 10.0f ? 0.0f : (x - 10.0f) * face85; }, true },
+        { "a 3 yd cliff over a buried floor", [](float x, float) { return x < 10.0f ? 0.0f : 3.0f; }, true },
+    };
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    for (Case const& c : cases)
+        for (float yaw : { 0.0f, 30.0f * PI / 180.0f })
+        {
+            FakeWorld world;
+            world.Ground = c.Ground;
+            if (c.Buried)
+                world.Boxes.push_back({ 10.0f, 40.0f, -40.0f, 40.0f, -1.0f, 0.0f });
+            Mv::BodyState body = At(5.0f, 0.0f, 0.0f, yaw);
+            Mv::ControlState control;
+            control.Forward = 1;
+            bool walled = false;
+            for (int tick = 0; tick < 120; ++tick)
+            {
+                Mv::Step(body, control, speeds, shape, world, 0.05f);
+                walled = walled || body.AgainstWall || body.SteepSlope;
+                ASSERT_FALSE(world.InTerrain(body.X, body.Y, body.Z)) << c.Name << ": feet inside the terrain at x "
+                    << body.X << " z " << body.Z << " (tick " << tick << ")";
+                ASSERT_NE(body.Kind, Mv::Mode::Falling) << c.Name << ": fell at x " << body.X << " (tick " << tick
+                    << ")";
+            }
+            EXPECT_LT(body.X, 10.5f) << c.Name;
+            EXPECT_TRUE(walled) << c.Name;
+        }
+
+    // A walkable hill over the same buried floor is walked up, on the terrain.
+    FakeWorld gentle;
+    gentle.Ground = [](float x, float) { return x < 10.0f ? 0.0f : (x - 10.0f) * 0.5f; };
+    gentle.Boxes.push_back({ 10.0f, 40.0f, -40.0f, 40.0f, -1.0f, 0.0f });
+    Mv::BodyState up = At(5.0f, 0.0f, 0.0f);
+    Mv::ControlState control;
+    control.Forward = 1;
+    Drive(up, control, speeds, gentle, 3.0f);
+    EXPECT_GT(up.X, 20.0f);
+    EXPECT_NEAR(up.Z, (up.X - 10.0f) * 0.5f, 0.05f);
+}
+
+// The crossing is from above the surface only: through a cave's mouth (a hole in the terrain: no height there) the body
+// walks under the hill onto the cave's floor and on inside it.
+TEST(PlayerControllerTest, ACavesMouthLetsTheBodyUnderTheHill)
+{
+    FakeWorld world;
+    world.Ground = [](float x, float) { return x < 10.0f ? 0.0f : x < 12.0f ? Mv::INVALID_FLOOR : 20.0f; };
+    world.Boxes.push_back({ 10.0f, 40.0f, -40.0f, 40.0f, -1.0f, 0.0f });     // the cave's floor
+    Mv::Speeds const speeds;
+    Mv::BodyState body = At(5.0f, 0.0f, 0.0f);
+    Mv::ControlState control;
+    control.Forward = 1;
+    Drive(body, control, speeds, world, 3.0f);
+    EXPECT_GT(body.X, 25.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 0.0f);
+
+    // The same hill with no mouth: the body stops at its foot.
+    world.Ground = [](float x, float) { return x < 12.0f ? 0.0f : 20.0f; };
+    body = At(5.0f, 0.0f, 0.0f);
+    Drive(body, control, speeds, world, 3.0f);
+    EXPECT_LT(body.X, 12.01f);
+}
+
 // What the action mask asks: jump on the ground (and at the surface), not in the air; height steered in water and
 // air, or on the ground with flight to take off into.
 TEST(PlayerControllerTest, JumpAndVerticalSteeringAreOnlyWhereTheyDoSomething)
