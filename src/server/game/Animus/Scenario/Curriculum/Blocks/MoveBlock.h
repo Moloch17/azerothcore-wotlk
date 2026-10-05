@@ -20,192 +20,99 @@
 #define ANIMUS_LIB_CURRICULUM_MOVE_BLOCK_H
 
 #include "Block.h"
+#include "MoveControls.h"
 #include <atomic>
 
 class Map;
 class Player;
-class Unit;
 
 namespace Animus::Curriculum
 {
-    struct SteerMemory;
-
-    /// Where the seat puts its feet, answered without reference to anything it is fighting.
+    /// **Where the seat puts its feet: a player's keys and mouse** (player-controller plan §4, C3).
     ///
-    /// Every movement the curriculum had before this was target-relative: DuelBlock's MOVE_TO_TARGET, MOVE_TO_RANGE,
-    /// MOVE_BEHIND, BACK_OFF, KEEP_RANGE, STAY_ON_TARGET and STOP all open with
-    /// `if (!target || !target->IsAlive()) return false`, so a seat with nothing to fight could not move at all. The
-    /// hazard drill found that the hard way: four million steps with allowed_actions at 1.00, entropy at 0 and the
-    /// seats standing still while the fire burned them, until an unkillable emitter was handed to them purely so the
-    /// movement actions would unmask. This block is what that hack was standing in for. It needs no target, no enemy
-    /// and no objective -- only legs.
+    /// The seat holds forward or back, a strafe, a turn rate and a pitch rate (the mouse), ascend or descend in water
+    /// and air, and walk; it presses jump. Each action changes one held control (MoveControls), and the controls stay
+    /// held across decisions until the seat changes them. The player controller (Animus/Movement) turns them into
+    /// motion every world tick with the client's own physics, and the server is told of it as a client would tell it.
+    /// Nothing is pathfound, no spline is laid for a seat, and nothing faces it at its target: walls, slopes, ledges,
+    /// water and where to look are the policy's to learn.
     ///
-    /// **Bearings are egocentric and durative.** An action picks a compass point relative to where the seat is facing
-    /// now (forward, forward-right, right, and so on round the eight), and the seat walks that way until it chooses
-    /// otherwise. It is a held key, not a step: a decision is 250 ms of game time and a step measured in one would be
-    /// a stutter, which is the same reason KEEP_RANGE is an option rather than a press. The destination is recomputed
-    /// from the seat's current position each decision the bearing is held, so the path bends with the ground rather
-    /// than aiming at a point chosen when the key went down.
+    /// This replaced the bearing / turn-lattice design (revisions 0 and 1: eight egocentric bearings walked as
+    /// navmesh splines, chosen turns and pitches, facing modes), which the user had stripped outright (plan §0). The
+    /// engine still senses -- the ground rays, the clearance, the trail -- and still measures; it no longer moves.
     ///
-    /// **Facing is chosen apart from movement**, which is what makes strafing and backpedalling expressible at all.
-    /// A player can run one way and look another; a spline that sets its own orientation cannot. FACE_TARGET keeps
-    /// the seat turned to what it is fighting while it moves anywhere, FACE_HEADING turns it the way it is going, and
-    /// FACE_HOLD leaves it pointing where it already points. Combined with a bearing, those give every gait a player
-    /// has: run in facing the enemy, circle it, back away still casting.
-    ///
-    /// **Resolution comes from the tick, not from more decisions.** AnimusForge.TicksPerDecision cuts a decision into
-    /// several world updates, so a spline issued once per decision is still walked in fine steps by the world. Making
-    /// the policy decide faster instead would cost an observation, a learner round trip and an action every time.
-    ///
-    /// **This block is the only way a seat moves.** The duel block's target-relative orders -- move to the target,
-    /// behind it, to casting range, back off, stop, keep range, stay on the target, break line of sight -- were the
-    /// pathfinder choosing a position on the policy's behalf, and they are gone. Closing to melee reach or holding
-    /// a caster's range is a bearing chosen against OBS_TARGET_BEARING_* now, learned rather than issued. The engine
-    /// still senses (the rays, the clearance, the trail), teaches (the route-distance shaping) and measures; it no
-    /// longer chooses.
+    /// The block needs no target, no enemy and no objective: only legs (the hazard drill's lesson).
     class MoveBlock final : public Block
     {
     public:
-        /// Bearings, clockwise from straight ahead. Egocentric: relative to the seat's facing when it chooses, not
-        /// to the world or to any enemy.
-        enum Bearing : uint32
-        {
-            BEARING_FORWARD         = 0,
-            BEARING_FORWARD_RIGHT   = 1,
-            BEARING_RIGHT           = 2,
-            BEARING_BACK_RIGHT      = 3,
-            BEARING_BACK            = 4,
-            BEARING_BACK_LEFT       = 5,
-            BEARING_LEFT           = 6,
-            BEARING_FORWARD_LEFT    = 7,
-            BEARING_COUNT           = 8
-        };
-
-        /// Rays the ground is sensed along: twice the bearings, so ray 2 * b lies along bearing b and the odd rays
-        /// fall half way between two. A gully's mouth or a doorway sits between two 45-degree rays as often as on
-        /// one, and a seat that cannot see it cannot choose the turn that lines it up. Sensing, not steering: the
-        /// bearings a seat can walk stay eight, and a heading between two of them is reached by a turn.
+        /// Rays the ground is sensed along, sixteen round the seat (SENSE_RAYS), clockwise from straight ahead.
         static constexpr uint32 RAY_COUNT = SENSE_RAYS;
 
-        /// **The turns a seat can choose**, each a whole turn relative to where it faces now, in radians with left
-        /// (counter-clockwise) positive: a small correction either way, an eighth, a quarter, three eighths, and
-        /// about. Carried out at TURN_RATE a decision (SeatView::TurnLeft).
-        ///
-        /// These replace a held turn key that swung the seat 15 degrees a decision for as long as it was held.
-        /// Reaching a heading that way took a run of correct decisions, each one a chance to overshoot and turn
-        /// back: in the final evaluations of the first full run 63-70% of the ground stages' turns were undone
-        /// within three decisions (2026-09-28), which on screen is a head twitching side to side. Choosing the
-        /// turn whole makes a quarter turn one decision, and a wobble something the policy has to choose rather
-        /// than something it falls into. The smallest is still 15 degrees, so every heading the key reached is
-        /// reached: the lattice is the same, and only the number of decisions it takes has changed.
-        static constexpr uint32 TURN_COUNT = 9;
-        static constexpr float TURN_ANGLES[TURN_COUNT] =
-        {
-            0.2617994f, -0.2617994f,    // 15 degrees
-            0.7853982f, -0.7853982f,    // 45
-            1.5707963f, -1.5707963f,    // 90
-            2.3561945f, -2.3561945f,    // 135
-            3.1415927f,                 // about: always the left way round, so it is one action and not two
-        };
-
-        /// **The pitches a seat can choose**, each an angle to hold off the ground (swimming and flying), in radians
-        /// above (+) or below (-) level: every 15 degrees from a 60 degree dive to a 60 degree climb. Carried out
-        /// at PITCH_RATE a decision (SeatView::PitchTarget).
-        ///
-        /// These replace a held key that tilted the seat 15 degrees a decision for as long as it was held. When the
-        /// turn stopped being such a key and the jitter charge priced turning back, the wobble moved to the one
-        /// axis still held and still free: in the second full run's flight stage 58% of pitch presses were undone
-        /// within three decisions (against 10% the run before), the seats bobbed up and down across Nagrand, and
-        /// the flights took half as long again (2026-09-28). An angle chosen whole is the same nine angles the key
-        /// could reach, one decision each.
-        static constexpr uint32 PITCH_COUNT = 9;
-        static constexpr uint32 PITCH_LEVEL_INDEX = 4;
-        static constexpr float PITCH_ANGLES[PITCH_COUNT] =
-        {
-            -1.0471976f, -0.7853982f, -0.5235988f, -0.2617994f,     // down 60, 45, 30, 15
-            0.0f,                                                   // level
-            0.2617994f, 0.5235988f, 0.7853982f, 1.0471976f,         // up 15, 30, 45, 60
-        };
-
-        enum Action : uint32
-        {
-            ACTION_BEARING_FIRST    = 0,
-            ACTION_HALT             = ACTION_BEARING_FIRST + BEARING_COUNT,
-            /// Face what the seat is fighting while it moves anywhere: the strafe, and the reason a caster can back
-            /// away without turning its back on a cast.
-            ACTION_FACE_TARGET,
-            /// Face the way it is going.
-            ACTION_FACE_HEADING,
-            /// Leave it facing where it already faces, whatever it does with its feet.
-            ///
-            /// FACE_OBJECTIVE used to follow here: the heading snapped to the objective every decision, which was a
-            /// compass the engine held for the policy. The trained policy collapsed onto it -- face the objective,
-            /// hold forward -- pressed it in every episode, and learned nothing about the ground. The objective's
-            /// bearing is still observed; turning towards it is the policy's, with the held turn below.
-            ACTION_FACE_HOLD,
-            /// Turn by one of TURN_ANGLES, while the feet carry on doing whatever they were told: the mouse-look,
-            /// and what makes a heading between two compass points reachable at all. The turn is carried out over
-            /// the decisions that follow (TURN_RATE); choosing another replaces what is left of it.
-            ACTION_TURN_FIRST,
-            /// Pitch to one of PITCH_ANGLES, reached over the decisions that follow (PITCH_RATE); choosing another
-            /// replaces it. Only off the ground, where a seat has a third dimension to steer in: swimming and flying.
-            ACTION_PITCH_FIRST = ACTION_TURN_FIRST + TURN_COUNT,
-            ACTION_PITCH_LEVEL = ACTION_PITCH_FIRST + PITCH_LEVEL_INDEX,
-            /// Jump along the heading it is facing. The one move that leaves the navmesh, and therefore the one
-            /// the pathfinder can never propose: a route is built from polygons that touch, and a gap has none.
-            /// A seat that jumps does it on what it can see, against the route it was given.
-            ACTION_JUMP = ACTION_PITCH_FIRST + PITCH_COUNT,
-            ACTION_COUNT,
-            /// Revision 1: a fine turn, 5 degrees either way, for the aim a 15-degree lattice cannot reach.
-            ACTION_R1_TURN_LEFT_FINE = ACTION_COUNT,
-            ACTION_R1_TURN_RIGHT_FINE,
-            ACTION_R1_COUNT
-        };
+        using Action = MoveControls::Action;
 
         enum Obs : uint32
         {
+            /// Whether it is under way: a translation key held, or the body moving.
             OBS_MOVING              = 0,
-            OBS_SPEED               = 1,    // current run speed / 14 yards a second (twice unmounted), clamped
-            OBS_BEARING_HELD        = 2,    // one-hot over the bearings being walked (BEARING_COUNT); all 0 if none
-            OBS_BEARING_NONE        = OBS_BEARING_HELD + BEARING_COUNT,
-            /// Which way the seat is looking, as sin and cos of its orientation. Two features rather than one angle,
-            /// because an angle wraps and a network asked to learn that 6.28 is 0.01 learns a seam instead.
+            OBS_SPEED,                      // current run speed / 14 yards a second (twice unmounted), clamped
+            /// Which way the body is looking, and how far up or down, each as sin and cos: an angle wraps, and a
+            /// network asked to learn that 6.28 is 0.01 learns a seam instead.
             OBS_FACING_SIN,
             OBS_FACING_COS,
-            /// How much of a chosen turn is still to come, left and right, each over a half turn. The policy has
-            /// to know its own hands are on the mouse, and how far they have still to move it.
-            OBS_TURNING_LEFT,
-            OBS_TURNING_RIGHT,
-            /// How far up or down it is looking, in the same sin/cos pair and for the same reason, and the pitch it
-            /// is on its way to (over PITCH_MAX): where the head is and where it has been told to go are two things.
             OBS_PITCH_SIN,
             OBS_PITCH_COS,
-            OBS_PITCH_TARGET,
+            /// **The controls it holds** (MoveControls::SeatControls): forward/back and strafe (-1, 0, 1; strafe + is
+            /// right), ascend/descend, the turn rate over TURN_RATE_MAX (+ left) and the pitch rate over
+            /// PITCH_RATE_MAX (+ up), and walk. A policy has to know its own hands are on the keys.
+            OBS_HELD_FORWARD,
+            OBS_HELD_STRAFE,
+            OBS_HELD_VERTICAL,
+            OBS_HELD_TURN,
+            OBS_HELD_PITCH,
+            OBS_HELD_WALK,
+            /// **What the body is actually doing**: its velocity in its own frame (ahead, left, up) over twice the
+            /// unhasted run speed, and how much of what the held keys asked for the last step it got (moved over
+            /// commanded; 1 when nothing was asked). Under 1 with a key held is a wall, a slope or a root: the
+            /// stuck and sliding signal.
+            OBS_VELOCITY_AHEAD,
+            OBS_VELOCITY_LEFT,
+            OBS_VELOCITY_UP,
+            OBS_PROGRESS,
+            /// The controller's mode, one-hot: ground, falling, swimming, flying (Movement::Mode).
+            OBS_MODE_FIRST,
+            OBS_MODE_COUNT          = 4,
+            /// How long it has been falling (/ FALL_TIME_SCALE_MS) and how far below the fall's highest point it is
+            /// (/ FALL_HEIGHT_SCALE): what the landing will cost is the seat's to learn from these and from what
+            /// happens, and it differs by class and by Slow Fall.
+            OBS_FALL_TIME           = OBS_MODE_FIRST + OBS_MODE_COUNT,
+            OBS_FALL_HEIGHT,
+            /// The last step met a wall (a move blocked, slid or stopped) or a rise refused for its slope.
+            OBS_AGAINST_WALL,
+            OBS_STEEP_SLOPE,
+            /// How deep the feet are under the surface, over the body's height, clamped: 0 dry, 1 fully under.
+            OBS_DEPTH,
+            /// Whether a jump would do anything now (the mask's reason, which the seat cannot otherwise see).
+            OBS_CAN_JUMP,
             /// Where the target is, in the seat's own frame: sin and cos of the bearing to it, and its distance.
             /// All zero without one -- which is the case this block exists for.
             OBS_TARGET_BEARING_SIN,
             OBS_TARGET_BEARING_COS,
             OBS_TARGET_DISTANCE,            // yards / 40
             /// The nearest hostile ground effect the seat is not standing in (SeatView::NearestHazard), in the same
-            /// frame: which way it lies, how far, and how wide. Without this the block can dodge only what it is
-            /// already burning in.
+            /// frame: which way it lies, how far, and how wide.
             OBS_HAZARD_BEARING_SIN,
             OBS_HAZARD_BEARING_COS,
             OBS_HAZARD_DISTANCE,            // yards / 40
             OBS_HAZARD_RADIUS,              // yards / 40
-            /// Where it is trying to get to, in the same frame. TravelBlock has these too, but this block is meant
-            /// to need no other block to be useful, and steering towards something is exactly its subject.
+            /// Where it is trying to get to, in the same frame.
             OBS_OBJECTIVE,                  // there is one
             OBS_OBJECTIVE_BEARING_SIN,
             OBS_OBJECTIVE_BEARING_COS,
             OBS_OBJECTIVE_DISTANCE,         // yards / 500
             /// **What the ground ahead is like along each of the RAY_COUNT rays**: how far it runs before the first
-            /// thing that stops it, over MARCH_MAX. Ray 2 * b lies along bearing b; the odd rays lie between two
-            /// bearings, which is where a doorway or a gully's mouth sits as often as not.
-            ///
-            /// Without this the seat steers blind and the pathfinder silently bends every route round what it
-            /// cannot see -- which is the point order coming back one layer down, having just been taken out of
-            /// the action space. A seat that holds a bearing into a cliff should be able to tell that it did.
+            /// thing that stops it, over MARCH_MAX. Ray r lies r sixteenths of a turn clockwise from straight
+            /// ahead, so a doorway or a gully's mouth is seen at 22.5 degrees and not only at 45. Without this the
+            /// seat steers blind: one that holds forward into a cliff should be able to tell that it did.
             OBS_GROUND_FIRST,
             /// **How the ground changes along each ray**, signed, / MAX_STEP and clamped: positive is a step up,
             /// negative a drop, zero flat. In flight (OBS_AIRBORNE, not swimming) OBS_GROUND_FIRST is instead the
@@ -272,15 +179,6 @@ namespace Animus::Curriculum
             /// every lost episode dies in spans half the range instead of a twelfth of it. A coarse feature and
             /// a fine one, which is the only way one number covers both five hundred yards and six.
             OBS_OBJECTIVE_NEAR,
-            /// **Which way it has told itself to look**, one-hot: none chosen, then the three FACE_* modes in
-            /// their action order.
-            ///
-            /// A FACE_* is masked once it is the mode being held, so until now the action mask was the only
-            /// evidence the policy had of a state it cannot otherwise perceive -- and a mask is not an
-            /// observation. Facing the target and facing where you are going are different beliefs about the
-            /// world, and a seat that cannot tell which one it is holding cannot decide to stop holding it.
-            OBS_FACING_MODE_FIRST,
-            OBS_FACING_MODE_COUNT   = 4,
             /// **How much room the seat has**: yards to the nearest edge of walkable space, over
             /// CLEARANCE_RANGE, and which way is out -- sine and cosine of the direction away from it, in the
             /// seat's own frame.
@@ -295,21 +193,9 @@ namespace Animus::Curriculum
             /// maxSimplificationError (1.8 yd). It is a coarse signal by construction: it shapes where the seat
             /// puts itself, and is never allowed to forbid a move -- a doorway is narrower than any margin worth
             /// keeping in open ground.
-            OBS_CLEARANCE           = OBS_FACING_MODE_FIRST + OBS_FACING_MODE_COUNT,
+            OBS_CLEARANCE,
             OBS_CLEARANCE_SIN,
             OBS_CLEARANCE_COS,
-            /// Whether a jump would be taken if it were pressed: on the ground, not already falling, and with
-            /// somewhere to land. A masked action the seat cannot see the reason for is state it cannot learn
-            /// around.
-            OBS_CAN_JUMP,
-            /// How far below the seat the landing is, over JUMP_DROP_SCALE and clamped: 0 for a hop on the flat
-            /// or a step up, 0.3 for a thirty yard drop, about 0.7 at the fall that kills a full-health character
-            /// without Slow Fall. What a fall costs is not written here on purpose; the seat learns it from this
-            /// number and from what happens, and it differs by class.
-            OBS_JUMP_DROP,
-            /// In the air without wings: the arc of a jump or the fall after one is still running, so the feet are
-            /// masked and nothing the seat presses will move it until it lands.
-            OBS_FALLING,
             /// **Where it has been** (MovementTrail): its last TRAIL_SAMPLES positions, one a second, each as an
             /// offset from where it stands now in its own frame (ahead, left) over YARD_SCALE, oldest first with
             /// the newest in the last pair, then the share of them it is still within six yards of.
@@ -322,47 +208,12 @@ namespace Animus::Curriculum
             /// zero; the dwell share is what tells them apart.
             OBS_TRAIL_FIRST,
             OBS_TRAIL_DWELL         = OBS_TRAIL_FIRST + 2 * TRAIL_SAMPLES,
-            OBS_COUNT,
-
-            /// **Revision 1** (AnimusForge.MoveRevision = 1, movement-smooth D; off by default, for a fresh start):
-            /// the steering's own recent past, which the jitter charge prices and the seat could not see. Appended
-            /// past OBS_COUNT, so revision 0's columns are where they always were.
-            OBS_R1_TURN_SIGN        = OBS_COUNT,    // the last turn's way: +1 left, -1 right, 0 none yet
-            OBS_R1_TURN_RECENCY,                    // how much it still weighs (MovePrice::Recency, JitterDecayMs)
-            OBS_R1_BEARING_LAST_FIRST,              // one-hot over the last bearing pressed (BEARING_COUNT)
-            OBS_R1_BEARING_RECENCY  = OBS_R1_BEARING_LAST_FIRST + BEARING_COUNT,
-            OBS_R1_PITCH_SIGN,                      // the last pitch's way: +1 up, -1 down
-            OBS_R1_PITCH_RECENCY,
-            OBS_R1_BEARING_LEFT,                    // the held bearing's clock, / 3 s (Options.MoveBearingMs)
-            OBS_R1_COUNT
+            OBS_COUNT
         };
 
-        /// How far ahead a held bearing aims each decision. Far enough that the seat is still walking when the next
-        /// decision comes (7 yards a second unhasted, so a 250 ms decision covers under two), short enough
-        /// that the path is recomputed against ground the seat can see.
-        static constexpr float STEP_YARDS = 8.0f;
+        static constexpr float FALL_TIME_SCALE_MS = 3000.0f;
+        static constexpr float FALL_HEIGHT_SCALE = 50.0f;
 
-        /// How far a chosen turn swings the seat each decision until it is done: 45 degrees, which at the 250 ms
-        /// decision is 180 degrees a second -- the game's own keyboard turn rate. A quarter turn takes two
-        /// decisions and turning about four.
-        ///
-        /// The held key this replaced turned 15 degrees a decision. Before that it turned 45 with no smaller turn,
-        /// and every heading the seat could walk was `spawn + k * 45` -- a lattice that FACE_OBJECTIVE and
-        /// FACE_TARGET were the only escapes from, which is why a trained policy found exactly one strategy (face
-        /// the objective, hold forward). The 15 degree turn in TURN_ANGLES keeps the finer lattice.
-        static constexpr float TURN_RATE = 0.7853982f;          // 45 degrees a decision
-        static constexpr float FINE_TURN = 0.0872665f;          // 5 degrees (revision 1)
-        static constexpr float BEARING_CLOCK_MS = 3000.0f;      // the held bearing's clock is observed on this
-
-        /// The layout revision every seat's move block has (AnimusForge.MoveRevision): 0, or 1 with the steering
-        /// memory and the fine turns. Set once at startup, before any layout is built; never per seat.
-        static void SetRevision(uint32 revision) { CurrentRevision = revision ? 1 : 0; }
-        [[nodiscard]] uint32 Revision() const override { return CurrentRevision; }
-        /// How far a chosen pitch tilts the seat each decision until it is there: 30 degrees, so level to a full
-        /// climb is two decisions. Slower than the turn because pitch is a smaller range doing more -- the whole
-        /// useful span is a dive and a climb -- and how far it may get from level.
-        static constexpr float PITCH_RATE = 0.5235988f;         // 30 degrees a decision
-        static constexpr float PITCH_MAX = 1.0471976f;          // 60 degrees
         /// How far ahead the ground is read along each bearing, and the height change a seat can walk up or drop
         /// down without it counting as a wall.
         ///
@@ -412,43 +263,14 @@ namespace Animus::Curriculum
         /// searches outward through the polygon graph and the shared query has a 1024-node pool, and room
         /// beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
-        /// A player's jump, which is the only one worth having: up at JUMP_SPEED_Z against
-        /// Movement::gravity (19.29) is an apex of about 1.64 yards, and carried forward at run speed it covers
-        /// about 5.8. That is the whole envelope.
-        ///
-        /// It is worth being plain about what that buys. The navmesh is built with walkableClimb 6 cells --
-        /// about 1.60 yards -- so it already assumes the seat can step up everything a jump could clear, and
-        /// jumping gains almost nothing upwards. What it gains is a gap the mesh does not bridge, which no path
-        /// will ever cross because off-mesh connections are the only thing that could and the shipped config
-        /// declares two in the whole world -- and, since format 7, a drop: the arc carries the seat over an edge
-        /// the mesh stops at, and the fall after it is the core's own (Encoding::FallToGround), with the core's
-        /// own damage.
-        static constexpr float JUMP_SPEED_Z = 7.955f;
-        /// The most a jump may rise: the mesh's walkableClimb, which a step already clears. Anything higher is a
-        /// wall, and a landing above it is not one.
-        static constexpr float JUMP_RISE_MAX = 1.6f;
-        /// A landing further below the seat than this is a drop: the arc ends at the launch height over the edge
-        /// and the fall takes it the rest of the way. The travel block's AIRBORNE_ABOVE, the same two yards.
-        static constexpr float DROP_ABOVE = 2.0f;
-        /// The yards OBS_JUMP_DROP is measured over.
-        static constexpr float JUMP_DROP_SCALE = 100.0f;
-
         /// How much further the ray that may cross magma must run than the ray that may not, before the gap
         /// between them is called a burning edge rather than float noise. Both rays start from one polygon and
         /// share the mesh's 1.8 yd simplification error, so that error cancels and this only has to cover the
         /// arithmetic.
         static constexpr float BURN_EDGE_MARGIN = 0.5f;
 
-        /// The shortest jump worth making, and the shortest one that is safe to build.
-        ///
-        /// Both halves matter. A jump of a few inches is not a move, and a jump of none at all is a spline with
-        /// no length, whose duration is zero and whose position is then whatever dividing by it produces.
-        static constexpr float JUMP_MIN_YARDS = 1.0f;
-        /// Where a water-walking seat's feet go: a hair over the surface, so the core reads LIQUID_MAP_WATER_WALK.
-        static constexpr float WATER_WALK_ABOVE = 0.1f;
-        /// OBS_SUBMERGED_TIME is the breath spent as the core spends it (SeatView::BreathSpent, against
-        /// WaterBreath.Timer), not seconds under over a guessed minute: the old sixty was a third of the real
-        /// breath, so the feature saturated with two thirds of the air still to come.
+        /// Its layout revision: MoveControls::REVISION (2), past the bearing design's 0 and 1.
+        [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
@@ -466,47 +288,26 @@ namespace Animus::Curriculum
         /// prints is what a seat standing there would sense and not a second implementation of it.
         static std::string RayReport(Map* map, float x, float y, float z, float facing);
 
-        /// A world tick between decisions under FACE_TARGET (StageScenario::SubTick): the seat keeps facing its
-        /// target, on its run or on the spot, and `facing` (the seat's frame) follows. Not under a cast or channel,
-        /// nor for a seat that cannot turn; a flying run faces along its path and is left alone (movement-smooth A2).
-        static void FaceTargetBetween(Player* bot, Unit const* target, float& facing);
-        /// Every world tick while a real client is connected: swing what the client is shown of a seat standing
-        /// still toward its orientation at TURN_RATE a decision, a packet every SHOWN_PACKET_MS and one when it
-        /// arrives -- the realm's CompanionParty::TurnShown. Cosmetic: the seat's own orientation, what casts and
-        /// facing checks read, is the decided one throughout. A running seat is shown its run's launch facing.
-        static void ShowTurn(Player* bot, SteerMemory& steering, uint32 diffMs, uint32 decisionMs);
-        static constexpr uint32 SHOWN_PACKET_MS = 100;
+        /// Take the body as the core has it now (Movement::Resync over the seat's map): its position, facing and mode,
+        /// none of the controller's velocity. At an episode's start; every decision until the controller steps the
+        /// body itself (C4), and after that whenever the core moved the seat.
+        static void TakeBody(Player const* bot, Movement::BodyState& body);
 
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
-        void BeforePress(SeatView& view) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 
-        /// Every bearing and the halt are movement, and so are the turns and the pitches: they take the
-        /// movement repeat pacing and are never charged for repeating (Actions.Repeat is not levied on movement).
-        /// Charging a held key for being held is exactly the mistake the repeat charge exists to avoid. The three
-        /// facing actions are not -- turning to look at something once is a press like any other, and a policy that
-        /// spams it should pay.
-        [[nodiscard]] bool IsMovement(uint32 local) const override
-        {
-            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP) || IsFineTurn(local);
-        }
+        /// Every action is movement: it is never charged for repeating (Actions.Repeat is not levied on movement), and
+        /// a held key re-pressed is a no-op anyway.
+        [[nodiscard]] bool IsMovement(uint32 /*local*/) const override { return true; }
 
-        /// The turns and the pitches aim the seat without moving its feet: pressing one leaves a held bearing walking
-        /// (SeatEncoder::Apply), which is what turning while walking is.
+        /// The turn and pitch rates aim the seat without moving its feet: a press of one leaves a positioning option
+        /// (the companion's follow) running, which is what turning while walking is.
         [[nodiscard]] bool IsAiming(uint32 local) const override
         {
-            return (local >= ACTION_TURN_FIRST && local < ACTION_JUMP) || IsFineTurn(local);
+            return MoveControls::IsTurn(local) || MoveControls::IsPitch(local);
         }
-
-        [[nodiscard]] static bool IsFineTurn(uint32 local)
-        {
-            return CurrentRevision && (local == ACTION_R1_TURN_LEFT_FINE || local == ACTION_R1_TURN_RIGHT_FINE);
-        }
-
-    private:
-        static inline uint32 CurrentRevision = 0;
     };
 }
 

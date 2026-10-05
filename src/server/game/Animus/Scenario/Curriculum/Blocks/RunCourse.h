@@ -30,7 +30,7 @@ namespace Animus::Curriculum
     /// a leg with no length. A leg's end is reached a millisecond after the decision that should start the next (the
     /// spline's timestamps start at 1), so the leg under way now reads the previous leg's direction at every decision
     /// boundary; half a decision ahead reads the leg the coming decision walks (Encoding::CourseAhead, RunCourseTest).
-    [[nodiscard]] inline std::optional<float> RunCourse(Movement::MoveSpline const& run, uint32 aheadMs)
+    [[nodiscard]] inline std::optional<float> RunCourse(::Movement::MoveSpline const& run, uint32 aheadMs)
     {
         auto const& spline = run._Spline();
         int32 const at = std::min(run.timePassed() + int32(aheadMs), run.Duration());
@@ -47,7 +47,7 @@ namespace Animus::Curriculum
     /// The climb (radians, up positive) of the leg a running spline will be on `aheadMs` from now, read as RunCourse
     /// reads its direction; none for a leg with no length. What the keep check holds a swim or a flight's pitch to:
     /// on a turn or a pitch laid out as one run, the run's end is not where the coming decision goes.
-    [[nodiscard]] inline std::optional<float> RunClimb(Movement::MoveSpline const& run, uint32 aheadMs)
+    [[nodiscard]] inline std::optional<float> RunClimb(::Movement::MoveSpline const& run, uint32 aheadMs)
     {
         auto const& spline = run._Spline();
         int32 const at = std::min(run.timePassed() + int32(aheadMs), run.Duration());

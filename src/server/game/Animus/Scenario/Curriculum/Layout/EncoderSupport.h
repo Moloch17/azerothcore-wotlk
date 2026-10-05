@@ -82,11 +82,8 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
-    /// A cast or a channel under way that moving would cancel: the steering does not launch a spline under it
-    /// (MoveBlock Steer), and a press that started one lets go of the held bearing (ReleaseBearing).
+    /// A cast or a channel under way that moving would cancel.
     [[nodiscard]] bool CastHoldsFeet(Player const* bot);
-    /// Stop the feet and let go of the held bearing and its option, so nothing re-issues the walk under a cast.
-    void ReleaseBearing(SeatView& view);
 
     /// Turn the head of the run under way to `facing` without relaunching it (MoveSpline::ReaimFacing), and the
     /// unit's orientation with it at once, so a facing check made before the next world tick reads where the seat

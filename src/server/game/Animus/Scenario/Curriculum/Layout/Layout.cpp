@@ -43,7 +43,10 @@ namespace
     /// 7: the jump can drop off a ledge, and the move block says how far the landing is below the seat
     /// (OBS_JUMP_DROP) and whether it is in the air (OBS_FALLING); Slow Fall and Levitate joined the mage's and
     /// the priest's catalogs. The move block changed shape for every layout, the core block for those two.
-    constexpr uint32 MANIFEST_FORMAT = 7;
+    /// 8: the move block is a player's keys and mouse driving the player controller (move revision 2, 25 actions;
+    /// player-controller C3), and the core block lost the move options' three clocks (core revision 1). Every layout
+    /// changed shape: a runtime holding a format 7 model must refuse it, not read it through this layout.
+    constexpr uint32 MANIFEST_FORMAT = 8;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an

@@ -185,15 +185,6 @@ namespace Animus::Curriculum::Encoding
         return bot && bot->IsNonMeleeSpellCast(false, false, true);
     }
 
-    void ReleaseBearing(SeatView& view)
-    {
-        view.HeldBearing = 0xFF;
-        if (view.Option)
-            view.Option->Stop(SeatOptionKind::MoveBearing);
-        if (view.Bot && !view.Bot->movespline->Finalized())
-            view.Bot->StopMoving();
-    }
-
     bool ReaimRun(Player* bot, float facing)
     {
         if (!bot || !bot->movespline->ReaimFacing(facing))
@@ -995,7 +986,7 @@ namespace Animus::Curriculum::Encoding
         // combat stages do.
         bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
 
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, true);
         init.SetOrientationFixed(true);
         init.SetFacing(*facing);        // and for the final tick, on the rare spline that does finish
@@ -1009,7 +1000,7 @@ namespace Animus::Curriculum::Encoding
         // A pathfound run at a given pace, walking when the owner walks, so the animation matches the stride. A
         // raw spline like MoveTo's, which is what lets it carry a velocity: MovePoint always runs at full speed.
         bot->GetMotionMaster()->Clear();
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, true);
         init.SetWalk(walk);
         init.SetVelocity(speed);
@@ -1033,7 +1024,7 @@ namespace Animus::Curriculum::Encoding
             bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
         }
 
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
         if (facing)
         {
@@ -1053,7 +1044,7 @@ namespace Animus::Curriculum::Encoding
         bot->DisableSpline();
         bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
 
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MovebyPath(points);
         init.SetOrientationFixed(true);
         init.SetFacing(facing);
@@ -1067,7 +1058,7 @@ namespace Animus::Curriculum::Encoding
         bot->GetMotionMaster()->Clear();
         std::vector<G3D::Vector3> path{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
         path.insert(path.end(), points.begin(), points.end());
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MovebyPath(path);
         init.Launch();
     }
@@ -1104,10 +1095,10 @@ namespace Animus::Curriculum::Encoding
         if (facing)
             bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
 
-        float const moveTimeHalf = speedZ / float(Movement::gravity);
-        float const maxHeight = -Movement::computeFallElevation(moveTimeHalf, false, -speedZ);
+        float const moveTimeHalf = speedZ / float(::Movement::gravity);
+        float const maxHeight = -::Movement::computeFallElevation(moveTimeHalf, false, -speedZ);
 
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false);
         init.SetParabolic(maxHeight, 0.0f);
         init.SetVelocity(speedXY);
@@ -1192,7 +1183,7 @@ namespace Animus::Curriculum::Encoding
             return;
         }
         bot->GetMotionMaster()->Clear();
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
         init.SetFly();
         if (velocity > 0.0f)
@@ -1219,7 +1210,7 @@ namespace Animus::Curriculum::Encoding
             }
         bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), along);
 
-        Movement::MoveSplineInit init(bot);
+        ::Movement::MoveSplineInit init(bot);
         init.MovebyPath(points);
         init.SetFly();
         init.SetOrientationFixed(true);
