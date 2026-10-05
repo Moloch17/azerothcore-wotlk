@@ -66,9 +66,10 @@ namespace
             { -1967.0f, -2544.0f, 94.0f, 0.0f },  { -2605.0f, -2286.0f, 92.0f, 0.0f },
             { -609.0f, -1614.0f, 94.0f, 0.0f },   { -881.0f, -3221.0f, 92.0f, 0.0f },
             { -3077.0f, -1786.0f, 92.0f, 0.0f },  { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            // Northern Barrens
-            { -652.0f, -2060.0f, 87.0f, 0.0f },   { -767.0f, -2062.0f, 81.0f, 0.0f },
-            { -579.6f, -2070.5f, 54.9f, 0.0f },   { -2068.0f, -2106.0f, 93.0f, 0.0f },
+            // Northern Barrens. Three curriculum-v1 points near the Wailing Caverns were left out (dry check,
+            // 2026-10-05): (-652, -2060, 87), (-767, -2062, 81) and (-580, -2070, 55) stand 36, 25 and 86 yd under the
+            // terrain's height there (the map tiles) -- in the caverns' ravine and caves, not on open ground.
+            { -2068.0f, -2106.0f, 93.0f, 0.0f },
             { -1942.0f, -1985.0f, 92.0f, 0.0f },  { -1991.0f, -2090.0f, 92.0f, 0.0f },
             // Mulgore (its other point, (-1210, -93), is on the ridge the broken list climbs)
             { -1225.2f, 106.6f, 131.4f, 0.0f },
@@ -99,13 +100,18 @@ namespace
         };
     }
 
+    /// Nagrand's held-out grass, far from the plateau the arena trains on. Both curriculum-v1 points were replaced
+    /// (dry check, 2026-10-05): (-974.2, 8136.0, -93.8) is a hollow in Northwind Cleft 58 yd under the terrain
+    /// (navmesh reach 5-8 yd on 12 of 16 bearings), and (-533.9, 8870.4, 209.0) is 111 yd under Warmaul Hill's
+    /// terrain (320.6 there): a cave, whose "open sky" was the collision trees' alone (they hold no terrain). These two
+    /// are from the map tiles (var/lakes' reader over map 530): Nagrand's own area, dry and within 2.7 and 3.2 yd of
+    /// level over a 40 yd ring, 1849 and 817 yd from the training points, z the terrain's. To be stood on with
+    /// `forge rays` / `forge controller probe` before M1's first run.
     std::vector<Position> NagrandPlateausControl()
     {
         return {
-            { -533.9f, 8870.4f, 209.0f, 0.0f },
-            // UNVERIFIED as open plateau ground: at z -93.8 it is far below Nagrand's grass. It was a flight
-            // stage's take-off point; the §7.5 dry check, before M1's first run, keeps or replaces it.
-            { -974.2f, 8136.0f, -93.8f, 0.0f },
+            { -1160.0f, 8400.0f, 20.5f, 0.0f },
+            { -1080.0f, 7360.0f, 36.0f, 0.0f },
         };
     }
 
@@ -171,7 +177,8 @@ namespace
             { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659): 23 yd
             { 85.4f, -4543.8f, 58.4f, 0.0f },      // Durotar canyon: 18 yd
             { -519.0f, -4076.9f, 69.9f, 0.0f },    // southern Barrens: 27 yd
-            { -2379.6f, 459.2f, 76.8f, 0.0f },     // Mulgore: 16-25 yd
+            // (-2380, 459, 77), Mulgore, was left out (dry check, 2026-10-05): 148 yd under the terrain there, a cave
+            // and not a ledge top.
             { -4052.7f, -2145.5f, 90.2f, 0.0f },   // Thousand Needles: 40 yd
             { -4449.9f, -2914.0f, 40.0f, 0.0f },   // Thousand Needles: 16-18 yd
         };

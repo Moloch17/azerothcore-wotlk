@@ -783,7 +783,9 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         if (rules.SkyOpen > 0.0f)
         {
             Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
-            if (world.Ceiling(x, y, z, rules.SkyOpen) < rules.SkyOpen)
+            // The collision trees hold no terrain, so the ceiling ray cannot see a hillside overhead: a place under
+            // the terrain (a cave) is refused by the terrain's own height.
+            if (world.Ceiling(x, y, z, rules.SkyOpen) < rules.SkyOpen || world.InTerrain(x, y, z + rules.SkyOpen))
                 return false;
         }
 
