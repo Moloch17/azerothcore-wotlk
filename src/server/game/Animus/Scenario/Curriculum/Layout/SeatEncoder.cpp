@@ -115,31 +115,13 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
                 option = SeatOption();
 
     // A durative action runs until the policy does something else: anything but the no-op takes over from it,
-    // except that a positioning option (IsPositioning: the companion's follow) survives everything but the seat
-    // moving its feet another way -- casting, swinging and turning are what it keeps going through -- and a standby
-    // (IsStandby) survives everything, since waiting for the target's cast is not a thing the seat stops fighting
-    // to do. The move block's held keys are not options: they are held until the seat changes them.
+    // except a standby (IsStandby), which survives everything, since waiting for the target's cast is not a thing the
+    // seat stops fighting to do. (The move block's held keys are not options: they are held until the seat changes
+    // them.)
     if (action > 0 && view.Option)
-    {
-        bool const movement = block && GetBlock(*block).IsMovement(local);
-        bool const aiming = block && GetBlock(*block).IsAiming(local);
         for (SeatOption& option : view.Option->Slots)
-        {
-            if (option.Kind == SeatOptionKind::None || IsStandby(option.Kind))
-                continue;
-
-            if (!IsPositioning(option.Kind))
-            {
+            if (option.Kind != SeatOptionKind::None && !IsStandby(option.Kind))
                 option = SeatOption();
-                continue;
-            }
-
-            // A follow is the seat's feet, so any other movement of them ends it. Aiming is not the feet: a turn
-            // or a pitch under a follow leaves it running.
-            if (movement && !aiming)
-                option = SeatOption();
-        }
-    }
 
     // A spell press first (Block::PressesFirst), against the world the seat observed; then every decision's upkeep,
     // whatever the action (the no-op included): this is where a running option acts.

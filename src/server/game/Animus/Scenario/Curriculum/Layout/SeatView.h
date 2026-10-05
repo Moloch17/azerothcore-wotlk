@@ -146,42 +146,20 @@ namespace Animus::Curriculum
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills
     /// it; each part is only used by the blocks that need it.
     /// What a durative action ("option") the seat started is doing. One press stands for many decisions -- resting
-    /// until it is ready to fight, holding an interrupt for the target's next cast, walking a bearing -- which is
-    /// how a plan longer than a decision is expressed at all: 1800 decisions of a 450 s episode are far more than
+    /// until it is ready to fight, holding an interrupt for the target's next cast -- which is how a plan longer
+    /// than a decision is expressed at all: 1800 decisions of a 450 s episode are far more than
     /// credit reaches back over. The block that owns the action starts it, the block that can act runs it every
     /// decision until its own stop condition or UntilMs, and any other action the policy takes cancels it.
     ///
-    /// The duel's keep-range and stay-on-target are gone with the pathfinder moves they issued: a position
-    /// relative to the target is the policy's to hold with a bearing now, not the engine's to run to.
+    /// No option moves the seat: the duel's keep-range and stay-on-target, the held bearing and the companion's
+    /// follow went with every engine move of a seat (player-controller C3, C9). Its feet are the move block's keys.
     enum class SeatOptionKind : uint8
     {
         None = 0,
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
-        /// Running to just behind the owner (CompanionBlock), re-aimed at where the owner is now every decision
-        /// until the seat is there and the owner has stopped, or the feet are told something else. Last on
-        /// purpose: the core block reports the clocks of every kind before it (CoreBlock's OPTION_KINDS), and a
-        /// kind added there would change every layout's observation; this one is reported by the companion block,
-        /// so only layouts that have the block change.
-        Follow,
         Count
     };
-
-    /// A positioning option owns the feet: the companion's follow. Only the seat moving its feet
-    /// another way takes over from it: a fight is spells and swings between steps, and ending it on those left a
-    /// melee seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every
-    /// 0.39 s while it stood in melee reach 96% of the time). Aiming does not end it either (IsAiming): a player
-    /// looks round while walking.
-    ///
-    /// **Nothing but the feet may end it.** DuelBlock::BeforeApply used to clear the positioning slot whenever
-    /// there was no living target, which was written for keep-range and became, the day the bearing joined this
-    /// list, the end of every bearing in every travel arena one decision after it was pressed (2026-09-21 to
-    /// 2026-09-23: 13,579 of 15,418 re-presses on stage1_move came exactly two decisions after the press, none
-    /// after one; the three-second hold was a one-decision hold and the "held key" was never trained on).
-    [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
-    {
-        return kind == SeatOptionKind::Follow;
-    }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
     /// keeps fighting, so every other action leaves it running. Cancelling it on any press left it lasting 0.6 s
@@ -255,19 +233,6 @@ namespace Animus::Curriculum
         void Clear() { *this = MovementTrail(); }
     };
 
-    /// The runs the blocks still launch for a seat keep their spline ids here: the party's follow-the-tank and the
-    /// crowd's advance. Both go in player-controller C9, and this with them.
-    struct SteerMemory
-    {
-        /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
-        uint64 FollowAimMs = 0;
-        uint32 FollowRunId = 0;
-        /// CrowdBlock's ADVANCE: the run it launched, which it carries on before it arrives (movement-smooth A8).
-        uint32 AdvanceRunId = 0;
-
-        void Clear() { *this = SteerMemory(); }
-    };
-
     struct Hazard
     {
         float Distance = 0.0f;      // yards from the unit to its centre
@@ -281,7 +246,6 @@ namespace Animus::Curriculum
     {
         SeatOptionKind Kind = SeatOptionKind::None;
         uint64 UntilMs = 0;                         // the clock (SeatView::NowMs) it runs out at
-        uint64 AimedMs = 0;                         // a follow: the clock its run was last re-aimed at
 
         [[nodiscard]] bool Running(SeatOptionKind kind, uint64 nowMs) const
         {
@@ -289,49 +253,23 @@ namespace Animus::Curriculum
         }
     };
 
-    /// Which option a kind occupies: a seat runs one positioning option and one standby option at a time. Keeping a
-    /// caster at range and waiting for its cast are not alternatives, and with a single slot each press of one threw
-    /// the other away -- a melee seat holding an interrupt stopped staying on its target.
+    /// The one slot an option occupies: resting and holding an interrupt are alternatives (a seat waiting out a pull
+    /// is not holding one), so a press of either replaces the other.
     enum class SeatOptionSlot : uint8
     {
-        Positioning = 0,
-        Standby,
+        Standby = 0,
         Count
     };
 
-    [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind kind)
+    [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind /*kind*/)
     {
-        return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
+        return SeatOptionSlot::Standby;
     }
-
-    /// Where the owner has been, one sample a decision: the path a follow trails along (CompanionBlock), so a
-    /// companion goes through the door its owner went through rather than cutting the corner at the wall.
-    struct OwnerTrail
-    {
-        static constexpr uint32 SAMPLES = 12;       // three seconds at a decision a quarter second
-        std::array<Position, SAMPLES> At{};
-        uint32 Count = 0;
-        uint32 Next = 0;
-
-        void Add(Position const& where)
-        {
-            At[Next] = where;
-            Next = (Next + 1) % SAMPLES;
-            Count = std::min(Count + 1, SAMPLES);
-        }
-        /// The i-th newest sample (0 = the newest).
-        [[nodiscard]] Position const& Back(uint32 i) const { return At[(Next + SAMPLES - 1 - i) % SAMPLES]; }
-        void Clear() { Count = 0; Next = 0; }
-    };
 
     /// The durative actions a seat is running, one per slot.
     struct SeatOptionSet
     {
         std::array<SeatOption, std::size_t(SeatOptionSlot::Count)> Slots{};
-        OwnerTrail Trail;
-        /// A follow: since when the owner has stood still (0 while it moves). The run settles only once the owner
-        /// has stood a moment, so an owner pausing between steps does not end it and make the seat start again.
-        uint64 OwnerStillSinceMs = 0;
 
         [[nodiscard]] SeatOption& Of(SeatOptionKind kind) { return Slots[std::size_t(SlotOf(kind))]; }
         [[nodiscard]] SeatOption const& Of(SeatOptionKind kind) const { return Slots[std::size_t(SlotOf(kind))]; }
@@ -347,12 +285,7 @@ namespace Animus::Curriculum
 
         void Start(SeatOptionKind kind, uint64 untilMs) { Of(kind) = SeatOption{ kind, untilMs }; }
         void Stop(SeatOptionKind kind) { if (Of(kind).Kind == kind) Of(kind) = SeatOption(); }
-        void Clear()
-        {
-            Slots = {};
-            Trail.Clear();
-            OwnerStillSinceMs = 0;
-        }
+        void Clear() { Slots = {}; }
     };
 
     struct SeatView
@@ -416,9 +349,6 @@ namespace Animus::Curriculum
         /// which holds nothing and moves nowhere.
         MoveControls::SeatControls* Controls = nullptr;
         Movement::BodyState* Body = nullptr;
-        /// The movement-smooth steering memory (SteerMemory): only the blocks still launching seat runs read it, and
-        /// it goes with them (player-controller C4, C9). Borrowed like the probe; null for a view without one.
-        SteerMemory* Steering = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
@@ -655,11 +585,6 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
-        /// The falls the engine made (Encoding::FallToGround: a dismount in the air), how far and what they cost in
-        /// health. The controller's jumps and landings are counted from its body (StageScenario::TrackController).
-        uint32 Falls = 0;
-        float FallYards = 0.0f;
-        float FallDamage = 0.0f;                    // fraction of maximum health
         /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a turn or pitch rate, or
         /// a climb, against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to
         /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves).
@@ -673,11 +598,6 @@ namespace Animus::Curriculum
         /// The share of a full press this press costs in Actions.Effort: a steering press by its angle
         /// (MovePrice::EffortOf), everything else 1.
         float EffortWeight = 1.0f;
-        /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
-        /// ran (negative: none ran).
-        uint32 FollowAims = 0;
-        uint32 FollowStarts = 0;        // ... of which a follow begun anew (none was running)
-        float FollowDistance = -1.0f;
         /// What a spell press was aimed at, for judging it against the seat's goal (StageScenario::JudgePress):
         /// the unit it went to (the enemy for a harmful spell, the friend or the seat for a helpful one), whether
         /// it was harmful, and whether it came from the tactical list (crowd control, interrupts, taunts).

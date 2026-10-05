@@ -42,9 +42,9 @@ namespace
     };
 
     constexpr float RUNE_COOLDOWN_MS = 10000.0f;
-    /// The durative actions every seat can be running (SeatOptionKind without None, up to the companion's follow,
-    /// which the companion block reports itself), and the scale their time left is reported on.
-    constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Follow) - 1;
+    /// The durative actions every seat can be running (SeatOptionKind without None), and the scale their time left
+    /// is reported on.
+    constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Count) - 1;
     constexpr float OPTION_SCALE_MS = 30000.0f;
     constexpr float GOAL_ESCAPE_HEALTH_PCT = 35.0f;
 

@@ -245,7 +245,6 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Options.RestMaxMs` | 30000 | | | |
 | `Options.HoldInterruptMs` | 10000 | | | |
 | `Options.JitterDecayMs` | 2500 | | | |
-| `Options.FollowMs` | 6000 | | | |
 
 | Key | Default | | Key | Default |
 |---|---|---|---|---|

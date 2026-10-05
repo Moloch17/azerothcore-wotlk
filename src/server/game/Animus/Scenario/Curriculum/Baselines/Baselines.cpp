@@ -615,7 +615,7 @@ namespace
             // so: it mounted in 2 of 2048 evaluation episodes. The sequence is that the press stops the seat and
             // starts the cast; on the next decision the seat is still not mounted, so this branch asks for the
             // mount again -- and CanSummon now refuses it, because a cast is in progress. The request comes back
-            // empty, the branch falls through to facing and steering, Encoding::MoveTo runs, and the cast dies
+            // empty, the branch falls through to facing and steering, the seat moves, and the cast dies
             // one decision after it began. Every time, for both the scripted policy and any learned one that
             // presses mount and then steers.
             //
@@ -1037,11 +1037,22 @@ namespace
         if (!fighting)
             fighting = SlotOnParty(row, false) >= 0;
 
-        // The leader is the tank the party block follows, as the crowd block shows it.
+        // The leader is the party's tank, as the crowd block shows it; keeping up with it is the seek helper on the
+        // move block's keys (the engine's follow-the-tank is gone, player-controller C9).
         bool const hasCrowd = row.Has(BlockId::Crowd);
         bool const hasLeader = !tank && hasCrowd && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_PRESENT) > 0.0f;
         float const leaderYards = hasLeader ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_DISTANCE) * 100.0f : 0.0f;
-        auto const follow = [&row]() { return row.Allowed(BlockId::Party, PartyBlock::ACTION_FOLLOW_TANK); };
+        auto const follow = [&row]()
+        {
+            return Seek(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_SIN),
+                row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_COS));
+        };
+        // Along the route to the objective (the engine's advance is gone): toward the move block's objective.
+        auto const advance = [&row]()
+        {
+            return Seek(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
+                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS));
+        };
 
         if (fighting)
         {
@@ -1108,8 +1119,8 @@ namespace
                 for (uint32 slot = 0; slot < PACK_SLOTS && !coming; ++slot)
                     coming = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f
                         && SlotObs(row, slot, PackBlock::SLOT_DISTANCE) * 60.0f > 10.0f;
-                if (coming && row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) == 0.0f)
-                    if (std::optional<int32> back = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+                if (coming)
+                    if (std::optional<int32> back = advance())
                     {
                         DungeonReason = "fight: falling back with the pull";
                         return back;
@@ -1193,16 +1204,12 @@ namespace
 
         if (!tank)
         {
-            // Out of the gathering (risen at the door, left behind, or where following the tank does not path): back
-            // along the route to it, which is always walkable.
-            bool const moving = row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f;
+            // Out of the gathering (risen at the door, left behind): back along the route to it. The seek helper
+            // presses nothing while the seat is already on its way, so nothing is pressed again for nothing.
             if (hasLeader && leaderYards > DUNGEON_GATHER_YARDS)
             {
                 DungeonReason = Acore::StringFormat("walking the route to the tank ({:.0f} yd)", leaderYards);
-                // An order under way is not pressed again (the presses the bots copied were mostly repeats).
-                if (moving)
-                    return 0;
-                if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+                if (std::optional<int32> go = advance())
                     return go;
                 // At its place on the route and the tank still far: straight to the tank (stragglers stood here).
                 if (std::optional<int32> go = follow())
@@ -1213,11 +1220,8 @@ namespace
             if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
             {
                 DungeonReason = Acore::StringFormat("following the tank ({:.0f} yd)", leaderYards);
-                if (moving)
-                    return 0;
                 if (std::optional<int32> go = follow())
                     return go;
-                // The follow order is paced: between its presses it is still walking the path to the tank.
                 return 0;
             }
             if (std::optional<int32> halt = Halt(row))
@@ -1269,7 +1273,7 @@ namespace
             }
             // A tank that rose at the door goes back to its party rather than waiting for it to come out.
             if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_BEHIND) > 0.0f)
-                if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+                if (std::optional<int32> go = advance())
                     return go;
             if (std::optional<int32> halt = Halt(row))
                 return halt;
@@ -1307,15 +1311,15 @@ namespace
         {
             if (std::optional<int32> use = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_USE_OBJECT))
                 return use;
-            if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_APPROACH_OBJECT))
+            if (std::optional<int32> go = Seek(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_SIN),
+                    row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_COS)))
                 return go;
         }
 
-        // On along the route, on the server's path: smooth, and round the corners; not pressed again while walking.
+        // On along the route: turned toward the objective and held forward (the seek helper presses nothing while the
+        // seat is already going the right way).
         DungeonReason = "the tank advances";
-        if (row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f)
-            return 0;
-        if (std::optional<int32> go = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_ADVANCE))
+        if (std::optional<int32> go = advance())
             return go;
         return 0;
     }

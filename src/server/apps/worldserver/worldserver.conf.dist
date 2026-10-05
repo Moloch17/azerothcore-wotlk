@@ -6598,12 +6598,6 @@ AnimusForge.Curriculum.Options.HoldInterruptMs = 10000
 #   free past it
 AnimusForge.Curriculum.Options.JitterDecayMs = 2500
 
-#   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press trails the owner
-#   3.5 yd back along its own path at its pace, re-aimed at most once a second; it ends on its own when the seat is
-#   close and the owner has stopped, and like a bearing it ends when the feet are told something else. Longer than a
-#   bearing: where the owner is going is the owner's to know. Re-pressing keeps following.
-AnimusForge.Curriculum.Options.FollowMs = 6000
-
 #   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison
 #   cloud, a consecration), charged per fraction of maximum health ON TOP of DamageTaken, which already charges it
 #   once as damage. This is the damage a seat could have walked out of, and the only term that pays for moving its

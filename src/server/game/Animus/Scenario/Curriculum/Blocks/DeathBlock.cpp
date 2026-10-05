@@ -25,7 +25,6 @@
 #include "Creature.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
-#include "MotionMaster.h"
 #include "Player.h"
 #include "SeatView.h"
 #include <cmath>
@@ -85,11 +84,6 @@ bool Animus::Curriculum::DeathBlock::IsAllowed(SeatView const& view, uint32 acti
     {
         case ACTION_RELEASE:        return !ghost && view.DeathRuns;
         case ACTION_ACCEPT:         return view.DeathRuns && bot->isResurrectRequested();
-        case ACTION_RUN_TO_CORPSE:
-        {
-            Corpse const* corpse = bot->GetCorpse();
-            return ghost && corpse && corpse->IsInMap(bot) && bot->GetExactDist2d(corpse) > 5.0f;
-        }
         case ACTION_RISE_AT_CORPSE: return ReclaimReady(bot);
         case ACTION_SPIRIT_HEALER:
         {
@@ -159,10 +153,6 @@ void Animus::Curriculum::DeathBlock::Apply(SeatView& view, uint32 local, SeatAct
             // who offered it and pays them when it lands.
             result.AcceptResurrection = true;
             break;
-        case ACTION_RUN_TO_CORPSE:
-            if (Corpse* corpse = bot->GetCorpse())
-                bot->GetMotionMaster()->MovePoint(0, corpse->GetPosition());
-            break;
         case ACTION_RISE_AT_CORPSE:
             bot->ResurrectPlayer(0.5f);
             bot->SpawnCorpseBones();
@@ -184,7 +174,6 @@ std::string Animus::Curriculum::DeathBlock::ActionName(Layout const& /*layout*/,
     {
         case ACTION_RELEASE:        return "release_spirit";
         case ACTION_ACCEPT:         return "accept_resurrection";
-        case ACTION_RUN_TO_CORPSE:  return "run_to_corpse";
         case ACTION_RISE_AT_CORPSE: return "rise_at_corpse";
         case ACTION_SPIRIT_HEALER:  return "spirit_healer";
         default:                    return {};

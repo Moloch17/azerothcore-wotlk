@@ -877,10 +877,9 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     });
     _info.Add("equipped_items", [seat](Env const& env, uint32 index) { return float(seat(env, index).EquippedItems); });
     _info.Add("spell_casts", [seat](Env const& env, uint32 index) { return float(seat(env, index).SpellCasts); });
-    // Leaving the ground (MoveBlock's jump, Encoding::FallToGround): jumps launched, jumps pressed with nowhere to
-    // land, drops (a landing more than a step below the seat) and the deepest of them, drops made under Slow Fall
-    // or Levitate, and the falls that followed -- whether there was one, what they cost in health, and whether one
-    // killed the seat. A drill about ledges reads these; every other stage gets them for free.
+    // Leaving the ground (the controller's jumps and falls, landed by the server): jumps taken, drops (a landing two
+    // yards or more below where the fall began), whether the seat fell, what the landings cost in health (the
+    // server's own HandleFall) and whether one killed it. A drill about ledges reads these; every stage gets them.
     // Water, for every stage: time swimming, time with the head under, surfacings, the most of a breath spent
     // (past 1 while drowning), damage taken under water past the breath and whether it killed the seat, and time
     // walking on water under an aura for it.
@@ -1280,40 +1279,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("fidget_seconds", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).FidgetMs) / 1000.0f;
-    });
-    // Following, per minute spent following: how often the run was re-aimed along the owner's path (at most once a
-    // second by design; the old follow re-aimed about every decision), and how often a follow was begun anew after
-    // the last had stopped -- the restarts the intent gate counts, which a player never makes while trailing someone
-    // at a walk -- and how far behind the owner it stayed.
-    _info.Add("follow_aims_per_minute", [this, seat](Env const& env, uint32 index)
-    {
-        SeatState const& state = seat(env, index);
-        float const minutes = float(state.FollowDecisions) * float(_decisionMs) / 60000.0f;
-        return minutes > 0.0f ? float(state.FollowAims) / minutes : 0.0f;
-    });
-    _info.Add("follow_restarts_per_minute", [this, seat](Env const& env, uint32 index)
-    {
-        SeatState const& state = seat(env, index);
-        float const minutes = float(state.FollowDecisions) * float(_decisionMs) / 60000.0f;
-        return minutes > 0.0f ? float(state.FollowStarts) / minutes : 0.0f;
-    });
-    _info.Add("follow_distance_mean", [seat](Env const& env, uint32 index)
-    {
-        SeatState const& state = seat(env, index);
-        return state.FollowDecisions ? state.FollowDistanceSum / float(state.FollowDecisions) : 0.0f;
-    });
-    _info.Add("follow_distance_sd", [seat](Env const& env, uint32 index)
-    {
-        SeatState const& state = seat(env, index);
-        if (!state.FollowDecisions)
-            return 0.0f;
-        float const mean = state.FollowDistanceSum / float(state.FollowDecisions);
-        return std::sqrt(std::max(0.0f, state.FollowDistanceSq / float(state.FollowDecisions) - mean * mean));
-    });
-    _info.Add("follow_in_band_share", [seat](Env const& env, uint32 index)
-    {
-        SeatState const& state = seat(env, index);
-        return state.FollowDecisions ? float(state.FollowInBand) / float(state.FollowDecisions) : 0.0f;
     });
     _info.Add("combat_actions_per_minute", [seat](Env const& env, uint32 index)
     {
@@ -3242,7 +3207,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
-    view.Steering = &seat.Steering;
     // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View
     // replaces the closing rate with the one toward the objective where there is one.
     view.MoveRate = seat.MoveRate;
@@ -3459,16 +3423,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     if (running)
         seat.OptionMs += _decisionMs;
 
-    seat.FollowAims += result.FollowAims;
-    seat.FollowStarts += result.FollowStarts;
-    if (result.FollowDistance >= 0.0f)
-    {
-        ++seat.FollowDecisions;
-        seat.FollowDistanceSum += result.FollowDistance;
-        seat.FollowDistanceSq += result.FollowDistance * result.FollowDistance;
-        seat.FollowInBand += result.FollowDistance >= 3.0f && result.FollowDistance <= 6.5f ? 1 : 0;
-    }
-
     seat.TargetSlot = view.TargetSlot;
     seat.StepPreparationMs += result.PreparationMs;
     seat.FriendSlot = view.FriendSlot;
@@ -3487,10 +3441,6 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.PitchReversals += result.PitchReversals;
     seat.Weaves += result.Weaves;
     seat.StepJitter += result.JitterWeight;
-    seat.Falls += result.Falls;
-    seat.FallDamage += result.FallDamage;
-    if (result.Falls && bot && !bot->IsAlive())
-        ++seat.FallDeaths;
     seat.TrinketUses += result.TrinketUses;
     seat.ItemUses += result.ItemUses;
     seat.ConsumablesUsed += result.ConsumablesUsed;
@@ -3725,26 +3675,8 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.CombatStartMs = env.EpisodeElapsedMs;
     seat.InCombat = inCombat;
 
-    // Whether the seat is in water is a thing the client normally tells the server: Player::SetInWater is called
-    // from exactly one place in the core, the movement opcode handler, and a sessionless bot sends no opcodes.
-    // So Player::IsInWater -- which returns the cached m_isInWater, unlike Unit::IsInWater which reads the map --
-    // was false for the whole life of every bot this sim has ever run. Nothing above it could work: the seat
-    // never counted as swimming, the three-dimensional steering never engaged, OBS_IN_WATER was always 0 and
-    // swim_seconds was 0 in every episode of every run. The sim has to keep the state the client would.
-    if (bot && bot->IsAlive())
-    {
-        LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
-            bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
-        bool const swimming = (liquid.Status & MAP_LIQUID_STATUS_SWIMMING) != 0;
-        bot->SetInWater(swimming);
-        // And the movement flag that goes with it, which is what the spline's speed is read from:
-        // MoveSplineInit::Launch asks MovementInfo::GetSpeedType, which answers MOVE_SWIM only under
-        // MOVEMENTFLAG_SWIMMING, and nothing ever set it for a bot -- the client does, and there is none. So every
-        // swim was launched at run speed: OBS_SWIM_SPEED reported a speed that was never used, and the water
-        // arena's crossings, placed so that swimming at 4.7 yd/s is a real choice against walking round at 7, were
-        // all won by swimming at 7. The same shape as TravelBlock::AllowFlight, for the same reason.
-        bot->SetSwim(swimming);
-    }
+    // Swimming is the client's to report (the controller's START_SWIM / STOP_SWIM, applied by the server's own
+    // handling, which keeps m_isInWater and MOVEMENTFLAG_SWIMMING): the sim no longer sets them on a seat's behalf.
 
     TrackTarget(env, seat, bot, target);
     TrackMotion(env, seat, bot, target);
@@ -5045,19 +4977,19 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
     {
         seat.HazardSearchMs = env.EpisodeElapsedMs;
         nearest = Hazard();
+        // Found among what the server shows the seat (the effects near it on its grid); measured below from the body.
         nearest.Present = Encoding::FindNearestHazard(bot, HAZARD_SEARCH_RANGE, nearest);
-        return;
     }
 
     if (!nearest.Present)
         return;
 
-    // It may have run out, and the seat has moved: measure it again rather than search again.
-    nearest.Distance = bot->GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
-    // The seat's own frame, not the spline's: OBS_HAZARD_BEARING_* has to agree with every other bearing the
-    // move block reports, and bot->GetOrientation() is the direction of travel while a spline is running.
-    nearest.Bearing = bot->GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY())
-        - seat.Facing;
+    // Measured from where the seat's body is, as a client knows where it stands relative to the fire on the ground
+    // (§5A.1 point 1), in the seat's own frame: OBS_HAZARD_BEARING_* agrees with every other bearing it observes.
+    Movement::BodyState const& body = seat.Mover.Body;
+    Position const self = seat.Mover.Started() ? Position(body.X, body.Y, body.Z) : bot->GetPosition();
+    nearest.Distance = self.GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
+    nearest.Bearing = self.GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY()) - seat.Facing;
 }
 
 /// Whether the seat's legs are getting anywhere, for every arena: how far it moved over about the last second
@@ -5079,8 +5011,12 @@ void Animus::Curriculum::StageScenario::TrackMotion(Env const& env, SeatState& s
         return;
     }
 
-    float const x = bot->GetPositionX();
-    float const y = bot->GetPositionY();
+    // The seat's own motion, from its body (§5A.1 point 1): a client knows how fast it is going.
+    Movement::BodyState const& body = seat.Mover.Body;
+    bool const own = seat.Mover.Started();
+    Position const self = own ? Position(body.X, body.Y, body.Z) : bot->GetPosition();
+    float const x = self.GetPositionX();
+    float const y = self.GetPositionY();
     if (seat.MotionHasLast)
     {
         float const dx = x - seat.MotionLastX;
@@ -5091,7 +5027,7 @@ void Animus::Curriculum::StageScenario::TrackMotion(Env const& env, SeatState& s
     seat.MotionLastY = y;
     seat.MotionHasLast = true;
 
-    float const range = target ? bot->GetExactDist2d(target) : -1.0f;
+    float const range = target ? self.GetExactDist2d(target) : -1.0f;
     if (!seat.MotionMarkMs || env.EpisodeElapsedMs < seat.MotionMarkMs)
     {
         seat.MotionMarkMs = std::max<uint32>(1, env.EpisodeElapsedMs);

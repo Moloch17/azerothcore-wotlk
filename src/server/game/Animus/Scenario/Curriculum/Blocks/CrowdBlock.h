@@ -99,14 +99,10 @@ namespace Animus::Curriculum
         enum Action : uint32
         {
             /// Use the nearest usable thing within reach: pull a lever, press a button, fire the cannon, open a door.
+            /// Getting there, and along the route, is the move block's keys: the engine-walked advance and approach
+            /// went with every seat engine move (player-controller C9, revision 1).
             ACTION_USE_OBJECT   = 0,
-            /// Walk the server's path to the seat's objective: the next point of the route, or for a seat other than
-            /// the tank the route back towards it. Smooth, pathed movement the script uses and a seat can learn,
-            /// where held bearings zig-zagged and walked into walls (2026-10-01).
-            ACTION_ADVANCE      = 1,
-            /// Walk the server's path to the nearest usable thing (a lever, the cannon).
-            ACTION_APPROACH_OBJECT = 2,
-            ACTION_COUNT        = 3
+            ACTION_COUNT        = 1
         };
 
         /// The item a lock is opened with (LOCK_KEY_ITEM), or 0: the Deadmines' cannon takes the Defias Gunpowder.
@@ -117,12 +113,9 @@ namespace Animus::Curriculum
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
-        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override
-        {
-            return local == ACTION_ADVANCE || local == ACTION_APPROACH_OBJECT;
-        }
+        /// 1: the advance and approach actions are gone (player-controller C9).
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
     };
 }

@@ -87,10 +87,11 @@ bool Mv::Client::Send(Report const& report, ServerLink& link)
     _lastSendMs = report.TimeMs;
     if (!link.Apply(report))
     {
-        // Refused: the body is where the server holds it, and the next change is reported afresh.
+        // Refused. A real client never learns of it: it sent the packet and carries on at its cadence (the next change
+        // or heartbeat). The body is taken back where the server holds it, so the two do not drift apart.
         ++Counts.Refused;
         TakeFromServer(link.State());
-        _lastFlags = 0;
+        _lastFlags = report.Flags;
         return false;
     }
     _reportedX = report.X;

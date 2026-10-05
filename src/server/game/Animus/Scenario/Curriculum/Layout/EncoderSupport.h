@@ -256,40 +256,6 @@ namespace Animus::Curriculum::Encoding
     /// only happens for something already detectable.
     [[nodiscard]] bool CanSee(WorldObject const* watcher, WorldObject const* target);
 
-    /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
-    /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
-    /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
-    /// `velocity` above 0 is the run's own speed (a bearing walked backwards runs at the run-back speed, A9);
-    /// otherwise the spline takes the unit's speed for how it moves, as before. Ignored without a facing.
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr,
-        float velocity = 0.0f);
-    /// A pathfound run to (x, y, z) at `speed` yards a second, walking if `walk`: a follow at its owner's pace.
-    void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk);
-    /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
-    inline std::atomic<uint64> MoveToCalls{ 0 };
-    inline std::atomic<uint64> MoveToNs{ 0 };
-    /// MoveBlock's turns walked as one run (movement-smooth A2): the tries at laying one out, their time since the
-    /// start (a PathGenerator and a line of sight a turning leg), and how many fell back to the straight run.
-    inline std::atomic<uint64> TurnRunCalls{ 0 };
-    inline std::atomic<uint64> TurnRunNs{ 0 };
-    inline std::atomic<uint64> TurnRunFallbacks{ 0 };
-
-    /// Walk through `points` from where the seat is, no pathfinding, facing along the way (the dungeon advance).
-    void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points);
-
-    /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
-
-    /// The caller must already know there is somewhere to land.
-
-    /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
-    /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the
-    /// damage, which is nothing under a feather-fall or hover aura and lethal past about seventy yards. True
-    /// when a fall was started; `yards` and `healthFraction` (of maximum health) say what it cost. Nothing
-    /// happens while a spline is still running, so a jump's own arc is never cut short, and the falling flag
-    /// the core leaves on a player is taken off again -- EffectMovementGenerator::Finalize clears it for
-    /// creatures only, and with it stuck the jump stayed masked for the rest of the episode.
-    bool FallToGround(Player* bot, float* yards = nullptr, float* healthFraction = nullptr);
-
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.
     bool PetAttack(Player* bot, Unit* target);
 

@@ -46,7 +46,10 @@ namespace
     /// 8: the move block is a player's keys and mouse driving the player controller (move revision 2, 25 actions;
     /// player-controller C3), and the core block lost the move options' three clocks (core revision 1). Every layout
     /// changed shape: a runtime holding a format 7 model must refuse it, not read it through this layout.
-    constexpr uint32 MANIFEST_FORMAT = 8;
+    /// 9: the seats' engine moves are gone (player-controller C9): the crowd block's advance and approach, the party
+    /// block's follow-the-tank, the companion block's follow and its clock, the death block's corpse run (each block at
+    /// revision 1). Layouts with any of those blocks changed shape.
+    constexpr uint32 MANIFEST_FORMAT = 9;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an

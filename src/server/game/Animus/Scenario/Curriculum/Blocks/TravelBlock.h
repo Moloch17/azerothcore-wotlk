@@ -99,7 +99,6 @@ namespace Animus::Curriculum
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
-        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         // No IsMovement override: summoning a mount and stepping off one are casts and presses, not movement. What
         // is movement now lives entirely in MoveBlock.
@@ -111,8 +110,6 @@ namespace Animus::Curriculum
         /// `reason` takes the SpellCastResult when the cast is what refused it -- the only way to tell a
         /// flying mount that is merely on cooldown from one the seat may never use where it is standing.
         [[nodiscard]] static bool CanSummonFlying(Player* bot, uint32* reason = nullptr);
-        /// Keep MOVEMENTFLAG_CAN_FLY with the seat's flying aura: nothing else sets it without a client.
-        static void AllowFlight(Player* bot);
         /// Yards between `bot` and the ground below it (0 when the ground cannot be found).
         [[nodiscard]] static float HeightAboveGround(Player const* bot);
         /// Whether `bot` stands within ARRIVE_DISTANCE of `objective`, on the ground.
@@ -124,9 +121,6 @@ namespace Animus::Curriculum
         /// wide enough to change nothing outdoors; an interior arena passes a storey's worth instead.
         [[nodiscard]] static bool AtObjective(Player const* bot, Position const& objective,
             float maxRise = ARRIVE_ANY_RISE, float within = ARRIVE_DISTANCE);
-        /// Without flight in the air (a dismount, a cast that took the mount away): fall to the ground and take a
-        /// player's fall damage.
-        static void FallIfAirborne(Player* bot);
         /// The level's riding skill and mounts of the bot's side, as a player of that level has them.
         static void LearnRiding(Player* bot);
     };

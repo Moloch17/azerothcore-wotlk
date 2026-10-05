@@ -660,13 +660,13 @@ in one choice -- and the move block's keys are held until the seat changes them 
 |---|---|---|
 | `rest_until_ready` | gauntlet | Eats and drinks, whichever is missing, until health and mana are back to 90% |
 | `hold_interrupt` | pack | Interrupts the target the moment it starts casting, with the first interrupt the seat has -- its own spell, or its pet's (a felhunter's Spell Lock) when it has none. Offered only to a seat that has one |
-| `follow` | companion | Runs to just behind the owner, re-aimed at where the owner is now every decision, for `Options.FollowMs` (6 s), until the seat is there and the owner has stopped, or until the feet are told something else. A press, not the client's right-click follow: the policy re-presses to keep following |
 
-A seat runs **two at a time**: one positioning option (the follow) and one standby (`SeatOptionSet`), since following
-and waiting for the target's cast are not alternatives. Each runs in its block's `BeforeApply`, every decision, and
-stops on its own condition (the fight starts, nothing is left to eat, the interrupt fires, the seat is there) or when
-its `Options.*` clock runs out. The follow ends when the feet are told something else; a turn or pitch rate does not
-end it, and casting and swinging do not either, since a fight is spells and swings between steps.
+A seat runs **one at a time** (`SeatOptionSet`): resting or holding an interrupt. Each runs in its block's
+`BeforeApply`, every decision, and stops on its own condition (the fight starts, nothing is left to eat, the interrupt
+fires) or when its `Options.*` clock runs out; the held interrupt survives any other press. No option moves the seat:
+the companion's follow, the party's follow-the-tank, the dungeon advance and the corpse run were engine moves and went
+with the player controller (C9). Keeping up, advancing and the corpse run are the move block's keys, learned in
+stages of their own.
 
 **The move block is a player's keys and mouse** (player-controller, 2026-10-05; move revision 2). Its 25 actions each
 change one held control -- `move_forward` / `move_back` / `move_stop`, `strafe_left` / `strafe_right` /
@@ -799,8 +799,8 @@ counts the charged presses.
 | `pet` (hunters, warlocks, death knights, mages; empty for others) | The pet's presence, health, power, distance to the target, attacking it, casting, stance, following or staying; what it is (a ferocity, tenacity or cunning beast, an Imp, Voidwalker, Succubus, Felhunter or Felguard, a ghoul, a Water Elemental); whether it leaves on its own and how soon; its four most useful abilities (interrupts, then crowd control, dispels, threat, help, damage): present, on cooldown and what each does | Cast each ability (at the target, or on itself when helpful) as the pet bar does; passive, defensive, aggressive; follow; stay |
 | `pack` | Living and in-combat enemy counts; 24 enemy slots (`PACK_SLOTS`, the enemies seat set; present, alive, health, distance, bearing, behind, attacking the bot or its pet, casting, in combat, crowd-controlled, current target, elite, level difference, in line of sight); (the tactical spells are core actions, cast at the selected enemy) | Select target slot 1-24 (a pointer over the set); hold an interrupt |
 | `gauntlet` | Pulls cleared, pull active, time since the last fight, time into the pull, elite or higher-level pull, eating, drinking, food and drink left, time until an unengaged pull comes to the bot, time until the next pull spawns (the sustain spells are core actions) | Eat, drink (offered only where the item's cast check passes) |
-| `companion` | The owner's presence, health, mana, distance, bearing, combat, movement, level difference and class; enemies on it; which slot it attacks; which enemies attack it; each revive's known and cooldown | Follow, assist (owner's target), guard (an enemy attacking the owner), one revive-on-owner per revive |
-| `party` | Living party size, the most hurt ally's health, living tank and healer present; per teammate: presence, health, mana, distance, bearing, combat, role, class, attackers, target slot, which enemies attack it | Follow the tank; per teammate: assist, guard, revives |
+| `companion` | The owner's presence, health, mana, distance, bearing, combat, movement, level difference and class; enemies on it; which slot it attacks; which enemies attack it; each revive's known and cooldown | Assist (owner's target), guard (an enemy attacking the owner), one revive-on-owner per revive (no follow: keeping up is the move block's keys) |
+| `party` | Living party size, the most hurt ally's health, living tank and healer present; per teammate: presence, health, mana, distance, bearing, combat, role, class, attackers, target slot, which enemies attack it | Per teammate: assist, guard, revives (no follow-the-tank: keeping up is the move block's keys) |
 | `party` teammate goals | Each teammate's goal one-hot (`SeatGoal`), so a party can divide the work | |
 | `party` raid summary | The seat's group index, the living share of the raid and of its own group, the share of the living in combat, the most hurt living seat anywhere, and living tanks and healers over `RAID_GROUPS` | |
 | `support` (stages 3-5, 8) | The selected friend and rank tier (one-hot); per friend slot (self, owner, then the party block's teammate slots): presence, alive, health, mana, distance, line of sight, attackers, role, the bot's own HoT (duration left) and absorb on it, buff coverage | Select a friend (the target of positive unit-target spells); set the rank tier (high, mid, low) |

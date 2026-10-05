@@ -1,3 +1,4 @@
+OBSOLETE (player-controller, 2026-10-05): the realm's movement is replaced by the controller (R1-R4); do not apply.
 mod-animus-movement.patch -- the movement-smooth work for the realm module: A1-A5, A7, A9, B and D (forge commits
 e0aac3412..2f7f4d155). C (the jitter prices), A6, A8 (the dungeon advance; the realm has no wing routes) and A10 are
 sim-only. A snapshot: the forge's MoveBlock has moved on with C and A8, so a later resync starts from a diverged file.

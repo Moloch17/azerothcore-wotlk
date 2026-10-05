@@ -314,6 +314,22 @@ TEST(ClientTest, ARefusedReportPutsTheBodyBackWhereTheServerHasIt)
     EXPECT_FLOAT_EQ(rig.Client.Body.X, rig.Link.X);
 }
 
+// A persistent refusal is not resent every tick: as a real client (which never learns of one) the seat carries on at
+// its cadence, so at most one report a heartbeat interval while nothing changes.
+TEST(ClientTest, APersistentRefusalKeepsTheClientsCadence)
+{
+    Rig rig;
+    rig.Start();
+    rig.Run(100);
+    rig.Link.Refuse = true;
+    rig.Control.Forward = 1;
+    rig.Run(3000);
+    size_t const sent = rig.Link.Reports.size() - 1;               // after Start's
+    EXPECT_LE(sent, 1u + 3000u / Cd::HEARTBEAT_MS);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::START_FORWARD), 1u);
+    EXPECT_FLOAT_EQ(rig.Client.Body.X, rig.Link.X);
+}
+
 // A jump is MSG_MOVE_JUMP at the press: FALLING, the fall's clock at 0, the launch in the jump info (down positive).
 TEST(ClientTest, AJumpIsReportedAtThePress)
 {

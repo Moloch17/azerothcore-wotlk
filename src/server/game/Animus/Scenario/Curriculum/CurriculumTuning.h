@@ -893,11 +893,6 @@ namespace Animus::Curriculum
             /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
             /// a second later went uncharged, and bearing flips did not fall.
             uint32 JitterDecayMs = 2500;
-            /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
-            /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
-            /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
-            /// seat is there and the owner has stopped.
-            uint32 FollowMs = 6000;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -1445,7 +1440,6 @@ namespace Animus::Curriculum
             f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
             f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
-            f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

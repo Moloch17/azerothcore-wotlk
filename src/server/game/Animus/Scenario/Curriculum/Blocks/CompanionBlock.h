@@ -24,14 +24,12 @@
 namespace Animus::Curriculum
 {
     /// The player the bot fights for: its health, position, class, target and attackers, and the class's revives.
-    /// Actions: follow, assist (its target), guard (an enemy on it), revive it (resurrection spells on the dead owner,
-    /// a warlock's soulstone on the living one). Heals, shields and buffs on it are core actions aimed by the support
+    /// Actions: assist (its target), guard (an enemy on it), revive it (resurrection spells on the dead owner, a
+    /// warlock's soulstone on the living one). Heals, shields and buffs on it are core actions aimed by the support
     /// block's friend selection.
     ///
-    /// Following is a press, not the client's right-click follow. The press runs the seat to just behind the owner
-    /// and, as a positioning option (SeatOptionKind::Follow), keeps re-aiming that run at where the owner is now
-    /// until the seat is there and the owner has stopped, the clock (Options.FollowMs) lapses, or the feet are told
-    /// something else. The policy re-presses to keep following, as it re-presses a bearing to keep walking.
+    /// No follow: the engine-run follow went with every seat engine move (player-controller C9, revision 1). Keeping
+    /// up with the owner is the move block's keys, learned in its own stage later (movement-curriculum).
     class CompanionBlock final : public Block
     {
     public:
@@ -52,26 +50,24 @@ namespace Animus::Curriculum
             OBS_OWNER_TARGET_FIRST      = 21,   // one-hot: which of the NAMED_ENEMY_SLOTS the owner attacks
             OBS_OWNER_NO_TARGET         = 25,   // it attacks nothing (past the named slots: this and those all 0)
             OBS_SLOT_ON_OWNER_FIRST     = 26,   // per named enemy slot: attacking the owner
-            OBS_FOLLOWING               = 30,   // the follow's clock left / Options.FollowMs; 0 when not following
-            OBS_GLOBAL_COUNT            = 31
+            OBS_GLOBAL_COUNT            = 30
 
             // Then per revive: known, cooldown.
         };
 
         enum Action : uint32
         {
-            ACTION_FOLLOW               = 0,    // run to just behind the owner and keep after it (an option)
-            ACTION_ASSIST               = 1,    // target the owner's target
-            ACTION_GUARD                = 2,    // target an enemy attacking the owner
-            ACTION_REVIVE_FIRST         = 3     // one per revive
+            ACTION_ASSIST               = 0,    // target the owner's target
+            ACTION_GUARD                = 1,    // target an enemy attacking the owner
+            ACTION_REVIVE_FIRST         = 2     // one per revive
         };
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
-        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_FOLLOW; }
+        /// 1: the follow action and its clock are gone (player-controller C9).
+        [[nodiscard]] uint32 Revision() const override { return 1; }
     };
 }
 
