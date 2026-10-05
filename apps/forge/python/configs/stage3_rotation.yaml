@@ -17,6 +17,13 @@ eval:
            serving_share, casts_completed, casts_cancelled,
            mode_switches, aimless_mode_flip, aimless_needless_move, aimless_trap_no_enemy]
 
+# The shaping fade steps down only once output is learned (a dummy's health and more each episode): faded on plateaus
+# alone it reached x0 at output ~5 and the drills' payment went with it (2026-10-05, before the dummy terms were
+# Outcome). With output, mana kept and time hurt now paid as the stage's own terms, the fade takes only the helpers.
+fade:
+  gate_metric: dummy_output
+  gate_value: 4.0
+
 layout_sampling:
   metric: dummy_output
   replay_fraction: 0.0

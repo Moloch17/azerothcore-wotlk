@@ -121,6 +121,9 @@ class ShapingFade:
     def __init__(self, config: TrainConfig, ladder=None):
         fade = config.fade if ladder is None else ladder
         self.enabled = bool(fade.enabled) and len(fade.rungs) > 0
+        self.gate_metric = str(getattr(fade, "gate_metric", "") or "")
+        self.gate_value = float(getattr(fade, "gate_value", 0.0))
+        self.gate_seen: float | None = None
         self.rungs = tuple(float(scale) for scale in fade.rungs) or (1.0,)
         self.window = max(1, int(fade.window))
         self.regress_z = float(fade.regress_z)
@@ -200,9 +203,22 @@ class ShapingFade:
                     f"{stderr:.2g} {self._why()}{against} after {waited} evaluations")
         return None
 
-    def _earned(self, env_steps: int, waited: int) -> bool:
+    def see_gate(self, summary: dict) -> None:
+        """The latest evaluation's gate metric (the ladder config's gate_metric), read before observe()."""
+        value = summary.get(self.gate_metric) if self.gate_metric else None
+        self.gate_seen = float(value) if isinstance(value, (int, float)) else None
+
+    def _gated(self) -> bool:
+        """The gate metric has reached its value, or there is no gate."""
+        return not self.gate_metric or (self.gate_seen is not None and self.gate_seen >= self.gate_value)
+
+    def _plateaued(self, env_steps: int, waited: int) -> bool:
         """The rung has been played long enough and the score has plateaued on it."""
         return waited >= self.window and self.tracker.converged(env_steps, 0)
+
+    def _earned(self, env_steps: int, waited: int) -> bool:
+        """Plateaued, and the stage's own measure there (the gate) when the ladder has one."""
+        return self._plateaued(env_steps, waited) and self._gated()
 
     def _moved(self) -> None:
         self.steps += 1
@@ -210,6 +226,8 @@ class ShapingFade:
         self.tracker = self._new_tracker()
 
     def _why(self) -> str:
+        if self.gate_metric and self.gate_seen is not None:
+            return f"plateaued with {self.gate_metric} {self.gate_seen:.3g} (gate {self.gate_value:g})"
         return "plateaued"
 
     def forget_scores(self) -> None:
@@ -252,15 +270,7 @@ class CostLadder(ShapingFade):
 
     def __init__(self, config: TrainConfig):
         super().__init__(config, config.costs)
-        self.gate_metric = str(config.costs.gate_metric or "")
-        self.gate_value = float(config.costs.gate_value)
-        self.gate_seen: float | None = None
         self.reshaped = False
-
-    def see_gate(self, summary: dict) -> None:
-        """The latest evaluation's gate metric, read before observe()."""
-        value = summary.get(self.gate_metric) if self.gate_metric else None
-        self.gate_seen = float(value) if isinstance(value, (int, float)) else None
 
     def load_state_dict(self, state: dict | None) -> None:
         """As the shaping ladder's; a checkpoint whose rung is past the configured ladder's end (the rungs were cut
@@ -276,9 +286,10 @@ class CostLadder(ShapingFade):
             self.step_stderr = 0.0
 
     def _earned(self, env_steps: int, waited: int) -> bool:
+        # The gate replaces the plateau off the first rung only; later rungs step on a plateau alone.
         if self.rung == 0 and self.gate_metric:
-            return self.gate_seen is not None and self.gate_seen >= self.gate_value
-        return super()._earned(env_steps, waited)
+            return self._gated()
+        return self._plateaued(env_steps, waited)
 
     def _why(self) -> str:
         if self.rung == 1 and self.gate_metric and self.gate_seen is not None:
@@ -417,6 +428,7 @@ class ConvergenceController:
         anneal_starting = self.plateau_env_steps == env_steps
         ladders_settled = self.ladders_settled()
         self.costs.see_gate(summary)
+        self.fade.see_gate(summary)
         self.costs_message = self.costs.observe(summary["score"], stderr, env_steps, ladders_settled,
                                                 anneal_starting)
         # The shaping ladder waits for the cost ladder: two scales moving at once cannot be told apart in the score.

@@ -127,6 +127,9 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::PullClean:             return "pull_clean";
         case RewardTerm::OrderChurn:            return "order_churn";
         case RewardTerm::EarlyPull:             return "early_pull";
+        case RewardTerm::DummyOutput:           return "dummy_output";
+        case RewardTerm::DummyMana:             return "dummy_mana";
+        case RewardTerm::DummyHurt:             return "dummy_hurt";
         case RewardTerm::Count:                 break;
     }
 

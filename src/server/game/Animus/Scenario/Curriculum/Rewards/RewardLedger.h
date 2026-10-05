@@ -122,6 +122,13 @@ namespace Animus::Curriculum
         /// A party's damage dealer or healer with enemies on it while the tank has not engaged (Raid.EarlyPull): the
         /// pull opened before the tank was there to take it. A cost, not shaping: it never fades (2026-10-03).
         EarlyPull,
+        /// The dummy drills' own lesson (DummyEncounter, stage3_rotation): output against the dummy's health, mana
+        /// kept at the end, and time spent hurt in the bleeding drill. Paid as DamageDealt, Readiness and HealthKept
+        /// until 2026-10-05, all Shaping: the shaping fade took away everything the stage is for, and stage3 stopped
+        /// casting (output 5 -> 1.1 a dummy) while its score -- kills in the one drill that has any -- rose.
+        DummyOutput,
+        DummyMana,
+        DummyHurt,
         Count
     };
 
@@ -163,6 +170,8 @@ namespace Animus::Curriculum
             case RewardTerm::QuestTurnIn:
             case RewardTerm::GatherNode:
             case RewardTerm::TownDone:
+            case RewardTerm::DummyOutput:
+            case RewardTerm::DummyMana:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -174,6 +183,7 @@ namespace Animus::Curriculum
             case RewardTerm::StepCost:
             case RewardTerm::DeathRun:
             case RewardTerm::EarlyPull:
+            case RewardTerm::DummyHurt:
             // The prices of noise: a press that did nothing again, a turn and its reversal, a press its goal did not
             // call for, any press at all, standing in place shuffling. As shaping they faded with the rest, and by a
             // stage's end spinning, strafing and re-pressing cost nothing: stage5's casters ended at 90-190 turns and

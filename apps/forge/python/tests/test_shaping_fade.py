@@ -151,3 +151,32 @@ def test_the_fade_waits_for_the_ladders_but_not_for_every_last_class(moving_clas
         # A restless class's rung moved by a whole rung over the window; a settled one by a tenth.
         state.rung = [1.0, 2.0, 3.0, 4.0] if index < restless else [3.0, 3.1, 3.0, 3.1]
     assert controller.ladders_settled() == settled
+
+
+def test_a_gated_fade_waits_for_the_stage_measure_then_steps_on_plateaus():
+    """stage3_rotation 2026-10-05: faded on plateaus alone, the shaping ladder reached x0 with output at ~5 a dummy and
+    the policy stopped casting. With a gate, a plateau short of the measure is no step."""
+    fade = _fade(gate_metric="dummy_output", gate_value=4.0)
+    scales = []
+    for index, output in enumerate([1.0, 2.0, 3.0, 3.5, 3.9, 3.9]):         # flat score, output short of the gate
+        fade.see_gate({"dummy_output": output})
+        fade.observe(5, 0.1, (index + 1) * 10)
+        scales.append(fade.scale)
+    assert scales == [1.0] * 6
+    fade.see_gate({"dummy_output": 4.2})
+    message = fade.observe(5, 0.1, 70)
+    assert fade.scale == 0.5 and "dummy_output 4.2 (gate 4)" in message
+    # A summary without the column holds it too (another stage's evaluation, a baseline).
+    held = _fade(gate_metric="dummy_output", gate_value=4.0)
+    held.see_gate({})
+    assert _play(held, [5] * 6) == [1.0] * 6
+
+
+def test_stage3_fades_on_its_output_and_stage4_keeps_the_plain_plateau():
+    from pathlib import Path
+    configs = Path(__file__).resolve().parents[1] / "configs"
+    config = TrainConfig.load(configs / "stage3_rotation.yaml")
+    assert config.fade.enabled and config.fade.gate_metric == "dummy_output" and config.fade.gate_value == 4.0
+    assert config.fade.rungs == (1.0, 0.5, 0.25, 0.0)
+    stage4 = TrainConfig.load(configs / "stage4_duel.yaml")
+    assert stage4.fade.enabled and stage4.fade.gate_metric == ""

@@ -202,7 +202,7 @@ void Animus::Curriculum::DummyEncounter::Reward(Env& env, uint32 seat, Player* b
     AgentStats const& step = env.StepStats[seat];
     float const output = float(step.Damage) / float(dummies.BaseHealth);
     dummies.Output += output;
-    ledger.Add(RewardTerm::DamageDealt, tuning.Damage * output);
+    ledger.Add(RewardTerm::DummyOutput, tuning.Damage * output);
     CombatReward::Casting(bot, step, tally, _scenario.Tuning().Casting, ledger);
 
     if (bot->IsAlive())
@@ -211,7 +211,7 @@ void Animus::Curriculum::DummyEncounter::Reward(Env& env, uint32 seat, Player* b
         if (dummies.Drill == DummyDrill::Hitting)
             ledger.Add(RewardTerm::DamageTaken, -duel.DamageTaken * seatState.LastStepDamageTaken);
         else if (dummies.Drill == DummyDrill::Bleeding)
-            ledger.Add(RewardTerm::HealthKept, -tuning.Hurt * (1.0f - bot->GetHealthPct() / 100.0f) * seconds);
+            ledger.Add(RewardTerm::DummyHurt, -tuning.Hurt * (1.0f - bot->GetHealthPct() / 100.0f) * seconds);
     }
     else if (!dummies.DeathPaid)
     {
@@ -235,7 +235,7 @@ void Animus::Curriculum::DummyEncounter::Reward(Env& env, uint32 seat, Player* b
         if (bot->getPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA))
         {
             dummies.ManaKept = float(bot->GetPower(POWER_MANA)) / float(bot->GetMaxPower(POWER_MANA));
-            ledger.Add(RewardTerm::Readiness, tuning.Resource * dummies.ManaKept);
+            ledger.Add(RewardTerm::DummyMana, tuning.Resource * dummies.ManaKept);
         }
     }
 }

@@ -168,6 +168,11 @@ class FadeConfig:
     # Classes whose difficulty ladder may still be moving when the shaping ladder steps: ten classes' ladders are rarely
     # all still at once, and waiting for every one held the fade at x1 for the whole of stage4 (2026-10-03).
     moving_classes: int = 2
+    # No step down until the evaluation's `gate_metric` (a column of its summary) is at least `gate_value`, on top of
+    # the plateau: shaping pulled before the stage's own measure is learned stops the learning (stage3_rotation,
+    # 2026-10-05: faded to 0 at output ~5 a dummy, then output fell to 1.1). "" = the plateau alone.
+    gate_metric: str = ""
+    gate_value: float = 0.0
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)
