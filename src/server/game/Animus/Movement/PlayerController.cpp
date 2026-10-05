@@ -33,6 +33,8 @@ namespace
     constexpr float SLIDE_GAIN = 0.01f;
     /// How far below the feet a standing body still counts as standing (rounding, a floor's own bumps).
     constexpr float SNAP = 0.1f;
+    /// How far under a buried body a floor is looked for before it is taken to have none (a cave's floor is closer).
+    constexpr float BURIED_SEARCH = 1000.0f;
 
     float WrapYaw(float yaw)
     {
@@ -574,6 +576,20 @@ void Animus::Movement::Resync(BodyState& body, float x, float y, float z, float 
     }
     else
         body.Kind = Mode::Falling;
+
+    // The last rung: put deeper than a step inside the ground with nothing at all under it -- a spawn point or the
+    // server's position buried in the terrain -- the body would fall to the map's floor and die there. It stands on
+    // the terrain instead. A cave (under the terrain's surface, with its own floor below) is left to fall onto that.
+    body.Unburied = false;
+    if (body.Kind == Mode::Falling && world.InTerrain(x, y, z)
+        && !HasFloor(world.FloorBelow(x, y, z, BURIED_SEARCH)))
+        if (float const terrain = world.TerrainHeight(x, y); HasFloor(terrain) && terrain > z)
+        {
+            body.Z = terrain;
+            body.FallApexZ = terrain;
+            body.Kind = Mode::Ground;
+            body.Unburied = true;
+        }
 }
 
 bool Animus::Movement::CanJump(BodyState const& body, Body const& /*shape*/, WorldQuery const& /*world*/)

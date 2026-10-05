@@ -3136,6 +3136,17 @@ void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, 
     }
     seat.LastKind = kind;
 
+    // Taken from the server deeper than a step inside the ground with nothing under it, and stood on the terrain
+    // (Resync's last rung): a spawn point, or the server, put the unit in the ground. Once an episode a seat.
+    if (seat.Mover.Counts.Unburied > seat.MoverAtStart.Unburied && !seat.UnburiedLogged)
+    {
+        seat.UnburiedLogged = true;
+        LOG_WARN("module.animus", "Player controller: {} ({} arena, {}) was put inside the ground at ({:.1f}, {:.1f}, "
+            "{:.1f}) on map {} with nothing under it, and was stood on the terrain at z {:.1f}: the spawn point or the "
+            "server's position is buried", bot->GetName(), arena, evaluating ? "evaluating" : "training", body.X,
+            body.Y, seat.Mover.UnburiedFromZ, bot->GetMapId(), body.Z);
+    }
+
     // Three seconds down with no floor anywhere under it, a seat falls until the map kills it at its floor (z -500):
     // the M1 dry check lost shaman seats so (2026-10-05). The first few are logged with what explains them.
     constexpr uint32 VOID_FALL_MS = 3000;

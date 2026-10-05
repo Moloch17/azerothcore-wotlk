@@ -75,7 +75,14 @@ void Mv::Client::TakeFromServer(ServerState const& state)
     // Only with the world the client is stepping in: Finish can refuse before any tick has set it (the body then
     // takes the server's position as it stands).
     if (_shape && _world)
+    {
         Resync(Body, state.X, state.Y, state.Z, state.Yaw, *_shape, *_world);
+        if (Body.Unburied)
+        {
+            ++Counts.Unburied;
+            UnburiedFromZ = state.Z;
+        }
+    }
     else
     {
         Body.X = state.X;

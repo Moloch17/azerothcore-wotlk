@@ -104,6 +104,7 @@ namespace Animus::Movement
             uint64_t Acks = 0;              // answers to the server's orders
             uint64_t YieldTicks = 0;        // ticks the server imposed and the client yielded
             uint64_t Resyncs = 0;           // starts again from a position the server set on its own
+            uint64_t Unburied = 0;          // ... and found it inside the ground, and stood it on the terrain
         };
 
         /// The body as the client knows it: the truth, which self observations read (§5A.1 point 1).
@@ -112,6 +113,8 @@ namespace Animus::Movement
         /// The last of the server's orders the client took, and when (episode ms): what a diagnostic names.
         uint8_t LastOrder = UINT8_MAX;
         uint32_t LastOrderMs = 0;
+        /// The server's height when the client last found the body inside the ground (Counts.Unburied).
+        float UnburiedFromZ = 0.0f;
         /// The last tick, over its sub-steps: yards moved, yards the held controls asked for, whether it met a wall;
         /// jumps taken and landings, and the highest fall landed.
         float TickMoved = 0.0f;

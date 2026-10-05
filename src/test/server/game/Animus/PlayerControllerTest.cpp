@@ -114,6 +114,11 @@ namespace
         {
             return z < Ground(x, y) - 0.05f;
         }
+
+        float TerrainHeight(float x, float y) const override
+        {
+            return Ground(x, y);
+        }
     };
 
     Mv::BodyState At(float x, float y, float z, float yaw = 0.0f)
@@ -607,6 +612,37 @@ TEST(PlayerControllerTest, ABodyPutJustUnderTheSurfaceStandsOnIt)
     EXPECT_FLOAT_EQ(body.Z, 0.0f);
     Mv::Resync(body, 0.0f, 0.0f, 3.0f - Mv::STEP_UP - 0.1f, 0.0f, shape, cave);
     EXPECT_NE(body.Z, 3.0f);
+}
+
+// Resync's last rung: put deeper than a step inside the ground with nothing under it, the body stands on the terrain
+// rather than fall to the map's floor; in a cave -- under the terrain's surface, with a floor of its own below -- it
+// falls onto that floor as before.
+TEST(PlayerControllerTest, ABodyBuriedInTheGroundStandsOnTheTerrain)
+{
+    FakeWorld world;
+    world.Ground = [](float, float) { return 286.2f; };
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    Mv::BodyState body;
+    Mv::Resync(body, 4012.0f, -788.0f, 283.2f, 0.0f, shape, world);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 286.2f);
+    EXPECT_TRUE(body.Unburied);
+    Mv::ControlState control;
+    Drive(body, control, speeds, world, 15.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 286.2f);
+
+    // A cave 10 yd under the surface, its floor 4 yd under the body: the body falls onto the cave's floor.
+    FakeWorld cave;
+    cave.Ground = [](float, float) { return 50.0f; };
+    cave.Boxes.push_back({ -20.0f, 20.0f, -20.0f, 20.0f, 30.0f, 36.0f });
+    Mv::Resync(body, 0.0f, 0.0f, 40.0f, 0.0f, shape, cave);
+    EXPECT_EQ(body.Kind, Mv::Mode::Falling);
+    EXPECT_FALSE(body.Unburied);
+    Drive(body, control, speeds, cave, 2.0f);
+    EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(body.Z, 36.0f);
 }
 
 // What the action mask asks: jump on the ground (and at the surface), not in the air; height steered in water and

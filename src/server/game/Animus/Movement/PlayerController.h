@@ -150,6 +150,7 @@ namespace Animus::Movement
         bool LandedInWater = false;
         bool Jumped = false;        // a jump (or a swim jump) was taken this step
         float FallHeight = 0.0f;    // apex to landing, when Landed
+        bool Unburied = false;      // the last Resync lifted it out of the ground onto the terrain (its last rung)
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
     };
@@ -180,6 +181,9 @@ namespace Animus::Movement
         /// Whether (x, y, z) is inside the terrain (below its surface). The terrain is in no collision tree, so a
         /// hillside's face is seen only this way; models are walls through Sweep.
         [[nodiscard]] virtual bool InTerrain(float x, float y, float z) const = 0;
+        /// The terrain heightfield's height at (x, y) alone (no models), or INVALID_FLOOR where it is not known (the
+        /// default: a world with no terrain apart from its floors). Resync's last rung reads it.
+        [[nodiscard]] virtual float TerrainHeight(float /*x*/, float /*y*/) const { return -200000.0f; }
     };
 
     constexpr float INVALID_FLOOR = -200000.0f;

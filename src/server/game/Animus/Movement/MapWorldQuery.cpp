@@ -151,3 +151,10 @@ bool Animus::Movement::MapWorldQuery::InTerrain(float x, float y, float z) const
     float const terrain = _map->GetGridHeight(x, y);
     return terrain > INVALID_HEIGHT && z < terrain - GROUND_HEIGHT_TOLERANCE;
 }
+
+float Animus::Movement::MapWorldQuery::TerrainHeight(float x, float y) const
+{
+    Heights.fetch_add(1, std::memory_order_relaxed);
+    float const terrain = _map->GetGridHeight(x, y);
+    return terrain > INVALID_HEIGHT ? terrain : INVALID_FLOOR;
+}

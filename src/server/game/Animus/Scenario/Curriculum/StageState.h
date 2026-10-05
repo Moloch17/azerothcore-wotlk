@@ -310,6 +310,7 @@ namespace Animus::Curriculum
         uint8 FallFrom = 0;
         uint8 LastKind = 0;
         bool VoidFallLogged = false;
+        bool UnburiedLogged = false;        // the buried-placement line was written this episode
         uint32 BreathingCasts = 0;      // water-breathing spells started (ActionCatalog::Action::WaterBreathing)
         uint32 ItemUses = 0;
         bool InCombat = false;
@@ -536,6 +537,7 @@ namespace Animus::Curriculum
             FallFrom = 0;
             LastKind = 0;
             VoidFallLogged = false;
+            UnburiedLogged = false;
             Jumps = 0;
             Drops = 0;
             Falls = 0;

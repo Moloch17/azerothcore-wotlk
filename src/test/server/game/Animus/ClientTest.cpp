@@ -50,6 +50,7 @@ namespace
         }
         [[nodiscard]] float Ceiling(float, float, float, float up) const override { return up; }
         [[nodiscard]] bool InTerrain(float x, float, float z) const override { return z < Ground(x) - 0.5f; }
+        [[nodiscard]] float TerrainHeight(float x, float) const override { return Ground(x); }
     };
 
     /// The server: holds what was last accepted, and mirrors the two core functions fall damage is made of --
@@ -198,6 +199,22 @@ TEST(ClientTest, ASpawnJustUnderTheGroundStandsOnIt)
     EXPECT_EQ(rig.Link.Reports[0].Flags & Mv::Flag::FALLING, 0u);
     rig.Run(15000);
     EXPECT_EQ(rig.Client.Body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::FALL_LAND), 0u);
+}
+
+// Spawned 3 yd inside the ground with nothing under it, a seat stands on the terrain, the client counts it (the
+// once-an-episode log reads that) and its first report puts the server on the ground: the void is out of reach.
+TEST(ClientTest, ASpawnBuriedInTheGroundStandsOnTheTerrain)
+{
+    Rig rig;
+    rig.Start(0.0f, -3.0f);
+    EXPECT_EQ(rig.Client.Body.Kind, Mv::Mode::Ground);
+    EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
+    EXPECT_EQ(rig.Client.Counts.Unburied, 1u);
+    EXPECT_FLOAT_EQ(rig.Client.UnburiedFromZ, -3.0f);
+    EXPECT_FLOAT_EQ(rig.Link.Z, 0.0f);
+    rig.Run(15000);
     EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
     EXPECT_EQ(rig.Link.Count(Cd::Op::FALL_LAND), 0u);
 }

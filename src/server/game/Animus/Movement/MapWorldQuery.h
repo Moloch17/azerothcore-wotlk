@@ -43,6 +43,7 @@ namespace Animus::Movement
             Body const& body) const override;
         [[nodiscard]] float Ceiling(float x, float y, float z, float up) const override;
         [[nodiscard]] bool InTerrain(float x, float y, float z) const override;
+        [[nodiscard]] float TerrainHeight(float x, float y) const override;
 
         /// Collision rays cast and height queries made (for the cost line, C8).
         static inline std::atomic<uint64> Rays{ 0 };
