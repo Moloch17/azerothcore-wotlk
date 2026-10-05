@@ -580,6 +580,10 @@ namespace
         if (arena.Pvp && !player)
             return "a pvp arena fights a player";
         bool const travel = arena.Against == Opposition::Travel;
+        // A marker arena takes some of the travel arena's kinds of ground (ledges, rooms, water, lakebeds, chains,
+        // flight), each by its own course; which course may have which is the marker rules' further down.
+        bool const markerGround = arena.Against == Opposition::Markers;
+        bool const placed = travel || markerGround;
         if (travel && !stage.Has(BlockId::Travel))
             return "travel needs the travel block";
         if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0))
@@ -592,26 +596,26 @@ namespace
         bool const mountedMarkers = arena.Against == Opposition::Markers && arena.Course == MarkerCourse::Mounted;
         if (arena.Flying && !travel && !mountedMarkers)
             return "only a travel arena flies";
-        if (arena.Indoors && !travel)
-            return "only a travel arena can be indoors: being inside changes where an objective may be put and "
-                "what reaching it means, and nothing else asks either question";
+        if (arena.Indoors && !placed)
+            return "only a travel or marker arena can be indoors: being inside changes where an objective may be put "
+                "and what reaching it means, and nothing else asks either question";
         if (arena.Indoors && arena.Flying)
             return "an arena is indoors or it flies, not both";
         if (arena.Indoors && arena.Water)
             return "an interior arena has no crossing to offer: water wants an objective across a lake";
-        if (arena.Ledges && !travel)
-            return "only a travel arena has ledges: an objective below a drop is a place to get to";
+        if (arena.Ledges && !placed)
+            return "only a travel or marker arena has ledges: an objective below a drop is a place to get to";
         if (arena.Ledges && (arena.Flying || arena.Indoors || arena.Water))
             return "a ledge arena is on foot outdoors: the drop is the shortcut and the ramp is the way round, which "
                 "wings, a roof or a lake would each make a different question";
-        if (arena.Water && !travel && arena.Against != Opposition::Creature)
+        if (arena.Water && !placed && arena.Against != Opposition::Creature)
             return "water is a travel arena's crossing or a creature arena's lake; nothing else reads it";
-        if (arena.Underwater && !travel)
-            return "only a travel arena dives: an objective on a lakebed is a place to get to";
+        if (arena.Underwater && !placed)
+            return "only a travel or marker arena dives: an objective on a lakebed is a place to get to";
         if (arena.Underwater && (arena.Flying || arena.Indoors || arena.Ledges || arena.Water))
             return "a dive arena is its own trip: the objective is on the bed, not across the lake, and neither "
                 "wings, a roof nor a ledge belong to it";
-        if (arena.Checkpoints && !(travel && arena.Underwater))
+        if (arena.Checkpoints && !(placed && arena.Underwater))
             return "only a dive arena chains: the next lakebed is drawn the way the first was, and no other kind of "
                 "objective has a next one yet";
         if (flag && (!stage.Has(BlockId::Travel) || !stage.Has(BlockId::Flag)))
