@@ -26,3 +26,7 @@ eval:
            stop_distance, stuck_seconds, wall_seconds, jumps, course_kinks, moves_refused, distance_travelled,
            movement_casts, speed_casts, died, timed_out, reward_arrive, reward_progress, reward_stuck, reward_wall,
            reward_jitter, reward_effort, reward_repeat]
+
+# Converged on the top rung and on the stage's own measure: the share of markers stopped on, on broken ground.
+convergence:
+  measure: arrived

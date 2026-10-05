@@ -97,6 +97,9 @@ eval:
            reward_arrive, reward_progress, reward_facing, reward_jitter, reward_effort, reward_repeat]
 
 convergence:
+  # Converged on the top rung's evaluation episodes (C7's top_rung, on by default) and on the stage's own measure:
+  # the share of markers stopped on. The score alone is not the readout (plan §1.2).
+  measure: arrived
   patience: 3
   window: 4
   z: 2.0

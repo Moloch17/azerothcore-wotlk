@@ -22,3 +22,7 @@ costs:
   rungs: [0.0, 0.25, 0.5, 1.0]
   gate_metric: arrived
   gate_value: 0.8
+
+# Converged on the top rung and on the stage's own measure: whether the one long trip arrived.
+convergence:
+  measure: arrived

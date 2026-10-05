@@ -21,3 +21,7 @@ eval:
            jumps, stuck_seconds, wall_seconds, course_kinks, moves_refused, movement_casts, speed_casts, died,
            timed_out, reward_arrive, reward_progress, reward_drowning, reward_stuck, reward_wall, reward_jitter,
            reward_effort]
+
+# Converged on the top rung and on the stage's own measure: the share of markers stopped on, across water and on lakebeds.
+convergence:
+  measure: arrived
