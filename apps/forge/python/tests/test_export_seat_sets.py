@@ -39,12 +39,12 @@ def actor_and_stage(tmp_path: Path, recurrent_size: int = 0, attention: bool = F
                               sets.mix_out.bias, sets.type_embed, sets.norm_attend.weight, sets.norm_mix.bias):
                 parameter.add_(torch.randn_like(parameter) * 0.5)
             sets.pool.weight[:, -sets.embed:] = torch.randn_like(sets.pool.weight[:, -sets.embed:]) * 0.5
-    stage_dir = tmp_path / f"layouts{recurrent_size}{'a' if attention else ''}" / "stage5_pack"
+    stage_dir = tmp_path / f"layouts{recurrent_size}{'a' if attention else ''}" / "test_stage_next"
     stage_dir.mkdir(parents=True)
-    stage = {"stage": "stage5_pack", "models": {name: f"{name}_pack" for name in NAMES},
+    stage = {"stage": "test_stage_next", "models": {name: f"{name}_pack" for name in NAMES},
              "layouts": {"warrior_dps": {"sets": SETS_A}, "priest_heal": {"sets": SETS_B}}}
     (stage_dir / "stage.json").write_text(json.dumps(stage))
-    spec = {"scenario": "stage5_pack",
+    spec = {"scenario": "test_stage_next",
             "layouts": [{"name": n, "obs_dim": o, "num_actions": a} for n, (o, a) in zip(NAMES, LAYOUTS)]}
     return actor, spec, stage_dir
 

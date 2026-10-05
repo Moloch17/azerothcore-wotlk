@@ -96,13 +96,26 @@ def sim_stage_columns() -> dict[str, set[str]]:
             if re.search(r"\.Ambushers = [1-9]", arena):
                 active.add("ambush")
         out[name.group(1)] = set(always).union(*(per_encounter[e] for e in active)) if active else set(always)
-    assert out, "no stage definitions found"
+    # Empty is a valid curriculum: none is defined between the archive (2026-10-05) and the movement stages.
     return out
 
 
 def test_layout_sampling_metric_must_exist():
-    config = TrainConfig.load(CONFIGS / "stage4_duel.yaml")
-    assert config.layout_sampling.metric in (*DERIVED_METRICS, *sim_stage_columns()["stage4_duel"])
+    """Every stage's config samples layouts by a column the stage can emit (configs/<stage>.yaml; none while the
+    curriculum is empty)."""
+    columns = sim_stage_columns()
+    assert {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"} <= set(columns), "a config with no stage"
+    for name, emitted in columns.items():
+        config = TrainConfig.load(CONFIGS / f"{name}.yaml")
+        assert config.layout_sampling.metric in (*DERIVED_METRICS, *emitted), name
+
+
+def test_the_test_stage_samples_by_a_column_some_stage_could_emit():
+    """The fixture the learner tests run on (tests/fixtures/test_stage.yaml) asks for a column the sim has."""
+    config = TrainConfig.load(Path(__file__).parent / "fixtures" / "test_stage.yaml")
+    emitted = {c for source in _curriculum_roots()[0].rglob("*.cpp")
+               for c in re.findall(r'Add\("([a-z0-9_]+)"', source.read_text())}
+    assert config.layout_sampling.metric in (*DERIVED_METRICS, *emitted)
 
 
 def stage_definitions() -> dict[str, dict]:
@@ -123,7 +136,6 @@ def stage_definitions() -> dict[str, dict]:
             merges=re.findall(r'"(stage[0-9a-z_]+)"', field(r"\.Merges = \{([^}]*)\}")),
             blocks={b.strip() for b in field(r"\.Blocks = \{([^}]*)\}").split(",") if b.strip()},
         )
-    assert out, "no stage definitions found"
     return out
 
 

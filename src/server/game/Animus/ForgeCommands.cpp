@@ -280,7 +280,11 @@ bool AnimusForge::Forge::ValidScenario(std::string const& scenario, LineSink con
     if (std::find(names.begin(), names.end(), scenario) != names.end())
         return true;
 
-    out(Acore::StringFormat("Unknown scenario '{}'. Available: {}", scenario, Join(names)));
+    if (names.empty())
+        out(Acore::StringFormat("Unknown scenario '{}': no stages defined (the curriculum is empty; the last one is "
+            "archived on the git tag curriculum-v1).", scenario));
+    else
+        out(Acore::StringFormat("Unknown scenario '{}'. Available: {}", scenario, Join(names)));
     return false;
 }
 
@@ -316,8 +320,13 @@ void AnimusForge::Forge::CommandStatus(LineSink const& out)
         out(_request == Request::Start ? "Forge: idle, starting a plan on the next tick" : "Forge: idle");
 
         TextTable table({ { "Setting" }, { "Value" } });
-        table.AddRow({ "queue (forge start)", Join(DefaultQueue()) });
-        table.AddRow({ "queue (forge fast)", Join(FastQueue()) });
+        // An empty curriculum leaves both queues empty: say so rather than show a blank cell.
+        auto const queue = [](std::vector<std::string> const& names)
+        {
+            return names.empty() ? std::string("none: no stages defined") : Join(names);
+        };
+        table.AddRow({ "queue (forge start)", queue(DefaultQueue()) });
+        table.AddRow({ "queue (forge fast)", queue(FastQueue()) });
         table.AddRow({ "policy", _config.Policy });
         table.AddRow({ "envs", Acore::StringFormat("{}, a decision every {} ms, {} s episodes", _config.Envs,
             _config.DecisionMs, _config.EpisodeSeconds) });
@@ -405,7 +414,10 @@ void AnimusForge::Forge::CommandScenarios(LineSink const& out)
     }
 
     out(Acore::StringFormat("Scenarios (runs in {}):", _config.RunsDir().string()));
-    table.Write(out, "  ");
+    if (Animus::ScenarioNames().empty())
+        out("  No stages defined: the curriculum is empty (the last one is archived on the git tag curriculum-v1).");
+    else
+        table.Write(out, "  ");
 
     uint32 models = 0;
     std::error_code error;
@@ -431,6 +443,13 @@ bool AnimusForge::Forge::CommandStart(std::vector<std::string> scenarios, LineSi
     // advanced (AnimusForge.Queue.SkipFinished), so a restarted server carries on where training stopped. Named
     // scenarios always train.
     bool const fromQueue = scenarios.empty();
+    if (fromQueue && DefaultQueue().empty())
+    {
+        out("Nothing to start: no stages defined (AnimusForge.Queue is empty and so is the curriculum; the last one "
+            "is archived on the git tag curriculum-v1).");
+        return false;
+    }
+
     if (fromQueue)
     {
         for (std::string const& scenario : DefaultQueue())
@@ -505,7 +524,8 @@ bool AnimusForge::Forge::CommandFast(std::vector<std::string> scenarios, LineSin
 
     if (scenarios.empty())
     {
-        out("Nothing to start: AnimusForge.Fast.Queue names no scenarios and the curriculum has no stages.");
+        out("Nothing to start: no stages defined (AnimusForge.Fast.Queue names no scenarios and the curriculum has "
+            "no stages).");
         return false;
     }
 
@@ -880,6 +900,13 @@ bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink cons
     }
 
     std::string const benchScenario = scenario.empty() ? _config.Bench.Scenario : scenario;
+    if (benchScenario.empty())
+    {
+        out(Acore::StringFormat("Nothing to bench: name a scenario (`forge bench <scenario>`) or set "
+            "AnimusForge.Bench.Scenario{}.", Animus::ScenarioNames().empty() ? "; no stages are defined yet" : ""));
+        return false;
+    }
+
     if (!ValidScenario(benchScenario, out))
         return false;
 

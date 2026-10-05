@@ -9,10 +9,6 @@ of trusted.
 import re
 from pathlib import Path
 
-import pytest
-
-from animus.config import TrainConfig
-
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 REPO = Path(__file__).resolve().parents[4]
 MANUAL = REPO / "docs" / "forge" / "04-curriculum.md"
@@ -35,70 +31,17 @@ def documented() -> dict[str, dict]:
     return out
 
 
-def configured(name: str) -> dict:
-    config = TrainConfig.load(CONFIGS / f"{name}.yaml")
-    return {
-        "total_env_steps": config.total_env_steps,
-        "every_env_steps": config.eval.every_env_steps,
-        "episodes": config.eval.episodes,
-    }
-
-
 def test_the_table_covers_every_stage_config():
-    """A stage added without a row is the way the table goes stale next."""
+    """A stage added without a row is the way the table goes stale next. (configs/archive/ is not globbed: the
+    archived curriculum's rows are history.)"""
     on_disk = {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}
     assert on_disk - set(documented()) == set(), "these configs have no row in the manual's budget table"
 
 
-@pytest.mark.parametrize("name", sorted(documented()))
-def test_the_manual_matches_the_config(name):
-    assert documented()[name] == configured(name), f"04-curriculum.md disagrees with configs/{name}.yaml"
-
-
-STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
-# AnimusForge.Envs the manual's arithmetic assumes (this machine's forge bench result), and the host default episode
-# length (AnimusForge.EpisodeSeconds) for an arena that sets none.
-ENVS = 128
-DEFAULT_EPISODE_SECONDS = 60
-# The gauntlet's 1024 x 900 s / 128 = 7,200 sim-seconds (its endurance arena) is the most any stage spends on one
-# evaluation today.
-MAX_EVAL_SIM_SECONDS = 7_200
-# The raid stages run at their own env count (AnimusForge.Stage.<name>.Envs in the conf template).
-STAGE_ENVS = {"stage10_raid_pulls": 8, "stage11_raids": 16}
-
-
-def longest_episode_seconds() -> dict[str, int]:
-    """Per stage, the longest arena episode in Stages.cpp: what one evaluation episode can cost."""
-    out, stage = {}, None
-    for line in STAGES_CPP.read_text().splitlines():
-        if m := re.search(r'\.Name = "(stage\d+_\w+)"', line):
-            stage = m.group(1)
-            out[stage] = DEFAULT_EPISODE_SECONDS
-        elif stage and (m := re.search(r"\.EpisodeSeconds = (\d+)", line)):
-            out[stage] = max(out[stage], int(m.group(1)))
-    return out
-
-
-@pytest.mark.parametrize("name", sorted(documented()))
-def test_an_evaluation_stays_affordable(name):
-    """episodes x episode seconds / envs (manual 4, "What an evaluation costs"): a stage that inherits the duel's
-    2048 episodes with a 300 s episode and a few dozen envs would spend more sim time evaluating than training. The
-    raid stages did exactly that until they set their own count."""
-    seconds = longest_episode_seconds()[name]
-    envs = STAGE_ENVS.get(name, ENVS)
-    cost = configured(name)["episodes"] * seconds / envs
-    assert cost <= MAX_EVAL_SIM_SECONDS, (f"{name}: {cost:,.0f} sim-seconds an evaluation at {envs} envs "
-                                          f"({seconds} s episodes); set eval.episodes in its config")
-
-
-def test_the_queue_total_is_what_the_manual_says():
-    """The manual states the whole queue in one number, which is the one a person plans a run from."""
-    rows = documented()
-    # Every stage is in the default queue, the raids included (they run at their own env count).
-    # stage9_deadmines has no end (a budget no run reaches): the manual states the rest.
-    queue = sum(v["total_env_steps"] for v in rows.values() if v["total_env_steps"] < 1_000_000_000_000)
-    assert queue == 8_050_000_000, f"the queue is {queue/1e6:.0f}M; the manual says 8,050M"
-    assert len(rows) == 21
+# The budget table's other checks -- each row against its config, an evaluation's sim-time cost from Stages.cpp's
+# episode lengths, and the queue total -- covered the first curriculum only, and went with it to the archive
+# (2026-10-05, git tag curriculum-v1). The table they read now documents that archive; the movement stages bring a
+# table of their own, and the checks come back against it.
 
 
 # --------------------------------------------------------------------------- 8.2 tuning defaults

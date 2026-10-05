@@ -1,5 +1,13 @@
 # 4. The curriculum
 
+> **Archived (2026-10-05).** The curriculum this chapter describes -- `stage1_move` ... `stage21_ship` -- was
+> archived when the curriculum was rebuilt from scratch around the player controller. Its stage definitions are on
+> the git tag `curriculum-v1`, its learner configs in `apps/forge/python/configs/archive/`, its runs in
+> `var/animus-forge/shared/archive/curriculum-v1-2026-10-05/`. No stage is defined today: `forge start` says so and
+> starts nothing. The movement stages that replace it are planned in `.agents/plans/movement-curriculum/`. What this
+> chapter says about blocks, encounters, rewards and tuning still describes the code; what it says about stages,
+> arenas, budgets and the queue is the archive's.
+
 The curriculum is the set of scenarios the policies train on. It lives in animus-lib under
 `src/Scenario/Curriculum/`. **Twenty-one stages in five phases** -- movement, classes, parties and raids, PvP, and
 life in the world -- and a last stage that replays them all and ships. Every stage is in the default queue, the raids included. No stage

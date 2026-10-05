@@ -5033,19 +5033,13 @@ AnimusForge.OutputDir = ""
 #                     every role it can play: what the model is told is its role and its talents, never
 #                     its spec, so it learns to play the character it was handed. Each stage's layouts
 #                     extend the stage it builds on, which seeds it:
-#                     Five phases, then one stage that ships (manual 4): solo, party, PvP, life.
-#                       movement  "stage1_move" (every ground on foot), "stage2_travel" (the mount, the air)
-#                       classes   "stage3_rotation" (the kit against dummies), "stage4_duel", "stage5_pack"
-#                       parties   "stage9_deadmines" (companion, party, dungeon bosses and wings),
-#                                 "stage10_raid_pulls", "stage11_raids"
-#                       pvp       "stage12_duel_pvp", "stage13_escape", "stage14_stealth", "stage15_arena",
-#                                 "stage16_flag", "stage17_warsong"
-#                       life      "stage18_life" (quests, herbs and ore, a town), "stage19_world_group",
-#                                 "stage20_world_shared"
-#                       ship      "stage21_ship" - every phase in one policy: the stage that ships
-#                     Every stage is in the default queue, the raids included (they set their own env
-#                     count: AnimusForge.Stage.<name>.Envs).
-#        Example:     "stage4_duel" - (train a single scenario)
+#                     No stages are defined at the moment: the first curriculum (stage1_move ...
+#                     stage21_ship) was archived on 2026-10-05 -- its definitions on the git tag
+#                     curriculum-v1, its learner configs in apps/forge/python/configs/archive/ -- and the
+#                     movement stages that replace it (.agents/plans/movement-curriculum/) are not in yet.
+#                     Until they are, `forge start` says no stages are defined and starts nothing.
+#                     Stages that need their own env count set it with AnimusForge.Stage.<name>.Envs.
+#        Example:     "<stage>" - (train a single scenario)
 #        Default:     "" - (the whole curriculum, first stage to last)
 
 AnimusForge.Queue = ""
@@ -5116,12 +5110,11 @@ AnimusForge.ContinentReplicas = 0
 #
 #    AnimusForge.Stage.<name>.Envs
 #        Description: a stage's own env count, where the default would not do. The real raids are forty seats an
-#                     env, so `forge start stage11_raids` at 128 envs could be 5,120 bots; these keep the bots in
-#                     the world where the pool stages have them. Any stage name works.
+#                     env, so a raid stage at 128 envs could be 5,120 bots; a stage like that sets its own
+#                     count here (`AnimusForge.Stage.<name>.Envs = 16`). Any stage name works. None are set:
+#                     the stages that set one (the raids) were archived with the first curriculum (git tag
+#                     curriculum-v1).
 #        Default:     AnimusForge.Envs
-
-AnimusForge.Stage.stage10_raid_pulls.Envs = 8
-AnimusForge.Stage.stage11_raids.Envs = 16
 
 #
 #    AnimusForge.DecisionMs
@@ -5165,15 +5158,11 @@ AnimusForge.TicksPerDecision = 1
 #                     worldserver takes the stage's tick while it runs and the configured one again after, so
 #                     no restart is needed. It must divide AnimusForge.DecisionMs; one that does not is dropped
 #                     with an error. Under AnimusForge.HalfBatch such a stage runs as one group.
-#                     Suggested for the movement stages: 5 (stage1_move, stage2_travel; 50 ms ticks, a live
-#                     server's own rate -- 4 does not divide 250 ms), at roughly the cost
-#                     above.
+#                     Suggested for the movement stages: 5 (50 ms ticks, a live server's own rate -- 4 does
+#                     not divide 250 ms), at roughly the cost above. None are set: the first curriculum's
+#                     movement stages, which ran at 5, were archived (git tag curriculum-v1); the new
+#                     movement stages set theirs when they land.
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
-#                     stage1_move runs at 5 from the 2026-10-04 fresh start, its throughput read before
-#                     stage2_travel follows.
-
-AnimusForge.Stage.stage1_move.TicksPerDecision = 5
-#    AnimusForge.Stage.stage2_travel.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -5687,9 +5676,10 @@ AnimusForge.Learner.LogFile = ""
 #    AnimusForge.Bench.Scenario
 #        Description: Scenario the trials run, when `forge bench` is given none. A party stage (four seats
 #                     per env) costs more per env than a solo one.
-#        Default:     "stage4_duel"
+#        Default:     "" - (none: `forge bench` then needs a scenario named; the first curriculum's
+#                     stage4_duel was the default until it was archived, git tag curriculum-v1)
 
-AnimusForge.Bench.Scenario = "stage4_duel"
+AnimusForge.Bench.Scenario = ""
 
 #
 #    AnimusForge.Bench.Policy
@@ -5820,8 +5810,7 @@ AnimusForge.Bench.AutoTune = 0
 #        Description: Comma-separated scenarios `forge fast` trains when given none, in order, each again
 #                     from scratch (nothing is skipped because an earlier fast run of it finished).
 #        Default:     ""  - (every curriculum stage in order, the raid stages included: a full run)
-#                     "stage4_duel, stage12_duel_pvp, stage21_ship" - (a stage from scratch, one seeded from
-#                     it, and a stage that mixes arenas, merges parents and distills)
+#                     "<stage>, <stage that extends it>" - (a stage from scratch and one seeded from it)
 
 AnimusForge.Fast.Queue = ""
 
@@ -5837,7 +5826,7 @@ AnimusForge.Fast.Queue = ""
 #                     smaller. Convergence is off for these runs, so a stage trains every step it was given
 #                     rather than stopping as soon as its score flattens.
 #
-#                     Override per invocation: `forge fast 30M`, `forge fast 30M stage4_duel`. A suffix of K
+#                     Override per invocation: `forge fast 30M`, `forge fast 30M <stage>`. A suffix of K
 #                     or M is understood, and a bare number under 1000 is read as a scenario name rather
 #                     than a budget.
 #
@@ -5909,14 +5898,14 @@ AnimusForge.Progress.Interval = 0
 #
 #    AnimusForge.Curriculum.Arena.<stage>.<arena>.Weight
 #        Description: A stage's share of episodes for one of its arenas (see stage.json "arenas"), e.g.
-#                     AnimusForge.Curriculum.Arena.stage1_move.chain.Weight = 2 for as many chains as
-#                     single dives. Only matters for stages with several arenas.
+#                     AnimusForge.Curriculum.Arena.<stage>.chain.Weight = 2 for twice the chain arena's
+#                     default share. Only matters for stages with several arenas.
 #        Default:     the stage definition's weight (1 for every arena of the current stages)
 
 #
 #    AnimusForge.Curriculum.Arena.<stage>.<arena>.MaxRung
 #        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
-#                     AnimusForge.Curriculum.Arena.stage5_pack.hazards.MaxRung = 0 for the bottom rung.
+#                     AnimusForge.Curriculum.Arena.<stage>.hazards.MaxRung = 0 for the bottom rung.
 #                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
 #                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
 #        Default:     the stage definition's (-1 for every arena: the ladder climbs)

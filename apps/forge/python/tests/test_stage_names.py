@@ -9,6 +9,12 @@ Lines carrying a date or a run citation (`at 20M`) are skipped: a comment quotin
 names that run by the name it had, and rewriting it would destroy the citation. The same rule, applied uniformly to
 conf templates and docs, is why C++ sources are not scanned at all (their citations are dense, their live names are
 checked by the compiler through Stages.cpp).
+
+**The archived curriculum** (stage1_move ... stage21_ship, archived 2026-10-05: git tag `curriculum-v1`,
+configs/archive/) is cited everywhere -- the manual, comments, the conf template's tuning notes. Its names are
+citations of that curriculum, as a dated line is of a run, and are allowed as such: an archived name is a stray only
+where a value is set from it (a conf template line `AnimusForge.<key> = ...`), since that is a run planned from a
+stage that no longer exists. A name that is neither defined nor archived is a stray everywhere.
 """
 
 import re
@@ -22,11 +28,23 @@ SIBLING_ANIMUS = REPO / "modules" / "mod-animus"
 
 TOKEN = re.compile(r"\bstage\d+[a-z]?_[a-z_]+\b")
 DATED = re.compile(r"20\d\d-\d\d-\d\d|\bat \d+(\.\d+)?M\b")
+# A conf template line that sets a value: the one place an archived name is still a stray.
+SETTING = re.compile(r"^\s*AnimusForge\.\S+\s*=")
+CONFIGS = REPO / "apps" / "forge" / "python" / "configs"
+ARCHIVE = CONFIGS / "archive"
 
 
 def defined_names() -> set[str]:
-    names = set(re.findall(r'\.Name = "(stage\d+_\w+)"', STAGES_CPP.read_text()))
-    assert len(names) >= 15, "Stages.cpp parsed badly"
+    """The stages Stages.cpp defines (none between the archive and the movement stages): a `.Name` followed by
+    a `.Suffix`, which an arena's never is."""
+    assert STAGES_CPP.is_file()
+    return set(re.findall(r'\.Name = "(\w+)",\s*\.Suffix', STAGES_CPP.read_text()))
+
+
+def archived_names() -> set[str]:
+    """The archived curriculum's stages: one config each in configs/archive/ (per-class ones included)."""
+    names = {p.stem for p in ARCHIVE.rglob("stage*.yaml")}
+    assert len(names) >= 15, "configs/archive/ parsed badly"
     return names
 
 
@@ -45,7 +63,8 @@ def scanned_files() -> list[Path]:
             files += [p for p in root.rglob("*")
                       if p.is_file() and p.suffix in (".py", ".yaml", ".md", ".dist", ".json", ".cpp", ".h")
                       and "__pycache__" not in p.parts and ".venv" not in p.parts
-                      and p.name != "test_stage_names.py"]  # its RESERVED names are not stages yet
+                      and ARCHIVE not in p.parents  # the archived curriculum's own files
+                      and p.name != "test_stage_names.py"]
     return sorted(files)
 
 
@@ -56,49 +75,37 @@ def trained_model(path: Path) -> bool:
         '{"format"')
 
 
-def strays(path: Path, names: set[str]) -> list[str]:
+def strays(path: Path, names: set[str], archived: set[str], root: Path = REPO) -> list[str]:
     out = []
     if trained_model(path):
         return out
     for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
         if DATED.search(line):
             continue
+        setting = SETTING.match(line) is not None
         for token in TOKEN.findall(line):
-            if token not in names:
-                out.append(f"{path.relative_to(REPO)}:{number}: {token}")
+            if token not in names and (setting or token not in archived):
+                out.append(f"{path.relative_to(root)}:{number}: {token}")
     return out
 
 
 @pytest.mark.parametrize("path", scanned_files(), ids=lambda p: str(p.relative_to(REPO)))
 def test_every_stage_name_written_down_exists(path):
-    found = strays(path, defined_names())
+    found = strays(path, defined_names(), archived_names())
     assert found == [], "stage names that no longer exist:\n" + "\n".join(found)
 
 
+def test_an_archived_name_is_a_stray_where_a_value_is_set_from_it(tmp_path):
+    conf = tmp_path / "worldserver.conf.dist"
+    conf.write_text("# stage4_duel was the bench default\nAnimusForge.Bench.Scenario = \"stage4_duel\"\n"
+                    "# stage99_nothing never existed\n")
+    found = strays(conf, set(), {"stage4_duel"}, root=tmp_path)
+    assert found == ["worldserver.conf.dist:2: stage4_duel", "worldserver.conf.dist:3: stage99_nothing"]
+
+
 def test_config_files_are_named_after_stages():
+    """Every stage has its learner config in configs/, and every config there is a stage's (fast.yaml is an
+    overlay, archive/ the archived curriculum's)."""
     names = defined_names()
-    configs = {p.stem for p in (REPO / "apps" / "forge" / "python" / "configs").glob("stage*.yaml")}
-    assert configs == names - set(), f"configs without a stage or stages without a config: {configs ^ names}"
-
-
-# Numbers held for stages that are planned but not yet defined, so the stages around them do not have to move twice.
-# A reserved number is filled by a stage of exactly this name; delete the entry when it lands. (Empty since the
-# life stages of the 2026-09-24 plan landed.)
-RESERVED: dict[int, str] = {}
-
-
-def test_numbers_are_contiguous_and_in_seed_order():
-    """A stage is never numbered below the stage it extends or merges, and the numbers run 1..N with no gap
-    (a reserved number counts as filled)."""
-    text = STAGES_CPP.read_text()
-    entries = re.findall(r'\.Name = "(stage(\d+)_\w+)",(.*?)\n        \}\);', text, re.S)
-    defined = {int(n): name for name, n, _ in entries}
-    for number, name in RESERVED.items():
-        assert defined.get(number, name) == name, f"{number} is reserved for {name}, not {defined[number]}"
-    numbers = sorted(set(defined) | set(RESERVED))
-    assert numbers == list(range(1, len(numbers) + 1)), f"numbers are not contiguous: {numbers}"
-    number = {name: int(n) for name, n, _ in entries}
-    for name, _, body in entries:
-        parents = re.findall(r'"(stage\d+_\w+)"', body.split(".Summary")[0])
-        for parent in parents:
-            assert number[parent] < number[name], f"{name} is numbered below {parent}, which it seeds from"
+    configs = {p.stem for p in CONFIGS.glob("*.yaml")} - {"fast"}
+    assert configs == names, f"configs without a stage or stages without a config: {configs ^ names}"

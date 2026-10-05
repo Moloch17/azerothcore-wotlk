@@ -411,8 +411,11 @@ def test_config_overlay_merges_over_extends_before_overrides(tmp_path):
 def test_every_shipped_config_loads_alone_and_under_the_fast_overlay():
     configs = Path(__file__).resolve().parent.parent / "configs"
     TrainConfig.load(configs / "fast.yaml")    # the overlay alone, as forge fast reads it first
-    stages = sorted(configs.glob("stage*.yaml")) + sorted(configs.glob("*/stage*.yaml"))
-    assert len(stages) > 21
+    # Every stage config (none while the curriculum is empty; configs/archive/ is the archived one's, loaded by
+    # nothing) and the tiny test stage the learner tests run on.
+    stages = [p for p in sorted(configs.glob("*.yaml")) + sorted(configs.glob("*/*.yaml"))
+              if p.name != "fast.yaml" and "archive" not in p.relative_to(configs).parts]
+    stages.append(Path(__file__).resolve().parent / "fixtures" / "test_stage.yaml")
     for stage in stages:
         full = TrainConfig.load(stage)
         assert full.run_name, stage

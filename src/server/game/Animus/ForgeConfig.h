@@ -238,7 +238,7 @@ namespace AnimusForge
         /// AnimusForge.Bench.*: what `forge bench` measures (see BenchProfile and Forge::CommandBench).
         struct BenchSettings
         {
-            std::string Scenario = "stage4_duel";   // the scenario every trial runs
+            std::string Scenario;                   // the scenario every trial runs (none: name one)
             std::string Policy = "fight";           // the local policy of the sim-only trials
             std::vector<uint32> Threads;            // MapUpdate.Threads values to try
             std::vector<uint32> Envs;               // AnimusForge.Envs values to try

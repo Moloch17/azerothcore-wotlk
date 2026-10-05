@@ -255,9 +255,6 @@ def test_config_validation_and_default_off():
         StyleConfig(hidden=())
     with pytest.raises(ValueError, match="coef"):
         StyleConfig(coef=-1.0)
-    loaded = TrainConfig.load("configs/stage1_move.yaml")
-    assert not loaded.style.enabled
-    assert not TrainConfig.load("configs/stage2_travel.yaml").style.enabled
 
 
 def test_startup_line():

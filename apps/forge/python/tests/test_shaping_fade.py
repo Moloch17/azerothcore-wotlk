@@ -170,23 +170,3 @@ def test_a_gated_fade_waits_for_the_stage_measure_then_steps_on_plateaus():
     held = _fade(gate_metric="dummy_output", gate_value=4.0)
     held.see_gate({})
     assert _play(held, [5] * 6) == [1.0] * 6
-
-
-def test_stage3_fades_on_its_output_and_stage4_keeps_the_plain_plateau():
-    from pathlib import Path
-    configs = Path(__file__).resolve().parents[1] / "configs"
-    config = TrainConfig.load(configs / "stage3_rotation.yaml")
-    assert config.fade.enabled and config.fade.gate_metric == "dummy_output" and config.fade.gate_value == 4.0
-    assert config.fade.rungs == (1.0, 0.5, 0.25, 0.0)
-    stage4 = TrainConfig.load(configs / "stage4_duel.yaml")
-    assert stage4.fade.enabled and stage4.fade.gate_metric == ""
-
-
-def test_stage6_fades_once_its_drills_are_won_and_stage7_and_8_on_plateaus():
-    from pathlib import Path
-    configs = Path(__file__).resolve().parents[1] / "configs"
-    stage6 = TrainConfig.load(configs / "stage6_roles.yaml")
-    assert stage6.fade.enabled and stage6.fade.gate_metric == "clean_kill" and stage6.fade.gate_value == 0.85
-    for name in ("stage7_group.yaml", "stage8_ragefire.yaml"):
-        later = TrainConfig.load(configs / name)
-        assert later.fade.enabled and later.fade.gate_metric == "", name

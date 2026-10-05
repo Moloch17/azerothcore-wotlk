@@ -146,12 +146,13 @@ order, which is already a valid order, so the usual case needs no arguments at a
 The curriculum trains in two parts (see chapter 4, *Training one class at a time*): the movement stages once for
 all ten classes, then each class's fighting stages on its own.
 
-**The shared movement root** -- stages 1-7, all ten classes, in the base server:
+**The shared movement root** -- stages 1-7, all ten classes, in the base server. (Those stages were archived with the
+first curriculum, 2026-10-05, git tag `curriculum-v1`; the queue below takes the movement stages that replace them.)
 
 ```
 # env/dist/etc/modules/mod_animus_forge.conf
 AnimusForge.Classes = ""
-AnimusForge.Queue   = "stage1_move, stage1_move, stage1_move, stage1_move, stage5_pack, stage2_travel, stage2_travel"
+AnimusForge.Queue   = "<the movement stages, in order>"
 
 # .env (compose passes AC_ANIMUS_FORGE_OUTPUT_DIR, which beats AnimusForge.OutputDir in the conf)
 ANIMUS_FORGE_OUTPUT_DIR=/azerothcore/var/animus-forge/shared
