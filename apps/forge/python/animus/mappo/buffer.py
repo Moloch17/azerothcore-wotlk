@@ -197,6 +197,8 @@ class RolloutBuffer:
         # The free look's choices (protocol 22, LookHead), one a head -- yaw rate, pitch rate, zoom -- as sent; 0 for a
         # row without the camera. `log_probs` is the joint one: the action's plus the look's.
         self.look = np.zeros((*shape, look_heads), dtype=np.int8)
+        # The look's part of `log_probs` (the policy's own, as log_probs is), for the movement-only KL.
+        self.look_log_probs = np.zeros(shape, dtype=np.float32)
         self.log_probs = np.zeros(shape, dtype=np.float32)
         self.values = np.zeros(shape, dtype=np.float32)  # denormalised
         self.rewards = np.zeros(shape, dtype=np.float32)
@@ -234,7 +236,7 @@ class RolloutBuffer:
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
                      foresight=None, memory=None, goals=None, critic_memory=None, chosen=None, image=None,
-                     look=None) -> None:
+                     look=None, look_log_prob=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
         choices, with look heads."""
@@ -248,6 +250,8 @@ class RolloutBuffer:
         self.actions[t] = actions
         if self.look_heads and look is not None:
             self.look[t] = look
+        if self.look_heads and look_log_prob is not None:
+            self.look_log_probs[t] = look_log_prob
         self.log_probs[t] = log_probs
         self.values[t] = values
         if self.foresight and foresight is not None:
@@ -416,7 +420,7 @@ class RolloutBuffer:
             "layout": self.layout,
             "valid": self.samples,
             "actions": self.actions,
-            **({"look": self.look} if self.look_heads else {}),
+            **({"look": self.look, "look_log_probs": self.look_log_probs} if self.look_heads else {}),
             "log_probs": self.log_probs,
             "values": self.values,
             "advantages": self.advantages,

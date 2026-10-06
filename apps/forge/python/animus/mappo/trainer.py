@@ -241,6 +241,9 @@ class ActingState:
     # The free look's last choices [E, A, heads] (LookHead, protocol 22): what the decision just taken sends with its
     # actions (MappoTrainer.wire_look). The sim holds the rates; nothing here is carried into the next decision.
     look: np.ndarray | None = None
+    # And the look's own log probability [E, A] (its part of the joint one), which the update takes out again for the
+    # movement-only KL (approx_kl_move).
+    look_log_prob: np.ndarray | None = None
 
     def take(self, rows: slice) -> "ActingState":
         """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
@@ -329,11 +332,12 @@ class _Decided:
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.goal_slots_at = self.queue_at = None
         self.actions_at = self.log_probs_at = None
-        self.look_at = None
+        self.look_at = self.look_log_prob_at = None
 
     def finish(self, fetched: list[np.ndarray]):
         if self.look_at is not None and self.state is not None:
             self.state.look = fetched[self.look_at]
+            self.state.look_log_prob = fetched[self.look_log_prob_at]
         goals = None
         if self.goal_at is not None:
             goal = fetched[self.goal_at]
@@ -518,6 +522,7 @@ class _RolloutGraph:
             look, look_log_prob = actor.look(features, layout_t, goal_t, self.deterministic)
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             out["look"] = look.reshape(envs, agents, -1).to(torch.int8)
+            out["look_log_prob"] = look_log_prob.reshape(envs, agents).to(torch.float32)
         out["actions"] = actions.reshape(envs, agents)
         out["log_probs"] = log_probs.reshape(envs, agents)
         if trainer.foresight_outputs:
@@ -592,6 +597,7 @@ class _RolloutGraph:
             state.critic_memory = fetched["critic_memory"]
         if "look" in fetched:
             state.look = fetched["look"]
+            state.look_log_prob = fetched["look_log_prob"]
         return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals, None
 
 
@@ -1183,6 +1189,7 @@ class MappoTrainer:
             look, look_log_prob = self._rollout_actor.look(features, layout_t, decided.goal_t, deterministic)
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             decided.look_at = downloads.add(look.reshape(envs, agents, -1).to(torch.int8))
+            decided.look_log_prob_at = downloads.add(look_log_prob.reshape(envs, agents).to(torch.float32))
 
         # A slow layout speaks on its own clock and its call stands in between, so the seats have something
         # steady enough to act on. The log probabilities of the held decisions are the sampled action's and not
@@ -1295,6 +1302,7 @@ class MappoTrainer:
             queue=(np.full((envs, agents, self.goal_slots - 2), -1, dtype=np.int64) if self.goal_slots > 2
                    else None),
             look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
+            look_log_prob=np.zeros((envs, agents), dtype=np.float32) if self.look_heads else None,
         )
 
     def wire_look(self, look: np.ndarray | None) -> np.ndarray | None:
@@ -1739,6 +1747,7 @@ class MappoTrainer:
         cfg = self.config
         started = time.perf_counter()
         stats = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "clip_frac": 0.0, "approx_kl": 0.0,
+                 "approx_kl_move": 0.0,
                  "actor_grad_norm": 0.0, "critic_grad_norm": 0.0}
         if self.goal_count:
             stats["goal_entropy"] = 0.0
@@ -1858,6 +1867,8 @@ class MappoTrainer:
 
                 dist = self.actor.action_distribution(features, layout_all, mask_all, goal_all, groups, obs_all)
                 log_probs = dist.log_prob(data["actions"][:, chunk].reshape(-1)).reshape(*lead)
+                # The movement action's own, before the goal's and the look's join it (approx_kl_move).
+                move_log_probs = log_probs
                 action_entropies = dist.entropy().reshape(*lead)
                 entropies = action_entropies
                 predictions = (self.actor.foresight(features).reshape(*lead, self.foresight_outputs)
@@ -2088,6 +2099,14 @@ class MappoTrainer:
                     totals["clip_frac"] += ((((ratio - 1).abs() > cfg.clip).to(torch.float32)
                                              * counted).sum() / weight)
                     totals["approx_kl"] += kl
+                    # The movement action's KL alone: the stored joint log probability less the look's part (the
+                    # goal's is stored apart). The joint KL above stays the early stop's signal.
+                    taken_move = data["log_probs"][:, chunk]
+                    if "look_log_probs" in data:
+                        taken_move = taken_move - data["look_log_probs"][:, chunk]
+                    move_log_ratio = move_log_probs - taken_move
+                    totals["approx_kl_move"] += ((((move_log_ratio.exp() - 1) - move_log_ratio) * counted).sum()
+                                                 / weight)
                     totals["actor_grad_norm"] += actor_grad
                     totals["critic_grad_norm"] += critic_grad
                     epoch_kl += kl
@@ -2105,6 +2124,10 @@ class MappoTrainer:
             stats[name] = float(totals[name]) / max(1, updates)
         stats["explained_variance"] = float(explained)
         stats["epochs_run"] = float(epochs_run)
+        # What the update actually completed, against mappo.epochs x mappo.minibatches: whether target_kl (on the
+        # joint KL, the look's heads in it) cut it short.
+        stats["epochs_done"] = float(epochs_run)
+        stats["minibatches_done"] = float(updates)
         stats.update(self._goal_stats(data))
         stats.update(self._look_stats(data))
         stats.update(sil_stats)

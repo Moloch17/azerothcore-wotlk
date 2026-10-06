@@ -406,7 +406,7 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory", "chosen",
-              "goal_slots", "image", "look")
+              "goal_slots", "image", "look", "look_log_prob")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -474,7 +474,7 @@ class DecisionRows:
                   a.get("goal_slots")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
                 a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"), a.get("image"),
-                a.get("look"))
+                a.get("look"), a.get("look_log_prob"))
 
 
 class RolloutOutcome:
@@ -820,6 +820,7 @@ class TrainingRun:
             *(f"episode_{name}" for name in spec.episode_info_names),
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
+            "approx_kl_move", "epochs_done", "minibatches_done",
             "lr_scale", "shaping_scale", "cost_scale", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
             # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
@@ -1860,6 +1861,7 @@ class TrainingRun:
         self.acting.put(rows, acting)
         # The free look the decision chose (protocol 22), sent with the actions and kept with them.
         look = trainer.wire_look(acting.look)
+        look_log_prob = acting.look_log_prob
         # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
         # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
         present = part.present
@@ -1909,7 +1911,8 @@ class TrainingRun:
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
-                     critic_memory=critic_memory, chosen=chosen, goal_slots=goal_slots, look=look)
+                     critic_memory=critic_memory, chosen=chosen, goal_slots=goal_slots, look=look,
+                     look_log_prob=look_log_prob)
         send(rows.start, rows.stop - rows.start, actions, trainer.wire_goals(goals[0]) if goals is not None else None,
              look)
 
