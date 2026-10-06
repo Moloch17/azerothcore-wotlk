@@ -35,7 +35,7 @@ from typing import Iterator
 
 import numpy as np
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 MAGIC = b"ANCAP\0\0\0"
 FRAME = struct.Struct("<HH")
 BLOCK_BYTES = 32 << 20          # decompressed bytes framed and parsed at once
@@ -52,7 +52,7 @@ class CaptureError(ValueError):
 # Record types (FORMAT.md §2).
 FILE_HEADER = 0
 SESSION_START, SESSION_CONTEXT, SESSION_END, GROUP_STATE, KNOWN_SPELLS, LATENCY = 1, 2, 3, 4, 5, 6
-MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MAP_UPDATE = 10, 11, 12, 13, 14
+MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY, MAP_UPDATE = 10, 11, 12, 13, 14, 15
 
 # Move `source` (FORMAT.md §2.3): a player's client packet; format 1's synthesised companion sample (never written by
 # format 2); a companion's player controller packet, through its session's movement handlers (format 2).
@@ -90,7 +90,7 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                     ("move_flags", "<u4"), ("move_flags2", "<u2"), ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
                     ("o", "<f4"), ("pitch", "<f4"), ("fall_ms", "<u4"), ("jump_zspeed", "<f4"),
                     ("jump_sin", "<f4"), ("jump_cos", "<f4"), ("jump_xyspeed", "<f4"), ("map", "<u4"),
-                    ("source", "u1")]),
+                    ("source", "u1"), ("server_ms", "<u4")]),
     SPEEDS: ("Speeds", [("ms", "<u8"), ("player", "<u8"), ("walk", "<f4"), ("run", "<f4"), ("run_back", "<f4"),
                         ("swim", "<f4"), ("swim_back", "<f4"), ("flight", "<f4"), ("flight_back", "<f4"),
                         ("turn_rate", "<f4"), ("pitch_rate", "<f4")]),
@@ -99,6 +99,7 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
     MOVER_STATE: ("MoverState", [("ms", "<u8"), ("player", "<u8"), ("kind", "u1"), ("class_", "u1"), ("race", "u1"),
                                  ("level", "u1"), ("map", "<u4"), ("zone", "<u4"), ("mount", "<u4"), ("form", "<u4"),
                                  ("in_combat", "u1"), ("move_revision", "u1"), ("model", "S32")]),
+    MOVE_TALLY: ("MoveTally", [("ms", "<u8"), ("player", "<u8"), ("kind", "u1"), ("sent", "<u4"), ("kept", "<u4")]),
     MAP_UPDATE: ("MapUpdate", [("ms", "<u8"), ("map", "<u4"), ("instance", "<u4"), ("diff_ms", "<u4")]),
     CAST_REQUEST: ("CastRequest", [("ms", "<u8"), ("player", "<u8"), ("spell", "<u4"), ("target", "<u8"),
                                    ("target_kind", "u1"), ("tx", "<f4"), ("ty", "<f4"), ("tz", "<f4"),
@@ -136,6 +137,11 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
 }
 PREFIX = {rtype: (name, np.dtype(fields)) for rtype, (name, fields) in PREFIX.items()}
 TYPE_OF = {name: rtype for rtype, (name, _) in PREFIX.items()}
+# Fields a later format appended to a record, which an older file's record lacks: read as 0 there. The record's
+# shortest valid payload is its prefix without them.
+APPENDED: dict[int, tuple[str, ...]] = {MOVE: ("server_ms",)}       # format 3
+MIN_LENGTH = {rtype: PREFIX[rtype][1].itemsize - sum(PREFIX[rtype][1].fields[name][0].itemsize for name in names)
+              for rtype, names in APPENDED.items()}
 
 # Variable tails (FORMAT.md §2.2, §2.5, §2.7).
 GROUP_MEMBER = np.dtype([("unit", "<u8"), ("class_", "u1"), ("level", "u1"), ("role", "u1"),
@@ -278,6 +284,26 @@ def _prefix_rows(buf: bytes, data: np.ndarray, dtype: np.dtype, runs: np.ndarray
     return np.concatenate(parts) if parts else np.zeros(0, dtype)
 
 
+def _rows_with_appended(buf: bytes, data: np.ndarray, rtype: int, dtype: np.dtype, runs: np.ndarray,
+                        older: np.ndarray) -> np.ndarray:
+    """Rows of a type whose older records lack its APPENDED fields (0 there), in file order."""
+    names = [name for name in dtype.names if name not in APPENDED[rtype]]
+    short = np.dtype({"names": names, "formats": [dtype.fields[n][0] for n in names],
+                      "offsets": [dtype.fields[n][1] for n in names], "itemsize": MIN_LENGTH[rtype]})
+    parts = []
+    for run, old in zip(runs, older):
+        one = run[None, :]
+        if old:
+            part = np.zeros(int(run[3]), dtype)
+            rows = _prefix_rows(buf, data, short, one)
+            for name in names:
+                part[name] = rows[name]
+            parts.append(part)
+        else:
+            parts.append(_prefix_rows(buf, data, dtype, one))
+    return np.concatenate(parts)
+
+
 def _offsets(runs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Every record's payload offset and length from runs."""
     if len(runs) == 0:
@@ -300,12 +326,16 @@ def parse(buf: bytes, runs: np.ndarray) -> Batch:
             batch.unknown[rtype] = int(mine[:, 3].sum())
             continue
         dtype = PREFIX[rtype][1]
-        ok = mine[:, 2] >= dtype.itemsize
+        ok = mine[:, 2] >= MIN_LENGTH.get(rtype, dtype.itemsize)
         batch.malformed += int(mine[~ok, 3].sum())
         mine = mine[ok]
         if len(mine) == 0:
             continue
-        batch.records[rtype] = _prefix_rows(buf, data, dtype, mine)
+        older = mine[:, 2] < dtype.itemsize
+        if older.any():
+            batch.records[rtype] = _rows_with_appended(buf, data, rtype, dtype, mine, older)
+        else:
+            batch.records[rtype] = _prefix_rows(buf, data, dtype, mine)
         if rtype == SNAPSHOT:
             offs, lens = _offsets(mine)
             batch._snapshot_spans = np.stack([offs, lens], axis=1)
