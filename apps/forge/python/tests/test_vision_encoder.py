@@ -1,6 +1,7 @@
-"""The camera's encoder (camera-vision, naive slice): stage.json's vision block read per layout, the image laid out
-[row][col][channel], the kind one-hot, the columns kept from the adapters and their normalisers, the zero join, the
-rollout graph kept on, export refused, and the networks of a stage without a camera exactly as they were."""
+"""The camera's encoder (camera-vision): stage.json's vision block read per layout, the image's bytes decoded on the
+device into [N, H, W, C], the kind one-hot, the scalar columns kept from the adapters and their normalisers, the join,
+the encoder shared by the actor and the critic, the rollout graph kept on, export refused, and the networks of a stage
+without a camera exactly as they were."""
 
 import copy
 import json
@@ -18,8 +19,10 @@ from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
 
 H, W, C, KINDS, KIND_CHANNEL, SCALARS = 8, 12, 5, 8, 3, 7
-SPAN = H * W * C + SCALARS
-IMAGE = {"height": H, "width": W, "channels": C, "kinds": KINDS, "kind_channel": KIND_CHANNEL, "scalars": SCALARS}
+BYTES = H * W * 4
+SPAN = SCALARS
+IMAGE = {"height": H, "width": W, "channels": C, "kinds": KINDS, "kind_channel": KIND_CHANNEL, "scalars": SCALARS,
+         "transport": "bytes", "bytes_per_pixel": 4}
 # Two layouts with a camera at different columns (their core blocks differ in width, as the classes' do) and one
 # without.
 NAMES = ["warrior", "priest", "director"]
@@ -30,15 +33,15 @@ def block(name: str, first: int, count: int, actions=(0, 0), **extra) -> dict:
     return {"name": name, "obs": [first, count], "actions": list(actions), **extra}
 
 
-def stage(image: dict | None = IMAGE, vision_revision: int = 1) -> dict:
-    """A stage.json: warrior core 5 + move 3, priest core 9 + move 3, then the vision block and a goal block of 2;
-    the director core 6 + goal 2."""
+def stage(image: dict | None = IMAGE, vision_revision: int = 3) -> dict:
+    """A stage.json: warrior core 5 + move 3, priest core 9 + move 3, then the vision block (its 7 scalars; the image
+    travels as bytes) and a goal block of 2; the director core 6 + goal 2."""
     layouts = {}
     for name, core in (("warrior", 5), ("priest", 9)):
         blocks = [block("core", 0, core, (0, 3)), block("move", core, 3, (3, 2))]
         at = core + 3
         if image is not None:
-            blocks.append(block("vision", at, SPAN, revision=vision_revision, image=image))
+            blocks.append(block("vision", at, SPAN, revision=vision_revision, image=dict(image)))
             at += SPAN
         blocks.append(block("goal", at, 2))
         layouts[name] = {"obs_dim": at + 2, "blocks": blocks}
@@ -56,35 +59,39 @@ def actor(vision=True, seed=0, **kwargs) -> LayoutActor:
     return LayoutActor(shapes(s), [16, 16], vision=vision_of(s, NAMES) if vision else None, **kwargs)
 
 
-def observations(rows: int, seed: int = 0, layouts=None) -> tuple[torch.Tensor, torch.Tensor]:
-    """Random rows of every layout, the camera's columns a plausible image (kinds 0-7, the rest in [0, 1])."""
+def frame(generator: torch.Generator) -> torch.Tensor:
+    """A plausible frame's bytes [I]: any distance, height and normal, a kind 0-7 with the objective bit now and
+    then."""
+    pixels = torch.randint(0, 256, (H, W, 4), generator=generator, dtype=torch.uint8)
+    kind = torch.randint(0, KINDS, (H, W), generator=generator, dtype=torch.uint8)
+    flag = (torch.rand(H, W, generator=generator) < 0.1).to(torch.uint8) << 4
+    pixels[..., 3] = kind | flag
+    return pixels.reshape(-1)
+
+
+def observations(rows: int, seed: int = 0, layouts=None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Random rows of every layout, (obs, layout, image): a camera layout's scalars in [0, 1] and a frame of bytes;
+    a layout without one the no-frame pattern."""
     s = stage()
     widths = [s["layouts"][name]["obs_dim"] for name in NAMES]
     generator = torch.Generator().manual_seed(seed)
     layout = (torch.tensor(layouts) if layouts is not None
               else torch.arange(rows) % len(NAMES))
     obs = torch.zeros(rows, max(widths))
+    image = blank(rows, (255, 128, 0, 0))
     for row in range(rows):
         index = int(layout[row])
         obs[row, : widths[index]] = torch.randn(widths[index], generator=generator)
         if NAMES[index] in FIRST:
             first = FIRST[NAMES[index]]
-            image = torch.rand(H, W, C, generator=generator)
-            image[..., KIND_CHANNEL] = torch.randint(0, KINDS, (H, W), generator=generator).float()
-            obs[row, first : first + H * W * C] = image.reshape(-1)
-            obs[row, first + H * W * C : first + SPAN] = torch.rand(SCALARS, generator=generator)
-    return obs, layout
+            obs[row, first : first + SCALARS] = torch.rand(SCALARS, generator=generator)
+            image[row] = frame(generator)
+    return obs, layout, image
 
 
-def with_image(obs: torch.Tensor, layout: torch.Tensor, value: float | None) -> torch.Tensor:
-    """`obs` with every camera column set to `value` (None: fresh noise)."""
-    out = obs.clone()
-    for row in range(obs.shape[0]):
-        name = NAMES[int(layout[row])]
-        if name in FIRST:
-            columns = slice(FIRST[name], FIRST[name] + SPAN)
-            out[row, columns] = torch.rand(SPAN) * 7 if value is None else value
-    return out
+def blank(rows: int, pixel) -> torch.Tensor:
+    """`rows` frames of one pixel everywhere, [rows, I] uint8."""
+    return torch.tensor(pixel, dtype=torch.uint8).repeat(rows, H * W)
 
 
 # ------------------------------------------------------------------ stage.json
@@ -93,7 +100,7 @@ def with_image(obs: torch.Tensor, layout: torch.Tensor, value: float | None) -> 
 def test_vision_of_keeps_each_layouts_own_first_column():
     vision = vision_of(stage(), NAMES)
     assert [entry and entry["first"] for entry in vision] == [8, 12, None]
-    assert vision[0] == {"first": 8, **IMAGE}
+    assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES}
 
 
 def test_vision_of_is_none_without_a_camera():
@@ -112,8 +119,16 @@ def test_vision_of_refuses_what_it_cannot_read():
         vision_of(other, NAMES)
     short = stage()
     short["layouts"]["warrior"]["blocks"][2]["obs"][1] = SPAN - 1
-    with pytest.raises(ValueError, match="image and scalars"):
+    with pytest.raises(ValueError, match="its scalars"):
         vision_of(short, NAMES)
+    floats = stage()
+    del floats["layouts"]["warrior"]["blocks"][2]["image"]["transport"]
+    with pytest.raises(ValueError, match="not sent as bytes"):
+        vision_of(floats, NAMES)
+    three = stage()
+    three["layouts"]["warrior"]["blocks"][2]["image"] = {**IMAGE, "bytes_per_pixel": 3}
+    with pytest.raises(ValueError, match="decodes 4 bytes"):
+        vision_of(three, NAMES)
     past = stage()
     past["layouts"]["warrior"]["obs_dim"] = FIRST["warrior"] + SPAN - 1
     with pytest.raises(ValueError, match="past the layout"):
@@ -141,21 +156,38 @@ def test_a_stage_without_a_camera_builds_the_networks_it_always_did():
 # ------------------------------------------------------------------ the encoder
 
 
-def test_the_image_is_read_row_col_channel_from_each_layouts_own_columns():
+def test_the_image_bytes_are_decoded_row_col_channel_and_the_scalars_read_from_each_layouts_columns():
+    """Revision 2's channels, decoded from the bytes exactly (Vision::DecodePixel), in the patch encoder's
+    [N, H, W, C]; the scalars from each layout's own columns."""
     encoder = VisionEncoder(vision_of(stage(), NAMES))
     obs = torch.zeros(2, 12 + SPAN + 2)
     layout = torch.tensor([0, 1])
-    row, col, channel = 5, 6, 2
+    image = blank(2, (255, 128, 0, 0))                  # no frame: sky, height 0
+    row, col = 5, 6
+    at = (row * W + col) * 4
+    image[0, at : at + 4] = torch.tensor([127, 3, 51, 0x10 | 6], dtype=torch.uint8)
+    image[1, at : at + 4] = torch.tensor([0, 253, 255, 2], dtype=torch.uint8)
     for index, name in enumerate(("warrior", "priest")):
-        first = FIRST[name]
-        obs[index, first + (row * W + col) * C + channel] = 0.25 + index
-        obs[index, first + H * W * C + 5] = 0.5 + index         # the sixth scalar (underwater)
-    image, scalars = encoder.gather(obs, layout)
-    assert image.shape == (2, H, W, C) and scalars.shape == (2, SCALARS)
+        obs[index, FIRST[name] + 5] = 0.5 + index        # the sixth scalar (underwater)
+    decoded, scalars = encoder.gather(obs, layout, image)
+    assert decoded.shape == (2, H, W, C) and scalars.shape == (2, SCALARS)
+    torch.testing.assert_close(decoded[0, row, col], torch.tensor([127 / 254, -125 / 125, 51 / 255, 6.0, 1.0]))
+    torch.testing.assert_close(decoded[1, row, col], torch.tensor([0.0, 125 / 125, 1.0, 2.0, 0.0]))
+    sky = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0])
+    torch.testing.assert_close(decoded[0, 0, 0], sky)
+    others = torch.ones(H, W, dtype=torch.bool)
+    others[row, col] = False
+    assert bool((decoded[:, others] == sky).all())
     for index in range(2):
-        assert float(image[index, row, col, channel]) == 0.25 + index
-        assert float(image[index].abs().sum()) == 0.25 + index      # nothing else: the layout's own offset
         assert float(scalars[index, 5]) == 0.5 + index
+        assert float(scalars[index].abs().sum()) == 0.5 + index
+
+
+def test_a_network_with_a_camera_refuses_to_act_without_its_image():
+    net = actor()
+    obs, layout, _ = observations(3)
+    with pytest.raises(ValueError, match="image bytes"):
+        net(obs, layout, torch.ones(3, 5))
 
 
 def test_the_kind_channel_becomes_a_one_hot_of_the_kinds():
@@ -191,13 +223,12 @@ def test_a_patch_is_its_square_of_pixels_row_by_row():
 def test_an_image_the_patches_do_not_tile_is_refused():
     image = {**IMAGE, "height": 30}
     with pytest.raises(ValueError, match="multiples of 4"):
-        VisionEncoder([{"first": 0, **image}])
+        VisionEncoder([{"first": 0, **image, "image_bytes": 30 * W * 4}])
 
 
 def test_shapes_at_the_default_camera():
-    image = {"height": 32, "width": 64, "channels": 5, "kinds": 8, "kind_channel": 3, "scalars": 7}
-    span = 32 * 64 * 5 + 7
-    assert span == 10_247
+    image = {"height": 32, "width": 64, "channels": 5, "kinds": 8, "kind_channel": 3, "scalars": 7,
+             "bytes_per_pixel": 4, "image_bytes": 32 * 64 * 4}
     descriptors = [{"first": 3, **image}, None]
     encoder = VisionEncoder(descriptors)
     join = VisionJoin(encoder.has_vision, 24)
@@ -207,13 +238,14 @@ def test_shapes_at_the_default_camera():
     assert (encoder.mix.in_features, encoder.mix.out_features) == (64, 64)
     assert encoder.embed.in_features == 128 + 7 and encoder.embed.out_features == 256
     assert join.linear.in_features == 256 and join.linear.out_features == 24
-    obs = torch.rand(5, 3 + span)
+    obs = torch.rand(5, 3 + 7)
     layout = torch.tensor([0, 1, 0, 1, 0])
+    image = torch.randint(0, 256, (5, 32 * 64 * 4), dtype=torch.uint8)
     with torch.no_grad():
         join.linear.bias.normal_()
-        embedding = encoder(obs, layout)
+        embedding = encoder(obs, layout, image)
         out = join(embedding, layout)
-        image = encoder.gather(obs, layout)[0]
+        image = encoder.gather(obs, layout, image)[0]
         features = encoder.features(encoder.patches(encoder.planes(image)))
         points = encoder.keypoints(features)
     assert embedding.shape == (5, 256) and out.shape == (5, 24)
@@ -229,10 +261,10 @@ def test_shapes_at_the_default_camera():
 def test_the_camera_columns_are_blind_to_the_adapters():
     net = actor()
     vision = vision_of(stage(), NAMES)
-    obs, layout = observations(9)
+    obs, layout, image = observations(9)
     with torch.no_grad():
         net.vision_join.linear.weight.normal_()               # the camera in the logits, so gradient reaches everything
-    logits = net(obs, layout, torch.ones(9, 5)).logits
+    logits = net(obs, layout, torch.ones(9, 5), image=image).logits
     logits.sum().backward()
     for index, entry in enumerate(vision):
         weight = net.adapters[index].weight
@@ -250,7 +282,7 @@ def test_the_camera_columns_are_blind_to_the_adapters():
 
 def test_the_camera_columns_keep_an_identity_normaliser():
     net = actor()
-    obs, layout = observations(30, seed=4)
+    obs, layout, _ = observations(30, seed=4)
     update_norms(net.norms, obs * 5.0 + 3.0, layout, net.obs_dims)
     for name, first in FIRST.items():
         norm = net.norms[NAMES.index(name)]
@@ -271,13 +303,15 @@ def test_a_fresh_camera_takes_part_from_the_first_update():
     """M1 trains from scratch (the user, 2026-10-06): its camera is initialised as the adapters are, so what it sees
     moves the logits at once and the whole encoder learns from the first update."""
     net = actor()
-    obs, layout = observations(12)
+    obs, layout, image = observations(12)
     mask = torch.ones(12, 5)
     with torch.no_grad():
-        dark = net(with_image(obs, layout, 0.0), layout, mask).logits
-        lit = net(with_image(obs, layout, 1.0), layout, mask).logits
+        # A frame with something in it against an even one (a spatial softmax reads where things are, so two even
+        # frames of different colours look alike to it).
+        dark = net(obs, layout, mask, image=blank(12, (0, 128, 0, 1))).logits
+        lit = net(obs, layout, mask, image=image).logits
     assert not torch.allclose(dark, lit)
-    net(with_image(obs, layout, 0.5), layout, mask).logits.sum().backward()
+    net(obs, layout, mask, image=image).logits.sum().backward()
     assert bool((net.vision_join.linear.weight.grad != 0).any())
     assert bool((net.vision.patch.weight.grad != 0).any())
     assert bool((net.vision.embed.weight.grad != 0).any())
@@ -301,11 +335,11 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
     join = seeded.actor.vision_join.linear
     assert bool((join.weight == 0).all()) and bool((join.bias == 0).all())
     assert bool((seeded.critic.vision_join.linear.weight == 0).all())
-    obs, layout = observations(12)
+    obs, layout, image = observations(12)
     mask = torch.ones(12, 5)
     with torch.no_grad():
-        torch.testing.assert_close(seeded.actor(with_image(obs, layout, 1.0), layout, mask).logits,
-                                   seeded.actor(with_image(obs, layout, 0.0), layout, mask).logits)
+        torch.testing.assert_close(seeded.actor(obs, layout, mask, image=image).logits,
+                                   seeded.actor(obs, layout, mask, image=blank(12, (0, 128, 0, 1))).logits)
 
 
 def test_the_actor_and_the_critic_share_one_camera_encoder():
@@ -325,51 +359,60 @@ def test_the_actor_and_the_critic_share_one_camera_encoder():
     held = lambda optimizer: {id(p) for group in optimizer.param_groups for p in group["params"]}
     assert held(trainer.vision_opt) == encoder
     assert not encoder & held(trainer.actor_opt) and not encoder & held(trainer.critic_opt)
-    obs, layout = observations(6)
+    obs, layout, image = observations(6)
     state = torch.randn(6, 4)
     with torch.no_grad():
-        value = trainer.critic(state, obs, layout)
+        value = trainer.critic(state, obs, layout, image=image)
         trainer.actor.vision.embed.bias.add_(1.0)           # the actor's encoder moves the critic's value
-        assert not torch.allclose(trainer.critic(state, obs, layout), value)
+        assert not torch.allclose(trainer.critic(state, obs, layout, image=image), value)
 
 
-def test_both_losses_train_the_shared_camera_once_per_minibatch():
-    """The camera's gradient is the actor's and the critic's together, and vision_opt steps it once a minibatch."""
-    config = MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=1, minibatches=1)
+@pytest.mark.parametrize("two_clock", [False, True], ids=["plain", "two_clock"])
+def test_both_losses_train_the_shared_camera_once_per_minibatch(two_clock):
+    """The camera's gradient is the actor's and the critic's together, and vision_opt steps it once a minibatch. With
+    the two-clock seat's goal update too, which replays the fast features (and so the images) itself."""
+    extra = dict(goal_count=3, goal_every_decisions=2, slow_goal_size=4) if two_clock else {}
+    config = MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=1, minibatches=1, **extra)
     torch.manual_seed(0)
     trainer = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
-    obs, layout = observations(6)
+    obs, layout, image = observations(6)
     state = torch.randn(6, 4)
     encoder = trainer.actor.vision
     # Each loss alone reaches the encoder.
-    trainer.critic(state, obs, layout).sum().backward()
+    trainer.critic(state, obs, layout, image=image).sum().backward()
     critic_grad = encoder.patch.weight.grad.clone()
     assert bool((critic_grad != 0).any())
     encoder.zero_grad()
-    trainer.actor(obs, layout, torch.ones(6, 5)).logits.sum().backward()
+    trainer.actor(obs, layout, torch.ones(6, 5), image=image).logits.sum().backward()
     assert bool((encoder.patch.weight.grad != 0).any())
     encoder.zero_grad()
     # In the update: one Adam step for the camera per minibatch (its state counts them).
     from animus.mappo.buffer import RolloutBuffer
     envs, steps = 3, 4
-    buffer = RolloutBuffer(steps, envs, 2, obs.shape[-1], 4, 5, 0, trainer.recurrent_size)
+    buffer = RolloutBuffer(steps, envs, 2, obs.shape[-1], 4, 5, 0, trainer.recurrent_size, two_clock,
+                           trainer.slow_goal_size, image_bytes=BYTES)
+    assert buffer.image.dtype == np.uint8 and buffer.image.shape == (steps, envs, 2, BYTES)
     acting = trainer.acting_state(envs, 2)
     for step in range(steps):
-        o, l = observations(envs * 2, seed=step)
-        o, l = o.numpy().reshape(envs, 2, -1), l.numpy().reshape(envs, 2)
+        o, l, im = observations(envs * 2, seed=step)
+        o, l, im = o.numpy().reshape(envs, 2, -1), l.numpy().reshape(envs, 2), im.numpy().reshape(envs, 2, -1)
         st = np.random.default_rng(step).standard_normal((envs, 4)).astype(np.float32)
         mask = np.ones((envs, 2, 5), bool)
-        chosen, log_probs, values, *_ = trainer.act_and_value(o, mask, l, st, state=acting)
-        buffer.add_decision(o, st, mask, l, chosen, log_probs, values)
+        memory = acting.memory.copy()
+        chosen, log_probs, values, _, goals, _ = trainer.act_and_value(o, mask, l, st, state=acting, image=im)
+        buffer.add_decision(o, st, mask, l, chosen, log_probs, values, None, None, memory, goals, image=im)
+        np.testing.assert_array_equal(buffer.image[step], im)
         buffer.add_outcome(np.ones((envs, 2), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),
                            np.zeros((envs, 2), np.float32))
-    buffer.finish(np.zeros((envs, 2), np.float32), 0.99, 0.95)
+    buffer.finish(np.zeros((envs, 2), np.float32), 0.99, 0.95,
+                  slow_goal=(config.slow_goal_gamma, config.slow_goal_lambda) if two_clock else None)
     before = [p.detach().clone() for p in encoder.parameters()]
     calls = []
     hook = encoder.register_forward_hook(lambda *_: calls.append(1))
     stats = trainer.update(buffer)
     hook.remove()
-    assert len(calls) == 1                  # one minibatch, encoded once for the actor and the critic
+    # One minibatch, encoded once for the actor and the critic (and once more by the goal update, without gradient).
+    assert len(calls) == (2 if two_clock else 1)
     assert stats["vision_grad_norm"] > 0.0
     assert stats["vision_grad_actor"] > 0.0 and stats["vision_grad_critic"] > 0.0
     assert all(int(trainer.vision_opt.state[p]["step"]) == 1 for p in encoder.parameters())
@@ -404,21 +447,22 @@ def test_the_graph_decides_with_the_camera_as_the_eager_path_does():
         for network in (trainer.actor, trainer.critic):
             network.vision_join.linear.weight.normal_(std=0.5)
     trainer.sync_rollout()
-    obs, layout = observations(6, layouts=[0, 1, 2, 0, 1, 2])
+    obs, layout, image = observations(6, layouts=[0, 1, 2, 0, 1, 2])
     arrays = (obs.numpy().reshape(3, 2, -1), np.ones((3, 2, 5), bool), layout.numpy().reshape(3, 2),
               np.random.default_rng(0).standard_normal((3, 4)).astype(np.float32))
+    image = image.numpy().reshape(3, 2, -1)
     eager_state = trainer.acting_state(3, 2)
     graph_state = copy.deepcopy(eager_state)
     trainer.config.rollout_graphs = False
-    eager = trainer.act_and_value(*arrays, deterministic=True, state=eager_state)
+    eager = trainer.act_and_value(*arrays, deterministic=True, state=eager_state, image=image)
     trainer.config.rollout_graphs = True
-    graphed = trainer.act_and_value(*arrays, deterministic=True, state=graph_state)
+    graphed = trainer.act_and_value(*arrays, deterministic=True, state=graph_state, image=image)
     assert trainer._rollout_graphs, "the decision was not captured"
     np.testing.assert_allclose(eager[2], graphed[2], rtol=1e-4, atol=1e-5)          # values
     np.testing.assert_allclose(eager_state.memory, graph_state.memory, rtol=1e-4, atol=1e-5)
     # The graph read the camera: another image, other values.
-    blank = (with_image(obs, layout, 0.0).numpy().reshape(3, 2, -1), *arrays[1:])
-    other = trainer.act_and_value(*blank, deterministic=True, state=copy.deepcopy(eager_state))
+    other = trainer.act_and_value(*arrays, deterministic=True, state=copy.deepcopy(eager_state),
+                                  image=blank(6, (0, 128, 0, 1)).numpy().reshape(3, 2, -1))
     assert not np.allclose(other[2], graphed[2])
 
 
@@ -475,7 +519,7 @@ def test_seeding_starts_the_camera_fresh_or_carries_it():
     assert carried.director_columns_clear()
 
     revised = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
-    seed_trainer(revised, checkpoint, spec, stage(vision_revision=2))
+    seed_trainer(revised, checkpoint, spec, stage(vision_revision=4))
     assert bool((revised.actor.vision_join.linear.weight == 0).all())
     assert revised.director_columns_clear()
 

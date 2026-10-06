@@ -17,7 +17,7 @@ from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
-                       split_goal_pair, to_device, update_norms, vision_term)
+                       split_goal_pair, to_device, update_norms, vision_image_bytes, vision_term)
 from .valuenorm import ValueNorm
 
 
@@ -396,9 +396,13 @@ class _RolloutGraph:
 
         # The large inputs, and the small ones: each a pinned host buffer the caller fills and a device buffer the graph
         # uploads it into -- the large ones only when they came from the host.
-        self.large = _Packed([("obs", (envs, agents, obs.shape[-1]), torch.float32),
-                              ("mask", (envs, agents, mask.shape[-1]), torch.bool),
-                              ("state", (envs, state_features.shape[-1]), torch.float32)], device)
+        large = [("obs", (envs, agents, obs.shape[-1]), torch.float32),
+                 ("mask", (envs, agents, mask.shape[-1]), torch.bool),
+                 ("state", (envs, state_features.shape[-1]), torch.float32)]
+        if trainer.image_bytes:
+            # The camera's bytes (protocol 21), decoded inside the graph.
+            large.append(("image", (envs, agents, trainer.image_bytes), torch.uint8))
+        self.large = _Packed(large, device)
         specs = [("layout", (envs, agents), torch.long)]
         if recurrent:
             specs += [("memory", (envs, agents, recurrent), torch.float32),
@@ -450,7 +454,7 @@ class _RolloutGraph:
         # One encoder for both (the critic reads the actor's), so the image is encoded once and each network's own
         # join reads it.
         if actor.vision is not None:
-            seen = actor.vision(obs_t, layout_t)
+            seen = actor.vision(obs_t, layout_t, inputs["image"].reshape(rows, -1))
             actor_own = actor_own + vision_term(actor, obs_t, layout_t, seen).to(actor_own.dtype)
             critic_own = critic_own + vision_term(critic, obs_t, layout_t, seen).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
@@ -510,7 +514,7 @@ class _RolloutGraph:
             self.outputs.device[name].copy_(value)
         self.outputs.download()
 
-    def run(self, obs, mask, layout, state_features, state: "ActingState"):
+    def run(self, obs, mask, layout, state_features, state: "ActingState", image=None):
         """One decision: fill the inputs, replay, wait once. Returns the act_and_value tuple and updates `state`."""
         trainer = self.trainer
         host = self.host_in
@@ -520,10 +524,14 @@ class _RolloutGraph:
             large["obs"].copy_(obs)
             large["mask"].copy_(mask)
             large["state"].copy_(state_features)
+            if trainer.image_bytes:
+                large["image"].copy_(torch.as_tensor(image, device=large["image"].device))
         else:
             np.copyto(host["obs"].numpy(), obs)
             np.copyto(host["mask"].numpy(), mask)
             np.copyto(host["state"].numpy(), state_features)
+            if trainer.image_bytes:
+                np.copyto(host["image"].numpy(), image)
         np.copyto(host["layout"].numpy(), layout, casting="unsafe")
         if trainer.recurrent_size:
             np.copyto(host["memory"].numpy(), state.memory)
@@ -608,6 +616,10 @@ class MappoTrainer:
         # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
         # On whenever the stage has one, with no switch of its own; the networks then carry a VisionEncoder each.
         self.vision = vision
+        # The camera's bytes per agent each decision carries beside its observation (protocol 21), 0 without one.
+        self.image_bytes = vision_image_bytes(vision)
+        if self.image_bytes and config.sil_coef > 0.0:
+            raise ValueError("mappo.sil_coef with a camera: self-imitation keeps no images yet (camera-vision)")
         # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
         self.slow_choose_column = (int(director[1].get("may_call", -1))
                                    if director is not None and director[0] == self.slow_layout else -1)
@@ -1025,20 +1037,21 @@ class MappoTrainer:
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool = False,
-            state: "ActingState | None" = None) -> tuple[np.ndarray, np.ndarray]:
-        """obs [E, A, O], mask [E, A, N], layout [E, A] -> actions [E, A], log_probs [E, A].
+            state: "ActingState | None" = None, image=None) -> tuple[np.ndarray, np.ndarray]:
+        """obs [E, A, O], mask [E, A, N], layout [E, A] -> actions [E, A], log_probs [E, A]. `image` [E, A, I] uint8:
+        the camera's bytes (protocol 21), with a camera.
 
         `state` is carried in and updated in place (memory, goal): the policy of a decision is the policy of what it
         remembers and is pursuing.
         """
         obs, mask = host(obs), host(mask)
         with self._rollout_context():
-            actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state)
+            actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state, image=image)
         return actions, log_probs
 
     @torch.inference_mode()
     def act_and_value(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, state_features: np.ndarray,
-                      deterministic: bool = False, state: "ActingState | None" = None):
+                      deterministic: bool = False, state: "ActingState | None" = None, image=None):
         """act() and value() of one decision in one pass over the inputs: the rows are converted and grouped by
         layout once for both networks. Returns (actions, log_probs, values, foresight or None, goals or None), the
         last three [E, A, H + 1], (goal, goal log prob, whether this decision chose it), and which
@@ -1048,7 +1061,7 @@ class MappoTrainer:
             graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
             self.device_inputs = None
             if graph is not None:
-                decided = graph.run(obs, mask, layout, state_features, state)
+                decided = graph.run(obs, mask, layout, state_features, state, image)
                 # The decision's device inputs, where the graph copied them: they stay there, on the rollout stream,
                 # until its next replay.
                 if graph.device_fed:
@@ -1062,7 +1075,9 @@ class MappoTrainer:
             obs_t = self._tensor(obs).reshape(rows, -1)
             layout_t = self._tensor(layout, torch.long).reshape(rows)
             groups = self._groups(layout, layout_t)
-            decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads)
+            image_t = self._image_tensor(image, rows)
+            decided = self._decide(obs, mask, layout, deterministic, state, (obs_t, layout_t, groups), downloads,
+                                   image=image_t)
 
             state_t = self._tensor(state_features)[:, None, :].expand(envs, agents, state_features.shape[-1]).reshape(
                 rows, -1)
@@ -1070,7 +1085,7 @@ class MappoTrainer:
             critic_memory = (self._memory_tensor(state.critic_memory if state is not None else None, rows)
                              if self.recurrent_size else None)
             values, carried = self._rollout_critic.step(state_t, obs_t, layout_t, goal_t, groups,
-                                                        memory=critic_memory)
+                                                        memory=critic_memory, image=image_t)
             carried_at = (downloads.add(carried.reshape(envs, agents, self.recurrent_size))
                           if self.recurrent_size and state is not None else None)
             if self._rollout_value_norm is not None:
@@ -1085,7 +1100,7 @@ class MappoTrainer:
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
-                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None):
+                state: "ActingState | None", prepared=None, downloads: "_Downloads | None" = None, image=None):
         """One decision of the actor: actions, their log probabilities, the foresight predictions and the goals. The
         acting state's memory and goal are updated when the result is finished. `prepared` is (obs, layout, groups)
         as tensors when the caller has them already. With `downloads` the results are queued there and the caller
@@ -1102,10 +1117,11 @@ class MappoTrainer:
         else:
             obs_t, layout_t, groups = prepared
         mask_t = self._tensor(mask).reshape(rows, -1)
+        image_t = self._image_tensor(image, rows)
 
         memory = state.memory if state is not None else None
         features = self._rollout_actor.features(
-            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups)
+            obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None, groups, image_t)
 
         decided = _Decided(self, state, layout, envs, agents)
         if self.goal_count and state is not None:
@@ -1169,7 +1185,8 @@ class MappoTrainer:
         return decided.finish(downloads.finish()) if own else decided
 
     @torch.no_grad()
-    def foresight_of(self, obs: np.ndarray, layout: np.ndarray, memory: np.ndarray | None = None) -> np.ndarray | None:
+    def foresight_of(self, obs: np.ndarray, layout: np.ndarray, memory: np.ndarray | None = None,
+                     image=None) -> np.ndarray | None:
         """The foresight head on observations the rollout did not act on (an ended episode's last one, and the one
         after the rollout), for the targets' bootstrap: [..., H + 1], or None when the head is off."""
         if not self.foresight_outputs:
@@ -1184,9 +1201,18 @@ class MappoTrainer:
             layout_t = self._tensor(layout, torch.long).reshape(rows)
             features = self._rollout_actor.features(
                 obs_t, layout_t, self._memory_tensor(memory, rows) if self.recurrent_size else None,
-                self._groups(layout, layout_t))
+                self._groups(layout, layout_t), self._image_tensor(image, rows))
             downloads.add(self._rollout_actor.foresight(features).reshape(*lead, self.foresight_outputs))
             return downloads.finish()[0]
+
+    def _image_tensor(self, image, rows: int) -> torch.Tensor | None:
+        """The camera's bytes of `rows` rows as a [rows, I] uint8 tensor on the rollout's device; None without a
+        camera. Refused missing: a network with a camera does not act blind."""
+        if not self.image_bytes:
+            return None
+        if image is None:
+            raise ValueError("this policy has a camera: the decision's image bytes (Step.image) have to come with it")
+        return self._tensor(image, torch.uint8).reshape(rows, self.image_bytes)
 
     def _memory_tensor(self, memory: np.ndarray | None, rows: int) -> torch.Tensor:
         """The memory to carry in, as the actor wants it: cleared when the caller has none."""
@@ -1244,7 +1270,7 @@ class MappoTrainer:
 
     @torch.no_grad()
     def value(self, state: np.ndarray, obs: np.ndarray, layout: np.ndarray,
-              goal: np.ndarray | None = None, memory: np.ndarray | None = None) -> np.ndarray:
+              goal: np.ndarray | None = None, memory: np.ndarray | None = None, image=None) -> np.ndarray:
         """state [E, S], obs [E, A, O], layout [E, A], goal [E, A] (with a goal head) -> denormalised V per agent
         [E, A]. The value depends on the goal the actor is pursuing, so pass the same goal the decision used, and on
         what the critic remembers of the episode, so pass the memory those decisions left (bootstrapping a truncated
@@ -1258,8 +1284,10 @@ class MappoTrainer:
             memory_t = (self._memory_tensor(memory, envs * agents).reshape(envs, agents, self.recurrent_size)
                         if self.recurrent_size else None)
             layout_t = self._tensor(layout, torch.long)
+            image_t = self._image_tensor(image, envs * agents)
             values = self._rollout_critic(state_t, self._tensor(obs), layout_t, goal_t,
-                                          self._groups(layout, layout_t.reshape(-1)), memory=memory_t)
+                                          self._groups(layout, layout_t.reshape(-1)), memory=memory_t,
+                                          image=None if image_t is None else image_t.reshape(envs, agents, -1))
             if self._rollout_value_norm is not None:
                 values = self._rollout_value_norm.denormalize(values)
             downloads.add(values)
@@ -1369,6 +1397,8 @@ class MappoTrainer:
             return array[tuple(torch.as_tensor(i, device=array.device) for i in index)].to(device)
 
         obs = rows(buffer.obs).float().reshape(length * columns, -1)
+        # The camera's bytes at the same decisions (protocol 21), decoded by the encoder.
+        image = rows(buffer.image).reshape(length * columns, -1) if self.image_bytes else None
         layout = rows(buffer.layout).long().reshape(-1)
         goal = rows(buffer.goal).long().reshape(-1)
         # With two goals and a queue: the slots each choice drew (scored again below), the primary as held for the
@@ -1402,7 +1432,7 @@ class MappoTrainer:
         dones_seq = torch.as_tensor(ended_between, device=device)
 
         with torch.no_grad():
-            features = self.actor.features(obs, layout, memory)
+            features = self.actor.features(obs, layout, memory, image=image)
             inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
 
         counted = targeted.float()
@@ -1729,7 +1759,8 @@ class MappoTrainer:
                 # the critic's (vision_opt below).
                 seen = seen_leaf = None
                 if self.vision_opt is not None:
-                    seen = self.actor.vision(obs_all, layout_all)
+                    image_all = data["image"][:, chunk].reshape(-1, self.image_bytes)
+                    seen = self.actor.vision(obs_all, layout_all, image_all)
                     seen_leaf = seen.detach().requires_grad_(True)
                 encoded = self.actor.encode(obs_all, layout_all, groups, seen_leaf).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)

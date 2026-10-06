@@ -41,10 +41,11 @@ class _View:
 
 
 class DeviceBuffers:
-    """obs [E, A, O] float32, state [E, S] float32 and mask [E, A, N] bool, on the sim's side of GPU `device`."""
+    """obs [E, A, O] float32, state [E, S] float32 and mask [E, A, N] bool, on the sim's side of GPU `device`; and in a
+    stage with a camera (protocol 21) the images [E, A, I] uint8, the fourth handle."""
 
     def __init__(self, device: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
-                 handles: tuple[bytes, bytes, bytes]):
+                 handles: tuple[bytes, ...], image_bytes: int = 0):
         import torch
 
         self._runtime = ctypes.CDLL(glob.glob(os.path.join(os.path.dirname(torch.__file__), "lib",
@@ -53,8 +54,13 @@ class DeviceBuffers:
         self._runtime.hipIpcCloseMemHandle.argtypes = [ctypes.c_void_p]
         self.device = torch.device("cuda", device)
         self._pointers: list[int] = []
-        shapes = ((envs, agents, obs_dim), (envs, state_dim), (envs, agents, num_actions))
-        types = ("<f4", "<f4", "|b1")
+        shapes = [(envs, agents, obs_dim), (envs, state_dim), (envs, agents, num_actions)]
+        types = ["<f4", "<f4", "|b1"]
+        if image_bytes:
+            shapes.append((envs, agents, image_bytes))
+            types.append("|u1")
+        if len(handles) != len(shapes):
+            raise ValueError(f"{len(handles)} device handles for {len(shapes)} buffers")
         tensors = []
         with torch.cuda.device(self.device):
             for handle, shape, typestr in zip(handles, shapes, types):
@@ -66,12 +72,14 @@ class DeviceBuffers:
                     raise OSError(f"hipIpcOpenMemHandle failed ({status})")
                 self._pointers.append(pointer.value)
                 tensors.append(torch.as_tensor(_View(pointer.value, shape, typestr), device=self.device))
-        self.obs, self.state, self.mask = tensors
+        self.obs, self.state, self.mask = tensors[:3]
+        self.image = tensors[3] if image_bytes else None
 
     def rows(self, begin: int, count: int):
-        """(obs, state, mask) of envs [begin, begin + count), as views."""
+        """(obs, state, mask) of envs [begin, begin + count) -- and the images, with a camera -- as views."""
         end = begin + count
-        return self.obs[begin:end], self.state[begin:end], self.mask[begin:end]
+        views = (self.obs[begin:end], self.state[begin:end], self.mask[begin:end])
+        return views if self.image is None else (*views, self.image[begin:end])
 
     def close(self) -> None:
         for pointer in self._pointers:
@@ -79,7 +87,7 @@ class DeviceBuffers:
         self._pointers = []
 
 
-def open_buffers(spec, device: int, envs: int, handles: tuple[bytes, bytes, bytes],
+def open_buffers(spec, device: int, envs: int, handles: tuple[bytes, ...],
                  rollout_device: str | None) -> tuple[DeviceBuffers | None, str]:
     """The sim's buffers when this learner can use them: its rollouts run on that GPU, under a HIP torch. Otherwise
     None and why (the learner then declines, and the sim keeps sending them over the socket)."""
@@ -99,7 +107,7 @@ def open_buffers(spec, device: int, envs: int, handles: tuple[bytes, bytes, byte
         return None, f"the buffers hold {envs} envs, the spec {spec.num_envs}"
     try:
         return DeviceBuffers(device, envs, spec.agents_per_env, spec.obs_dim, spec.state_dim, spec.num_actions,
-                             handles), ""
+                             handles, spec.image_bytes), ""
     except OSError as error:
         return None, str(error)
 

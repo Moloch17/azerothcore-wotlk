@@ -149,8 +149,9 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
                  foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
-                 goal_slots: int = 1):
+                 goal_slots: int = 1, image_bytes: int = 0):
         self.steps = steps
+        self.image_bytes = image_bytes
         self.foresight = foresight
         self.recurrent = recurrent
         self.goals = goals
@@ -181,6 +182,8 @@ class RolloutBuffer:
         # seat, and the update has to replay its sequences from the state they were produced with.
         self.critic_memory = np.zeros((*shape, recurrent), dtype=np.float32)
         self.obs = np.zeros((*shape, obs_dim), dtype=np.float32)
+        # The camera's images as the sim sent them (protocol 21): bytes, decoded on the device for each pass only.
+        self.image = np.zeros((*shape, image_bytes), dtype=np.uint8)
         self.state = np.zeros((steps, envs, state_dim), dtype=np.float32)
         self.mask = np.zeros((*shape, num_actions), dtype=bool)
         self.layout = np.zeros(shape, dtype=np.int64)
@@ -215,8 +218,9 @@ class RolloutBuffer:
         advantages and returns -- its own. Written to at the same steps as `main`, after it."""
         steps, envs, agents = main.actions.shape
         view = cls(steps, envs, agents, 0, 0, 0, foresight, recurrent, goals, slow_goal, goal_slots)
-        for name in ("obs", "state", "mask", "layout", "actions", "rewards", "dones", "terminated"):
+        for name in ("obs", "image", "state", "mask", "layout", "actions", "rewards", "dones", "terminated"):
             setattr(view, name, getattr(main, name))
+        view.image_bytes = main.image_bytes
         return view
 
     @property
@@ -225,11 +229,11 @@ class RolloutBuffer:
         return self.valid & self.chosen
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
-                     foresight=None, memory=None, goals=None, critic_memory=None, chosen=None) -> None:
+                     foresight=None, memory=None, goals=None, critic_memory=None, chosen=None, image=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
-        (default: all)."""
+        (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera."""
         t = self.cursor
-        for name, value in (("obs", obs), ("state", state), ("mask", mask)):
+        for name, value in (("obs", obs), ("state", state), ("mask", mask), ("image", image)):
             if value is not None:       # None: store_rows wrote it already
                 self._store(name, t, value)
         self.layout[t] = layout
@@ -252,9 +256,9 @@ class RolloutBuffer:
                 self.goal_slots[t] = goals[5]
 
     def store_rows(self, name: str, t: int, rows: slice, value, stream) -> None:
-        """Envs `rows` of step `t` of obs, state or mask, from a device tensor, copied on `stream` (queued: the caller
-        finishes it). For inputs the sim wrote into device memory it overwrites at its next step, which have to be
-        copied out before the actions go back rather than when the whole decision is recorded."""
+        """Envs `rows` of step `t` of obs, state, mask or image, from a device tensor, copied on `stream` (queued: the
+        caller finishes it). For inputs the sim wrote into device memory it overwrites at its next step, which have to
+        be copied out before the actions go back rather than when the whole decision is recorded."""
         import torch
 
         with torch.cuda.stream(stream):
@@ -398,6 +402,7 @@ class RolloutBuffer:
         rows that are samples (a seat without a character is none), and `dones` [T, E] say where a memory is cleared."""
         return {
             "obs": self.obs,
+            **({"image": self.image} if self.image_bytes else {}),
             "state": self.state,
             "mask": self.mask,
             "layout": self.layout,

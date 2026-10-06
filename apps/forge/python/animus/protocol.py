@@ -11,9 +11,12 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 20
+PROTOCOL_VERSION = 21
 # 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
 # agent (FORMAT.md section 3, animus.human.motion): the body the style reward and the realism score read.
+# 21: the camera's image travels as bytes (camera-vision.BYTES.md): SPEC ends with the image bytes per agent (0 without
+# a vision block), and a stage with one ends each STEP with every agent's image and the ended envs' final images, and
+# its DEVICE message with the images' device buffer handle. A stage without one sends protocol 20's STEP and DEVICE.
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -40,7 +43,8 @@ class MsgType(IntEnum):
 
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}sI")  # ..., scenario name, kinematics width (20)
+# ..., scenario name, kinematics width (20), image bytes per agent (21)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s2I")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
@@ -57,9 +61,15 @@ MAX_EXPLORE_STARTS = 64
 # DEVICE (protocol 15): the sim's device buffers for this learner's obs, state and mask -- GPU, envs, then the three
 # hipIpcMemHandle_t -- offered after SPEC; DEVICE_ACK answers 1 when they were opened (animus.device).
 DEVICE = struct.Struct("<II64s64s64s")
+# Then, in a stage with a camera (Spec.image_bytes > 0; protocol 21), the images' handle: [E, A, I] uint8.
+DEVICE_IMAGE = struct.Struct("<64s")
 DEVICE_ACK = struct.Struct("<I")
 # What a STEP leaves out when the learner reads them from the device buffers.
-DEVICE_FIELDS = ("obs", "state", "mask")
+DEVICE_FIELDS = ("obs", "state", "mask", "image")
+# The camera's image as bytes (protocol 21, Vision::EncodePixel): 4 a pixel, [row][col][byte]. A row without a frame
+# (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0.
+IMAGE_FIELDS = ("image", "final_image")
+NO_FRAME_PIXEL = (255, 128, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,8 @@ class Spec:
     env_groups: int = 1
     # Floats per agent of each STEP's kinematics (protocol 20): motion.SAMPLE_DIM from a sim that sends them, 0 none.
     kinematics_dim: int = 0
+    # Bytes per agent of each STEP's camera image (protocol 21): the vision block's height x width x 4, 0 without one.
+    image_bytes: int = 0
 
     @property
     def decision_ms(self) -> int:
@@ -135,6 +147,9 @@ class Spec:
             # in_combat], the new episode's first sample where done is set; zeros for an agent without a body.
             ("kinematics", f32, (e, a, self.kinematics_dim)),
         ]
+        if self.image_bytes:
+            # The camera's images (protocol 21): every agent's after any auto-reset, then the ended envs' last ones.
+            layout += [("image", u8, (e, a, self.image_bytes)), ("final_image", u8, (d, a, self.image_bytes))]
         return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
 
     def step_payload_size(self, envs: int | None = None, ended: int | None = None, device: bool = False) -> int:
@@ -163,6 +178,16 @@ class Step:
     # [E, A, K] float32 kinematic samples (protocol 20, Spec.kinematics_dim); None where nobody made any (a step built
     # by hand), which encodes as zeros.
     kinematics: np.ndarray | None = None
+    # [E, A, I] uint8 camera images (protocol 21, Spec.image_bytes), and [E, A, I] the ended episodes' last ones, valid
+    # where done; None in a stage without a camera.
+    image: np.ndarray | None = None
+    final_image: np.ndarray | None = None
+
+
+def no_frame(shape: tuple[int, ...]) -> np.ndarray:
+    """Images of `shape` [..., I] holding no frame: every pixel NO_FRAME_PIXEL (sky, height 0), as the sim fills a row
+    without one."""
+    return np.broadcast_to(np.array(NO_FRAME_PIXEL, np.uint8), (*shape[:-1], shape[-1] // 4, 4)).reshape(shape).copy()
 
 
 def rows_of(step: Step, begin: int, count: int) -> Step:
@@ -220,6 +245,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.env_groups,
         spec.scenario.encode("ascii"),
         spec.kinematics_dim,
+        spec.image_bytes,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -243,6 +269,7 @@ def decode_spec(payload: bytes) -> Spec:
         env_groups=fields[11],
         scenario=fields[12].split(b"\0", 1)[0].decode("ascii"),
         kinematics_dim=fields[13],
+        image_bytes=fields[14],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -250,7 +277,7 @@ def decode_spec(payload: bytes) -> Spec:
 
 # Carried for the ended envs only (Spec.step_layout); the decoder gives them back full-sized, zero elsewhere. Episode
 # info from protocol 18: every reader looks only where done is set.
-ENDED_ONLY = ("final_obs", "final_state", "episode_info")
+ENDED_ONLY = ("final_obs", "final_state", "episode_info", "final_image")
 
 
 def encode_step(spec: Spec, step: Step) -> bytes:
@@ -260,7 +287,8 @@ def encode_step(spec: Spec, step: Step) -> bytes:
     for name, dtype, shape in spec.step_layout(envs, int(done.sum())):
         array = getattr(step, name)
         if array is None:
-            array = np.zeros(shape, dtype)
+            full = (envs, *shape[1:])
+            array = no_frame(full) if name in IMAGE_FIELDS else np.zeros(full if name in ENDED_ONLY else shape, dtype)
         if name in ENDED_ONLY:
             array = np.asarray(array)[done]
         parts.append(np.ascontiguousarray(array, dtype=dtype).reshape(shape).tobytes())
@@ -276,7 +304,8 @@ def _decode_layout(spec: Spec, envs: int, device: bool) -> list[tuple[str, np.dt
     key = (spec, envs, device)
     layout = _DECODE_LAYOUTS.get(key)
     if layout is None:
-        layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1"))
+        # The u1 flags (mask, present, done, terminated) read as bool; the images are bytes.
+        layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1") and name not in IMAGE_FIELDS)
                                          for name, dtype, shape in spec.step_layout(envs, device=device)]
     return layout
 
@@ -289,7 +318,7 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
     offset = STEP_HEADER.size
     arrays = {}
     if device is not None:
-        arrays["obs"], arrays["state"], arrays["mask"] = device.rows(env_begin, envs)
+        arrays.update(zip(DEVICE_FIELDS, device.rows(env_begin, envs)))
     done = ended = None
     for name, dtype, shape, flag in _decode_layout(spec, envs, device is not None):
         if name in ENDED_ONLY:

@@ -936,13 +936,23 @@ def _attach_entity_sets(network: nn.Module, seat_sets, head_width: int = 0, atte
 VISION_BLOCK = "vision"
 
 
+#: The camera's bytes a pixel (protocol 21, Vision::BYTES_PER_PIXEL): distance, height, normal, kind and flags.
+IMAGE_BYTES_PER_PIXEL = 4
+#: The decoded channels, as the sim's Vision::DecodePixel lays them out (revision 2's floats): the kind is channel 3.
+IMAGE_CHANNELS = 5
+IMAGE_KIND_CHANNEL = 3
+
+
 def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | None] | None:
-    """Per layout, in `layout_names` order, its camera image as the vision block of stage.json describes it --
-    {"first": its first observation column, "height", "width", "channels", "kinds", "kind_channel", "scalars"} -- or
-    None for a layout without one; None altogether when no layout has a camera (no encoder, nothing new in the
-    networks). The block's first column differs per layout (the core block before it is as wide as the class's
-    spells), so every layout keeps its own. Refused: a vision block without its image, layouts whose images differ in
-    shape (one encoder reads them all), and a block whose width is not its image and scalars."""
+    """Per layout, in `layout_names` order, its camera as the vision block of stage.json describes it -- {"first": the
+    block's first observation column (its scalars), "height", "width", "channels", "kinds", "kind_channel",
+    "scalars", "bytes_per_pixel", "image_bytes"} -- or None for a layout without one; None altogether when no layout
+    has a camera (no encoder, nothing new in the networks). The block's first column differs per layout (the core
+    block before it is as wide as the class's spells), so every layout keeps its own.
+
+    The image itself travels as bytes beside the observation (protocol 21, Spec.image_bytes): the block's columns are
+    its scalars alone. Refused: a vision block without its image, or from before the bytes (revision 2's floats),
+    layouts whose images differ (one encoder reads them all), and a block whose width is not its scalars."""
     if stage is None:
         return None
     layouts = stage.get("layouts") or {}
@@ -958,34 +968,80 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         if not image:
             raise ValueError(f"{name}: stage.json has a vision block without its image (the sim's manifest is older "
                              f"than the learner's camera); its columns would reach the adapters raw")
+        if image.get("transport") != "bytes":
+            raise ValueError(f"{name}: the vision block's image is not sent as bytes (transport "
+                             f"{image.get('transport')!r}): a sim from before protocol 21, which this learner does "
+                             f"not read")
         described = {key: int(image[key]) for key in ("height", "width", "channels", "kinds", "kind_channel",
-                                                      "scalars")}
+                                                      "scalars", "bytes_per_pixel")}
+        if (described["bytes_per_pixel"], described["channels"], described["kind_channel"]) != (
+                IMAGE_BYTES_PER_PIXEL, IMAGE_CHANNELS, IMAGE_KIND_CHANNEL) or not 1 <= described["kinds"] <= 16:
+            raise ValueError(f"{name}: a vision image of {described['bytes_per_pixel']} bytes a pixel decoded to "
+                             f"{described['channels']} channels (kind {described['kind_channel']}, "
+                             f"{described['kinds']} kinds); this learner decodes {IMAGE_BYTES_PER_PIXEL} bytes to "
+                             f"{IMAGE_CHANNELS} channels, the kind channel {IMAGE_KIND_CHANNEL}, at most 16 kinds")
         if shape is None:
             shape = described
         elif described != shape:
             raise ValueError(f"{name}: vision image {described}, another layout's {shape}; one encoder needs one "
                              f"shape")
         first, count = int(block["obs"][0]), int(block["obs"][1])
-        span = described["height"] * described["width"] * described["channels"] + described["scalars"]
-        if count != span:
-            raise ValueError(f"{name}: the vision block is {count} columns, its image and scalars {span}")
+        if count != described["scalars"]:
+            raise ValueError(f"{name}: the vision block is {count} columns, its scalars {described['scalars']} (the "
+                             f"image travels as bytes beside the observation)")
         obs_dim = entry.get("obs_dim")
-        if obs_dim is not None and first + span > int(obs_dim):
-            raise ValueError(f"{name}: the vision block ends at {first + span}, past the layout's {obs_dim} columns")
-        if not 0 <= described["kind_channel"] < described["channels"] or described["kinds"] < 1:
-            raise ValueError(f"{name}: vision kind channel {described['kind_channel']} of {described['channels']}, "
-                             f"{described['kinds']} kinds")
-        out.append({"first": first, **described})
+        if obs_dim is not None and first + count > int(obs_dim):
+            raise ValueError(f"{name}: the vision block ends at {first + count}, past the layout's {obs_dim} columns")
+        image_bytes = described["height"] * described["width"] * described["bytes_per_pixel"]
+        out.append({"first": first, **described, "image_bytes": image_bytes})
     return out if any(entry is not None for entry in out) else None
+
+
+def vision_image_bytes(vision: list[dict | None] | None) -> int:
+    """The image bytes per agent stage.json's camera makes (height x width x bytes a pixel), 0 without one: what the
+    sim's SPEC must announce (Spec.image_bytes)."""
+    return next((entry["image_bytes"] for entry in vision or () if entry is not None), 0)
+
+
+def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int) -> None:
+    """Refuse a sim and a stage.json that disagree about the camera: SPEC's image bytes per agent against stage.json's
+    height x width x bytes a pixel, or one side with a camera and the other without."""
+    expected = vision_image_bytes(vision)
+    if expected == int(spec_image_bytes):
+        return
+    if not expected:
+        raise ValueError(f"the sim sends {spec_image_bytes} image bytes an agent, but stage.json has no camera (no "
+                         f"vision block with an image)")
+    if not spec_image_bytes:
+        raise ValueError(f"stage.json has a camera ({expected} bytes an agent), but the sim's SPEC sends no image")
+    raise ValueError(f"the sim sends {spec_image_bytes} image bytes an agent, stage.json's camera makes {expected} "
+                     f"(height x width x bytes a pixel)")
+
+
+def decode_image(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    """The camera's bytes [N, H x W x 4] uint8 as its five float channels [N, H, W, 5] -- distance, height, normal,
+    kind, objective -- exactly as Vision::DecodePixel: 255 -> 1.0 (sky) else b / 254; (b - 128) / 125; b / 255;
+    b & 15; (b >> 4) & 1. On the device: the bytes are what the rollout keeps."""
+    pixels = image.reshape(-1, height, width, IMAGE_BYTES_PER_PIXEL)
+    distance, rise, normal, kind = pixels.unbind(-1)
+    as_float = lambda value: value.to(torch.float32)
+    return torch.stack([
+        torch.where(distance == 255, torch.ones_like(as_float(distance)), as_float(distance) / 254.0),
+        (as_float(rise) - 128.0) / 125.0,
+        as_float(normal) / 255.0,
+        as_float(kind & 15),
+        as_float((kind >> 4) & 1),
+    ], dim=-1)
 
 
 class VisionEncoder(nn.Module):
     """**The camera** (camera-vision): a seat's H x W image of what its camera's rays hit, encoded by one small
     network shared by every layout, as EntitySets shares its encoders.
 
-    The image is gathered raw from each row's own layout's columns (a table by layout id: the vision block starts at
-    a different column in every class) -- [row][col][channel] floats, kept in that order, channels last -- and the
-    kind channel becomes a one-hot over the kinds, so C - 1 + kinds planes a pixel (12). **Patches**, not
+    The image arrives as bytes beside the observation (protocol 21: [N, H x W x 4] uint8, [row][col][byte]) and is
+    decoded on the device to its five channels, channels last (decode_image); the block's scalars are gathered from
+    each row's own layout's columns (a table by layout id: the vision block starts at a different column in every
+    class). The kind channel becomes a one-hot over the kinds, so C - 1 + kinds planes a pixel (12). **Patches**, not
     convolutions: the image is cut into PATCH x PATCH squares (32 x 64 -> an 8 x 16 grid), each square's pixels and
     planes (16 x 12 = 192 features, ordered row in the patch, column in the patch, plane) go through one shared
     Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, a spatial softmax per channel over the patch grid gives its
@@ -1017,8 +1073,8 @@ class VisionEncoder(nn.Module):
             raise ValueError(f"the camera's image is {self.width} x {self.height}; the vision encoder cuts it into "
                              f"{self.PATCH} x {self.PATCH} patches, so both must be multiples of {self.PATCH} "
                              f"(AnimusForge.Vision.Width, Height)")
-        self.pixels = self.height * self.width * self.channels
-        self.span = self.pixels + self.scalars
+        self.image_bytes = image["image_bytes"]
+        self.span = self.scalars
         self.planes_per_pixel = self.channels - 1 + self.kinds
         self.grid = (self.height // self.PATCH, self.width // self.PATCH)
         features = self.PATCH * self.PATCH * self.planes_per_pixel
@@ -1036,18 +1092,22 @@ class VisionEncoder(nn.Module):
                                         torch.linspace(-1.0, 1.0, self.grid[1]), indexing="ij")
         self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
         self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
-        #: Per layout with the camera, the columns its adapter and normaliser do not read: the image and the scalars.
+        #: Per layout with the camera, the columns its adapter and normaliser do not read: the block's scalars, which
+        #: the encoder reads raw.
         self.blind = {index: list(range(entry["first"], entry["first"] + self.span))
                       for index, entry in enumerate(descriptors) if entry is not None}
 
-    def gather(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Each row's own camera columns: (image [N, H, W, C], scalars [N, S]), raw. Rows of a layout without the
-        camera read whatever is at column 0 on (their output is zeroed after)."""
+    def gather(self, obs: torch.Tensor, layout: torch.Tensor,
+               image: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Each row's camera: (its image decoded, [N, H, W, C], and its own layout's scalar columns, [N, S], raw).
+        Rows of a layout without the camera read whatever is at column 0 on (their output is zeroed by the join)."""
+        if image is None:
+            raise ValueError("this network has a camera: its image bytes have to come with the observation")
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
-        raw = obs.gather(1, columns).to(self.embed.weight.dtype)
-        image = raw[:, : self.pixels].reshape(-1, self.height, self.width, self.channels)
-        return image, raw[:, self.pixels:]
+        scalars = obs.gather(1, columns).to(self.embed.weight.dtype)
+        decoded = decode_image(image.reshape(-1, self.image_bytes), self.height, self.width)
+        return decoded.to(self.embed.weight.dtype), scalars
 
     def planes(self, image: torch.Tensor) -> torch.Tensor:
         """[N, H, W, C] -> [N, H, W, C - 1 + kinds]: every channel but the kind as it is, then the kind (rounded,
@@ -1077,9 +1137,10 @@ class VisionEncoder(nn.Module):
         y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
         return torch.cat([x, y], dim=-1)
 
-    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
-        """The camera's embedding, [N, 256] (a layout without the camera's rows are zeroed by the join)."""
-        image, scalars = self.gather(obs, layout)
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor | None) -> torch.Tensor:
+        """The camera's embedding of rows `obs` [N, O] with their images `image` [N, I] uint8, [N, 256] (a layout
+        without the camera's rows are zeroed by the join)."""
+        image, scalars = self.gather(obs, layout, image)
         points = self.keypoints(self.features(self.patches(self.planes(image))))
         return nn.functional.silu(self.embed(torch.cat([points, scalars], dim=-1)))
 
@@ -1135,20 +1196,21 @@ def owns_vision(network: nn.Module) -> bool:
 
 
 def vision_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
-                embedding: torch.Tensor | None = None) -> torch.Tensor:
-    """What the camera adds to `network`'s adapter output: its join over the encoder's embedding (computed here
-    unless the caller has it: the rollout graph encodes once for both networks)."""
+                embedding: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
+    """What the camera adds to `network`'s adapter output: its join over the encoder's embedding of the rows' images
+    `image` [N, I] uint8 (computed here unless the caller has it: the rollout graph and the update encode once for
+    both networks)."""
     if embedding is None:
-        embedding = network.vision(obs, layout)
+        embedding = network.vision(obs, layout, image)
     return network.vision_join(embedding, layout)
 
 
 def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor, extra,
-                  embedding: torch.Tensor | None = None):
+                  embedding: torch.Tensor | None = None, image: torch.Tensor | None = None):
     """`extra` (what the sets add to the adapter's output, or None) with the camera's term added."""
     if getattr(network, "vision", None) is None:
         return extra
-    seen = vision_term(network, obs, layout, embedding)
+    seen = vision_term(network, obs, layout, embedding, image)
     return seen if extra is None else extra + seen.to(extra.dtype)
 
 
@@ -1324,16 +1386,18 @@ class LayoutActor(nn.Module):
         _attach_vision(self, vision)
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
-                memory: torch.Tensor | None = None) -> Categorical:
+                memory: torch.Tensor | None = None, image: torch.Tensor | None = None) -> Categorical:
         """obs [..., O], layout [...], mask [..., N] (padded) -> distribution over N actions. `groups` is
-        per_layout(layout) when the caller already has it; `memory` [..., recurrent_size] the state carried in."""
-        return self._forward(obs, layout, mask, groups, memory)[0]
+        per_layout(layout) when the caller already has it; `memory` [..., recurrent_size] the state carried in;
+        `image` [..., I] uint8 the camera's bytes (protocol 21), with a camera."""
+        return self._forward(obs, layout, mask, groups, memory, image=image)[0]
 
     def step(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, memory: torch.Tensor | None = None,
-             groups=None, goal: torch.Tensor | None = None) -> tuple[Categorical, torch.Tensor, torch.Tensor]:
+             groups=None, goal: torch.Tensor | None = None,
+             image: torch.Tensor | None = None) -> tuple[Categorical, torch.Tensor, torch.Tensor]:
         """One decision: (distribution, memory carried out, foresight predictions). Without a GRU the memory out is
         whatever came in (an empty tensor), and without foresight heads the predictions are empty."""
-        dist, features, lead = self._forward(obs, layout, mask, groups, memory, goal)
+        dist, features, lead = self._forward(obs, layout, mask, groups, memory, goal, image)
         predictions = (self.foresight(features).reshape(*lead, self.foresight_outputs) if self.foresight is not None
                        else features.new_zeros((*lead, 0)))
         carried = features.reshape(*lead, features.shape[-1]) if self.memory is not None else (
@@ -1361,17 +1425,17 @@ class LayoutActor(nn.Module):
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
 
     def encode(self, obs: torch.Tensor, layout: torch.Tensor, groups=None,
-               vision_embedding: torch.Tensor | None = None) -> torch.Tensor:
+               vision_embedding: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
         """Adapters and trunk for flat rows: everything that depends only on this decision's observation, before the
         GRU. A replayed sequence encodes every step in one pass and then carries the memory through them (carry),
         which is the difference between one large matmul per layer and one per step. `vision_embedding` is the
         camera's embedding of these rows when the caller has it (the update encodes once for the actor and the
-        critic); else it is computed here."""
+        critic); else it is computed here, from the rows' camera bytes `image` [N, I]."""
         extra = _director_extra(self.director_sets, self.director_index, obs, layout)
         if self.entity_sets is not None:
             seats = self.entity_sets.pooled(obs, layout)
             extra = seats if extra is None else extra + seats.to(extra.dtype)
-        extra = _vision_extra(self, obs, layout, extra, vision_embedding)
+        extra = _vision_extra(self, obs, layout, extra, vision_embedding, image)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -1396,9 +1460,9 @@ class LayoutActor(nn.Module):
         return _carry_sequence(self.memory, self.recurrent_size, encoded, memory, dones)
 
     def features(self, obs: torch.Tensor, layout: torch.Tensor, memory: torch.Tensor | None = None,
-                 groups=None) -> torch.Tensor:
+                 groups=None, image: torch.Tensor | None = None) -> torch.Tensor:
         """The trunk's output for flat rows, through the GRU when there is one: what every head reads."""
-        return self.features_from(self.encode(obs, layout, groups), memory)
+        return self.features_from(self.encode(obs, layout, groups, image=image), memory)
 
     def features_from(self, hidden: torch.Tensor, memory: torch.Tensor | None = None) -> torch.Tensor:
         """features() from the trunk's output on: the GRU, when there is one."""
@@ -1530,13 +1594,13 @@ class LayoutActor(nn.Module):
                 "log_prob": torch.where(chosen, log_prob, torch.zeros_like(log_prob)), "slots": slots, **signals}
 
     def _forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
-                 memory: torch.Tensor | None = None,
-                 goal: torch.Tensor | None = None) -> tuple[Categorical, torch.Tensor, tuple[int, ...]]:
+                 memory: torch.Tensor | None = None, goal: torch.Tensor | None = None,
+                 image: torch.Tensor | None = None) -> tuple[Categorical, torch.Tensor, tuple[int, ...]]:
         lead = obs.shape[:-1]
         obs, layout, mask = obs.reshape(-1, obs.shape[-1]), layout.reshape(-1), mask.reshape(-1, mask.shape[-1])
         groups = groups if groups is not None else _per_layout(layout, len(self.adapters))
 
-        hidden = self.features(obs, layout, memory, groups)
+        hidden = self.features(obs, layout, memory, groups, image)
         dist = self.action_distribution(hidden, layout, mask, goal, groups, obs)
         if len(lead) != 1:
             dist = Categorical(logits=dist.logits.reshape(*lead, -1))
@@ -1584,16 +1648,16 @@ class LayoutCritic(nn.Module):
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None,
-               vision_embedding: torch.Tensor | None = None) -> torch.Tensor:
+               vision_embedding: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
         """Everything that depends only on this decision -- the state, the seat's own observation and its goal --
         for flat rows, before the GRU. A replayed sequence encodes every step in one pass and then carries the memory
         through them (carry). `vision_embedding` as for LayoutActor.encode."""
-        hidden, own = self.encode_goal_free(state, obs, layout, groups, vision_embedding)
+        hidden, own = self.encode_goal_free(state, obs, layout, groups, vision_embedding, image)
         return self.encode_goal(hidden, own, goal)
 
     def encode_goal_free(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
-                         groups=None,
-                         vision_embedding: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+                         groups=None, vision_embedding: torch.Tensor | None = None,
+                         image: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """encode's first half, which does not need the goal: (the state's encoding, the seat's own). The larger
         part of the critic's work, so a rollout decision runs it beside the actor choosing the goal."""
         hidden = self.state_encoder(self.state_norm(state))
@@ -1610,7 +1674,7 @@ class LayoutCritic(nn.Module):
         if self.entity_sets is not None:
             own = own + self.entity_sets.pooled(obs, layout).to(own.dtype)
         if self.vision is not None:
-            own = own + vision_term(self, obs, layout, vision_embedding).to(own.dtype)
+            own = own + vision_term(self, obs, layout, vision_embedding, image).to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:
@@ -1647,11 +1711,12 @@ class LayoutCritic(nn.Module):
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
 
     def step(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
-             groups=None, memory: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+             groups=None, memory: torch.Tensor | None = None,
+             image: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """One decision: (value [...], the memory carried out). Without a GRU the memory out is whatever came in."""
         lead = obs.shape[:-1]
         state, obs, layout = state.reshape(-1, state.shape[-1]), obs.reshape(-1, obs.shape[-1]), layout.reshape(-1)
-        return self.step_encoded(self.encode(state, obs, layout, goal, groups), lead, memory)
+        return self.step_encoded(self.encode(state, obs, layout, goal, groups, image=image), lead, memory)
 
     def step_encoded(self, encoded: torch.Tensor, lead, memory: torch.Tensor | None = None):
         """step() from the encoding on: the GRU and the value head."""
@@ -1663,7 +1728,7 @@ class LayoutCritic(nn.Module):
         return self.head(carried).reshape(lead), carried.reshape(*lead, self.recurrent_size)
 
     def forward(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
-                groups=None, memory: torch.Tensor | None = None) -> torch.Tensor:
+                groups=None, memory: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
         """state [..., S], obs [..., O], layout [...], goal [...] (with a goal head) -> value [...]. `groups` as for
-        LayoutActor.forward; `memory` [..., recurrent_size] the state carried in."""
-        return self.step(state, obs, layout, goal, groups, memory)[0]
+        LayoutActor.forward; `memory` [..., recurrent_size] the state carried in; `image` as for LayoutActor."""
+        return self.step(state, obs, layout, goal, groups, memory, image)[0]
