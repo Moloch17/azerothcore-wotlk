@@ -81,8 +81,9 @@ namespace
     /// only to author, never a bot input) scanned on a half-yard grid over x 40-210, y -160-160, with each
     /// walkable cell's floor height read from the vmaps (StockadeRoomsDataTest's scan); the walkable cells eroded by a
     /// yard and a half so the doorways part, the parts flooded and grown back, the entrance hallway with its crossing
-    /// and ramps being the one left over. Each room's Floor is the convex hull of its eroded cells cut to at most eight corners
-    /// (a corner's removal only ever shrinks the hull), so it stays a yard and a half or more off the walls; FloorZ is
+    /// and ramps being the one left over. Each room's Floor is the convex hull of its eroded cells cut to at most eight
+    /// corners (a corner's removal only ever shrinks the hull), so it stays a yard and a half or more off the walls;
+    /// FloorZ is
     /// the median of its cells' vmap floor; Opening the middle of the cells it shares with the region it is entered
     /// from; Centre its walkable cell nearest its middle; Walk the walking distance from the spawn to the Centre, an
     /// eight-way Dijkstra over the scan's cells. Every 1-yd sample of every Floor was on the room's own walkable cells.

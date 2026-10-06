@@ -40,7 +40,9 @@
 ///
 /// FORGE_STOCKADE_SCAN (the data directory too, run from it: the navmesh is read from DataDir ".") prints the authoring
 /// scan instead: every half-yard (STEP) cell the navmesh walks, with its navmesh and vmap floor heights ("P x y nav
-/// vmap"), which var tools segmented into the room table. The navmesh is read only here, to author; no bot reads it.
+/// vmap"), which .agents/plans/perception-goals/tools/table.py segments into the room table (rooms.py's erosion, then
+/// table.py <scan> writes rooms.inc; render.py draws the regions). The navmesh is read only here, to author; no bot
+/// reads it.
 namespace
 {
     namespace Cu = Animus::Curriculum;

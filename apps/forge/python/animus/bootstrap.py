@@ -246,7 +246,8 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
         old_revision, new_revision = old_revisions.get(block, 0), new_revisions.get(block, 0)
         if old_revision != new_revision:
             print(f"seeding {source or name}: {name} block {block} revision {old_revision} -> {new_revision} (width "
-                  f"{old_obs[1]} -> {new_obs[1]}): its columns start fresh", flush=True)
+                  f"{old_obs[1]} -> {new_obs[1]}): its columns start fresh, but for those it names (by name below)",
+                  flush=True)
             continue
         if old_obs[1] != new_obs[1] or old_actions[1] != new_actions[1]:
             segments = None
