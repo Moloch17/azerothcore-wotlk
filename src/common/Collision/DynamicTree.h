@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "Optional.h"
+#include <functional>
 
 namespace G3D
 {
@@ -66,6 +67,14 @@ public:
 
     void balance();
     void update(uint32 diff);
+
+    /// Every model in the tree with the cells (x * 64 + y of its 64 x 64 grid, up to 9) it was filed under, which
+    /// are the cells a ray's walk tests it in. Read-only: the bots' camera copies them to the GPU
+    /// (Animus/Gpu/VisionScene).
+    /// It iterates the tree's own tables, which inserts, removes and rebalances change, so it may only run while
+    /// the map that owns the tree is not updating: from an idle console now, and after the map update's join (on the
+    /// world thread) once the GPU camera runs in training (camera-vision.GPU.md, G3). Never from a map thread.
+    void VisitModels(std::function<void(GameObjectModel const&, uint16 const* cells, uint32 count)> const& visit) const;
 };
 
 #endif // _DYNTREE_H

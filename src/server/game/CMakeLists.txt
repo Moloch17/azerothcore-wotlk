@@ -106,10 +106,17 @@ CU_RUN_HOOK(AFTER_GAME_LIBRARY)
 # linked against no HIP runtime: its HIP symbols come from the runtime the learner's torch ships, loaded by the
 # worldserver first, because device memory can only be shared between processes on the same HIP runtime. A machine
 # without hipcc builds without it, and the forge runs everything on the CPU.
+# hipcc is expected in every image that builds the forge -- the dev image and every worker's -- so that each builds
+# the library for its own GPU: an image without it still builds and runs, but with no libforge-gpu.so, and so no
+# device observations and no GPU camera (camera-vision.GPU.md).
 find_program(FORGE_HIPCC hipcc)
 set(FORGE_GPU_ARCHS "gfx1100" CACHE STRING "GPU architectures libforge-gpu.so is compiled for (a ;-list)")
 if (FORGE_HIPCC)
   file(GLOB FORGE_GPU_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/Device/*.hip)
+  # Every header a kernel includes: the camera's (VisionDevice.h, shared with the host) and the constants it reads.
+  file(GLOB FORGE_GPU_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/Device/*.h)
+  list(APPEND FORGE_GPU_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Vision/Camera.h)
   set(FORGE_GPU_ARCH_FLAGS)
   foreach(arch ${FORGE_GPU_ARCHS})
     list(APPEND FORGE_GPU_ARCH_FLAGS --offload-arch=${arch})
@@ -121,9 +128,11 @@ if (FORGE_HIPCC)
     add_custom_command(
       OUTPUT ${object}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/forge-gpu
-      COMMAND ${FORGE_HIPCC} ${FORGE_GPU_ARCH_FLAGS} -O3 -fPIC -std=c++20 -fvisibility=hidden
-        -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu -c ${source} -o ${object}
-      DEPENDS ${source} ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/DeviceApi.h
+      # No contracted multiply-adds and no fast math: the camera's kernels follow the CPU caster's arithmetic
+      # (camera-vision.GPU.md, amendment 5).
+      COMMAND ${FORGE_HIPCC} ${FORGE_GPU_ARCH_FLAGS} -O3 -fPIC -std=c++20 -fvisibility=hidden -ffp-contract=off
+        -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Vision -c ${source} -o ${object}
+      DEPENDS ${source} ${FORGE_GPU_HEADERS}
       COMMENT "hipcc Animus/Gpu/Device/${name}.hip"
       VERBATIM)
     list(APPEND FORGE_GPU_OBJECTS ${object})
