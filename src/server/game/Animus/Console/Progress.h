@@ -53,6 +53,12 @@ namespace AnimusForge
         std::unordered_map<std::string, std::string> _strings;
     };
 
+    /// The "Reset stall: ..." line for resets that stall the sim (Animus::Stall), or empty: the status warning and the
+    /// sim's own log line (Forge::WatchResets) say the same. `resetMsPerDecision` is the world thread's and the map
+    /// threads' reset time per decision; `decisionMs` the decision's wall time.
+    [[nodiscard]] std::string ResetStallText(Animus::ResetSamples::Summary const& resets, double resetMsPerDecision,
+        double decisionMs);
+
     /// What the sim knows about the running scenario, gathered by Forge for a report.
     struct SimSnapshot
     {

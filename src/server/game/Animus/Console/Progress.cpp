@@ -74,17 +74,8 @@ namespace
     /// The warning for resets that stall the sim (Animus::Stall), empty when they do not.
     std::string StallWarning(AnimusForge::SimSnapshot const& sim)
     {
-        double const decisionMs = sim.WorldMsPerTick + sim.SimMsPerTick + sim.LearnerMsPerTick;
-        Animus::StallCause const cause = Animus::Stall(sim.Resets, decisionMs);
-        if (cause == Animus::StallCause::None)
-            return {};
-        char const* const on = cause == Animus::StallCause::Routes
-            ? "route planning (RoutePlanner, serial on the thread that resets: long trips)"
-            : cause == Animus::StallCause::Placement
-            ? "placement (the encounters' Build less its routes: objective and ledge searches, spawn retries)"
-            : "the reset's characters, kit and despawns";
-        return Acore::StringFormat("Resets stall the sim: one in twenty takes {:.1f} ms or more (a decision is "
-            "{:.1f} ms), mostly {}; see the placement row", sim.Resets.Reset.P95Ms, decisionMs, on);
+        return AnimusForge::ResetStallText(sim.Resets, sim.Collect.Reset + sim.Collect.MapReset,
+            sim.WorldMsPerTick + sim.SimMsPerTick + sim.LearnerMsPerTick);
     }
 
     /// The rest of the observation's blocks after the largest, as "name ms", largest first.
@@ -345,6 +336,25 @@ void AnimusForge::ProgressMonitor::Advance(ProgressFile const& progress)
     _previous.Reward = progress.Number("reward_per_decision");
     _previous.Entropy = progress.Number("entropy");
     _previous.Rate = StepRate(progress);
+}
+
+std::string AnimusForge::ResetStallText(Animus::ResetSamples::Summary const& resets, double resetMsPerDecision,
+    double decisionMs)
+{
+    Animus::StallVerdict const verdict = Animus::Stall(resets, resetMsPerDecision, decisionMs);
+    if (verdict.Cause == Animus::StallCause::None)
+        return {};
+    char const* const on = verdict.Cause == Animus::StallCause::Routes
+        ? "route planning (RoutePlanner, serial on the thread that resets: long trips, ledge reaches)"
+        : verdict.Cause == Animus::StallCause::Placement
+        ? "placement (the encounters' Build less its routes: objective and ledge searches, spawn retries)"
+        : "the reset's characters, kit and despawns";
+    return Acore::StringFormat("Reset stall: resets take {:.0f}% of a decision ({:.1f} ms a decision of {:.1f}){}, "
+        "mostly {}: route plans {:.1f} ms, placement {:.1f} ms, the reset {:.1f} ms on average (p95 {:.1f}, max "
+        "{:.1f}) over the last {} resets; see the placement row", 100.0 * verdict.Share, resetMsPerDecision, decisionMs,
+        verdict.Tail ? Acore::StringFormat(", and one in twenty takes {:.1f} ms or more, longer than a whole decision",
+            resets.Reset.P95Ms) : std::string(), on, resets.Route.MeanMs, resets.Placement.MeanMs,
+        resets.Reset.MeanMs, resets.Reset.P95Ms, resets.Reset.MaxMs, resets.Count);
 }
 
 void AnimusForge::ProgressMonitor::Report(ForgeConfig const& config, SimSnapshot const& sim,

@@ -74,6 +74,7 @@ namespace Animus
             double P50Ms = 0.0;
             double P95Ms = 0.0;
             double MaxMs = 0.0;
+            double MeanMs = 0.0;        // where the time goes in sum: what a stall's cause is read from
         };
 
         struct Summary
@@ -143,6 +144,10 @@ namespace Animus
             out.P50Ms = rank(0.50);
             out.P95Ms = rank(0.95);
             out.MaxMs = double(ns.back()) / 1e6;
+            double sum = 0.0;
+            for (uint64 value : ns)
+                sum += double(value);
+            out.MeanMs = sum / double(ns.size()) / 1e6;
             return out;
         }
 
@@ -159,28 +164,47 @@ namespace Animus
     enum class StallCause : uint8
     {
         None = 0,
-        Routes,         // RoutePlanner::Plan is at least half of the p95 reset (M5's long trips)
+        Routes,         // RoutePlanner::Plan is at least half of the reset time (M5's long trips, M3's ledge reaches)
         Placement,      // the encounters' Build less its routes is (M3's ledge search, objectives, spawn retries)
         Reset,          // the rest of the reset is: characters, kit, despawns
     };
 
     /// Fewer resets than this say nothing about a p95.
     constexpr uint32 STALL_MIN_RESETS = 20;
-    /// A p95 reset under this is never a stall, however short the decisions.
+    /// A p95 reset under this is never a tail stall, however short the decisions.
     constexpr double STALL_FLOOR_MS = 20.0;
+    /// Resets taking this share of a decision's wall time or more stall the sim: the rest of the decision waits for
+    /// them (the world thread's resets are serial; the map threads' sit inside their map's task).
+    constexpr double STALL_SHARE = 0.25;
 
-    /// One reset in twenty costing more than a whole decision (and STALL_FLOOR_MS) stalls the sim: the thread that
-    /// resets holds its decision -- the world thread every env's, a map thread its map's join -- for that long.
-    /// `decisionMs` is a decision's wall time (world + sim + learner).
-    [[nodiscard]] inline StallCause Stall(ResetSamples::Summary const& resets, double decisionMs)
+    struct StallVerdict
     {
-        if (resets.Count < STALL_MIN_RESETS || resets.Reset.P95Ms <= std::max(STALL_FLOOR_MS, decisionMs))
-            return StallCause::None;
-        if (resets.Route.P95Ms * 2.0 >= resets.Reset.P95Ms)
-            return StallCause::Routes;
-        if (resets.Placement.P95Ms * 2.0 >= resets.Reset.P95Ms)
-            return StallCause::Placement;
-        return StallCause::Reset;
+        StallCause Cause = StallCause::None;
+        double Share = 0.0;             // reset time per decision over the decision's wall time
+        bool Tail = false;              // one reset in twenty longer than a whole decision (and the floor)
+    };
+
+    /// Whether the resets stall the sim (the M3 dry check, 2026-10-05: route plans of ~150 ms at p95, under the 250 ms
+    /// decision cadence the old rule compared against while the sim ran 17 ms decisions, and sps halved -- reported
+    /// only at the stage's end). Two ways: the reset time summed per decision (`resetMsPerDecision`: the world
+    /// thread's and the map threads' resets per decision, from the pool's timings) is STALL_SHARE or more of the
+    /// decision's wall time (`decisionMs`: world + sim + learner), which is throughput lost; or one reset in twenty
+    /// takes longer than a whole decision, which is a decision held up. The cause is where the reset time goes in sum
+    /// (the means): route planning, the rest of placement, or the rest of the reset.
+    [[nodiscard]] inline StallVerdict Stall(ResetSamples::Summary const& resets, double resetMsPerDecision,
+        double decisionMs)
+    {
+        StallVerdict out;
+        if (resets.Count < STALL_MIN_RESETS || decisionMs <= 0.0)
+            return out;
+        out.Share = resetMsPerDecision / decisionMs;
+        out.Tail = resets.Reset.P95Ms > std::max(STALL_FLOOR_MS, decisionMs);
+        if (out.Share < STALL_SHARE && !out.Tail)
+            return out;
+        double const total = std::max(resets.Reset.MeanMs, 1e-9);
+        out.Cause = resets.Route.MeanMs * 2.0 >= total ? StallCause::Routes
+            : resets.Placement.MeanMs * 2.0 >= total ? StallCause::Placement : StallCause::Reset;
+        return out;
     }
 
     /// Nanoseconds since `from`, and move `from` to now.

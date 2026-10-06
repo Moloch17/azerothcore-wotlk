@@ -276,6 +276,10 @@ namespace AnimusForge
         void Pump();
         void PollExport();
         void MaybeReport();
+        /// Every STALL_CHECK_SECONDS while a stage runs: whether the resets stall the sim (Animus::Stall), logged as
+        /// "Reset stall: ..." at once and again every STALL_RELOG_SECONDS while it lasts -- not only in `forge status`
+        /// or at the stage's end, where the M3 dry check's halved throughput was first named.
+        void WatchResets();
 
         /// Cluster: take the registrations and orders that have come in; a worker acts on its host's orders.
         void PollCluster();
@@ -509,6 +513,20 @@ namespace AnimusForge
         };
         [[nodiscard]] static ControllerMarks ReadControllerMarks();
         ControllerMarks _rateController;
+        /// WatchResets' window: the decision and reset totals when it last looked.
+        struct StallMarks
+        {
+            bool Valid = false;
+            uint64 Ticks = 0;
+            uint64 WorldNs = 0;
+            uint64 SimNs = 0;
+            uint64 LearnerNs = 0;
+            uint64 ResetNs = 0;
+            uint64 MapResetNs = 0;
+        };
+        StallMarks _stallMarks;
+        std::chrono::steady_clock::time_point _nextStallCheck{};
+        std::optional<std::chrono::steady_clock::time_point> _lastStallLog;
         uint64 _startUnsticks = 0;
         SimSnapshot::ControllerStats _controller;
         /// SeatEncoder::ObserveNs at the last report, and per decision since it (for `forge status`).

@@ -42,6 +42,7 @@ TEST(ResetSamplesTest, QuantilesAreNearestRank)
     EXPECT_DOUBLE_EQ(q.P50Ms, 50.0);
     EXPECT_DOUBLE_EQ(q.P95Ms, 95.0);
     EXPECT_DOUBLE_EQ(q.MaxMs, 100.0);
+    EXPECT_DOUBLE_EQ(q.MeanMs, 50.5);
 
     std::vector<uint64> one{ 7 * MS };
     ResetSamples::Quantiles const single = ResetSamples::Of(one);
@@ -107,7 +108,8 @@ TEST(ResetSamplesTest, ConcurrentAddsAreAllCounted)
     EXPECT_DOUBLE_EQ(s.Reset.MaxMs, 2.0);
 }
 
-// A stall is a p95 reset over a whole decision and the floor, named for what took most of it.
+// A stall is throughput lost -- reset time a quarter of a decision's wall time or more -- or one reset in twenty longer
+// than a whole decision; named for where the reset time goes in sum.
 TEST(ResetSamplesTest, StallsAreNamedByWhatTookTheTime)
 {
     auto summary = [](uint64 placementMs, uint64 routeMs, uint64 resetMs, uint32 count = 40)
@@ -117,14 +119,45 @@ TEST(ResetSamplesTest, StallsAreNamedByWhatTookTheTime)
             samples.Add(Reset(placementMs, routeMs, resetMs));
         return samples.Summarise();
     };
-    // M5: the route is the reset.
-    EXPECT_EQ(Stall(summary(300, 280, 320), 25.0), StallCause::Routes);
-    // M3: a ledge search with no route.
-    EXPECT_EQ(Stall(summary(150, 0, 170), 25.0), StallCause::Placement);
-    // Characters and kit.
-    EXPECT_EQ(Stall(summary(5, 0, 90), 25.0), StallCause::Reset);
-    // Under a decision, under the floor, or too few resets to tell: no stall.
-    EXPECT_EQ(Stall(summary(300, 280, 320), 400.0), StallCause::None);
-    EXPECT_EQ(Stall(summary(15, 10, 19), 5.0), StallCause::None);
-    EXPECT_EQ(Stall(summary(300, 280, 320, STALL_MIN_RESETS - 1), 25.0), StallCause::None);
+    // The tail: one reset in twenty longer than a whole decision, however little of the time resets take in sum.
+    StallVerdict const routes = Stall(summary(300, 280, 320), 1.0, 25.0);
+    EXPECT_EQ(routes.Cause, StallCause::Routes);
+    EXPECT_TRUE(routes.Tail);
+    EXPECT_EQ(Stall(summary(150, 0, 170), 1.0, 25.0).Cause, StallCause::Placement);
+    EXPECT_EQ(Stall(summary(5, 0, 90), 1.0, 25.0).Cause, StallCause::Reset);
+    // Under a decision, under the floor, too few resets to tell, or no decisions: no stall.
+    EXPECT_EQ(Stall(summary(300, 280, 320), 1.0, 400.0).Cause, StallCause::None);
+    EXPECT_EQ(Stall(summary(15, 10, 19), 1.0, 5.0).Cause, StallCause::None);
+    EXPECT_EQ(Stall(summary(300, 280, 320, STALL_MIN_RESETS - 1), 1.0, 25.0).Cause, StallCause::None);
+    EXPECT_EQ(Stall(summary(300, 280, 320), 1.0, 0.0).Cause, StallCause::None);
+}
+
+// The M3 dry check (forge 21b2a98ec): most resets cheap, one in eight plans ledge routes for ~150 ms; 0.8 resets a
+// decision of 17.3 ms, so resets take ~45% of the sim's time and steps/s halved. Against a 250 ms decision cadence the
+// tail is shorter than a decision, and still it is a stall: the share says so. Small resets that add up do too.
+TEST(ResetSamplesTest, ResetsTakingAShareOfEveryDecisionStall)
+{
+    ResetSamples samples;
+    for (int i = 0; i < 1024; ++i)
+        samples.Add(i % 8 == 0 ? Reset(150, 145, 152, 36) : Reset(0, 0, 1));
+    ResetSamples::Summary const m3 = samples.Summarise();
+    double const perDecision = 0.8 * m3.Reset.MeanMs;
+    StallVerdict const verdict = Stall(m3, perDecision, 17.3);
+    EXPECT_EQ(verdict.Cause, StallCause::Routes);
+    EXPECT_NEAR(verdict.Share, perDecision / 17.3, 1e-9);
+    EXPECT_GE(verdict.Share, STALL_SHARE);
+
+    // The same resets with a slow decision (250 ms of wall time): 6% of it, and the tail under a decision -- no stall.
+    StallVerdict const slow = Stall(m3, perDecision, 250.0);
+    EXPECT_EQ(slow.Cause, StallCause::None);
+    EXPECT_FALSE(slow.Tail);
+
+    // Many small resets: 10 ms each, three a 40 ms decision -- 75% of it, though none is long.
+    ResetSamples many;
+    for (int i = 0; i < 100; ++i)
+        many.Add(Reset(1, 0, 10));
+    StallVerdict const small = Stall(many.Summarise(), 30.0, 40.0);
+    EXPECT_EQ(small.Cause, StallCause::Reset);
+    EXPECT_FALSE(small.Tail);
+    EXPECT_EQ(Stall(many.Summarise(), 5.0, 40.0).Cause, StallCause::None);
 }

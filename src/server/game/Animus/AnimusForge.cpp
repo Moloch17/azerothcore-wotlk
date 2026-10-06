@@ -458,6 +458,7 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
         {
             ++_ticks;
             MaybeReport();
+            WatchResets();
         }
 
         if (_plan.Remote())
@@ -783,6 +784,9 @@ bool AnimusForge::Forge::StartCurrent()
     _collectMs = SimSnapshot::CollectMs();
     _rateController = ReadControllerMarks();
     _startUnsticks = _rateController.Unsticks;
+    _stallMarks = StallMarks();
+    _nextStallCheck = now;
+    _lastStallLog.reset();
     _controller = SimSnapshot::ControllerStats();
     _mapTasks = SimSnapshot::MapTasksMs();
     _scenarioStarted = now;
@@ -1345,6 +1349,36 @@ void AnimusForge::Forge::MaybeReport()
     _lastReport = now;
     _learner.Poll();
     _monitor.Report(RunConfig(), Snapshot(true), PlanRows(_plan, true), LogInfo, LogWarn, true);
+}
+
+void AnimusForge::Forge::WatchResets()
+{
+    constexpr auto STALL_CHECK_SECONDS = std::chrono::seconds(30);
+    constexpr auto STALL_RELOG_SECONDS = std::chrono::seconds(300);
+    if (_state != State::Training && _state != State::Running)
+        return;
+    auto const now = std::chrono::steady_clock::now();
+    if (now < _nextStallCheck)
+        return;
+    _nextStallCheck = now + STALL_CHECK_SECONDS;
+
+    StallMarks const marks{ true, _ticks, _worldNs, _simNs, _learnerNs, _collect.ResetNs, _collect.MapResetNs };
+    StallMarks const last = _stallMarks;
+    _stallMarks = marks;
+    uint64 const ticks = marks.Ticks - std::min(marks.Ticks, last.Ticks);
+    if (!last.Valid || !ticks)
+        return;
+
+    auto const since = [](uint64 now, uint64 then) { return double(now - std::min(now, then)); };
+    double const perTick = double(ticks) * 1e6;
+    double const decisionMs = (since(marks.WorldNs, last.WorldNs) + since(marks.SimNs, last.SimNs)
+        + since(marks.LearnerNs, last.LearnerNs)) / perTick;
+    double const resetMs = (since(marks.ResetNs, last.ResetNs) + since(marks.MapResetNs, last.MapResetNs)) / perTick;
+    std::string const stall = ResetStallText(Animus::RecentResets.Summarise(), resetMs, decisionMs);
+    if (stall.empty() || (_lastStallLog && now - *_lastStallLog < STALL_RELOG_SECONDS))
+        return;
+    _lastStallLog = now;
+    LOG_WARN("module.animus", "{} ({})", stall, _current);
 }
 
 void AnimusForge::Forge::ReportStageEnd()
