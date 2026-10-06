@@ -248,7 +248,7 @@ def fill(trainer, envs=3, agents=2, steps=4):
         (o, mask, l, st), im, acting, (chosen, log_probs, values, _, goals, _) = decide(trainer, envs, agents, step,
                                                                                          state=acting)
         buffer.add_decision(o, st, mask, l, chosen, log_probs, values, None, None, memory, goals, critic_memory,
-                            image=im, look=acting.look)
+                            image=im, look=acting.look, look_log_prob=acting.look_log_prob)
         np.testing.assert_array_equal(buffer.look[step], acting.look)
         buffer.add_outcome(np.random.default_rng(step).standard_normal((envs, agents)).astype(np.float32),
                            np.zeros(envs, bool), np.zeros(envs, bool), np.zeros((envs, agents), np.float32))
@@ -260,7 +260,7 @@ def test_the_rollout_buffer_holds_the_look():
     trainer = trainer_of()
     buffer = fill(trainer)
     assert buffer.look.dtype == np.int8 and buffer.look.shape == (4, 3, 2, 3)
-    assert "look" in buffer.sequences()
+    assert "look" in buffer.sequences() and "look_log_probs" in buffer.sequences()
     assert int(buffer.look[..., 0].max()) < 7 and int(buffer.look[..., 2].max()) < 4
     # A buffer without look heads keeps none, and its sequences do not carry one.
     plain = RolloutBuffer(2, 1, 1, 3, 2, 2)
@@ -304,6 +304,26 @@ def test_the_ratio_is_one_on_the_first_epoch_with_the_look_in_it():
                                      critic_lr=0.0, normalise_observations=False))
     stats = trainer.update(fill(trainer))
     assert stats["approx_kl"] == pytest.approx(0.0, abs=1e-6) and stats["clip_frac"] == 0.0
+    # The movement's own KL is 0 too: the look's stored part comes out exactly.
+    assert stats["approx_kl_move"] == pytest.approx(0.0, abs=1e-6)
+    assert stats["epochs_done"] == 1.0 and stats["minibatches_done"] == 1.0
+
+
+def test_the_movement_kl_is_logged_apart_and_target_kl_still_stops_on_the_joint_one():
+    trainer = trainer_of(MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=4, minibatches=2, actor_lr=0.05,
+                                     target_kl=1e-6))
+    buffer = fill(trainer)
+    stored = buffer.look_log_probs.copy()
+    seeing = buffer.layout != 2
+    assert bool((stored[~seeing] == 0).all()) and bool((stored[seeing] < 0).all())
+    stats = trainer.update(buffer)
+    # The first epoch moves the policy past a target this small: the update stops there, after its two minibatches.
+    assert stats["epochs_done"] == 1.0 and stats["minibatches_done"] == 2.0
+    assert stats["approx_kl"] > 0.0 and stats["approx_kl_move"] > 0.0
+    # Without a target every epoch and minibatch runs.
+    whole = trainer_of(MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=3, minibatches=2))
+    stats = whole.update(fill(whole))
+    assert stats["epochs_done"] == 3.0 and stats["minibatches_done"] == 6.0
 
 
 def test_the_camera_update_in_chunks_is_the_whole_minibatchs():
