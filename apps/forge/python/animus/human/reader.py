@@ -35,7 +35,7 @@ from typing import Iterator
 
 import numpy as np
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 MAGIC = b"ANCAP\0\0\0"
 FRAME = struct.Struct("<HH")
 BLOCK_BYTES = 32 << 20          # decompressed bytes framed and parsed at once
@@ -52,7 +52,11 @@ class CaptureError(ValueError):
 # Record types (FORMAT.md §2).
 FILE_HEADER = 0
 SESSION_START, SESSION_CONTEXT, SESSION_END, GROUP_STATE, KNOWN_SPELLS, LATENCY = 1, 2, 3, 4, 5, 6
-MOVE, SPEEDS, MOTION_EVENT = 10, 11, 12
+MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE = 10, 11, 12, 13
+
+# Move `source` (FORMAT.md §2.3): a player's client packet; format 1's synthesised companion sample (never written by
+# format 2); a companion's player controller packet, through its session's movement handlers (format 2).
+SOURCE_CLIENT, SOURCE_COMPANION_SAMPLE, SOURCE_CONTROLLER = 0, 1, 2
 CAST_REQUEST, CAST_RESULT, CAST_END, SELECT, ITEM_USE, ATTACK, INTERACT = 20, 21, 22, 23, 24, 25, 26
 SNAPSHOT = 30
 DAMAGE, HEAL, KILL, DEATH, QUEST, ENCOUNTER, PVP, AREA = 40, 41, 42, 43, 44, 45, 46, 47
@@ -92,6 +96,9 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                         ("turn_rate", "<f4"), ("pitch_rate", "<f4")]),
     MOTION_EVENT: ("MotionEvent", [("ms", "<u8"), ("player", "<u8"), ("event", "u1"), ("arg", "<u4"),
                                    ("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("map", "<u4")]),
+    MOVER_STATE: ("MoverState", [("ms", "<u8"), ("player", "<u8"), ("kind", "u1"), ("class_", "u1"), ("race", "u1"),
+                                 ("level", "u1"), ("map", "<u4"), ("zone", "<u4"), ("mount", "<u4"), ("form", "<u4"),
+                                 ("in_combat", "u1"), ("move_revision", "u1"), ("model", "S32")]),
     CAST_REQUEST: ("CastRequest", [("ms", "<u8"), ("player", "<u8"), ("spell", "<u4"), ("target", "<u8"),
                                    ("target_kind", "u1"), ("tx", "<f4"), ("ty", "<f4"), ("tz", "<f4"),
                                    ("gcd_active", "u1"), ("casting", "u1"), ("power", "<u4"),
