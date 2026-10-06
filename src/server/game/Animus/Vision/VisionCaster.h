@@ -20,7 +20,9 @@
 
 #include "Camera.h"
 #include "PlayerController.h"
+#include <array>
 #include <span>
+#include <vector>
 
 /// **The caster** (camera-vision INTERFACE, "What a ray hits"; camera-vision.RAYCAST.md): every pixel's ray cast
 /// exactly against what the server has loaded -- the static and dynamic collision trees (two casts, the nearer kept),
@@ -55,10 +57,13 @@ namespace Animus::Vision
 
     /// A collision tree's first solid along a segment: how far along it (< 0 for none) and the hit triangle's normal
     /// z, turned to face the segment's start -- 1 a floor seen from above, 0 a wall, below 0 a ceiling from under it.
+    /// Object, for the dynamic tree, is the game object model hit (its GameObjectModel, opaque here): the frame's
+    /// DoorShape of it says what it is (perception-goals 1a).
     struct SurfaceHit
     {
         float Distance = -1.0f;
         float NormalZ = 0.0f;
+        void const* Object = nullptr;
     };
 
     struct LiquidHit
@@ -89,6 +94,7 @@ namespace Animus::Vision
     };
 
     /// A unit as a ray sees it: a vertical cylinder from its feet. `Self` is the seat's own character, never seen.
+    /// Entity is its number in the frame (NumberNearest: 1 the nearest), 0 past MAX_SEEN or not numbered.
     struct UnitShape
     {
         float X = 0.0f;
@@ -99,6 +105,60 @@ namespace Animus::Vision
         /// What it is to the seat (Classify): its pixels' class.
         Class What = Class::NeutralCreature;
         bool Self = false;
+        uint8_t Entity = 0;
+    };
+
+    /// **A game object with no collision model** (a herb, most chests, a mailbox) as a ray sees it: its display's
+    /// bounding box (GameObjectDisplayInfo's bounds, scaled), turned as the object is (perception-goals 1a: cast as
+    /// its bounding shape, as a unit is a cylinder). The box's space is the object's: a point p is at
+    /// InvRot (p - origin) there, InvRot row-major (the inverse of the object's rotation).
+    struct BoxShape
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float InvRot[9] = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+        float Low[3] = {};
+        float High[3] = {};
+        Class What = Class::OtherObject;
+        uint8_t Entity = 0;
+    };
+
+    /// A game object with a collision model, in the dynamic tree: what a ray that hits `Model` (its GameObjectModel)
+    /// has hit. A dynamic hit on a model no DoorShape names is a door with no entity (Class::Door).
+    struct DoorShape
+    {
+        void const* Model = nullptr;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        Class What = Class::Door;
+        uint8_t Entity = 0;
+    };
+
+    /// **The entities a frame can see**, as the caster reads them: the units' cylinders, the colliderless game
+    /// objects' boxes and the collision game objects' identities. Built from units alone where there is nothing
+    /// else (the tests).
+    struct Sight
+    {
+        Sight() = default;
+        Sight(std::span<UnitShape const> units) : Units(units) { }
+        Sight(std::vector<UnitShape> const& units) : Units(units) { }
+
+        std::span<UnitShape const> Units;
+        std::span<BoxShape const> Boxes;
+        std::span<DoorShape const> Doors;
+    };
+
+    /// **A frame's entity list**, as the frame decided it (perception-goals 1b): Slots[s - 1] is pixel slot s's
+    /// entity (its number) and its pixels at the size the frame was cast at (CastWidth x CastHeight), the nearest
+    /// first.
+    struct FrameSlots
+    {
+        uint32_t Count = 0;
+        uint32_t CastWidth = 0;
+        uint32_t CastHeight = 0;
+        std::array<SlotStat, ENTITY_SLOTS> Slots{};
     };
 
     /// Where the seat is: its feet, its facing (radians, WoW's counter-clockwise yaw), its body height.
@@ -143,6 +203,7 @@ namespace Animus::Vision
         Class What = Class::Sky;
         float Z = 0.0f;             // the hit's height
         float NormalZ = 0.0f;
+        uint8_t Entity = 0;         // the entity's number in the frame (NumberNearest), 0 none
     };
 
     /// Where a frame's time and work went: filled only when asked for (the snapshot and the timing test), since
@@ -185,18 +246,30 @@ namespace Animus::Vision
 
     /// The nearest thing along `dir` (a unit vector) from `origin`: nothing is a range, only the loaded grids'
     /// extent (Reach), at which the ray is Sky. A liquid's surface is only ever entered from above, so a camera
-    /// under one sees through it upwards.
-    [[nodiscard]] Hit CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world, std::span<UnitShape const> units,
+    /// under one sees through it upwards. In order: the trees (a dynamic hit is its model's DoorShape), the WMO
+    /// liquids, the terrain, the units' cylinders, the boxes; the nearest wins, the earlier on a tie.
+    [[nodiscard]] Hit CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world, Sight const& sight,
         Breakdown* breakdown = nullptr);
 
     /// The distance along `dir` at which the ray meets the cylinder, or < 0 for a miss; `top` says the cap was hit.
     [[nodiscard]] float RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape const& unit, bool& top);
 
+    /// The distance along `dir` at which the ray enters the box from outside, within `limit`, or < 0 for a miss (a
+    /// ray from inside sees none of it, as with a cylinder); `normalZ` takes the entered face's world normal z,
+    /// turned to face the ray (1 a top seen from above).
+    [[nodiscard]] float RayBox(Vec3 origin, Vec3 dir, float limit, BoxShape const& box, float& normalZ);
+
+    /// Numbers a frame's entities nearest first (perception-goals 1b): numbers[i] is 1 + the rank of distances[i]
+    /// (squared distances from the seat's head; a tie goes to the lower i) when that rank is below MAX_SEEN, else
+    /// 0 -- an entity past the cap is still cast, with its class, and never listed.
+    void NumberNearest(std::span<float const> distances, std::span<uint8_t> numbers);
+
     /// 1 when the closed segment from `origin` to `distance` along `dir` (the hit, or the reach on sky) comes within
     /// OBJECTIVE_RADIUS of the objective, else 0 (and 0 with none).
     [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective);
 
-    /// A pixel's five bytes (Camera.h, BYTES_PER_PIXEL): `slot` is byte 4 as it is.
+    /// A pixel's five bytes (Camera.h, BYTES_PER_PIXEL): `slot` is byte 4 as it is (while a frame is cast, the
+    /// hit's entity number; Render then makes it the slot).
     void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out);
     /// The learner's decode of them: the five image channels (distance, height, normal, class, objective), quantised,
     /// then the entity slot (CHANNEL_SLOT), DECODED_VALUES in all. For `forge camera snapshot` and the tests; the
@@ -207,9 +280,23 @@ namespace Animus::Vision
     /// pixel), the eleven scalars into `scalars`. `settings` is the canonical size; the pixels are cast at the
     /// camera's RenderWidth x RenderHeight (the same field of view, fewer and wider rays) and scaled up into the
     /// image by nearest pixel (Upscale). Returns the rays actually cast (every cast pixel's and the boom's).
+    ///
+    /// **The entity slots** (perception-goals 1b): the cast frame's pixels are counted by entity number
+    /// (CountEntities), the entities with a pixel take the slots in number order -- the nearest first -- up to
+    /// ENTITY_SLOTS (AssignSlots), and byte 4 becomes each pixel's slot (0 past the cap, its class kept) before the
+    /// frame is scaled up. `slots`, when given, takes the list.
     uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
-        std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image, float* scalars,
-        Breakdown* breakdown = nullptr);
+        Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars, Breakdown* breakdown = nullptr,
+        FrameSlots* slots = nullptr);
+
+    /// A cast frame's pixels per entity number (byte 4): counts[n] -- its pixels and the sums of their rows and
+    /// columns -- for n from 1 to MAX_SEEN (counts[0] holds the pixels of no entity).
+    void CountEntities(uint8_t const* frame, uint32_t width, uint32_t height,
+        std::array<SlotStat, MAX_SEEN + 1>& counts);
+    /// The slots from the counts: the numbers with a pixel, ascending, up to ENTITY_SLOTS; slotOf[n] the slot of
+    /// number n (0 none).
+    void AssignSlots(std::array<SlotStat, MAX_SEEN + 1> const& counts, FrameSlots& slots,
+        std::array<uint8_t, MAX_SEEN + 1>& slotOf);
 }
 
 #endif

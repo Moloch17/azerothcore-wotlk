@@ -179,16 +179,17 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     }
 
     Vi::MapVisionWorld const world(map, bot->GetPhaseMask());
-    // The units within range of where the camera can be: the pivot, with the zoom added to the reach.
-    thread_local std::vector<Vi::UnitShape> units;
+    // The entities within range of where the camera can be: the pivot, with the zoom added to the reach -- units,
+    // game objects, what each is to this seat, numbered nearest first (perception-goals 1a).
+    thread_local Vi::SightStore sight;
     Vi::Vec3 const pivot{ pose.X, pose.Y, pose.Z + Vi::PIVOT_SHARE * pose.BodyHeight };
-    Vi::GatherUnits(bot, pivot, settings.Range + camera.Zoom, units);
+    Vi::GatherSight(bot, pivot, settings.Range + camera.Zoom, sight);
 
     Vi::Vec3 const objective{ view.Objective.GetPositionX(), view.Objective.GetPositionY(),
         view.Objective.GetPositionZ() };
     // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
-    uint32 const rays = Vi::Render(settings, pose, camera, world, units, view.HasObjective ? &objective : nullptr,
-        view.Image, obs);
+    uint32 const rays = Vi::Render(settings, pose, camera, world, sight.View(),
+        view.HasObjective ? &objective : nullptr, view.Image, obs);
     Vi::Cost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), rays);
 }

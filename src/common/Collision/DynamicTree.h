@@ -47,10 +47,10 @@ public:
 
     [[nodiscard]] bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask, VMAP::ModelIgnoreFlags ignoreFlags) const;
 
-    /// `normal`, when given, takes the nearest hit triangle's normal (unnormalised, either side), and is left alone
-    /// without a hit.
+    /// `normal`, when given, takes the nearest hit triangle's normal (unnormalised, either side), and `model` the
+    /// model it belongs to (the bots' camera tells what it saw by it); both are left alone without a hit.
     bool GetIntersectionTime(uint32 phasemask, G3D::Ray const& ray, G3D::Vector3 const& endPos, float& maxDist,
-        G3D::Vector3* normal = nullptr) const;
+        G3D::Vector3* normal = nullptr, GameObjectModel const** model = nullptr) const;
 
     bool GetAreaAndLiquidData(float x, float y, float z, uint32 phasemask, Optional<uint8> reqLiquidType, VMAP::AreaAndLiquidData& data) const;
 

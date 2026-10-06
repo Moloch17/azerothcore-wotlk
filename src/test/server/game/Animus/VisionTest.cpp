@@ -15,6 +15,10 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Identity.h"
+#include "MapVisionWorld.h"
+#include "QuestDef.h"
+#include "SharedDefines.h"
 #include "VisionCaster.h"
 #include "gtest/gtest.h"
 #include <algorithm>
@@ -254,6 +258,7 @@ namespace
                 {
                     best.Distance = hit;
                     best.NormalZ = axis == 2 ? (to.Z < from.Z ? 1.0f : -1.0f) : 0.0f;
+                    best.Object = &box;     // a door's identity is its box, as a live one's is its model
                 }
             }
             return best;
@@ -1100,4 +1105,339 @@ TEST(VisionTest, TimingHarness)
             EXPECT_EQ(rays, 64u * 32u + 1u);
             EXPECT_EQ(breakdown.Rays, rays);
         }
+}
+
+// The UI rule (perception-goals amendment 7): a class that depends on the character is what this seat's client would
+// show it. A quest giver is one only while it shows the seat a mark; a quest object only while the seat's quests need
+// it; a corpse lootable only when this seat may loot it.
+TEST(VisionTest, ClassesFollowTheUiRule)
+{
+    Vi::EntityFacts creature;
+    EXPECT_EQ(Vi::Classify(creature).What, Vi::Class::NeutralCreature);
+    creature.Reaction = 1;
+    EXPECT_EQ(Vi::Classify(creature).What, Vi::Class::FriendlyCreature);
+    creature.Reaction = -1;
+    EXPECT_EQ(Vi::Classify(creature).What, Vi::Class::HostileCreature);
+
+    // A quest giver whose quests this seat cannot take (no mark drawn for it) is a creature; with the mark, a giver.
+    Vi::EntityFacts giver;
+    giver.Reaction = 1;
+    giver.Interactive = true;
+    EXPECT_EQ(Vi::Classify(giver).What, Vi::Class::FriendlyCreature);
+    EXPECT_FALSE(Vi::Classify(giver).Quest);
+    EXPECT_TRUE(Vi::Classify(giver).Usable);
+    giver.QuestMark = true;
+    EXPECT_EQ(Vi::Classify(giver).What, Vi::Class::QuestGiver);
+    EXPECT_TRUE(Vi::Classify(giver).Quest);
+    // The marks the client draws by default: from the grey "?" of a quest under way up; not the grey "!" of one too
+    // high, nor the low-level ones it hides.
+    EXPECT_FALSE(Vi::ShowsQuestMark(DIALOG_STATUS_NONE));
+    EXPECT_FALSE(Vi::ShowsQuestMark(DIALOG_STATUS_UNAVAILABLE));
+    EXPECT_FALSE(Vi::ShowsQuestMark(DIALOG_STATUS_LOW_LEVEL_AVAILABLE));
+    EXPECT_TRUE(Vi::ShowsQuestMark(DIALOG_STATUS_INCOMPLETE));
+    EXPECT_TRUE(Vi::ShowsQuestMark(DIALOG_STATUS_AVAILABLE));
+    EXPECT_TRUE(Vi::ShowsQuestMark(DIALOG_STATUS_REWARD));
+
+    Vi::EntityFacts vendor;
+    vendor.Vendor = true;
+    vendor.Interactive = true;
+    EXPECT_EQ(Vi::Classify(vendor).What, Vi::Class::Vendor);
+    vendor.Reaction = -1;      // the other faction's vendor is an enemy to this seat
+    EXPECT_EQ(Vi::Classify(vendor).What, Vi::Class::HostileCreature);
+    EXPECT_FALSE(Vi::Classify(vendor).Usable);
+    Vi::EntityFacts trainer;
+    trainer.Trainer = true;
+    EXPECT_EQ(Vi::Classify(trainer).What, Vi::Class::Trainer);
+
+    // A creature the seat's quests need killed keeps its class and is quest relevant.
+    Vi::EntityFacts target;
+    target.Reaction = -1;
+    target.QuestTarget = true;
+    EXPECT_EQ(Vi::Classify(target).What, Vi::Class::HostileCreature);
+    EXPECT_TRUE(Vi::Classify(target).Quest);
+
+    // Corpses: lootable only with the seat's own sparkle; nothing about a dead one is quest or usable.
+    Vi::EntityFacts corpse;
+    corpse.Dead = true;
+    corpse.Reaction = -1;
+    corpse.QuestTarget = true;
+    EXPECT_EQ(Vi::Classify(corpse).What, Vi::Class::Corpse);
+    EXPECT_FALSE(Vi::Classify(corpse).Lootable);
+    EXPECT_FALSE(Vi::Classify(corpse).Quest);
+    corpse.LootableByMe = true;
+    EXPECT_EQ(Vi::Classify(corpse).What, Vi::Class::LootableCorpse);
+    EXPECT_TRUE(Vi::Classify(corpse).Lootable);
+
+    Vi::EntityFacts player;
+    player.Player = true;
+    EXPECT_EQ(Vi::Classify(player).What, Vi::Class::FriendlyPlayer);
+    player.Reaction = -1;
+    EXPECT_EQ(Vi::Classify(player).What, Vi::Class::HostilePlayer);
+
+    // Game objects.
+    Vi::EntityFacts object;
+    object.GameObject = true;
+    object.ObjectType = GAMEOBJECT_TYPE_DOOR;
+    EXPECT_EQ(Vi::Classify(object).What, Vi::Class::Door);
+    object.ObjectType = GAMEOBJECT_TYPE_MAILBOX;
+    EXPECT_EQ(Vi::Classify(object).What, Vi::Class::Mailbox);
+    object.ObjectType = GAMEOBJECT_TYPE_CHEST;
+    object.Usable = true;
+    object.Lootable = true;
+    EXPECT_EQ(Vi::Classify(object).What, Vi::Class::Chest);
+    EXPECT_TRUE(Vi::Classify(object).Lootable);
+    object.LockSkill = LOCKTYPE_HERBALISM;
+    EXPECT_EQ(Vi::Classify(object).What, Vi::Class::Herb);
+    object.LockSkill = LOCKTYPE_MINING;
+    EXPECT_EQ(Vi::Classify(object).What, Vi::Class::Ore);
+    // A quest chest is a chest to a seat without the quest, a quest object to one with it.
+    Vi::EntityFacts crate;
+    crate.GameObject = true;
+    crate.ObjectType = GAMEOBJECT_TYPE_CHEST;
+    EXPECT_EQ(Vi::Classify(crate).What, Vi::Class::Chest);
+    EXPECT_FALSE(Vi::Classify(crate).Quest);
+    crate.QuestRelevant = true;
+    EXPECT_EQ(Vi::Classify(crate).What, Vi::Class::QuestObject);
+    EXPECT_TRUE(Vi::Classify(crate).Quest);
+    Vi::EntityFacts goober;
+    goober.GameObject = true;
+    goober.ObjectType = GAMEOBJECT_TYPE_GOOBER;
+    EXPECT_EQ(Vi::Classify(goober).What, Vi::Class::OtherObject);
+    goober.Usable = true;
+    EXPECT_EQ(Vi::Classify(goober).What, Vi::Class::UsableObject);
+    goober.QuestRelevant = true;
+    EXPECT_EQ(Vi::Classify(goober).What, Vi::Class::QuestObject);
+    // A quest-giving object: a giver only with its mark.
+    Vi::EntityFacts board;
+    board.GameObject = true;
+    board.ObjectType = GAMEOBJECT_TYPE_QUESTGIVER;
+    board.Usable = true;
+    EXPECT_EQ(Vi::Classify(board).What, Vi::Class::UsableObject);
+    board.QuestMark = true;
+    EXPECT_EQ(Vi::Classify(board).What, Vi::Class::QuestGiver);
+}
+
+// The frame's numbering: nearest first, ties to the earlier, MAX_SEEN at most (the rest 0, cast but never listed).
+TEST(VisionTest, EntitiesAreNumberedNearestFirst)
+{
+    std::vector<float> const distances = { 9.0f, 1.0f, 4.0f, 1.0f, 0.5f };
+    std::vector<uint8_t> numbers(distances.size());
+    Vi::NumberNearest(distances, numbers);
+    EXPECT_EQ(numbers, (std::vector<uint8_t>{ 5, 2, 4, 3, 1 }));
+
+    std::vector<float> many(300);
+    for (std::size_t i = 0; i < many.size(); ++i)
+        many[i] = float(many.size() - i);
+    std::vector<uint8_t> capped(many.size());
+    Vi::NumberNearest(many, capped);
+    EXPECT_EQ(capped.back(), 1);
+    EXPECT_EQ(capped[many.size() - Vi::MAX_SEEN], Vi::MAX_SEEN);
+    for (std::size_t i = 0; i < many.size() - Vi::MAX_SEEN; ++i)
+        EXPECT_EQ(capped[i], 0) << i;
+}
+
+// The slots: the numbers with a pixel, ascending, ENTITY_SLOTS at most; one with no pixel takes none.
+TEST(VisionTest, SlotsAreTheSeenInOrderAndCapped)
+{
+    std::array<Vi::SlotStat, Vi::MAX_SEEN + 1> counts{};
+    for (uint32_t number = 0; number <= Vi::MAX_SEEN; ++number)
+        counts[number].Entity = number;
+    for (uint32_t number = 2; number <= 41; ++number)
+    {
+        counts[number].Pixels = number;
+        counts[number].SumRow = 3 * number;
+        counts[number].SumCol = 5 * number;
+    }
+    counts[7].Pixels = 0;       // numbered, out of sight: not listed
+    Vi::FrameSlots slots;
+    std::array<uint8_t, Vi::MAX_SEEN + 1> slotOf{};
+    Vi::AssignSlots(counts, slots, slotOf);
+    ASSERT_EQ(slots.Count, Vi::ENTITY_SLOTS);
+    std::vector<uint32_t> listed;
+    for (uint32_t slot = 0; slot < slots.Count; ++slot)
+    {
+        listed.push_back(slots.Slots[slot].Entity);
+        EXPECT_EQ(slotOf[slots.Slots[slot].Entity], slot + 1);
+        EXPECT_EQ(slots.Slots[slot], counts[slots.Slots[slot].Entity]);
+    }
+    EXPECT_TRUE(std::is_sorted(listed.begin(), listed.end()));
+    EXPECT_EQ(listed.front(), 2u);
+    EXPECT_EQ(listed.back(), 34u);      // 2 to 34 but 7: the 32 nearest seen
+    EXPECT_EQ(slotOf[7], 0);
+    EXPECT_EQ(slotOf[1], 0);
+    for (uint32_t number = 35; number <= 41; ++number)
+        EXPECT_EQ(slotOf[number], 0) << number;
+
+    float x = 0.0f;
+    float y = 0.0f;
+    float share = 0.0f;
+    Vi::SlotStat stat;
+    stat.Pixels = 4;
+    stat.SumRow = 4 * 31;     // every pixel in row 31 of 64, column 0 of 128
+    stat.SumCol = 0;
+    Vi::SlotCentroid(stat, 128, 64, x, y, share);
+    EXPECT_FLOAT_EQ(x, 2.0f * 0.5f / 128.0f - 1.0f);
+    EXPECT_FLOAT_EQ(y, 1.0f - 2.0f * 31.5f / 64.0f);
+    EXPECT_FLOAT_EQ(share, 4.0f / 8192.0f);
+}
+
+// A colliderless game object is cast as its bounding box (perception-goals 1a): entered from outside only, its face's
+// slope as a cylinder's cap (a top seen from above 1, a side 0), turned as the object is, and its class and number.
+TEST(VisionTest, ColliderlessObjectsAreCastAsBoxes)
+{
+    Vi::BoxShape box;
+    box.X = 10.0f;
+    box.Y = 0.0f;
+    box.Z = 0.0f;
+    box.Low[0] = -0.5f;
+    box.Low[1] = -0.5f;
+    box.Low[2] = 0.0f;
+    box.High[0] = 0.5f;
+    box.High[1] = 0.5f;
+    box.High[2] = 1.0f;
+    box.What = Vi::Class::Chest;
+    box.Entity = 3;
+    float normalZ = -5.0f;
+    EXPECT_NEAR(Vi::RayBox({ 0.0f, 0.0f, 0.5f }, { 1.0f, 0.0f, 0.0f }, 100.0f, box, normalZ), 9.5f, 1e-5f);
+    EXPECT_FLOAT_EQ(normalZ, 0.0f);
+    EXPECT_NEAR(Vi::RayBox({ 10.0f, 0.0f, 5.0f }, { 0.0f, 0.0f, -1.0f }, 100.0f, box, normalZ), 4.0f, 1e-5f);
+    EXPECT_FLOAT_EQ(normalZ, 1.0f);
+    EXPECT_LT(Vi::RayBox({ 0.0f, 0.0f, 0.5f }, { 1.0f, 0.0f, 0.0f }, 9.0f, box, normalZ), 0.0f);     // past the limit
+    EXPECT_LT(Vi::RayBox({ 0.0f, 3.0f, 0.5f }, { 1.0f, 0.0f, 0.0f }, 100.0f, box, normalZ), 0.0f);   // beside it
+    EXPECT_LT(Vi::RayBox({ 10.0f, 0.0f, 0.5f }, { 1.0f, 0.0f, 0.0f }, 100.0f, box, normalZ), 0.0f);  // from inside
+
+    // Turned 45 degrees about z: a ray along x meets the corner at sqrt(2) / 2 short of the centre.
+    float const c = std::cos(45.0f * DEG);
+    float const s = std::sin(45.0f * DEG);
+    float const turned[9] = { c, s, 0.0f, -s, c, 0.0f, 0.0f, 0.0f, 1.0f };     // the inverse of a 45 degree turn
+    std::copy(std::begin(turned), std::end(turned), box.InvRot);
+    EXPECT_NEAR(Vi::RayBox({ 0.0f, 0.0f, 0.5f }, { 1.0f, 0.0f, 0.0f }, 100.0f, box, normalZ),
+        10.0f - 0.5f * std::sqrt(2.0f), 1e-4f);
+    EXPECT_NEAR(normalZ, 0.0f, 1e-6f);
+
+    // Through the caster: the box after the units, the nearest wins, its class and number on the hit.
+    FakeVision world;
+    world.Surface = [](float, float) { return 0.0f; };
+    Vi::BoxShape chest = box;
+    chest.X = X0 + 6.0f;
+    chest.Y = Y0;
+    std::vector<Vi::BoxShape> const boxes{ chest };
+    Vi::Sight sight;
+    sight.Boxes = boxes;
+    Vi::Vec3 const origin{ X0, Y0, 0.5f };
+    Vi::Vec3 const ahead{ 1.0f, 0.0f, 0.0f };
+    Vi::Hit hit = Vi::CastRay(origin, ahead, world, sight);
+    EXPECT_EQ(hit.What, Vi::Class::Chest);
+    EXPECT_EQ(hit.Entity, 3);
+    EXPECT_NEAR(hit.Distance, 6.0f - 0.5f * std::sqrt(2.0f), 1e-3f);
+    std::vector<Vi::UnitShape> const units{ { X0 + 3.0f, Y0, 0.0f, 0.5f, 2.0f, Vi::Class::Vendor, false, 9 } };
+    sight.Units = units;
+    hit = Vi::CastRay(origin, ahead, world, sight);
+    EXPECT_EQ(hit.What, Vi::Class::Vendor);
+    EXPECT_EQ(hit.Entity, 9);
+    // A door the frame knows is its object (its class and number); one it does not know, a door with none.
+    world.Doors = { { X0 + 1.0f, X0 + 1.5f, Y0 - 2.0f, Y0 + 2.0f, 0.0f, 4.0f } };
+    hit = Vi::CastRay(origin, ahead, world, sight);
+    EXPECT_EQ(hit.What, Vi::Class::Door);
+    EXPECT_EQ(hit.Entity, 0);
+    std::vector<Vi::DoorShape> const doors{ { &world.Doors[0], X0 + 1.0f, Y0, 0.0f, Vi::Class::UsableObject, 4 } };
+    sight.Doors = doors;
+    hit = Vi::CastRay(origin, ahead, world, sight);
+    EXPECT_EQ(hit.What, Vi::Class::UsableObject);
+    EXPECT_EQ(hit.Entity, 4);
+    EXPECT_NEAR(hit.Distance, 1.0f, 1e-3f);
+}
+
+// A whole frame's identity: every pixel's class is its hit's whatever its slot; the entities with a pixel take the
+// slots nearest first, 32 at most, and the rest keep their class with slot 0; slot s is the list's s-th entity, and the
+// list's pixel counts are the frame's. At the canonical size and at a drawn one (the slots are the cast frame's).
+TEST(VisionTest, FramesNameTheirEntities)
+{
+    FakeVision world;
+    world.Surface = [](float, float) { return 0.0f; };
+    Vi::Settings const settings;    // 128 x 64
+    Vi::Pose pose;
+    pose.X = X0;
+    pose.Y = Y0;
+    pose.Z = 0.0f;
+    Vi::Vec3 const pivot{ pose.X, pose.Y, pose.Z + Vi::PIVOT_SHARE * pose.BodyHeight };
+
+    // 48 units in a wall of 8 columns by 6 rows across the view (stacked in the air), each a little further than
+    // the last: more of them seen than the list holds.
+    std::vector<Vi::UnitShape> units;
+    std::vector<float> distances;
+    for (int32_t i = 0; i < 48; ++i)
+    {
+        float const angle = (-45.0f + 90.0f * float(i % 8) / 7.0f) * DEG;
+        float const away = 8.0f + 0.05f * float(i);
+        Vi::UnitShape unit{ X0 + away * std::cos(angle), Y0 + away * std::sin(angle), 0.2f + 1.3f * float(i / 8),
+            0.4f, 1.0f, i % 3 ? Vi::Class::NeutralCreature : Vi::Class::HostileCreature, false, 0 };
+        units.push_back(unit);
+        Vi::Vec3 const offset = Vi::Vec3{ unit.X, unit.Y, unit.Z + 0.5f } - pivot;
+        distances.push_back(Vi::Dot(offset, offset));
+    }
+    std::vector<uint8_t> numbers(units.size());
+    Vi::NumberNearest(distances, numbers);
+    for (std::size_t i = 0; i < units.size(); ++i)
+        units[i].Entity = numbers[i];
+    Vi::Sight const sight(units);
+
+    for (uint32_t width : { 128u, 48u })
+    {
+        Vi::CameraState camera;
+        camera.Pitch = 10.0f * DEG;
+        camera.Zoom = 0.0f;
+        camera.RenderWidth = width;
+        camera.RenderHeight = width / 2;
+        Frame frame(settings);
+        Vi::FrameSlots slots;
+        Vi::Render(settings, pose, camera, world, sight, nullptr, frame.Image.data(), frame.Scalars.data(), nullptr,
+            &slots);
+        EXPECT_EQ(slots.CastWidth, width);
+        EXPECT_EQ(slots.CastHeight, width / 2);
+
+        // The frame cast again ray by ray, at its own size: what each pixel hit.
+        Vi::Settings cast = settings;
+        cast.Width = width;
+        cast.Height = width / 2;
+        Vi::Rig const rig = Vi::PlaceCamera(pose, camera, world);
+        std::vector<Vi::Hit> hits;
+        std::set<uint32_t> seen;
+        std::map<uint32_t, uint32_t> pixels;
+        for (uint32_t row = 0; row < cast.Height; ++row)
+            for (uint32_t col = 0; col < cast.Width; ++col)
+            {
+                Vi::Hit const hit = Vi::CastRay(rig.Camera, Vi::PixelDirection(rig, cast, row, col), world, sight);
+                hits.push_back(hit);
+                if (hit.Entity)
+                {
+                    seen.insert(hit.Entity);
+                    ++pixels[hit.Entity];
+                }
+            }
+        ASSERT_GT(seen.size(), Vi::ENTITY_SLOTS) << "the arc should show more entities than the list holds";
+        ASSERT_EQ(slots.Count, Vi::ENTITY_SLOTS);
+        std::vector<uint32_t> const nearest(seen.begin(), std::next(seen.begin(), Vi::ENTITY_SLOTS));
+        for (uint32_t slot = 0; slot < slots.Count; ++slot)
+        {
+            EXPECT_EQ(slots.Slots[slot].Entity, nearest[slot]);
+            EXPECT_EQ(slots.Slots[slot].Pixels, pixels[nearest[slot]]);
+        }
+
+        // Every canonical pixel: its class the hit's, its slot the list's place of the hit's entity, or 0.
+        uint32_t past = 0;
+        for (uint32_t r = 0; r < settings.Height; ++r)
+            for (uint32_t c = 0; c < settings.Width; ++c)
+            {
+                Vi::Hit const& hit = hits[std::size_t(r * cast.Height / settings.Height) * cast.Width
+                    + c * cast.Width / settings.Width];
+                uint8_t const* pixel = &frame.Image[(std::size_t(r) * settings.Width + c) * Vi::BYTES_PER_PIXEL];
+                ASSERT_EQ(Vi::ClassOfByte(pixel[Vi::CLASS_BYTE]), hit.What) << r << ", " << c;
+                auto const at = std::find(nearest.begin(), nearest.end(), uint32_t(hit.Entity));
+                uint8_t const slot = hit.Entity && at != nearest.end() ? uint8_t(at - nearest.begin() + 1) : 0;
+                ASSERT_EQ(pixel[Vi::SLOT_BYTE], slot) << r << ", " << c;
+                past += hit.Entity && !slot;
+            }
+        EXPECT_GT(past, 0u) << "entities past the cap keep their class, with slot 0";
+    }
 }

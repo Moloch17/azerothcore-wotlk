@@ -19,12 +19,15 @@
 #define ANIMUS_VISION_MAP_VISION_WORLD_H
 
 #include "Define.h"
+#include "Identity.h"
 #include "MapWorldQuery.h"
 #include "VisionCaster.h"
 #include <vector>
 
+class GameObject;
 class Map;
 class Player;
+class Unit;
 
 /// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the static tree's WMO
 /// liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
@@ -54,10 +57,43 @@ namespace Animus::Vision
         Movement::MapWorldQuery _query;
     };
 
-    /// The units a seat's camera can see: every creature and player within `range` of the camera that the seat can
-    /// see or detect, the dead included (a corpse is in the world, and in the way), the seat itself marked Self.
+    /// **What a seat's camera can see round it** (perception-goals 1a and 1b): the shapes the caster reads and what
+    /// each numbered entity is. Entities[n] is entity number n's (1 to MAX_SEEN; [0] is unused).
+    struct SightStore
+    {
+        std::vector<UnitShape> Units;
+        std::vector<BoxShape> Boxes;
+        std::vector<DoorShape> Doors;
+        std::vector<EntityInfo> Entities;
+
+        [[nodiscard]] Sight View() const
+        {
+            Sight sight;
+            sight.Units = Units;
+            sight.Boxes = Boxes;
+            sight.Doors = Doors;
+            return sight;
+        }
+    };
+
+    /// The entities a seat's camera can see, within `range` of `pivot` (its head), as this seat's client knows them:
+    /// - every creature and player it can see or detect, the dead included (a corpse is in the world, and in the
+    ///   way), the seat itself marked Self, each a cylinder of its class (Classify over FactsOf);
+    /// - every spawned game object it can see: one with an enabled collision model (in the dynamic tree) by its
+    ///   model (a DoorShape); one with none, or a disabled one that is not a door or button (an opened chest, still
+    ///   drawn by the client), by its display's bounding box (a BoxShape); a disabled door or button not at all (it
+    ///   is open: the doorway is clear);
+    /// - numbered nearest the head first (NumberNearest), MAX_SEEN of them at most, each number's EntityInfo kept.
     /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
-    void GatherUnits(Player* seat, Vec3 camera, float range, std::vector<UnitShape>& out);
+    void GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out);
+
+    /// The facts this seat's client shows of a unit or a game object (the UI rule, perception-goals amendment 7).
+    /// `killTargets`: the creature entries the seat's incomplete quests still need killed (KillTargets).
+    [[nodiscard]] EntityFacts FactsOf(Player* seat, Unit* unit, std::vector<uint32> const& killTargets);
+    [[nodiscard]] EntityFacts FactsOf(Player* seat, GameObject* object);
+    [[nodiscard]] std::vector<uint32> KillTargets(Player* seat);
+    /// Whether a quest giver status is a mark the client draws over the giver's head by default.
+    [[nodiscard]] bool ShowsQuestMark(uint32 status);
 }
 
 #endif

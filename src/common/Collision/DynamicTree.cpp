@@ -169,8 +169,9 @@ void DynamicMapTree::update(uint32 t_diff)
 
 struct DynamicTreeIntersectionCallback
 {
-    DynamicTreeIntersectionCallback(uint32 phasemask, VMAP::ModelIgnoreFlags ignoreFlags, G3D::Vector3* normal = nullptr) :
-        _didHit(false), _phaseMask(phasemask), _ignoreFlags(ignoreFlags), _normal(normal) { }
+    DynamicTreeIntersectionCallback(uint32 phasemask, VMAP::ModelIgnoreFlags ignoreFlags,
+        G3D::Vector3* normal = nullptr, GameObjectModel const** model = nullptr) :
+        _didHit(false), _phaseMask(phasemask), _ignoreFlags(ignoreFlags), _normal(normal), _model(model) { }
 
     bool operator()(G3D::Ray const& r, GameObjectModel const& obj, float& distance, bool stopAtFirstHit)
     {
@@ -178,6 +179,9 @@ struct DynamicTreeIntersectionCallback
         if (result)
         {
             _didHit = result;
+            // A hit only ever shortens the distance, so the last model hit is the nearest.
+            if (_model)
+                *_model = &obj;
         }
         return result;
     }
@@ -192,6 +196,7 @@ private:
     uint32 _phaseMask;
     VMAP::ModelIgnoreFlags _ignoreFlags;
     G3D::Vector3* _normal;
+    GameObjectModel const** _model;
 };
 
 struct DynamicTreeLocationInfoCallback
@@ -221,10 +226,10 @@ private:
 };
 
 bool DynamicMapTree::GetIntersectionTime(const uint32 phasemask, G3D::Ray const& ray, G3D::Vector3 const& endPos, float& maxDist,
-    G3D::Vector3* normal) const
+    G3D::Vector3* normal, GameObjectModel const** model) const
 {
     float distance = maxDist;
-    DynamicTreeIntersectionCallback callback(phasemask, VMAP::ModelIgnoreFlags::Nothing, normal);
+    DynamicTreeIntersectionCallback callback(phasemask, VMAP::ModelIgnoreFlags::Nothing, normal, model);
     impl->intersectRay(ray, callback, distance, endPos, false);
     if (callback.didHit())
     {

@@ -61,9 +61,10 @@ class DynamicVMapCollisionData : public DynamicMapTree
 {
 public:
     bool GetObjectHitPos(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2, float& rx, float& ry, float& rz, float modifyDist) const;
-    /// StaticVMapCollisionData::GetSurfaceHit's, for the game objects of `phasemask`.
+    /// StaticVMapCollisionData::GetSurfaceHit's, for the game objects of `phasemask`; `model`, when given, takes the
+    /// game object model hit.
     bool GetSurfaceHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
-        float& normalZ) const;
+        float& normalZ, GameObjectModel const** model = nullptr) const;
 };
 
 class MMapData

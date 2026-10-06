@@ -213,6 +213,35 @@ namespace Animus::Vision
     constexpr uint32_t ENTITY_SLOTS = 32;
     constexpr uint32_t MAX_SEEN = 255;
 
+    /// One entity's pixels in a frame, at the size it was cast at (perception-goals amendment 11: what the GPU's
+    /// reduction writes, and the CPU's): its number (Entity, 1 to MAX_SEEN), how many pixels, and the sums of their
+    /// rows and columns -- integers, so both casters agree to the bit whatever order they add in.
+    struct SlotStat
+    {
+        uint32_t Entity = 0;
+        uint32_t Pixels = 0;
+        uint32_t SumRow = 0;
+        uint32_t SumCol = 0;
+
+        [[nodiscard]] bool operator==(SlotStat const& other) const = default;
+    };
+
+    /// Where in the image an entity's pixels are, on average: x from -1 (left) to 1 (right), y from -1 (bottom) to 1
+    /// (top), the pixels' centres; and their share of the frame's pixels.
+    inline void SlotCentroid(SlotStat const& stat, uint32_t width, uint32_t height, float& x, float& y, float& share)
+    {
+        if (!stat.Pixels || !width || !height)
+        {
+            x = y = share = 0.0f;
+            return;
+        }
+        float const col = (float(stat.SumCol) / float(stat.Pixels) + 0.5f) / float(width);
+        float const row = (float(stat.SumRow) / float(stat.Pixels) + 0.5f) / float(height);
+        x = 2.0f * col - 1.0f;
+        y = 1.0f - 2.0f * row;
+        share = float(stat.Pixels) / float(width * height);
+    }
+
     /// **A pixel on the wire** (camera-vision.BYTES.md, perception-goals 1a; vision block revision 5): five bytes,
     /// which the learner decodes back to the five image channels below and the entity slot.
     ///   0 distance: SKY_BYTE for sky, else round(254 x the log-scaled distance, 0..1);

@@ -228,7 +228,7 @@ bool DynamicVMapCollisionData::GetObjectHitPos(uint32 phasemask, float x1, float
 }
 
 bool DynamicVMapCollisionData::GetSurfaceHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2,
-    float z2, float& distance, float& normalZ) const
+    float z2, float& distance, float& normalZ, GameObjectModel const** model) const
 {
     G3D::Vector3 const startPos(x1, y1, z1);
     G3D::Vector3 const endPos(x2, y2, z2);
@@ -239,7 +239,7 @@ bool DynamicVMapCollisionData::GetSurfaceHit(uint32 phasemask, float x1, float y
     G3D::Ray const ray(startPos, dir);
     float reach = length;
     G3D::Vector3 normal = G3D::Vector3::zero();
-    if (!DynamicMapTree::GetIntersectionTime(phasemask, ray, endPos, reach, &normal))
+    if (!DynamicMapTree::GetIntersectionTime(phasemask, ray, endPos, reach, &normal, model))
         return false;
     distance = reach;
     normalZ = FacingNormalZ(normal, dir);
