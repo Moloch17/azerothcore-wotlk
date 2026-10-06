@@ -98,7 +98,7 @@ namespace
             .Extends = "",
             .Summary = "an empty Stockades: from the entrance to the end of the hallway as fast as possible, and stop "
                 "within a yard of the mark",
-            .Blocks = { Core, Move, Goal },
+            .Blocks = { Core, Move, Vision, Goal },
             .Arenas = {
                 { .Name = "hallway", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 60,
                     .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,

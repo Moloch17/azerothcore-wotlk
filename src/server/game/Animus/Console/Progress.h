@@ -164,6 +164,16 @@ namespace AnimusForge
         };
 
         ControllerStats Controller;
+        /// The camera (camera-vision): thread time and rays per frame, frames per decision, over the last interval.
+        struct VisionStats
+        {
+            double UsPerFrame = 0.0;
+            double RaysPerFrame = 0.0;
+            double FramesPerDecision = 0.0;
+            double MsPerDecision = 0.0;     // thread time, every seat on every map
+        };
+
+        VisionStats Vision;
         /// The last resets one by one (Animus::RecentResets): placement, its route plans, the reset as a whole.
         Animus::ResetSamples::Summary Resets;
         /// Observation thread time per decision by block (and "view", the seat's work before its blocks), largest

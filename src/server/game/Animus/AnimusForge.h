@@ -510,6 +510,10 @@ namespace AnimusForge
             uint64 Relayed = 0;
             uint64 Unsticks = 0;
             std::vector<uint64> Refused;    // by ClientMovement::Refusal
+            // The camera's (Vision::Cost), over the same windows: thread time, frames, rays.
+            uint64 VisionNs = 0;
+            uint64 VisionFrames = 0;
+            uint64 VisionRays = 0;
         };
         [[nodiscard]] static ControllerMarks ReadControllerMarks();
         ControllerMarks _rateController;
@@ -529,6 +533,7 @@ namespace AnimusForge
         std::optional<std::chrono::steady_clock::time_point> _lastStallLog;
         uint64 _startUnsticks = 0;
         SimSnapshot::ControllerStats _controller;
+        SimSnapshot::VisionStats _vision;
         /// SeatEncoder::ObserveNs at the last report, and per decision since it (for `forge status`).
         std::array<uint64, Animus::Curriculum::SeatEncoder::OBSERVE_SLOTS> _rateObserveNs{};
         std::vector<std::pair<std::string, double>> _observeBlockMs;

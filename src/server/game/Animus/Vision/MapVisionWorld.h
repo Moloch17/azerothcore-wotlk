@@ -1,0 +1,57 @@
+/*
+ * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef ANIMUS_VISION_MAP_VISION_WORLD_H
+#define ANIMUS_VISION_MAP_VISION_WORLD_H
+
+#include "Define.h"
+#include "MapWorldQuery.h"
+#include "VisionCaster.h"
+#include <vector>
+
+class Map;
+class Player;
+
+/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the terrain
+/// heightfield, liquids, floors and their slopes, all through an uncounted MapWorldQuery (the controller's cost line
+/// keeps only the controller's rays). Read from the map's own update, as the rest of a seat's observation is.
+namespace Animus::Vision
+{
+    class MapVisionWorld final : public VisionWorld
+    {
+    public:
+        MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _query(map, phaseMask, false) { }
+
+        [[nodiscard]] float StaticHit(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] float DynamicHit(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] float TerrainHeight(float x, float y) const override;
+        [[nodiscard]] Movement::Liquid LiquidAt(float x, float y, float z) const override;
+        [[nodiscard]] float FloorBelow(float x, float y, float z, float search) const override;
+        [[nodiscard]] float FloorNormalZ(float x, float y, float z) const override;
+
+    private:
+        Map* _map;
+        Movement::MapWorldQuery _query;
+    };
+
+    /// The units a seat's camera can see: every creature and player within `range` of the camera that the seat can
+    /// see or detect, the dead included (a corpse is in the world, and in the way), the seat itself marked Self.
+    /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
+    void GatherUnits(Player* seat, Vec3 camera, float range, std::vector<UnitShape>& out);
+}
+
+#endif

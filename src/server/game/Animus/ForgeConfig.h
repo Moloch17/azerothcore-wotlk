@@ -19,6 +19,7 @@
 #ifndef MOD_ANIMUS_FORGE_CONFIG_H
 #define MOD_ANIMUS_FORGE_CONFIG_H
 
+#include "Camera.h"
 #include "Define.h"
 #include "Position.h"
 #include "StageSettings.h"
@@ -110,6 +111,10 @@ namespace AnimusForge
         bool ProbeGeometry = false;
         std::string ProbeDir;           // AnimusForge.Probe.Dir, resolved: never empty after Load
         uint32 ProbeCacheGrids = 64;    // AnimusForge.Probe.CacheGrids: tables held in memory at once
+
+        /// AnimusForge.Vision.*: the vision block's camera (camera-vision), validated at load. Width and Height set
+        /// the block's size, so they are the process's (Animus::Vision::Configure, before any layout is built).
+        Animus::Vision::Settings Vision;
 
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;

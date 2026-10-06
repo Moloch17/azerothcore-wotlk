@@ -63,6 +63,9 @@ namespace Animus::Curriculum
         /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
         /// friend's resurrection. Before the goal block, which stays last.
         Death,
+        /// What the seat's camera sees: a depth-and-meaning image and the camera's scalars (camera-vision; no
+        /// actions). Before the goal block, which stays last.
+        Vision,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };

@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -279,6 +280,26 @@ void AnimusForge::ForgeConfig::Load()
     ProbeDir = (probeDir.empty() ? DefaultLearnerWorkDir().parent_path() / "probes" : Resolve(probeDir, configDir))
         .lexically_normal().string();
     ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Probe.CacheGrids", 64));
+
+    // The camera (camera-vision): a value out of its range is clamped into it, and said so.
+    {
+        Animus::Vision::Settings const defaults;
+        auto const ranged = [](char const* key, float fallback, float low, float high)
+        {
+            float const value = sConfigMgr->GetOption<float>(key, fallback);
+            float const kept = std::clamp(std::isfinite(value) ? value : fallback, low, high);
+            if (kept != value)
+                LOG_ERROR("server.loading", "{} = {} is outside {} to {}: using {}", key, value, low, high, kept);
+            return kept;
+        };
+        Vision.Width = uint32(ranged("AnimusForge.Vision.Width", float(defaults.Width), 8.0f, 256.0f));
+        Vision.Height = uint32(ranged("AnimusForge.Vision.Height", float(defaults.Height), 8.0f, 256.0f));
+        Vision.FovH = ranged("AnimusForge.Vision.FovH", defaults.FovH, 30.0f, 170.0f);
+        Vision.FovV = ranged("AnimusForge.Vision.FovV", defaults.FovV, 20.0f, 120.0f);
+        Vision.Range = ranged("AnimusForge.Vision.Range", defaults.Range, 10.0f, 500.0f);
+        Vision.Zoom = ranged("AnimusForge.Vision.Zoom", defaults.Zoom, 0.0f, 50.0f);
+        Vision.Pitch = ranged("AnimusForge.Vision.Pitch", defaults.Pitch, -80.0f, 80.0f);
+    }
 
     // Human play (human-play-data plan 2.6): off unless a file is named and its share is above 0.
     fs::path const humanTrips = sConfigMgr->GetOption<std::string>("AnimusForge.Human.Trips", "");

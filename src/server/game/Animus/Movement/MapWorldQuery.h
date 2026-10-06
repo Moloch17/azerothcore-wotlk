@@ -34,7 +34,10 @@ namespace Animus::Movement
     class MapWorldQuery final : public WorldQuery
     {
     public:
-        MapWorldQuery(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask) { }
+        /// `counted` false: the queries are not added to Rays and Heights (the camera's, which would swamp the
+        /// controller's cost line; VisionCost counts its own).
+        MapWorldQuery(Map* map, uint32 phaseMask, bool counted = true)
+            : _map(map), _phaseMask(phaseMask), _counted(counted) { }
 
         [[nodiscard]] float FloorBelow(float x, float y, float z, float search) const override;
         [[nodiscard]] float FloorNormalZ(float x, float y, float z) const override;
@@ -44,6 +47,11 @@ namespace Animus::Movement
         [[nodiscard]] float Ceiling(float x, float y, float z, float up) const override;
         [[nodiscard]] bool InTerrain(float x, float y, float z) const override;
         [[nodiscard]] float TerrainHeight(float x, float y) const override;
+
+        /// How far along the segment the first solid of the static tree (models), or of the dynamic tree (game
+        /// objects: doors), is, or -1 when there is none. The camera casts the two apart to tell a door from a model.
+        [[nodiscard]] float StaticHit(float x0, float y0, float z0, float x1, float y1, float z1) const;
+        [[nodiscard]] float DynamicHit(float x0, float y0, float z0, float x1, float y1, float z1) const;
 
         /// Collision rays cast and height queries made (for the cost line, C8).
         static inline std::atomic<uint64> Rays{ 0 };
@@ -56,6 +64,7 @@ namespace Animus::Movement
 
         Map* _map;
         uint32 _phaseMask;
+        bool _counted = true;
     };
 
     /// The side offsets of a sweep: a body is a cylinder, swept as rays from its centre and its left and right edges

@@ -60,6 +60,12 @@ namespace
                     controller.HeightsPerSeatTick, controller.AppliedPerSecond, controller.RefusedPerSecond,
                     controller.Refusals.empty() ? "" : " (" + controller.Refusals + ")", controller.Unsticks,
                     controller.OrdersPerSecond, controller.RelayedPerSecond) });
+        // The camera's naive cost (camera-vision): the point of M1's vision test.
+        AnimusForge::SimSnapshot::VisionStats const& vision = sim.Vision;
+        if (vision.FramesPerDecision > 0.0)
+            table.AddRow({ "vision", Acore::StringFormat("{:.0f} us/frame", vision.UsPerFrame),
+                Acore::StringFormat("per frame (thread time), {:.0f} rays/frame, {:.1f} frames/decision, {:.2f} ms per "
+                    "decision (every seat)", vision.RaysPerFrame, vision.FramesPerDecision, vision.MsPerDecision) });
         Animus::ResetSamples::Summary const& resets = sim.Resets;
         if (resets.Count)
             table.AddRow({ "placement", Acore::StringFormat("{:.1f} ms p95", resets.Placement.P95Ms),

@@ -41,6 +41,7 @@
 #include "PvpBlock.h"
 #include "SupportBlock.h"
 #include "TravelBlock.h"
+#include "VisionBlock.h"
 #include "WorldBlock.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
@@ -130,13 +131,14 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static CrowdBlock const crowd;
     static HintBlock const hint;
     static DeathBlock const death;
+    static VisionBlock const vision;
     static GoalBlock const goal;
 
     // In BlockId order.
     static std::array<Block const*, BLOCK_COUNT> const blocks =
     {
         &core, &move, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet, &travel,
-        &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &goal
+        &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &vision, &goal
     };
 
     return *blocks[std::size_t(id)];

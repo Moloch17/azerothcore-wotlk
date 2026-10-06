@@ -25,6 +25,8 @@
 #include "ProbeBake.h"
 #include "LayeredField.h"
 #include "MapWorldQuery.h"
+#include "MapVisionWorld.h"
+#include "VisionCaster.h"
 #include "Capture.h"
 #include "GameTime.h"
 #include "MovementHandlerScript.h"
@@ -33,6 +35,7 @@
 #include "Replay.h"
 #include "UnitBody.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <map>
@@ -44,6 +47,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <vector>
 #include "FieldRoute.h"
 #include "FloorScan.h"
 #include "RoutePlanner.h"
@@ -171,6 +175,11 @@ namespace
                 { "replay", HandleControllerReplay, SEC_ADMINISTRATOR, Console::Yes },
             };
 
+            static ChatCommandTable cameraCommandTable =
+            {
+                { "snapshot", HandleCameraSnapshot, SEC_ADMINISTRATOR, Console::Yes },
+            };
+
             static ChatCommandTable forgeCommandTable =
             {
                 { "help",      HandleHelp,      SEC_ADMINISTRATOR, Console::Yes },
@@ -193,6 +202,7 @@ namespace
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
+                { "camera",    cameraCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
@@ -240,6 +250,11 @@ namespace
             table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
+            table.AddRow({ "forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]", "render one frame of "
+                "the vision block's camera from feet at (x, y, z), facing yaw degrees, pitch degrees (+ up) and zoom "
+                "yd (default the AnimusForge.Vision.* ones), on the base map with no units and no objective: writes "
+                "<file>-depth.pgm, <file>-kind.ppm and <file>-height.pgm (default file camera-snapshot) and prints the "
+                "rays and the wall time, split into tree casts, the march and units (idle only)" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
                 "their neighbours (kept if already baked, unless rebake)" });
@@ -539,6 +554,119 @@ namespace
             }
             if (!line.empty())
                 handler->SendSysMessage(line);
+            return true;
+        }
+
+        /// `forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]`: one frame of the vision block's
+        /// camera (camera-vision), from feet at (x, y, z) facing `yaw` degrees, the camera at `pitch` degrees (+ up)
+        /// and `zoom` yards (the AnimusForge.Vision.* ones by default), with a default body, no units and no
+        /// objective. Writes <file>-depth.pgm (the distance channel, near dark), <file>-kind.ppm (a colour a kind,
+        /// the objective white) and <file>-height.pgm (the height channel, mid-grey at the feet), and prints the rays
+        /// cast and the wall time, split into the tree casts, the terrain and liquid march, and the units. On the
+        /// base map (terrain, collision and navmesh tiles only, no creatures: CreateGrids), only while idle.
+        static bool HandleCameraSnapshot(ChatHandler* handler, uint32 mapId, float x, float y, float z, float yaw,
+            Optional<float> pitch, Optional<float> zoom, Optional<std::string> file)
+        {
+            namespace Vi = Animus::Vision;
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("forge camera snapshot runs only while the forge is idle (it creates grids)");
+                return true;
+            }
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+
+            Vi::Settings const settings = Vi::Current();
+            Vi::CameraState camera;
+            camera.Pitch = std::clamp(pitch.value_or(settings.Pitch), -80.0f, 80.0f) * Vi::DEGREES;
+            camera.Zoom = std::clamp(zoom.value_or(settings.Zoom), 0.0f, 50.0f);
+            float const reach = settings.Range + camera.Zoom + 2.0f;
+            CreateGrids(map, x - reach, y - reach, x + reach, y + reach);
+
+            Vi::Pose pose;
+            pose.X = x;
+            pose.Y = y;
+            pose.Z = z;
+            pose.Yaw = yaw * Vi::DEGREES;
+            pose.BodyHeight = Animus::Movement::Body().Height;
+            Vi::MapVisionWorld const world(map, PHASEMASK_NORMAL);
+            std::vector<float> frame(Vi::ObsCount(settings));
+
+            // Once as the block renders (no clock inside), once with the breakdown's clocks.
+            auto const start = std::chrono::steady_clock::now();
+            uint32 const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data());
+            double const wallUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now()
+                - start).count();
+            Vi::Breakdown breakdown;
+            Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data(), &breakdown);
+
+            std::string const base = file.value_or("camera-snapshot");
+            uint32 const width = settings.Width;
+            uint32 const height = settings.Height;
+            uint32 const pixels = width * height;
+            auto const channel = [&](uint32 pixel, uint32 index) { return frame[std::size_t(pixel) * Vi::CHANNELS
+                + index]; };
+            auto const byte = [](float value) { return char(uint8(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)); };
+            static constexpr uint8 COLOURS[Vi::KINDS][3] = {
+                { 30, 30, 80 },     // sky
+                { 60, 160, 60 },    // terrain
+                { 160, 160, 160 },  // model
+                { 170, 100, 40 },   // door or game object
+                { 40, 90, 220 },    // water
+                { 240, 80, 0 },     // deadly liquid
+                { 220, 0, 0 },      // hostile unit
+                { 230, 230, 0 },    // other unit
+            };
+            std::array<uint32, Vi::KINDS> kinds{};
+            std::string depth, kind, rise;
+            for (uint32 pixel = 0; pixel < pixels; ++pixel)
+            {
+                depth += byte(channel(pixel, Vi::CHANNEL_DISTANCE));
+                rise += byte((channel(pixel, Vi::CHANNEL_HEIGHT) + 1.0f) / 2.0f);
+                uint32 const what = std::min<uint32>(uint32(channel(pixel, Vi::CHANNEL_KIND)), Vi::KINDS - 1);
+                ++kinds[what];
+                bool const objective = channel(pixel, Vi::CHANNEL_OBJECTIVE) > 0.5f;
+                for (uint32 c = 0; c < 3; ++c)
+                    kind += char(objective ? 255 : COLOURS[what][c]);
+            }
+            auto const write = [&](std::string const& path, char const* magic, std::string const& data)
+            {
+                std::ofstream out(path, std::ios::binary);
+                out << magic << "\n" << width << " " << height << "\n255\n" << data;
+                if (!out)
+                    handler->PSendSysMessage("Could not write {}", path);
+            };
+            write(base + "-depth.pgm", "P5", depth);
+            write(base + "-kind.ppm", "P6", kind);
+            write(base + "-height.pgm", "P5", rise);
+
+            float const* scalars = frame.data() + Vi::ImageCount(settings);
+            handler->PSendSysMessage("camera snapshot map {} feet ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f} pitch {:.1f} "
+                "zoom {:.1f}: {} x {} pixels, {:.0f} x {:.0f} degrees, {:.0f} yd", mapId, x, y, z, yaw,
+                camera.Pitch / Vi::DEGREES, camera.Zoom, width, height, settings.FovH, settings.FovV, settings.Range);
+            handler->PSendSysMessage("  {} rays in {:.0f} us ({:.2f} us a ray)", rays, wallUs,
+                rays ? wallUs / double(rays) : 0.0);
+            handler->PSendSysMessage("  with the breakdown's clocks: trees {:.0f} us ({} casts), march {:.0f} us ({} "
+                "steps), units {:.0f} us ({} tests)", double(breakdown.TreeNs) / 1e3, breakdown.TreeCasts,
+                double(breakdown.MarchNs) / 1e3, breakdown.MarchSteps, double(breakdown.UnitNs) / 1e3,
+                breakdown.UnitTests);
+            handler->PSendSysMessage("  boom {:.2f} yd, pivot above floor {:.2f} (/10), underwater {}, airborne {}",
+                scalars[Vi::SCALAR_BOOM] * Vi::ZOOM_SCALE, scalars[Vi::SCALAR_PIVOT_HEIGHT],
+                scalars[Vi::SCALAR_UNDERWATER] > 0.5f ? "yes" : "no",
+                scalars[Vi::SCALAR_AIRBORNE] > 0.5f ? "yes" : "no");
+            static constexpr char const* KIND_NAMES[Vi::KINDS] = { "sky", "terrain", "model", "door", "water",
+                "deadly", "hostile", "other" };
+            std::string histogram;
+            for (uint32 what = 0; what < Vi::KINDS; ++what)
+                if (kinds[what])
+                    histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", KIND_NAMES[what],
+                        kinds[what]);
+            handler->PSendSysMessage("  pixels by kind: {}", histogram);
+            handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm", base);
             return true;
         }
 

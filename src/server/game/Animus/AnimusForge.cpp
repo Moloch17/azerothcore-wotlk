@@ -33,6 +33,7 @@
 #include "AnimusHooks.h"
 #include "ClientMovement.h"
 #include "ControllerCost.h"
+#include "VisionCost.h"
 #include "MapWorldQuery.h"
 #include "PlayerLink.h"
 #include "Config.h"
@@ -151,6 +152,12 @@ AnimusForge::Forge* AnimusForge::Forge::Instance()
 void AnimusForge::Forge::OnStartup()
 {
     _config.Load();
+    // The camera's settings before any layout is built: its width and height are the vision block's size.
+    Animus::Vision::Configure(_config.Vision);
+    LOG_INFO("module.animus", "Camera vision: {} x {} pixels, {:.0f} x {:.0f} degrees, {:.0f} yd range, zoom {:.1f} "
+        "yd, pitch {:.0f} degrees: {} observation columns a vision block", _config.Vision.Width, _config.Vision.Height,
+        _config.Vision.FovH, _config.Vision.FovV, _config.Vision.Range, _config.Vision.Zoom, _config.Vision.Pitch,
+        Animus::Vision::ObsCount(_config.Vision));
     // The player controller's client constants, once: what training moves and reports seats with (player-controller).
     LOG_INFO("module.animus", "Player controller: step up {:.4f} yd (the client's max(radius + 1/720, tan 50), "
         "provisional until C6's replay), jump {:.4f} yd/s, swim jump {:.4f}; reports at the client's cadence -- a change at once, "
@@ -695,6 +702,18 @@ bool AnimusForge::Forge::StartCurrent()
         return false;
     }
 
+    // The camera gathers the units it sees from the grid around the seat, which is safe only on the map's own
+    // update: under ObserveAfterJoin the observations run on the job pool, outside it (camera-vision R17).
+    if (_config.ObserveAfterJoin)
+        if (Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(entry.Scenario);
+            stage && stage->Has(Animus::Curriculum::BlockId::Vision))
+        {
+            LOG_ERROR("module.animus", "Scenario {} has a vision block, which AnimusForge.ObserveAfterJoin does not "
+                "support (its camera visits the grid around each seat, which is safe only on the map's own update): "
+                "set AnimusForge.ObserveAfterJoin = 0 to run it", entry.Scenario);
+            return false;
+        }
+
     // A benchmark trial runs at its own map update thread count; every other entry leaves the pool alone.
     if (entry.MapThreads)
         ApplyMapThreads(entry.MapThreads);
@@ -789,6 +808,7 @@ bool AnimusForge::Forge::StartCurrent()
     _nextStallCheck = now;
     _lastStallLog.reset();
     _controller = SimSnapshot::ControllerStats();
+    _vision = SimSnapshot::VisionStats();
     _mapTasks = SimSnapshot::MapTasksMs();
     _scenarioStarted = now;
     _lastReport = now;
@@ -1205,6 +1225,9 @@ AnimusForge::Forge::ControllerMarks AnimusForge::Forge::ReadControllerMarks()
     marks.Orders = Movement::PlayerLink::OrderPackets.load(std::memory_order_relaxed);
     marks.Relayed = Movement::PlayerLink::Relayed.load(std::memory_order_relaxed);
     marks.Unsticks = Movement::PlayerLink::Unsticks.load(std::memory_order_relaxed);
+    marks.VisionNs = Animus::Vision::Cost::Ns.load(std::memory_order_relaxed);
+    marks.VisionFrames = Animus::Vision::Cost::Frames.load(std::memory_order_relaxed);
+    marks.VisionRays = Animus::Vision::Cost::Rays.load(std::memory_order_relaxed);
     marks.Refused.reserve(Movement::PlayerLink::Refused.size());
     for (auto const& count : Movement::PlayerLink::Refused)
         marks.Refused.push_back(count.load(std::memory_order_relaxed));
@@ -1960,6 +1983,11 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
         _controller.OrdersPerSecond = delta(marks.Orders, last.Orders) / seconds;
         _controller.RelayedPerSecond = delta(marks.Relayed, last.Relayed) / seconds;
         _controller.Unsticks = marks.Unsticks - std::min(marks.Unsticks, _startUnsticks);
+        double const frames = delta(marks.VisionFrames, last.VisionFrames);
+        _vision.UsPerFrame = frames > 0.0 ? delta(marks.VisionNs, last.VisionNs) / 1e3 / frames : 0.0;
+        _vision.RaysPerFrame = frames > 0.0 ? delta(marks.VisionRays, last.VisionRays) / frames : 0.0;
+        _vision.FramesPerDecision = ticks ? frames / double(ticks) : 0.0;
+        _vision.MsPerDecision = ticks ? delta(marks.VisionNs, last.VisionNs) / 1e6 / double(ticks) : 0.0;
         std::vector<std::pair<uint64, std::string>> refused;
         double refusedTotal = 0.0;
         for (std::size_t reason = 1; reason < marks.Refused.size(); ++reason)
@@ -2057,6 +2085,7 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
     sim.World = _worldMs;
     sim.MapTasks = _mapTasks;
     sim.Controller = _controller;
+    sim.Vision = _vision;
     sim.Resets = Animus::RecentResets.Summarise();
 
     sim.LearnerRunning = _learner.IsRunning();

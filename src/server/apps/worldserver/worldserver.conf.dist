@@ -5376,6 +5376,65 @@ AnimusForge.Probe.Dir = ""
 AnimusForge.Probe.CacheGrids = 64
 
 ###################################################################################################
+# CAMERA VISION
+#
+#    The vision block's third-person camera (camera-vision): follow mode, behind the seat's facing,
+#    rendered every decision by the naive caster. A value outside its range is clamped into it and
+#    logged. `forge camera snapshot` renders one frame with these settings.
+#
+#    AnimusForge.Vision.Width
+#        Description: Image columns of the vision block's camera (stages with a vision block,
+#                     move1_controls). Width and Height decide the block's observation count,
+#                     Width x Height x 5 + 7: a model trained at one size does not fit another.
+#        Default:     64 - (8 to 256)
+
+AnimusForge.Vision.Width = 64
+
+#
+#    AnimusForge.Vision.Height
+#        Description: Image rows of the camera.
+#        Default:     32 - (8 to 256)
+
+AnimusForge.Vision.Height = 32
+
+#
+#    AnimusForge.Vision.FovH
+#        Description: Horizontal field of view, degrees. Pixels are square when FovH / Width equals
+#                     FovV / Height (1.875 degrees at the defaults).
+#        Default:     120 - (30 to 170)
+
+AnimusForge.Vision.FovH = 120
+
+#
+#    AnimusForge.Vision.FovV
+#        Description: Vertical field of view, degrees.
+#        Default:     60 - (20 to 120)
+
+AnimusForge.Vision.FovV = 60
+
+#
+#    AnimusForge.Vision.Range
+#        Description: Yards a ray reaches; anything further reads as sky.
+#        Default:     100 - (10 to 500)
+
+AnimusForge.Vision.Range = 100
+
+#
+#    AnimusForge.Vision.Zoom
+#        Description: Yards from the pivot (the head) back to the camera, before the boom pulls in
+#                     at a wall. 0 sees from the eyes.
+#        Default:     6 - (0 to 50)
+
+AnimusForge.Vision.Zoom = 6
+
+#
+#    AnimusForge.Vision.Pitch
+#        Description: The camera's pitch, degrees, + up: the default looks slightly down.
+#        Default:     -15 - (-80 to 80)
+
+AnimusForge.Vision.Pitch = -15
+
+###################################################################################################
 # LEARNER
 #
 #    AnimusForge.Learner.AutoStart

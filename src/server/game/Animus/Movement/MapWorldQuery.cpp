@@ -66,7 +66,8 @@ float Animus::Movement::SweepShare(float free, float length, float radius)
 
 float Animus::Movement::MapWorldQuery::FloorBelow(float x, float y, float z, float search) const
 {
-    Heights.fetch_add(1, std::memory_order_relaxed);
+    if (_counted)
+        Heights.fetch_add(1, std::memory_order_relaxed);
     // Terrain, static models and the dynamic tree (Map::GetHeight's own choice between them), the highest at or below z.
     float const floor = _map->GetHeight(_phaseMask, x, y, z, true, search);
     if (floor <= INVALID_HEIGHT || floor > z + 0.05f || floor < z - search)
@@ -105,7 +106,8 @@ Animus::Movement::Liquid Animus::Movement::MapWorldQuery::LiquidAt(float x, floa
 
 float Animus::Movement::MapWorldQuery::RayFree(float x0, float y0, float z0, float x1, float y1, float z1) const
 {
-    Rays.fetch_add(1, std::memory_order_relaxed);
+    if (_counted)
+        Rays.fetch_add(1, std::memory_order_relaxed);
     float const length = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     float free = length;
     float rx = 0.0f, ry = 0.0f, rz = 0.0f;
@@ -115,6 +117,27 @@ float Animus::Movement::MapWorldQuery::RayFree(float x0, float y0, float z0, flo
     if (collision.GetDynamicTree().GetObjectHitPos(_phaseMask, x0, y0, z0, x1, y1, z1, rx, ry, rz, 0.0f))
         free = std::min(free, std::sqrt((rx - x0) * (rx - x0) + (ry - y0) * (ry - y0) + (rz - z0) * (rz - z0)));
     return free;
+}
+
+float Animus::Movement::MapWorldQuery::StaticHit(float x0, float y0, float z0, float x1, float y1, float z1) const
+{
+    if (_counted)
+        Rays.fetch_add(1, std::memory_order_relaxed);
+    float rx = 0.0f, ry = 0.0f, rz = 0.0f;
+    if (!_map->GetMapCollisionData().GetStaticTree().GetObjectHitPos(x0, y0, z0, x1, y1, z1, rx, ry, rz, 0.0f))
+        return -1.0f;
+    return std::sqrt((rx - x0) * (rx - x0) + (ry - y0) * (ry - y0) + (rz - z0) * (rz - z0));
+}
+
+float Animus::Movement::MapWorldQuery::DynamicHit(float x0, float y0, float z0, float x1, float y1, float z1) const
+{
+    if (_counted)
+        Rays.fetch_add(1, std::memory_order_relaxed);
+    float rx = 0.0f, ry = 0.0f, rz = 0.0f;
+    if (!_map->GetMapCollisionData().GetDynamicTree().GetObjectHitPos(_phaseMask, x0, y0, z0, x1, y1, z1, rx, ry, rz,
+        0.0f))
+        return -1.0f;
+    return std::sqrt((rx - x0) * (rx - x0) + (ry - y0) * (ry - y0) + (rz - z0) * (rz - z0));
 }
 
 float Animus::Movement::MapWorldQuery::Sweep(float x0, float y0, float z0, float x1, float y1, float z1,
@@ -159,7 +182,8 @@ bool Animus::Movement::MapWorldQuery::InTerrain(float x, float y, float z) const
 
 float Animus::Movement::MapWorldQuery::TerrainHeight(float x, float y) const
 {
-    Heights.fetch_add(1, std::memory_order_relaxed);
+    if (_counted)
+        Heights.fetch_add(1, std::memory_order_relaxed);
     float const terrain = _map->GetGridHeight(x, y);
     return terrain > INVALID_HEIGHT ? terrain : INVALID_FLOOR;
 }
