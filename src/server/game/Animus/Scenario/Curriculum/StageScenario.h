@@ -137,7 +137,7 @@ namespace Animus::Curriculum
         void ApplyActions(Env& env, int32 const* actions) override;
         void SubTick(Env& env, uint32 diffMs, bool decided) override;
         void ApplyGoals(Env& env, int32 const* goals) override;
-        void Observe(Env& env, float* obs, float* state, uint8* mask) override;
+        void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
         void AgentKinematics(Env const& env, float* kinematics) const override;
@@ -438,7 +438,7 @@ namespace Animus::Curriculum
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void SettleDeath(Env& env, SeatState& seat, Player* bot);
-        void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
+        void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image);
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
         /// and which calls it may make (DirectorLayout).
         void ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask);

@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include "StageScenario.h"
+#include "Camera.h"
 #include <set>
 #include <span>
 #include "ResetTiming.h"
@@ -433,6 +434,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     }
 
     _spec.StateDim = STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES;
+    // The camera's image travels as bytes beside the rows (camera-vision.BYTES.md): every agent has a row of them
+    // when the stage has a vision block, and none is sent when it has not.
+    _spec.ImageBytes = _stage.Has(BlockId::Vision) ? Vision::ImageBytes(Vision::Current()) : 0;
     _data.resize(settings.Envs);
 
     // The encounters any of the stage's arenas uses, in build order.
@@ -3665,16 +3669,27 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         Encoding::StartCallBeastCooldown(bot);
 }
 
-void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask)
+void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image)
 {
+    // An agent's image row, or none for a stage without a camera.
+    auto const imageRow = [this, image](uint32 agent)
+    {
+        return image ? image + std::size_t(agent) * _spec.ImageBytes : nullptr;
+    };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
-        ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr);
+        ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
+            imageRow(seat));
     // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
     Data(env).StepReward = nullptr;
 
     for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
+    {
         ObserveDirector(env, side, obs + (_seatCount + side) * _spec.ObsDim,
             mask ? mask + (_seatCount + side) * _spec.NumActions : nullptr);
+        // A director has no camera.
+        if (uint8* row = imageRow(_seatCount + side))
+            std::fill(row, row + _spec.ImageBytes, uint8(0));
+    }
 
     // The owner's row: a seat's observation when it is played through it, else an empty row that allows only
     // the no-op (the learner marks it absent, AgentPresence).
@@ -3684,10 +3699,12 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
         float* row = obs + agent * _spec.ObsDim;
         uint8* maskRow = mask ? mask + agent * _spec.NumActions : nullptr;
         if (CastOwnerActive(env))
-            ObserveSeat(env, agent, row, maskRow);
+            ObserveSeat(env, agent, row, maskRow, imageRow(agent));
         else
         {
             std::fill(row, row + _spec.ObsDim, 0.0f);
+            if (uint8* pixels = imageRow(agent))
+                std::fill(pixels, pixels + _spec.ImageBytes, uint8(0));
             if (maskRow)
             {
                 std::fill(maskRow, maskRow + _spec.NumActions, uint8(0));
@@ -3834,9 +3851,13 @@ uint32 Animus::Curriculum::StageScenario::SideSeats(Env const& env, uint32 side,
     return count;
 }
 
-void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask)
+void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask,
+    uint8* image)
 {
     std::fill(obs, obs + _spec.ObsDim, 0.0f);
+    // The image row starts zeroed as the observation row does: a seat with no frame this decision sends zeros.
+    if (image)
+        std::fill(image, image + _spec.ImageBytes, uint8(0));
     if (mask)
     {
         std::fill(mask, mask + _spec.NumActions, 0);
@@ -3989,6 +4010,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
     SeatEncoder::AddObserve(SeatEncoder::OBSERVE_VIEW, uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
+    view.Image = image;
     SeatEncoder::Observe(view, obs, mask);
 
     if (mask)

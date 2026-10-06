@@ -56,6 +56,14 @@
  *                                                     2 flying, 3 airborne), mounted, speed in force (yd/s),
  *                                                     in_combat; the new episode's first sample where done is 1,
  *                                                     zeros for an agent without a body (protocol 20)
+ *                            and, only in a stage with a vision block (I = the vision block's image height x width
+ *                            x bytes_per_pixel from stage.json, the same for every layout; protocol 21):
+ *                              u8  image[E*A*I]       each agent's camera image after any auto-reset, [row][col][byte]
+ *                                                     row 0 at the top, 4 bytes a pixel (Vision::EncodePixel,
+ *                                                     camera-vision.BYTES.md); zeros for an agent with no frame. Absent
+ *                                                     when the learner reads it from the device buffers (DEVICE)
+ *                              u8  final_image[D*A*I] last image of each ended episode, the same D envs as final_obs
+ *                            A stage without one sends exactly the protocol 20 STEP.
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
  *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
  *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
@@ -128,7 +136,11 @@ namespace AnimusForge
     // 20: SPEC ends with the kinematics width and every STEP ends with one kinematic sample per agent (Kinematics.h):
     // the bodies the learner's style reward and realism score read. A learner of 19 would read the width as the
     // first episode info name's bytes and every STEP as too long.
-    constexpr uint32 PROTOCOL_VERSION = 20;
+    // 21: the camera's image travels as bytes (camera-vision.BYTES.md): a stage with a vision block (revision 3) ends
+    // each STEP with every agent's image and the ended envs' final images, and its DEVICE message with the images'
+    // device buffer handle. The vision block's float columns are its seven scalars. A stage without one is
+    // unchanged on the wire; a learner of 20 would read a vision stage's STEP as too long.
+    constexpr uint32 PROTOCOL_VERSION = 21;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -264,7 +276,9 @@ namespace AnimusForge
 
     /// Then the arrays of envs [EnvBegin, EnvBegin + EnvCount), in the order of the learner's Spec.step_layout.
     /// DEVICE: device buffers holding this rank's obs [E, A, O] float, state [E, S] float and mask [E, A, N] uint8,
-    /// env-major in the rank's own env numbering, on HIP device `Device`. Handles are hipIpcMemHandle_t bytes.
+    /// env-major in the rank's own env numbering, on HIP device `Device`. Handles are hipIpcMemHandle_t bytes. In a
+    /// stage with a vision block the message is followed by one more handle, DEVICE_HANDLE_BYTES: the images
+    /// [E, A, I] uint8 (protocol 21), which its STEPs then leave out as they leave out obs.
     constexpr uint32 DEVICE_HANDLE_BYTES = 64;
     struct DeviceMsg
     {

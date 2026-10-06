@@ -597,21 +597,28 @@ namespace
             pose.Yaw = yaw * Vi::DEGREES;
             pose.BodyHeight = Animus::Movement::Body().Height;
             Vi::MapVisionWorld const world(map, PHASEMASK_NORMAL);
-            std::vector<float> frame(Vi::ObsCount(settings));
+            // The frame as the block sends it: the image's bytes and the scalars.
+            std::vector<uint8> image(Vi::ImageBytes(settings));
+            std::array<float, Vi::SCALARS> scalars{};
 
             // Once as the block renders (no clock inside), once with the breakdown's clocks.
             auto const start = std::chrono::steady_clock::now();
-            uint32 const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data());
+            uint32 const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, image.data(), scalars.data());
             double const wallUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now()
                 - start).count();
             Vi::Breakdown breakdown;
-            Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data(), &breakdown);
+            Vi::Render(settings, pose, camera, world, {}, nullptr, image.data(), scalars.data(), &breakdown);
 
             std::string const base = file.value_or("camera-snapshot");
             uint32 const width = settings.Width;
             uint32 const height = settings.Height;
             uint32 const pixels = width * height;
-            auto const channel = [&](uint32 pixel, uint32 index) { return frame[std::size_t(pixel) * Vi::CHANNELS
+            // Decoded as the learner decodes the bytes.
+            std::vector<float> decoded(std::size_t(pixels) * Vi::CHANNELS);
+            for (uint32 pixel = 0; pixel < pixels; ++pixel)
+                Vi::DecodePixel(&image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL], &decoded[std::size_t(pixel)
+                    * Vi::CHANNELS]);
+            auto const channel = [&](uint32 pixel, uint32 index) { return decoded[std::size_t(pixel) * Vi::CHANNELS
                 + index]; };
             auto const byte = [](float value) { return char(uint8(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)); };
             static constexpr uint8 COLOURS[Vi::KINDS][3] = {
@@ -647,7 +654,6 @@ namespace
             write(base + "-kind.ppm", "P6", kind);
             write(base + "-height.pgm", "P5", rise);
 
-            float const* scalars = frame.data() + Vi::ImageCount(settings);
             handler->PSendSysMessage("camera snapshot map {} feet ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f} pitch {:.1f} "
                 "zoom {:.1f}: {} x {} pixels, {:.0f} x {:.0f} degrees, no range", mapId, x, y, z, yaw,
                 camera.Pitch / Vi::DEGREES, camera.Zoom, width, height, settings.FovH, settings.FovV);

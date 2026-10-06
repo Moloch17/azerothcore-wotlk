@@ -430,12 +430,14 @@ namespace AnimusForge
         uint32 _tickDiff = 0;
         uint64 _decisions = 0;
         /// SendStep's gather of the ended envs' final obs and state (protocol 14), kept to reuse the allocations.
-        /// A rank's device buffers (OfferDevice): obs, state and mask, written before each STEP instead of sent.
+        /// A rank's device buffers (OfferDevice): obs, state and mask -- and the camera image in a stage with one
+        /// (protocol 21) -- written before each STEP instead of sent.
         struct RankDevice
         {
             void* Obs = nullptr;
             void* State = nullptr;
             void* Mask = nullptr;
+            void* Image = nullptr;
             int Device = 0;
             std::size_t Bytes = 0;
             bool Offered = false;           // DEVICE sent, its answer not yet read
@@ -443,6 +445,7 @@ namespace AnimusForge
         };
         std::vector<RankDevice> _rankDevices;
         std::vector<float> _endedObs;
+        std::vector<uint8> _endedImage;     // ... and their final camera images (protocol 21)
         std::vector<float> _endedState;
         std::vector<float> _endedInfo;
         bool _tickMismatchLogged = false;   // a world tick other than ForgeConfig::TickMs was reported once

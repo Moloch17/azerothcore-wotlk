@@ -349,6 +349,10 @@ namespace Animus::Curriculum
         /// which holds nothing and moves nowhere.
         MoveControls::SeatControls* Controls = nullptr;
         Movement::BodyState* Body = nullptr;
+        /// **The seat's camera image**, written by the vision block: Vision::ImageBytes bytes (camera-vision.BYTES.md),
+        /// the seat's row of the pool's image (EnvPool::Image, or FinalImage for an ended episode's last look). Null
+        /// for a view without one (a stage with no vision block): the block then writes its scalars alone.
+        uint8* Image = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0

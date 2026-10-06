@@ -5385,8 +5385,9 @@ AnimusForge.Probe.CacheGrids = 64
 #
 #    AnimusForge.Vision.Width
 #        Description: Image columns of the vision block's camera (stages with a vision block,
-#                     move1_controls). Width and Height decide the block's observation count,
-#                     Width x Height x 5 + 7: a model trained at one size does not fit another.
+#                     move1_controls). Width and Height decide the image each agent sends,
+#                     Width x Height x 4 bytes beside its observation (the block's own columns
+#                     are 7 scalars): a model trained at one size does not fit another.
 #        Default:     64 - (8 to 256)
 
 AnimusForge.Vision.Width = 64

@@ -60,6 +60,21 @@ namespace Animus::Vision
     constexpr uint32_t KIND_CHANNEL = 3;
     constexpr uint32_t SCALARS = 7;
 
+    /// **A pixel on the wire** (camera-vision.BYTES.md, vision block revision 3): four bytes, which the learner decodes
+    /// back to the five channels below.
+    ///   0 distance: SKY_BYTE for sky, else round(254 x the log-scaled distance, 0..1);
+    ///   1 height over the feet: HEIGHT_ZERO + clamp(round(dz / HEIGHT_STEP), -HEIGHT_LIMIT, HEIGHT_LIMIT); sky 128;
+    ///   2 normal z: round(255 x clamp(nz, 0, 1));
+    ///   3 the kind in the low four bits, the objective flag in bit 4 (OBJECTIVE_BIT); bits 5-7 are 0.
+    constexpr uint32_t BYTES_PER_PIXEL = 4;
+    constexpr uint8_t SKY_BYTE = 255;
+    constexpr float DISTANCE_LEVELS = 254.0f;
+    constexpr uint8_t HEIGHT_ZERO = 128;
+    constexpr float HEIGHT_STEP = 0.2f;
+    constexpr int32_t HEIGHT_LIMIT = 125;
+    constexpr uint8_t KIND_MASK = 0x0F;
+    constexpr uint8_t OBJECTIVE_BIT = 0x10;
+
     enum Channel : uint32_t
     {
         CHANNEL_DISTANCE = 0,
@@ -95,7 +110,8 @@ namespace Animus::Vision
     /// The longest a ray is cast when its path never leaves the loaded grids (a ray straight up or down): far past
     /// the distance channel's reference, so it is no range a frame can see.
     constexpr float REACH_MAX = 4000.0f;
-    /// The height channel: (hit z - feet z) / HEIGHT_SCALE, clamped to [-1, 1].
+    /// The height channel, decoded: (hit z - feet z) / HEIGHT_SCALE, clamped to [-1, 1] (HEIGHT_LIMIT steps of
+    /// HEIGHT_STEP on the wire).
     constexpr float HEIGHT_SCALE = 25.0f;
     /// A ray flags the objective when it passes within this many yards of it.
     constexpr float OBJECTIVE_RADIUS = 1.0f;
@@ -114,15 +130,16 @@ namespace Animus::Vision
     [[nodiscard]] constexpr float GridU(float x) { return float(GRID_CELLS) * (float(GRIDS / 2) - x / GRID_SIZE); }
     [[nodiscard]] constexpr float WorldOfU(float u) { return (float(GRIDS / 2) - u / float(GRID_CELLS)) * GRID_SIZE; }
 
-    /// The vision block's width: the image, then the scalars.
-    [[nodiscard]] constexpr uint32_t ImageCount(Settings const& settings)
+    /// An agent's image on the wire: [row][col][byte], row 0 at the top, BYTES_PER_PIXEL a pixel.
+    [[nodiscard]] constexpr uint32_t ImageBytes(Settings const& settings)
     {
-        return settings.Width * settings.Height * CHANNELS;
+        return settings.Width * settings.Height * BYTES_PER_PIXEL;
     }
 
-    [[nodiscard]] constexpr uint32_t ObsCount(Settings const& settings)
+    /// The vision block's float columns: the scalars alone (revision 3; the image travels as bytes beside them).
+    [[nodiscard]] constexpr uint32_t ObsCount(Settings const& /*settings*/)
     {
-        return ImageCount(settings) + SCALARS;
+        return SCALARS;
     }
 
     /// The process's settings, set once at startup (AnimusForge::Forge::OnStartup) before any layout is built: the
