@@ -1,0 +1,35 @@
+"""Means of episode info columns, where some columns are per event rather than per episode.
+
+An episode that never reached its marker reports arrive_seconds 0, not "nothing": averaged over every episode, M1's
+first run read 5.8 s for a run whose optimum is 16.6 s (2026-10-05). A per-event column is the mean over the events
+its episode had, so the right mean across episodes weights each episode by that count, and an episode with none of
+them carries no weight at all. Everything else is a plain mean.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+# Per-event column -> the column counting its events in the same episode.
+PER_EVENT = {
+    "arrive_seconds": "markers",
+    "time_ratio": "markers",
+    "overshoot": "markers",
+    "stop_distance": "stops_near",
+}
+
+
+def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
+    """Column means of `values` (episodes x columns, in `names` order); a per-event column whose count column is
+    present is weighted by it, and is NaN when no episode had the event."""
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 2 or len(values) == 0:
+        return np.full(len(names), np.nan)
+    out = values.mean(axis=0)
+    index = {name: i for i, name in enumerate(names)}
+    for name, count in PER_EVENT.items():
+        if name in index and count in index:
+            weights = values[:, index[count]]
+            total = weights.sum()
+            out[index[name]] = float((values[:, index[name]] * weights).sum() / total) if total > 0 else np.nan
+    return out
