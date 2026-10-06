@@ -2624,7 +2624,8 @@ bool AnimusForge::Forge::AwaitDeviceAnswer(uint32 rank)
     if (!device.On)
     {
         for (void* pointer : { device.Obs, device.State, device.Mask, device.Image })
-            gpu->Free(pointer);
+            if (pointer)
+                gpu->Free(pointer);
         device = RankDevice();
     }
     return true;
