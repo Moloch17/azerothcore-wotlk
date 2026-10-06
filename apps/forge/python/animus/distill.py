@@ -20,7 +20,7 @@ import torch
 
 from .bootstrap import DIRECTOR_LAYOUT
 
-from .mappo.networks import LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of
+from .mappo.networks import LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_of
 from .stages import Span, arena_names, arena_state_span, block_spans, revised_blocks
 
 
@@ -93,6 +93,11 @@ def build_teacher(checkpoint: dict, spec, stage: dict | None, device: torch.devi
                 if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
     # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
     seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
+    # A teacher with a camera (VisionEncoder) is not distilled from in the camera's naive slice: its image columns
+    # would have to be mapped onto the student's camera, which nothing here does yet.
+    if (vision_of(t_stage, t_names) is not None
+            or any(key.startswith("vision.") for key in checkpoint["trainer"]["actor"])):
+        raise ValueError("distillation from a teacher with a camera (a vision block) is not supported yet")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
                         director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,

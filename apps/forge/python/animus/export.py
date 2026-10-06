@@ -482,6 +482,14 @@ def export_layouts(
     stage = json.loads(stage_path.read_text()) if stage_path.is_file() else {}
     models = model_names(stage) if stage else {}
     layouts = spec["layouts"]
+    # The camera (VisionEncoder) has no section in the realm's format yet: a model without it would act on a policy
+    # whose adapter is blind to the image it was trained to read through it. Refused before any file is written.
+    seeing = [layout["name"] for layout in layouts
+              if any(block.get("name") == "vision" for block in
+                     ((stage.get("layouts") or {}).get(layout["name"]) or {}).get("blocks", ()))]
+    if seeing or any(key.startswith("vision.") for key in actor_state):
+        raise ValueError(f"{', '.join(seeing) or 'this checkpoint'}: vision layers are not in the realm format yet "
+                         f"(the camera's encoder has no .amdl section); not exporting")
     written = []
     for index, layout in enumerate(layouts):
         name = model_name(spec["scenario"], layout["name"], len(layouts), models)
