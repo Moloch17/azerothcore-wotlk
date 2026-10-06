@@ -151,6 +151,7 @@ namespace Animus::Movement
         bool Jumped = false;        // a jump (or a swim jump) was taken this step
         float FallHeight = 0.0f;    // apex to landing, when Landed
         bool Unburied = false;      // the last Resync lifted it out of the ground onto the terrain (its last rung)
+        bool OverVoid = false;      // a step was refused for nothing at all below it: no floor, no terrain, no water
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
     };

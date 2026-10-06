@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <utility>
 #include <vector>
 
 namespace Mv = Animus::Movement;
@@ -728,6 +729,79 @@ TEST(PlayerControllerTest, ACavesMouthLetsTheBodyUnderTheHill)
     body = At(5.0f, 0.0f, 0.0f);
     Drive(body, control, speeds, world, 3.0f);
     EXPECT_LT(body.X, 12.01f);
+}
+
+// Holes in the world query where the client has a floor (the M1 Stockades hallway, 2026-10-05: strips along the
+// corridor with no collision in the vmaps, nothing below, and no terrain on the map). A body walking across, along or
+// into them never falls to the map's floor and never ends below the floor it walks on: a void is an edge it cannot step
+// off (a wall), a crack narrower than the body is walked over on the footprint's edge, and a gutter with a floor is
+// stepped into and out of.
+TEST(PlayerControllerTest, AHoleInTheWorldIsAnEdgeNotAFallIntoTheVoid)
+{
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    auto world = [](std::vector<Box> boxes)
+    {
+        FakeWorld w;
+        w.Ground = [](float, float) { return Mv::INVALID_FLOOR; };           // no terrain: nothing below the floors
+        w.Boxes = std::move(boxes);
+        return w;
+    };
+    auto walk = [&](FakeWorld const& w, float x, float y, float yaw, float seconds, float lowest)
+    {
+        Mv::BodyState body = At(x, y, 0.0f, yaw);
+        Mv::ControlState control;
+        control.Forward = 1;
+        bool refused = false;
+        for (int tick = 0; tick < int(seconds / 0.05f); ++tick)
+        {
+            Mv::Step(body, control, speeds, shape, w, 0.05f);
+            refused = refused || body.OverVoid;
+            EXPECT_NE(body.Kind, Mv::Mode::Falling) << "fell at x " << body.X << " y " << body.Y;
+            EXPECT_GE(body.Z, lowest - 1e-3f) << "below the floor at x " << body.X;
+            if (body.Kind == Mv::Mode::Falling)
+                break;
+        }
+        return std::make_pair(body, refused);
+    };
+
+    // A 1.5 yd floorless strip between two floors, nothing below it: across, along it and into it at an angle.
+    FakeWorld const strip = world({ { -20.0f, 0.0f, -20.0f, 20.0f, -1.0f, 0.0f }, { 1.5f, 20.0f, -20.0f, 20.0f, -1.0f,
+        0.0f } });
+    auto [across, refusedAcross] = walk(strip, -5.0f, 0.0f, 0.0f, 3.0f, 0.0f);
+    EXPECT_TRUE(refusedAcross);
+    EXPECT_LE(across.X, shape.Radius + 0.05f);
+    auto [along, refusedAlong] = walk(strip, -0.1f, -10.0f, PI / 2.0f, 3.0f, 0.0f);
+    EXPECT_GT(along.Y, 5.0f);
+    EXPECT_FLOAT_EQ(along.Z, 0.0f);
+    for (float yaw : { PI / 6.0f, -PI / 4.0f, PI / 3.0f })
+        walk(strip, -3.0f, 0.0f, yaw, 3.0f, 0.0f);
+
+    // Past the floor's edge, nothing at all: the body stops at the edge.
+    FakeWorld const edge = world({ { -20.0f, 0.0f, -20.0f, 20.0f, -1.0f, 0.0f } });
+    auto [stopped, refusedEdge] = walk(edge, -5.0f, 0.0f, 0.0f, 3.0f, 0.0f);
+    EXPECT_TRUE(refusedEdge);
+    EXPECT_LE(stopped.X, shape.Radius + 0.05f);
+
+    // A crack narrower than the body (0.5 yd, the body 0.78 across): walked over on the footprint's edge.
+    FakeWorld const crack = world({ { -20.0f, 0.0f, -20.0f, 20.0f, -1.0f, 0.0f }, { 0.5f, 20.0f, -20.0f, 20.0f, -1.0f,
+        0.0f } });
+    auto [over, refusedCrack] = walk(crack, -5.0f, 0.0f, 0.0f, 2.0f, 0.0f);
+    EXPECT_FALSE(refusedCrack);
+    EXPECT_GT(over.X, 5.0f);
+    EXPECT_FLOAT_EQ(over.Z, 0.0f);
+    // ... and along its middle: the footprint's edges stand on both sides.
+    auto [inCrack, refusedInCrack] = walk(crack, 0.25f, -10.0f, PI / 2.0f, 2.0f, 0.0f);
+    EXPECT_FALSE(refusedInCrack);
+    EXPECT_GT(inCrack.Y, 0.0f);
+
+    // A gutter 1.5 yd wide with a floor 0.9 yd down: stepped into and out of, never below its floor.
+    FakeWorld const gutter = world({ { -20.0f, 0.0f, -20.0f, 20.0f, -1.0f, 0.0f }, { 0.0f, 1.5f, -20.0f, 20.0f, -2.0f,
+        -0.9f }, { 1.5f, 20.0f, -20.0f, 20.0f, -1.0f, 0.0f } });
+    auto [crossed, refusedGutter] = walk(gutter, -5.0f, 0.0f, 0.0f, 2.0f, -0.9f);
+    EXPECT_FALSE(refusedGutter);
+    EXPECT_GT(crossed.X, 5.0f);
+    EXPECT_FLOAT_EQ(crossed.Z, 0.0f);
 }
 
 // What the action mask asks: jump on the ground (and at the surface), not in the air; height steered in water and

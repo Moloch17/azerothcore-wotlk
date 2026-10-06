@@ -471,8 +471,9 @@ namespace Animus::Curriculum
         CurriculumTuning _tuning;
         std::atomic<uint64> _reused{ 0 };       // characters kept across episodes (CharactersReused)
         bool _resetsStayOnMap = false;          // ResetsStayOnMap: worked out once, from the stage's arenas
-        /// Diagnostic lines written, per kind and layout (MayLog): deaths, void falls, burials, into the terrain.
-        static constexpr uint32 LOG_KINDS = 4;
+        /// Diagnostic lines written, per kind and layout (MayLog): deaths, void falls, burials, into the terrain,
+        /// steps refused over a void.
+        static constexpr uint32 LOG_KINDS = 5;
         static constexpr uint32 LOG_LAYOUTS = 64;
         mutable std::array<std::array<std::atomic<uint32>, LOG_LAYOUTS>, LOG_KINDS> _logged{};
         uint32 _spawnMapId;

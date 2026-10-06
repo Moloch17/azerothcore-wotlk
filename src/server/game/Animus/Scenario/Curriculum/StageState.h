@@ -317,6 +317,7 @@ namespace Animus::Curriculum
         bool VoidFallLogged = false;
         bool UnburiedLogged = false;        // the buried-placement line was written this episode
         bool IntoTerrainLogged = false;     // the into-the-terrain line was written this episode
+        bool OverVoidLogged = false;        // the over-a-void line was written this episode
         uint32 BreathingCasts = 0;      // water-breathing spells started (ActionCatalog::Action::WaterBreathing)
         uint32 ItemUses = 0;
         bool InCombat = false;
@@ -545,6 +546,7 @@ namespace Animus::Curriculum
             VoidFallLogged = false;
             UnburiedLogged = false;
             IntoTerrainLogged = false;
+            OverVoidLogged = false;
             Jumps = 0;
             Drops = 0;
             Falls = 0;

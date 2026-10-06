@@ -3154,6 +3154,7 @@ namespace
     constexpr uint32 LOG_VOID_FALL = 1;
     constexpr uint32 LOG_BURIED = 2;
     constexpr uint32 LOG_INTO_TERRAIN = 3;
+    constexpr uint32 LOG_OVER_VOID = 4;
 }
 
 bool Animus::Curriculum::StageScenario::MayLog(SeatState const& seat, uint32 kind, uint32 cap) const
@@ -3186,6 +3187,18 @@ void Animus::Curriculum::StageScenario::WatchFall(SeatState& seat, Player* bot, 
                 "point or the server's position is buried", bot->GetName(), arena,
                 evaluating ? "evaluating" : "training", body.X, body.Y, seat.Mover.UnburiedFromZ, bot->GetMapId(),
                 body.Z);
+    }
+
+    // A step refused over nothing at all (no floor, no terrain, no water below): the world query has a hole there --
+    // the vmaps lack what the client has (M1's Stockades hallway). Once a seat an episode.
+    if (seat.Mover.Counts.OverVoid > seat.MoverAtStart.OverVoid && !seat.OverVoidLogged)
+    {
+        seat.OverVoidLogged = true;
+        if (MayLog(seat, LOG_OVER_VOID, 8))
+            LOG_WARN("module.animus", "Player controller: {} ({} arena, {}) was kept from stepping over nothing at all "
+                "at ({:.1f}, {:.1f}, {:.1f}) on map {}: no floor, terrain or water below -- a hole in the world query "
+                "there", bot->GetName(), arena, evaluating ? "evaluating" : "training", seat.Mover.VoidX,
+                seat.Mover.VoidY, seat.Mover.VoidZ, bot->GetMapId());
     }
 
     // Through the terrain's surface from above in one tick: never, by the controller's own rule (IntoTerrain). Counted

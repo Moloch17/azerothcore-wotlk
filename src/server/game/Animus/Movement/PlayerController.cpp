@@ -122,6 +122,40 @@ namespace
     /// Move (dx, dy, dz) from the body with the wall rule: the whole move if it is free; else the turned variants of
     /// it (SLIDE_ANGLES, shortened by the cosine) kept for the most progress along the original; else as far as the
     /// original goes. Returns the move made.
+    /// The highest floor under the edge of a body's footprint at (x, y) -- eight points at its radius -- between `top`
+    /// and `lowest`, or INVALID_FLOOR. A body is a cylinder: where its centre is over a crack narrower than itself,
+    /// or over the lip of a drop, its edge still stands on the floor beside it.
+    float FootprintFloor(float x, float y, float top, float lowest, Mv::Body const& shape, Mv::WorldQuery const& world)
+    {
+        constexpr float DIAGONAL = 0.70710678f;
+        static constexpr float POINTS[8][2] = { { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f },
+            { DIAGONAL, DIAGONAL }, { -DIAGONAL, DIAGONAL }, { DIAGONAL, -DIAGONAL }, { -DIAGONAL, -DIAGONAL } };
+        float best = Mv::INVALID_FLOOR;
+        if (shape.Radius <= 0.0f || top < lowest)
+            return best;
+        for (auto const& point : POINTS)
+        {
+            float const floor = world.FloorBelow(x + point[0] * shape.Radius, y + point[1] * shape.Radius, top,
+                top - lowest);
+            if (HasFloor(floor) && floor >= lowest)
+                best = std::max(best, floor);
+        }
+        return best;
+    }
+
+    /// Nothing at all below (x, y, z): no floor, no terrain's surface under it, no water -- a step there could only
+    /// fall to the map's floor and die (the M1 Stockades hallway, 2026-10-05: strips along the corridor with no
+    /// collision in the vmaps, where the client has the WMO's floor).
+    bool OverVoid(float x, float y, float z, Mv::WorldQuery const& world)
+    {
+        if (HasFloor(world.FloorBelow(x, y, z, BURIED_SEARCH)))
+            return false;
+        float const terrain = world.TerrainHeight(x, y);
+        if (HasFloor(terrain) && terrain <= z + SNAP)
+            return false;
+        return !world.LiquidAt(x, y, z).Present;
+    }
+
     /// The share of a move along which the knee stays out of the terrain, when it starts above the terrain's surface:
     /// the terrain is in no collision tree, so the sweep's rays do not see a hillside, and a step up it that the floor
     /// search answered with something else -- a rock model buried in the hill, whose top Map::GetHeight hands back once
@@ -276,8 +310,13 @@ namespace
         float const nx = body.X + dx;
         float const ny = body.Y + dy;
 
-        // The floor under the new place, from a step above the feet down to a step below.
+        // The floor under the new place, from a step above the feet down to a step below; where the centre has none,
+        // or only one below the feet (a step down), the footprint's edge on a floor at the feet holds the body there
+        // (FootprintFloor): it does not drop through, or into, a gap narrower than itself. Only a supporting floor (at
+        // or below the feet) is taken from the edge: stepping up stays the centre's, as the sweep's.
         float floor = world.FloorBelow(nx, ny, body.Z + Mv::STEP_UP, 2.0f * Mv::STEP_UP);
+        if (!HasFloor(floor) || floor < body.Z - SNAP)
+            floor = std::max(floor, FootprintFloor(nx, ny, body.Z + SNAP, body.Z - Mv::STEP_UP, shape, world));
         Mv::Liquid const liquid = world.LiquidAt(nx, ny, body.Z);
         if (speeds.WaterWalk && liquid.Present && !liquid.Deadly && liquid.Level <= body.Z + Mv::STEP_UP
             && (!HasFloor(floor) || liquid.Level > floor))
@@ -306,6 +345,15 @@ namespace
             // onto (the terrain is in no collision tree, so no sweep sees a hillside's face). A wall. A body already
             // under the terrain's surface (a cave) is not walled in by it.
             body.AgainstWall = true;
+            return;
+        }
+
+        if (!HasFloor(floor) && (dx != 0.0f || dy != 0.0f) && OverVoid(nx, ny, body.Z, world))
+        {
+            // Over nothing at all: an edge the body cannot step off (it could only fall to the map's floor). A wall,
+            // counted (OverVoid) so the place is reported.
+            body.AgainstWall = true;
+            body.OverVoid = true;
             return;
         }
 
@@ -378,6 +426,10 @@ namespace
         // Landing: a floor between where the feet were and where they are going.
         float const top = std::max(body.Z, nz) + SNAP;
         float floor = world.FloorBelow(nx, ny, top, top - nz + SNAP);
+        // The footprint's edge lands too, on a floor the feet go down past in this step (a jump onto a crack's lip) --
+        // never on the one the body is leaving, which its trailing edge still overlaps as it steps off.
+        if (!HasFloor(floor) && body.Vz <= 0.0f && nz < body.Z - SNAP)
+            floor = FootprintFloor(nx, ny, body.Z - SNAP, nz - SNAP, shape, world);
         Mv::Liquid const liquid = world.LiquidAt(nx, ny, nz);
         if (speeds.WaterWalk && liquid.Present && !liquid.Deadly && liquid.Level <= top
             && (!HasFloor(floor) || liquid.Level > floor))
@@ -585,6 +637,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
 {
     body.AgainstWall = false;
     body.SteepSlope = false;
+    body.OverVoid = false;
     body.Landed = false;
     body.LandedInWater = false;
     body.Jumped = false;
@@ -602,6 +655,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     float fallHeight = 0.0f;
     bool wall = false;
     bool steep = false;
+    bool overVoid = false;
     for (uint32_t i = 0; i < steps; ++i)
     {
         SubStep(body, control, speeds, shape, world, sub);
@@ -611,7 +665,8 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
         fallHeight = std::max(fallHeight, body.FallHeight);
         wall = wall || body.AgainstWall;
         steep = steep || body.SteepSlope;
-        body.Landed = body.LandedInWater = body.AgainstWall = body.SteepSlope = body.Jumped = false;
+        overVoid = overVoid || body.OverVoid;
+        body.Landed = body.LandedInWater = body.AgainstWall = body.SteepSlope = body.Jumped = body.OverVoid = false;
     }
     body.Landed = landed;
     body.Jumped = jumped;
@@ -619,6 +674,7 @@ void Animus::Movement::Step(BodyState& body, ControlState& control, Speeds const
     body.FallHeight = fallHeight;
     body.AgainstWall = wall;
     body.SteepSlope = steep;
+    body.OverVoid = overVoid;
 }
 
 void Animus::Movement::Launch(BodyState& body, float vx, float vy, float vz)
