@@ -51,9 +51,11 @@ namespace
         [[nodiscard]] bool Holds(float x, float y) const { return x >= X0 && x <= X1 && y >= Y0 && y <= Y1; }
     };
 
-    /// The distance along the segment to the box's first face (slab method), or -1.
-    float SegmentBox(Vi::Vec3 from, Vi::Vec3 to, Box const& box)
+    /// The distance along the segment to the box's first face (slab method), or -1; `entered` the face's axis (0 x, 1 y,
+    /// 2 z; -1 when the segment starts inside).
+    float SegmentBox(Vi::Vec3 from, Vi::Vec3 to, Box const& box, int& entered)
     {
+        entered = -1;
         Vi::Vec3 const d = to - from;
         float const length = Vi::Length(d);
         float lo = 0.0f;
@@ -74,6 +76,8 @@ namespace
             float t1 = (maxs[axis] - o[axis]) / v[axis];
             if (t0 > t1)
                 std::swap(t0, t1);
+            if (t0 > lo)
+                entered = axis;
             lo = std::max(lo, t0);
             hi = std::min(hi, t1);
             if (lo > hi)
@@ -118,8 +122,8 @@ namespace
                     Loaded.insert({ x, y });
         }
 
-        float StaticHit(Vi::Vec3 from, Vi::Vec3 to) const override { return Nearest(Models, from, to); }
-        float DynamicHit(Vi::Vec3 from, Vi::Vec3 to) const override { return Nearest(Doors, from, to); }
+        Vi::SurfaceHit StaticHit(Vi::Vec3 from, Vi::Vec3 to) const override { return Nearest(Models, from, to); }
+        Vi::SurfaceHit DynamicHit(Vi::Vec3 from, Vi::Vec3 to) const override { return Nearest(Doors, from, to); }
 
         Vi::LiquidHit ModelLiquid(Vi::Vec3 from, Vi::Vec3 to) const override
         {
@@ -236,17 +240,21 @@ namespace
             return best;
         }
 
-        float FloorNormalZ(float /*x*/, float /*y*/, float /*z*/) const override { return 1.0f; }
-
     private:
-        static float Nearest(std::vector<Box> const& boxes, Vi::Vec3 from, Vi::Vec3 to)
+        /// The nearest box face along the segment, its normal z turned to face the start: a top seen from above 1,
+        /// a bottom from below -1, a side 0.
+        static Vi::SurfaceHit Nearest(std::vector<Box> const& boxes, Vi::Vec3 from, Vi::Vec3 to)
         {
-            float best = -1.0f;
+            Vi::SurfaceHit best;
             for (Box const& box : boxes)
             {
-                float const hit = SegmentBox(from, to, box);
-                if (hit >= 0.0f && (best < 0.0f || hit < best))
-                    best = hit;
+                int axis = -1;
+                float const hit = SegmentBox(from, to, box, axis);
+                if (hit >= 0.0f && (best.Distance < 0.0f || hit < best.Distance))
+                {
+                    best.Distance = hit;
+                    best.NormalZ = axis == 2 ? (to.Z < from.Z ? 1.0f : -1.0f) : 0.0f;
+                }
             }
             return best;
         }
@@ -263,8 +271,8 @@ namespace
         Vi::Hit best;
         best.Distance = range;
         best.Z = end.Z;
-        float const model = world.StaticHit(origin, end);
-        float const door = world.DynamicHit(origin, end);
+        float const model = world.StaticHit(origin, end).Distance;
+        float const door = world.DynamicHit(origin, end).Distance;
         bool const modelHit = model >= 0.0f && model <= range;
         bool const doorHit = door >= 0.0f && door <= range;
         if (modelHit || doorHit)

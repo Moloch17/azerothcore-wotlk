@@ -53,6 +53,14 @@ namespace Animus::Vision
         bool Deadly = false;
     };
 
+    /// A collision tree's first solid along a segment: how far along it (< 0 for none) and the hit triangle's normal
+    /// z, turned to face the segment's start -- 1 a floor seen from above, 0 a wall, below 0 a ceiling from under it.
+    struct SurfaceHit
+    {
+        float Distance = -1.0f;
+        float NormalZ = 0.0f;
+    };
+
     struct LiquidHit
     {
         float Distance = -1.0f;     // along the segment, or < 0 for none
@@ -64,10 +72,10 @@ namespace Animus::Vision
     {
     public:
         virtual ~VisionWorld() = default;
-        /// How far along the segment the first solid of the static tree (WMOs, M2s) is, or < 0 when none is.
-        [[nodiscard]] virtual float StaticHit(Vec3 from, Vec3 to) const = 0;
+        /// The first solid of the static tree (WMOs, M2s) along the segment, and its slope.
+        [[nodiscard]] virtual SurfaceHit StaticHit(Vec3 from, Vec3 to) const = 0;
         /// ... of the dynamic tree (doors and other game objects, phase-masked).
-        [[nodiscard]] virtual float DynamicHit(Vec3 from, Vec3 to) const = 0;
+        [[nodiscard]] virtual SurfaceHit DynamicHit(Vec3 from, Vec3 to) const = 0;
         /// The first WMO liquid surface along the segment (the static tree's group liquids).
         [[nodiscard]] virtual LiquidHit ModelLiquid(Vec3 from, Vec3 to) const = 0;
         /// Terrain grid (tileX, tileY), as GridCoord numbers them (u / 128, v / 128).
@@ -78,7 +86,6 @@ namespace Animus::Vision
         [[nodiscard]] virtual Movement::Liquid LiquidAt(float x, float y, float z) const = 0;
         /// The highest floor (terrain, models, doors) at or below z within `search`, or Movement::INVALID_FLOOR.
         [[nodiscard]] virtual float FloorBelow(float x, float y, float z, float search) const = 0;
-        [[nodiscard]] virtual float FloorNormalZ(float x, float y, float z) const = 0;
     };
 
     /// A unit as a ray sees it: a vertical cylinder from its feet. `Self` is the seat's own character, never seen.
@@ -134,7 +141,7 @@ namespace Animus::Vision
     /// the clock reads cost something of their own.
     struct Breakdown
     {
-        uint64_t TreeNs = 0;        // the static and dynamic casts, with the model floor test
+        uint64_t TreeNs = 0;        // the static and dynamic casts
         uint64_t LiquidNs = 0;      // the WMO liquids
         uint64_t TerrainNs = 0;     // the loaded grids' extent and the terrain cells (their triangles and liquid)
         uint64_t UnitNs = 0;        // the cylinders

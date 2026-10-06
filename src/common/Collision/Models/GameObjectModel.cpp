@@ -170,7 +170,8 @@ GameObjectModel* GameObjectModel::Create(std::unique_ptr<GameObjectModelOwnerBas
     return mdl;
 }
 
-bool GameObjectModel::intersectRay(G3D::Ray const& ray, float& MaxDist, bool StopAtFirstHit, uint32 ph_mask, VMAP::ModelIgnoreFlags ignoreFlags) const
+bool GameObjectModel::intersectRay(G3D::Ray const& ray, float& MaxDist, bool StopAtFirstHit, uint32 ph_mask, VMAP::ModelIgnoreFlags ignoreFlags,
+    G3D::Vector3* normal) const
 {
     if (!(phasemask & ph_mask) || !owner->IsSpawned())
     {
@@ -187,11 +188,14 @@ bool GameObjectModel::intersectRay(G3D::Ray const& ray, float& MaxDist, bool Sto
     Vector3 p = iInvRot * (ray.origin() - iPos) * iInvScale;
     Ray modRay(p, iInvRot * ray.direction());
     float distance = MaxDist * iInvScale;
-    bool hit = iModel->IntersectRay(modRay, distance, StopAtFirstHit, ignoreFlags);
+    bool hit = iModel->IntersectRay(modRay, distance, StopAtFirstHit, ignoreFlags, normal);
     if (hit)
     {
         distance *= iScale;
         MaxDist = distance;
+        // Back out of the model's space: the inverse of a rotation is its transpose (the scale is uniform).
+        if (normal)
+            *normal = iInvRot.transpose() * *normal;
     }
     return hit;
 }

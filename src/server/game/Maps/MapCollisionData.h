@@ -45,6 +45,11 @@ public:
     /// segment crosses none (VMAP::StaticMapTree::GetLiquidIntersection; the bots' camera, nothing else).
     bool GetLiquidHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
         uint32& liquidType) const;
+    /// How far along the segment the first solid of the tree is, and the hit triangle's normal z turned to face
+    /// the segment's start (1 a floor seen from above, 0 a wall, below 0 a ceiling seen from under it), or false
+    /// when the segment meets none (the bots' camera, nothing else).
+    bool GetSurfaceHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
+        float& normalZ) const;
     bool GetAreaAndLiquidData(float x, float y, float z, Optional<uint8> reqLiquidType, VMAP::AreaAndLiquidData& data) const;
 protected:
     // _staticTree is a shared_ptr as it will point to a parent maps static tree (if exists) to save on memory
@@ -56,6 +61,9 @@ class DynamicVMapCollisionData : public DynamicMapTree
 {
 public:
     bool GetObjectHitPos(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2, float& rx, float& ry, float& rz, float modifyDist) const;
+    /// StaticVMapCollisionData::GetSurfaceHit's, for the game objects of `phasemask`.
+    bool GetSurfaceHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
+        float& normalZ) const;
 };
 
 class MMapData

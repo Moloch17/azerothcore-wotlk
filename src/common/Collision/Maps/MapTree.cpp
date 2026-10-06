@@ -35,10 +35,11 @@ namespace VMAP
     class MapRayCallback
     {
     public:
-        MapRayCallback(ModelInstance* val, ModelIgnoreFlags ignoreFlags): prims(val), flags(ignoreFlags), hit(false) { }
+        MapRayCallback(ModelInstance* val, ModelIgnoreFlags ignoreFlags, Vector3* hitNormal = nullptr): prims(val),
+            flags(ignoreFlags), hit(false), normal(hitNormal) { }
         bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool StopAtFirstHit)
         {
-            bool result = prims[entry].intersectRay(ray, distance, StopAtFirstHit, flags);
+            bool result = prims[entry].intersectRay(ray, distance, StopAtFirstHit, flags, normal);
             if (result)
             {
                 hit = true;
@@ -50,6 +51,7 @@ namespace VMAP
         ModelInstance* prims;
         ModelIgnoreFlags flags;
         bool hit;
+        Vector3* normal;
     };
 
     class MapLiquidCallback
@@ -128,10 +130,11 @@ namespace VMAP
     Else, pMaxDist is not modified and returns false;
     */
 
-    bool StaticMapTree::GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
+    bool StaticMapTree::GetIntersectionTime(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags,
+        Vector3* normal) const
     {
         float distance = pMaxDist;
-        MapRayCallback intersectionCallBack(iTreeValues, ignoreFlags);
+        MapRayCallback intersectionCallBack(iTreeValues, ignoreFlags, normal);
         iTree.intersectRay(pRay, intersectionCallBack, distance, StopAtFirstHit);
         if (intersectionCallBack.didHit())
         {
@@ -140,6 +143,11 @@ namespace VMAP
         return intersectionCallBack.didHit();
     }
     //=========================================================
+
+    bool StaticMapTree::GetSurfaceIntersection(G3D::Ray const& pRay, float& pMaxDist, Vector3& normal) const
+    {
+        return GetIntersectionTime(pRay, pMaxDist, false, ModelIgnoreFlags::Nothing, &normal);
+    }
 
     bool StaticMapTree::GetLiquidIntersection(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const
     {

@@ -132,6 +132,40 @@ bool StaticVMapCollisionData::GetLiquidHit(float x1, float y1, float z1, float x
     return true;
 }
 
+namespace
+{
+    /// A hit triangle's normal z, turned to face the ray (the triangles are two-sided) and normalised; 0 for a
+    /// degenerate one. z is the same in the static tree's internal space and the world's (only x and y mirror).
+    float FacingNormalZ(G3D::Vector3 const& normal, G3D::Vector3 const& dir)
+    {
+        float const length = normal.magnitude();
+        if (!(length > 1e-12f))
+            return 0.0f;
+        return (normal.dot(dir) > 0.0f ? -normal.z : normal.z) / length;
+    }
+}
+
+bool StaticVMapCollisionData::GetSurfaceHit(float x1, float y1, float z1, float x2, float y2, float z2,
+    float& distance, float& normalZ) const
+{
+    if (!_staticTree)
+        return false;
+    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
+    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
+    float const length = (pos2 - pos1).magnitude();
+    if (!(length > 1e-6f) || !std::isfinite(length))
+        return false;
+    G3D::Vector3 const dir = (pos2 - pos1) / length;
+    G3D::Ray const ray = G3D::Ray::fromOriginAndDirection(pos1, dir);
+    float reach = length;
+    G3D::Vector3 normal = G3D::Vector3::zero();
+    if (!_staticTree->GetSurfaceIntersection(ray, reach, normal))
+        return false;
+    distance = reach;
+    normalZ = FacingNormalZ(normal, dir);
+    return true;
+}
+
 float StaticVMapCollisionData::getHeight(float x, float y, float z, float maxSearchDist) const
 {
 #if defined(ENABLE_VMAP_CHECKS)
@@ -191,6 +225,25 @@ bool DynamicVMapCollisionData::GetObjectHitPos(uint32 phasemask, float x1, float
     ry = resultPos.y;
     rz = resultPos.z;
     return result;
+}
+
+bool DynamicVMapCollisionData::GetSurfaceHit(uint32 phasemask, float x1, float y1, float z1, float x2, float y2,
+    float z2, float& distance, float& normalZ) const
+{
+    G3D::Vector3 const startPos(x1, y1, z1);
+    G3D::Vector3 const endPos(x2, y2, z2);
+    float const length = (endPos - startPos).magnitude();
+    if (!(length > 1e-6f) || !std::isfinite(length))
+        return false;
+    G3D::Vector3 const dir = (endPos - startPos) / length;
+    G3D::Ray const ray(startPos, dir);
+    float reach = length;
+    G3D::Vector3 normal = G3D::Vector3::zero();
+    if (!DynamicMapTree::GetIntersectionTime(phasemask, ray, endPos, reach, &normal))
+        return false;
+    distance = reach;
+    normalZ = FacingNormalZ(normal, dir);
+    return true;
 }
 
 namespace

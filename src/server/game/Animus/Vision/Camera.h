@@ -115,9 +115,6 @@ namespace Animus::Vision
     constexpr float HEIGHT_SCALE = 25.0f;
     /// A ray flags the objective when it passes within this many yards of it.
     constexpr float OBJECTIVE_RADIUS = 1.0f;
-    /// A model or door hit is a floor when the floor found from FLOOR_LOOK above it is within FLOOR_MATCH of it.
-    constexpr float FLOOR_LOOK = 0.5f;
-    constexpr float FLOOR_MATCH = 0.25f;
     constexpr float ZOOM_SCALE = 12.0f;
     constexpr float PIVOT_HEIGHT_SCALE = 10.0f;
     /// The terrain's grids as the core's GridTerrainData lays them out: 64 x 64 grids of SIZE_OF_GRIDS yards, each

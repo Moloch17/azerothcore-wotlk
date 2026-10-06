@@ -71,7 +71,10 @@ public:
     [[nodiscard]] bool isEnabled() const { return phasemask != 0; }
     [[nodiscard]] bool IsMapObject() const { return isWmo; }
 
-    bool intersectRay(G3D::Ray const& Ray, float& MaxDist, bool StopAtFirstHit, uint32 ph_mask, VMAP::ModelIgnoreFlags ignoreFlags) const;
+    /// `normal`, when given, takes the nearest hit triangle's normal in world space (unnormalised, either side), and
+    /// is left alone without a hit.
+    bool intersectRay(G3D::Ray const& Ray, float& MaxDist, bool StopAtFirstHit, uint32 ph_mask, VMAP::ModelIgnoreFlags ignoreFlags,
+        G3D::Vector3* normal = nullptr) const;
     bool GetLocationInfo(G3D::Vector3 const& point, VMAP::LocationInfo& info, uint32 ph_mask) const;
     bool GetLiquidLevel(G3D::Vector3 const& point, VMAP::LocationInfo& info, float& liqHeight) const;
 

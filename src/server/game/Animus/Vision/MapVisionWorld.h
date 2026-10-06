@@ -28,28 +28,29 @@ class Player;
 
 /// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the static tree's WMO
 /// liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
-/// not created is where a ray leaves the world it can see), and floors and their slopes through an uncounted
-/// MapWorldQuery (the controller's cost line keeps only the controller's rays). Read from the map's own update, as
+/// not created is where a ray leaves the world it can see), and floors through an uncounted MapWorldQuery (the
+/// controller's cost line keeps only the controller's rays). A tree hit's slope is its triangle's own. Read from the map's own update, as
 /// the rest of a seat's observation is.
 namespace Animus::Vision
 {
     class MapVisionWorld final : public VisionWorld
     {
     public:
-        MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _query(map, phaseMask, false) { }
+        MapVisionWorld(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask),
+            _query(map, phaseMask, false) { }
 
-        [[nodiscard]] float StaticHit(Vec3 from, Vec3 to) const override;
-        [[nodiscard]] float DynamicHit(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] SurfaceHit StaticHit(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] SurfaceHit DynamicHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] LiquidHit ModelLiquid(Vec3 from, Vec3 to) const override;
         [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const override;
         [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
             bool liquid) const override;
         [[nodiscard]] Movement::Liquid LiquidAt(float x, float y, float z) const override;
         [[nodiscard]] float FloorBelow(float x, float y, float z, float search) const override;
-        [[nodiscard]] float FloorNormalZ(float x, float y, float z) const override;
 
     private:
         Map* _map;
+        uint32 _phaseMask;
         Movement::MapWorldQuery _query;
     };
 

@@ -165,23 +165,22 @@ namespace
         best.Z = end.Z;
 
         // 1. The collision trees, cast apart so a door (the dynamic tree) is told from a model (R8).
-        float const model = world.StaticHit(origin, end);
-        float const door = world.DynamicHit(origin, end);
+        SurfaceHit const model = world.StaticHit(origin, end);
+        SurfaceHit const door = world.DynamicHit(origin, end);
         if (breakdown)
             breakdown->TreeCasts += 2;
-        bool const modelHit = model >= 0.0f && model <= limit;
-        bool const doorHit = door >= 0.0f && door <= limit;
+        bool const modelHit = model.Distance >= 0.0f && model.Distance <= limit;
+        bool const doorHit = door.Distance >= 0.0f && door.Distance <= limit;
         if (modelHit || doorHit)
         {
-            bool const isDoor = doorHit && (!modelHit || door < model);
-            best.Distance = isDoor ? door : model;
+            bool const isDoor = doorHit && (!modelHit || door.Distance < model.Distance);
+            SurfaceHit const& hit = isDoor ? door : model;
+            best.Distance = hit.Distance;
             best.What = isDoor ? Kind::Door : Kind::Model;
-            Vec3 const at = origin + dir * best.Distance;
-            best.Z = at.Z;
-            // A floor when a floor is found just above it within FLOOR_MATCH: its slope; else a wall or a ceiling.
-            float const floor = world.FloorBelow(at.X, at.Y, at.Z + FLOOR_LOOK, FLOOR_LOOK + FLOOR_MATCH);
-            best.NormalZ = floor > Mv::INVALID_FLOOR + 1.0f && std::fabs(floor - at.Z) <= FLOOR_MATCH
-                ? world.FloorNormalZ(at.X, at.Y, floor) : 0.0f;
+            best.Z = (origin + dir * best.Distance).Z;
+            // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
+            // (the encoding clamps it to 0, a wall's).
+            best.NormalZ = hit.NormalZ;
         }
         Charge(breakdown, &Breakdown::TreeNs, mark);
 

@@ -26,14 +26,32 @@
 #include "Player.h"
 #include "UnitBody.h"
 
-float Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, Vec3 to) const
+Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::StaticHit(Vec3 from, Vec3 to) const
 {
-    return _query.StaticHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+    SurfaceHit hit;
+    float distance = 0.0f;
+    float normalZ = 0.0f;
+    if (_map->GetMapCollisionData().GetStaticTree().GetSurfaceHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z, distance,
+        normalZ))
+    {
+        hit.Distance = distance;
+        hit.NormalZ = normalZ;
+    }
+    return hit;
 }
 
-float Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from, Vec3 to) const
+Animus::Vision::SurfaceHit Animus::Vision::MapVisionWorld::DynamicHit(Vec3 from, Vec3 to) const
 {
-    return _query.DynamicHit(from.X, from.Y, from.Z, to.X, to.Y, to.Z);
+    SurfaceHit hit;
+    float distance = 0.0f;
+    float normalZ = 0.0f;
+    if (_map->GetMapCollisionData().GetDynamicTree().GetSurfaceHit(_phaseMask, from.X, from.Y, from.Z, to.X, to.Y,
+        to.Z, distance, normalZ))
+    {
+        hit.Distance = distance;
+        hit.NormalZ = normalZ;
+    }
+    return hit;
 }
 
 Animus::Vision::LiquidHit Animus::Vision::MapVisionWorld::ModelLiquid(Vec3 from, Vec3 to) const
@@ -95,11 +113,6 @@ Animus::Movement::Liquid Animus::Vision::MapVisionWorld::LiquidAt(float x, float
 float Animus::Vision::MapVisionWorld::FloorBelow(float x, float y, float z, float search) const
 {
     return _query.FloorBelow(x, y, z, search);
-}
-
-float Animus::Vision::MapVisionWorld::FloorNormalZ(float x, float y, float z) const
-{
-    return _query.FloorNormalZ(x, y, z);
 }
 
 void Animus::Vision::GatherUnits(Player* seat, Vec3 camera, float range, std::vector<UnitShape>& out)

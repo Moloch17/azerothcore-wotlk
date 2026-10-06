@@ -85,7 +85,9 @@ namespace VMAP
         //! pass mesh data to object and create BIH. Passed vectors get get swapped with old geometry!
         void setMeshData(std::vector<G3D::Vector3>& vert, std::vector<MeshTriangle>& tri);
         void setLiquidData(WmoLiquid*& liquid) { iLiquid = liquid; liquid = nullptr; }
-        bool IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit) const;
+        /// `normal`, when given, takes the nearest hit triangle's normal (unnormalised, in this model's space, either
+        /// side), and is left alone without a hit.
+        bool IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, G3D::Vector3* normal = nullptr) const;
         enum InsideResult { INSIDE = 0, MAYBE_INSIDE = 1, ABOVE = 2, OUT_OF_BOUNDS = -1 };
         InsideResult IsInsideObject(G3D::Ray const& ray, float& z_dist) const;
         bool GetLiquidLevel(G3D::Vector3 const& pos, float& liqHeight) const;
@@ -117,7 +119,9 @@ namespace VMAP
         //! pass group models to WorldModel and create BIH. Passed vector is swapped with old geometry!
         void setGroupModels(std::vector<GroupModel>& models);
         void setRootWmoID(uint32 id) { RootWMOID = id; }
-        bool IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, ModelIgnoreFlags ignoreFlags) const;
+        /// `normal` as GroupModel::IntersectRay's.
+        bool IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, ModelIgnoreFlags ignoreFlags,
+            G3D::Vector3* normal = nullptr) const;
         //! The ray's nearest crossing of any group's liquid closer than `distance` (opt-in: only the camera asks).
         bool IntersectLiquid(G3D::Ray const& ray, float& distance, uint32& liquidType) const;
         bool GetLocationInfo(G3D::Vector3 const& p, G3D::Vector3 const& down, float& dist, GroupLocationInfo& info) const;

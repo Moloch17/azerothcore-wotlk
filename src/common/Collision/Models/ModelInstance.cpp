@@ -30,7 +30,8 @@ namespace VMAP
         iInvScale = 1.f / iScale;
     }
 
-    bool ModelInstance::intersectRay(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
+    bool ModelInstance::intersectRay(G3D::Ray const& pRay, float& pMaxDist, bool StopAtFirstHit, ModelIgnoreFlags ignoreFlags,
+        G3D::Vector3* normal) const
     {
         if (!iModel)
         {
@@ -54,11 +55,14 @@ namespace VMAP
         Vector3 p = iInvRot * (pRay.origin() - iPos) * iInvScale;
         Ray modRay(p, iInvRot * pRay.direction());
         float distance = pMaxDist * iInvScale;
-        bool hit = iModel->IntersectRay(modRay, distance, StopAtFirstHit, ignoreFlags);
+        bool hit = iModel->IntersectRay(modRay, distance, StopAtFirstHit, ignoreFlags, normal);
         if (hit)
         {
             distance *= iScale;
             pMaxDist = distance;
+            // Back out of the model's space: the inverse of a rotation is its transpose (the scale is uniform).
+            if (normal)
+                *normal = iInvRot.transpose() * *normal;
         }
         return hit;
     }

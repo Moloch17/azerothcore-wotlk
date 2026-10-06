@@ -551,27 +551,37 @@ namespace VMAP
 
     struct GModelRayCallback
     {
-        GModelRayCallback(std::vector<MeshTriangle> const& tris, std::vector<Vector3> const& vert):
-            vertices(vert.begin()), triangles(tris.begin()), hit(false) { }
+        GModelRayCallback(std::vector<MeshTriangle> const& tris, std::vector<Vector3> const& vert, Vector3* hitNormal):
+            vertices(vert.begin()), triangles(tris.begin()), hit(false), normal(hitNormal) { }
         bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool /*StopAtFirstHit*/)
         {
             bool result = IntersectTriangle(triangles[entry], vertices, ray, distance);
-            if (result) { hit = true; }
+            if (result)
+            {
+                hit = true;
+                // Each hit is nearer than the last (distance only shrinks), so the last one written is the nearest.
+                if (normal)
+                {
+                    MeshTriangle const& tri = triangles[entry];
+                    *normal = (vertices[tri.idx1] - vertices[tri.idx0]).cross(vertices[tri.idx2] - vertices[tri.idx0]);
+                }
+            }
             return hit;
         }
         std::vector<Vector3>::const_iterator vertices;
         std::vector<MeshTriangle>::const_iterator triangles;
         bool hit;
+        Vector3* normal;
     };
 
-    bool GroupModel::IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit) const
+    bool GroupModel::IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, Vector3* normal) const
     {
         if (triangles.empty())
         {
             return false;
         }
 
-        GModelRayCallback callback(triangles, vertices);
+        GModelRayCallback callback(triangles, vertices, normal);
         meshTree.intersectRay(ray, callback, distance, stopAtFirstHit);
         return callback.hit;
     }
@@ -669,18 +679,21 @@ namespace VMAP
 
     struct WModelRayCallBack
     {
-        WModelRayCallBack(std::vector<GroupModel> const& mod): models(mod.begin()), hit(false) { }
+        WModelRayCallBack(std::vector<GroupModel> const& mod, Vector3* hitNormal): models(mod.begin()), hit(false),
+            normal(hitNormal) { }
         bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool StopAtFirstHit)
         {
-            bool result = models[entry].IntersectRay(ray, distance, StopAtFirstHit);
+            bool result = models[entry].IntersectRay(ray, distance, StopAtFirstHit, normal);
             if (result) { hit = true; }
             return hit;
         }
         std::vector<GroupModel>::const_iterator models;
         bool hit;
+        Vector3* normal;
     };
 
-    bool WorldModel::IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
+    bool WorldModel::IntersectRay(G3D::Ray const& ray, float& distance, bool stopAtFirstHit, ModelIgnoreFlags ignoreFlags,
+        Vector3* normal) const
     {
         // If the caller asked us to ignore certain objects we should check flags
         if ((ignoreFlags & ModelIgnoreFlags::M2) != ModelIgnoreFlags::Nothing)
@@ -696,10 +709,10 @@ namespace VMAP
         // in any case, there's no need to use a bound tree if we only have one submodel
         if (groupModels.size() == 1)
         {
-            return groupModels[0].IntersectRay(ray, distance, stopAtFirstHit);
+            return groupModels[0].IntersectRay(ray, distance, stopAtFirstHit, normal);
         }
 
-        WModelRayCallBack isc(groupModels);
+        WModelRayCallBack isc(groupModels, normal);
         groupTree.intersectRay(ray, isc, distance, stopAtFirstHit);
         return isc.hit;
     }
