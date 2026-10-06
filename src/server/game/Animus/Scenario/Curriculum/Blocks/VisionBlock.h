@@ -36,8 +36,10 @@ namespace Animus::Curriculum
     {
     public:
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
-        /// 1: the first image layout (camera-vision V1).
-        [[nodiscard]] uint32 Revision() const override { return 1; }
+        /// 1: the first image layout (camera-vision V1). 2: the ray casts' distance channel, log-scaled to a fixed
+        /// 1,000 yd instead of the range, and sky only past the loaded grids (camera-vision.RAYCAST.md): the same
+        /// columns read differently, so an encoder trained on revision 1 starts fresh.
+        [[nodiscard]] uint32 Revision() const override { return 2; }
         /// "image": { height, width, channels, kinds, kind_channel, scalars } -- the image starts at the block's
         /// first column, the scalars right after it -- and "camera": the settings it was rendered with.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
