@@ -190,7 +190,7 @@ def test_an_evaluation_carries_one_acting_state_through_its_episodes():
         return states[-1]
 
     run = SimpleNamespace(trainer=SimpleNamespace(acting_state=acting_state, act=trainer.act,
-                                                  wire_goals=trainer.wire_goals),
+                                                  wire_goals=trainer.wire_goals, wire_look=trainer.wire_look),
                           spec=SimpleNamespace(num_envs=2, agents_per_env=1),
                           config=SimpleNamespace(eval=SimpleNamespace(deterministic=True)),
                           _acting=lambda deterministic: TrainingRun._acting(run, deterministic))

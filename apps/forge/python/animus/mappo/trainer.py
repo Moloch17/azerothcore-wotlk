@@ -17,7 +17,8 @@ from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
-                       split_goal_pair, to_device, update_norms, vision_image_bytes, vision_term)
+                       split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
+                       look_hold_indices)
 from .valuenorm import ValueNorm
 
 
@@ -43,6 +44,13 @@ class MappoConfig:
     clip: float = 0.2
     value_clip: float = 0.2
     entropy_coef: float = 0.01
+    # The free look's entropy bonus (LookHead, camera-vision.FREELOOK.md D), on the look's summed entropy; None is
+    # entropy_coef. Either way it follows entropy_coef's schedule and floor (it is entropy_coef times this over it).
+    look_entropy_coef: float | None = None
+    # The camera's update a chunk of this many rows at a time (MappoTrainer._encode_vision), encoded twice -- once
+    # without its graph, once more for its gradient -- so the decoded images and the patch activations live a chunk
+    # at a time; 0 = the whole minibatch at once.
+    vision_chunk_rows: int = 0
     value_coef: float = 1.0
     actor_lr: float = 5e-4
     critic_lr: float = 5e-4
@@ -230,6 +238,9 @@ class ActingState:
     slow_memory: np.ndarray | None = None
     # The goals queued behind the two held [E, A, goal_slots - 2] (-1 none): the learner's own (decide_goals).
     queue: np.ndarray | None = None
+    # The free look's last choices [E, A, heads] (LookHead, protocol 22): what the decision just taken sends with its
+    # actions (MappoTrainer.wire_look). The sim holds the rates; nothing here is carried into the next decision.
+    look: np.ndarray | None = None
 
     def take(self, rows: slice) -> "ActingState":
         """A copy of these envs' state, for acting on them alone (a half-batch group); put() writes it back."""
@@ -318,8 +329,11 @@ class _Decided:
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.goal_slots_at = self.queue_at = None
         self.actions_at = self.log_probs_at = None
+        self.look_at = None
 
     def finish(self, fetched: list[np.ndarray]):
+        if self.look_at is not None and self.state is not None:
+            self.state.look = fetched[self.look_at]
         goals = None
         if self.goal_at is not None:
             goal = fetched[self.goal_at]
@@ -499,6 +513,11 @@ class _RolloutGraph:
 
         logits = actor.action_logits(features, layout_t, mask_t, goal_t, None, obs_t)
         actions, log_probs = sample_logits(logits, self.deterministic)
+        if actor.look_head is not None:
+            # The free look, inside the captured decision: the joint log probability is the action's and the look's.
+            look, look_log_prob = actor.look(features, layout_t, goal_t, self.deterministic)
+            log_probs = log_probs + look_log_prob.to(log_probs.dtype)
+            out["look"] = look.reshape(envs, agents, -1).to(torch.int8)
         out["actions"] = actions.reshape(envs, agents)
         out["log_probs"] = log_probs.reshape(envs, agents)
         if trainer.foresight_outputs:
@@ -571,6 +590,8 @@ class _RolloutGraph:
         if trainer.recurrent_size:
             state.memory = fetched["memory"]
             state.critic_memory = fetched["critic_memory"]
+        if "look" in fetched:
+            state.look = fetched["look"]
         return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals, None
 
 
@@ -618,6 +639,8 @@ class MappoTrainer:
         self.vision = vision
         # The camera's bytes per agent each decision carries beside its observation (protocol 21), 0 without one.
         self.image_bytes = vision_image_bytes(vision)
+        # The free look's heads (protocol 22, vision_look_heads): () without them, and no look head.
+        self.look_heads = vision_look_heads(vision)
         if self.image_bytes and config.sil_coef > 0.0:
             raise ValueError("mappo.sil_coef with a camera: self-imitation keeps no images yet (camera-vision)")
         # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
@@ -1155,6 +1178,11 @@ class MappoTrainer:
         dist = self._rollout_actor.action_distribution(features, layout_t, mask_t, decided.goal_t, groups, obs_t)
         actions = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
         log_probs = dist.log_prob(actions)
+        if self._rollout_actor.look_head is not None:
+            # The free look (LookHead): drawn beside the action, deterministic with it; the log probability is joint.
+            look, look_log_prob = self._rollout_actor.look(features, layout_t, decided.goal_t, deterministic)
+            log_probs = log_probs + look_log_prob.to(log_probs.dtype)
+            decided.look_at = downloads.add(look.reshape(envs, agents, -1).to(torch.int8))
 
         # A slow layout speaks on its own clock and its call stands in between, so the seats have something
         # steady enough to act on. The log probabilities of the held decisions are the sampled action's and not
@@ -1266,7 +1294,23 @@ class MappoTrainer:
                          else None),
             queue=(np.full((envs, agents, self.goal_slots - 2), -1, dtype=np.int64) if self.goal_slots > 2
                    else None),
+            look=np.zeros((envs, agents, len(self.look_heads)), dtype=np.int8) if self.look_heads else None,
         )
+
+    def wire_look(self, look: np.ndarray | None) -> np.ndarray | None:
+        """The look ACT carries (protocol 22) for the choices `look` [E, A, heads] a decision took: int32, 0 for a row
+        without the camera (LookHead gives it 0); None without look heads."""
+        if not self.look_heads or look is None:
+            return None
+        return np.asarray(look, dtype=np.int32)
+
+    def look_entropy_coef(self) -> float:
+        """The look's entropy coefficient now: mappo.look_entropy_coef (entropy_coef when None), following
+        entropy_coef's schedule and floor as a constant share of it."""
+        configured = self.config.look_entropy_coef
+        if configured is None or self.config.entropy_coef <= 0.0:
+            return self.entropy_coef if configured is None else float(configured)
+        return self.entropy_coef * float(configured) / self.config.entropy_coef
 
     @torch.no_grad()
     def value(self, state: np.ndarray, obs: np.ndarray, layout: np.ndarray,
@@ -1292,6 +1336,21 @@ class MappoTrainer:
                 values = self._rollout_value_norm.denormalize(values)
             downloads.add(values)
             return downloads.finish()[0]
+
+    def _look_stats(self, data: dict) -> dict[str, float]:
+        """Whether the policy uses its camera at all, from the rollout: `look_turning`, the share of the samples with
+        the camera whose decision chose a non-zero yaw rate (held until the next); `look_pitching` the same of the
+        pitch rate; `look_zooming` the share that pressed anything on the zoom."""
+        if self.actor.look_head is None or "look" not in data:
+            return {}
+        seeing = self.actor.look_head.has_vision[data["layout"].long()] & data["valid"].bool()
+        count = seeing.sum().clamp(min=1).to(torch.float32)
+        look = data["look"].long()
+        hold = look_hold_indices(self.look_heads)
+        out = {}
+        for index, name in enumerate(("look_turning", "look_pitching", "look_zooming")[:len(hold)]):
+            out[name] = ((look[..., index] != hold[index]) & seeing).sum().to(torch.float32) / count
+        return _host_stats(out)
 
     def _goal_stats(self, data: dict) -> dict[str, float]:
         """How the goal head is being used, from the rollout itself: the share of decisions spent on each goal, and
@@ -1432,7 +1491,10 @@ class MappoTrainer:
         dones_seq = torch.as_tensor(ended_between, device=device)
 
         with torch.no_grad():
-            features = self.actor.features(obs, layout, memory, image=image)
+            # The camera a chunk at a time where mappo.vision_chunk_rows says so (no gradient here either way).
+            seen = self._encode_vision(obs, layout, image) if image is not None else None
+            features = self.actor.features_from(self.actor.encode(obs, layout, vision_embedding=seen, image=image),
+                                                memory)
             inputs = self.actor.with_foresight(features).reshape(length, columns, -1)
 
         counted = targeted.float()
@@ -1642,6 +1704,29 @@ class MappoTrainer:
             return 0
         return max(length for length in range(1, wanted + 1) if steps % length == 0)
 
+    def _encode_vision(self, obs: torch.Tensor, layout: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        """The shared camera's embedding of a minibatch's rows, for the update. With mappo.vision_chunk_rows and more
+        rows than that, it is encoded a chunk at a time without keeping the graph, and _backward_vision encodes each
+        chunk again for its gradient: the decoded image and the patch layers' activations then live for one chunk at a
+        time, not the minibatch's (at 128 x 64 a row's decoded planes alone are 393 KB)."""
+        rows = self.config.vision_chunk_rows
+        if rows <= 0 or obs.shape[0] <= rows:
+            return self.actor.vision(obs, layout, image)
+        with torch.no_grad():
+            return torch.cat([self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows])
+                              for i in range(0, obs.shape[0], rows)])
+
+    def _backward_vision(self, seen: torch.Tensor, grad: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
+                         image: torch.Tensor) -> None:
+        """The camera embedding's gradient `grad` back through the encoder: through `seen`'s graph, or chunk by chunk
+        again where _encode_vision kept none."""
+        if seen.requires_grad:
+            seen.backward(grad)
+            return
+        rows = self.config.vision_chunk_rows
+        for i in range(0, obs.shape[0], rows):
+            self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows]).backward(grad[i:i + rows])
+
     def _update_recurrent(self, buffer: RolloutBuffer, auxiliary=None, sync: bool = True) -> dict[str, float]:
         """One PPO update that replays the rollout in order, so the GRU learns what to remember.
 
@@ -1655,6 +1740,8 @@ class MappoTrainer:
                  "actor_grad_norm": 0.0, "critic_grad_norm": 0.0}
         if self.goal_count:
             stats["goal_entropy"] = 0.0
+        if self.actor.look_head is not None:
+            stats["look_entropy"] = 0.0
         if self.vision_opt is not None:
             # The shared camera's gradient at its embedding, each loss's share: whether the value loss swamps the
             # policy's in what the encoder learns.
@@ -1760,7 +1847,7 @@ class MappoTrainer:
                 seen = seen_leaf = None
                 if self.vision_opt is not None:
                     image_all = data["image"][:, chunk].reshape(-1, self.image_bytes)
-                    seen = self.actor.vision(obs_all, layout_all, image_all)
+                    seen = self._encode_vision(obs_all, layout_all, image_all)
                     seen_leaf = seen.detach().requires_grad_(True)
                 encoded = self.actor.encode(obs_all, layout_all, groups, seen_leaf).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)
@@ -1782,6 +1869,14 @@ class MappoTrainer:
                     # bonus is worth the share of decisions that actually choose a goal.
                     goal_entropies = (goals.entropy() * chosen).reshape(*lead)
                     entropies = entropies + self.goal_entropy_factor * goal_entropies
+                look_entropies = None
+                if self.actor.look_head is not None:
+                    # The free look (LookHead): the action is joint, so its log probability joins the ratio (the
+                    # rollout's stored log_probs are joint already); 0 with no gradient on rows without the camera.
+                    look_log_probs, look_entropies = self.actor.look_terms(
+                        features, layout_all, data["look"][:, chunk].reshape(features.shape[0], -1), goal_all)
+                    log_probs = log_probs + look_log_probs.reshape(*lead).to(log_probs.dtype)
+                    look_entropies = look_entropies.reshape(*lead)
 
                 # The teachers' own memories follow the same replayed decisions as the student's (animus.distill),
                 # so distillation is the one part that stays a loop over the sequence.
@@ -1817,6 +1912,9 @@ class MappoTrainer:
                 action_entropy = (action_entropies * counted).sum() / weight
 
                 actor_loss = policy_loss - self.entropy_coef * entropy
+                if look_entropies is not None:
+                    look_entropy = (look_entropies * counted).sum() / weight
+                    actor_loss = actor_loss - self.look_entropy_coef() * look_entropy
                 if foresight:
                     targets = data["foresight_targets"][:, chunk]
                     known = data["foresight_valid"][:, chunk].to(torch.float32) * counted[..., None]
@@ -1961,7 +2059,7 @@ class MappoTrainer:
                     if seen_leaf.grad is not None:
                         critic_share = seen_leaf.grad if actor_share is None else seen_leaf.grad - actor_share
                         totals["vision_grad_critic"] += critic_share.detach().norm()
-                        seen.backward(seen_leaf.grad)
+                        self._backward_vision(seen, seen_leaf.grad, obs_all, layout_all, image_all)
                     vision_parameters = self.vision_parameters()
                     if cfg.rank_sync == "gradients":
                         self.ranks.average_gradients(vision_parameters)
@@ -1981,6 +2079,10 @@ class MappoTrainer:
                     if goal_entropies is not None:
                         chose = (data["goal_chosen"][:, chunk].to(torch.float32) * counted).sum().clamp(min=1.0)
                         totals["goal_entropy"] += (goal_entropies * counted).sum().detach() / chose
+                    if look_entropies is not None:
+                        # Over the rows that look (a layout without the camera has none to speak of).
+                        seeing = self.actor.look_head.has_vision[layout_all].reshape(lead).to(torch.float32) * counted
+                        totals["look_entropy"] += (look_entropies * seeing).sum().detach() / seeing.sum().clamp(min=1.0)
                     totals["clip_frac"] += ((((ratio - 1).abs() > cfg.clip).to(torch.float32)
                                              * counted).sum() / weight)
                     totals["approx_kl"] += kl
@@ -2002,6 +2104,7 @@ class MappoTrainer:
         stats["explained_variance"] = float(explained)
         stats["epochs_run"] = float(epochs_run)
         stats.update(self._goal_stats(data))
+        stats.update(self._look_stats(data))
         stats.update(sil_stats)
         auxiliary_stats = _host_stats(auxiliary_stats)
         # The forecasts' quality: sums over every minibatch with their counts (_foresight_quality).

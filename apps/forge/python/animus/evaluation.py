@@ -497,7 +497,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
     choose_actions(step) -> [E, A] actions, or (actions, goals) from a policy with a goal head (the goals go to the
-    sim, which scores and reports them); ignored by the sim when `baseline` names a scripted policy. `opponents`
+    sim, which scores and reports them), or (actions, goals or None, look) from one with the free look (protocol 22;
+    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a scripted policy. `opponents`
     names a scripted policy for the opponent seats of self-play episodes (the learner plays the rest, or `baseline`
     everything); their rows are left out. `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
@@ -555,7 +556,9 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     while playing():
         chosen = np.zeros((envs, agents), dtype=np.int32) if baseline else choose_actions(step)
-        actions, goals = chosen if isinstance(chosen, tuple) else (chosen, None)
+        # (actions, goals) from a goal head, (actions, goals or None, look) with the free look (protocol 22).
+        actions, goals, look = (tuple(chosen) + (None,) * (3 - len(chosen)) if isinstance(chosen, tuple)
+                                else (chosen, None, None))
         # The episode's layouts: after a done, the next STEP already carries the new episode's.
         layout = step.layout
         if not baseline:
@@ -575,7 +578,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                         "goal": int(goals[e, a, 0] if goals.ndim == 3 else goals[e, a]) if goals is not None else -1,
                     })
 
-        step = env.step(actions, goals)
+        step = env.step(actions, goals, look) if look is not None else env.step(actions, goals)
         decisions += 1
 
         running += step.reward

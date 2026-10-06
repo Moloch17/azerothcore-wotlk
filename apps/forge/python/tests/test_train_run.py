@@ -337,10 +337,10 @@ def test_half_batch_training_answers_each_half_as_it_comes(tmp_path, monkeypatch
     sent_one_half, events = [], []
     send_act, receive_step = ForgeEnv.send_act, ForgeEnv.receive_step
 
-    def watched_send(self, env_begin, actions, goals=None):
+    def watched_send(self, env_begin, actions, goals=None, look=None):
         sent_one_half.append(actions.shape[0] == spec.num_envs // 2)
         events.append(("act", env_begin))
-        return send_act(self, env_begin, actions, goals)
+        return send_act(self, env_begin, actions, goals, look)
 
     def watched_receive(self):
         step = receive_step(self)

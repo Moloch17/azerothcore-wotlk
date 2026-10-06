@@ -11,12 +11,16 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 21
+PROTOCOL_VERSION = 22
 # 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
 # agent (FORMAT.md section 3, animus.human.motion): the body the style reward and the realism score read.
 # 21: the camera's image travels as bytes (camera-vision.BYTES.md): SPEC ends with the image bytes per agent (0 without
 # a vision block), and a stage with one ends each STEP with every agent's image and the ended envs' final images, and
 # its DEVICE message with the images' device buffer handle. A stage without one sends protocol 20's STEP and DEVICE.
+# 22: free look (camera-vision.FREELOOK.md): SPEC ends with the look heads (3 with a vision block of revision 4, else
+# 0), and an ACT in a stage with them ends with int32 look[agents x LookHeads] -- every agent's yaw rate, pitch rate
+# and zoom choice, agent-major in the actions' order (0s where there is no camera). A stage without them sends
+# protocol 21's ACT byte for byte.
 # Slots per class in the WEIGHTS vector (Curriculum::MAX_SPECS, the druid's four builds). A class with fewer
 # builds still has the slots; they are never drawn and stay at the even 1.0.
 MAX_SPECS = 4
@@ -43,12 +47,13 @@ class MsgType(IntEnum):
 
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
-# ..., scenario name, kinematics width (20), image bytes per agent (21)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s2I")
+# ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s3I")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
-ACT_HEADER = struct.Struct("<II")  # first env, env count; then that many envs' actions (and goals)
+# first env, env count; then that many envs' actions, their goals (with a goal head) and their look (protocol 22)
+ACT_HEADER = struct.Struct("<II")
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
 MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; the learner the rest
@@ -70,6 +75,9 @@ DEVICE_FIELDS = ("obs", "state", "mask", "image")
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0.
 IMAGE_FIELDS = ("image", "final_image")
 NO_FRAME_PIXEL = (255, 128, 0, 0)
+# The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 4]): yaw rate 0, pitch rate 0, hold.
+# What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
+LOOK_HOLD = (3, 2, 0)
 
 
 @dataclass(frozen=True)
@@ -108,6 +116,8 @@ class Spec:
     kinematics_dim: int = 0
     # Bytes per agent of each STEP's camera image (protocol 21): the vision block's height x width x 4, 0 without one.
     image_bytes: int = 0
+    # The look heads each agent's ACT entry carries (protocol 22): 3 in a stage whose vision block has them, else 0.
+    look_heads: int = 0
 
     @property
     def decision_ms(self) -> int:
@@ -246,6 +256,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.scenario.encode("ascii"),
         spec.kinematics_dim,
         spec.image_bytes,
+        spec.look_heads,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -270,6 +281,7 @@ def decode_spec(payload: bytes) -> Spec:
         scenario=fields[12].split(b"\0", 1)[0].decode("ascii"),
         kinematics_dim=fields[13],
         image_bytes=fields[14],
+        look_heads=fields[15],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -342,14 +354,48 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
     return Step(decision=decision, env_begin=env_begin, **arrays)
 
 
-def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> bytes:
+def look_hold(count: int, agents: int, look_heads: int) -> np.ndarray:
+    """[count, agents, look_heads] int32 look choices that change nothing (LOOK_HOLD for revision 4's three heads,
+    else zeros)."""
+    hold = LOOK_HOLD if look_heads == len(LOOK_HOLD) else (0,) * look_heads
+    return np.broadcast_to(np.array(hold, dtype="<i4"), (count, agents, look_heads)).copy()
+
+
+def encode_act(env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
+               look: np.ndarray | None = None) -> bytes:
     """ACT payload for envs [env_begin, env_begin + len(actions)): [E, A] actions, then the goals when the policy has a
-    goal head: [E, A, 2], primary then secondary (-1 none; MappoTrainer.wire_goals) -- protocol 17."""
+    goal head: [E, A, 2], primary then secondary (-1 none; MappoTrainer.wire_goals) -- protocol 17; then, in a stage
+    with look heads (protocol 22), the look [E, A, LookHeads], agent-major in the actions' order."""
     actions = np.ascontiguousarray(actions, dtype="<i4")
     payload = ACT_HEADER.pack(env_begin, actions.shape[0]) + actions.tobytes()
     if goals is not None:
         payload += np.ascontiguousarray(goals, dtype="<i4").tobytes()
+    if look is not None:
+        look = np.ascontiguousarray(look, dtype="<i4")
+        if look.shape[:2] != actions.shape:
+            raise ValueError(f"look of shape {look.shape} for actions of shape {actions.shape}")
+        payload += look.tobytes()
     return payload
+
+
+def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool = False,
+               look_heads: int = 0) -> tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None]:
+    """An ACT as the sim reads it: (first env, actions [E, A], goals [E, A, 2] or None, look [E, A, H] or None).
+    Raises ValueError when the payload is not the size those make."""
+    env_begin, envs = ACT_HEADER.unpack_from(payload)
+    sizes = [("actions", envs * agents), ("goals", envs * agents * 2 if goals else 0),
+             ("look", envs * agents * look_heads)]
+    expected = ACT_HEADER.size + 4 * sum(size for _, size in sizes)
+    if len(payload) != expected:
+        raise ValueError(f"ACT of {len(payload)} bytes, expected {expected} ({envs} envs x {agents} agents, goals "
+                         f"{goals}, look heads {look_heads})")
+    offset, out = ACT_HEADER.size, {}
+    for name, size in sizes:
+        out[name] = np.frombuffer(payload, dtype="<i4", count=size, offset=offset).copy() if size else None
+        offset += 4 * size
+    return (env_begin, out["actions"].reshape(envs, agents),
+            None if out["goals"] is None else out["goals"].reshape(envs, agents, 2),
+            None if out["look"] is None else out["look"].reshape(envs, agents, look_heads))
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",

@@ -149,9 +149,10 @@ def decisions_left(dones: np.ndarray) -> np.ndarray:
 class RolloutBuffer:
     def __init__(self, steps: int, envs: int, agents: int, obs_dim: int, state_dim: int, num_actions: int,
                  foresight: int = 0, recurrent: int = 0, goals: bool = False, slow_goal: int = 0,
-                 goal_slots: int = 1, image_bytes: int = 0):
+                 goal_slots: int = 1, image_bytes: int = 0, look_heads: int = 0):
         self.steps = steps
         self.image_bytes = image_bytes
+        self.look_heads = look_heads
         self.foresight = foresight
         self.recurrent = recurrent
         self.goals = goals
@@ -193,6 +194,9 @@ class RolloutBuffer:
         # it is not a sample: `samples` is what the loss and the advantages are drawn from.
         self.chosen = np.ones(shape, dtype=bool)
         self.actions = np.zeros(shape, dtype=np.int64)
+        # The free look's choices (protocol 22, LookHead), one a head -- yaw rate, pitch rate, zoom -- as sent; 0 for a
+        # row without the camera. `log_probs` is the joint one: the action's plus the look's.
+        self.look = np.zeros((*shape, look_heads), dtype=np.int8)
         self.log_probs = np.zeros(shape, dtype=np.float32)
         self.values = np.zeros(shape, dtype=np.float32)  # denormalised
         self.rewards = np.zeros(shape, dtype=np.float32)
@@ -218,9 +222,9 @@ class RolloutBuffer:
         advantages and returns -- its own. Written to at the same steps as `main`, after it."""
         steps, envs, agents = main.actions.shape
         view = cls(steps, envs, agents, 0, 0, 0, foresight, recurrent, goals, slow_goal, goal_slots)
-        for name in ("obs", "image", "state", "mask", "layout", "actions", "rewards", "dones", "terminated"):
+        for name in ("obs", "image", "state", "mask", "layout", "actions", "look", "rewards", "dones", "terminated"):
             setattr(view, name, getattr(main, name))
-        view.image_bytes = main.image_bytes
+        view.image_bytes, view.look_heads = main.image_bytes, main.look_heads
         return view
 
     @property
@@ -229,9 +233,11 @@ class RolloutBuffer:
         return self.valid & self.chosen
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
-                     foresight=None, memory=None, goals=None, critic_memory=None, chosen=None, image=None) -> None:
+                     foresight=None, memory=None, goals=None, critic_memory=None, chosen=None, image=None,
+                     look=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
-        (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera."""
+        (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
+        choices, with look heads."""
         t = self.cursor
         for name, value in (("obs", obs), ("state", state), ("mask", mask), ("image", image)):
             if value is not None:       # None: store_rows wrote it already
@@ -240,6 +246,8 @@ class RolloutBuffer:
         self.valid[t] = True if present is None else present
         self.chosen[t] = True if chosen is None else chosen
         self.actions[t] = actions
+        if self.look_heads and look is not None:
+            self.look[t] = look
         self.log_probs[t] = log_probs
         self.values[t] = values
         if self.foresight and foresight is not None:
@@ -408,6 +416,7 @@ class RolloutBuffer:
             "layout": self.layout,
             "valid": self.samples,
             "actions": self.actions,
+            **({"look": self.look} if self.look_heads else {}),
             "log_probs": self.log_probs,
             "values": self.values,
             "advantages": self.advantages,

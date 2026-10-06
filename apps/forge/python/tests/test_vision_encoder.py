@@ -100,7 +100,9 @@ def blank(rows: int, pixel) -> torch.Tensor:
 def test_vision_of_keeps_each_layouts_own_first_column():
     vision = vision_of(stage(), NAMES)
     assert [entry and entry["first"] for entry in vision] == [8, 12, None]
-    assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES}
+    # A manifest from before revision 4: patch 4, no render sizes, no look.
+    assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES,
+                         "patch": 4, "render_sizes": (), "look": (), "look_names": ()}
 
 
 def test_vision_of_is_none_without_a_camera():
@@ -534,10 +536,10 @@ def test_export_refuses_a_layout_with_a_camera(tmp_path):
                         for name, (obs, actions) in zip(NAMES, shapes(s))]}
     out = tmp_path / "models"
     out.mkdir()
-    with pytest.raises(ValueError, match="vision layers are not in the realm format yet"):
+    with pytest.raises(ValueError, match="the camera and its look head are not exported"):
         export_layouts(actor().state_dict(), spec, out, stage_dir)
     assert not list(out.iterdir())
     # The checkpoint alone says so too, whatever stage.json is beside it.
     (stage_dir / "stage.json").unlink()
-    with pytest.raises(ValueError, match="vision layers are not in the realm format yet"):
+    with pytest.raises(ValueError, match="the camera and its look head are not exported"):
         export_layouts(actor().state_dict(), spec, out, stage_dir)

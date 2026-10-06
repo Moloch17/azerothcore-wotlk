@@ -941,18 +941,24 @@ IMAGE_BYTES_PER_PIXEL = 4
 #: The decoded channels, as the sim's Vision::DecodePixel lays them out (revision 2's floats): the kind is channel 3.
 IMAGE_CHANNELS = 5
 IMAGE_KIND_CHANNEL = 3
+#: The encoder's patch size when the manifest names none (revision 3 and before: 4 x 4 at 64 x 32).
+DEFAULT_PATCH = 4
 
 
 def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | None] | None:
     """Per layout, in `layout_names` order, its camera as the vision block of stage.json describes it -- {"first": the
     block's first observation column (its scalars), "height", "width", "channels", "kinds", "kind_channel",
-    "scalars", "bytes_per_pixel", "image_bytes"} -- or None for a layout without one; None altogether when no layout
-    has a camera (no encoder, nothing new in the networks). The block's first column differs per layout (the core
-    block before it is as wide as the class's spells), so every layout keeps its own.
+    "scalars", "bytes_per_pixel", "patch", "render_sizes", "look", "look_names", "image_bytes"} -- or None for a
+    layout without one; None altogether when no layout has a camera (no encoder, nothing new in the networks). The
+    block's first column differs per layout (the core block before it is as wide as the class's spells), so every
+    layout keeps its own.
 
     The image itself travels as bytes beside the observation (protocol 21, Spec.image_bytes): the block's columns are
-    its scalars alone. Refused: a vision block without its image, or from before the bytes (revision 2's floats),
-    layouts whose images differ (one encoder reads them all), and a block whose width is not its scalars."""
+    its scalars alone. Revision 4 (camera-vision.FREELOOK.md) adds the encoder's "patch" (4 when absent), the
+    "render_sizes" the sim draws from (scaled up to the canonical height x width it sends) and the free look's heads,
+    `"look": {"heads": [7, 5, 4], "names": [...]}` (() when absent: no look head). Refused: a vision block without
+    its image, or from before the bytes (revision 2's floats), layouts whose images differ (one encoder reads them
+    all), and a block whose width is not its scalars."""
     if stage is None:
         return None
     layouts = stage.get("layouts") or {}
@@ -974,6 +980,21 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
                              f"not read")
         described = {key: int(image[key]) for key in ("height", "width", "channels", "kinds", "kind_channel",
                                                       "scalars", "bytes_per_pixel")}
+        described["patch"] = int(image.get("patch", DEFAULT_PATCH))
+        described["render_sizes"] = tuple(tuple(int(v) for v in size) for size in image.get("render_sizes", ()))
+        look = block.get("look") or image.get("look") or {}
+        heads = tuple(int(head) for head in look.get("heads", ()))
+        look_names = tuple(str(n) for n in look.get("names", ()))
+        if any(head < 1 for head in heads) or (look_names and len(look_names) != len(heads)):
+            raise ValueError(f"{name}: the vision block's look heads {list(heads)} (names {list(look_names)}): every "
+                             f"head needs a choice, and a name if any has one")
+        described["look"], described["look_names"] = heads, look_names
+        if described["patch"] < 1:
+            raise ValueError(f"{name}: the vision block's patch is {described['patch']}")
+        for width, height in described["render_sizes"]:
+            if not (1 <= width <= described["width"] and 1 <= height <= described["height"]):
+                raise ValueError(f"{name}: render size {width}x{height} is not within the canonical "
+                                 f"{described['width']}x{described['height']} image")
         if (described["bytes_per_pixel"], described["channels"], described["kind_channel"]) != (
                 IMAGE_BYTES_PER_PIXEL, IMAGE_CHANNELS, IMAGE_KIND_CHANNEL) or not 1 <= described["kinds"] <= 16:
             raise ValueError(f"{name}: a vision image of {described['bytes_per_pixel']} bytes a pixel decoded to "
@@ -1001,6 +1022,20 @@ def vision_image_bytes(vision: list[dict | None] | None) -> int:
     """The image bytes per agent stage.json's camera makes (height x width x bytes a pixel), 0 without one: what the
     sim's SPEC must announce (Spec.image_bytes)."""
     return next((entry["image_bytes"] for entry in vision or () if entry is not None), 0)
+
+
+def vision_look_heads(vision: list[dict | None] | None) -> tuple[int, ...]:
+    """The free look's heads stage.json's camera has (revision 4: (7, 5, 4)), () without a camera or a look."""
+    return next((tuple(entry.get("look", ())) for entry in vision or () if entry is not None), ())
+
+
+def check_look_heads(vision: list[dict | None] | None, spec_look_heads: int) -> None:
+    """Refuse a sim and a stage.json that disagree about the look (protocol 22): SPEC's LookHeads against the number
+    of heads in the vision block's "look"."""
+    heads = vision_look_heads(vision)
+    if len(heads) != int(spec_look_heads):
+        raise ValueError(f"the sim's SPEC announces {spec_look_heads} look heads, stage.json's vision block has "
+                         f"{len(heads)} ({list(heads)})")
 
 
 def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int) -> None:
@@ -1046,7 +1081,9 @@ class VisionEncoder(nn.Module):
     planes (16 x 12 = 192 features, ordered row in the patch, column in the patch, plane) go through one shared
     Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, a spatial softmax per channel over the patch grid gives its
     expected (x, y) in [-1, 1] (128 keypoints), the block's scalars join them, and Linear -> 256 with SiLU: the
-    camera's embedding. Each network reads it through a `vision_join` of its own, a Linear onto its adapters' output
+    camera's embedding. PATCH is the manifest's "patch" (4 when it names none): revision 4's 128 x 64 canonical image
+    with patch 8 is the same 16 x 8 grid, of 8 x 8 x 12 = 768 features a patch, and its 11 scalars make the last
+    layer Linear(139 -> 256). Each network reads it through a `vision_join` of its own, a Linear onto its adapters' output
     width (VisionJoin). MIOpen computed the 3 x 3 convolutions' weight gradients one image at a
     time (89.7% of an update in ConvolutionBackward, M1 2026-10-06); the patches are three batched matrix products,
     about ten times faster at a minibatch.
@@ -1059,7 +1096,7 @@ class VisionEncoder(nn.Module):
     No normalisation: the channels are 0-1 or -1-1 already. Every shape is fixed and nothing is read back, so a
     rollout graph captures it."""
 
-    PATCH = 4
+    PATCH = DEFAULT_PATCH       # the class's default; an encoder's own is its manifest's "patch" (revision 4: 8)
     WIDTHS = (64, 64)
     EMBED = 256
 
@@ -1069,6 +1106,7 @@ class VisionEncoder(nn.Module):
         self.height, self.width = image["height"], image["width"]
         self.channels, self.kinds = image["channels"], image["kinds"]
         self.kind_channel, self.scalars = image["kind_channel"], image["scalars"]
+        self.PATCH = int(image.get("patch", DEFAULT_PATCH))
         if self.height % self.PATCH or self.width % self.PATCH:
             raise ValueError(f"the camera's image is {self.width} x {self.height}; the vision encoder cuts it into "
                              f"{self.PATCH} x {self.PATCH} patches, so both must be multiples of {self.PATCH} "
@@ -1160,6 +1198,76 @@ class VisionJoin(nn.Module):
         """What the camera adds to the adapter's output: [N, width], zero for a layout without it."""
         joined = self.linear(embedding)
         return joined * self.has_vision[layout.reshape(-1).long()][:, None].to(joined.dtype)
+
+
+#: The look head's initial lean toward the choice that changes nothing (camera-vision.FREELOOK.md, amendments): that
+#: choice's logit starts this much above the others', so early turning of the camera is rarer -- at 2.0 a fresh head
+#: holds the yaw rate at 0 about 55% of the time, against 14% for an even 7-way draw. Every choice stays possible.
+LOOK_HOLD_BIAS = 2.0
+
+
+def look_hold_indices(heads: Sequence[int]) -> tuple[int, ...]:
+    """Per look head, its choice that changes nothing: the middle of an odd rate head (rate 0), 0 for the zoom head
+    ("hold"). Revision 4's (7, 5, 4) gives (3, 2, 0), protocol.LOOK_HOLD."""
+    return tuple(head // 2 if head % 2 else 0 for head in heads)
+
+
+class LookHead(nn.Module):
+    """**The free look** (camera-vision.FREELOOK.md D): a second policy head over the features the movement head reads,
+    Linear(features -> sum(heads)) split into one categorical per head -- yaw rate, pitch rate, zoom -- chosen every
+    decision, independently of the movement action and of each other. Initialised as the other policy outputs are
+    (small gain), its bias leaning toward each head's hold choice (LOOK_HOLD_BIAS).
+
+    Only rows whose layout has the camera look: for the others the choice is 0 (what the wire carries, and the sim
+    ignores), and its log probability and entropy are 0 with no gradient. Nothing is masked: every choice is allowed.
+    Fixed shapes and no reads back, so a rollout graph captures it."""
+
+    def __init__(self, width: int, heads: Sequence[int], layouts_with: torch.Tensor):
+        super().__init__()
+        self.heads = tuple(int(head) for head in heads)
+        self.linear = _linear(width, sum(self.heads), 0.01)
+        with torch.no_grad():
+            offset = 0
+            for head, hold in zip(self.heads, look_hold_indices(self.heads)):
+                self.linear.bias[offset + hold] = LOOK_HOLD_BIAS
+                offset += head
+        self.register_buffer("has_vision", layouts_with.clone(), persistent=False)
+
+    def logits(self, features: torch.Tensor) -> list[torch.Tensor]:
+        """Each head's logits for flat rows, [[N, head], ...]."""
+        return list(torch.split(self.linear(features), self.heads, dim=-1))
+
+    def _seeing(self, layout: torch.Tensor) -> torch.Tensor:
+        return self.has_vision[layout.reshape(-1).long()]
+
+    def sample(self, features: torch.Tensor, layout: torch.Tensor,
+               deterministic: bool) -> tuple[torch.Tensor, torch.Tensor]:
+        """(choice [N, heads] long, its log probability [N], the heads' summed) for flat rows; 0 and 0 for a row
+        without the camera. Deterministic is each head's argmax."""
+        seeing = self._seeing(layout)
+        choices, log_prob = [], None
+        for logits in self.logits(features):
+            choice, chosen = sample_logits(logits.float(), deterministic)
+            choices.append(choice)
+            log_prob = chosen if log_prob is None else log_prob + chosen
+        choice = torch.where(seeing[:, None], torch.stack(choices, dim=-1), torch.zeros_like(choices[0])[:, None])
+        return choice, torch.where(seeing, log_prob, torch.zeros_like(log_prob))
+
+    def evaluate(self, features: torch.Tensor, layout: torch.Tensor,
+                 choice: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """(log probability [N], entropy [N]) of the choices `choice` [N, heads] taken, each the heads' sum; 0 with no
+        gradient for a row without the camera."""
+        seeing = self._seeing(layout)
+        choice = choice.reshape(-1, len(self.heads)).long()
+        log_prob = entropy = None
+        for index, logits in enumerate(self.logits(features)):
+            logits = logits.float()
+            part = log_prob_of(logits, choice[:, index].clamp(0, self.heads[index] - 1))
+            spread = _entropy(logits)
+            log_prob = part if log_prob is None else log_prob + part
+            entropy = spread if entropy is None else entropy + spread
+        zero = torch.zeros_like(log_prob)
+        return torch.where(seeing, log_prob, zero), torch.where(seeing, entropy, zero)
 
 
 def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None) -> None:
@@ -1384,6 +1492,9 @@ class LayoutActor(nn.Module):
         _attach_entity_sets(self, seat_sets, head_width, entity_attention)
         # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one).
         _attach_vision(self, vision)
+        # Its free look (LookHead), where the vision block has look heads (revision 4): the actor's own, not shared.
+        look_heads = vision_look_heads(vision)
+        self.look_head = LookHead(head_width, look_heads, self.vision.has_vision) if look_heads else None
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None, image: torch.Tensor | None = None) -> Categorical:
@@ -1490,12 +1601,28 @@ class LayoutActor(nn.Module):
         slow loop learns on top of the fast one without pulling on it)."""
         return self.slow_memory(self.with_foresight(features).detach(), slow)
 
-    def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
-                      goal: torch.Tensor | None = None, groups=None, obs: torch.Tensor | None = None) -> torch.Tensor:
-        """action_distribution's masked logits, unnormalised (for sample_logits)."""
+    def policy_features(self, features: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:
+        """The final policy features the action head reads -- the predictions fed back, then the goal's conditioning
+        -- and the look head with it."""
         features = self.with_foresight(features)
         if self.goal_embedding is not None and goal is not None:
             features = self.goal_embedding.condition(features, goal.reshape(-1))
+        return features
+
+    def look(self, features: torch.Tensor, layout: torch.Tensor, goal: torch.Tensor | None = None,
+             deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
+        """The free look's choice for flat rows (LookHead.sample): (choice [N, heads], log probability [N])."""
+        return self.look_head.sample(self.policy_features(features, goal), layout, deterministic)
+
+    def look_terms(self, features: torch.Tensor, layout: torch.Tensor, choice: torch.Tensor,
+                   goal: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """The free look's (log probability [N], entropy [N]) of choices taken (LookHead.evaluate)."""
+        return self.look_head.evaluate(self.policy_features(features, goal), layout, choice)
+
+    def action_logits(self, features: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
+                      goal: torch.Tensor | None = None, groups=None, obs: torch.Tensor | None = None) -> torch.Tensor:
+        """action_distribution's masked logits, unnormalised (for sample_logits)."""
+        features = self.policy_features(features, goal)
 
         if self.dense_heads is not None:
             dense = self.dense_heads
