@@ -97,6 +97,20 @@ class RunningNorm(nn.Module):
         self.register_buffer("count", torch.zeros(()))
         # Folded into the layer that reads it (fold_into): the rollout copies pass rows through untouched.
         self.bypass = False
+        # Columns kept at mean 0, variance 1 whatever is seen (hide): the camera's image, which the adapters never read
+        # and the vision encoder reads raw. Made from the stage, not saved: None until hide() is called.
+        self.register_buffer("hidden_columns", None, persistent=False)
+
+    @torch.no_grad()
+    def hide(self, columns: Sequence[int]) -> None:
+        """Keep `columns` at the identity (mean 0, variance 1) through every update."""
+        hidden = torch.zeros(self.mean.shape[0], dtype=torch.bool, device=self.mean.device)
+        hidden[[c for c in columns if c < hidden.shape[0]]] = True
+        if self.hidden_columns is not None:
+            hidden |= self.hidden_columns
+        self.hidden_columns = hidden
+        self.mean.masked_fill_(hidden, 0.0)
+        self.var.masked_fill_(hidden, 1.0)
 
     @torch.no_grad()
     def update(self, rows: torch.Tensor, ranks=None) -> None:
@@ -125,6 +139,9 @@ class RunningNorm(nn.Module):
         self.var.copy_((self.var * self.count + batch_var * batch_count
                         + delta.pow(2) * (self.count * batch_count / total)) / total)
         self.count.copy_(total)
+        if self.hidden_columns is not None:
+            self.mean.masked_fill_(self.hidden_columns, 0.0)
+            self.var.masked_fill_(self.hidden_columns, 1.0)
 
     def forward(self, rows: torch.Tensor) -> torch.Tensor:
         if self.bypass:
@@ -893,14 +910,15 @@ def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag:
 
 def clear_director_columns(network: nn.Module) -> None:
     """Zero the director adapter's slot columns again (after a seed or a load brought weights from elsewhere), and
-    every seat layout's set columns (EntitySets)."""
+    every seat layout's set columns (EntitySets) and camera columns (VisionEncoder)."""
     with torch.no_grad():
         if getattr(network, "director_sets", None) is not None:
             network.adapters[network.director_index].weight.mul_(network.director_keep)
         for index in range(len(network.adapters)):
-            keep = getattr(network, f"set_keep_{index}", None)
-            if keep is not None:
-                network.adapters[index].weight.mul_(keep)
+            for tag in ("set", "vision"):
+                keep = getattr(network, f"{tag}_keep_{index}", None)
+                if keep is not None:
+                    network.adapters[index].weight.mul_(keep)
 
 
 def _attach_entity_sets(network: nn.Module, seat_sets, head_width: int = 0, attention: bool = False) -> None:
@@ -912,6 +930,162 @@ def _attach_entity_sets(network: nn.Module, seat_sets, head_width: int = 0, atte
     network.entity_sets = EntitySets(seat_sets, network.obs_dims, network.adapters[0].out_features, head_width,
                                      attention=attention)
     attach_blind_columns(network, network.entity_sets.blind, tag="set")
+
+
+#: The vision block's name in stage.json (BlockId::Vision); its manifest entry carries the camera image's shape.
+VISION_BLOCK = "vision"
+
+
+def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | None] | None:
+    """Per layout, in `layout_names` order, its camera image as the vision block of stage.json describes it --
+    {"first": its first observation column, "height", "width", "channels", "kinds", "kind_channel", "scalars"} -- or
+    None for a layout without one; None altogether when no layout has a camera (no encoder, nothing new in the
+    networks). The block's first column differs per layout (the core block before it is as wide as the class's
+    spells), so every layout keeps its own. Refused: a vision block without its image, layouts whose images differ in
+    shape (one encoder reads them all), and a block whose width is not its image and scalars."""
+    if stage is None:
+        return None
+    layouts = stage.get("layouts") or {}
+    out: list[dict | None] = []
+    shape = None
+    for name in layout_names:
+        entry = layouts.get(name) or {}
+        block = next((b for b in entry.get("blocks", ()) if b.get("name") == VISION_BLOCK), None)
+        if block is None:
+            out.append(None)
+            continue
+        image = block.get("image")
+        if not image:
+            raise ValueError(f"{name}: stage.json has a vision block without its image (the sim's manifest is older "
+                             f"than the learner's camera); its columns would reach the adapters raw")
+        described = {key: int(image[key]) for key in ("height", "width", "channels", "kinds", "kind_channel",
+                                                      "scalars")}
+        if shape is None:
+            shape = described
+        elif described != shape:
+            raise ValueError(f"{name}: vision image {described}, another layout's {shape}; one encoder needs one "
+                             f"shape")
+        first, count = int(block["obs"][0]), int(block["obs"][1])
+        span = described["height"] * described["width"] * described["channels"] + described["scalars"]
+        if count != span:
+            raise ValueError(f"{name}: the vision block is {count} columns, its image and scalars {span}")
+        obs_dim = entry.get("obs_dim")
+        if obs_dim is not None and first + span > int(obs_dim):
+            raise ValueError(f"{name}: the vision block ends at {first + span}, past the layout's {obs_dim} columns")
+        if not 0 <= described["kind_channel"] < described["channels"] or described["kinds"] < 1:
+            raise ValueError(f"{name}: vision kind channel {described['kind_channel']} of {described['channels']}, "
+                             f"{described['kinds']} kinds")
+        out.append({"first": first, **described})
+    return out if any(entry is not None for entry in out) else None
+
+
+class VisionEncoder(nn.Module):
+    """**The camera** (camera-vision, naive slice): a seat's H x W image of what its camera's rays hit, encoded by one
+    small convolutional network shared by every layout, as EntitySets shares its encoders.
+
+    The image is gathered raw from each row's own layout's columns (a table by layout id: the vision block starts at
+    a different column in every class) -- [row][col][channel] floats -- and laid out [N, C, H, W]; the kind channel
+    becomes a one-hot over the kinds, so C - 1 + kinds input planes (12). Three 3 x 3 convolutions with SiLU (stride
+    2, 2, 1; padding 1: 32 x 64 -> 16 x 32 -> 8 x 16 -> 8 x 16), a spatial softmax per channel to its expected (x, y)
+    in [-1, 1] (128 keypoints), the block's scalars after them, Linear -> 256 with SiLU, and `join`, a Linear onto the
+    adapters' output width that starts at zero: a network given the camera acts exactly as it did without it until
+    the join learns. A layout without the camera adds zero. No normalisation: the channels are 0-1 or -1-1 already.
+    Every shape is fixed and nothing is read back, so a rollout graph captures it."""
+
+    CONVS = ((32, 2), (64, 2), (64, 1))
+    EMBED = 256
+
+    def __init__(self, descriptors: Sequence[dict | None], width: int):
+        super().__init__()
+        image = next(entry for entry in descriptors if entry is not None)
+        self.height, self.width = image["height"], image["width"]
+        self.channels, self.kinds = image["channels"], image["kinds"]
+        self.kind_channel, self.scalars = image["kind_channel"], image["scalars"]
+        self.pixels = self.height * self.width * self.channels
+        self.span = self.pixels + self.scalars
+        layers: list[nn.Module] = []
+        planes = self.channels - 1 + self.kinds
+        for out, stride in self.CONVS:
+            layers += [nn.Conv2d(planes, out, 3, stride=stride, padding=1), nn.SiLU()]
+            planes = out
+        self.convs = nn.Sequential(*layers)
+        self.embed = nn.Linear(2 * planes + self.scalars, self.EMBED)
+        self.join = nn.Linear(self.EMBED, width)
+        nn.init.zeros_(self.join.weight)
+        nn.init.zeros_(self.join.bias)
+        # Derived from stage.json, not learned: kept out of the state dict.
+        self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
+                                                    for entry in descriptors], dtype=torch.long), persistent=False)
+        self.register_buffer("has_vision", self.start >= 0, persistent=False)
+        self.register_buffer("offsets", torch.arange(self.span, dtype=torch.long), persistent=False)
+        self.register_buffer("kind_values", torch.arange(self.kinds, dtype=torch.float32).view(1, -1, 1, 1),
+                             persistent=False)
+        with torch.no_grad():
+            rows, cols = self.convs(torch.zeros(1, self.channels - 1 + self.kinds, self.height, self.width)).shape[2:]
+        self.feature_shape = (planes, rows, cols)
+        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, rows), torch.linspace(-1.0, 1.0, cols),
+                                        indexing="ij")
+        self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
+        self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
+        #: Per layout with the camera, the columns its adapter and normaliser do not read: the image and the scalars.
+        self.blind = {index: list(range(entry["first"], entry["first"] + self.span))
+                      for index, entry in enumerate(descriptors) if entry is not None}
+
+    def gather(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Each row's own camera columns: (image [N, C, H, W], scalars [N, S]), raw. Rows of a layout without the
+        camera read whatever is at column 0 on (their output is zeroed after)."""
+        layout = layout.reshape(-1).long()
+        columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
+        raw = obs.gather(1, columns).to(self.embed.weight.dtype)
+        image = raw[:, : self.pixels].reshape(-1, self.height, self.width, self.channels).permute(0, 3, 1, 2)
+        return image, raw[:, self.pixels:]
+
+    def planes(self, image: torch.Tensor) -> torch.Tensor:
+        """[N, C, H, W] -> the convolutions' input [N, C - 1 + kinds, H, W]: every channel but the kind as it is,
+        then the kind (rounded, clamped to the kinds) one-hot."""
+        kind = image[:, self.kind_channel : self.kind_channel + 1].round().clamp(0, self.kinds - 1)
+        one_hot = (kind == self.kind_values.to(kind.dtype)).to(image.dtype)
+        rest = torch.cat([image[:, : self.kind_channel], image[:, self.kind_channel + 1 :]], dim=1)
+        return torch.cat([rest, one_hot], dim=1)
+
+    def keypoints(self, features: torch.Tensor) -> torch.Tensor:
+        """Spatial softmax: per channel the expected (x, y) of its softmax over the positions, [N, 2 x channels]."""
+        weights = torch.softmax(features.flatten(2), dim=-1)
+        x = (weights * self.grid_x.to(weights.dtype)).sum(-1)
+        y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
+        return torch.cat([x, y], dim=-1)
+
+    def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """The camera's embedding before the join, [N, 256]."""
+        image, scalars = self.gather(obs, layout)
+        points = self.keypoints(self.convs(self.planes(image)))
+        return nn.functional.silu(self.embed(torch.cat([points, scalars], dim=-1)))
+
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """What the camera adds to the adapter's output: [N, width], zero for a layout without it."""
+        joined = self.join(self.encode(obs, layout))
+        return joined * self.has_vision[layout.reshape(-1).long()][:, None].to(joined.dtype)
+
+
+def _attach_vision(network: nn.Module, vision) -> None:
+    """Give an actor or critic the camera's encoder (VisionEncoder) and keep its columns -- image and scalars -- out
+    of every layout's adapter (attach_blind_columns, tag "vision") and normaliser (RunningNorm.hide); `vision` is
+    vision_of()'s per-layout image, or None (no camera: nothing changes)."""
+    network.vision = None
+    if vision is None:
+        return
+    network.vision = VisionEncoder(vision, network.adapters[0].out_features)
+    attach_blind_columns(network, network.vision.blind, tag="vision")
+    for index, columns in network.vision.blind.items():
+        network.norms[index].hide(columns)
+
+
+def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor, extra):
+    """`extra` (what the sets add to the adapter's output, or None) with the camera's term added."""
+    if getattr(network, "vision", None) is None:
+        return extra
+    seen = network.vision(obs, layout)
+    return seen if extra is None else extra + seen.to(extra.dtype)
 
 
 class GoalEmbedding(nn.Module):
@@ -977,12 +1151,16 @@ class GoalEmbedding(nn.Module):
 _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_scale.weight")
 
 
+#: The blind-column masks' buffer names (attach_blind_columns' tags): the hint block's, the seat sets', the camera's.
+BLIND_KEEP_PREFIXES = ("blind_keep_", "set_keep_", "vision_keep_")
+
+
 def without_blind_columns(state: dict) -> dict:
     """A saved network's state without its blind-column masks (attach_blind_columns): they are made again from the
     stage's layouts after loading (MappoTrainer.set_hint_space, the seat sets), and a network not yet given them
     refused them."""
     return {key: value for key, value in state.items()
-            if not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))}
+            if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)}
 
 
 def load_actor_state(actor: nn.Module, state: dict) -> None:
@@ -991,7 +1169,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> None:
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
     # stage's), which a resume keeps; the hint block's are made after loading.
     wrong = [key for key in missing
-             if key not in _GOAL_SCALE_KEYS and not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))]
+             if key not in _GOAL_SCALE_KEYS and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
     if wrong or unexpected:
         raise RuntimeError(f"Error(s) in loading state_dict for {type(actor).__name__}: missing {wrong}, "
                            f"unexpected {list(unexpected)}")
@@ -1017,7 +1195,7 @@ class LayoutActor(nn.Module):
     def __init__(self, layouts: Sequence[tuple[int, int]], hidden: Sequence[int], foresight_outputs: int = 0,
                  recurrent_size: int = 0, goal_count: int = 0, goal_targets: int = 1, slow_size: int = 0,
                  foresight_feedback: bool = False, lookahead: bool = False, director=None, goal_slots: int = 1,
-                 seat_sets=None, entity_attention: bool = False):
+                 seat_sets=None, entity_attention: bool = False, vision=None):
         """layouts: (obs dim, action count) per layout; hidden: widths, the first being the adapters' output.
 
         `foresight_outputs` adds a head on the trunk that predicts what happens after this decision (mappo.trainer's
@@ -1078,6 +1256,8 @@ class LayoutActor(nn.Module):
         _attach_director(self, director, head_width)
         # Every seat layout's entities as sets, with pointer heads (EntitySets; mappo.seat_sets, None = off).
         _attach_entity_sets(self, seat_sets, head_width, entity_attention)
+        # The camera (VisionEncoder; vision_of(stage.json), None = no layout has one).
+        _attach_vision(self, vision)
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor, groups=None,
                 memory: torch.Tensor | None = None) -> Categorical:
@@ -1124,6 +1304,7 @@ class LayoutActor(nn.Module):
         if self.entity_sets is not None:
             seats = self.entity_sets.pooled(obs, layout)
             extra = seats if extra is None else extra + seats.to(extra.dtype)
+        extra = _vision_extra(self, obs, layout, extra)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -1307,7 +1488,7 @@ class LayoutCritic(nn.Module):
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
                  goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1, director=None,
-                 goal_slots: int = 1, seat_sets=None, entity_attention: bool = False):
+                 goal_slots: int = 1, seat_sets=None, entity_attention: bool = False, vision=None):
         super().__init__()
         if not hidden:
             raise ValueError("the critic needs at least one hidden layer")
@@ -1329,6 +1510,8 @@ class LayoutCritic(nn.Module):
         self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
         _attach_director(self, director)
         _attach_entity_sets(self, seat_sets, attention=entity_attention)
+        # The camera, with an encoder of its own (not the actor's): the value has to see what the actor reacts to.
+        _attach_vision(self, vision)
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
                goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
@@ -1355,6 +1538,8 @@ class LayoutCritic(nn.Module):
             own = own + extra.to(own.dtype)
         if self.entity_sets is not None:
             own = own + self.entity_sets.pooled(obs, layout).to(own.dtype)
+        if self.vision is not None:
+            own = own + self.vision(obs, layout).to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

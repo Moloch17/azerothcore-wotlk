@@ -430,6 +430,37 @@ def _seed_entity_sets(new: dict, old: dict, new_layouts: list[str] | None = None
     return carried, [name for name in new_names if name not in carried]
 
 
+#: The camera's encoder (VisionEncoder): shared by every layout, as the trunk is.
+VISION = "vision."
+
+
+def _vision_revision(stage: dict | None) -> int | None:
+    """The vision block's revision in the first layout of `stage` that has one; None for a stage without a camera."""
+    for entry in ((stage or {}).get("layouts") or {}).values():
+        for block in entry.get("blocks", ()):
+            if block.get("name") == "vision":
+                return int(block.get("revision", 0))
+    return None
+
+
+def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict | None) -> str | None:
+    """Carry the camera's encoder from a checkpoint that has one of the same shape and the same vision block revision
+    (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
+    None when this network has no camera. Left fresh, its join is zero: the seeded policy starts as it was."""
+    keys = [key for key in new if key.startswith(VISION)]
+    if not keys:
+        return None
+    if not any(key.startswith(VISION) for key in old):
+        return "fresh (the checkpoint has none)"
+    if _vision_revision(new_stage) != _vision_revision(old_stage):
+        return f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
+    if not all(key in old and old[key].shape == new[key].shape for key in keys):
+        return "fresh (its shape changed)"
+    for key in keys:
+        new[key].copy_(old[key])
+    return "carried"
+
+
 def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False,
                  source: str = "") -> list[str]:
     """Seed a fresh MappoTrainer for `spec` (whose stage.json is `stage`) from an earlier stage's checkpoint; returns
@@ -452,6 +483,10 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         names = [layout.name for layout in spec.layouts]
         sets = _seed_entity_sets(actor, old["actor"], names, old_names)
         _seed_entity_sets(critic, old["critic"], names, old_names)
+        vision = _seed_vision(actor, old["actor"], stage, old_stage)
+        _seed_vision(critic, old["critic"], stage, old_stage)
+        if vision is not None:
+            print(f"  vision encoder: {vision}", flush=True)
         if sets is not None:
             carried, fresh = sets
             print(f"  seat sets: {', '.join(carried) or 'none'} carried, {', '.join(fresh) or 'none'} fresh (their "

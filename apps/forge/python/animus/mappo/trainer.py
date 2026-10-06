@@ -445,6 +445,12 @@ class _RolloutGraph:
         critic_hidden = critic.state_encoder(critic.state_norm(state_t))
         # Both networks' adapters read the observation: one product (SharedInputDense), the critic's half handed over.
         actor_own, critic_own = trainer._shared_adapters(obs_t, layout_t)
+        # The camera (VisionEncoder) onto both, as LayoutActor.encode and LayoutCritic.encode_goal_free add it: every
+        # row through the encoder, zero for a layout without one, so the graph's shapes do not depend on the batch.
+        if actor.vision is not None:
+            actor_own = actor_own + actor.vision(obs_t, layout_t).to(actor_own.dtype)
+        if critic.vision is not None:
+            critic_own = critic_own + critic.vision(obs_t, layout_t).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
 
         out: dict[str, torch.Tensor] = {}
@@ -583,6 +589,7 @@ class MappoTrainer:
         ranks=None,
         director=None,
         seat_sets=None,
+        vision=None,
     ):
         """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `slow_layout` is the
         index of config.slow_layout among them, resolved by the caller (layouts carry no names here); -1 when the
@@ -596,6 +603,9 @@ class MappoTrainer:
         # Per layout stage.json's seat sets, when mappo.seat_sets is on (EntitySets); None leaves the networks as they
         # were.
         self.seat_sets = seat_sets if config.seat_sets else None
+        # Per layout its camera image (networks.vision_of, stage.json's vision block), or None: no camera anywhere.
+        # On whenever the stage has one, with no switch of its own; the networks then carry a VisionEncoder each.
+        self.vision = vision
         # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
         self.slow_choose_column = (int(director[1].get("may_call", -1))
                                    if director is not None and director[0] == self.slow_layout else -1)
@@ -634,12 +644,13 @@ class MappoTrainer:
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
                                  config.goal_lookahead, director, self.goal_slots,
-                                 self.seat_sets, config.entity_attention).to(self.train_device)
+                                 self.seat_sets, config.entity_attention, self.vision).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets, director,
-                                   self.goal_slots, self.seat_sets, config.entity_attention).to(self.train_device)
+                                   self.goal_slots, self.seat_sets, config.entity_attention,
+                                   self.vision).to(self.train_device)
         # Self-imitation's replay of the best episodes (sil_coef > 0), and the per-decision discount its returns use
         # (the run's own, set by animus.train; mappo.gamma until then).
         self.sil = SelfImitation(config.sil_episodes) if config.sil_coef > 0.0 else None
@@ -753,10 +764,10 @@ class MappoTrainer:
         fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
                              self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
                              self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets,
-                             self.config.entity_attention),
+                             self.config.entity_attention, self.vision),
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
                               self.goal_targets, self.director, self.goal_slots, self.seat_sets,
-                              self.config.entity_attention))
+                              self.config.entity_attention, self.vision))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)
@@ -877,16 +888,18 @@ class MappoTrainer:
         return (at >= 0) & (obs[index, (at + 2).clamp(min=0)] > 0.5)
 
     def director_columns_clear(self) -> bool:
-        """Whether both networks' director adapters still read nothing from the slot columns."""
+        """Whether both networks' director adapters still read nothing from the slot columns, nor any layout's adapter
+        from its seat sets' or camera's columns."""
         for network in (self.actor, self.critic):
             if getattr(network, "director_sets", None) is not None:
                 weight = network.adapters[network.director_index].weight
                 if bool((weight[:, network.director_sets.column_mask] != 0).any()):
                     return False
             for index in range(len(network.adapters)):
-                keep = getattr(network, f"set_keep_{index}", None)
-                if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
-                    return False
+                for tag in ("set", "vision"):
+                    keep = getattr(network, f"{tag}_keep_{index}", None)
+                    if keep is not None and bool((network.adapters[index].weight * (1.0 - keep) != 0).any()):
+                        return False
         return True
 
     def clear_director_columns(self) -> None:
@@ -936,13 +949,19 @@ class MappoTrainer:
         # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
         return to_device(torch.as_tensor(np.ascontiguousarray(array), dtype=dtype), self.rollout_device)
 
+    def _graphs_apply(self, state: "ActingState | None") -> bool:
+        """Whether a rollout decision runs as a captured graph (_rollout_graph): on the GPU, turned on, with an acting
+        state, and without what branches on the host (a slow layout's held decisions, the director's and the seat
+        sets' row picks). The camera (VisionEncoder) is none of those: its shapes are fixed, graphs stay on."""
+        return not (self._rollout_stream is None or not self.config.rollout_graphs or state is None
+                    or self.slow_layout >= 0 or self.director is not None or self.seat_sets is not None)
+
     def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
                        state: "ActingState | None") -> "_RolloutGraph | None":
         """The captured decision for this batch shape, captured on first use; None where it does not apply: off the
         GPU, turned off (mappo.rollout_graphs), without an acting state, or with a slow layout (its held decisions
         branch on the host)."""
-        if (self._rollout_stream is None or not self.config.rollout_graphs or state is None
-                or self.slow_layout >= 0 or self.director is not None or self.seat_sets is not None):
+        if not self._graphs_apply(state):
             return None
         envs, agents = layout.shape
         device_fed = isinstance(obs, torch.Tensor)
@@ -1960,10 +1979,10 @@ class MappoTrainer:
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
-        from .networks import without_blind_columns
+        from .networks import BLIND_KEEP_PREFIXES, without_blind_columns
         load_actor_state(self.actor, state["actor"])
         missing, unexpected = self.critic.load_state_dict(without_blind_columns(state["critic"]), strict=False)
-        missing = [key for key in missing if not key.split(".")[-1].startswith(("blind_keep_", "set_keep_"))]
+        missing = [key for key in missing if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
         if missing or unexpected:
             raise RuntimeError(f"Error(s) in loading state_dict for the critic: missing {missing}, unexpected "
                                f"{list(unexpected)}")

@@ -47,7 +47,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import seat_sets_of
+from .mappo.networks import seat_sets_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -612,6 +612,12 @@ class TrainingRun:
         if config.mappo.seat_sets and seat_sets is None:
             print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
                   flush=True)
+        # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch.
+        vision = vision_of(self.stage, names)
+        if vision is not None:
+            image = next(entry for entry in vision if entry is not None)
+            print(f"Vision: a {image['width']} x {image['height']} camera in {sum(e is not None for e in vision)} of "
+                  f"{len(names)} layouts, one encoder per network", flush=True)
         def make_trainer() -> MappoTrainer:
             # The exploiter's (animus.exploit) is built by this too: the same layouts, director and seat sets, the
             # same ranks -- its update is data-parallel like the main's.
@@ -625,6 +631,7 @@ class TrainingRun:
                 ranks=self.ranks.update,
                 director=director,
                 seat_sets=seat_sets,
+                vision=vision,
             )
 
         self.make_trainer = make_trainer

@@ -28,7 +28,7 @@ from .bootstrap import DIRECTOR_LAYOUT
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
-from .mappo.networks import seat_sets_of
+from .mappo.networks import seat_sets_of, vision_of
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE, layout_changes, load_stage
@@ -77,7 +77,8 @@ def main() -> None:
     director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
                 if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)
     seat_sets = seat_sets_of(stage, names) if mappo.seat_sets else None
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo, director=director, seat_sets=seat_sets)
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, director=director, seat_sets=seat_sets,
+                           vision=vision_of(stage, names))
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)
