@@ -299,6 +299,19 @@ void AnimusForge::ForgeConfig::Load()
         Vision.Range = ranged("AnimusForge.Vision.Range", defaults.Range, 10.0f, 500.0f);
         Vision.Zoom = ranged("AnimusForge.Vision.Zoom", defaults.Zoom, 0.0f, 50.0f);
         Vision.Pitch = ranged("AnimusForge.Vision.Pitch", defaults.Pitch, -80.0f, 80.0f);
+        // The learner cuts the canonical image into a 16-wide grid of square patches (Vision::Patch): a size it
+        // does not tile is said, not changed -- the learner refuses it with the manifest in hand.
+        uint32 const patch = Animus::Vision::Patch(Vision);
+        if (Vision.Width % Animus::Vision::PATCH_COLUMNS || Vision.Height % patch)
+            LOG_ERROR("server.loading", "AnimusForge.Vision.Width x Height = {} x {} is not a whole grid of {}-pixel "
+                "patches, {} wide: the learner's patch encoder will not take it (128 x 64 is)", Vision.Width,
+                Vision.Height, patch, Animus::Vision::PATCH_COLUMNS);
+        // The sizes frames are cast at, each within the canonical size; the ones that are not are left out.
+        std::vector<std::string> sizeErrors;
+        Vision.RenderSizes = Animus::Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>(
+            "AnimusForge.Vision.RenderSizes", "32x16, 48x24, 64x32"), Vision, sizeErrors);
+        for (std::string const& error : sizeErrors)
+            LOG_ERROR("server.loading", "AnimusForge.Vision.RenderSizes: {}", error);
         VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));
         VisionAuditSeats = uint32(ranged("AnimusForge.Vision.AuditSeats", 4.0f, 1.0f, 64.0f));
     }

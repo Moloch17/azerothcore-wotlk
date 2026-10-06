@@ -25,6 +25,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Animus
@@ -65,6 +66,9 @@ namespace Animus
         /// Per agent, the bytes of its camera image (Vision::ImageBytes) when the stage has a vision block, else 0:
         /// the STEP's image section (camera-vision.BYTES.md, protocol 21).
         uint32 ImageBytes = 0;
+        /// Per agent, the look head's choices ACT carries after the actions and goals (Vision::FreeLook::HEADS) when
+        /// the stage has a vision block, else 0: ACT is then protocol 21's (camera-vision.FREELOOK.md C).
+        uint32 LookHeads = 0;
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
 
@@ -113,6 +117,19 @@ namespace Animus
         /// the actions by a policy that has a goal head. Called before ApplyActions. A goal is scored, reported and
         /// shown to teammates; it never masks an action, so a goal out of range is simply ignored.
         virtual void ApplyGoals(Env& /*env*/, int32 const* /*goals*/) { }
+
+        /// look: [AgentsPerEnv * Spec().LookHeads] each agent's look head choice (Vision::FreeLook), in range (ACT
+        /// refuses any other). Called before ApplyActions, only when LookHeads > 0. Only agents whose layout has a
+        /// camera take theirs; every other row is a placeholder and is never applied. Looking is free: nothing
+        /// here may reach what prices, tallies or judges an action.
+        virtual void ApplyLook(Env& /*env*/, int32 const* /*look*/) { }
+
+        /// The size agent `agent`'s camera casts its frames at this episode (the camera audit's "render"), or 0 x 0
+        /// for an agent with no camera.
+        [[nodiscard]] virtual std::pair<uint32, uint32> CameraRenderSize(Env const& /*env*/, uint32 /*agent*/) const
+        {
+            return { 0, 0 };
+        }
 
         /// obs: [AgentsPerEnv * ObsDim], state: [StateDim], mask: [AgentsPerEnv * NumActions]. `mask` is null for an
         /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then. image:

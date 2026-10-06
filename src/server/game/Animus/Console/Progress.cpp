@@ -64,8 +64,9 @@ namespace
         AnimusForge::SimSnapshot::VisionStats const& vision = sim.Vision;
         if (vision.FramesPerDecision > 0.0)
             table.AddRow({ "vision", Acore::StringFormat("{:.0f} us/frame", vision.UsPerFrame),
-                Acore::StringFormat("per frame (thread time), {:.0f} rays/frame, {:.1f} frames/decision, {:.2f} ms per "
-                    "decision (every seat)", vision.RaysPerFrame, vision.FramesPerDecision, vision.MsPerDecision) });
+                Acore::StringFormat("per frame (thread time), {:.0f} rays/frame actually cast (at the seats' drawn "
+                    "render sizes, before scaling up), {:.1f} frames/decision, {:.2f} ms per decision (every seat)",
+                    vision.RaysPerFrame, vision.FramesPerDecision, vision.MsPerDecision) });
         if (vision.FramesPerDecision > 0.0 && vision.AuditInterval)
             table.AddRow({ "camera audit", Acore::StringFormat("{} frames", vision.AuditFrames),
                 Acore::StringFormat("every {} s to {}{}", vision.AuditInterval, vision.AuditDir,

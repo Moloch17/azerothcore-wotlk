@@ -5378,31 +5378,50 @@ AnimusForge.Probe.CacheGrids = 64
 ###################################################################################################
 # CAMERA VISION
 #
-#    The vision block's third-person camera (camera-vision): follow mode, behind the seat's facing,
-#    rendered every decision by ray casts against the loaded terrain, collision trees and liquids.
+#    The vision block's third-person camera (camera-vision): the seat turns it itself (free look: a
+#    yaw rate, a pitch rate and a zoom step chosen every decision, easing back behind the facing
+#    while it walks forward), rendered every decision by ray casts against the loaded terrain,
+#    collision trees and liquids.
 #    A value outside its range is clamped into it and logged. `forge camera snapshot` renders one
 #    frame with these settings.
 #
 #    AnimusForge.Vision.Width
 #        Description: Image columns of the vision block's camera (stages with a vision block,
-#                     move1_controls). Width and Height decide the image each agent sends,
-#                     Width x Height x 4 bytes beside its observation (the block's own columns
-#                     are 7 scalars): a model trained at one size does not fit another.
-#        Default:     64 - (8 to 256)
+#                     move1_controls): the canonical image, the one the learner's network reads.
+#                     Width and Height decide the image each agent sends, Width x Height x 4
+#                     bytes beside its observation (the block's own columns are 11 scalars): a
+#                     model trained at one size does not fit another. Frames are cast at the
+#                     smaller RenderSizes and scaled up to it. The learner cuts it into a grid of
+#                     16 patches across (8 x 8 pixels at the default), so Width is a multiple of
+#                     16 and Height of Width / 16.
+#        Default:     128 - (8 to 256)
 
-AnimusForge.Vision.Width = 64
+AnimusForge.Vision.Width = 128
 
 #
 #    AnimusForge.Vision.Height
-#        Description: Image rows of the camera.
-#        Default:     32 - (8 to 256)
+#        Description: Image rows of the camera's canonical image.
+#        Default:     64 - (8 to 256)
 
-AnimusForge.Vision.Height = 32
+AnimusForge.Vision.Height = 64
+
+#
+#    AnimusForge.Vision.RenderSizes
+#        Description: The sizes frames are actually cast at, "WxH" separated by commas, each at
+#                     most Width x Height: the same field of view with fewer, wider rays, scaled
+#                     up into the canonical image by nearest pixel. Each seat draws one at random
+#                     at every episode reset, so the model learns to see at all of them; with one
+#                     entry every seat renders at it (pick the tier a machine can afford). An
+#                     entry that does not parse or does not fit is left out and logged; none
+#                     left renders at Width x Height.
+#        Default:     "32x16, 48x24, 64x32"
+
+AnimusForge.Vision.RenderSizes = "32x16, 48x24, 64x32"
 
 #
 #    AnimusForge.Vision.FovH
 #        Description: Horizontal field of view, degrees. Pixels are square when FovH / Width equals
-#                     FovV / Height (1.875 degrees at the defaults).
+#                     FovV / Height (0.9375 degrees at the defaults).
 #        Default:     120 - (30 to 170)
 
 AnimusForge.Vision.FovH = 120
@@ -5426,14 +5445,16 @@ AnimusForge.Vision.Range = 100
 #
 #    AnimusForge.Vision.Zoom
 #        Description: Yards from the pivot (the head) back to the camera, before the boom pulls in
-#                     at a wall. 0 sees from the eyes.
+#                     at a wall. 0 sees from the eyes. A seat's camera starts each episode at the
+#                     zoom level nearest it (0, 3, 6 or 12 yd) and steps between those levels.
 #        Default:     6 - (0 to 50)
 
 AnimusForge.Vision.Zoom = 6
 
 #
 #    AnimusForge.Vision.Pitch
-#        Description: The camera's pitch, degrees, + up: the default looks slightly down.
+#        Description: The camera's pitch, degrees, + up: the default looks slightly down. A seat's
+#                     camera starts each episode here and returns here when it recentres.
 #        Default:     -15 - (-80 to 80)
 
 AnimusForge.Vision.Pitch = -15

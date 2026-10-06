@@ -18,6 +18,7 @@
 
 #include "EnvPool.h"
 #include "Camera.h"
+#include "FreeLook.h"
 #include "ResetDefer.h"
 #include "MapMgr.h"
 #include "ResetTiming.h"
@@ -82,6 +83,11 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head
     // sends them.
     Goals.assign(std::size_t(agents) * GOAL_SLOTS_ON_WIRE, -1);
+    // The look head's rows (free look, protocol 22), neutral until an ACT sets them: both rates let go, the zoom
+    // held -- never zeros, which would hold the fastest turn right. Empty for a stage without a camera.
+    Look.clear();
+    for (uint32 agent = 0; _spec.LookHeads && agent < agents; ++agent)
+        Look.insert(Look.end(), Vision::FreeLook::NEUTRAL.begin(), Vision::FreeLook::NEUTRAL.end());
     _reportInfoSum.assign(_spec.EpisodeInfoDim, 0.0);
 
     // NOT_FILED, not MapKey(0, 0): map 0 instance 0 is Eastern Kingdoms, a key an env can really have.
@@ -331,6 +337,10 @@ void Animus::EnvPool::ApplyActionsForMap(Map const& map)
         Env& env = _envs[index];
         if (!Goals.empty())
             _scenario.ApplyGoals(env, &Goals[std::size_t(index) * _spec.AgentsPerEnv * GOAL_SLOTS_ON_WIRE]);
+        // The camera's turn, with the movement actions, so it shows in the next frame; beside them, never through
+        // them (looking is free).
+        if (!Look.empty())
+            _scenario.ApplyLook(env, &Look[std::size_t(index) * _spec.AgentsPerEnv * _spec.LookHeads]);
 
         _scenario.ApplyActions(env, &Actions[index * _spec.AgentsPerEnv]);
     }
@@ -479,6 +489,10 @@ bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponen
 
         float const* obs = &Obs[i * _spec.ObsDim];
         uint8 const* mask = &Mask[i * numActions];
+        // A local policy does not look: the camera's rates let go and its zoom held (it eases back in follow mode).
+        if (!Look.empty())
+            std::copy(Vision::FreeLook::NEUTRAL.begin(), Vision::FreeLook::NEUTRAL.end(),
+                Look.begin() + std::size_t(i) * _spec.LookHeads);
 
         if (random)
         {

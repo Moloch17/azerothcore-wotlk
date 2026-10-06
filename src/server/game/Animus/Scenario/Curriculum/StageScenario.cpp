@@ -437,6 +437,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The camera's image travels as bytes beside the rows (camera-vision.BYTES.md): every agent has a row of them
     // when the stage has a vision block, and none is sent when it has not.
     _spec.ImageBytes = _stage.Has(BlockId::Vision) ? Vision::ImageBytes(Vision::Current()) : 0;
+    // ... and its look head's choices come back with the actions (free look, protocol 22).
+    _spec.LookHeads = _stage.Has(BlockId::Vision) ? Vision::FreeLook::HEADS : 0;
     _data.resize(settings.Envs);
 
     // The encounters any of the stage's arenas uses, in build order.
@@ -638,6 +640,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _info.Add("reward_" + std::string(RewardTermName(RewardTerm::DeathRun)), [this](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(RewardTerm::DeathRun);
+        });
+    // The width this episode's camera frames were cast at (AnimusForge.Vision.RenderSizes), before they were scaled
+    // up to the canonical image: the learner can split its measures by render tier.
+    if (_stage.Has(BlockId::Vision))
+        _info.Add("vision_render_width", [this](Env const& env, uint32 seat)
+        {
+            return float(Data(env).Seats[seat].Look.Render.Width);
         });
 
     if (HasDirectors())
@@ -1652,6 +1661,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["image"] = manifest["image"];
                 block["camera"] = manifest["camera"];
+                block["look"] = manifest["look"];
             }
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
@@ -2179,6 +2189,12 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // A new episode starts from clean totals, in every encounter: those this arena does not use report 0.
     for (SeatState& seat : data.Seats)
         seat.ResetEpisode();
+    // Each seat's camera draws the size it casts this episode's frames at (AnimusForge.Vision.RenderSizes), from the
+    // world thread's random numbers as the rest of the reset does; one size draws nothing, and a stage without a
+    // camera draws nothing at all, so its random numbers are what they were.
+    if (_stage.Has(BlockId::Vision))
+        for (SeatState& seat : data.Seats)
+            seat.Look.Render = Vision::DrawRenderSize(Vision::Current(), [](uint32 n) { return urand(0, n - 1); });
     for (RewardLedger& director : data.DirectorRewards)
         director.ResetEpisode();
     // No resurrection offer is in flight into a new episode, and the clock it was taken on has restarted.
@@ -3012,6 +3028,38 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
     }
 }
 
+void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
+{
+    if (!_stage.Has(BlockId::Vision))
+        return;
+    EnvState& data = Data(env);
+    Vision::Settings const& settings = Vision::Current();
+    // The seats with a character this episode, and the cast owner while it is played through its row: the rows with
+    // a camera. A director's row, an empty seat's and an unplayed owner's are placeholders, never applied (R5).
+    auto const take = [&](uint32 agent)
+    {
+        SeatState& seat = data.Seats[agent];
+        if (seat.L)
+            Vision::FreeLook::Apply(seat.Look, look + std::size_t(agent) * Vision::FreeLook::HEADS, settings);
+    };
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        take(seat);
+    if (CastOwnerActive(env))
+        take(OwnerAgent());
+}
+
+std::pair<uint32, uint32> Animus::Curriculum::StageScenario::CameraRenderSize(Env const& env, uint32 agent) const
+{
+    if (!_stage.Has(BlockId::Vision))
+        return { 0, 0 };
+    EnvState const& data = Data(env);
+    bool const seat = agent < _seatCount || (_castOwner && agent == OwnerAgent());
+    if (!seat || agent >= data.Seats.size() || !data.Seats[agent].L)
+        return { 0, 0 };
+    Vision::Resolution const render = data.Seats[agent].Look.Render;
+    return { render.Width, render.Height };
+}
+
 bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatIndex, Player* bot,
     Unit const* target) const
 {
@@ -3409,6 +3457,8 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // The keys it holds and the body they move, carried over from the last decision: without them a held key is
     // forgotten before it can do anything.
     view.Controls = &seat.Controls;
+    // Its camera, in a stage with one: the vision block advances it by the decision and renders from it.
+    view.Look = _stage.Has(BlockId::Vision) ? &seat.Look : nullptr;
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.Facing = seat.Facing;

@@ -17,8 +17,10 @@
 
 #include "VisionCaster.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <limits>
+#include <vector>
 
 namespace
 {
@@ -236,6 +238,55 @@ Animus::Vision::Settings const& Animus::Vision::Current()
 void Animus::Vision::Configure(Settings const& settings)
 {
     CurrentSettings = settings;
+}
+
+std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::string const& text,
+    Settings const& canonical, std::vector<std::string>& errors)
+{
+    std::vector<Resolution> sizes;
+    std::size_t at = 0;
+    while (at <= text.size())
+    {
+        std::size_t const comma = std::min(text.find(',', at), text.size());
+        std::string entry = text.substr(at, comma - at);
+        at = comma + 1;
+        // Spaces anywhere in an entry are ignored ("48 x 24" reads as "48x24").
+        entry.erase(std::remove_if(entry.begin(), entry.end(), [](char c) { return std::isspace(uint8_t(c)); }),
+            entry.end());
+        if (entry.empty())
+            continue;
+
+        std::size_t const x = entry.find_first_of("xX");
+        std::string const w = x == std::string::npos ? std::string() : entry.substr(0, x);
+        std::string const h = x == std::string::npos ? std::string() : entry.substr(x + 1);
+        auto const digits = [](std::string const& part)
+        {
+            return !part.empty() && part.size() <= 6
+                && std::all_of(part.begin(), part.end(), [](char c) { return std::isdigit(uint8_t(c)); });
+        };
+        if (!digits(w) || !digits(h))
+        {
+            errors.push_back("\"" + entry + "\" is not WxH");
+            continue;
+        }
+
+        Resolution const size{ uint32_t(std::stoul(w)), uint32_t(std::stoul(h)) };
+        if (size.Width < 1 || size.Height < 1 || size.Width > canonical.Width || size.Height > canonical.Height)
+        {
+            errors.push_back("\"" + entry + "\" is not within 1x1 to " + std::to_string(canonical.Width) + "x"
+                + std::to_string(canonical.Height));
+            continue;
+        }
+        sizes.push_back(size);
+    }
+
+    if (sizes.empty())
+    {
+        errors.push_back("no size left: rendering at the canonical " + std::to_string(canonical.Width) + "x"
+            + std::to_string(canonical.Height));
+        sizes.push_back({ canonical.Width, canonical.Height });
+    }
+    return sizes;
 }
 
 float Animus::Vision::Reach(Vec3 origin, Vec3 dir, VisionWorld const& world)
@@ -488,17 +539,42 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
     bool const underwater = liquid.Present && rig.Camera.Z < liquid.Level;
 
-    for (uint32_t row = 0; image && row < settings.Height; ++row)
-        for (uint32_t col = 0; col < settings.Width; ++col)
+    // The size the rays are cast at: the camera's, within the canonical size (0 or larger: the canonical itself).
+    // The thread's own copy of the angles, so a frame allocates nothing (its RenderSizes are never read here).
+    thread_local Settings cast;
+    cast.FovH = settings.FovH;
+    cast.FovV = settings.FovV;
+    cast.Width = settings.Width;
+    cast.Height = settings.Height;
+    if (camera.RenderWidth > 0 && camera.RenderHeight > 0)
+    {
+        cast.Width = std::min(camera.RenderWidth, settings.Width);
+        cast.Height = std::min(camera.RenderHeight, settings.Height);
+    }
+    bool const scaled = cast.Width != settings.Width || cast.Height != settings.Height;
+    // A smaller frame is cast into the thread's scratch and scaled up into the image; a canonical one straight in.
+    thread_local std::vector<uint8_t> scratch;
+    uint8_t* target = image;
+    if (image && scaled)
+    {
+        scratch.resize(std::size_t(cast.Width) * cast.Height * BYTES_PER_PIXEL);
+        target = scratch.data();
+    }
+
+    for (uint32_t row = 0; target && row < cast.Height; ++row)
+        for (uint32_t col = 0; col < cast.Width; ++col)
         {
-            Vec3 const dir = PixelDirection(rig, settings, row, col);
+            Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit const hit = CastRay(rig.Camera, dir, world, units, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective) > 0.5f;
-            EncodePixel(hit, pose.Z, flag, image + (std::size_t(row) * settings.Width + col) * BYTES_PER_PIXEL);
+            EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
         }
+    if (image && scaled)
+        Upscale(target, cast.Width, cast.Height, image, settings.Width, settings.Height);
 
-    scalars[SCALAR_YAW_OFFSET] = camera.YawOffset / PI;
+    scalars[SCALAR_YAW_SIN] = std::sin(camera.YawOffset);
+    scalars[SCALAR_YAW_COS] = std::cos(camera.YawOffset);
     scalars[SCALAR_PITCH] = camera.Pitch / (PI / 2.0f);
     scalars[SCALAR_ZOOM] = camera.Zoom / ZOOM_SCALE;
     scalars[SCALAR_BOOM] = rig.Boom / ZOOM_SCALE;
@@ -507,5 +583,8 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
         ? std::clamp((rig.Pivot.Z - floor) / PIVOT_HEIGHT_SCALE, 0.0f, 1.0f) : 1.0f;
     scalars[SCALAR_UNDERWATER] = underwater ? 1.0f : 0.0f;
     scalars[SCALAR_AIRBORNE] = pose.Airborne ? 1.0f : 0.0f;
-    return (image ? settings.Width * settings.Height : 0) + (camera.Zoom > 0.0f ? 1 : 0);
+    scalars[SCALAR_YAW_RATE] = camera.YawRate / YAW_RATE_SCALE;
+    scalars[SCALAR_PITCH_RATE] = camera.PitchRate / PITCH_RATE_SCALE;
+    scalars[SCALAR_RENDER_WIDTH] = float(cast.Width) / float(std::max<uint32_t>(1, settings.Width));
+    return (image ? cast.Width * cast.Height : 0) + (camera.Zoom > 0.0f ? 1 : 0);
 }

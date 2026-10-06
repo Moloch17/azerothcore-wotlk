@@ -460,6 +460,8 @@ namespace AnimusForge
         std::chrono::steady_clock::time_point _lastReport;
         std::chrono::steady_clock::time_point _lastAudit;   // the camera audit's last frames, or the scenario's start
         std::optional<std::chrono::steady_clock::time_point> _lastAct;
+        /// An ACT's look section, checked here before any of it reaches the pool (protocol 22).
+        std::vector<int32> _actLook;
 
         /// Where a tick's wall time goes, since the scenario started (ns). Reported per tick, and what the benchmark
         /// compares settings by.

@@ -330,6 +330,16 @@ namespace
         return best;
     }
 
+    /// The size these tests were written at, before the canonical image became 128 x 64 (FREELOOK A): the pixel
+    /// angles and the old march's comparison are checked on it.
+    Vi::Settings Legacy()
+    {
+        Vi::Settings settings;
+        settings.Width = 64;
+        settings.Height = 32;
+        return settings;
+    }
+
     /// A frame as the vision block makes it: the image's bytes and the scalars, read back as the learner decodes it.
     struct Frame
     {
@@ -368,7 +378,7 @@ namespace
 // left, so the right of the image is clockwise of the facing), the elevation the pitch plus pitch' (R11).
 TEST(VisionTest, PixelRaysAreEqualAngleStepsAboutTheView)
 {
-    Vi::Settings settings;      // 64 x 32, 120 x 60 degrees
+    Vi::Settings settings = Legacy();      // 64 x 32, 120 x 60 degrees
     Vi::Rig rig;
     rig.Azimuth = 30.0f * DEG;
     rig.Elevation = -15.0f * DEG;
@@ -807,12 +817,12 @@ TEST(VisionTest, NoFrameRowIsSky)
     }
 }
 
-// A frame: [row][col][channel] with row 0 at the top, then the seven scalars (R16).
+// A frame: [row][col][channel] with row 0 at the top, then the eleven scalars (R16, FREELOOK B).
 TEST(VisionTest, FrameLayoutAndScalars)
 {
     FakeVision world;
     world.Surface = [](float, float) { return 0.0f; };
-    Vi::Settings settings;
+    Vi::Settings settings = Legacy();
     Vi::Pose pose;
     pose.X = X0;
     pose.Y = Y0;
@@ -838,13 +848,17 @@ TEST(VisionTest, FrameLayoutAndScalars)
     EXPECT_NEAR(at(31, 32, Vi::CHANNEL_HEIGHT), 0.0f, 1e-3f);
 
     float const* scalars = frame.Scalars.data();
-    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_YAW_OFFSET], 0.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_YAW_SIN], 0.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_YAW_COS], 1.0f);
     EXPECT_NEAR(scalars[Vi::SCALAR_PITCH], -1.0f / 6.0f, 1e-5f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_ZOOM], 0.5f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_BOOM], 0.5f);
     EXPECT_NEAR(scalars[Vi::SCALAR_PIVOT_HEIGHT], 0.18f, 1e-5f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_UNDERWATER], 0.0f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_AIRBORNE], 1.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_YAW_RATE], 0.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_PITCH_RATE], 0.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_RENDER_WIDTH], 1.0f);
 
     world.Surface = [](float, float) { return -30.0f; };
     world.Pools = { { X0 - 50.0f, X0 + 50.0f, Y0 - 50.0f, Y0 + 50.0f, 20.0f } };
@@ -878,7 +892,7 @@ TEST(VisionTest, RaycastsAgainstTheOldMarch)
     world.Pools = { { X0 + 5.0f, X0 + 45.0f, Y0 - 20.0f, Y0 + 20.0f, -6.0f } };
     world.Models = { { X0 + 20.0f, X0 + 21.0f, Y0 + 20.0f, Y0 + 30.0f, -10.0f, 12.0f } };
     world.Doors = { { X0 + 15.0f, X0 + 15.5f, Y0 - 30.0f, Y0 - 25.0f, -10.0f, 8.0f } };
-    Vi::Settings settings;
+    Vi::Settings settings = Legacy();
     uint32_t agree = 0;
     uint32_t steppedOver = 0;
     uint32_t pastRange = 0;
@@ -939,6 +953,63 @@ TEST(VisionTest, RaycastsAgainstTheOldMarch)
     EXPECT_GT(agree, (agree + steppedOver + sideEntry + shore) * 9 / 10);
 }
 
+// A frame cast at a render size (FREELOOK A): the same field of view with fewer rays, scaled up by nearest pixel into
+// the canonical image -- byte for byte the frame a canonical camera of that size casts, upscaled -- with the rays
+// actually cast returned and the render width's share in the scalars; and the free camera's turn and rates read out.
+TEST(VisionTest, RenderAtADrawnSize)
+{
+    FakeVision world;
+    world.Surface = [](float x, float y) { return 2.0f * std::sin(x / 5.0f) + std::cos(y / 3.0f); };
+    world.Pools = { { X0 + 5.0f, X0 + 30.0f, Y0 - 10.0f, Y0 + 10.0f, 0.5f } };
+    Vi::Settings const settings;    // 128 x 64
+    Vi::Pose pose;
+    pose.X = X0;
+    pose.Y = Y0;
+    pose.Z = 3.0f;
+    Vi::Vec3 const marker{ X0 + 8.0f, Y0, 1.0f };
+    for (Vi::Resolution const size : settings.RenderSizes)
+    {
+        Vi::CameraState camera;
+        camera.Pitch = -15.0f * DEG;
+        camera.Zoom = 6.0f;
+        camera.RenderWidth = size.Width;
+        camera.RenderHeight = size.Height;
+        Frame frame(settings);
+        uint32_t const rays = Vi::Render(settings, pose, camera, world, {}, &marker, frame.Image.data(),
+            frame.Scalars.data());
+        EXPECT_EQ(rays, size.Width * size.Height + 1u);
+        EXPECT_FLOAT_EQ(frame.Scalars[Vi::SCALAR_RENDER_WIDTH], float(size.Width) / 128.0f);
+
+        Vi::Settings small = settings;
+        small.Width = size.Width;
+        small.Height = size.Height;
+        Vi::CameraState canonical = camera;
+        canonical.RenderWidth = 0;
+        canonical.RenderHeight = 0;
+        Frame cast(small);
+        Vi::Render(small, pose, canonical, world, {}, &marker, cast.Image.data(), cast.Scalars.data());
+        std::vector<uint8_t> expected(frame.Image.size());
+        Vi::Upscale(cast.Image.data(), size.Width, size.Height, expected.data(), settings.Width, settings.Height);
+        EXPECT_EQ(frame.Image, expected) << size.Width << "x" << size.Height;
+    }
+
+    // The camera's own state in the scalars: the yaw offset as its sine and cosine, the held rates by their scales.
+    Vi::CameraState camera;
+    camera.YawOffset = 90.0f * DEG;
+    camera.Pitch = -45.0f * DEG;
+    camera.YawRate = -90.0f * DEG;
+    camera.PitchRate = 60.0f * DEG;
+    Frame frame(settings);
+    EXPECT_EQ(Vi::Render(settings, pose, camera, world, {}, nullptr, frame.Image.data(), frame.Scalars.data()),
+        128u * 64u + 1u);
+    EXPECT_NEAR(frame.Scalars[Vi::SCALAR_YAW_SIN], 1.0f, 1e-6f);
+    EXPECT_NEAR(frame.Scalars[Vi::SCALAR_YAW_COS], 0.0f, 1e-6f);
+    EXPECT_NEAR(frame.Scalars[Vi::SCALAR_PITCH], -0.5f, 1e-6f);
+    EXPECT_NEAR(frame.Scalars[Vi::SCALAR_YAW_RATE], -0.5f, 1e-6f);
+    EXPECT_NEAR(frame.Scalars[Vi::SCALAR_PITCH_RATE], 1.0f, 1e-6f);
+    EXPECT_FLOAT_EQ(frame.Scalars[Vi::SCALAR_RENDER_WIDTH], 1.0f);
+}
+
 // The cost (R22) on two fake scenes: a hallway of models with a door and a WMO gutter, no terrain (as map 34), and
 // rolling terrain with a lake. The fake trees and grids cost next to nothing, so this measures the caster's own
 // work (the cell traversal and triangles, the units), not VMAP's or GridTerrainData's: `forge camera snapshot`
@@ -962,7 +1033,7 @@ TEST(VisionTest, TimingHarness)
     field.Pools = { { X0 + 10.0f, X0 + 40.0f, Y0 - 15.0f, Y0 + 15.0f, 1.5f } };
     field.MaxHeight = [](int32_t, int32_t) { return 5.0f; };    // the height header's: the field's highest point
 
-    Vi::Settings const settings;
+    Vi::Settings const settings = Legacy();
     Vi::CameraState camera;
     camera.Pitch = settings.Pitch * DEG;
     camera.Zoom = settings.Zoom;

@@ -114,6 +114,8 @@ namespace AnimusForge
 
         /// AnimusForge.Vision.*: the vision block's camera (camera-vision), validated at load. Width and Height set
         /// the block's size, so they are the process's (Animus::Vision::Configure, before any layout is built).
+        /// RenderSizes ("WxH, ..."), the sizes frames are cast at and scaled up from, are parsed and checked
+        /// against them (Animus::Vision::ParseRenderSizes).
         Animus::Vision::Settings Vision;
         /// AnimusForge.Vision.AuditInterval / AuditSeats: every AuditInterval seconds of real time (0 = never) while a
         /// stage with a camera trains or runs, AuditSeats seats' frames as the learner gets them are saved under

@@ -647,7 +647,8 @@ namespace
             // The four panels in one image, as the training audit saves them (AnimusForge.Vision.AuditInterval).
             {
                 std::ofstream png(base + ".png", std::ios::binary);
-                png << Vi::FramePng(settings, image.data(), 4);
+                png << Vi::FramePng(settings, image.data(), std::max<uint32>(1, 256 / std::max<uint32>(1,
+                    settings.Width)));
                 if (!png)
                     handler->PSendSysMessage("Could not write {}", base + ".png");
             }

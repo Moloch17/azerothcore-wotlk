@@ -238,6 +238,16 @@ namespace Animus
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.
         /// The goals ACT sent: GOAL_SLOTS_ON_WIRE per agent (primary, secondary), agent-major.
         std::vector<int32> Goals;
+        /// The look head's choices ACT sent (free look, protocol 22): Spec().LookHeads per agent, agent-major, each in
+        /// range (ACT refuses any other). Vision::FreeLook::NEUTRAL until one arrives; empty without a camera.
+        std::vector<int32> Look;
+
+        /// The size agent `agent` of env `e`'s camera casts at this episode (Scenario::CameraRenderSize): 0 x 0 for
+        /// none. For the world thread between map updates (the camera audit).
+        [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(uint32 e, uint32 agent) const
+        {
+            return _scenario.CameraRenderSize(_envs[e], agent);
+        }
 
     private:
         /// Env `e`'s rows of an image array, or null when the stage has no camera.

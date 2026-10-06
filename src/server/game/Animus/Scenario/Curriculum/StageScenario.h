@@ -137,6 +137,11 @@ namespace Animus::Curriculum
         void ApplyActions(Env& env, int32 const* actions) override;
         void SubTick(Env& env, uint32 diffMs, bool decided) override;
         void ApplyGoals(Env& env, int32 const* goals) override;
+        /// The look head's choices (free look, camera-vision.FREELOOK.md), taken by the seats -- and the cast owner,
+        /// when it is played -- of a stage with a vision block, straight into their cameras (SeatState::Look). Never
+        /// through ApplySeatAction: looking is free, and nothing that prices or tallies an action sees it (R1).
+        void ApplyLook(Env& env, int32 const* look) override;
+        [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(Env const& env, uint32 agent) const override;
         void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;

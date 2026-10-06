@@ -19,27 +19,73 @@
 #define ANIMUS_VISION_CAMERA_H
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 /// **The bot's camera** (camera-vision plan, naive slice V1: camera-vision.INTERFACE.md): WoW's third-person camera,
-/// client-side only -- never in Movement::ControlState or the Body, so it sends nothing -- held in follow mode (yaw
-/// offset 0, the conf's pitch and zoom) for this slice. Each frame is a W x H grid of rays from the camera, each pixel
+/// client-side only -- never in Movement::ControlState or the Body, so it sends nothing -- turned by the seat's own
+/// look head (free look: FreeLook.h, camera-vision.FREELOOK.md). Each frame is a W x H grid of rays from the camera, each pixel
 /// five channels: distance, height of the hit over the feet, the surface's normal z, what was hit, and whether the
 /// ray passed the objective. A ray has no range: it ends at what it hits, or reads sky where nothing loaded is left
 /// for it to hit (camera-vision.RAYCAST.md). Pure: the settings, the kinds and the geometry, with no core types.
 namespace Animus::Vision
 {
-    /// AnimusForge.Vision.* (worldserver.conf.dist). Angles in degrees, as the conf has them.
+    /// A frame's size in pixels: columns by rows.
+    struct Resolution
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+
+        [[nodiscard]] bool operator==(Resolution const& other) const = default;
+    };
+
+    /// AnimusForge.Vision.* (worldserver.conf.dist). Angles in degrees, as the conf has them. Width x Height is the
+    /// canonical image, the one the wire carries and the network reads (FREELOOK A); RenderSizes are what frames are
+    /// actually cast at, each scaled up into it by nearest pixel (Upscale).
     struct Settings
     {
-        uint32_t Width = 64;
-        uint32_t Height = 32;
+        uint32_t Width = 128;
+        uint32_t Height = 64;
         float FovH = 120.0f;
         float FovV = 60.0f;
         float Range = 100.0f;       // yards: the units a frame can see (a ray itself has no range)
         float Zoom = 6.0f;
         float Pitch = -15.0f;       // degrees, + up: the default looks slightly down
+        /// AnimusForge.Vision.RenderSizes: a seat draws one at every episode reset and casts its frames at it; each
+        /// is at most Width x Height. One entry renders every seat at it (a user's tier).
+        std::vector<Resolution> RenderSizes = { { 32, 16 }, { 48, 24 }, { 64, 32 } };
     };
+
+    /// The learner's patch is this share of the canonical width: a PATCH_COLUMNS-wide grid of patches (16 x 8 at 2:1).
+    constexpr uint32_t PATCH_COLUMNS = 16;
+
+    /// The learner's patch size at the canonical size (the manifest's "patch"): 8 at 128 x 64, 4 at 64 x 32.
+    [[nodiscard]] inline uint32_t Patch(Settings const& settings)
+    {
+        return settings.Width / PATCH_COLUMNS > 0 ? settings.Width / PATCH_COLUMNS : 1;
+    }
+
+    /// AnimusForge.Vision.RenderSizes' text, "WxH, WxH, ...": the sizes kept, in order, each 1 to the canonical
+    /// size's; an entry that does not parse or does not fit is left out with a line in `errors`. None kept: the
+    /// canonical size alone (and a line saying so).
+    [[nodiscard]] std::vector<Resolution> ParseRenderSizes(std::string const& text, Settings const& canonical,
+        std::vector<std::string>& errors);
+
+    /// The size a seat casts its frames at this episode: one of RenderSizes, `roll(n)` drawing an index in [0, n)
+    /// (the pool's random numbers), called only when there is a choice -- so one entry draws nothing and every seat
+    /// renders at it. None configured: the canonical size.
+    template <typename Roll>
+    [[nodiscard]] Resolution DrawRenderSize(Settings const& settings, Roll&& roll)
+    {
+        if (settings.RenderSizes.empty())
+            return { settings.Width, settings.Height };
+        if (settings.RenderSizes.size() == 1)
+            return settings.RenderSizes.front();
+        uint32_t const index = uint32_t(roll(uint32_t(settings.RenderSizes.size())));
+        return settings.RenderSizes[index < settings.RenderSizes.size() ? index : 0];
+    }
 
     /// What a pixel's ray hit: the kind channel's values (the interface's table).
     enum class Kind : uint8_t
@@ -58,7 +104,7 @@ namespace Animus::Vision
     constexpr uint32_t CHANNELS = 5;
     constexpr uint32_t KINDS = uint32_t(Kind::Count);
     constexpr uint32_t KIND_CHANNEL = 3;
-    constexpr uint32_t SCALARS = 7;
+    constexpr uint32_t SCALARS = 11;
 
     /// **A pixel on the wire** (camera-vision.BYTES.md, vision block revision 3): four bytes, which the learner decodes
     /// back to the five channels below.
@@ -84,17 +130,23 @@ namespace Animus::Vision
         CHANNEL_OBJECTIVE = 4,
     };
 
-    /// The scalars after the image, in order.
+    /// The scalars after the image, in order (vision block revision 4, FREELOOK B).
     enum Scalar : uint32_t
     {
-        SCALAR_YAW_OFFSET = 0,      // / pi
+        SCALAR_YAW_SIN = 0,         // sin(yaw offset)
+        SCALAR_YAW_COS,             // cos(yaw offset)
         SCALAR_PITCH,               // radians / (pi / 2)
         SCALAR_ZOOM,                // / ZOOM_SCALE
         SCALAR_BOOM,                // / ZOOM_SCALE
         SCALAR_PIVOT_HEIGHT,        // above the floor below it / PIVOT_HEIGHT_SCALE, clamped; 1 with no floor
         SCALAR_UNDERWATER,          // the camera is under a liquid's surface
         SCALAR_AIRBORNE,            // the body is falling or flying
+        SCALAR_YAW_RATE,            // the held yaw rate / YAW_RATE_SCALE (+ left)
+        SCALAR_PITCH_RATE,          // the held pitch rate / PITCH_RATE_SCALE (+ up)
+        SCALAR_RENDER_WIDTH,        // the width the frame was cast at / the canonical width
+        SCALAR_COUNT
     };
+    static_assert(SCALAR_COUNT == SCALARS, "the contract's eleven vision scalars");
 
     constexpr float PI = 3.14159265358979f;
     constexpr float DEGREES = PI / 180.0f;
@@ -116,6 +168,9 @@ namespace Animus::Vision
     /// A ray flags the objective when it passes within this many yards of it.
     constexpr float OBJECTIVE_RADIUS = 1.0f;
     constexpr float ZOOM_SCALE = 12.0f;
+    /// The held rates' scales: the fastest of each the look head offers (FreeLook.h).
+    constexpr float YAW_RATE_SCALE = 180.0f * DEGREES;
+    constexpr float PITCH_RATE_SCALE = 60.0f * DEGREES;
     constexpr float PIVOT_HEIGHT_SCALE = 10.0f;
     /// The terrain's grids as the core's GridTerrainData lays them out: 64 x 64 grids of SIZE_OF_GRIDS yards, each
     /// 128 x 128 cells (MAP_RESOLUTION), indexed from the map's +x / +y edge: u = 128 * (32 - x / GRID_SIZE).
@@ -127,8 +182,9 @@ namespace Animus::Vision
     [[nodiscard]] constexpr float GridU(float x) { return float(GRID_CELLS) * (float(GRIDS / 2) - x / GRID_SIZE); }
     [[nodiscard]] constexpr float WorldOfU(float u) { return (float(GRIDS / 2) - u / float(GRID_CELLS)) * GRID_SIZE; }
 
-    /// An agent's image on the wire: [row][col][byte], row 0 at the top, BYTES_PER_PIXEL a pixel.
-    [[nodiscard]] constexpr uint32_t ImageBytes(Settings const& settings)
+    /// An agent's image on the wire: [row][col][byte], row 0 at the top, BYTES_PER_PIXEL a pixel, at the canonical
+    /// size whatever size it was cast at.
+    [[nodiscard]] inline uint32_t ImageBytes(Settings const& settings)
     {
         return settings.Width * settings.Height * BYTES_PER_PIXEL;
     }
@@ -147,8 +203,27 @@ namespace Animus::Vision
         }
     }
 
-    /// The vision block's float columns: the scalars alone (revision 3; the image travels as bytes beside them).
-    [[nodiscard]] constexpr uint32_t ObsCount(Settings const& /*settings*/)
+    /// **Nearest-pixel upscaling** (FREELOOK A): a frame cast at w x h into the canonical W x H, canonical pixel
+    /// (r, c) taking cast pixel (floor(r h / H), floor(c w / W)). Every byte, the objective flag with them, is copied
+    /// as it is; nothing is interpolated. w <= W and h <= H.
+    inline void Upscale(uint8_t const* from, uint32_t w, uint32_t h, uint8_t* to, uint32_t W, uint32_t H)
+    {
+        for (uint32_t r = 0; r < H; ++r)
+        {
+            uint32_t const sr = uint32_t(uint64_t(r) * h / H);
+            for (uint32_t c = 0; c < W; ++c)
+            {
+                uint32_t const sc = uint32_t(uint64_t(c) * w / W);
+                uint8_t const* in = from + (std::size_t(sr) * w + sc) * BYTES_PER_PIXEL;
+                uint8_t* out = to + (std::size_t(r) * W + c) * BYTES_PER_PIXEL;
+                for (uint32_t b = 0; b < BYTES_PER_PIXEL; ++b)
+                    out[b] = in[b];
+            }
+        }
+    }
+
+    /// The vision block's float columns: the scalars alone (revision 3 on; the image travels as bytes beside them).
+    [[nodiscard]] inline uint32_t ObsCount(Settings const& /*settings*/)
     {
         return SCALARS;
     }

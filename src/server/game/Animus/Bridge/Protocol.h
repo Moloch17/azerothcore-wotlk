@@ -29,7 +29,9 @@
  *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
  *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20), and
  *                            u32 ImageBytes, the bytes per agent of each STEP's camera images, I below: the vision
- *                            block's height x width x 4, 0 for a stage without one (protocol 21).
+ *                            block's height x width x 4, 0 for a stage without one (protocol 21); then u32
+ *                            LookHeads, the look head's categoricals per agent in ACT (Vision::FreeLook::HEADS, 3)
+ *                            with a vision block, 0 without one (protocol 22).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
@@ -71,6 +73,14 @@
  *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
  *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
  *                            scenario and shown to a party's teammates; they never mask an action.
+ *                            With LookHeads L > 0 (a stage with a vision block; protocol 22) either is followed by
+ *                              i32 look[E*A*L]        each agent's look head choice, agent-major in the actions'
+ *                                                     order: yaw rate (0..6), pitch rate (0..4), zoom (0..3)
+ *                                                     (Vision::FreeLook). Rows without a camera (a director, an
+ *                                                     absent agent) send 0s, placeholders the sim never applies.
+ *                                                     Required, and every value in range: anything else is a
+ *                                                     protocol error and drops the learner.
+ *                            A stage without one sends exactly protocol 21's ACT.
  *   client -> server  MODE   ModeMsg (instead of ACT) -- switch between training and evaluation; the server
  *                            resets every env and answers with a fresh STEP (zero reward and done)
  *   client -> server  WEIGHTS { u32 count, f32 weight[count] } (instead of ACT) -- how often training episodes
@@ -143,7 +153,10 @@ namespace AnimusForge
     // a stage with a vision block (revision 3) ends each STEP with every agent's image and the ended envs' final
     // images, and its DEVICE message with the images' device buffer handle. The vision block's float columns are its
     // seven scalars. A stage without one has protocol 20's STEP and DEVICE; every SPEC is four bytes longer.
-    constexpr uint32 PROTOCOL_VERSION = 21;
+    // 22: free look (camera-vision.FREELOOK.md): SPEC ends with LookHeads, and a stage with a vision block (revision 4)
+    // ends each ACT with every agent's look head choice. A stage without one has protocol 21's ACT; every SPEC is
+    // four bytes longer.
+    constexpr uint32 PROTOCOL_VERSION = 22;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -215,9 +228,12 @@ namespace AnimusForge
         /// Bytes per agent of each STEP's camera images (ScenarioSpec::ImageBytes; 0 without a vision block;
         /// protocol 21): the wire's cut, which the learner checks against stage.json's image.
         uint32 ImageBytes;
+        /// The look head's categoricals per agent in ACT (ScenarioSpec::LookHeads; 0 without a vision block;
+        /// protocol 22). Their sizes are the vision block's manifest's "look" "heads".
+        uint32 LookHeads;
     };
-    // The learner's SPEC (protocol.py): "<12I32s2I".
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 2 * 4);
+    // The learner's SPEC (protocol.py): "<12I32s3I", 92 bytes.
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 3 * 4 && sizeof(SpecMsg) == 92);
 
     struct LayoutMsg
     {
@@ -308,14 +324,51 @@ namespace AnimusForge
         uint32 EnvCount;
     };
 
-    /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then as many goals when the policy has
-    /// a goal head.
+    /// ACT payload: this header, then EnvCount x AgentsPerEnv int32 actions, then GOAL_SLOTS_ON_WIRE as many goals
+    /// when the policy has a goal head, then LookHeads as many look choices when the stage has a camera.
     struct ActHeader
     {
         uint32 EnvBegin;
         uint32 EnvCount;
     };
 #pragma pack(pop)
+
+    /// How an ACT's body (after its header) is cut, for `rows` agent rows: whether its length is one the stage
+    /// takes, whether it carries goals, and where its look section starts. With lookHeads > 0 the look section is
+    /// required; without, it is protocol 21's ACT exactly.
+    struct ActCut
+    {
+        bool Valid = false;
+        bool Goals = false;
+        std::size_t LookOffset = 0;     // bytes into the body
+    };
+
+    [[nodiscard]] inline ActCut CutAct(std::size_t body, std::size_t rows, uint32 lookHeads)
+    {
+        std::size_t const actionBytes = rows * sizeof(int32);
+        std::size_t const goalBytes = actionBytes * Animus::GOAL_SLOTS_ON_WIRE;
+        std::size_t const lookBytes = actionBytes * lookHeads;
+        ActCut cut;
+        if (body == actionBytes + lookBytes)
+            cut = { true, false, actionBytes };
+        else if (body == actionBytes + goalBytes + lookBytes)
+            cut = { true, true, actionBytes + goalBytes };
+        return cut;
+    }
+
+    /// The first look row of `rows` (lookHeads values each) out of its head's range, or -1 when all are in range.
+    [[nodiscard]] inline int64 BadLookRow(int32 const* look, std::size_t rows, uint32 lookHeads,
+        uint32 const* headSizes)
+    {
+        for (std::size_t row = 0; row < rows; ++row)
+            for (uint32 head = 0; head < lookHeads; ++head)
+            {
+                int32 const value = look[row * lookHeads + head];
+                if (value < 0 || uint32(value) >= headSizes[head])
+                    return int64(row);
+            }
+        return -1;
+    }
 }
 
 #endif

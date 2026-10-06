@@ -18,13 +18,16 @@
 
 #include "VisionBlock.h"
 #include "Camera.h"
+#include "FreeLook.h"
 #include "MapVisionWorld.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "UnitBody.h"
 #include "VisionCaster.h"
 #include "VisionCost.h"
+#include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
+#include <boost/json/string.hpp>
 #include <chrono>
 #include <vector>
 
@@ -48,11 +51,43 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     // Revision 3: the image is not in the float columns but its own byte section of the STEP, four bytes a pixel.
     image["transport"] = "bytes";
     image["bytes_per_pixel"] = Vi::BYTES_PER_PIXEL;
+    // Revision 4: the learner's patch at this canonical size (a 16-wide grid), and the sizes frames are actually
+    // cast at before they are scaled up to it, [width, height] each.
+    image["patch"] = Vi::Patch(settings);
+    boost::json::array sizes;
+    for (Vi::Resolution const& size : settings.RenderSizes)
+        sizes.push_back(boost::json::array{ size.Width, size.Height });
+    image["render_sizes"] = std::move(sizes);
     block["image"] = std::move(image);
+
+    // The look head (free look): three categoricals, in ACT's order. Every choice is always allowed: no mask.
+    boost::json::object look;
+    boost::json::array heads;
+    boost::json::array names;
+    for (uint32 head = 0; head < Vi::FreeLook::HEADS; ++head)
+    {
+        heads.push_back(Vi::FreeLook::HEAD_SIZES[head]);
+        names.push_back(boost::json::string(Vi::FreeLook::HEAD_NAMES[head]));
+    }
+    look["heads"] = std::move(heads);
+    look["names"] = std::move(names);
+    block["look"] = std::move(look);
 
     // What the image means beyond its shape: the camera it was rendered with (informational).
     boost::json::object camera;
-    camera["mode"] = "follow";
+    camera["mode"] = "free";
+    boost::json::array yawRates;
+    for (float rate : Vi::FreeLook::YAW_RATES_DEG)
+        yawRates.push_back(double(rate));
+    camera["yaw_rates"] = std::move(yawRates);
+    boost::json::array pitchRates;
+    for (float rate : Vi::FreeLook::PITCH_RATES_DEG)
+        pitchRates.push_back(double(rate));
+    camera["pitch_rates"] = std::move(pitchRates);
+    boost::json::array zoomLevels;
+    for (float level : Vi::FreeLook::ZOOM_LEVELS)
+        zoomLevels.push_back(double(level));
+    camera["zoom_levels"] = std::move(zoomLevels);
     camera["fov_h"] = double(settings.FovH);
     camera["fov_v"] = double(settings.FovV);
     // A ray has no range: the distance channel is log-scaled to a fixed reference, and Range is the units' radius.
@@ -67,6 +102,12 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
 
 void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
+    // The camera first, whatever else this seat can render: the held rates over the decision (none at the episode's
+    // first observation), follow mode easing it back while the forward key is held (R2: the key, not the body).
+    if (Vi::FreeLook::State* look = view.Look)
+        Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f,
+            view.Controls && view.Controls->Held.Forward > 0);
+
     Player* bot = view.Bot;
     Map* map = bot && bot->IsInWorld() ? bot->GetMap() : nullptr;
     if (!map)
@@ -95,11 +136,15 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     pose.Yaw = view.Facing;
     pose.BodyHeight = Movement::ShapeOf(bot).Height;
 
-    // Follow mode, fixed for this slice: behind the facing, the conf's pitch and zoom.
+    // The seat's own camera; a view without one sees in follow mode, behind the facing at the conf's pitch and zoom.
     Vi::CameraState camera;
-    camera.YawOffset = 0.0f;
-    camera.Pitch = settings.Pitch * Vi::DEGREES;
-    camera.Zoom = settings.Zoom;
+    if (view.Look)
+        camera = Vi::FreeLook::CameraOf(*view.Look);
+    else
+    {
+        camera.Pitch = settings.Pitch * Vi::DEGREES;
+        camera.Zoom = settings.Zoom;
+    }
 
     Vi::MapVisionWorld const world(map, bot->GetPhaseMask());
     // The units within range of where the camera can be: the pivot, with the zoom added to the reach.

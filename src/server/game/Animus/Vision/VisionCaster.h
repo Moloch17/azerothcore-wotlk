@@ -111,12 +111,19 @@ namespace Animus::Vision
         bool Airborne = false;
     };
 
-    /// The camera's own state, in radians and yards. Follow mode: yaw offset 0.
+    /// The camera's own state, in radians and yards (FreeLook::CameraOf builds it from a seat's look). The held rates
+    /// (radians a second, + left / + up) are only reported, as scalars; the camera has already been turned by them.
+    /// RenderWidth x RenderHeight is the size the frame is cast at, scaled up into the canonical image; 0 casts at
+    /// the canonical size itself.
     struct CameraState
     {
         float YawOffset = 0.0f;
         float Pitch = 0.0f;
         float Zoom = 6.0f;
+        float YawRate = 0.0f;
+        float PitchRate = 0.0f;
+        uint32_t RenderWidth = 0;
+        uint32_t RenderHeight = 0;
     };
 
     /// The camera placed for a frame: the pivot, the camera after the boom's pull-in, and the view's angles.
@@ -195,7 +202,9 @@ namespace Animus::Vision
     void DecodePixel(uint8_t const* in, float* out);
 
     /// A whole frame: the image into `image` (ImageBytes, [row][col][byte] with row 0 at the top; null to cast no
-    /// pixel), the seven scalars into `scalars`. Returns the rays cast (every pixel's and the boom's).
+    /// pixel), the eleven scalars into `scalars`. `settings` is the canonical size; the pixels are cast at the
+    /// camera's RenderWidth x RenderHeight (the same field of view, fewer and wider rays) and scaled up into the
+    /// image by nearest pixel (Upscale). Returns the rays actually cast (every cast pixel's and the boom's).
     uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
         std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image, float* scalars,
         Breakdown* breakdown = nullptr);

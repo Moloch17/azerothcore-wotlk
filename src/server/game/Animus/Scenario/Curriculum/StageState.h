@@ -250,6 +250,10 @@ namespace Animus::Curriculum
         /// reads a const seat and hands the move block pointers it writes. The client is kept across episodes, as
         /// the server state it mirrors (a root, flying, feather fall) is; each episode starts it again.
         mutable MoveControls::SeatControls Controls;
+        /// The seat's camera (free look, Vision::FreeLook), beside its controls and never in the body: the look head's
+        /// held rates, where they have turned it, its zoom, and the size its frames are cast at this episode. Mutable
+        /// like the controls: the vision block advances it while observing a const seat.
+        mutable Vision::FreeLook::State Look;
         mutable Movement::Client Mover;
         mutable Movement::LinkMemory Link;
         /// The controller's columns: reports refused, ticks pressing into a wall or stuck with a key held, course
@@ -559,6 +563,9 @@ namespace Animus::Curriculum
             // Facing and the body are seeded from the bot once the seat has been placed (StageScenario::ResetSeats),
             // not here, where there is no bot to ask.
             Controls.Clear();
+            // The camera too: yaw offset 0, the conf's pitch and zoom, the rates let go. Its render size is drawn
+            // after this (StageScenario::Reset), only in a stage with a camera.
+            Vision::FreeLook::Reset(Look, Vision::Current());
             Mover.Stop();
             MoverAtStart = Mover.Counts;
             WallMs = 0;

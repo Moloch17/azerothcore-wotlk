@@ -35,6 +35,7 @@
 #include "ControllerCost.h"
 #include "VisionCost.h"
 #include "FrameImage.h"
+#include "FreeLook.h"
 #include "Player.h"
 #include "MapWorldQuery.h"
 #include "PlayerLink.h"
@@ -158,9 +159,13 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     // The camera's settings before any layout is built: its width and height are the vision block's size.
     Animus::Vision::Configure(_config.Vision);
-    LOG_INFO("module.animus", "Camera vision: {} x {} pixels, {:.0f} x {:.0f} degrees, units within {:.0f} yd (rays "
-        "have no range), zoom {:.1f} yd, pitch {:.0f} degrees: {} scalar columns and a {}-byte image an agent",
-        _config.Vision.Width, _config.Vision.Height,
+    std::string renderSizes;
+    for (Animus::Vision::Resolution const& size : _config.Vision.RenderSizes)
+        renderSizes += (renderSizes.empty() ? "" : ", ") + Acore::StringFormat("{}x{}", size.Width, size.Height);
+    LOG_INFO("module.animus", "Camera vision: {} x {} pixels (cast at {}, a size drawn a seat an episode), {:.0f} x "
+        "{:.0f} degrees, units within {:.0f} yd (rays have no range), zoom {:.1f} yd, pitch {:.0f} degrees, free look: "
+        "{} scalar columns and a {}-byte image an agent",
+        _config.Vision.Width, _config.Vision.Height, renderSizes,
         _config.Vision.FovH, _config.Vision.FovV, _config.Vision.Range, _config.Vision.Zoom, _config.Vision.Pitch,
         Animus::Vision::ObsCount(_config.Vision), Animus::Vision::ImageBytes(_config.Vision));
     // The player controller's client constants, once: what training moves and reports seats with (player-controller).
@@ -1443,7 +1448,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
     if (fresh)
     {
         csv << "time,scenario_seconds,decision,env,agent,layout,class,race,level,map,instance,x,y,z,orientation,"
-               "episode_seconds";
+               "episode_seconds,render";
         for (char const* name : Vi::KIND_NAMES)
             csv << ',' << name;
         csv << ",file\n";
@@ -1466,7 +1471,9 @@ void AnimusForge::Forge::MaybeAuditCamera()
         Player const* bot = env.FindBot(a);
 
         std::string const file = Acore::StringFormat("{}-e{}a{}-{}.png", stamp, e, a, layout);
-        std::string const png = Vi::FramePng(settings, image, 4);
+        // A 128-wide frame at 2x, a 64-wide one at 4x: about 256 pixels a panel whatever the canonical size.
+        std::string const png = Vi::FramePng(settings, image, std::max<uint32>(1, 256 / std::max<uint32>(1,
+            settings.Width)));
         std::ofstream out(dir / file, std::ios::binary);
         out << png;
         if (png.empty() || !out)
@@ -1486,6 +1493,11 @@ void AnimusForge::Forge::MaybeAuditCamera()
         else
             csv << ",,,,,,,,,";
         csv << Acore::StringFormat(",{:.2f}", env.EpisodeElapsedMs / 1000.0);
+        // The size the frame was cast at before it was scaled up to the canonical image (RenderSizes), e.g. 48x24.
+        auto const [renderWidth, renderHeight] = _pool->CameraRenderSize(e, a);
+        csv << ',';
+        if (renderWidth && renderHeight)
+            csv << renderWidth << 'x' << renderHeight;
         for (uint32 kind : Vi::KindCounts(settings, image))
             csv << ',' << kind;
         csv << ',' << file << '\n';
@@ -2370,6 +2382,8 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
     std::size_t const replayBytes = sizeof(ReplayHeader) + MAX_REPLAY_SEEDS * sizeof(uint32);
     std::size_t const exploreBytes = sizeof(ExploreStartsHeader) + MAX_EXPLORE_STARTS * sizeof(ExploreCell);
     uint32 const agents = _pool->Spec().AgentsPerEnv;
+    // The look head's choices per agent in ACT (protocol 22): 0 without a camera, and ACT is protocol 21's.
+    uint32 const lookHeads = _pool->Spec().LookHeads;
 
     // Every learner's answer for the group awaited, rank by rank: an ACT for its share, or a MODE, WEIGHTS or REPLAY
     // first. A mode switch resets every env and answers with every group's fresh STEP before the ACT -- once every
@@ -2383,7 +2397,8 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         std::vector<char> payload;
         auto const waitFrom = std::chrono::steady_clock::now();
         bool const received = _server.ReceiveAny(type, payload,
-            std::max({ sizeof(ActHeader) + 2 * actionBytes, sizeof(ModeMsg), weightBytes, replayBytes, exploreBytes }),
+            std::max({ sizeof(ActHeader) + (1 + Animus::GOAL_SLOTS_ON_WIRE + lookHeads) * actionBytes,
+                sizeof(ModeMsg), weightBytes, replayBytes, exploreBytes }),
             onIdle);
         WaitedForLearner(waitFrom);
         if (!received)
@@ -2399,18 +2414,42 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
         if (type == MsgType::Act && payload.size() >= sizeof(act))
             std::memcpy(&act, payload.data(), sizeof(act));
         RankRows const rows = RankGroup(rank, target);
-        std::size_t const groupBytes = std::size_t(rows.Count) * agents * sizeof(int32);
+        std::size_t const groupRows = std::size_t(rows.Count) * agents;
+        std::size_t const groupBytes = groupRows * sizeof(int32);
         std::size_t const body = payload.size() - std::min(payload.size(), sizeof(act));
         std::size_t const goalBytes = groupBytes * Animus::GOAL_SLOTS_ON_WIRE;
+        ActCut const cut = CutAct(body, groupRows, lookHeads);
         if (type == MsgType::Act && modes.empty() && act.EnvBegin == rows.Local && act.EnvCount == rows.Count
-            && (body == groupBytes || body == groupBytes + goalBytes))
+            && cut.Valid)
         {
             std::size_t const first = std::size_t(rows.Global) * agents;
             char const* actions = payload.data() + sizeof(act);
+            // The look section first (protocol 22), checked before anything is taken: a value out of its head's
+            // range is a protocol error, as a malformed ACT is. Rows without a camera (a director's, an absent
+            // agent's) carry 0s -- index 0 is the fastest turn right -- as placeholders: they are checked for range
+            // like any row, and never applied (StageScenario::ApplyLook takes only the seats with a camera, R5).
+            if (lookHeads)
+            {
+                std::size_t const lookBytes = groupBytes * lookHeads;
+                std::vector<int32>& look = _actLook;
+                look.resize(groupRows * lookHeads);
+                std::memcpy(look.data(), actions + cut.LookOffset, lookBytes);
+                int64 const bad = BadLookRow(look.data(), groupRows, lookHeads,
+                    Animus::Vision::FreeLook::HEAD_SIZES.data());
+                if (bad >= 0)
+                {
+                    LOG_ERROR("module.animus", "Learner rank {} sent ACT with a look choice out of range for row {} "
+                        "({}, {}, {}); dropping it", rank, bad, look[bad * lookHeads], look[bad * lookHeads + 1],
+                        look[bad * lookHeads + 2]);
+                    _server.DropClient();
+                    return;
+                }
+                std::copy(look.begin(), look.end(), _pool->Look.begin() + first * lookHeads);
+            }
             std::memcpy(_pool->Actions.data() + first, actions, groupBytes);
             // The goals, when the policy has a goal head: primary and secondary per agent (protocol 17).
             std::size_t const goalFirst = first * Animus::GOAL_SLOTS_ON_WIRE;
-            if (body == groupBytes + goalBytes)
+            if (cut.Goals)
                 std::memcpy(_pool->Goals.data() + goalFirst, actions + groupBytes, goalBytes);
             else
                 std::fill_n(_pool->Goals.begin() + goalFirst, goalBytes / sizeof(int32), -1);
@@ -2648,6 +2687,7 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
     msg.KinematicsDim = Animus::Kinematics::SAMPLE_DIM;
     msg.ImageBytes = spec.ImageBytes;
+    msg.LookHeads = spec.LookHeads;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);
