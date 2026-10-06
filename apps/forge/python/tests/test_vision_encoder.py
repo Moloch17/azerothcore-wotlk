@@ -252,22 +252,44 @@ def test_the_camera_columns_keep_an_identity_normaliser():
         assert bool((weight[:, first : first + SPAN] == 0).all())
 
 
-def test_the_zero_join_leaves_the_policy_as_it_was():
+def test_a_fresh_camera_takes_part_from_the_first_update():
+    """M1 trains from scratch (the user, 2026-10-06): its camera is initialised as the adapters are, so what it sees
+    moves the logits at once and the whole encoder learns from the first update."""
     net = actor()
     obs, layout = observations(12)
     mask = torch.ones(12, 5)
     with torch.no_grad():
-        logits = net(obs, layout, mask).logits
-        torch.testing.assert_close(net(with_image(obs, layout, 0.0), layout, mask).logits, logits)
-        torch.testing.assert_close(net(with_image(obs, layout, None), layout, mask).logits, logits)
-        encoder, net.vision = net.vision, None
-        torch.testing.assert_close(net(obs, layout, mask).logits, logits)
-        net.vision = encoder
-    # At the start only the join learns: everything before it is behind a zero matrix.
-    net(obs, layout, mask).logits.sum().backward()
+        dark = net(with_image(obs, layout, 0.0), layout, mask).logits
+        lit = net(with_image(obs, layout, 1.0), layout, mask).logits
+    assert not torch.allclose(dark, lit)
+    net(with_image(obs, layout, 0.5), layout, mask).logits.sum().backward()
     assert bool((net.vision.join.weight.grad != 0).any())
-    assert bool((net.vision.convs[0].weight.grad == 0).all())
-    assert bool((net.vision.embed.weight.grad == 0).all())
+    assert bool((net.vision.convs[0].weight.grad != 0).any())
+    assert bool((net.vision.embed.weight.grad != 0).any())
+
+
+def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was():
+    config = MappoConfig(hidden=(16, 16))
+    layouts = [Layout(name, obs, actions) for name, (obs, actions) in zip(NAMES, shapes(stage()))]
+    spec = SimpleNamespace(layouts=tuple(layouts), state_dim=4)
+    checkpoint_spec = {"layouts": [{"name": l.name, "obs_dim": l.obs_dim, "num_actions": l.num_actions}
+                                   for l in layouts]}
+    # The checkpoint is from before the camera: its stage has no vision block, so its layouts are narrower.
+    plain_stage = stage(None)
+    plain_spec = {"layouts": [{"name": name, "obs_dim": obs, "num_actions": actions}
+                              for name, (obs, actions) in zip(NAMES, shapes(plain_stage))]}
+    torch.manual_seed(0)
+    plain = MappoTrainer(shapes(plain_stage), 4, config)
+    checkpoint = {"trainer": plain.state_dict(), "spec": plain_spec, "stage": plain_stage}
+    seeded = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
+    seed_trainer(seeded, checkpoint, spec, stage())
+    assert bool((seeded.actor.vision.join.weight == 0).all()) and bool((seeded.actor.vision.join.bias == 0).all())
+    assert bool((seeded.critic.vision.join.weight == 0).all())
+    obs, layout = observations(12)
+    mask = torch.ones(12, 5)
+    with torch.no_grad():
+        torch.testing.assert_close(seeded.actor(with_image(obs, layout, 1.0), layout, mask).logits,
+                                   seeded.actor(with_image(obs, layout, 0.0), layout, mask).logits)
 
 
 def test_the_critic_has_its_own_camera():

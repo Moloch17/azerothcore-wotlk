@@ -988,8 +988,10 @@ class VisionEncoder(nn.Module):
     becomes a one-hot over the kinds, so C - 1 + kinds input planes (12). Three 3 x 3 convolutions with SiLU (stride
     2, 2, 1; padding 1: 32 x 64 -> 16 x 32 -> 8 x 16 -> 8 x 16), a spatial softmax per channel to its expected (x, y)
     in [-1, 1] (128 keypoints), the block's scalars after them, Linear -> 256 with SiLU, and `join`, a Linear onto the
-    adapters' output width that starts at zero: a network given the camera acts exactly as it did without it until
-    the join learns. A layout without the camera adds zero. No normalisation: the channels are 0-1 or -1-1 already.
+    adapters' output width, initialised as the adapters are: a network trained from scratch sees with the camera from
+    its first update (M1, the user, 2026-10-06). Seeding from a checkpoint without the camera zeroes the join instead
+    (bootstrap._seed_vision), so the seeded policy starts as it was. A layout without the camera adds zero. No
+    normalisation: the channels are 0-1 or -1-1 already.
     Every shape is fixed and nothing is read back, so a rollout graph captures it."""
 
     CONVS = ((32, 2), (64, 2), (64, 1))
@@ -1011,8 +1013,6 @@ class VisionEncoder(nn.Module):
         self.convs = nn.Sequential(*layers)
         self.embed = nn.Linear(2 * planes + self.scalars, self.EMBED)
         self.join = nn.Linear(self.EMBED, width)
-        nn.init.zeros_(self.join.weight)
-        nn.init.zeros_(self.join.bias)
         # Derived from stage.json, not learned: kept out of the state dict.
         self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
                                                     for entry in descriptors], dtype=torch.long), persistent=False)

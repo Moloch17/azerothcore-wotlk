@@ -446,16 +446,23 @@ def _vision_revision(stage: dict | None) -> int | None:
 def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict | None) -> str | None:
     """Carry the camera's encoder from a checkpoint that has one of the same shape and the same vision block revision
     (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
-    None when this network has no camera. Left fresh, its join is zero: the seeded policy starts as it was."""
+    None when this network has no camera. Left fresh, its join is zeroed: the seeded policy starts as it was, and the
+    camera comes in as the join learns (a network trained from scratch keeps its join's ordinary initialisation)."""
     keys = [key for key in new if key.startswith(VISION)]
     if not keys:
         return None
+    fresh = None
     if not any(key.startswith(VISION) for key in old):
-        return "fresh (the checkpoint has none)"
-    if _vision_revision(new_stage) != _vision_revision(old_stage):
-        return f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
-    if not all(key in old and old[key].shape == new[key].shape for key in keys):
-        return "fresh (its shape changed)"
+        fresh = "fresh (the checkpoint has none)"
+    elif _vision_revision(new_stage) != _vision_revision(old_stage):
+        fresh = f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
+    elif not all(key in old and old[key].shape == new[key].shape for key in keys):
+        fresh = "fresh (its shape changed)"
+    if fresh:
+        for key in keys:
+            if key.startswith(VISION + "join."):
+                new[key].zero_()
+        return fresh
     for key in keys:
         new[key].copy_(old[key])
     return "carried"
