@@ -56,6 +56,10 @@ namespace VMAP
         //! model space: sets `distance` and returns true. Read-only; nothing else calls it (the bots' camera does).
         bool IntersectRay(G3D::Ray const& ray, float& distance) const;
         [[nodiscard]] uint32 GetType() const { return iType; }
+        //! Read-only views for the bots' camera's GPU copy (Animus/Gpu/VisionScene): null heights is no surface,
+        //! null flags a single level over the whole liquid.
+        [[nodiscard]] float const* GetHeights() const { return iHeight; }
+        [[nodiscard]] uint8 const* GetFlags() const { return iFlags; }
         float* GetHeightStorage() { return iHeight; }
         uint8* GetFlagsStorage() { return iFlags; }
         uint32 GetFileSize();
@@ -101,6 +105,11 @@ namespace VMAP
         [[nodiscard]] uint32 GetMogpFlags() const { return iMogpFlags; }
         [[nodiscard]] uint32 GetWmoID() const { return iGroupWMOID; }
         void GetMeshData(std::vector<G3D::Vector3>& outVertices, std::vector<MeshTriangle>& outTriangles, WmoLiquid*& liquid);
+        //! Read-only views of what IntersectRay and IntersectLiquid read (the bots' camera's GPU copy).
+        [[nodiscard]] std::vector<G3D::Vector3> const& GetVertices() const { return vertices; }
+        [[nodiscard]] std::vector<MeshTriangle> const& GetTriangles() const { return triangles; }
+        [[nodiscard]] BIH const& GetMeshTree() const { return meshTree; }
+        [[nodiscard]] WmoLiquid const* GetLiquid() const { return iLiquid; }
     protected:
         G3D::AABox iBound;
         uint32 iMogpFlags{0};// 0x8 outdor; 0x2000 indoor
@@ -128,6 +137,9 @@ namespace VMAP
         bool writeFile(std::string const& filename);
         bool readFile(std::string const& filename);
         void GetGroupModels(std::vector<GroupModel>& outGroupModels);
+        //! Read-only views of what IntersectRay and IntersectLiquid read (the bots' camera's GPU copy).
+        [[nodiscard]] std::vector<GroupModel> const& GetGroups() const { return groupModels; }
+        [[nodiscard]] BIH const& GetGroupTree() const { return groupTree; }
         uint32 Flags;
     protected:
         uint32 RootWMOID{0};

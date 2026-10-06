@@ -95,6 +95,11 @@ namespace VMAP
         [[nodiscard]] bool isTiled() const { return iIsTiled; }
         [[nodiscard]] uint32 numLoadedTiles() const { return iLoadedTiles.size(); }
         void GetModelInstances(ModelInstance*& models, uint32& count);
+        //! The tree over every spawn of the map and its entries (an entry without a model is a spawn whose tile was
+        //! never loaded), read-only: the bots' camera copies them to the GPU (Animus/Gpu/VisionScene).
+        [[nodiscard]] BIH const& GetTree() const { return iTree; }
+        [[nodiscard]] ModelInstance const* GetTreeValues() const { return iTreeValues; }
+        [[nodiscard]] uint32 GetTreeValueCount() const { return iTreeValues ? iNTreeValues : 0; }
     };
 
     struct AreaInfo

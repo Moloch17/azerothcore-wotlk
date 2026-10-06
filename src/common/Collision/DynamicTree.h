@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "Optional.h"
+#include <functional>
 
 namespace G3D
 {
@@ -66,6 +67,11 @@ public:
 
     void balance();
     void update(uint32 diff);
+
+    /// Every model in the tree with the cells (x * 64 + y of its 64 x 64 grid, up to 9) it was filed under, which
+    /// are the cells a ray's walk tests it in. Read-only: the bots' camera copies them to the GPU
+    /// (Animus/Gpu/VisionScene).
+    void VisitModels(std::function<void(GameObjectModel const&, uint16 const* cells, uint32 count)> const& visit) const;
 };
 
 #endif // _DYNTREE_H

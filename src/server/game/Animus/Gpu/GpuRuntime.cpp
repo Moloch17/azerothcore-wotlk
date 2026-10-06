@@ -45,6 +45,8 @@ namespace
         return dir;
     }
 
+    void DoLoadFrom(std::string const& runtime, std::string const& library);
+
     void DoLoad(std::string const& python, std::string const& workDir)
     {
         Animus::Gpu::PrepareEnvironment();
@@ -56,18 +58,22 @@ namespace
             return;
         }
 
+        std::error_code error;
+        std::filesystem::path const self = std::filesystem::read_symlink("/proc/self/exe", error);
+        DoLoadFrom((std::filesystem::path(torchLib) / "libamdhip64.so").string(),
+            (self.parent_path() / "libforge-gpu.so").string());
+    }
+
+    void DoLoadFrom(std::string const& runtime, std::string const& library)
+    {
         // The runtime first, by its full path and with its symbols global: the device library needs its symbols
         // and names it only by soname, which this already-loaded object satisfies.
-        std::string const runtime = (std::filesystem::path(torchLib) / "libamdhip64.so").string();
         if (!dlopen(runtime.c_str(), RTLD_NOW | RTLD_GLOBAL))
         {
             g_why = "cannot load " + runtime + ": " + dlerror();
             return;
         }
 
-        std::error_code error;
-        std::filesystem::path const self = std::filesystem::read_symlink("/proc/self/exe", error);
-        std::string const library = (self.parent_path() / "libforge-gpu.so").string();
         void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle)
         {
@@ -98,6 +104,17 @@ namespace Animus::Gpu
     bool Load(std::string const& python, std::string const& workDir, std::string& why)
     {
         std::call_once(g_once, [&] { DoLoad(python, workDir); });
+        why = g_why;
+        return g_api != nullptr;
+    }
+
+    bool LoadFrom(std::string const& runtime, std::string const& library, std::string& why)
+    {
+        std::call_once(g_once, [&]
+        {
+            PrepareEnvironment();
+            DoLoadFrom(runtime, library);
+        });
         why = g_why;
         return g_api != nullptr;
     }

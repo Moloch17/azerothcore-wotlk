@@ -31,6 +31,10 @@ namespace Animus::Gpu
     /// without hipcc); the forge then does everything on the CPU as before.
     bool Load(std::string const& python, std::string const& workDir, std::string& why);
 
+    /// Load's second half on its own: the HIP runtime and the device library by their paths (the tests', which
+    /// have no learner to ask and are not beside the library). Shares Load's once.
+    bool LoadFrom(std::string const& runtime, std::string const& library, std::string& why);
+
     /// The device calls, or nullptr before a successful Load.
     ForgeGpuApi const* Api();
 
