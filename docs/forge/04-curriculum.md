@@ -19,7 +19,7 @@
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
-> | `move2_seek` | 250M | 5M | 512 |
+> | `move2_seek` | 250M | 5M | 195 |
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

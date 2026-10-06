@@ -258,8 +258,8 @@ namespace
     /// has one, so nothing about them can be used, looted or opened; the strongbox is a type 3 chest with no quest and
     /// no flags. Height is the model's bounding box height (dtree) times the template's size (all 1): the objective
     /// point is the object's centre. Radius is the box's largest half-extent: the camera's flag reaches its radius and
-    /// a quarter yard more (at most a yard; Vision::ObjectiveRadiusFor), so it sits on the object. Looked up in acore_world on 2026-10-06
-    /// (MySQL is sealed after startup, so nothing is queried at runtime).
+    /// a quarter yard more (at most a yard; Vision::ObjectiveRadiusFor), so it sits on the object. Looked up in
+    /// acore_world on 2026-10-06 (MySQL is sealed after startup, so nothing is queried at runtime).
     std::vector<SeekObject> SeekObjects()
     {
         return {
@@ -317,7 +317,8 @@ namespace
         // within three yards of it (interaction range). Its memory is the GRU's (P1; the mental map is P1b).
         //
         // The room ladder is the shaping fade's: the draw moves from the rooms seen from the hallway to the deepest as
-        // the fade steps (SeekDraw::Weights), every room always possible. Evaluations take every room in turn.
+        // the fade steps (SeekDraw::Weights), every room always possible. An evaluation sweeps every (room, object)
+        // pair once: 39 x 5 = 195 episodes.
         //
         // **The clock, 300 s**: a greedy sweep from the spawn through every room's centre walks 1,595 yd, 228 s at run
         // speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a room from its

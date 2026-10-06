@@ -83,6 +83,8 @@ def test_the_stage_config_reads_its_own_measures():
     assert config.mappo.gamma == pytest.approx(0.998)
     assert config.mappo.chunk_length >= config.rollout_length
     assert config.mappo.recurrent_size > 0
+    # One pass of the evaluation sweep: every (room, object) pair once.
+    assert config.eval.episodes == 39 * 5
     headline = set(config.status.headline)
     assert {"found", "found_deepest", "sight_seconds", "sight_to_arrival", "rooms_before_found",
             "revisit_rate"} <= headline

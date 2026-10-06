@@ -29,10 +29,11 @@ mappo:
   # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
   look_entropy_coef: 0.001
 
-# Every room in turn (SeekDraw::EvaluationPick: 512 seeds meet each of the 39 rooms 13 times, every object in every
-# tier), the object placed by the seed so every checkpoint meets the same spots.
+# A deterministic sweep over every (room, object) pair (SeekDraw::EvaluationPick): 39 rooms x 5 objects = 195 episodes,
+# each pair once, the object placed by the seed so every checkpoint meets the same spots. The per-room and per-object
+# tables are balanced, and the evaluation is at most 195 episodes of 300 s.
 eval:
-  episodes: 512
+  episodes: 195
   report: [found, find_seconds, sighted, sight_seconds, sight_to_arrival, rooms_entered, rooms_reentered,
            revisit_rate, rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
            distance_travelled, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, died,

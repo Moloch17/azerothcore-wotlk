@@ -282,7 +282,8 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     for (GameObject* object : own)
         object->DespawnOrUnsummon(0ms, Seconds(WEEK));
 
-    // The room: the ladder's weights in training, every room in turn in an evaluation; the object uniformly.
+    // The room: the ladder's weights in training and the object uniformly; an evaluation sweeps every (room,
+    // object) pair.
     std::vector<float> const depths = Draw::Depths(arena.Rooms);
     if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
     {

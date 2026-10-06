@@ -39,8 +39,9 @@ namespace Animus::Curriculum
     /// random spot of the room's floor with a random orientation: a real gameobject whose display has a collision
     /// model, so the camera's rays hit it. The objective point the flag marks is the object's centre. The object of
     /// the episode before is removed first, and so are the map's own game objects (the Stockades' chests and the
-    /// Hallow's End decorations), so the one object in the dungeon is the one to find. An evaluation takes every room
-    /// in turn and places the object by its seed (SeekDraw::EvaluationPick, SeedUniform).
+    /// Hallow's End decorations), so the one object in the dungeon is the one to find. An evaluation sweeps every
+    /// (room, object) pair once a pass (SeekDraw::EvaluationPick: 195 episodes) and places the object by its seed
+    /// (SeedUniform).
     ///
     /// Paid: Arrive once, stopped within the arena's SeekRadius of the object (Outcome); StepCost, Death, Stuck and
     /// Wall (Cost); Sighting and NewGround, the training-only aids (Shaping, faded). Measured: found, the time to the

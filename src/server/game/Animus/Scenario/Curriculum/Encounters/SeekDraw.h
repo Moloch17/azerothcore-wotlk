@@ -87,12 +87,21 @@ namespace Animus::Curriculum::SeekDraw
         return weights.empty() ? 0 : uint32(weights.size() - 1);
     }
 
-    /// An evaluation's room and object for seed `seed`: every room in turn, and the object cycling once a lap of the
-    /// rooms, so 512 seeds meet each of 39 rooms 13 times and every object in every tier.
+    /// How many episodes one pass of the evaluation sweep is: every (room, object) pair once (39 x 5 = 195).
+    inline uint32 SweepLength(uint32 rooms, uint32 objects)
+    {
+        return std::max<uint32>(1, rooms) * std::max<uint32>(1, objects);
+    }
+
+    /// An evaluation's room and object for seed `seed`: a deterministic sweep over every (room, object) pair, seed i
+    /// the pair i mod SweepLength -- the rooms in table order (nearest first), each with every object in turn -- so an
+    /// evaluation of SweepLength episodes (or a multiple) meets each pair exactly once (or that many times), and the
+    /// per-room and per-object tables are balanced. A class (seed mod castings) meets rooms spread over every depth.
     inline std::pair<uint32, uint32> EvaluationPick(uint32 seed, uint32 rooms, uint32 objects)
     {
-        rooms = std::max<uint32>(1, rooms);
-        return { seed % rooms, (seed / rooms) % std::max<uint32>(1, objects) };
+        objects = std::max<uint32>(1, objects);
+        uint32 const pair = seed % SweepLength(rooms, objects);
+        return { pair / objects, pair % objects };
     }
 
     /// A uniform number in [0, 1) fixed by an evaluation seed and a salt (splitmix64): an evaluation places the object

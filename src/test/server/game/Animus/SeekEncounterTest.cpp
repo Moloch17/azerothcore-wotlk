@@ -182,17 +182,26 @@ TEST(SeekEncounterTest, ObjectsAreUniformAndEvaluationsCoverEveryRoom)
     for (uint32 count : counts)
         EXPECT_NEAR(float(count) / 50000.0f, 0.2f, 0.01f);
 
-    std::set<uint32> rooms;
-    std::set<std::pair<uint32, uint32>> pairs;
-    for (uint32 seed = 0; seed < 512; ++seed)
+    // One pass of the sweep is every (room, object) pair exactly once; a second pass repeats it.
+    EXPECT_EQ(Draw::SweepLength(39, 5), 195u);
+    std::map<std::pair<uint32, uint32>, uint32> met;
+    for (uint32 seed = 0; seed < 2 * 195; ++seed)
+        ++met[Draw::EvaluationPick(seed, 39, 5)];
+    EXPECT_EQ(met.size(), 195u);
+    for (auto const& [pair, times] : met)
     {
-        auto const [room, object] = Draw::EvaluationPick(seed, 39, 5);
-        rooms.insert(room);
-        pairs.insert({ Draw::Tier(float(room) / 38.0f), object });
-        EXPECT_LT(object, 5u);
+        EXPECT_LT(pair.first, 39u);
+        EXPECT_LT(pair.second, 5u);
+        EXPECT_EQ(times, 2u);
     }
-    EXPECT_EQ(rooms.size(), 39u);
-    EXPECT_EQ(Draw::EvaluationPick(40, 39, 5), (std::pair<uint32, uint32>{ 1u, 1u }));
+    EXPECT_EQ(Draw::EvaluationPick(0, 39, 5), (std::pair<uint32, uint32>{ 0u, 0u }));
+    EXPECT_EQ(Draw::EvaluationPick(7, 39, 5), (std::pair<uint32, uint32>{ 1u, 2u }));
+    EXPECT_EQ(Draw::EvaluationPick(195, 39, 5), (std::pair<uint32, uint32>{ 0u, 0u }));
+    // A class cast every 30 seeds (seed mod castings) meets rooms at every depth, not one end of the table.
+    std::set<uint32> tiers;
+    for (uint32 seed = 7; seed < 195; seed += 30)
+        tiers.insert(Draw::Tier(float(Draw::EvaluationPick(seed, 39, 5).first) / 38.0f));
+    EXPECT_EQ(tiers.size(), std::size_t(Draw::TIERS));
 }
 
 // A placement point is inside the room's floor for any three numbers; the corners and the middle of the range land
