@@ -22,7 +22,7 @@ mod-animus keeps a copy at `doc/capture-format.md`; this file is the source. Cha
 ### index.json (per hour)
 
 ```json
-{"format": 2, "hour": "2026-10-05T14", "module_revision": "<git sha>", "realm_build": "<core revision>",
+{"format": 3, "hour": "2026-10-05T14", "module_revision": "<git sha>", "realm_build": "<core revision>",
  "files": {"move-0.bin.gz": {"records": 123456, "bytes": 987654}},
  "players": 42, "sessions": 57, "dropped": {"move": 0, "snapshot": 0}, "paused": {"snapshot": false}}
 ```
@@ -68,10 +68,11 @@ Common field names: `ms` = server unix time in milliseconds (u64); `player` = ps
 
 | type | name | payload |
 |---|---|---|
-| 10 | Move | `u64 ms, u64 player, u32 client_ms, u16 opcode, u32 move_flags, u16 move_flags2, f32 x, f32 y, f32 z, f32 o, f32 pitch, u32 fall_ms, f32 jump_zspeed, f32 jump_sin, f32 jump_cos, f32 jump_xyspeed, u32 map, u8 source` |
+| 10 | Move | `u64 ms, u64 player, u32 client_ms, u16 opcode, u32 move_flags, u16 move_flags2, f32 x, f32 y, f32 z, f32 o, f32 pitch, u32 fall_ms, f32 jump_zspeed, f32 jump_sin, f32 jump_cos, f32 jump_xyspeed, u32 map, u8 source, u32 server_ms` (`server_ms` format 3) |
 | 11 | Speeds | `u64 ms, u64 player, f32 walk, f32 run, f32 run_back, f32 swim, f32 swim_back, f32 flight, f32 flight_back, f32 turn_rate, f32 pitch_rate` (at session start and on every change) |
 | 12 | MotionEvent | `u64 ms, u64 player, u8 event, u32 arg, f32 x, f32 y, f32 z, u32 map` |
 | 13 | MoverState | `u64 ms, u64 player, u8 kind, u8 class, u8 race, u8 level, u32 map, u32 zone, u32 mount, u32 form, u8 in_combat, u8 move_revision, char[32] model` (format 2) |
+| 14 | MoveTally | `u64 ms, u64 player, u8 kind, u32 sent, u32 kept` (format 3) |
 
 `opcode`: the client opcode (`MSG_MOVE_*` and the movement acks, as the server's movement handler received it).
 `source`: 0 a player's client packet; 2 an Animus companion's packet (format 2): its player controller reports through
@@ -79,6 +80,20 @@ its session's own movement handlers exactly as a client does, so it is recorded 
 `OnPlayerMove`) with the same fields, and `client_ms` is the companion client's own clock; 1 was format 1's synthesised
 companion sample (its server position once a decision), no longer written -- a reader of format 1 files keeps it out
 of the kinematics.
+
+**Two clocks on every Move** (format 3). `client_ms` is the mover's own client clock, what the client claims: a
+player's client's, a companion's client's (its CompanionClient clock, which starts one second ahead of the server's).
+`server_ms` is the server's own monotonic clock (`getMSTime`, milliseconds since the worldserver started, wrapping at
+2^32) when the server's movement handler took the packet -- the same clock for both kinds, so intervals and cadence
+are compared on it. For a player it trails the packet's arrival by the time it waited in its session's queue (up to
+one world/map update); a companion hands its packet to the handler as it sends it. `ms` stays the server's unix time
+for joining streams. A format 1/2 Move has no `server_ms`; readers take it as 0.
+
+MoveTally counts a mover's movement packets since its session began (cumulative): `sent`, those that reached a
+movement handler (every opcode whose handler records a kept packet here); `kept`, those the handler kept and this
+stream recorded. `sent - kept` is what the server refused or ignored (a spline under way, movement disabled, a
+teleport pending, an ack's pre-check, an invalid position). Written every 60 s while the counts change, and at the
+session's end, for players and companions alike.
 
 MoverState is written at a mover's first update and whenever a field changes, for players and companions alike:
 `kind` (0 human, 1 companion, as SessionStart), class, race, level, map and zone, `mount` (the mount aura's spell, 0

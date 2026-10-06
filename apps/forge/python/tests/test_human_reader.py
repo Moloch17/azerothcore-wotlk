@@ -22,7 +22,7 @@ SAMPLES = {
     6: {"ms": 6, "player": 11, "latency_ms": 250},
     10: {"ms": 10, "player": 11, "client_ms": 99, "opcode": 0x0B5, "move_flags": 0x200001, "move_flags2": 8,
          "x": 1.5, "y": -2.25, "z": 3.0, "o": 0.5, "pitch": -0.25, "fall_ms": 12, "jump_zspeed": 7.9,
-         "jump_sin": 0.5, "jump_cos": 0.75, "jump_xyspeed": 7.0, "map": 530, "source": 1},
+         "jump_sin": 0.5, "jump_cos": 0.75, "jump_xyspeed": 7.0, "map": 530, "source": 1, "server_ms": 4000123},
     11: {"ms": 11, "player": 11, "walk": 2.5, "run": 7.0, "run_back": 4.5, "swim": 4.75, "swim_back": 2.5,
          "flight": 7.0, "flight_back": 4.5, "turn_rate": 3.25, "pitch_rate": 3.0},
     12: {"ms": 12, "player": 11, "event": 3, "arg": 42, "x": 1.0, "y": 2.0, "z": 3.0, "map": 1},
@@ -45,6 +45,7 @@ SAMPLES = {
     47: {"ms": 47, "player": 11, "map": 1, "zone": 14, "area": 362},
     13: {"ms": 13, "player": 77, "kind": 1, "class_": 11, "race": 4, "level": 60, "map": 1, "zone": 141,
          "mount": 0, "form": 3, "in_combat": 1, "move_revision": 2, "model": b"druid_travel"},
+    14: {"ms": 14, "player": 77, "kind": 1, "sent": 1200, "kept": 1188},
     51: {"ms": 51, "owner": 11, "companion": 77, "command": 2, "arg": 0},
     52: {"ms": 52, "owner": 11, "companion": 77, "rating": -1, "reason": 5},
 }
@@ -243,9 +244,10 @@ def test_struct_sizes_match_the_reader_prefixes():
         assert struct.calcsize(fmt) == r.PREFIX[rtype][1].itemsize, r.PREFIX[rtype][0]
 
 
-def test_format2_player_and_companion_moves_read_back(tmp_path):
-    """Format 2: a player's client packet (source 0) and a companion's controller packet (source 2) in one move file,
-    with a MoverState for each, read back field for field; the companion's track is told apart by its source."""
+def test_format3_player_and_companion_moves_read_back(tmp_path):
+    """Format 3: a player's client packet (source 0) and a companion's controller packet (source 2) in one move file,
+    each with both clocks, a MoverState and a MoveTally, read back field for field; the companion's track is told apart
+    by its source."""
     from animus.human import tracks as t
     player, companion = 11, 77
     human = dict(SAMPLES[10], player=player, source=r.SOURCE_CLIENT, ms=1000, move_flags=1)
@@ -255,18 +257,27 @@ def test_format2_player_and_companion_moves_read_back(tmp_path):
               dict(SAMPLES[13], ms=999, player=companion)]
     moves = []
     for i in range(12):
-        moves.append(w.record(10, dict(human, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=99 + 100 * i)))
-        moves.append(w.record(10, dict(bot, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=1001000 + 100 * i)))
+        moves.append(w.record(10, dict(human, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=99 + 100 * i,
+                                       server_ms=5000 + 100 * i)))
+        moves.append(w.record(10, dict(bot, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=1001000 + 100 * i,
+                                       server_ms=5000 + 100 * i)))
+    tallies = [w.record(14, {"ms": 2300, "player": player, "kind": 0, "sent": 13, "kept": 12}),
+               w.record(14, {"ms": 2300, "player": companion, "kind": 1, "sent": 14, "kept": 12})]
     path = tmp_path / "move-1.bin"
     path.write_bytes(w.header("move", fmt=r.FORMAT_VERSION) + b"".join(w.record(13, m) for m in movers)
-                     + b"".join(moves))
+                     + b"".join(moves) + b"".join(tallies))
     stats = r.FileStats(path)
     batch = r.read_all(path, stats)
-    assert stats.malformed == 0 and stats.header["format"] == 2
+    assert stats.malformed == 0 and stats.header["format"] == r.FORMAT_VERSION == 3
     rows = batch.get(r.MOVE)
     assert sorted(set(rows["source"].tolist())) == [r.SOURCE_CLIENT, r.SOURCE_CONTROLLER]
     mine = rows[rows["player"] == companion]
     assert int(mine["opcode"][0]) == 0x0EE and int(mine["client_ms"][0]) == 1001000
+    assert list(mine["server_ms"][:3]) == [5000, 5100, 5200]
+    assert list(rows[rows["player"] == player]["server_ms"][:2]) == [5000, 5100]
+    tally = {int(row["player"]): row for row in batch.get(r.MOVE_TALLY)}
+    assert (int(tally[companion]["sent"]) - int(tally[companion]["kept"]), int(tally[companion]["kind"])) == (2, 1)
+    assert (int(tally[player]["sent"]) - int(tally[player]["kept"]), int(tally[player]["kind"])) == (1, 0)
     state = batch.get(r.MOVER_STATE)
     assert len(state) == 2
     them = {int(row["player"]): row for row in state}
@@ -278,3 +289,20 @@ def test_format2_player_and_companion_moves_read_back(tmp_path):
     kinds = {track.player: track.companion for track in built}
     assert kinds.get(companion) is True and kinds.get(player) is False
     assert companion not in {track.player for track in t.build_tracks(batch)}
+
+
+def test_older_moves_without_server_ms_still_read(tmp_path):
+    """A format 1/2 Move (no server_ms) is read with server_ms 0, in file order among format 3 ones; a record shorter
+    than even the old Move is malformed."""
+    old = w.record(10, dict(SAMPLES[10], ms=1))[:-4]
+    old = struct.pack("<HH", 10, len(old) - 4) + old[4:]
+    new = w.record(10, dict(SAMPLES[10], ms=2))
+    runt = struct.pack("<HH", 10, 20) + bytes(20)
+    path = tmp_path / "mixed.bin"
+    path.write_bytes(w.header("move", fmt=2) + old + new + old.replace(struct.pack("<Q", 1), struct.pack("<Q", 3), 1)
+                     + runt)
+    stats = r.FileStats(path)
+    rows = r.read_all(path, stats).get(r.MOVE)
+    assert list(rows["ms"]) == [1, 2, 3] and list(rows["server_ms"]) == [0, 4000123, 0]
+    assert float(rows["x"][0]) == 1.5 and int(rows["source"][2]) == 1
+    assert stats.malformed == 1
