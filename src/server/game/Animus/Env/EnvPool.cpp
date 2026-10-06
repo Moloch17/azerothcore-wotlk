@@ -17,6 +17,7 @@
  */
 
 #include "EnvPool.h"
+#include "Camera.h"
 #include "ResetDefer.h"
 #include "MapMgr.h"
 #include "ResetTiming.h"
@@ -71,8 +72,11 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     Present.assign(agents, 1);
     EpisodeSeed.assign(envs, NO_EPISODE_SEED);
     KinematicSamples.assign(std::size_t(agents) * Kinematics::SAMPLE_DIM, 0.0f);
+    // No frame yet: "nothing seen" (Vision::FillNoFrame), never zeros.
     Image.assign(std::size_t(agents) * _spec.ImageBytes, 0);
     FinalImage.assign(std::size_t(agents) * _spec.ImageBytes, 0);
+    Vision::FillNoFrame(Image.data(), uint32(Image.size()));
+    Vision::FillNoFrame(FinalImage.data(), uint32(FinalImage.size()));
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
     // Two per agent, primary then secondary (Curriculum::GOAL_SLOTS); NO_GOAL until a learner with a goal head

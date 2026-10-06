@@ -27,7 +27,9 @@
  *   server -> client  SPEC   SpecMsg, then u32 layout count and that many LayoutMsg, then the episode info
  *                            column names as comma-separated ASCII filling the rest of the payload
  *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
- *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20).
+ *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20), and
+ *                            u32 ImageBytes, the bytes per agent of each STEP's camera images, I below: the vision
+ *                            block's height x width x 4, 0 for a stage without one (protocol 21).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
  *                            O obs dim, S state dim, N actions, K episode info dim:
  *                              f32 obs[E*A*O]         observation after any auto-reset
@@ -56,14 +58,15 @@
  *                                                     2 flying, 3 airborne), mounted, speed in force (yd/s),
  *                                                     in_combat; the new episode's first sample where done is 1,
  *                                                     zeros for an agent without a body (protocol 20)
- *                            and, only in a stage with a vision block (I = the vision block's image height x width
- *                            x bytes_per_pixel from stage.json, the same for every layout; protocol 21):
+ *                            and, only in a stage with a vision block (I = SPEC's ImageBytes > 0; protocol 21):
  *                              u8  image[E*A*I]       each agent's camera image after any auto-reset, [row][col][byte]
  *                                                     row 0 at the top, 4 bytes a pixel (Vision::EncodePixel,
- *                                                     camera-vision.BYTES.md); zeros for an agent with no frame. Absent
+ *                                                     camera-vision.BYTES.md); for an agent with no frame,
+ *                                                     Vision::FillNoFrame's pattern (sky, height 0). Absent
  *                                                     when the learner reads it from the device buffers (DEVICE)
  *                              u8  final_image[D*A*I] last image of each ended episode, the same D envs as final_obs
- *                            A stage without one sends exactly the protocol 20 STEP.
+ *                            A stage without one sends exactly the protocol 20 STEP (SPEC grows by ImageBytes for
+ *                            every stage).
  *   client -> server  ACT    { i32 actions[E*A] } or, from a policy with a goal head,
  *                            { i32 actions[E*A], i32 goals[E*A*2] } -- the goals each agent is pursuing, primary
  *                            then secondary (0..GoalCount-1, or -1 for none). Goals are scored and reported by the
@@ -136,10 +139,10 @@ namespace AnimusForge
     // 20: SPEC ends with the kinematics width and every STEP ends with one kinematic sample per agent (Kinematics.h):
     // the bodies the learner's style reward and realism score read. A learner of 19 would read the width as the
     // first episode info name's bytes and every STEP as too long.
-    // 21: the camera's image travels as bytes (camera-vision.BYTES.md): a stage with a vision block (revision 3) ends
-    // each STEP with every agent's image and the ended envs' final images, and its DEVICE message with the images'
-    // device buffer handle. The vision block's float columns are its seven scalars. A stage without one is
-    // unchanged on the wire; a learner of 20 would read a vision stage's STEP as too long.
+    // 21: the camera's image travels as bytes (camera-vision.BYTES.md): SPEC ends with the image bytes per agent, and
+    // a stage with a vision block (revision 3) ends each STEP with every agent's image and the ended envs' final
+    // images, and its DEVICE message with the images' device buffer handle. The vision block's float columns are its
+    // seven scalars. A stage without one has protocol 20's STEP and DEVICE; every SPEC is four bytes longer.
     constexpr uint32 PROTOCOL_VERSION = 21;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
@@ -209,9 +212,12 @@ namespace AnimusForge
         uint32 EnvGroups;       // STEPs per decision: 1, or 2 for half-batch (contiguous halves, the first half first)
         char Scenario[SCENARIO_NAME_SIZE];
         uint32 KinematicsDim;   // floats per agent of each STEP's kinematics (Kinematics::SAMPLE_DIM; protocol 20)
+        /// Bytes per agent of each STEP's camera images (ScenarioSpec::ImageBytes; 0 without a vision block;
+        /// protocol 21): the wire's cut, which the learner checks against stage.json's image.
+        uint32 ImageBytes;
     };
-    // The learner's SPEC (protocol.py): "<12I32sI".
-    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 4);
+    // The learner's SPEC (protocol.py): "<12I32s2I".
+    static_assert(sizeof(SpecMsg) == 12 * 4 + SCENARIO_NAME_SIZE + 2 * 4);
 
     struct LayoutMsg
     {

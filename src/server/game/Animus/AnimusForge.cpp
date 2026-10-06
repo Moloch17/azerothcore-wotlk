@@ -2528,6 +2528,7 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.EnvGroups = _pool->GroupCount();
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
     msg.KinematicsDim = Animus::Kinematics::SAMPLE_DIM;
+    msg.ImageBytes = spec.ImageBytes;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);

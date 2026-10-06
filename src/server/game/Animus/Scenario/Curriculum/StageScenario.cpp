@@ -3688,7 +3688,7 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
             mask ? mask + (_seatCount + side) * _spec.NumActions : nullptr);
         // A director has no camera.
         if (uint8* row = imageRow(_seatCount + side))
-            std::fill(row, row + _spec.ImageBytes, uint8(0));
+            Vision::FillNoFrame(row, _spec.ImageBytes);
     }
 
     // The owner's row: a seat's observation when it is played through it, else an empty row that allows only
@@ -3704,7 +3704,7 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
         {
             std::fill(row, row + _spec.ObsDim, 0.0f);
             if (uint8* pixels = imageRow(agent))
-                std::fill(pixels, pixels + _spec.ImageBytes, uint8(0));
+                Vision::FillNoFrame(pixels, _spec.ImageBytes);
             if (maskRow)
             {
                 std::fill(maskRow, maskRow + _spec.NumActions, uint8(0));
@@ -3855,9 +3855,10 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     uint8* image)
 {
     std::fill(obs, obs + _spec.ObsDim, 0.0f);
-    // The image row starts zeroed as the observation row does: a seat with no frame this decision sends zeros.
+    // The image row starts as no frame, as the observation row starts zeroed: a seat that renders nothing this
+    // decision (no character, no map) sends "nothing seen".
     if (image)
-        std::fill(image, image + _spec.ImageBytes, uint8(0));
+        Vision::FillNoFrame(image, _spec.ImageBytes);
     if (mask)
     {
         std::fill(mask, mask + _spec.NumActions, 0);

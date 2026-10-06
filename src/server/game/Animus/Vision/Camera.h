@@ -136,6 +136,20 @@ namespace Animus::Vision
         return settings.Width * settings.Height * BYTES_PER_PIXEL;
     }
 
+    /// A row with no frame (a director, an absent agent, a seat with no character or no map): every pixel
+    /// { SKY_BYTE, HEIGHT_ZERO, 0, 0 } -- sky, height 0, normal 0, no objective -- "nothing seen", in the range the
+    /// network trains on, where zeros would read as a wall at the camera a yard below the feet.
+    inline void FillNoFrame(uint8_t* image, uint32_t bytes)
+    {
+        for (uint32_t at = 0; at + BYTES_PER_PIXEL <= bytes; at += BYTES_PER_PIXEL)
+        {
+            image[at] = SKY_BYTE;
+            image[at + 1] = HEIGHT_ZERO;
+            image[at + 2] = 0;
+            image[at + 3] = 0;
+        }
+    }
+
     /// The vision block's float columns: the scalars alone (revision 3; the image travels as bytes beside them).
     [[nodiscard]] constexpr uint32_t ObsCount(Settings const& /*settings*/)
     {

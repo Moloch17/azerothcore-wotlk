@@ -777,6 +777,28 @@ TEST(VisionTest, PixelsTravelAsFourBytes)
     }
 }
 
+// A row with no frame (a director, an absent agent, a seat with no character or no map) is "nothing seen": every
+// pixel sky, height 0, normal 0, no objective -- never the zeros that would read as a wall at the camera.
+TEST(VisionTest, NoFrameRowIsSky)
+{
+    std::vector<uint8_t> row(Vi::ImageBytes(Vi::Settings()), 0x5A);
+    Vi::FillNoFrame(row.data(), uint32_t(row.size()));
+    for (std::size_t at = 0; at < row.size(); at += Vi::BYTES_PER_PIXEL)
+    {
+        ASSERT_EQ(row[at], 255);
+        ASSERT_EQ(row[at + 1], 128);
+        ASSERT_EQ(row[at + 2], 0);
+        ASSERT_EQ(row[at + 3], 0);
+        float out[Vi::CHANNELS];
+        Vi::DecodePixel(&row[at], out);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_DISTANCE], 1.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_HEIGHT], 0.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_NORMAL], 0.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(Vi::Kind::Sky));
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], 0.0f);
+    }
+}
+
 // A frame: [row][col][channel] with row 0 at the top, then the seven scalars (R16).
 TEST(VisionTest, FrameLayoutAndScalars)
 {
