@@ -706,11 +706,11 @@ TEST(VisionTest, RaysMeetUnitCylindersButNotTheSeat)
 
 // A pixel's four bytes (camera-vision.BYTES.md), and their decode back to the five channels: distance at 0.25, 1,
 // 100 and 1000 yd and sky; height +-25 yd and clamped; normal 0, 0.5, 1; every kind with and without the objective.
-// The block's float columns are the seven scalars.
+// The block's float columns are the eleven scalars (revision 4); the canonical image is 128 x 64.
 TEST(VisionTest, PixelsTravelAsFourBytes)
 {
-    EXPECT_EQ(Vi::ObsCount(Vi::Settings()), 7u);
-    EXPECT_EQ(Vi::ImageBytes(Vi::Settings()), 64u * 32u * 4u);
+    EXPECT_EQ(Vi::ObsCount(Vi::Settings()), 11u);
+    EXPECT_EQ(Vi::ImageBytes(Vi::Settings()), 128u * 64u * 4u);
 
     uint8_t bytes[Vi::BYTES_PER_PIXEL];
     Vi::Hit hit;
