@@ -90,7 +90,8 @@ namespace
         // lesson is the movement alone, and every class's layout learns it from the start.
         //
         // Core and the goal block stay as the layout's frame (the character and its kit, the goal head the learner
-        // sizes from the goal block); Move is the whole lesson. Nothing to fight, so no duel block. One place and one
+        // sizes from the goal block); Move is the whole lesson, and the compass (perception-goals P1: the objective's
+        // bearing and distance, split from the move block) says where the mark is. Nothing to fight, so no duel block. One place and one
         // objective: there is no held-out ground, and the evaluation is the training task itself.
         stages.push_back({
             .Name = "move1_controls",
@@ -98,7 +99,7 @@ namespace
             .Extends = "",
             .Summary = "an empty Stockades: from the entrance to the end of the hallway as fast as possible, and stop "
                 "within a yard of the mark",
-            .Blocks = { Core, Move, Vision, Goal },
+            .Blocks = { Core, Move, Compass, Vision, Goal },
             .Arenas = {
                 { .Name = "hallway", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 60,
                     .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
@@ -303,6 +304,8 @@ namespace
             return "a marker arena is ledges or rooms, not both";
         if (markers && !stage.Has(BlockId::Move))
             return "markers are walked to with the move block";
+        if (markers && !stage.Has(BlockId::Compass))
+            return "a marker is found by its bearing and distance: the compass block";
         if (!markers && arena.Course != MarkerCourse::Open)
             return "only a marker arena has a course";
 

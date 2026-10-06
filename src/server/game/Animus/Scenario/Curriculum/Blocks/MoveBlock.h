@@ -103,39 +103,21 @@ namespace Animus::Curriculum
             OBS_HAZARD_BEARING_COS,
             OBS_HAZARD_DISTANCE,            // yards / 40
             OBS_HAZARD_RADIUS,              // yards / 40
-            /// Where it is trying to get to, in the same frame.
-            OBS_OBJECTIVE,                  // there is one
-            OBS_OBJECTIVE_BEARING_SIN,
-            OBS_OBJECTIVE_BEARING_COS,
-            OBS_OBJECTIVE_DISTANCE,         // yards / 500
             OBS_IN_WATER,
             OBS_SUBMERGED,
             OBS_SUBMERGED_TIME,
             OBS_SWIM_SPEED,                 // / 7 yards a second, so under 1 means water is slower
             /// It is off the ground -- swimming or flying -- so pitch steers and the third dimension is real.
             OBS_AIRBORNE,
-            /// **How much longer the way round is than the way through**: the walking route to the objective over
-            /// the straight line to it, / 4 and clamped. 0 without an objective, and about 0.25 (a ratio of 1)
-            /// when the straight line is the route.
-            ///
-            /// This is the one thing a seat cannot see for itself at any probe length: that the barrier in front
-            /// of it runs for two hundred yards and the way past is backwards. Measured on foot, with water and
-            /// magma excluded, so it is the ground's answer and not the pathfinder's -- a player's path filter
-            /// admits both, which would have this read "straight shot" across a lake or a lava field.
-            OBS_DETOUR,
             /// **Whether the legs are getting anywhere.** How far the seat moved over the last second against
-            /// how far running would have carried it, and how much of the distance to the objective -- or, in an
-            /// arena with none, to the target -- that closed. Measured by the scenario for every seat in every
-            /// arena; the travel encounter used to be the only source, so every other arena read 0 and a seat
-            /// wedged against a rock in a fight looked, from the inside, exactly like one walking freely.
+            /// how far running would have carried it, and how much of the distance to the target closed (the
+            /// scenario's TrackMotion, every seat in every arena; the travel encounter's own objective reading is
+            /// the travel arenas'). A seat wedged against a rock reads 0 here while its keys are held.
+            ///
+            /// The objective's presence, bearing, distances and detour are the compass block's since revision 5
+            /// (CompassBlock): a stage without the compass (M2 seek) has nothing here that points at its objective.
             OBS_MOVE_RATE,
             OBS_CLOSE_RATE,
-            /// **The last forty yards, at a resolution that can see them.** The same distance as
-            /// OBS_OBJECTIVE_DISTANCE but over YARD_SCALE rather than OBJECTIVE_SCALE, so arriving
-            /// (TravelBlock::ARRIVE_DISTANCE, 6 yards) sits at 0.15 instead of 0.012 and the 20-45 yard band
-            /// every lost episode dies in spans half the range instead of a twelfth of it. A coarse feature and
-            /// a fine one, which is the only way one number covers both five hundred yards and six.
-            OBS_OBJECTIVE_NEAR,
             /// **Where it has been** (MovementTrail): its last TRAIL_SAMPLES positions, one a second, each as an
             /// offset from where it stands now in its own frame (ahead, left) over YARD_SCALE, oldest first with
             /// the newest in the last pair, then the share of them it is still within six yards of.
@@ -163,9 +145,13 @@ namespace Animus::Curriculum
         /// purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
         /// 1024-node pool, and room beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
-        /// Its layout revision: MoveControls::REVISION (4), past the bearing design's 0 and 1, the controls' 2 and
-        /// the rays' removal.
+        /// Its layout revision: MoveControls::REVISION (5), past the bearing design's 0 and 1, the controls' 2, the
+        /// rays' removal (4) and the compass's leaving (5).
         [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
+        /// Each column's name (stage.json obs_names), so a seed can follow a column that moved: revision 4's
+        /// objective columns are the compass block's names, and bootstrap maps a revision 4 move block by them.
+        [[nodiscard]] static std::string ColumnName(uint32 column);
+        void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;

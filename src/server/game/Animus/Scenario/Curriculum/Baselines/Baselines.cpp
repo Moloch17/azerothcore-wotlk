@@ -18,6 +18,7 @@
 
 #include "Baselines.h"
 #include "ClassAssets.h"
+#include "CompassBlock.h"
 #include "CoreBlock.h"
 #include "CrowdBlock.h"
 #include "DuelBlock.h"
@@ -496,6 +497,13 @@ namespace
         return row.Has(BlockId::Move) ? row.Obs(BlockId::Move, feature) : 0.0f;
     }
 
+    /// The objective's bearing and distance (CompassBlock's columns, the move block's before its revision 5), read
+    /// back off the row; 0 for a layout without the compass.
+    float Compass(Row const& row, uint32 feature)
+    {
+        return row.Has(BlockId::Compass) ? row.Obs(BlockId::Compass, feature) : 0.0f;
+    }
+
     /// **The seek helper** (player-controller criterion C): turn toward `heading` (sin, cos in the seat's own frame)
     /// with a held turn rate -- the one whose swing over a decision best fits the error -- and let go of it once
     /// within TURN_WITHIN_RADIANS. Nothing when it already holds the right rate, or is aimed and not turning.
@@ -606,11 +614,11 @@ namespace
                 return 0;
 
             // Turn towards it, as a held key, while the feet keep walking: the objective's heading in the seat's
-            // own frame comes from the move block's pair. FACE_OBJECTIVE used to do this in one press, and the
+            // own frame comes from the compass block's pair. FACE_OBJECTIVE used to do this in one press, and the
             // engine snapping the heading every decision was the compass the trained policy collapsed onto.
             if (std::optional<int32> turn = TurnToward(row,
-                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
-                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+                Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_SIN),
+                Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_COS)))
                 return turn;
 
             // In the air, climb to cruising height for the crossing and descend for the arrival with the ascend and
@@ -635,10 +643,9 @@ namespace
                         return level;
             }
 
-            // And steer. The objective's direction in the seat's own frame comes from the move block's own pair,
-            // because this is the block that owns getting there.
-            if (std::optional<int32> go = Seek(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
-                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+            // And steer. The objective's direction in the seat's own frame comes from the compass block's pair.
+            if (std::optional<int32> go = Seek(row, Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_SIN),
+                Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_COS)))
                 return go;
 
             // On the way: wait (the no-op), rather than cast something that would take the mount away.
@@ -1026,11 +1033,11 @@ namespace
             return Seek(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_SIN),
                 row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_COS));
         };
-        // Along the route to the objective (the engine's advance is gone): toward the move block's objective.
+        // Along the route to the objective (the engine's advance is gone): toward the compass block's objective.
         auto const advance = [&row]()
         {
-            return Seek(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
-                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS));
+            return Seek(row, Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_SIN),
+                Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_COS));
         };
 
         if (fighting)

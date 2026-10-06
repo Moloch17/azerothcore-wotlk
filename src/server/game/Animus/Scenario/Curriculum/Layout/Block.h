@@ -43,6 +43,9 @@ namespace Animus::Curriculum
     {
         Core,           // the character, its spells, trinkets and talents
         Move,           // where it puts its feet, with no reference to a target: bearings and facing
+        /// Where the objective is: whether there is one, its bearing, its distance and the detour to it (no actions).
+        /// Split from the move block (perception-goals P1): M1 carries it, M2 seek finds its objective by sight.
+        Compass,
         Duel,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
         Pack,           // enemy slots, target selection, tactical spells
         Gauntlet,       // pull timing, food, drink, sustain spells
@@ -331,6 +334,11 @@ namespace Animus::Curriculum
         /// keeps the rest of the block (bootstrap._seed_rescaled_norms). A Revision is for columns that changed
         /// meaning; this is for a reading that changed its scale.
         virtual void DescribeRescaled(Layout const& /*layout*/, boost::json::array& /*out*/) const { }
+
+        /// Each observation column's name, in order (stage.json obs_names), for a block whose columns may move to
+        /// another block or revision: the learner's seeding maps named columns across by name (bootstrap), where a
+        /// changed revision would otherwise start the block fresh. Empty (the default) for a block that does not say.
+        virtual void DescribeColumns(Layout const& /*layout*/, boost::json::array& /*names*/) const { }
 
         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }

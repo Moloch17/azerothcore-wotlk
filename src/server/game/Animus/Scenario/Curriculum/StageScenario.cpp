@@ -1663,6 +1663,11 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 block["camera"] = manifest["camera"];
                 block["look"] = manifest["look"];
             }
+            // Its columns by name, where the block names them: a seed follows a column that moved (bootstrap).
+            boost::json::array names;
+            GetBlock(id).DescribeColumns(layout, names);
+            if (!names.empty())
+                block["obs_names"] = std::move(names);
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
             if (!rescaled.empty())

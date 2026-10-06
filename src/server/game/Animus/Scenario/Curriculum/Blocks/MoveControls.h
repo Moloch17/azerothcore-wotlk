@@ -34,8 +34,10 @@ namespace Animus::Curriculum::MoveControls
     /// gone (§0); a checkpoint or a manifest of either describes a model that no longer fits, and is refused on resume
     /// and seeded fresh (bootstrap: a block whose revision differs starts from nothing). 3 (never shipped): the
     /// ground probe measured live, the clearance columns gone. 4: no ground rays, flight rays or clearance at all --
-    /// the camera (the vision block, free look) is how a seat sees; the probe they came from is gone.
-    constexpr uint32_t REVISION = 4;
+    /// the camera (the vision block, free look) is how a seat sees; the probe they came from is gone. 5: the objective's
+    /// presence, bearing, distances and detour left for the compass block (perception-goals P1): a stage without the
+    /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap).
+    constexpr uint32_t REVISION = 5;
 
     /// Turn rates, degrees a second, + left (counter-clockwise, the client's yaw direction): the mouse's, not slowed
     /// while moving. 0 lets go of the turn.
