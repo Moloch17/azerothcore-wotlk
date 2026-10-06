@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from animus.human import build as build_mod
-from animus.human import companions, dataset, fit, mapper, motion, prices, realism
+from animus.human import companions, dataset, fit, mapper, motion, parity, prices, realism
 from animus.human import reader as r
 from animus.human import reference as ref
 from animus.human import segment, tracks
@@ -179,6 +179,15 @@ def cmd_realism(args) -> dict:
             "contexts": result["realism_emd_contexts"]}
 
 
+def cmd_parity(args) -> dict:
+    study = parity.study_capture(r.CaptureDir(args.capture_dir, args.start, args.end))
+    rep = parity.report(study, source=str(args.capture_dir))
+    js, md = parity.write(rep, args.out)
+    return {"json": str(js), "markdown": str(md), "summary": rep["summary"],
+            "attention": [f"{row['context']}: {row['metric']}" for row in rep["attention"]][:40],
+            "timing": {k: rep["timing"][k] for k in ("tick_ms", "decision_ms", "jitter_recommended")}}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m animus.human", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -238,6 +247,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bot", default=None, help="an eval_motion.npz (instead of --run)")
     p.add_argument("--reference", default=None, help="human_reference.json (default <out>/human_reference.json)")
     p.set_defaults(func=cmd_realism)
+
+    p = sub.add_parser("parity", help="bots against players in one capture: kinematics, cadence, realism, physics")
+    p.add_argument("capture_dir", help="the capture directory (<Animus.Capture.Dir>)")
+    p.add_argument("--out", default="human_parity.json", help="report path (.json or .md; both are written)")
+    p.add_argument("--from", dest="start", default=None, help="first hour (yyyy-mm-dd[Thh])")
+    p.add_argument("--to", dest="end", default=None, help="last hour")
+    p.set_defaults(func=cmd_parity)
 
     args = parser.parse_args(argv)
     if args.command == "realism" and not (args.run or args.bot):

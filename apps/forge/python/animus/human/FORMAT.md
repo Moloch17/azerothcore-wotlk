@@ -72,6 +72,7 @@ Common field names: `ms` = server unix time in milliseconds (u64); `player` = ps
 | 11 | Speeds | `u64 ms, u64 player, f32 walk, f32 run, f32 run_back, f32 swim, f32 swim_back, f32 flight, f32 flight_back, f32 turn_rate, f32 pitch_rate` (at session start and on every change) |
 | 12 | MotionEvent | `u64 ms, u64 player, u8 event, u32 arg, f32 x, f32 y, f32 z, u32 map` |
 | 13 | MoverState | `u64 ms, u64 player, u8 kind, u8 class, u8 race, u8 level, u32 map, u32 zone, u32 mount, u32 form, u8 in_combat, u8 move_revision, char[32] model` (format 2) |
+| 14 | MapUpdate | `u64 ms, u32 map, u32 instance, u32 diff_ms` (PROPOSED by the parity analysis, not yet written by mod-animus: each update of a map holding a captured mover, with the diff it was updated with -- the realm's own tick) |
 
 `opcode`: the client opcode (`MSG_MOVE_*` and the movement acks, as the server's movement handler received it).
 `source`: 0 a player's client packet; 2 an Animus companion's packet (format 2): its player controller reports through
