@@ -104,6 +104,9 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
 {
     // The camera first, whatever else this seat can render: the held rates over the decision (none at the episode's
     // first observation), follow mode easing it back while the forward key is held (R2: the key, not the body).
+    // The state is advanced from a const block, which is safe only because Observe runs once per seat per decision:
+    // a reset clears Observed, and ObserveAfterJoin is refused for vision stages. Anything that observes a seat twice
+    // in a decision would advance its camera twice.
     if (Vi::FreeLook::State* look = view.Look)
         Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f,
             view.Controls && view.Controls->Held.Forward > 0);
