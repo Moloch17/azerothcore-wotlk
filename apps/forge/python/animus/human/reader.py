@@ -52,7 +52,7 @@ class CaptureError(ValueError):
 # Record types (FORMAT.md §2).
 FILE_HEADER = 0
 SESSION_START, SESSION_CONTEXT, SESSION_END, GROUP_STATE, KNOWN_SPELLS, LATENCY = 1, 2, 3, 4, 5, 6
-MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY = 10, 11, 12, 13, 14
+MOVE, SPEEDS, MOTION_EVENT, MOVER_STATE, MOVE_TALLY, MAP_UPDATE = 10, 11, 12, 13, 14, 15
 
 # Move `source` (FORMAT.md §2.3): a player's client packet; format 1's synthesised companion sample (never written by
 # format 2); a companion's player controller packet, through its session's movement handlers (format 2).
@@ -100,6 +100,7 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                                  ("level", "u1"), ("map", "<u4"), ("zone", "<u4"), ("mount", "<u4"), ("form", "<u4"),
                                  ("in_combat", "u1"), ("move_revision", "u1"), ("model", "S32")]),
     MOVE_TALLY: ("MoveTally", [("ms", "<u8"), ("player", "<u8"), ("kind", "u1"), ("sent", "<u4"), ("kept", "<u4")]),
+    MAP_UPDATE: ("MapUpdate", [("ms", "<u8"), ("map", "<u4"), ("instance", "<u4"), ("diff_ms", "<u4")]),
     CAST_REQUEST: ("CastRequest", [("ms", "<u8"), ("player", "<u8"), ("spell", "<u4"), ("target", "<u8"),
                                    ("target_kind", "u1"), ("tx", "<f4"), ("ty", "<f4"), ("tz", "<f4"),
                                    ("gcd_active", "u1"), ("casting", "u1"), ("power", "<u4"),

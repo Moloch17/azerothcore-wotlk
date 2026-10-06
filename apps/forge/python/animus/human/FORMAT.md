@@ -73,6 +73,7 @@ Common field names: `ms` = server unix time in milliseconds (u64); `player` = ps
 | 12 | MotionEvent | `u64 ms, u64 player, u8 event, u32 arg, f32 x, f32 y, f32 z, u32 map` |
 | 13 | MoverState | `u64 ms, u64 player, u8 kind, u8 class, u8 race, u8 level, u32 map, u32 zone, u32 mount, u32 form, u8 in_combat, u8 move_revision, char[32] model` (format 2) |
 | 14 | MoveTally | `u64 ms, u64 player, u8 kind, u32 sent, u32 kept` (format 3) |
+| 15 | MapUpdate | `u64 ms, u32 map, u32 instance, u32 diff_ms` (format 3) |
 
 `opcode`: the client opcode (`MSG_MOVE_*` and the movement acks, as the server's movement handler received it).
 `source`: 0 a player's client packet; 2 an Animus companion's packet (format 2): its player controller reports through
@@ -94,6 +95,12 @@ movement handler (every opcode whose handler records a kept packet here); `kept`
 stream recorded. `sent - kept` is what the server refused or ignored (a spline under way, movement disabled, a
 teleport pending, an ack's pre-check, an invalid position). Written every 60 s while the counts change, and at the
 session's end, for players and companions alike.
+
+MapUpdate records every tick of a map instance that holds at least one captured mover (player or companion), in that
+map's move file: every one, not a sample -- one 28-byte record per occupied map instance per world tick. `diff_ms` is
+the diff that tick's player updates got (`Player::Update`; a companion's controller tick runs in it with the same
+diff), written by the first mover to update on that map that tick. It is the realm's movement tick; the map's full
+updates of creatures and objects (`MapUpdate.Interval`, `t_diff`) run on their own, slower, cadence and are not this.
 
 MoverState is written at a mover's first update and whenever a field changes, for players and companions alike:
 `kind` (0 human, 1 companion, as SessionStart), class, race, level, map and zone, `mount` (the mount aura's spell, 0
