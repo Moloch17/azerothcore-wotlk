@@ -309,7 +309,8 @@ void AnimusForge::ForgeConfig::Load()
         // The sizes frames are cast at, each within the canonical size; the ones that are not are left out.
         std::vector<std::string> sizeErrors;
         Vision.RenderSizes = Animus::Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>(
-            "AnimusForge.Vision.RenderSizes", "32x16, 48x24, 64x32"), Vision, sizeErrors);
+            "AnimusForge.Vision.RenderSizes", Animus::Vision::DEFAULT_RENDER_SIZES), Vision, Vision.RenderWeights,
+            sizeErrors);
         for (std::string const& error : sizeErrors)
             LOG_ERROR("server.loading", "AnimusForge.Vision.RenderSizes: {}", error);
         VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));

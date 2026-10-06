@@ -53,10 +53,17 @@ namespace Animus::Vision
         float Range = 100.0f;       // yards: the units a frame can see (a ray itself has no range)
         float Zoom = 6.0f;
         float Pitch = -15.0f;       // degrees, + up: the default looks slightly down
-        /// AnimusForge.Vision.RenderSizes: a seat draws one at every episode reset and casts its frames at it; each
-        /// is at most Width x Height. One entry renders every seat at it (a user's tier).
-        std::vector<Resolution> RenderSizes = { { 32, 16 }, { 48, 24 }, { 64, 32 } };
+        /// AnimusForge.Vision.RenderSizes: a seat draws one at every episode reset, by weight, and casts its frames
+        /// at it; each is at most Width x Height. One entry renders every seat at it (a user's tier). The default
+        /// renders about one episode in eight natively at 128 x 64 (0.4 of 3.4), so the model also sees what a GPU
+        /// renderer at the canonical size will give it.
+        std::vector<Resolution> RenderSizes = { { 32, 16 }, { 48, 24 }, { 64, 32 }, { 128, 64 } };
+        /// ... and each one's weight in that draw (> 0), parallel to RenderSizes.
+        std::vector<float> RenderWeights = { 1.0f, 1.0f, 1.0f, 0.4f };
     };
+
+    /// AnimusForge.Vision.RenderSizes' default, as the conf writes it.
+    constexpr char const* DEFAULT_RENDER_SIZES = "32x16, 48x24, 64x32, 128x64:0.4";
 
     /// The learner's patch is this share of the canonical width: a PATCH_COLUMNS-wide grid of patches (16 x 8 at 2:1).
     constexpr uint32_t PATCH_COLUMNS = 16;
@@ -67,24 +74,40 @@ namespace Animus::Vision
         return settings.Width / PATCH_COLUMNS > 0 ? settings.Width / PATCH_COLUMNS : 1;
     }
 
-    /// AnimusForge.Vision.RenderSizes' text, "WxH, WxH, ...": the sizes kept, in order, each 1 to the canonical
-    /// size's; an entry that does not parse or does not fit is left out with a line in `errors`. None kept: the
-    /// canonical size alone (and a line saying so).
+    /// AnimusForge.Vision.RenderSizes' text, "WxH, WxH:w, ...": the sizes kept, in order, each 1 to the canonical
+    /// size's, with their weights in `weights` (w > 0; 1 when not given); an entry that does not parse or does not
+    /// fit is left out with a line in `errors`. None kept: the canonical size alone, weight 1 (and a line saying so).
     [[nodiscard]] std::vector<Resolution> ParseRenderSizes(std::string const& text, Settings const& canonical,
-        std::vector<std::string>& errors);
+        std::vector<float>& weights, std::vector<std::string>& errors);
 
-    /// The size a seat casts its frames at this episode: one of RenderSizes, `roll(n)` drawing an index in [0, n)
-    /// (the pool's random numbers), called only when there is a choice -- so one entry draws nothing and every seat
-    /// renders at it. None configured: the canonical size.
+    /// The size a seat casts its frames at this episode: one of RenderSizes, drawn by RenderWeights (a missing or
+    /// non-positive weight counts as 1), `roll(total)` giving a number in [0, total) from the pool's random numbers.
+    /// Rolled only when there is a choice -- so one entry draws nothing and every seat renders at it. None
+    /// configured: the canonical size.
     template <typename Roll>
     [[nodiscard]] Resolution DrawRenderSize(Settings const& settings, Roll&& roll)
     {
-        if (settings.RenderSizes.empty())
+        std::vector<Resolution> const& sizes = settings.RenderSizes;
+        if (sizes.empty())
             return { settings.Width, settings.Height };
-        if (settings.RenderSizes.size() == 1)
-            return settings.RenderSizes.front();
-        uint32_t const index = uint32_t(roll(uint32_t(settings.RenderSizes.size())));
-        return settings.RenderSizes[index < settings.RenderSizes.size() ? index : 0];
+        if (sizes.size() == 1)
+            return sizes.front();
+        auto const weight = [&settings](std::size_t i)
+        {
+            return i < settings.RenderWeights.size() && settings.RenderWeights[i] > 0.0f ? settings.RenderWeights[i]
+                : 1.0f;
+        };
+        float total = 0.0f;
+        for (std::size_t i = 0; i < sizes.size(); ++i)
+            total += weight(i);
+        float pick = float(roll(total));
+        for (std::size_t i = 0; i < sizes.size(); ++i)
+        {
+            if (pick < weight(i))
+                return sizes[i];
+            pick -= weight(i);
+        }
+        return sizes.back();        // a roll at the very top of the range (rounding)
     }
 
     /// What a pixel's ray hit: the kind channel's values (the interface's table).

@@ -159,9 +159,18 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     // The camera's settings before any layout is built: its width and height are the vision block's size.
     Animus::Vision::Configure(_config.Vision);
+    // The render sizes, each with its share of the draw.
     std::string renderSizes;
-    for (Animus::Vision::Resolution const& size : _config.Vision.RenderSizes)
-        renderSizes += (renderSizes.empty() ? "" : ", ") + Acore::StringFormat("{}x{}", size.Width, size.Height);
+    float weightSum = 0.0f;
+    for (float weight : _config.Vision.RenderWeights)
+        weightSum += weight;
+    for (std::size_t i = 0; i < _config.Vision.RenderSizes.size(); ++i)
+    {
+        Animus::Vision::Resolution const& size = _config.Vision.RenderSizes[i];
+        float const weight = i < _config.Vision.RenderWeights.size() ? _config.Vision.RenderWeights[i] : 1.0f;
+        renderSizes += (renderSizes.empty() ? "" : ", ") + Acore::StringFormat("{}x{} {:.0f}%", size.Width,
+            size.Height, weightSum > 0.0f ? 100.0f * weight / weightSum : 0.0f);
+    }
     LOG_INFO("module.animus", "Camera vision: {} x {} pixels (cast at {}, a size drawn a seat an episode), {:.0f} x "
         "{:.0f} degrees, units within {:.0f} yd (rays have no range), zoom {:.1f} yd, pitch {:.0f} degrees, free look: "
         "{} scalar columns and a {}-byte image an agent",

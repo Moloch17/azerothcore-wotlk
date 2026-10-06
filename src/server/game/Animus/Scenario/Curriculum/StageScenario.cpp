@@ -2190,11 +2190,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (SeatState& seat : data.Seats)
         seat.ResetEpisode();
     // Each seat's camera draws the size it casts this episode's frames at (AnimusForge.Vision.RenderSizes), from the
-    // world thread's random numbers as the rest of the reset does; one size draws nothing, and a stage without a
-    // camera draws nothing at all, so its random numbers are what they were.
+    // world thread's random numbers as the rest of the reset does, by the sizes' weights; one size draws nothing, and
+    // a stage without a camera draws nothing at all, so its random numbers are what they were.
     if (_stage.Has(BlockId::Vision))
         for (SeatState& seat : data.Seats)
-            seat.Look.Render = Vision::DrawRenderSize(Vision::Current(), [](uint32 n) { return urand(0, n - 1); });
+            seat.Look.Render = Vision::DrawRenderSize(Vision::Current(), [](float total)
+            {
+                return std::min(frand(0.0f, total), std::nextafter(total, 0.0f));
+            });
     for (RewardLedger& director : data.DirectorRewards)
         director.ResetEpisode();
     // No resurrection offer is in flight into a new episode, and the clock it was taken on has restarted.

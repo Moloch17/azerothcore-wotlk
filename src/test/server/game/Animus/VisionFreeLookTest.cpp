@@ -21,6 +21,8 @@
 #include "gtest/gtest.h"
 #include <array>
 #include <cmath>
+#include <map>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -338,51 +340,96 @@ TEST(VisionFreeLookTest, UpscaleNearestPixel)
     EXPECT_EQ(columns, (std::vector<uint32_t>{ 0, 0, 0, 1, 1, 1, 2, 2 }));
 }
 
-// The draw: one entry means every seat renders at it (and nothing is drawn); several are drawn among; none is the
+// The draw: one entry means every seat renders at it and nothing is rolled; several are drawn by weight; none is the
 // canonical size.
 TEST(VisionFreeLookTest, RenderSizeDraw)
 {
     Vi::Settings settings;
     settings.RenderSizes = { { 48, 24 } };
+    settings.RenderWeights = { 0.3f };
     uint32_t rolls = 0;
-    auto const roll = [&rolls](uint32_t n) { ++rolls; return n - 1; };
+    auto const roll = [&rolls](float total) { ++rolls; return total / 2.0f; };
     for (int i = 0; i < 10; ++i)
         EXPECT_EQ(Vi::DrawRenderSize(settings, roll), (Vi::Resolution{ 48, 24 }));
     EXPECT_EQ(rolls, 0u);
 
-    settings.RenderSizes = { { 32, 16 }, { 48, 24 }, { 64, 32 } };
-    std::set<uint32_t> widths;
-    for (uint32_t pick = 0; pick < 3; ++pick)
-        widths.insert(Vi::DrawRenderSize(settings, [pick](uint32_t n) { return pick % n; }).Width);
-    EXPECT_EQ(widths, (std::set<uint32_t>{ 32, 48, 64 }));
-    // A roll out of range falls back to the first.
-    EXPECT_EQ(Vi::DrawRenderSize(settings, [](uint32_t n) { return n + 5; }), (Vi::Resolution{ 32, 16 }));
+    // The roll walks the weights in order: [0, 1) the first, [1, 2) the second, [2, 3) the third, [3, 3.4) the last.
+    settings.RenderSizes = { { 32, 16 }, { 48, 24 }, { 64, 32 }, { 128, 64 } };
+    settings.RenderWeights = { 1.0f, 1.0f, 1.0f, 0.4f };
+    auto const at = [&settings](float value) { return Vi::DrawRenderSize(settings, [value](float) { return value; }); };
+    EXPECT_EQ(at(0.0f).Width, 32u);
+    EXPECT_EQ(at(0.99f).Width, 32u);
+    EXPECT_EQ(at(1.0f).Width, 48u);
+    EXPECT_EQ(at(2.5f).Width, 64u);
+    EXPECT_EQ(at(3.0f).Width, 128u);
+    EXPECT_EQ(at(3.39f).Width, 128u);
+    EXPECT_EQ(at(5.0f).Width, 128u);        // past the top (rounding): the last
+    float total = 0.0f;
+    EXPECT_EQ(Vi::DrawRenderSize(settings, [&total](float t) { total = t; return 0.0f; }).Width, 32u);
+    EXPECT_FLOAT_EQ(total, 3.4f);
 
     settings.RenderSizes.clear();
     EXPECT_EQ(Vi::DrawRenderSize(settings, roll), (Vi::Resolution{ settings.Width, settings.Height }));
 }
 
-// AnimusForge.Vision.RenderSizes: "WxH" entries separated by commas, spaces ignored; an entry that does not parse or
-// does not fit within the canonical size is left out and said; none left is the canonical size.
+// The default mix, drawn 100,000 times from a fixed seed: each low size about 1 / 3.4 of the episodes and the native
+// 128 x 64 about 0.4 / 3.4 (11.8%).
+TEST(VisionFreeLookTest, RenderSizeDrawIsWeighted)
+{
+    Vi::Settings const settings;
+    ASSERT_EQ(settings.RenderSizes.size(), 4u);
+    std::mt19937 random(20261006);
+    std::map<uint32_t, uint32_t> drawn;
+    constexpr uint32_t DRAWS = 100000;
+    for (uint32_t i = 0; i < DRAWS; ++i)
+    {
+        Vi::Resolution const size = Vi::DrawRenderSize(settings, [&random](float total)
+        {
+            return std::uniform_real_distribution<float>(0.0f, total)(random);
+        });
+        ++drawn[size.Width];
+    }
+    EXPECT_EQ(drawn.size(), 4u);
+    EXPECT_NEAR(double(drawn[32]) / DRAWS, 1.0 / 3.4, 0.01);
+    EXPECT_NEAR(double(drawn[48]) / DRAWS, 1.0 / 3.4, 0.01);
+    EXPECT_NEAR(double(drawn[64]) / DRAWS, 1.0 / 3.4, 0.01);
+    EXPECT_NEAR(double(drawn[128]) / DRAWS, 0.4 / 3.4, 0.01);
+}
+
+// AnimusForge.Vision.RenderSizes: "WxH" or "WxH:w" entries separated by commas, spaces ignored; an entry that does
+// not parse, has no weight above 0 after its colon, or does not fit within the canonical size is left out and said;
+// none left is the canonical size.
 TEST(VisionFreeLookTest, ParseRenderSizes)
 {
     Vi::Settings settings;      // 128 x 64
     std::vector<std::string> errors;
-    std::vector<Vi::Resolution> sizes = Vi::ParseRenderSizes("32x16, 48x24, 64x32", settings, errors);
+    std::vector<float> weights;
+    std::vector<Vi::Resolution> sizes = Vi::ParseRenderSizes("32x16, 48x24, 64x32", settings, weights, errors);
     EXPECT_TRUE(errors.empty());
     EXPECT_EQ(sizes, (std::vector<Vi::Resolution>{ { 32, 16 }, { 48, 24 }, { 64, 32 } }));
+    EXPECT_EQ(weights, (std::vector<float>{ 1.0f, 1.0f, 1.0f }));
 
-    sizes = Vi::ParseRenderSizes(" 128 X 64 ,", settings, errors);
+    // The default, weights and all, is the Settings default.
+    sizes = Vi::ParseRenderSizes(Vi::DEFAULT_RENDER_SIZES, settings, weights, errors);
+    EXPECT_TRUE(errors.empty());
+    EXPECT_EQ(sizes, settings.RenderSizes);
+    EXPECT_EQ(weights, settings.RenderWeights);
+
+    sizes = Vi::ParseRenderSizes(" 128 X 64 : 2.5 ,", settings, weights, errors);
     EXPECT_TRUE(errors.empty());
     EXPECT_EQ(sizes, (std::vector<Vi::Resolution>{ { 128, 64 } }));
+    EXPECT_EQ(weights, (std::vector<float>{ 2.5f }));
 
-    sizes = Vi::ParseRenderSizes("32x16, 256x16, 0x8, banana, 48x", settings, errors);
+    sizes = Vi::ParseRenderSizes("32x16, 256x16, 0x8, banana, 48x, 64x32:0, 64x32:-1, 64x32:x, 64x32:", settings,
+        weights, errors);
     EXPECT_EQ(sizes, (std::vector<Vi::Resolution>{ { 32, 16 } }));
-    EXPECT_EQ(errors.size(), 4u);
+    EXPECT_EQ(weights, (std::vector<float>{ 1.0f }));
+    EXPECT_EQ(errors.size(), 8u);
 
     errors.clear();
-    sizes = Vi::ParseRenderSizes("", settings, errors);
+    sizes = Vi::ParseRenderSizes("", settings, weights, errors);
     EXPECT_EQ(sizes, (std::vector<Vi::Resolution>{ { 128, 64 } }));
+    EXPECT_EQ(weights, (std::vector<float>{ 1.0f }));
     EXPECT_EQ(errors.size(), 1u);
 }
 

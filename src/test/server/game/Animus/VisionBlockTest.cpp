@@ -62,6 +62,10 @@ TEST(VisionBlockTest, ScalarsAloneAndTheImageAsBytes)
         EXPECT_EQ(size[0].to_number<uint32>(), settings.RenderSizes[i].Width);
         EXPECT_EQ(size[1].to_number<uint32>(), settings.RenderSizes[i].Height);
     }
+    boost::json::array const& weights = image.at("render_weights").as_array();
+    ASSERT_EQ(weights.size(), settings.RenderSizes.size());
+    for (std::size_t i = 0; i < weights.size(); ++i)
+        EXPECT_FLOAT_EQ(float(weights[i].to_number<double>()), settings.RenderWeights[i]);
 
     ASSERT_TRUE(entry.contains("look"));
     boost::json::object const& look = entry.at("look").as_object();
@@ -79,7 +83,7 @@ TEST(VisionBlockTest, ScalarsAloneAndTheImageAsBytes)
 }
 
 // The contract's defaults (FREELOOK A): a 128 x 64 canonical image, 32 KB an agent, patch 8 (a 16 x 8 grid), and
-// three render sizes within it; 64 x 32 keeps the old patch of 4.
+// four weighted render sizes within it, the native 128 x 64 at 0.4; 64 x 32 keeps the old patch of 4.
 TEST(VisionBlockTest, CanonicalDefaults)
 {
     Vi::Settings settings;
@@ -89,10 +93,12 @@ TEST(VisionBlockTest, CanonicalDefaults)
     EXPECT_EQ(Vi::Patch(settings), 8u);
     EXPECT_EQ(settings.Width / Vi::Patch(settings), 16u);
     EXPECT_EQ(settings.Height / Vi::Patch(settings), 8u);
-    ASSERT_EQ(settings.RenderSizes.size(), 3u);
+    ASSERT_EQ(settings.RenderSizes.size(), 4u);
     EXPECT_EQ(settings.RenderSizes[0], (Vi::Resolution{ 32, 16 }));
     EXPECT_EQ(settings.RenderSizes[1], (Vi::Resolution{ 48, 24 }));
     EXPECT_EQ(settings.RenderSizes[2], (Vi::Resolution{ 64, 32 }));
+    EXPECT_EQ(settings.RenderSizes[3], (Vi::Resolution{ 128, 64 }));
+    EXPECT_EQ(settings.RenderWeights, (std::vector<float>{ 1.0f, 1.0f, 1.0f, 0.4f }));
     EXPECT_EQ(Vi::SCALARS, 11u);
 
     settings.Width = 64;

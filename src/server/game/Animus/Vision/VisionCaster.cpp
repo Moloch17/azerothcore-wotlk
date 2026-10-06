@@ -18,6 +18,8 @@
 #include "VisionCaster.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <chrono>
 #include <limits>
 #include <vector>
@@ -241,9 +243,10 @@ void Animus::Vision::Configure(Settings const& settings)
 }
 
 std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::string const& text,
-    Settings const& canonical, std::vector<std::string>& errors)
+    Settings const& canonical, std::vector<float>& weights, std::vector<std::string>& errors)
 {
     std::vector<Resolution> sizes;
+    weights.clear();
     std::size_t at = 0;
     while (at <= text.size())
     {
@@ -255,6 +258,21 @@ std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::st
             entry.end());
         if (entry.empty())
             continue;
+
+        // An optional weight after a colon: "128x64:0.4".
+        float weight = 1.0f;
+        if (std::size_t const colon = entry.find(':'); colon != std::string::npos)
+        {
+            std::string const number = entry.substr(colon + 1);
+            char* end = nullptr;
+            weight = std::strtof(number.c_str(), &end);
+            if (number.empty() || end != number.c_str() + number.size() || !std::isfinite(weight) || weight <= 0.0f)
+            {
+                errors.push_back("\"" + entry + "\" has no weight above 0 after its colon");
+                continue;
+            }
+            entry.resize(colon);
+        }
 
         std::size_t const x = entry.find_first_of("xX");
         std::string const w = x == std::string::npos ? std::string() : entry.substr(0, x);
@@ -278,6 +296,7 @@ std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::st
             continue;
         }
         sizes.push_back(size);
+        weights.push_back(weight);
     }
 
     if (sizes.empty())
@@ -285,6 +304,7 @@ std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::st
         errors.push_back("no size left: rendering at the canonical " + std::to_string(canonical.Width) + "x"
             + std::to_string(canonical.Height));
         sizes.push_back({ canonical.Width, canonical.Height });
+        weights.assign(1, 1.0f);
     }
     return sizes;
 }

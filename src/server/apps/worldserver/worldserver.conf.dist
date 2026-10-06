@@ -5407,16 +5407,18 @@ AnimusForge.Vision.Height = 64
 
 #
 #    AnimusForge.Vision.RenderSizes
-#        Description: The sizes frames are actually cast at, "WxH" separated by commas, each at
-#                     most Width x Height: the same field of view with fewer, wider rays, scaled
-#                     up into the canonical image by nearest pixel. Each seat draws one at random
-#                     at every episode reset, so the model learns to see at all of them; with one
-#                     entry every seat renders at it (pick the tier a machine can afford). An
-#                     entry that does not parse or does not fit is left out and logged; none
-#                     left renders at Width x Height.
-#        Default:     "32x16, 48x24, 64x32"
+#        Description: The sizes frames are actually cast at, "WxH" or "WxH:weight" separated by
+#                     commas, each at most Width x Height: the same field of view with fewer,
+#                     wider rays, scaled up into the canonical image by nearest pixel. Each seat
+#                     draws one at every episode reset, by weight (above 0; 1 when not given), so
+#                     the model learns to see at all of them; with one entry every seat renders
+#                     at it (pick the tier a machine can afford). The default renders about one
+#                     episode in eight natively at 128 x 64 (0.4 of 3.4), what a renderer at the
+#                     canonical size gives. An entry that does not parse or does not fit is left
+#                     out and logged; none left renders at Width x Height.
+#        Default:     "32x16, 48x24, 64x32, 128x64:0.4"
 
-AnimusForge.Vision.RenderSizes = "32x16, 48x24, 64x32"
+AnimusForge.Vision.RenderSizes = "32x16, 48x24, 64x32, 128x64:0.4"
 
 #
 #    AnimusForge.Vision.FovH
