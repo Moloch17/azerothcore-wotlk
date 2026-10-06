@@ -181,13 +181,17 @@ namespace Animus::Vision
     /// OBJECTIVE_RADIUS of the objective, else 0 (and 0 with none).
     [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective);
 
-    /// A pixel's five channels.
-    void EncodePixel(Hit const& hit, float feetZ, float objective, float* out);
+    /// A pixel's four bytes (Camera.h, BYTES_PER_PIXEL).
+    void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out);
+    /// The learner's decode of them: the five channels (distance, height, normal, kind, objective) as revision 2
+    /// carried them, but quantised. For `forge camera snapshot` and the tests; the network decodes its own.
+    void DecodePixel(uint8_t const* in, float* out);
 
-    /// A whole frame into `out` (ObsCount floats): the image, [row][col][channel] with row 0 at the top, then the
-    /// seven scalars. Returns the rays cast (every pixel's and the boom's).
+    /// A whole frame: the image into `image` (ImageBytes, [row][col][byte] with row 0 at the top; null to cast no
+    /// pixel), the seven scalars into `scalars`. Returns the rays cast (every pixel's and the boom's).
     uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
-        std::span<UnitShape const> units, Vec3 const* objective, float* out, Breakdown* breakdown = nullptr);
+        std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image, float* scalars,
+        Breakdown* breakdown = nullptr);
 }
 
 #endif

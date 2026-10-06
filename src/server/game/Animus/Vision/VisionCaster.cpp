@@ -460,36 +460,45 @@ float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 
     return Length(toward - dir * along) <= OBJECTIVE_RADIUS ? 1.0f : 0.0f;
 }
 
-void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, float objective, float* out)
+void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
 {
     bool const sky = hit.What == Kind::Sky;
-    out[CHANNEL_DISTANCE] = sky ? 1.0f : std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
+    float const distance = std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
         / std::log(DISTANCE_REFERENCE / NEAR), 0.0f, 1.0f);
-    out[CHANNEL_HEIGHT] = sky ? 0.0f : std::clamp((hit.Z - feetZ) / HEIGHT_SCALE, -1.0f, 1.0f);
-    out[CHANNEL_NORMAL] = std::clamp(hit.NormalZ, 0.0f, 1.0f);
-    out[CHANNEL_KIND] = float(uint32_t(hit.What));
-    out[CHANNEL_OBJECTIVE] = objective;
+    out[0] = sky ? SKY_BYTE : uint8_t(std::lround(DISTANCE_LEVELS * distance));
+    int32_t const steps = std::clamp(int32_t(std::lround((hit.Z - feetZ) / HEIGHT_STEP)), -HEIGHT_LIMIT, HEIGHT_LIMIT);
+    out[1] = sky ? HEIGHT_ZERO : uint8_t(int32_t(HEIGHT_ZERO) + steps);
+    out[2] = uint8_t(std::lround(255.0f * std::clamp(hit.NormalZ, 0.0f, 1.0f)));
+    out[3] = uint8_t((uint8_t(hit.What) & KIND_MASK) | (objective ? OBJECTIVE_BIT : 0));
+}
+
+void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
+{
+    out[CHANNEL_DISTANCE] = in[0] == SKY_BYTE ? 1.0f : float(in[0]) / DISTANCE_LEVELS;
+    out[CHANNEL_HEIGHT] = float(int32_t(in[1]) - int32_t(HEIGHT_ZERO)) / float(HEIGHT_LIMIT);
+    out[CHANNEL_NORMAL] = float(in[2]) / 255.0f;
+    out[CHANNEL_KIND] = float(in[3] & KIND_MASK);
+    out[CHANNEL_OBJECTIVE] = float((in[3] >> 4) & 1);
 }
 
 uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
-    VisionWorld const& world, std::span<UnitShape const> units, Vec3 const* objective, float* out,
-    Breakdown* breakdown)
+    VisionWorld const& world, std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image,
+    float* scalars, Breakdown* breakdown)
 {
     Rig const rig = PlaceCamera(pose, camera, world, breakdown);
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
     bool const underwater = liquid.Present && rig.Camera.Z < liquid.Level;
 
-    for (uint32_t row = 0; row < settings.Height; ++row)
+    for (uint32_t row = 0; image && row < settings.Height; ++row)
         for (uint32_t col = 0; col < settings.Width; ++col)
         {
             Vec3 const dir = PixelDirection(rig, settings, row, col);
             Hit const hit = CastRay(rig.Camera, dir, world, units, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
-            float const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective);
-            EncodePixel(hit, pose.Z, flag, out + (std::size_t(row) * settings.Width + col) * CHANNELS);
+            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective) > 0.5f;
+            EncodePixel(hit, pose.Z, flag, image + (std::size_t(row) * settings.Width + col) * BYTES_PER_PIXEL);
         }
 
-    float* scalars = out + ImageCount(settings);
     scalars[SCALAR_YAW_OFFSET] = camera.YawOffset / PI;
     scalars[SCALAR_PITCH] = camera.Pitch / (PI / 2.0f);
     scalars[SCALAR_ZOOM] = camera.Zoom / ZOOM_SCALE;
@@ -499,5 +508,5 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
         ? std::clamp((rig.Pivot.Z - floor) / PIVOT_HEIGHT_SCALE, 0.0f, 1.0f) : 1.0f;
     scalars[SCALAR_UNDERWATER] = underwater ? 1.0f : 0.0f;
     scalars[SCALAR_AIRBORNE] = pose.Airborne ? 1.0f : 0.0f;
-    return settings.Width * settings.Height + (camera.Zoom > 0.0f ? 1 : 0);
+    return (image ? settings.Width * settings.Height : 0) + (camera.Zoom > 0.0f ? 1 : 0);
 }

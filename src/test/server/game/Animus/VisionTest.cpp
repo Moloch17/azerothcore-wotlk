@@ -18,6 +18,7 @@
 #include "VisionCaster.h"
 #include "gtest/gtest.h"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -321,6 +322,31 @@ namespace
         return best;
     }
 
+    /// A frame as the vision block makes it: the image's bytes and the scalars, read back as the learner decodes it.
+    struct Frame
+    {
+        std::vector<uint8_t> Image;
+        std::array<float, Vi::SCALARS> Scalars{};
+
+        explicit Frame(Vi::Settings const& settings) : Image(Vi::ImageBytes(settings)) { }
+
+        [[nodiscard]] float At(uint32_t pixel, uint32_t channel) const
+        {
+            float decoded[Vi::CHANNELS];
+            Vi::DecodePixel(&Image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL], decoded);
+            return decoded[channel];
+        }
+    };
+
+    /// A pixel encoded, then decoded.
+    std::array<float, Vi::CHANNELS> RoundTrip(Vi::Hit const& hit, float feetZ, bool objective, uint8_t* bytes)
+    {
+        Vi::EncodePixel(hit, feetZ, objective, bytes);
+        std::array<float, Vi::CHANNELS> out{};
+        Vi::DecodePixel(bytes, out.data());
+        return out;
+    }
+
     float AzimuthOf(Vi::Vec3 d) { return std::atan2(d.Y, d.X); }
     float ElevationOf(Vi::Vec3 d) { return std::asin(std::clamp(d.Z, -1.0f, 1.0f)); }
     float WrapDiff(float a, float b) { return std::remainder(a - b, 2.0f * Vi::PI); }
@@ -583,10 +609,10 @@ TEST(VisionTest, DoorsAndModelsAreToldApart)
     EXPECT_EQ(hit.What, Vi::Kind::Model);
     EXPECT_FLOAT_EQ(hit.NormalZ, 1.0f);
 
-    float pixel[Vi::CHANNELS];
+    uint8_t bytes[Vi::BYTES_PER_PIXEL];
     world.Models.clear();
-    Vi::EncodePixel(Vi::CastRay(origin, ahead, world, {}), 0.0f, 0.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_KIND], 3.0f);
+    EXPECT_FLOAT_EQ(RoundTrip(Vi::CastRay(origin, ahead, world, {}), 0.0f, false, bytes)[Vi::CHANNEL_KIND], 3.0f);
+    EXPECT_EQ(bytes[3], 3);
 }
 
 // The objective flag: the closed segment from the camera to the hit (or the reach) within a yard of it (R12).
@@ -614,13 +640,13 @@ TEST(VisionTest, ObjectiveFlagIsTheSegmentWithinAYard)
     Vi::CameraState camera;
     camera.Pitch = -15.0f * DEG;
     Vi::Vec3 const marker{ X0 + 8.0f, Y0, 0.0f };
-    std::vector<float> frame(Vi::ObsCount(settings));
+    Frame frame(settings);
     auto const flagged = [&](Vi::Vec3 const* objective)
     {
-        Vi::Render(settings, pose, camera, world, {}, objective, frame.data());
+        Vi::Render(settings, pose, camera, world, {}, objective, frame.Image.data(), frame.Scalars.data());
         float sum = 0.0f;
         for (uint32_t pixel = 0; pixel < settings.Width * settings.Height; ++pixel)
-            sum += frame[pixel * Vi::CHANNELS + Vi::CHANNEL_OBJECTIVE];
+            sum += frame.At(pixel, Vi::CHANNEL_OBJECTIVE);
         return sum;
     };
     EXPECT_GT(flagged(&marker), 0.0f);
@@ -660,52 +686,117 @@ TEST(VisionTest, RaysMeetUnitCylindersButNotTheSeat)
     EXPECT_EQ(Vi::CastRay(origin, ahead, world, alone).What, Vi::Kind::Sky);
 }
 
-// The five channels and the block's width; the distance is log-scaled to DISTANCE_REFERENCE (1000 yd).
-TEST(VisionTest, ChannelsAreEncodedAsTheInterfaceSays)
+// A pixel's four bytes (camera-vision.BYTES.md), and their decode back to the five channels: distance at 0.25, 1,
+// 100 and 1000 yd and sky; height +-25 yd and clamped; normal 0, 0.5, 1; every kind with and without the objective.
+// The block's float columns are the seven scalars.
+TEST(VisionTest, PixelsTravelAsFourBytes)
 {
-    EXPECT_EQ(Vi::ObsCount(Vi::Settings()), 10247u);
+    EXPECT_EQ(Vi::ObsCount(Vi::Settings()), 7u);
+    EXPECT_EQ(Vi::ImageBytes(Vi::Settings()), 64u * 32u * 4u);
 
-    float pixel[Vi::CHANNELS];
+    uint8_t bytes[Vi::BYTES_PER_PIXEL];
     Vi::Hit hit;
     hit.What = Vi::Kind::Terrain;
-    hit.Distance = 0.1f;
-    hit.Z = 50.0f;
-    hit.NormalZ = 0.8f;
-    Vi::EncodePixel(hit, 0.0f, 1.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_DISTANCE], 0.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_HEIGHT], 1.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_NORMAL], 0.8f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_KIND], 1.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_OBJECTIVE], 1.0f);
-
-    hit.Distance = 5.0f;
-    hit.Z = -30.0f;
-    hit.What = Vi::Kind::Hostile;
-    Vi::EncodePixel(hit, 0.0f, 0.0f, pixel);
-    EXPECT_NEAR(pixel[Vi::CHANNEL_DISTANCE], std::log(20.0f) / std::log(4000.0f), 1e-6f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_HEIGHT], -1.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_KIND], 6.0f);
-
+    hit.NormalZ = 1.0f;
+    float const logRange = std::log(4000.0f);
+    for (float distance : { 0.1f, 0.25f, 1.0f, 100.0f, 1000.0f, 2500.0f })
+    {
+        hit.Distance = distance;
+        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, false, bytes);
+        float const exact = std::clamp(std::log(std::max(distance, 0.25f) / 0.25f) / logRange, 0.0f, 1.0f);
+        EXPECT_EQ(bytes[0], uint8_t(std::lround(254.0f * exact))) << distance;
+        EXPECT_NEAR(out[Vi::CHANNEL_DISTANCE], exact, 0.5f / 254.0f + 1e-6f) << distance;
+        EXPECT_NE(bytes[0], Vi::SKY_BYTE);      // 255 is sky alone: 1000 yd and beyond is 254
+    }
+    hit.Distance = 0.25f;
+    RoundTrip(hit, 0.0f, false, bytes);
+    EXPECT_EQ(bytes[0], 0);
     hit.Distance = 1000.0f;
-    Vi::EncodePixel(hit, 0.0f, 0.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_DISTANCE], 1.0f);
-    hit.Distance = 2500.0f;
-    Vi::EncodePixel(hit, 0.0f, 0.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_DISTANCE], 1.0f);
+    RoundTrip(hit, 0.0f, false, bytes);
+    EXPECT_EQ(bytes[0], 254);
 
+    // Height over the feet in 0.2 yd steps round 128: +-25 yd is +-125 steps, and past it clamps.
     hit.Distance = 10.0f;
-    hit.Z = 12.5f;
-    Vi::EncodePixel(hit, 0.0f, 0.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_HEIGHT], 0.5f);
+    struct Rise { float Dz; uint8_t Byte; float Decoded; };
+    for (Rise const& rise : { Rise{ 0.0f, 128, 0.0f }, Rise{ 25.0f, 253, 1.0f }, Rise{ -25.0f, 3, -1.0f },
+             Rise{ 40.0f, 253, 1.0f }, Rise{ -60.0f, 3, -1.0f }, Rise{ 1.0f, 133, 5.0f / 125.0f },
+             Rise{ -0.29f, 127, -1.0f / 125.0f } })
+    {
+        hit.Z = 7.0f + rise.Dz;
+        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 7.0f, false, bytes);
+        EXPECT_EQ(bytes[1], rise.Byte) << rise.Dz;
+        EXPECT_NEAR(out[Vi::CHANNEL_HEIGHT], rise.Decoded, 1e-6f) << rise.Dz;
+    }
 
+    // The normal's z in 255ths.
+    hit.Z = 0.0f;
+    for (float normal : { 0.0f, 0.5f, 1.0f, 1.3f, -0.2f })
+    {
+        hit.NormalZ = normal;
+        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, false, bytes);
+        EXPECT_EQ(bytes[2], uint8_t(std::lround(255.0f * std::clamp(normal, 0.0f, 1.0f)))) << normal;
+        EXPECT_NEAR(out[Vi::CHANNEL_NORMAL], std::clamp(normal, 0.0f, 1.0f), 0.5f / 255.0f + 1e-6f) << normal;
+    }
+
+    // Every kind in the low four bits, the objective in bit 4, bits 5-7 clear.
+    for (uint32_t kind = 0; kind < Vi::KINDS; ++kind)
+        for (bool objective : { false, true })
+        {
+            hit.What = Vi::Kind(kind);
+            hit.Distance = 10.0f;
+            std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, objective, bytes);
+            EXPECT_EQ(bytes[3], uint8_t(kind | (objective ? 0x10u : 0u)));
+            EXPECT_EQ(bytes[3] & 0xE0, 0);
+            EXPECT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(kind));
+            EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], objective ? 1.0f : 0.0f);
+        }
+
+    // Sky: distance 255 (1.0), height 128 (0), whatever the ray's end.
     hit = Vi::Hit();
     hit.Distance = 300.0f;
     hit.Z = 80.0f;
-    Vi::EncodePixel(hit, 0.0f, 0.0f, pixel);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_DISTANCE], 1.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_HEIGHT], 0.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_NORMAL], 0.0f);
-    EXPECT_FLOAT_EQ(pixel[Vi::CHANNEL_KIND], 0.0f);
+    std::array<float, Vi::CHANNELS> const sky = RoundTrip(hit, 0.0f, false, bytes);
+    EXPECT_EQ(bytes[0], 255);
+    EXPECT_EQ(bytes[1], 128);
+    EXPECT_EQ(bytes[2], 0);
+    EXPECT_EQ(bytes[3], 0);
+    EXPECT_FLOAT_EQ(sky[Vi::CHANNEL_DISTANCE], 1.0f);
+    EXPECT_FLOAT_EQ(sky[Vi::CHANNEL_HEIGHT], 0.0f);
+
+    // Every byte value decodes in range, as the learner's table does.
+    for (uint32_t value = 0; value < 256; ++value)
+    {
+        uint8_t const in[4] = { uint8_t(value), uint8_t(value), uint8_t(value), uint8_t(value) };
+        float out[Vi::CHANNELS];
+        Vi::DecodePixel(in, out);
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_DISTANCE], value == 255 ? 1.0f : float(value) / 254.0f);
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_HEIGHT], (float(value) - 128.0f) / 125.0f);
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_NORMAL], float(value) / 255.0f);
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(value & 15));
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], float((value >> 4) & 1));
+    }
+}
+
+// A row with no frame (a director, an absent agent, a seat with no character or no map) is "nothing seen": every
+// pixel sky, height 0, normal 0, no objective -- never the zeros that would read as a wall at the camera.
+TEST(VisionTest, NoFrameRowIsSky)
+{
+    std::vector<uint8_t> row(Vi::ImageBytes(Vi::Settings()), 0x5A);
+    Vi::FillNoFrame(row.data(), uint32_t(row.size()));
+    for (std::size_t at = 0; at < row.size(); at += Vi::BYTES_PER_PIXEL)
+    {
+        ASSERT_EQ(row[at], 255);
+        ASSERT_EQ(row[at + 1], 128);
+        ASSERT_EQ(row[at + 2], 0);
+        ASSERT_EQ(row[at + 3], 0);
+        float out[Vi::CHANNELS];
+        Vi::DecodePixel(&row[at], out);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_DISTANCE], 1.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_HEIGHT], 0.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_NORMAL], 0.0f);
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(Vi::Kind::Sky));
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], 0.0f);
+    }
 }
 
 // A frame: [row][col][channel] with row 0 at the top, then the seven scalars (R16).
@@ -721,22 +812,24 @@ TEST(VisionTest, FrameLayoutAndScalars)
     Vi::CameraState camera;
     camera.Pitch = -15.0f * DEG;
     camera.Zoom = 6.0f;
-    std::vector<float> frame(Vi::ObsCount(settings), -7.0f);
-    uint32_t const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data());
+    Frame frame(settings);
+    frame.Scalars.fill(-7.0f);
+    uint32_t const rays = Vi::Render(settings, pose, camera, world, {}, nullptr, frame.Image.data(),
+        frame.Scalars.data());
     EXPECT_EQ(rays, 64u * 32u + 1u);
-    for (float value : frame)
+    for (float value : frame.Scalars)
         EXPECT_NE(value, -7.0f);
 
     auto const at = [&](uint32_t row, uint32_t col, uint32_t channel)
     {
-        return frame[(std::size_t(row) * settings.Width + col) * Vi::CHANNELS + channel];
+        return frame.At(row * settings.Width + col, channel);
     };
     EXPECT_FLOAT_EQ(at(0, 32, Vi::CHANNEL_KIND), float(Vi::Kind::Sky));
     EXPECT_FLOAT_EQ(at(31, 32, Vi::CHANNEL_KIND), float(Vi::Kind::Terrain));
     EXPECT_LT(at(31, 32, Vi::CHANNEL_DISTANCE), at(20, 32, Vi::CHANNEL_DISTANCE));
     EXPECT_NEAR(at(31, 32, Vi::CHANNEL_HEIGHT), 0.0f, 1e-3f);
 
-    float const* scalars = frame.data() + Vi::ImageCount(settings);
+    float const* scalars = frame.Scalars.data();
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_YAW_OFFSET], 0.0f);
     EXPECT_NEAR(scalars[Vi::SCALAR_PITCH], -1.0f / 6.0f, 1e-5f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_ZOOM], 0.5f);
@@ -747,7 +840,12 @@ TEST(VisionTest, FrameLayoutAndScalars)
 
     world.Surface = [](float, float) { return -30.0f; };
     world.Pools = { { X0 - 50.0f, X0 + 50.0f, Y0 - 50.0f, Y0 + 50.0f, 20.0f } };
-    Vi::Render(settings, pose, camera, world, {}, nullptr, frame.data());
+    Vi::Render(settings, pose, camera, world, {}, nullptr, frame.Image.data(), frame.Scalars.data());
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_PIVOT_HEIGHT], 1.0f);
+    EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_UNDERWATER], 1.0f);
+
+    // With no image to write, the scalars alone and no pixel cast (only the boom).
+    EXPECT_EQ(Vi::Render(settings, pose, camera, world, {}, nullptr, nullptr, frame.Scalars.data()), 1u);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_PIVOT_HEIGHT], 1.0f);
     EXPECT_FLOAT_EQ(scalars[Vi::SCALAR_UNDERWATER], 1.0f);
 }
@@ -860,7 +958,7 @@ TEST(VisionTest, TimingHarness)
     Vi::CameraState camera;
     camera.Pitch = settings.Pitch * DEG;
     camera.Zoom = settings.Zoom;
-    std::vector<float> frame(Vi::ObsCount(settings));
+    Frame frame(settings);
     std::vector<Vi::UnitShape> crowd;
     for (int i = 0; i < 20; ++i)
         crowd.push_back(Vi::UnitShape{ X0 + 10.0f + 4.0f * float(i), Y0 + float(i % 5) - 2.0f, -1.0f, 0.4f, 2.0f,
@@ -880,11 +978,13 @@ TEST(VisionTest, TimingHarness)
             uint32_t rays = 0;
             auto const start = std::chrono::steady_clock::now();
             for (int i = 0; i < FRAMES; ++i)
-                rays = Vi::Render(settings, pose, camera, *scene.World, seen, nullptr, frame.data());
+                rays = Vi::Render(settings, pose, camera, *scene.World, seen, nullptr, frame.Image.data(),
+                    frame.Scalars.data());
             double const us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
                 .count() / FRAMES;
             Vi::Breakdown breakdown;
-            Vi::Render(settings, pose, camera, *scene.World, seen, nullptr, frame.data(), &breakdown);
+            Vi::Render(settings, pose, camera, *scene.World, seen, nullptr, frame.Image.data(),
+                frame.Scalars.data(), &breakdown);
             std::cout << "[ vision ] " << scene.Name << ", " << seen.size() << " units: " << us << " us/frame, "
                 << rays << " rays/frame; with clocks: trees " << double(breakdown.TreeNs) / 1e3 << " us ("
                 << breakdown.TreeCasts << " casts), WMO liquids " << double(breakdown.LiquidNs) / 1e3 << " us ("

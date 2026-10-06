@@ -155,10 +155,10 @@ void AnimusForge::Forge::OnStartup()
     // The camera's settings before any layout is built: its width and height are the vision block's size.
     Animus::Vision::Configure(_config.Vision);
     LOG_INFO("module.animus", "Camera vision: {} x {} pixels, {:.0f} x {:.0f} degrees, units within {:.0f} yd (rays "
-        "have no range), zoom {:.1f} yd, pitch {:.0f} degrees: {} observation columns a vision block",
+        "have no range), zoom {:.1f} yd, pitch {:.0f} degrees: {} scalar columns and a {}-byte image an agent",
         _config.Vision.Width, _config.Vision.Height,
         _config.Vision.FovH, _config.Vision.FovV, _config.Vision.Range, _config.Vision.Zoom, _config.Vision.Pitch,
-        Animus::Vision::ObsCount(_config.Vision));
+        Animus::Vision::ObsCount(_config.Vision), Animus::Vision::ImageBytes(_config.Vision));
     // The player controller's client constants, once: what training moves and reports seats with (player-controller).
     LOG_INFO("module.animus", "Player controller: step up {:.4f} yd (the client's max(radius + 1/720, tan 50), "
         "provisional until C6's replay), jump {:.4f} yd/s, swim jump {:.4f}; reports at the client's cadence -- a change at once, "
@@ -2528,6 +2528,7 @@ bool AnimusForge::Forge::SendSpec(uint32 rank)
     msg.EnvGroups = _pool->GroupCount();
     std::strncpy(msg.Scenario, _scenario->Name(), SCENARIO_NAME_SIZE - 1);
     msg.KinematicsDim = Animus::Kinematics::SAMPLE_DIM;
+    msg.ImageBytes = spec.ImageBytes;
 
     uint32 const layoutCount = uint32(spec.Layouts.size());
     std::vector<LayoutMsg> layouts(layoutCount);
@@ -2555,7 +2556,7 @@ bool AnimusForge::Forge::OfferDevice(uint32 rank)
 
     // A learner reconnecting gets fresh buffers; whatever it had opened it closed when it went.
     if (gpu)
-        for (void* pointer : { device.Obs, device.State, device.Mask })
+        for (void* pointer : { device.Obs, device.State, device.Mask, device.Image })
             if (pointer)
                 gpu->Free(pointer);
     device = RankDevice();
@@ -2567,6 +2568,9 @@ bool AnimusForge::Forge::OfferDevice(uint32 rank)
     std::size_t const obsBytes = std::size_t(envs) * spec.AgentsPerEnv * spec.ObsDim * sizeof(float);
     std::size_t const stateBytes = std::size_t(envs) * spec.StateDim * sizeof(float);
     std::size_t const maskBytes = std::size_t(envs) * spec.AgentsPerEnv * spec.NumActions * sizeof(uint8);
+    // The camera's images too, in a stage with one (protocol 21): the DEVICE message then carries their handle.
+    std::size_t const imageBytes = std::size_t(envs) * spec.AgentsPerEnv * spec.ImageBytes;
+    uint8 imageHandle[DEVICE_HANDLE_BYTES] = {};
     // The GPU the rank's learner trains on: the one it can open the buffers on.
     std::vector<uint32> const& gpus = _config.Gpus;
     device.Device = int(rank < gpus.size() ? gpus[rank] : 0);
@@ -2578,11 +2582,12 @@ bool AnimusForge::Forge::OfferDevice(uint32 rank)
         || gpu->Alloc(&device.State, std::max<std::size_t>(stateBytes, 4))
         || gpu->Alloc(&device.Mask, std::max<std::size_t>(maskBytes, 4))
         || gpu->Export(device.Obs, msg.ObsHandle) || gpu->Export(device.State, msg.StateHandle)
-        || gpu->Export(device.Mask, msg.MaskHandle))
+        || gpu->Export(device.Mask, msg.MaskHandle)
+        || (imageBytes && (gpu->Alloc(&device.Image, imageBytes) || gpu->Export(device.Image, imageHandle))))
     {
         LOG_WARN("module.animus", "Rank {}: no device buffers, the learner gets obs over the socket: {}", rank,
             gpu->LastError());
-        for (void* pointer : { device.Obs, device.State, device.Mask })
+        for (void* pointer : { device.Obs, device.State, device.Mask, device.Image })
             if (pointer)
                 gpu->Free(pointer);
         device = RankDevice();
@@ -2591,8 +2596,10 @@ bool AnimusForge::Forge::OfferDevice(uint32 rank)
 
     _server.Use(rank);
     device.Offered = true;
-    device.Bytes = obsBytes + stateBytes + maskBytes;
-    return _server.Send(MsgType::Device, { { &msg, sizeof(msg) } });
+    device.Bytes = obsBytes + stateBytes + maskBytes + imageBytes;
+    // A stage without a camera sends the message as protocol 20 did; one with a camera adds its images' handle.
+    Chunk const image = imageBytes ? Chunk{ imageHandle, DEVICE_HANDLE_BYTES } : Chunk{ nullptr, 0 };
+    return _server.Send(MsgType::Device, { { &msg, sizeof(msg) }, image });
 }
 
 bool AnimusForge::Forge::AwaitDeviceAnswer(uint32 rank)
@@ -2611,13 +2618,15 @@ bool AnimusForge::Forge::AwaitDeviceAnswer(uint32 rank)
     device.Offered = false;
     device.On = ack.Accepted != 0;
     LOG_INFO("module.animus", "Rank {}: {}", rank, device.On
-        ? Acore::StringFormat("obs, state and mask in device memory on GPU {} ({:.1f} MB)", device.Device,
+        ? Acore::StringFormat("obs, state, mask{} in device memory on GPU {} ({:.1f} MB)",
+            device.Image ? " and the camera images" : "", device.Device,
             double(device.Bytes) / (1024.0 * 1024.0))
         : std::string("the learner declined device buffers; obs over the socket"));
     if (!device.On)
     {
-        for (void* pointer : { device.Obs, device.State, device.Mask })
-            gpu->Free(pointer);
+        for (void* pointer : { device.Obs, device.State, device.Mask, device.Image })
+            if (pointer)
+                gpu->Free(pointer);
         device = RankDevice();
     }
     return true;
@@ -2635,7 +2644,8 @@ bool AnimusForge::Forge::UploadRows(uint32 rank, uint32 begin, uint32 local, uin
             reinterpret_cast<char const*>(vec.data()) + std::size_t(begin) * perEnv, std::size_t(count) * perEnv) == 0;
     };
     if (gpu->Init(device.Device) == 0 && copy(device.Obs, _pool->Obs) && copy(device.State, _pool->State)
-        && copy(device.Mask, _pool->Mask) && gpu->Synchronize() == 0)
+        && copy(device.Mask, _pool->Mask) && (!device.Image || copy(device.Image, _pool->Image))
+        && gpu->Synchronize() == 0)
         return true;
     LOG_ERROR("module.animus", "Rank {}: writing obs to the device failed: {}", rank, gpu->LastError());
     return false;
@@ -2684,6 +2694,16 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                         vec.begin() + std::ptrdiff_t((env + 1) * perEnv));
             return Chunk{ rows.data(), rows.size() * sizeof(float) };
         };
+        auto endedBytes = [this, begin, count, envs](std::vector<uint8> const& vec, std::vector<uint8>& rows)
+        {
+            std::size_t const perEnv = vec.size() / envs;
+            rows.clear();
+            for (uint32 env = begin; env < begin + count; ++env)
+                if (_pool->Done[env])
+                    rows.insert(rows.end(), vec.begin() + std::ptrdiff_t(env * perEnv),
+                        vec.begin() + std::ptrdiff_t((env + 1) * perEnv));
+            return Chunk{ rows.data(), rows.size() };
+        };
 
         // With device buffers the obs, state and mask are in them before the STEP says they are there.
         bool const device = rank < _rankDevices.size() && _rankDevices[rank].On;
@@ -2707,6 +2727,10 @@ bool AnimusForge::Forge::SendStep(uint32 group)
                 ended(_pool->EpisodeInfo, _endedInfo),
                 chunk(_pool->EpisodeSeed),
                 chunk(_pool->KinematicSamples),
+                // The camera's images (protocol 21), only in a stage with a vision block: every env's (unless they
+                // are in the device buffers), then the ended envs' last, as final_obs.
+                device || _pool->Image.empty() ? none : chunk(_pool->Image),
+                _pool->FinalImage.empty() ? none : endedBytes(_pool->FinalImage, _endedImage),
             }))
             return false;
     }

@@ -227,6 +227,10 @@ namespace Animus
         /// Per agent, Kinematics::SAMPLE_DIM floats: its body after the decision (the new episode's first sample where
         /// one ended), written with Layout and Present (protocol 20).
         std::vector<float> KinematicSamples;
+        /// Per agent, Spec().ImageBytes bytes: its camera image (camera-vision.BYTES.md, protocol 21), beside Obs; and
+        /// the ended episodes' last, beside FinalObs. Empty for a stage without a vision block.
+        std::vector<uint8> Image;
+        std::vector<uint8> FinalImage;
         std::vector<int32> Actions;
         /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
         /// A host fills it before ApplyActions; a policy without goals leaves it alone.
@@ -234,6 +238,12 @@ namespace Animus
         std::vector<int32> Goals;
 
     private:
+        /// Env `e`'s rows of an image array, or null when the stage has no camera.
+        [[nodiscard]] uint8* ImageRows(std::vector<uint8>& image, uint32 e)
+        {
+            return image.empty() ? nullptr : &image[std::size_t(e) * _spec.AgentsPerEnv * _spec.ImageBytes];
+        }
+
         struct AgentSlot
         {
             uint32 Env;

@@ -62,6 +62,9 @@ namespace Animus
         uint32 EpisodeInfoDim = 0;  // per agent
         uint32 GoalCount = 0;       // goals a policy may pursue (Curriculum::SeatGoal); 0 = the scenario has none
         uint32 LongestEpisodeSeconds = 0;   // when some episodes run longer than StageSettings::EpisodeSeconds
+        /// Per agent, the bytes of its camera image (Vision::ImageBytes) when the stage has a vision block, else 0:
+        /// the STEP's image section (camera-vision.BYTES.md, protocol 21).
+        uint32 ImageBytes = 0;
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
 
@@ -112,8 +115,9 @@ namespace Animus
         virtual void ApplyGoals(Env& /*env*/, int32 const* /*goals*/) { }
 
         /// obs: [AgentsPerEnv * ObsDim], state: [StateDim], mask: [AgentsPerEnv * NumActions]. `mask` is null for an
-        /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then.
-        virtual void Observe(Env& env, float* obs, float* state, uint8* mask) = 0;
+        /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then. image:
+        /// [AgentsPerEnv * Spec().ImageBytes] each agent's camera image, null when ImageBytes is 0.
+        virtual void Observe(Env& env, float* obs, float* state, uint8* mask, uint8* image) = 0;
 
         /// layout: [AgentsPerEnv] index into Spec().Layouts of each agent's current layout. Called after Observe,
         /// and for an ended episode before its reset. Constant within an episode.

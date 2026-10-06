@@ -45,6 +45,9 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     image["kinds"] = Vi::KINDS;
     image["kind_channel"] = Vi::KIND_CHANNEL;
     image["scalars"] = Vi::SCALARS;
+    // Revision 3: the image is not in the float columns but its own byte section of the STEP, four bytes a pixel.
+    image["transport"] = "bytes";
+    image["bytes_per_pixel"] = Vi::BYTES_PER_PIXEL;
     block["image"] = std::move(image);
 
     // What the image means beyond its shape: the camera it was rendered with (informational).
@@ -106,8 +109,9 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
 
     Vi::Vec3 const objective{ view.Objective.GetPositionX(), view.Objective.GetPositionY(),
         view.Objective.GetPositionZ() };
+    // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
     uint32 const rays = Vi::Render(settings, pose, camera, world, units, view.HasObjective ? &objective : nullptr,
-        obs);
+        view.Image, obs);
     Vi::Cost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), rays);
 }
