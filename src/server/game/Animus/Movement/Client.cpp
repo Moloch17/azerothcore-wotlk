@@ -241,6 +241,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         if (control.FaceTurn != 0.0f)
         {
             Body.Yaw = WrapYaw(Body.Yaw + control.FaceTurn);
+            control.FaceTurnApplied += control.FaceTurn;
             control.FaceTurn = 0.0f;
             ++Counts.Facings;
             if (!Send(Snapshot(Cd::Op::SET_FACING, startMs, before), link))

@@ -112,8 +112,18 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     // The state is advanced from a const block, which is safe only because Observe runs once per seat per decision:
     // a reset clears Observed, and ObserveAfterJoin is refused for vision stages. Anything that observes a seat twice
     // in a decision would advance its camera twice.
+    // A face the player controller really turned the body for comes off the yaw offset here, before the frame: the
+    // camera looks where it did, and the body faces it. A face the server's control dropped turned nothing.
     if (Vi::FreeLook::State* look = view.Look)
-        Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f);
+    {
+        float turned = 0.0f;
+        if (view.Controls)
+        {
+            turned = view.Controls->Held.FaceTurnApplied;
+            view.Controls->Held.FaceTurnApplied = 0.0f;
+        }
+        Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f, turned);
+    }
 
     Player* bot = view.Bot;
     Map* map = bot && bot->IsInWorld() ? bot->GetMap() : nullptr;

@@ -17,9 +17,11 @@
 
 #include "Client.h"
 #include "FlagRules.h"
+#include "FreeLook.h"
 #include "ReportCadence.h"
 #include "gtest/gtest.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <random>
 #include <thread>
@@ -706,35 +708,66 @@ TEST(ClientTest, TheServerStripsTheSameFlagsFromEveryReport)
     EXPECT_EQ(Mv::SanitizeFlags(Mv::FlagBit::FLYING, gm), Mv::FlagBit::FLYING);
 }
 
-// Turn to camera (ControlState::FaceTurn, the look head's face choice): the facing snaps by the turn at the next
-// tick's start and the client reports it as exactly one SET_FACING there, carrying the new facing -- the server's
-// handler takes it as any mouse-look facing. One-shot: nothing more is sent after it, and no turn sends nothing.
+// Turn to camera (ControlState::FaceTurn, the look head's face choice), end to end: a camera 90 degrees left of the
+// facing asks for face; the next tick snaps the facing +90 at its start and reports it as exactly one SET_FACING there,
+// carrying the new facing -- the server's handler takes it as any mouse-look facing -- and records the turn it applied;
+// at the next observation the camera takes that off its offset, which is then 0. While the server imposes (a stun)
+// the turn is dropped: the body, the server and the camera's offset are all unchanged, and no packet is sent.
 TEST(ClientTest, TurnToCameraIsOneSetFacing)
 {
+    namespace FL = Animus::Vision::FreeLook;
+    Animus::Vision::Settings const settings;
+    FL::State look;
+    FL::Reset(look, settings);
+    FL::Advance(look, 0.0f);
+    float const quarter = 1.5707963f;
+    look.YawOffset = quarter;
+
     Rig rig;
     rig.Start(0.0f, 0.0f, 1.0f);
     rig.Run(200);
     size_t const before = rig.Link.Reports.size();
     ASSERT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 0u);
 
-    float const quarter = 1.5707963f;
-    rig.Control.FaceTurn = quarter;
+    // Imposed first: dropped.
+    std::array<int32_t, FL::HEADS> const face = { int32_t(FL::YAW_STOP_INDEX), int32_t(FL::PITCH_STOP_INDEX),
+        int32_t(FL::ZOOM_FACE) };
+    rig.Link.Imposed = true;
+    rig.Control.FaceTurn = FL::Apply(look, face.data(), settings);
+    rig.Run(50);
+    rig.Link.Imposed = false;
+    EXPECT_FLOAT_EQ(rig.Control.FaceTurn, 0.0f);
+    EXPECT_FLOAT_EQ(rig.Control.FaceTurnApplied, 0.0f);
+    FL::Advance(look, 0.05f, rig.Control.FaceTurnApplied);
+    EXPECT_NEAR(look.YawOffset, quarter, 1e-6f);
+    EXPECT_NEAR(Turned(rig.Client.Body.Yaw, 1.0f), 0.0f, 1e-5f);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 0u);
+    size_t const afterImposed = rig.Link.Reports.size();
+    EXPECT_EQ(afterImposed, before);
+
+    // Pressed again, with the server's hands off: taken.
+    rig.Control.FaceTurn = FL::Apply(look, face.data(), settings);
+    EXPECT_NEAR(rig.Control.FaceTurn, quarter, 1e-6f);
     rig.Run(50);
     EXPECT_FLOAT_EQ(rig.Control.FaceTurn, 0.0f);
+    EXPECT_NEAR(rig.Control.FaceTurnApplied, quarter, 1e-6f);
     EXPECT_NEAR(Turned(rig.Client.Body.Yaw, 1.0f + quarter), 0.0f, 1e-5f);
-    ASSERT_EQ(rig.Link.Reports.size(), before + 1);
+    ASSERT_EQ(rig.Link.Reports.size(), afterImposed + 1);
     EXPECT_EQ(rig.Link.Reports.back().Opcode, Cd::Op::SET_FACING);
     EXPECT_EQ(rig.Link.Reports.back().TimeMs, rig.Now - 50);        // at the step's start
     EXPECT_NEAR(Turned(rig.Link.Yaw, 1.0f + quarter), 0.0f, 1e-5f);
 
+    // The next observation: the camera's offset is 0, and its yaw in the world is where it was (1 + 90 degrees).
+    float const turned = rig.Control.FaceTurnApplied;
+    rig.Control.FaceTurnApplied = 0.0f;
+    FL::Advance(look, 0.05f, turned);
+    EXPECT_NEAR(look.YawOffset, 0.0f, 1e-6f);
+    EXPECT_NEAR(Turned(rig.Client.Body.Yaw + look.YawOffset, 1.0f + quarter), 0.0f, 1e-5f);
+
+    // One-shot: nothing more is sent.
     rig.Run(500);
     EXPECT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 1u);
-    EXPECT_EQ(rig.Link.Reports.size(), before + 1);
-
-    // While the server imposes (a stun), the snap is dropped: no turn, no packet.
-    rig.Link.Imposed = true;
-    rig.Control.FaceTurn = -quarter;
-    rig.Run(50);
-    EXPECT_FLOAT_EQ(rig.Control.FaceTurn, 0.0f);
-    EXPECT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 1u);
+    EXPECT_EQ(rig.Link.Reports.size(), afterImposed + 1);
+    // And face with the offset at 0 asks for no turn at all.
+    EXPECT_FLOAT_EQ(FL::Apply(look, face.data(), settings), 0.0f);
 }

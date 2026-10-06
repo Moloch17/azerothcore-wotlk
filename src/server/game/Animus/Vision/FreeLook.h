@@ -56,7 +56,7 @@ namespace Animus::Vision::FreeLook
     constexpr uint32_t PITCH_STOP_INDEX = 2;
     /// The zoom head: hold; in or out one level (clamped); recentre (yaw offset 0, the conf's pitch, both rates let
     /// go; the zoom is kept); face, "turn to camera" (WoW's right-click snap): the body turns to the camera's yaw
-    /// (facing + yaw offset) and the yaw offset becomes 0, the held rates and the pitch kept.
+    /// (facing + yaw offset) and, once it has, the yaw offset becomes 0; the held rates and the pitch kept.
     enum Zoom : uint32_t
     {
         ZOOM_HOLD = 0,
@@ -138,9 +138,10 @@ namespace Animus::Vision::FreeLook
     /// steps now; so it shows in the next frame. A row out of range is left alone (ACT refuses one before it gets
     /// here). Recentre lets go of both rates, whatever this choice held.
     ///
-    /// Returns the turn the body is to make (radians, + left): the yaw offset a face choice took, which the caller
-    /// hands the player controller (Movement::ControlState::FaceTurn) so it reaches the server as a client's
-    /// SET_FACING; 0 for every other choice, and for a face with the offset already within FACE_MIN of 0.
+    /// Returns the turn the body is to make (radians, + left): a face choice's yaw offset, which the caller hands the
+    /// player controller (Movement::ControlState::FaceTurn) so it reaches the server as a client's SET_FACING; 0 for
+    /// every other choice, and for a face with the offset already within FACE_MIN of 0. The offset itself changes
+    /// only once the body has turned (Advance).
     inline float Apply(State& state, int32_t const* choice, Settings const& settings)
     {
         if (!Valid(choice))
@@ -162,13 +163,9 @@ namespace Animus::Vision::FreeLook
                 state.PitchRate = 0.0f;
                 break;
             case ZOOM_FACE:
-            {
-                float const turn = state.YawOffset;
-                if (std::fabs(turn) < FACE_MIN)
-                    return 0.0f;
-                state.YawOffset = 0.0f;
-                return turn;
-            }
+                // The offset stays as it is until the body has really turned (Advance's `bodyTurned`): a turn the
+                // server's control drops changes nothing, and the seat can press face again.
+                return std::fabs(state.YawOffset) < FACE_MIN ? 0.0f : state.YawOffset;
             default:
                 break;
         }
@@ -186,9 +183,14 @@ namespace Animus::Vision::FreeLook
         state.Pitch = std::clamp(state.Pitch + state.PitchRate * dt, -PITCH_LIMIT, PITCH_LIMIT);
     }
 
-    /// An observation: the camera advances by the decision's length, except at the episode's first (dt = 0).
-    inline void Advance(State& state, float decisionSeconds)
+    /// An observation: the camera advances by the decision's length, except at the episode's first (dt = 0). And
+    /// `bodyTurned`, what the player controller actually turned the body by for a face since the last observation
+    /// (ControlState::FaceTurnApplied), comes off the yaw offset: the camera looks the same way in the world, and the
+    /// body now faces it. 0 when no face was taken, or the server's control dropped it.
+    inline void Advance(State& state, float decisionSeconds, float bodyTurned = 0.0f)
     {
+        if (bodyTurned != 0.0f)
+            state.YawOffset = Wrap(state.YawOffset - bodyTurned);
         Integrate(state, state.Observed ? decisionSeconds : 0.0f);
         state.Observed = true;
     }

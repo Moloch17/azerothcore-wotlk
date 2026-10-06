@@ -108,6 +108,10 @@ namespace Animus::Movement
         /// as one SET_FACING there (Client::Tick). Cleared by the tick that takes it, or drops it while the server
         /// imposes. 0 is none.
         float FaceTurn = 0.0f;
+        /// What the client actually turned the body by for FaceTurn (Client::Tick adds it as it turns), until the
+        /// camera takes it off its yaw offset at the next observation and clears it (FreeLook::Advance). A dropped
+        /// turn adds nothing, so the camera stays where it was.
+        float FaceTurnApplied = 0.0f;
     };
 
     /// The unit's own speeds in force (mount, form, snare and buffs included), yd/s and rad/s.
