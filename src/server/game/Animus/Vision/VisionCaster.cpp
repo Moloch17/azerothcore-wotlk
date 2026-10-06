@@ -713,6 +713,9 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
     list = FrameSlots();
     list.CastWidth = cast.Width;
     list.CastHeight = cast.Height;
+    list.Camera = rig.Camera;
+    list.Azimuth = rig.Azimuth;
+    list.Elevation = rig.Elevation;
     if (target)
     {
         thread_local std::array<SlotStat, MAX_SEEN + 1> counts;

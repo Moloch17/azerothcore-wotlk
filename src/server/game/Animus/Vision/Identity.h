@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_IDENTITY_H
 
 #include "Camera.h"
+#include <array>
 #include <cstdint>
 
 /// **What a thing in view is, to this seat** (perception-goals 1a and 1b): the facts a player's client shows about a
@@ -101,6 +102,23 @@ namespace Animus::Vision
         float Health = 1.0f;
         int8_t Reaction = 0;
         Vec3 Centre;
+    };
+
+    /// **A seat's entity list for this decision** (perception-goals 1b): what its last frame saw, in slot order --
+    /// Info[s - 1] and Stats[s - 1] are pixel slot s's entity -- the size it was cast at, and the camera it was seen
+    /// from (the list's directions are to it). Written by the vision block, read by the entities block; Count 0
+    /// when nothing was rendered.
+    struct SeenList
+    {
+        uint32_t Count = 0;
+        uint32_t CastWidth = 0;
+        uint32_t CastHeight = 0;
+        Vec3 Camera;
+        float Azimuth = 0.0f;
+        float Elevation = 0.0f;
+        float SeatLevel = 0.0f;
+        std::array<EntityInfo, ENTITY_SLOTS> Info{};
+        std::array<SlotStat, ENTITY_SLOTS> Stats{};
     };
 }
 

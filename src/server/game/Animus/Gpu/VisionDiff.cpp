@@ -89,8 +89,8 @@ namespace
             Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()),
             Percent(tally.EdgeMismatches, tally.Pixels)));
         lines.push_back(Acore::StringFormat("    mismatches by cause: class {}, identity {}, objective {}, "
-            "distance {}, height {}, normal {}", tally.Class, tally.Identity, tally.Objective, tally.Distance, tally.Height,
-            tally.Normal));
+            "distance {}, height {}, normal {}", tally.Class, tally.Identity, tally.Objective, tally.Distance,
+            tally.Height, tally.Normal));
         lines.push_back(Acore::StringFormat("    identity: {} class or entity mismatches off an edge (gate 0); entity "
             "lists equal in {} of {} frames (gate all); {} entities listed by the CPU, {} frames with a full list",
             tally.OffEdgeIdentity, tally.SlotTablesExact, tally.Frames, tally.Listed, tally.FullLists));

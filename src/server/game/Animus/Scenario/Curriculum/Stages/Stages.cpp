@@ -444,6 +444,11 @@ std::vector<Animus::Curriculum::StageDefinition> const& Animus::Curriculum::Curr
         std::vector<StageDefinition> valid;
         for (StageDefinition& stage : Definitions())
         {
+            // A camera brings its entity list, right after it (perception-goals 1b): no stage names it on its own.
+            auto const vision = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Vision);
+            if (vision != stage.Blocks.end() && !stage.Has(BlockId::Entities))
+                stage.Blocks.insert(vision + 1, BlockId::Entities);
+
             if (std::string const problem = Problem(stage, valid); !problem.empty())
             {
                 LOG_ERROR("module.animus", "Stage {} is left out: {}", stage.Name, problem);

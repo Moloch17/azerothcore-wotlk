@@ -66,6 +66,9 @@ namespace Animus::Curriculum
         /// What the seat's camera sees: a depth-and-meaning image and the camera's scalars (camera-vision; no
         /// actions). Before the goal block, which stays last.
         Vision,
+        /// What the camera's last frame showed, as a list of the entities in it (perception-goals 1b; no actions).
+        /// Right after the vision block, which every stage with one is given it with (CurriculumStages).
+        Entities,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };

@@ -1663,6 +1663,13 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 block["camera"] = manifest["camera"];
                 block["look"] = manifest["look"];
             }
+            // The entity list, as a set the learner reads beside the camera (perception-goals 1b).
+            if (id == BlockId::Entities)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["entities"] = manifest["entities"];
+            }
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
             if (!rescaled.empty())
@@ -3469,6 +3476,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Controls = &seat.Controls;
     // Its camera, in a stage with one: the vision block advances it by the decision and renders from it.
     view.Look = _stage.Has(BlockId::Vision) ? &seat.Look : nullptr;
+    view.Seen = _stage.Has(BlockId::Vision) ? &seat.Seen : nullptr;
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.Facing = seat.Facing;

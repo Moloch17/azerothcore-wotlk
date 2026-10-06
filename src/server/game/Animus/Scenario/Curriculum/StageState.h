@@ -23,6 +23,7 @@
 #include "Block.h"
 #include "BotSlot.h"
 #include "Client.h"
+#include "Identity.h"
 #include "PlayerLink.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -254,6 +255,9 @@ namespace Animus::Curriculum
         /// held rates, where they have turned it, its zoom, and the size its frames are cast at this episode. Mutable
         /// like the controls: the vision block advances it while observing a const seat.
         mutable Vision::FreeLook::State Look;
+        /// The entities its camera's last frame showed (perception-goals 1b): written by the vision block, read by
+        /// the entities block. Mutable like the camera.
+        mutable Vision::SeenList Seen;
         mutable Movement::Client Mover;
         mutable Movement::LinkMemory Link;
         /// The controller's columns: reports refused, ticks pressing into a wall or stuck with a key held, course

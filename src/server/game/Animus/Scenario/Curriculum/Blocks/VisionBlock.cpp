@@ -140,6 +140,9 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
         Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f, turned);
     }
 
+    // Nothing seen until this decision's frame says otherwise.
+    if (view.Seen)
+        view.Seen->Count = 0;
     Player* bot = view.Bot;
     Map* map = bot && bot->IsInWorld() ? bot->GetMap() : nullptr;
     if (!map)
@@ -188,8 +191,27 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     Vi::Vec3 const objective{ view.Objective.GetPositionX(), view.Objective.GetPositionY(),
         view.Objective.GetPositionZ() };
     // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
+    thread_local Vi::FrameSlots slots;
     uint32 const rays = Vi::Render(settings, pose, camera, world, sight.View(),
-        view.HasObjective ? &objective : nullptr, view.Image, obs);
+        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, &slots);
+
+    // The frame's entity list for the entities block: slot s's entity, as the gather saw it.
+    if (Vi::SeenList* seen = view.Seen)
+    {
+        seen->Count = slots.Count;
+        seen->CastWidth = slots.CastWidth;
+        seen->CastHeight = slots.CastHeight;
+        seen->Camera = slots.Camera;
+        seen->Azimuth = slots.Azimuth;
+        seen->Elevation = slots.Elevation;
+        seen->SeatLevel = float(bot->GetLevel());
+        for (uint32 slot = 0; slot < slots.Count; ++slot)
+        {
+            uint32 const number = slots.Slots[slot].Entity;
+            seen->Stats[slot] = slots.Slots[slot];
+            seen->Info[slot] = number < sight.Entities.size() ? sight.Entities[number] : Vi::EntityInfo();
+        }
+    }
     Vi::Cost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), rays);
 }

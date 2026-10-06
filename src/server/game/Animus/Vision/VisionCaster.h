@@ -159,6 +159,10 @@ namespace Animus::Vision
         uint32_t CastWidth = 0;
         uint32_t CastHeight = 0;
         std::array<SlotStat, ENTITY_SLOTS> Slots{};
+        /// The camera the frame was seen from (Render fills it): where it was, and the view's azimuth and elevation.
+        Vec3 Camera;
+        float Azimuth = 0.0f;
+        float Elevation = 0.0f;
     };
 
     /// Where the seat is: its feet, its facing (radians, WoW's counter-clockwise yaw), its body height.

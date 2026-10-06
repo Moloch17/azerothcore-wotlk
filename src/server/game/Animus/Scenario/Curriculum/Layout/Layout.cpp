@@ -266,6 +266,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Hint:      return "hint";
         case BlockId::Death:     return "death";
         case BlockId::Vision:    return "vision";
+        case BlockId::Entities:  return "entities";
         case BlockId::Goal:      return "goal";
         case BlockId::Count:     break;
     }

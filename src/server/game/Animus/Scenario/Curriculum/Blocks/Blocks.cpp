@@ -26,6 +26,7 @@
 #include "CrowdBlock.h"
 #include "DeathBlock.h"
 #include "DuelBlock.h"
+#include "EntitiesBlock.h"
 #include "MoveBlock.h"
 #include "FlagBlock.h"
 #include "ForecastBlock.h"
@@ -132,13 +133,14 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static HintBlock const hint;
     static DeathBlock const death;
     static VisionBlock const vision;
+    static EntitiesBlock const entities;
     static GoalBlock const goal;
 
     // In BlockId order.
     static std::array<Block const*, BLOCK_COUNT> const blocks =
     {
         &core, &move, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet, &travel,
-        &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &vision, &goal
+        &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &vision, &entities, &goal
     };
 
     return *blocks[std::size_t(id)];

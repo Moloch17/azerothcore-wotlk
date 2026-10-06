@@ -41,6 +41,11 @@ class Player;
 class SpellInfo;
 class Unit;
 
+namespace Animus::Vision
+{
+    struct SeenList;
+}
+
 namespace Animus::Curriculum
 {
     struct Layout;
@@ -317,6 +322,9 @@ namespace Animus::Curriculum
         /// rendered by the vision block. Borrowed like the controls; null for a view without one, which the block
         /// renders from a fixed camera (yaw offset 0, the conf's pitch and zoom, at the canonical size).
         Vision::FreeLook::State* Look = nullptr;
+        /// **What its camera's last frame showed** (perception-goals 1b, SeatState::Seen): written by the vision
+        /// block as it renders, read by the entities block after it. Null for a view without a camera.
+        Vision::SeenList* Seen = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
