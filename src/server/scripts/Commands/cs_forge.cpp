@@ -28,6 +28,10 @@
 #include "MapVisionWorld.h"
 #include "FrameImage.h"
 #include "VisionCaster.h"
+#include "VisionDiff.h"
+#include "VisionGpu.h"
+#include "ForgeConfig.h"
+#include "GpuRuntime.h"
 #include "Capture.h"
 #include "GameTime.h"
 #include "MovementHandlerScript.h"
@@ -179,6 +183,12 @@ namespace
             static ChatCommandTable cameraCommandTable =
             {
                 { "snapshot", HandleCameraSnapshot, SEC_ADMINISTRATOR, Console::Yes },
+                { "diff",     HandleCameraDiff,     SEC_ADMINISTRATOR, Console::Yes },
+            };
+
+            static ChatCommandTable gpuCommandTable =
+            {
+                { "scene", HandleGpuScene, SEC_ADMINISTRATOR, Console::Yes },
             };
 
             static ChatCommandTable forgeCommandTable =
@@ -200,6 +210,7 @@ namespace
                 { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
                 { "camera",    cameraCommandTable },
+                { "gpu",       gpuCommandTable },
                 { "tasks",     HandleTasks,     SEC_ADMINISTRATOR, Console::Yes },
                 { "bench",     HandleBench,     SEC_ADMINISTRATOR, Console::Yes },
                 { "talents",   HandleTalents,   SEC_ADMINISTRATOR, Console::Yes },
@@ -241,6 +252,14 @@ namespace
                 "<file>-depth.pgm, <file>-kind.ppm and <file>-height.pgm (default file camera-snapshot) and prints the "
                 "rays and the wall time, split into tree casts, WMO liquids, terrain cells and units; no range: a ray "
                 "leaving the grids created round the feet is sky (idle only)" });
+            table.AddRow({ "forge camera diff <map> <x> <y> <z> <N> [radius]", "cast N random camera frames round "
+                "(x, y, z) (positions within radius yd, default 20; yaw, pitch, zoom random; render sizes cycling "
+                "through AnimusForge.Vision.RenderSizes and the canonical size; random units and objective) on the "
+                "CPU caster and on the GPU, and report the share of pixels identical within the tolerances, the "
+                "mismatches by cause and the time a frame of each (idle only)" });
+            table.AddRow({ "forge gpu scene <map> <gx> <gy>", "create grid (gx, gy) of the base map and report the "
+                "GPU camera's scene: the static tree's spawns, models, triangles and BIH against the CPU tree's, "
+                "the doors, the terrain grids and the MB each holds (idle only)" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields the dungeon wings' routes "
                 "read for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and their "
                 "neighbours (kept if already baked, unless rebake)" });
@@ -560,6 +579,121 @@ namespace
             handler->PSendSysMessage("  pixels by kind: {}", histogram);
             handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm, {0}.png and "
                 "{0}-composite.png", base);
+            return true;
+        }
+
+        /// The device library for the GPU camera's commands: loaded as AnimusForge.Gpu.Observe loads it, the first
+        /// time one asks; without it they say why and run on the host alone.
+        static bool EnsureDevice(ChatHandler* handler)
+        {
+            if (Animus::Gpu::Api())
+                return true;
+            AnimusForge::ForgeConfig config;
+            config.Load();
+            std::string why;
+            if (Animus::Gpu::Load(config.LearnerPython, config.LearnerWorkDir, why))
+                return true;
+            handler->PSendSysMessage("No device library ({}): the host's copy only", why);
+            return false;
+        }
+
+        /// `forge gpu scene <map> <gx> <gy>` (camera-vision.GPU.md, G1): creates grid (gx, gy) of the base map
+        /// (terrain, collision and navmesh tiles; no creatures), syncs the GPU camera's scene of the map and reports
+        /// it: the static tree's spawns and triangles as the CPU tree has them against the packing, the models,
+        /// their BIHs and liquids, the doors, the terrain grids, the MB each part holds and what the device holds in
+        /// all; then the grid's own share (its terrain, the spawns whose bounds touch it). Only while idle.
+        static bool HandleGpuScene(ChatHandler* handler, uint32 mapId, uint32 gx, uint32 gy)
+        {
+            namespace Gv = Animus::GpuVision;
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("forge gpu scene runs only while the forge is idle (it creates grids)");
+                return true;
+            }
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map || gx >= MAX_NUMBER_OF_GRIDS || gy >= MAX_NUMBER_OF_GRIDS)
+            {
+                handler->PSendSysMessage("No such map or grid: {} ({}, {})", mapId, gx, gy);
+                return true;
+            }
+            map->EnsureGridCreated(GridCoord(gx, gy));
+            EnsureDevice(handler);
+
+            Animus::Vision::MapVisionWorld const world(map, PHASEMASK_NORMAL);
+            Gv::Renderer& renderer = Gv::Shared();
+            std::string error;
+            auto const start = std::chrono::steady_clock::now();
+            int32 const scene = renderer.Sync(Gv::SourceOf(map, world), error);
+            double const syncMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()
+                - start).count();
+            if (scene < 0)
+            {
+                handler->PSendSysMessage("Scene sync failed: {}", error);
+                return true;
+            }
+            auto const mb = [](uint64 bytes) { return double(bytes) / (1024.0 * 1024.0); };
+            Gv::SceneReport const all = renderer.Report(scene);
+            Gv::GridReport const grid = renderer.ReportGrid(scene, int32(gx), int32(gy));
+            handler->PSendSysMessage("gpu scene map {} ({}), synced in {:.1f} ms{}", mapId, map->GetMapName(),
+                syncMs, renderer.OnDevice() ? "" : " (host only: no device)");
+            handler->PSendSysMessage("  static tree: {} spawns, {} loaded (the CPU tree: {}), {} triangles in them "
+                "(the CPU's models: {}); {} distinct models: {} groups, {} triangles, {} vertices, {} BIH node "
+                "words, {} WMO liquids; {:.2f} MB", all.Slots, all.LoadedSlots, all.CpuLoadedSlots, all.Triangles,
+                all.CpuTriangles, all.Models, all.Counts.Groups, all.Counts.Triangles, all.Counts.Vertices,
+                all.Counts.BihNodeWords, all.Counts.Liquids, mb(all.StaticBytes));
+            handler->PSendSysMessage("  doors: {} ({:.2f} MB); terrain: {} grids created, {} with terrain "
+                "({:.2f} MB); the device holds {:.2f} MB for this renderer", all.Doors, mb(all.DoorBytes), all.Grids,
+                all.TerrainGrids, mb(all.TerrainBytes), mb(all.DeviceBytes));
+            handler->PSendSysMessage("  grid ({}, {}): {}; terrain {:.2f} MB; {} spawns touch it ({} triangles), {} "
+                "distinct models ({:.2f} MB, {} BIH node words): {:.2f} MB with its terrain", gx, gy,
+                grid.Created ? "created" : "not created", mb(grid.TerrainBytes), grid.Spawns, grid.Triangles,
+                grid.Models, mb(grid.ModelBytes), grid.BihNodeWords, mb(grid.TerrainBytes + grid.ModelBytes));
+            return true;
+        }
+
+        /// `forge camera diff <map> <x> <y> <z> <N> [radius]` (camera-vision.GPU.md, G2): N random frames round
+        /// (x, y, z) on the base map (RandomFrames: positions within radius yd, default 20; yaw, pitch and zoom
+        /// random; the render sizes cycling through RenderSizes and the canonical size; random units and an
+        /// objective) cast by the CPU caster and by the GPU (and by the kernel's code on the host), compared ray by
+        /// ray (VisionDiff.h's tolerances and edges), with the time a frame of each. The grids within the radius
+        /// and one beyond are created, as round a seat. Only while idle; writes nothing.
+        static bool HandleCameraDiff(ChatHandler* handler, uint32 mapId, float x, float y, float z, uint32 count,
+            Optional<float> radius)
+        {
+            namespace Vi = Animus::Vision;
+            namespace Gv = Animus::GpuVision;
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("forge camera diff runs only while the forge is idle (it creates grids)");
+                return true;
+            }
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+            float const around = std::clamp(radius.value_or(20.0f), 0.0f, 500.0f);
+            count = std::clamp<uint32>(count, 1, 4096);
+            CreateGrids(map, x - around - Vi::GRID_SIZE, y - around - Vi::GRID_SIZE, x + around + Vi::GRID_SIZE,
+                y + around + Vi::GRID_SIZE);
+            EnsureDevice(handler);
+
+            Vi::MapVisionWorld const world(map, PHASEMASK_NORMAL);
+            Gv::Renderer& renderer = Gv::Shared();
+            std::string error;
+            int32 const scene = renderer.Sync(Gv::SourceOf(map, world), error);
+            if (scene < 0)
+            {
+                handler->PSendSysMessage("Scene sync failed: {}", error);
+                return true;
+            }
+            Vi::Settings const settings = Vi::Current();
+            std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, count, around);
+            Gv::DiffReport const report = Gv::RunDiff(renderer, scene, world, PHASEMASK_NORMAL, settings, frames,
+                true);
+            for (std::string const& line : Gv::FormatDiff(report))
+                handler->SendSysMessage(line);
             return true;
         }
 
