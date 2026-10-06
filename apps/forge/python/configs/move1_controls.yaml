@@ -68,6 +68,10 @@ mappo:
   clip: 0.2
   value_clip: 0.2
   entropy_coef: 0.01
+  # The look head's three entropies sum to up to 5.17 nats against movement's one (~3.2), so at the same coefficient
+  # the camera was pushed to uniform: it turned 78% of decisions and M1 trailed the fixed camera (-2.44 vs +0.20 at
+  # 10M). A tenth of movement's (overseer, 2026-10-06); it follows the same schedule and floor.
+  look_entropy_coef: 0.001
   value_coef: 1.0
   actor_lr: 0.0003
   critic_lr: 0.0003
