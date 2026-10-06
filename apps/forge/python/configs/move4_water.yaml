@@ -16,13 +16,15 @@ costs:
   gate_value: 0.8
 
 eval:
-  report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, marker_rise, crossings,
-           fallback_legs, banks_climbed, swim_seconds, breaths, drowned, underwater_self_damage, time_ratio, overshoot,
-           stop_distance, jumps, stuck_seconds, wall_seconds, course_kinks, moves_refused, movement_casts, speed_casts,
-           died, timed_out, reward_arrive, reward_progress, reward_drowning, reward_stuck, reward_wall, reward_jitter,
-           reward_effort]
+  report: [arrived, arrived_narrow, fallback_share, narrow_legs, markers, markers_wanted, markers_broken, difficulty,
+           at_top_rung, marker_rise, crossings, fallback_legs, banks_climbed, swim_seconds, breaths, drowned,
+           underwater_self_damage, time_ratio, overshoot, stop_distance, jumps, stuck_seconds, wall_seconds,
+           course_kinks, moves_refused, movement_casts, speed_casts, died, timed_out, reward_arrive, reward_progress,
+           reward_drowning, reward_stuck, reward_wall, reward_jitter, reward_effort]
 
-# Converged on the top rung and on the stage's own measure: the share of markers stopped on, across water and
-# on lakebeds.
+# Converged on the top rung and on the stage's own measure.
 convergence:
-  measure: arrived
+  # The narrow skill itself: arrivals on real climb/ledge/upstairs (M3) or crossing/lakebed (M4) legs over those legs,
+  # fallbacks to ordinary markers excluded (`arrived` stays reported). A class cannot converge while its top-rung
+  # fallback_share is over the sim's Markers.FallbackCeiling (20%).
+  measure: arrived_narrow

@@ -971,6 +971,12 @@ namespace Animus::Curriculum
             /// a ledge's way round takes MarkerVertical.SafeDrop instead). Placement never asks for a near-fatal
             /// fall: at 20 yd a fall takes 0.018 x 20 - 0.2426 = 12% of maximum health (nothing under 13.48 yd).
             float RouteMaxDrop = 20.0f;
+            /// The most a stage's narrow legs (above, below, upstairs, across water, a lakebed) may fall back to
+            /// ordinary markers: a class cannot converge while its top-rung evaluation's fallback share is over it
+            /// (the learner reads it from stage.json), and a spawn point over it across FallbackMinLegs legs is
+            /// named once in the log and in `forge status`, to be removed from the data.
+            float FallbackCeiling = 0.2f;
+            uint32 FallbackMinLegs = 50;
         } Markers;
 
         /// The ground stage's markers (MarkerCourse::Ground, M2): broken ground with something in the way -- a face
@@ -1687,6 +1693,8 @@ namespace Animus::Curriculum
             f("Markers.StopNear", tuning.Markers.StopNear);
             f("Markers.ArriveRise", tuning.Markers.ArriveRise);
             f("Markers.RouteMaxDrop", tuning.Markers.RouteMaxDrop);
+            f("Markers.FallbackCeiling", tuning.Markers.FallbackCeiling);
+            f("Markers.FallbackMinLegs", tuning.Markers.FallbackMinLegs);
             f("MarkerGround.MarkersMin", tuning.MarkerGround.MarkersMin);
             f("MarkerGround.MarkersMax", tuning.MarkerGround.MarkersMax);
             f("MarkerGround.Rungs", tuning.MarkerGround.Rungs);

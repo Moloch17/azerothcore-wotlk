@@ -6675,6 +6675,11 @@ AnimusForge.Curriculum.Markers.ArriveRise = 2.0
 #   a fall takes 12% of maximum health (0.018 x h - 0.2426; nothing under 13.48 yd), so no marker needs a
 #   near-fatal fall
 AnimusForge.Curriculum.Markers.RouteMaxDrop = 20.0
+#   narrow legs (above, below, upstairs, across water, a lakebed) that fell back to ordinary markers: a class cannot
+#   converge while its top-rung fallback share is over FallbackCeiling (a convergence signal), and a spawn point over it
+#   across FallbackMinLegs legs is named once in the log and in `forge status`
+AnimusForge.Curriculum.Markers.FallbackCeiling = 0.2
+AnimusForge.Curriculum.Markers.FallbackMinLegs = 50
 
 #
 #    AnimusForge.Curriculum.MarkerGround.*

@@ -155,6 +155,11 @@ class ConvergenceConfig:
     # The stage's own measure, if not the evaluation score: an episode info column the per-class plateau reads (M1:
     # "arrived"), at the top rung on a ladder stage. Empty: the score.
     measure: str = ""
+    # The most of a ladder stage's narrow legs that may fall back to ordinary markers at the top rung (evaluation
+    # column fallback_share) while a class converges: above it the class is missing "fallbacks" -- easier legs would
+    # otherwise let it converge without the narrow skill (M3, M4). A convergence signal, not a gate. < 0: the sim's
+    # Markers.FallbackCeiling from stage.json's tuning (the default); 0 turns the signal off.
+    fallback_ceiling: float = -1.0
 
 
 @dataclass

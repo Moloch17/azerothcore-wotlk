@@ -26,6 +26,8 @@
 #include "SeatView.h"
 #include "StageScenario.h"
 #include "StageState.h"
+#include "Log.h"
+#include "StringFormat.h"
 #include "UnitDefines.h"
 #include "MoveBlock.h"
 #include <algorithm>
@@ -231,6 +233,11 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     // Legs whose narrow kind (above, below, upstairs, across, a lakebed) this spawn offered none of: an ordinary
     // marker of the course's ground was placed instead.
     table.Add("fallback_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].FallbackLegs); });
+    // The narrow skill alone: narrow legs placed as asked, and those stopped on. The learner's arrived_narrow is their
+    // ratio over an evaluation (sums, not a mean of episode ratios), and the fallback share fallback_legs over
+    // fallback_legs + narrow_legs (animus.evaluation).
+    table.Add("narrow_legs", [this](Env const& env, uint32) { return float(_envs[env.Index].NarrowLegs); });
+    table.Add("narrow_arrived", [this](Env const& env, uint32) { return float(_envs[env.Index].NarrowArrived); });
     table.Add("ground_mount_on_air_leg", [this](Env const& env, uint32)
     {
         return float(_envs[env.Index].GroundMountAirMs) / 1000.0f;
@@ -414,9 +421,12 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     // A narrow leg -- above, below, upstairs, across water, on a lakebed -- that this spawn offers none of falls back
     // to an ordinary marker of the course's ground, as the first curriculum's travel arenas fell back to an ordinary
     // trip, and says so (fallback_legs): one spawn without a ledge in reach must not cost the episode.
-    bool const narrow = rules.HasRise || rules.Underwater || across;
+    // Narrow: a height window that excludes the seat's own level, upstairs, a crossing or a lakebed (a room's
+    // down-or-level marker is not).
+    bool const narrow = upstairs || across || rules.Underwater
+        || (rules.HasRise && (rules.RiseMin > 0.0f || rules.RiseMax < 0.0f));
     bool fellBack = false;
-    if (!placed && narrow)
+    if (!placed && (narrow || rules.HasRise))
     {
         TravelPlaceRules plain = rules;
         plain.HasRise = false;
@@ -431,7 +441,11 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     }
     if (!placed)
         return false;
-    markers.FallbackLegs += fellBack ? 1 : 0;
+    markers.FallbackLegs += narrow && fellBack ? 1 : 0;
+    markers.LegNarrow = narrow && !fellBack;
+    markers.NarrowLegs += markers.LegNarrow ? 1 : 0;
+    if (narrow)
+        NoteNarrow(env, fellBack);
     markers.LegUnder = arena.Underwater && !fellBack;
     markers.LegAirOnly = airOnly;
     markers.AirOnlyLegs += airOnly ? 1 : 0;
@@ -762,6 +776,7 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
 
     // Stopped on it: paid, measured, and the next one placed from here -- or the episode is done.
     ++markers.Reached;
+    markers.NarrowArrived += markers.LegNarrow ? 1 : 0;
     ledger.Add(RewardTerm::Arrive, tuning.Arrive);
     float const seconds = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, markers.LegStartMs)) / 1000.0f;
     float const run = std::max(1.0f, bot->GetSpeed(MOVE_RUN));
@@ -852,6 +867,43 @@ float Animus::Curriculum::MarkerEncounter::WayDistance(EnvMarkers const& markers
         return along + std::sqrt(dx * dx + dy * dy);
     }
     return along;
+}
+
+namespace
+{
+    std::mutex g_namedLock;
+    std::vector<std::string> g_named;
+}
+
+void Animus::Curriculum::MarkerEncounter::NoteNarrow(Env const& env, bool fellBack) const
+{
+    CurriculumTuning::MarkerTuning const& tuning = _scenario.Tuning().Markers;
+    EnvState const& data = _scenario.Data(env);
+    std::string named;
+    {
+        std::lock_guard guard(_pointLock);
+        PointFallbacks& point = _points[{ data.Arena, data.Spawn, env.Evaluating }];
+        ++point.Legs;
+        point.Fallbacks += fellBack ? 1 : 0;
+        if (point.Named || point.Legs < tuning.FallbackMinLegs
+            || float(point.Fallbacks) <= tuning.FallbackCeiling * float(point.Legs))
+            return;
+        point.Named = true;
+        Position const& where = _scenario.SpawnPointFor(env);
+        named = Acore::StringFormat("{} {} {}({:.0f} {:.0f} {:.0f}): {} of {} narrow legs fell back",
+            _scenario.Name(), _scenario.Arena(env).Name, env.Evaluating ? "held out " : "", where.GetPositionX(),
+            where.GetPositionY(), where.GetPositionZ(), point.Fallbacks, point.Legs);
+    }
+    LOG_WARN("module.animus", "Spawn point over the fallback ceiling ({:.0f}%), to be removed from the stage's data: "
+        "{}", tuning.FallbackCeiling * 100.0f, named);
+    std::lock_guard guard(g_namedLock);
+    g_named.push_back(std::move(named));
+}
+
+std::vector<std::string> Animus::Curriculum::MarkerEncounter::NamedFallbackPoints()
+{
+    std::lock_guard guard(g_namedLock);
+    return g_named;
 }
 
 void Animus::Curriculum::MarkerEncounter::RecordRung(Env const& env, EnvMarkers& markers)

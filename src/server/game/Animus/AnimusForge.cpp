@@ -17,6 +17,7 @@
  */
 
 #include "AnimusForge.h"
+#include "MarkerEncounter.h"
 #include "GpuRuntime.h"
 #include "LayeredField.h"
 #include "MoveBlock.h"
@@ -1976,6 +1977,9 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 double(Travel::PlaceAttempts.load(std::memory_order_relaxed)) / double(searches),
                 double(Travel::PlacePaths.load(std::memory_order_relaxed)) / double(searches),
                 Travel::PlaceFailed.load(std::memory_order_relaxed));
+        // The movement stages' spawn points whose narrow legs keep falling back (MarkerEncounter::NoteNarrow).
+        for (std::string const& point : Animus::Curriculum::MarkerEncounter::NamedFallbackPoints())
+            sim.ProbeNote += "fallback point " + point + "; ";
         // Human play (AnimusForge.Human.*): what the travel arenas were handed, and what held up.
         uint64 const humanTrips = Travel::HumanTripsDrawn.load(std::memory_order_relaxed);
         uint64 const hardStarts = Travel::HardStartsDrawn.load(std::memory_order_relaxed);

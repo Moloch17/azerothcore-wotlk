@@ -56,6 +56,8 @@ LIVELOCK_CANCELS = 20
 # spl is success weighted by path length -- arrived x path / max(path, covered), the navigation literature's SPL --
 # 1 for a seat that walked exactly the path and 0 for one that did not arrive.
 DERIVED_METRICS = ("livelocked", "clean_kill", "lost", "wedged", "spl")
+# Ratios of sums over an evaluation's episodes (EvalResult.summary), on the movement stages that report the columns.
+RATIO_METRICS = ("arrived_narrow", "fallback_share")
 LOST_ABOVE = 3.0
 WEDGED_BELOW = 0.5
 
@@ -249,6 +251,24 @@ class EvalResult:
             for name, values in derived.items():
                 picked = values[rows]
                 out[name] = float(picked.mean()) if len(picked) else None
+            out.update(ratios(rows))
+            return out
+
+        # The movement stages' narrow skill, as ratios of sums over the episodes (a mean of per-episode ratios would
+        # weigh a one-leg episode as much as a four-leg one, and has nothing to say for an episode with no such leg):
+        # arrived_narrow, narrow legs stopped on over narrow legs placed as asked; fallback_share, narrow legs that
+        # fell back to an ordinary marker over every narrow leg asked for (MarkerEncounter).
+        narrow, narrow_arrived, fallbacks = (self.column("narrow_legs"), self.column("narrow_arrived"),
+                                             self.column("fallback_legs"))
+
+        def ratios(rows: np.ndarray) -> dict:
+            out = {}
+            if narrow is not None and narrow_arrived is not None:
+                placed = float(narrow[rows].sum())
+                out["arrived_narrow"] = float(narrow_arrived[rows].sum()) / placed if placed > 0 else None
+                if fallbacks is not None:
+                    asked = placed + float(fallbacks[rows].sum())
+                    out["fallback_share"] = float(fallbacks[rows].sum()) / asked if asked > 0 else None
             return out
 
         everything = np.ones(self.episodes, dtype=bool)
