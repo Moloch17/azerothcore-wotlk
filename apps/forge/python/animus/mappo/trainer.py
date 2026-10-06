@@ -33,6 +33,11 @@ def chunked(value, length: int):
     return np.ascontiguousarray(split.swapaxes(0, 1)).reshape(length, -1, *rest)
 
 
+#: The free look's command head, choice by choice (Vision::FreeLook::Zoom: hold, in, out, recentre, face): the rollout
+#: statistics' names for the share of decisions on each (MappoTrainer._look_stats).
+LOOK_COMMANDS = ("look_zoom_hold", "look_zoom_in", "look_zoom_out", "look_recentre", "look_face")
+
+
 @dataclass
 class MappoConfig:
     hidden: tuple[int, ...] = (128, 128)
@@ -1348,7 +1353,9 @@ class MappoTrainer:
     def _look_stats(self, data: dict) -> dict[str, float]:
         """Whether the policy uses its camera at all, from the rollout: `look_turning`, the share of the samples with
         the camera whose decision chose a non-zero yaw rate (held until the next); `look_pitching` the same of the
-        pitch rate; `look_zooming` the share that pressed anything on the zoom."""
+        pitch rate; `look_zooming` the share that pressed anything on the zoom. And which command those were: the share
+        of the decisions on each choice of the command head (LOOK_COMMANDS: hold, in, out, recentre, face), which sum to
+        1 -- M1 read look_zooming 0.93 with no way to tell zooming from recentring or turning to the camera."""
         if self.actor.look_head is None or "look" not in data:
             return {}
         seeing = self.actor.look_head.has_vision[data["layout"].long()] & data["valid"].bool()
@@ -1358,6 +1365,10 @@ class MappoTrainer:
         out = {}
         for index, name in enumerate(("look_turning", "look_pitching", "look_zooming")[:len(hold)]):
             out[name] = ((look[..., index] != hold[index]) & seeing).sum().to(torch.float32) / count
+        if self.look_heads and self.look_heads[-1] == len(LOOK_COMMANDS):
+            command = look[..., len(self.look_heads) - 1]
+            for choice, name in enumerate(LOOK_COMMANDS):
+                out[name] = ((command == choice) & seeing).sum().to(torch.float32) / count
         return _host_stats(out)
 
     def _goal_stats(self, data: dict) -> dict[str, float]:

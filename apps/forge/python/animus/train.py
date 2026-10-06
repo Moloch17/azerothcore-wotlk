@@ -46,7 +46,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          format_summary,
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
-from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
+from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule
 from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
@@ -862,6 +862,9 @@ class TrainingRun:
         if self.trainer.look_heads:
             # The free look (camera-vision.FREELOOK.md): its entropy, and whether it turns, pitches or zooms at all.
             columns += ["look_entropy", "look_turning", "look_pitching", "look_zooming"]
+            # ... and which command its zoom head chose (hold, in, out, recentre, face), as shares of the decisions.
+            if self.trainer.look_heads[-1] == len(LOOK_COMMANDS):
+                columns += list(LOOK_COMMANDS)
         if self.trainer.slow_goal_size:
             # The slow goal loop (Component D) and its goal-level predictions (Component P layer 3): its own
             # losses, and how well it foresees a goal being reached -- the Brier score against always predicting the
