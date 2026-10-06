@@ -989,22 +989,25 @@ class VisionEncoder(nn.Module):
     convolutions: the image is cut into PATCH x PATCH squares (32 x 64 -> an 8 x 16 grid), each square's pixels and
     planes (16 x 12 = 192 features, ordered row in the patch, column in the patch, plane) go through one shared
     Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, a spatial softmax per channel over the patch grid gives its
-    expected (x, y) in [-1, 1] (128 keypoints), the block's scalars join them, Linear -> 256 with SiLU, and `join`, a
-    Linear onto the adapters' output width. MIOpen computed the 3 x 3 convolutions' weight gradients one image at a
+    expected (x, y) in [-1, 1] (128 keypoints), the block's scalars join them, and Linear -> 256 with SiLU: the
+    camera's embedding. Each network reads it through a `vision_join` of its own, a Linear onto its adapters' output
+    width (VisionJoin). MIOpen computed the 3 x 3 convolutions' weight gradients one image at a
     time (89.7% of an update in ConvolutionBackward, M1 2026-10-06); the patches are three batched matrix products,
     about ten times faster at a minibatch.
 
-    The join is initialised as the adapters are: a network trained from scratch sees with the camera from its first
-    update (M1, the user, 2026-10-06). Seeding from a checkpoint without the camera zeroes the join instead
-    (bootstrap._seed_vision), so the seeded policy starts as it was. A layout without the camera adds zero. No
-    normalisation: the channels are 0-1 or -1-1 already. Every shape is fixed and nothing is read back, so a rollout
-    graph captures it."""
+    **One encoder for the actor and the critic** (MappoTrainer): the actor owns it -- it is in the actor's state dict,
+    so a policy alone (export, distillation, the league) carries its camera -- and the critic holds a reference that
+    is not one of its modules, so neither its parameters, its optimiser nor its state dict has a second copy. Both
+    losses' gradients reach it, summed, and its own optimiser steps it once per minibatch (MappoTrainer.vision_opt).
+
+    No normalisation: the channels are 0-1 or -1-1 already. Every shape is fixed and nothing is read back, so a
+    rollout graph captures it."""
 
     PATCH = 4
     WIDTHS = (64, 64)
     EMBED = 256
 
-    def __init__(self, descriptors: Sequence[dict | None], width: int):
+    def __init__(self, descriptors: Sequence[dict | None]):
         super().__init__()
         image = next(entry for entry in descriptors if entry is not None)
         self.height, self.width = image["height"], image["width"]
@@ -1022,7 +1025,6 @@ class VisionEncoder(nn.Module):
         self.patch = nn.Linear(features, self.WIDTHS[0])
         self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
         self.embed = nn.Linear(2 * self.WIDTHS[1] + self.scalars, self.EMBED)
-        self.join = _linear(self.EMBED, width, math.sqrt(2))
         self.feature_shape = (self.WIDTHS[1], *self.grid)
         # Derived from stage.json, not learned: kept out of the state dict.
         self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
@@ -1075,36 +1077,78 @@ class VisionEncoder(nn.Module):
         y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
         return torch.cat([x, y], dim=-1)
 
-    def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
-        """The camera's embedding before the join, [N, 256]."""
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+        """The camera's embedding, [N, 256] (a layout without the camera's rows are zeroed by the join)."""
         image, scalars = self.gather(obs, layout)
         points = self.keypoints(self.features(self.patches(self.planes(image))))
         return nn.functional.silu(self.embed(torch.cat([points, scalars], dim=-1)))
 
-    def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
+
+class VisionJoin(nn.Module):
+    """A network's own reading of the shared camera embedding (VisionEncoder): a Linear onto its adapters' output
+    width, initialised as the adapters are, so a network trained from scratch sees with the camera from its first
+    update (M1, the user, 2026-10-06). Seeding from a checkpoint without the camera zeroes it instead
+    (bootstrap._seed_vision), so the seeded policy starts as it was. A layout without the camera adds zero."""
+
+    def __init__(self, layouts_with: torch.Tensor, width: int):
+        super().__init__()
+        self.linear = _linear(VisionEncoder.EMBED, width, math.sqrt(2))
+        self.register_buffer("has_vision", layouts_with.clone(), persistent=False)
+
+    def forward(self, embedding: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
         """What the camera adds to the adapter's output: [N, width], zero for a layout without it."""
-        joined = self.join(self.encode(obs, layout))
+        joined = self.linear(embedding)
         return joined * self.has_vision[layout.reshape(-1).long()][:, None].to(joined.dtype)
 
 
-def _attach_vision(network: nn.Module, vision) -> None:
-    """Give an actor or critic the camera's encoder (VisionEncoder) and keep its columns -- image and scalars -- out
-    of every layout's adapter (attach_blind_columns, tag "vision") and normaliser (RunningNorm.hide); `vision` is
-    vision_of()'s per-layout image, or None (no camera: nothing changes)."""
+def _attach_vision(network: nn.Module, vision, encoder: "VisionEncoder | None" = None) -> None:
+    """Give an actor or critic the camera: the encoder (VisionEncoder) and its own join (VisionJoin), and keep the
+    camera's columns -- image and scalars -- out of every layout's adapter (attach_blind_columns, tag "vision") and
+    normaliser (RunningNorm.hide). `vision` is vision_of()'s per-layout image, or None (no camera: nothing changes).
+    With `encoder` (another network's: the trainer's critic gets the actor's), the network reads that one through a
+    reference that is not one of its modules -- not in its parameters, its state dict or its .to() -- else it builds
+    and owns its own."""
     network.vision = None
+    network.vision_join = None
     if vision is None:
         return
-    network.vision = VisionEncoder(vision, network.adapters[0].out_features)
+    if encoder is None:
+        network.vision = VisionEncoder(vision)
+    else:
+        share_vision(network, encoder)
+    network.vision_join = VisionJoin(network.vision.has_vision, network.adapters[0].out_features)
     attach_blind_columns(network, network.vision.blind, tag="vision")
     for index, columns in network.vision.blind.items():
         network.norms[index].hide(columns)
 
 
-def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor, extra):
+def share_vision(network: nn.Module, encoder: "VisionEncoder") -> None:
+    """Point `network` at another network's camera encoder without making it one of its modules (no second copy in
+    its parameters or state dict)."""
+    network._modules.pop("vision", None)
+    network.__dict__["vision"] = encoder
+
+
+def owns_vision(network: nn.Module) -> bool:
+    """Whether the camera encoder `network` reads is its own module (False: a reference to another's, or none)."""
+    return "vision" in network._modules
+
+
+def vision_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
+                embedding: torch.Tensor | None = None) -> torch.Tensor:
+    """What the camera adds to `network`'s adapter output: its join over the encoder's embedding (computed here
+    unless the caller has it: the rollout graph encodes once for both networks)."""
+    if embedding is None:
+        embedding = network.vision(obs, layout)
+    return network.vision_join(embedding, layout)
+
+
+def _vision_extra(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor, extra,
+                  embedding: torch.Tensor | None = None):
     """`extra` (what the sets add to the adapter's output, or None) with the camera's term added."""
     if getattr(network, "vision", None) is None:
         return extra
-    seen = network.vision(obs, layout)
+    seen = vision_term(network, obs, layout, embedding)
     return seen if extra is None else extra + seen.to(extra.dtype)
 
 
@@ -1316,15 +1360,18 @@ class LayoutActor(nn.Module):
         """A cleared memory for `lead` rows (what an episode starts with)."""
         return torch.zeros((*lead, self.recurrent_size), dtype=torch.float32, device=device)
 
-    def encode(self, obs: torch.Tensor, layout: torch.Tensor, groups=None) -> torch.Tensor:
+    def encode(self, obs: torch.Tensor, layout: torch.Tensor, groups=None,
+               vision_embedding: torch.Tensor | None = None) -> torch.Tensor:
         """Adapters and trunk for flat rows: everything that depends only on this decision's observation, before the
         GRU. A replayed sequence encodes every step in one pass and then carries the memory through them (carry),
-        which is the difference between one large matmul per layer and one per step."""
+        which is the difference between one large matmul per layer and one per step. `vision_embedding` is the
+        camera's embedding of these rows when the caller has it (the update encodes once for the actor and the
+        critic); else it is computed here."""
         extra = _director_extra(self.director_sets, self.director_index, obs, layout)
         if self.entity_sets is not None:
             seats = self.entity_sets.pooled(obs, layout)
             extra = seats if extra is None else extra + seats.to(extra.dtype)
-        extra = _vision_extra(self, obs, layout, extra)
+        extra = _vision_extra(self, obs, layout, extra, vision_embedding)
         if self.dense_adapters is not None:
             hidden = self.dense_adapters(obs, layout)
             return self.trunk(hidden if extra is None else hidden + extra.to(hidden.dtype))
@@ -1508,7 +1555,8 @@ class LayoutCritic(nn.Module):
 
     def __init__(self, state_dim: int, layouts: Sequence[tuple[int, int]], hidden: Sequence[int],
                  goal_count: int = 0, recurrent_size: int = 0, goal_targets: int = 1, director=None,
-                 goal_slots: int = 1, seat_sets=None, entity_attention: bool = False, vision=None):
+                 goal_slots: int = 1, seat_sets=None, entity_attention: bool = False, vision=None,
+                 vision_encoder: "VisionEncoder | None" = None):
         super().__init__()
         if not hidden:
             raise ValueError("the critic needs at least one hidden layer")
@@ -1530,19 +1578,22 @@ class LayoutCritic(nn.Module):
         self.dense_adapters: DenseLayouts | None = None     # as LayoutActor's
         _attach_director(self, director)
         _attach_entity_sets(self, seat_sets, attention=entity_attention)
-        # The camera, with an encoder of its own (not the actor's): the value has to see what the actor reacts to.
-        _attach_vision(self, vision)
+        # The camera: the actor's encoder when given one (`vision_encoder`, MappoTrainer: one encoder, both losses'
+        # gradients), else its own; the join onto its adapters' output is always its own.
+        _attach_vision(self, vision, vision_encoder)
 
     def encode(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
-               goal: torch.Tensor | None = None, groups=None) -> torch.Tensor:
+               goal: torch.Tensor | None = None, groups=None,
+               vision_embedding: torch.Tensor | None = None) -> torch.Tensor:
         """Everything that depends only on this decision -- the state, the seat's own observation and its goal --
         for flat rows, before the GRU. A replayed sequence encodes every step in one pass and then carries the memory
-        through them (carry)."""
-        hidden, own = self.encode_goal_free(state, obs, layout, groups)
+        through them (carry). `vision_embedding` as for LayoutActor.encode."""
+        hidden, own = self.encode_goal_free(state, obs, layout, groups, vision_embedding)
         return self.encode_goal(hidden, own, goal)
 
     def encode_goal_free(self, state: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
-                         groups=None) -> tuple[torch.Tensor, torch.Tensor]:
+                         groups=None,
+                         vision_embedding: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """encode's first half, which does not need the goal: (the state's encoding, the seat's own). The larger
         part of the critic's work, so a rollout decision runs it beside the actor choosing the goal."""
         hidden = self.state_encoder(self.state_norm(state))
@@ -1559,7 +1610,7 @@ class LayoutCritic(nn.Module):
         if self.entity_sets is not None:
             own = own + self.entity_sets.pooled(obs, layout).to(own.dtype)
         if self.vision is not None:
-            own = own + self.vision(obs, layout).to(own.dtype)
+            own = own + vision_term(self, obs, layout, vision_embedding).to(own.dtype)
         return hidden, own
 
     def encode_goal(self, hidden: torch.Tensor, own: torch.Tensor, goal: torch.Tensor | None = None) -> torch.Tensor:

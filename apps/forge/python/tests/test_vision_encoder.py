@@ -12,8 +12,8 @@ import torch
 
 from animus.bootstrap import seed_trainer
 from animus.export import export_layouts
-from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, update_norms, vision_of,
-                                   without_blind_columns)
+from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, VisionJoin, owns_vision, update_norms,
+                                   vision_of, without_blind_columns)
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
 
@@ -142,7 +142,7 @@ def test_a_stage_without_a_camera_builds_the_networks_it_always_did():
 
 
 def test_the_image_is_read_row_col_channel_from_each_layouts_own_columns():
-    encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
+    encoder = VisionEncoder(vision_of(stage(), NAMES))
     obs = torch.zeros(2, 12 + SPAN + 2)
     layout = torch.tensor([0, 1])
     row, col, channel = 5, 6, 2
@@ -159,7 +159,7 @@ def test_the_image_is_read_row_col_channel_from_each_layouts_own_columns():
 
 
 def test_the_kind_channel_becomes_a_one_hot_of_the_kinds():
-    encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
+    encoder = VisionEncoder(vision_of(stage(), NAMES))
     image = torch.zeros(1, H, W, C)
     image[0, ..., 0] = 0.7                              # distance
     image[0, ..., 4] = 1.0                              # objective
@@ -178,7 +178,7 @@ def test_the_kind_channel_becomes_a_one_hot_of_the_kinds():
 
 
 def test_a_patch_is_its_square_of_pixels_row_by_row():
-    encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
+    encoder = VisionEncoder(vision_of(stage(), NAMES))
     planes = torch.zeros(1, H, W, 12)
     # Pixel (row 5, col 6) is in patch (1, 1) of the 2 x 3 grid -- the fifth patch -- at (1, 2) inside it.
     planes[0, 5, 6, 9] = 3.0
@@ -191,7 +191,7 @@ def test_a_patch_is_its_square_of_pixels_row_by_row():
 def test_an_image_the_patches_do_not_tile_is_refused():
     image = {**IMAGE, "height": 30}
     with pytest.raises(ValueError, match="multiples of 4"):
-        VisionEncoder([{"first": 0, **image}], 16)
+        VisionEncoder([{"first": 0, **image}])
 
 
 def test_shapes_at_the_default_camera():
@@ -199,23 +199,24 @@ def test_shapes_at_the_default_camera():
     span = 32 * 64 * 5 + 7
     assert span == 10_247
     descriptors = [{"first": 3, **image}, None]
-    encoder = VisionEncoder(descriptors, 24)
+    encoder = VisionEncoder(descriptors)
+    join = VisionJoin(encoder.has_vision, 24)
     # 4 x 4 patches: 32 x 64 -> an 8 x 16 grid of 192 features each, 64 channels after the two layers.
     assert encoder.feature_shape == (64, 8, 16)
     assert (encoder.patch.in_features, encoder.patch.out_features) == (192, 64)
     assert (encoder.mix.in_features, encoder.mix.out_features) == (64, 64)
     assert encoder.embed.in_features == 128 + 7 and encoder.embed.out_features == 256
-    assert encoder.join.in_features == 256 and encoder.join.out_features == 24
+    assert join.linear.in_features == 256 and join.linear.out_features == 24
     obs = torch.rand(5, 3 + span)
     layout = torch.tensor([0, 1, 0, 1, 0])
     with torch.no_grad():
-        encoder.join.weight.normal_()
-        encoder.join.bias.normal_()
-        out = encoder(obs, layout)
+        join.linear.bias.normal_()
+        embedding = encoder(obs, layout)
+        out = join(embedding, layout)
         image = encoder.gather(obs, layout)[0]
         features = encoder.features(encoder.patches(encoder.planes(image)))
         points = encoder.keypoints(features)
-    assert out.shape == (5, 24)
+    assert embedding.shape == (5, 256) and out.shape == (5, 24)
     assert bool((out[1] == 0).all()) and bool((out[3] == 0).all())     # no camera, nothing added
     assert bool((out[0] != 0).any())
     assert features.shape == (5, 128, 64)
@@ -230,7 +231,7 @@ def test_the_camera_columns_are_blind_to_the_adapters():
     vision = vision_of(stage(), NAMES)
     obs, layout = observations(9)
     with torch.no_grad():
-        net.vision.join.weight.normal_()               # the camera in the logits, so gradient reaches everything
+        net.vision_join.linear.weight.normal_()               # the camera in the logits, so gradient reaches everything
     logits = net(obs, layout, torch.ones(9, 5)).logits
     logits.sum().backward()
     for index, entry in enumerate(vision):
@@ -277,7 +278,7 @@ def test_a_fresh_camera_takes_part_from_the_first_update():
         lit = net(with_image(obs, layout, 1.0), layout, mask).logits
     assert not torch.allclose(dark, lit)
     net(with_image(obs, layout, 0.5), layout, mask).logits.sum().backward()
-    assert bool((net.vision.join.weight.grad != 0).any())
+    assert bool((net.vision_join.linear.weight.grad != 0).any())
     assert bool((net.vision.patch.weight.grad != 0).any())
     assert bool((net.vision.embed.weight.grad != 0).any())
 
@@ -297,8 +298,9 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
     checkpoint = {"trainer": plain.state_dict(), "spec": plain_spec, "stage": plain_stage}
     seeded = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
     seed_trainer(seeded, checkpoint, spec, stage())
-    assert bool((seeded.actor.vision.join.weight == 0).all()) and bool((seeded.actor.vision.join.bias == 0).all())
-    assert bool((seeded.critic.vision.join.weight == 0).all())
+    join = seeded.actor.vision_join.linear
+    assert bool((join.weight == 0).all()) and bool((join.bias == 0).all())
+    assert bool((seeded.critic.vision_join.linear.weight == 0).all())
     obs, layout = observations(12)
     mask = torch.ones(12, 5)
     with torch.no_grad():
@@ -306,16 +308,73 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
                                    seeded.actor(with_image(obs, layout, 0.0), layout, mask).logits)
 
 
-def test_the_critic_has_its_own_camera():
+def test_the_actor_and_the_critic_share_one_camera_encoder():
     trainer = MappoTrainer(shapes(stage()), 4, MappoConfig(hidden=(16, 16)), vision=vision_of(stage(), NAMES))
-    assert trainer.actor.vision is not None and trainer.critic.vision is not None
-    assert trainer.actor.vision.patch.weight is not trainer.critic.vision.patch.weight
+    assert trainer.actor.vision is not None and trainer.critic.vision is trainer.actor.vision
+    assert owns_vision(trainer.actor) and not owns_vision(trainer.critic)
+    # The rollout copies share theirs too, and it is not the trained one.
+    assert trainer._rollout_critic.vision is trainer._rollout_actor.vision
+    assert trainer._rollout_actor.vision is not trainer.actor.vision
+    # One copy: in the actor's parameters and state dict alone; each network keeps its own join.
+    encoder = {id(p) for p in trainer.actor.vision.parameters()}
+    assert not encoder & {id(p) for p in trainer.critic.parameters()}
+    assert not any(key.startswith("vision.") for key in trainer.critic.state_dict())
+    assert any(key.startswith("vision_join.") for key in trainer.critic.state_dict())
+    assert trainer.actor.vision_join is not trainer.critic.vision_join
+    # Stepped by one optimizer: the camera's own, which neither the actor's nor the critic's holds.
+    held = lambda optimizer: {id(p) for group in optimizer.param_groups for p in group["params"]}
+    assert held(trainer.vision_opt) == encoder
+    assert not encoder & held(trainer.actor_opt) and not encoder & held(trainer.critic_opt)
     obs, layout = observations(6)
     state = torch.randn(6, 4)
     with torch.no_grad():
         value = trainer.critic(state, obs, layout)
-        trainer.critic.vision.join.weight.normal_()
+        trainer.actor.vision.embed.bias.add_(1.0)           # the actor's encoder moves the critic's value
         assert not torch.allclose(trainer.critic(state, obs, layout), value)
+
+
+def test_both_losses_train_the_shared_camera_once_per_minibatch():
+    """The camera's gradient is the actor's and the critic's together, and vision_opt steps it once a minibatch."""
+    config = MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=1, minibatches=1)
+    torch.manual_seed(0)
+    trainer = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
+    obs, layout = observations(6)
+    state = torch.randn(6, 4)
+    encoder = trainer.actor.vision
+    # Each loss alone reaches the encoder.
+    trainer.critic(state, obs, layout).sum().backward()
+    critic_grad = encoder.patch.weight.grad.clone()
+    assert bool((critic_grad != 0).any())
+    encoder.zero_grad()
+    trainer.actor(obs, layout, torch.ones(6, 5)).logits.sum().backward()
+    assert bool((encoder.patch.weight.grad != 0).any())
+    encoder.zero_grad()
+    # In the update: one Adam step for the camera per minibatch (its state counts them).
+    from animus.mappo.buffer import RolloutBuffer
+    envs, steps = 3, 4
+    buffer = RolloutBuffer(steps, envs, 2, obs.shape[-1], 4, 5, 0, trainer.recurrent_size)
+    acting = trainer.acting_state(envs, 2)
+    for step in range(steps):
+        o, l = observations(envs * 2, seed=step)
+        o, l = o.numpy().reshape(envs, 2, -1), l.numpy().reshape(envs, 2)
+        st = np.random.default_rng(step).standard_normal((envs, 4)).astype(np.float32)
+        mask = np.ones((envs, 2, 5), bool)
+        chosen, log_probs, values, *_ = trainer.act_and_value(o, mask, l, st, state=acting)
+        buffer.add_decision(o, st, mask, l, chosen, log_probs, values)
+        buffer.add_outcome(np.ones((envs, 2), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),
+                           np.zeros((envs, 2), np.float32))
+    buffer.finish(np.zeros((envs, 2), np.float32), 0.99, 0.95)
+    before = [p.detach().clone() for p in encoder.parameters()]
+    calls = []
+    hook = encoder.register_forward_hook(lambda *_: calls.append(1))
+    stats = trainer.update(buffer)
+    hook.remove()
+    assert len(calls) == 1                  # one minibatch, encoded once for the actor and the critic
+    assert stats["vision_grad_norm"] > 0.0
+    assert all(int(trainer.vision_opt.state[p]["step"]) == 1 for p in encoder.parameters())
+    assert any(not torch.equal(a, p.detach()) for a, p in zip(before, encoder.parameters()))
+    # The rollout copies read the update's weights.
+    torch.testing.assert_close(trainer._rollout_actor.vision.patch.weight, encoder.patch.weight)
 
 
 def test_rollout_graphs_stay_on_with_a_camera():
@@ -342,7 +401,7 @@ def test_the_graph_decides_with_the_camera_as_the_eager_path_does():
                            vision=vision_of(stage(), NAMES))
     with torch.no_grad():
         for network in (trainer.actor, trainer.critic):
-            network.vision.join.weight.normal_(std=0.5)
+            network.vision_join.linear.weight.normal_(std=0.5)
     trainer.sync_rollout()
     obs, layout = observations(6, layouts=[0, 1, 2, 0, 1, 2])
     arrays = (obs.numpy().reshape(3, 2, -1), np.ones((3, 2, 5), bool), layout.numpy().reshape(3, 2),
@@ -371,10 +430,13 @@ def test_a_checkpoint_round_trips_with_the_camera():
     torch.manual_seed(0)
     saved = MappoTrainer(shapes(stage()), 4, config, vision=vision)
     with torch.no_grad():
-        saved.actor.vision.join.weight.normal_()
-        saved.critic.vision.embed.bias.normal_()
+        saved.actor.vision_join.linear.weight.normal_()
+        saved.critic.vision_join.linear.bias.normal_()
+        saved.actor.vision.embed.bias.normal_()
     state = saved.state_dict()
     assert any(key.startswith("vision.") for key in state["actor"])
+    assert not any(key.startswith("vision.") for key in state["critic"])        # one copy, the actor's
+    assert "vision_opt" in state
     assert any(key.startswith("vision_keep_") for key in state["actor"])
     assert not any(key.startswith("vision_keep_") for key in without_blind_columns(state["actor"]))
     torch.manual_seed(1)
@@ -383,6 +445,8 @@ def test_a_checkpoint_round_trips_with_the_camera():
     for network in ("actor", "critic"):
         for key, value in getattr(saved, network).state_dict().items():
             torch.testing.assert_close(getattr(loaded, network).state_dict()[key], value)
+    assert loaded.critic.vision is loaded.actor.vision
+    torch.testing.assert_close(loaded._rollout_critic.vision.embed.bias, saved.actor.vision.embed.bias)
     assert loaded.director_columns_clear()
     # A camera checkpoint does not load into networks without one, nor the other way round.
     plain = MappoTrainer(shapes(stage()), 4, config)
@@ -401,17 +465,17 @@ def test_seeding_starts_the_camera_fresh_or_carries_it():
     torch.manual_seed(0)
     old = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
     with torch.no_grad():
-        old.actor.vision.join.weight.fill_(0.5)
+        old.actor.vision_join.linear.weight.fill_(0.5)
     checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec, "stage": stage()}
 
     carried = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
     seed_trainer(carried, checkpoint, spec, stage())
-    torch.testing.assert_close(carried.actor.vision.join.weight, old.actor.vision.join.weight)
+    torch.testing.assert_close(carried.actor.vision_join.linear.weight, old.actor.vision_join.linear.weight)
     assert carried.director_columns_clear()
 
     revised = MappoTrainer(shapes(stage()), 4, config, vision=vision_of(stage(), NAMES))
     seed_trainer(revised, checkpoint, spec, stage(vision_revision=2))
-    assert bool((revised.actor.vision.join.weight == 0).all())
+    assert bool((revised.actor.vision_join.linear.weight == 0).all())
     assert revised.director_columns_clear()
 
 

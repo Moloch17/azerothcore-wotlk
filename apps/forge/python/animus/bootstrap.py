@@ -430,8 +430,10 @@ def _seed_entity_sets(new: dict, old: dict, new_layouts: list[str] | None = None
     return carried, [name for name in new_names if name not in carried]
 
 
-#: The camera's encoder (VisionEncoder): shared by every layout, as the trunk is.
-VISION = "vision."
+#: The camera: its encoder (VisionEncoder, in the actor alone: the critic reads the actor's) and each network's join
+#: onto its adapters' output (VisionJoin).
+VISION = ("vision.", "vision_join.")
+VISION_JOIN = "vision_join."
 
 
 def _vision_revision(stage: dict | None) -> int | None:
@@ -460,7 +462,7 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
         fresh = "fresh (its shape changed)"
     if fresh:
         for key in keys:
-            if key.startswith(VISION + "join."):
+            if key.startswith(VISION_JOIN):
                 new[key].zero_()
         return fresh
     for key in keys:

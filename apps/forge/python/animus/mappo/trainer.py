@@ -17,7 +17,7 @@ from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
                        log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
-                       split_goal_pair, to_device, update_norms)
+                       split_goal_pair, to_device, update_norms, vision_term)
 from .valuenorm import ValueNorm
 
 
@@ -447,10 +447,12 @@ class _RolloutGraph:
         actor_own, critic_own = trainer._shared_adapters(obs_t, layout_t)
         # The camera (VisionEncoder) onto both, as LayoutActor.encode and LayoutCritic.encode_goal_free add it: every
         # row through the encoder, zero for a layout without one, so the graph's shapes do not depend on the batch.
+        # One encoder for both (the critic reads the actor's), so the image is encoded once and each network's own
+        # join reads it.
         if actor.vision is not None:
-            actor_own = actor_own + actor.vision(obs_t, layout_t).to(actor_own.dtype)
-        if critic.vision is not None:
-            critic_own = critic_own + critic.vision(obs_t, layout_t).to(critic_own.dtype)
+            seen = actor.vision(obs_t, layout_t)
+            actor_own = actor_own + vision_term(actor, obs_t, layout_t, seen).to(actor_own.dtype)
+            critic_own = critic_own + vision_term(critic, obs_t, layout_t, seen).to(critic_own.dtype)
         features = actor.features_from(actor.trunk(actor_own), memory)
 
         out: dict[str, torch.Tensor] = {}
@@ -647,10 +649,11 @@ class MappoTrainer:
                                  self.seat_sets, config.entity_attention, self.vision).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
+        # One camera encoder for both networks: the actor's, which the critic reads by reference (VisionEncoder).
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
                                    self.recurrent_size, self.goal_targets, director,
                                    self.goal_slots, self.seat_sets, config.entity_attention,
-                                   self.vision).to(self.train_device)
+                                   self.vision, self.actor.vision).to(self.train_device)
         # Self-imitation's replay of the best episodes (sil_coef > 0), and the per-decision discount its returns use
         # (the run's own, set by animus.train; mappo.gamma until then).
         self.sil = SelfImitation(config.sil_episodes) if config.sil_coef > 0.0 else None
@@ -669,8 +672,10 @@ class MappoTrainer:
         #: The last act_and_value's obs, mask and state on the device, when a device-fed graph took them (else None).
         self.device_inputs: dict[str, torch.Tensor] | None = None
         self._shared_adapters: SharedInputDense | None = None   # the rollout graph's actor + critic adapters
-        self._rollout_actor = copy.deepcopy(self.actor).to(self.rollout_device)
-        self._rollout_critic = copy.deepcopy(self.critic).to(self.rollout_device)
+        # Copied together, so the rollout critic reads the rollout actor's camera encoder as the trained pair do.
+        self._rollout_actor, self._rollout_critic = copy.deepcopy((self.actor, self.critic))
+        self._rollout_actor.to(self.rollout_device)
+        self._rollout_critic.to(self.rollout_device)
         self._rollout_value_norm = (
             copy.deepcopy(self.value_norm).to(self.rollout_device) if self.value_norm is not None else None
         )
@@ -703,11 +708,26 @@ class MappoTrainer:
         actor = self.actor
         return [*actor.slow_memory.parameters(), *actor.goal_head.parameters(), *actor.slow_value.parameters()]
 
+    def vision_parameters(self) -> list[torch.nn.Parameter]:
+        """The camera encoder shared by the actor and the critic (VisionEncoder): trained by both losses, summed, and
+        stepped once per minibatch by an optimizer of its own (vision_opt), after the critic's backward pass. In the
+        actor's optimizer it would be stepped before the critic's gradient arrived, which the next minibatch's
+        zero_grad would then drop; in both, it would be stepped twice with two Adam states. The update encodes each
+        minibatch once and hands both networks the embedding as a leaf, so the encoder's backward pass runs once,
+        over the two gradients added."""
+        return list(self.actor.vision.parameters()) if self.actor.vision is not None else []
+
+    def _actor_parameters(self) -> list[torch.nn.Parameter]:
+        """The actor's parameters its own optimizer steps: all but the slow loop's and the shared camera's."""
+        apart = {id(parameter) for parameter in self.slow_parameters() + self.vision_parameters()}
+        return [p for p in self.actor.parameters() if id(p) not in apart]
+
     def reset_optimizers(self) -> None:
         """Fresh Adam state: after a restart the step sizes are no longer shrunk by the old gradient history."""
-        slow = {id(parameter) for parameter in self.slow_parameters()}
-        self.actor_opt = torch.optim.Adam([p for p in self.actor.parameters() if id(p) not in slow],
-                                          lr=self.config.actor_lr, eps=1e-5)
+        self.actor_opt = torch.optim.Adam(self._actor_parameters(), lr=self.config.actor_lr, eps=1e-5)
+        # The camera at the actor's rate: it is the actor's encoder that the critic also reads.
+        self.vision_opt = (torch.optim.Adam(self.vision_parameters(), lr=self.config.actor_lr, eps=1e-5)
+                           if self.vision_parameters() else None)
         self.slow_opt = (torch.optim.Adam(self.slow_parameters(), lr=self.config.slow_goal_lr, eps=1e-5)
                          if self.slow_goal_size else None)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=self.config.critic_lr, eps=1e-5)
@@ -753,7 +773,10 @@ class MappoTrainer:
 
     def set_learning_rate_scale(self, scale: float) -> None:
         """Both optimizers at `scale` times their configured learning rate (see MappoConfig.lr_final_fraction)."""
-        for optimizer, rate in ((self.actor_opt, self.config.actor_lr), (self.critic_opt, self.config.critic_lr)):
+        for optimizer, rate in ((self.actor_opt, self.config.actor_lr), (self.critic_opt, self.config.critic_lr),
+                                (self.vision_opt, self.config.actor_lr)):
+            if optimizer is None:
+                continue
             for group in optimizer.param_groups:
                 group["lr"] = rate * scale
 
@@ -761,13 +784,15 @@ class MappoTrainer:
     def shrink_perturb(self, shrink: float, perturb: float) -> None:
         """weights = shrink x weights + perturb x freshly initialised weights (Ash & Adams, 2020)."""
         hidden = list(self.config.hidden)
-        fresh = (LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
-                             self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                             self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets,
-                             self.config.entity_attention, self.vision),
+        fresh_actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
+                                  self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
+                                  self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets,
+                                  self.config.entity_attention, self.vision)
+        # As the trained pair: the critic reads the actor's camera encoder, so its parameters line up with the critic's.
+        fresh = (fresh_actor,
                  LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
                               self.goal_targets, self.director, self.goal_slots, self.seat_sets,
-                              self.config.entity_attention, self.vision))
+                              self.config.entity_attention, self.vision, fresh_actor.vision))
         for network, init in zip((self.actor, self.critic), fresh):
             for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
                 param.mul_(shrink).add_(init_param, alpha=perturb)
@@ -1600,6 +1625,8 @@ class MappoTrainer:
                  "actor_grad_norm": 0.0, "critic_grad_norm": 0.0}
         if self.goal_count:
             stats["goal_entropy"] = 0.0
+        if self.vision_opt is not None:
+            stats["vision_grad_norm"] = 0.0
         foresight = self.foresight_outputs > 0 and buffer.foresight >= self.foresight_outputs
         if foresight:
             stats["foresight_loss"] = 0.0
@@ -1695,7 +1722,14 @@ class MappoTrainer:
                 # overlap with itself but can with the other. The minibatch's statistics wait for both.
                 self._switch_stream(self._update_streams[0], wait_for=main)
 
-                encoded = self.actor.encode(obs_all, layout_all, groups).reshape(steps, rows_here, -1)
+                # The shared camera encodes the minibatch once for both networks: its embedding is handed to each as a
+                # leaf, and the actor's and the critic's gradients there go back through the encoder in one pass after
+                # the critic's (vision_opt below).
+                seen = seen_leaf = None
+                if self.vision_opt is not None:
+                    seen = self.actor.vision(obs_all, layout_all)
+                    seen_leaf = seen.detach().requires_grad_(True)
+                encoded = self.actor.encode(obs_all, layout_all, groups, seen_leaf).reshape(steps, rows_here, -1)
                 memory = data["memory"][0][chunk].reshape(rows_here, -1)
                 carried = self.actor.carry(encoded, memory, dones_host)
                 features = carried.reshape(-1, carried.shape[-1])
@@ -1838,23 +1872,30 @@ class MappoTrainer:
                     auxiliary_updates += 1
 
                 self.actor_opt.zero_grad()
+                if self.vision_opt is not None:
+                    # The shared camera's gradient is the actor's and the critic's together, stepped after both.
+                    self.vision_opt.zero_grad()
                 actor_loss.backward()
+                actor_parameters = self._actor_parameters()
                 if cfg.rank_sync == "gradients":
-                    self.ranks.average_gradients(self.actor.parameters())
-                actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), cfg.max_grad_norm)
+                    self.ranks.average_gradients(actor_parameters)
+                actor_grad = nn.utils.clip_grad_norm_(actor_parameters, cfg.max_grad_norm)
                 self.actor_opt.step()
 
                 # The critic carries a memory of its own, so its rows are replayed in order exactly as the
                 # actor's are: encode every step in one pass, then walk the GRU through the sequence from the state
                 # those decisions were valued with.
-                self._switch_stream(self._update_streams[1], wait_for=main)
+                # With a shared camera the critic's backward adds to the gradient the actor's left on its stream.
+                self._switch_stream(self._update_streams[1],
+                                    wait_for=(main, self._update_streams[0]) if self.vision_opt is not None else main)
                 obs = data["obs"][:, chunk].reshape(-1, data["obs"].shape[-1])
                 state = (data["state"][:, chunk][:, :, None, :]
                          .expand(steps, len(chunk), agents, data["state"].shape[-1])
                          .reshape(-1, data["state"].shape[-1]))
                 layout = data["layout"][:, chunk].reshape(-1)
                 goal_chunk = data["goal"][:, chunk].reshape(-1) if self.goal_count else None
-                encoded_value = self.critic.encode(state, obs, layout, goal_chunk, groups).reshape(steps, rows_here, -1)
+                encoded_value = self.critic.encode(state, obs, layout, goal_chunk, groups, seen_leaf).reshape(
+                    steps, rows_here, -1)
                 critic_memory = data["critic_memory"][0][chunk].reshape(rows_here, -1)
                 predicted = self.critic.values_of(
                     self.critic.carry(encoded_value, critic_memory, dones_host)).reshape(steps, -1, agents)
@@ -1878,6 +1919,14 @@ class MappoTrainer:
                     self.ranks.average_gradients(self.critic.parameters())
                 critic_grad = nn.utils.clip_grad_norm_(self.critic.parameters(), cfg.max_grad_norm)
                 self.critic_opt.step()
+                if self.vision_opt is not None:
+                    if seen_leaf.grad is not None:
+                        seen.backward(seen_leaf.grad)
+                    vision_parameters = self.vision_parameters()
+                    if cfg.rank_sync == "gradients":
+                        self.ranks.average_gradients(vision_parameters)
+                    totals["vision_grad_norm"] += nn.utils.clip_grad_norm_(vision_parameters, cfg.max_grad_norm)
+                    self.vision_opt.step()
 
                 # Back on the update's own stream, once both halves are in.
                 self._switch_stream(main, wait_for=self._update_streams)
@@ -1976,6 +2025,8 @@ class MappoTrainer:
             "value_norm": self.value_norm.state_dict() if self.value_norm is not None else None,
             "actor_opt": self.actor_opt.state_dict(),
             "critic_opt": self.critic_opt.state_dict(),
+            # The camera's encoder is in "actor" alone (the critic reads it by reference); its optimizer here.
+            **({"vision_opt": self.vision_opt.state_dict()} if self.vision_opt is not None else {}),
         }
 
     def load_state_dict(self, state: dict, load_optimizers: bool = True) -> None:
@@ -1991,4 +2042,6 @@ class MappoTrainer:
         if load_optimizers:
             self.actor_opt.load_state_dict(state["actor_opt"])
             self.critic_opt.load_state_dict(state["critic_opt"])
+            if self.vision_opt is not None and "vision_opt" in state:
+                self.vision_opt.load_state_dict(state["vision_opt"])
         self._sync_rollout()
