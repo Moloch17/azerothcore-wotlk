@@ -1724,6 +1724,8 @@ class MappoTrainer:
             seen.backward(grad)
             return
         rows = self.config.vision_chunk_rows
+        if rows <= 0:
+            return      # an encoder with nothing to train (its graph was never kept)
         for i in range(0, obs.shape[0], rows):
             self.actor.vision(obs[i:i + rows], layout[i:i + rows], image[i:i + rows]).backward(grad[i:i + rows])
 
