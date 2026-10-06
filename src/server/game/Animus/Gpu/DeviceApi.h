@@ -39,7 +39,7 @@ extern "C"
     struct ForgeVisionLaunch;
 
     /// Bump when a member is added or changed: the loader refuses a library built against another.
-    constexpr uint32_t FORGE_GPU_API_VERSION = 3;
+    constexpr uint32_t FORGE_GPU_API_VERSION = 4;
     /// hipIpcMemHandle_t's size: the handle a learner opens a buffer by.
     constexpr size_t FORGE_GPU_HANDLE_BYTES = 64;
 

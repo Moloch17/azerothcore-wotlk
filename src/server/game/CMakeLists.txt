@@ -106,6 +106,9 @@ CU_RUN_HOOK(AFTER_GAME_LIBRARY)
 # linked against no HIP runtime: its HIP symbols come from the runtime the learner's torch ships, loaded by the
 # worldserver first, because device memory can only be shared between processes on the same HIP runtime. A machine
 # without hipcc builds without it, and the forge runs everything on the CPU.
+# hipcc is expected in every image that builds the forge -- the dev image and every worker's -- so that each builds
+# the library for its own GPU: an image without it still builds and runs, but with no libforge-gpu.so, and so no
+# device observations and no GPU camera (camera-vision.GPU.md).
 find_program(FORGE_HIPCC hipcc)
 set(FORGE_GPU_ARCHS "gfx1100" CACHE STRING "GPU architectures libforge-gpu.so is compiled for (a ;-list)")
 if (FORGE_HIPCC)

@@ -63,7 +63,19 @@ namespace Animus::GpuVision
         uint32_t Vertices = 0;
         uint32_t BihNodeWords = 0;
         uint32_t Liquids = 0;
+        /// The most entries a ray's walk of the model holds on the shared stack at once: its group tree's push
+        /// depth (none with one group, which is walked straight) plus its deepest mesh tree's. Its liquid walk
+        /// needs the group tree's alone (LiquidStackDepth).
+        uint32_t StackDepth = 0;
+        uint32_t LiquidStackDepth = 0;
     };
+
+    /// The most entries BIH::intersectRay's stack can hold walking `tree`: a node is pushed only where the ray
+    /// passes both children of a split, and stays only while the walk is below that split, so the deepest count of
+    /// splits on a path from the root bounds it (BVH2 nodes and leaves push nothing).
+    [[nodiscard]] uint32_t BihPushDepth(BIH const& tree);
+    /// ... over a packed node array (BIH::GetNodes' layout).
+    [[nodiscard]] uint32_t BihPushDepth(std::vector<uint32_t> const& nodes);
 
     /// `model` appended to `pool` (never at word 0): returns its offset.
     uint32_t PackModel(VMAP::WorldModel const& model, Words& pool, LiquidDeadly const& deadly,
@@ -86,6 +98,7 @@ namespace Animus::GpuVision
         uint32_t Acquire(VMAP::WorldModel const* model, LiquidDeadly const& deadly);
         [[nodiscard]] Words const& Data() const { return _words; }
         [[nodiscard]] uint32_t Models() const { return uint32_t(_offsets.size()); }
+        /// Counts summed over the models, but for the stack depths: the deepest of them.
         [[nodiscard]] ModelCounts const& Counts() const { return _counts; }
         /// A packed model's size in words, and its counts.
         [[nodiscard]] uint32_t SizeOf(VMAP::WorldModel const* model) const;
@@ -104,11 +117,11 @@ namespace Animus::GpuVision
     };
 
     /// A static tree's packing: each slot's instance (SlotTable, NO_INSTANCE where the spawn has no model), the
-    /// instances and their models, and two BIHs the kernel walks in place of the CPU tree's: Top over the loaded
-    /// spawns' bounds (Slots: its objects' instances) and LiquidTop over those of them with a WMO liquid
-    /// (LiquidSlots). The CPU tree is built over every spawn of the map, most of them in tiles never loaded, and a
-    /// ray walks all of their leaves; these hold only what a ray can hit, which is the same nearest hit. Sync
-    /// follows the tree: a spawn whose tile has loaded since is added, and both BIHs are rebuilt.
+    /// instances and their models, and the CPU tree twice, pruned: Top with every subtree that holds no loaded
+    /// spawn made an empty leaf, LiquidTop the same for the spawns with a WMO liquid (Slots and LiquidSlots map
+    /// their objects to instances). The CPU tree is built over every spawn of the map, most of them in tiles never
+    /// loaded, and a ray walks all of their leaves; the pruned trees walk only what a ray can hit, in the CPU's
+    /// order. Sync follows the tree: a spawn whose tile has loaded since is added, and both are pruned again.
     class StaticScene
     {
     public:
@@ -126,9 +139,17 @@ namespace Animus::GpuVision
         std::vector<VMAP::WorldModel const*> SlotModels;
         std::vector<uint32_t> SlotInstance;
         uint32_t LoadedSlots = 0;
+        /// The two top trees' push depths (BihPushDepth), and the deepest model under each: the stack a ray's
+        /// static walk can need is TopDepth plus the deepest model's StackDepth (StackDepth below), its liquid
+        /// walk LiquidTopDepth plus the deepest LiquidStackDepth.
+        uint32_t TopDepth = 0;
+        uint32_t LiquidTopDepth = 0;
+        [[nodiscard]] uint32_t StackDepth() const;
+        /// A loaded spawn of the deepest model (its slot), for the warning that names where it is.
+        uint32_t DeepestSlot = NO_INSTANCE;
 
     private:
-        void BuildTrees();
+        void BuildTrees(BIH const& tree);
     };
 
     /// A map instance's doors (its dynamic tree's game object models): their records, the 64 x 64 cell table (an
@@ -143,6 +164,8 @@ namespace Animus::GpuVision
         Words Cells;
         ModelPool Models;
         uint32_t Count = 0;
+        /// A door's walk needs its model's stack alone (the cells are a list, not a tree).
+        [[nodiscard]] uint32_t StackDepth() const { return Models.Counts().StackDepth; }
     };
 }
 

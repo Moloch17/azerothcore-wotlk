@@ -338,16 +338,30 @@ namespace Animus::GpuVision
     /// BIH's MAX_STACK_SIZE: each tree's own stack on the CPU.
     constexpr int BIH_STACK = 64;
     /// A pixel's one stack, shared by the nested walks (the static tree's, a model's group tree's, a group's mesh
-    /// tree's: each starts where its caller's ends). It is a pixel's whole scratch; three of BIH_STACK each cost
-    /// the kernel two and a half times its occupancy. A walk that would push past it drops the node (the CPU's
-    /// stack has no guard at all); `forge camera diff` would show it.
-    constexpr int SHARED_STACK = 96;
+    /// tree's: each starts where its caller's ends). It is a pixel's whole scratch, so it is sized per launch: the
+    /// kernel is compiled at each of STACK_SIZES and a launch takes the smallest that holds the worst case its
+    /// scenes can need (VisionScene's depths: the spawn tree's push depth plus the deepest model's). A walk that
+    /// would still push past it drops the node, as no CPU walk does, and says so: the launch's overflow count,
+    /// which fails `forge camera diff`'s gate.
+    constexpr int STACK_SIZES[] = { 64, 96, 128, 256 };
+    constexpr int STACK_COUNT = int(sizeof(STACK_SIZES) / sizeof(STACK_SIZES[0]));
+    constexpr int MAX_STACK = STACK_SIZES[STACK_COUNT - 1];
 
-    /// The free part of the shared stack, handed down to a nested walk.
+    /// The index in STACK_SIZES of the smallest stack holding `depth` entries (the largest when none does).
+    FORGE_HD inline int StackIndexFor(uint32_t depth)
+    {
+        for (int i = 0; i < STACK_COUNT; ++i)
+            if (depth <= uint32_t(STACK_SIZES[i]))
+                return i;
+        return STACK_COUNT - 1;
+    }
+
+    /// The free part of the shared stack, handed down to a nested walk, and where a dropped node is told.
     struct BihStack
     {
         BihStackNode* Nodes;
         int Capacity;
+        bool* Overflow;
     };
 
     /// BIH::intersectRay (never stopping at a first hit), over the record at `bih` in `words`, on `stack`:
@@ -436,7 +450,8 @@ namespace Animus::GpuVision
                             intervalMax = (tf <= intervalMax) ? tf : intervalMax;
                             continue;
                         }
-                        // The CPU's stack has no guard (an overflow there is undefined); here one is dropped.
+                        // The CPU's stack has no guard (an overflow there is undefined); here one is dropped, and
+                        // counted.
                         if (stackPos < stack.Capacity)
                         {
                             stack.Nodes[stackPos].Node = uint32_t(back);
@@ -444,6 +459,8 @@ namespace Animus::GpuVision
                             stack.Nodes[stackPos].Far = intervalMax;
                             ++stackPos;
                         }
+                        else
+                            *stack.Overflow = true;
                         intervalMax = (tf <= intervalMax) ? tf : intervalMax;
                         continue;
                     }
@@ -451,7 +468,7 @@ namespace Animus::GpuVision
                     while (n > 0)
                     {
                         visit(objects[offset], maxDist, BihStack{ stack.Nodes + stackPos,
-                            stack.Capacity - stackPos });
+                            stack.Capacity - stackPos, stack.Overflow });
                         --n;
                         ++offset;
                     }
@@ -488,7 +505,8 @@ namespace Animus::GpuVision
         Visit&& visit)
     {
         BihStackNode nodes[BIH_STACK];
-        BihRayOn(BihStack{ nodes, BIH_STACK }, words, bih, origin, direction, maxDist,
+        bool overflow = false;
+        BihRayOn(BihStack{ nodes, BIH_STACK, &overflow }, words, bih, origin, direction, maxDist,
             [&](uint32_t entry, float& distance, BihStack) { visit(entry, distance); });
     }
 
@@ -1298,14 +1316,16 @@ namespace Animus::GpuVision
         return best;
     }
 
-    /// VisionCaster's Nearest (liquids and units always: the pixels' cast; the boom stays on the CPU).
+    /// VisionCaster's Nearest (liquids and units always: the pixels' cast; the boom stays on the CPU), on a stack
+    /// of `Stack` entries; `overflow` is set when a walk dropped a node.
+    template <int Stack>
     FORGE_HD inline Hit Nearest(V3 origin, V3 dir, float limit, SceneView const& scene, uint32_t phaseMask,
-        DeviceUnit const* units, uint32_t unitCount)
+        DeviceUnit const* units, uint32_t unitCount, bool& overflow)
     {
         V3 const end = origin + dir * limit;
         Hit best = { limit, uint32_t(Vision::Kind::Sky), end.Z, 0.0f };
-        BihStackNode nodes[SHARED_STACK];
-        BihStack const stack = { nodes, SHARED_STACK };
+        BihStackNode nodes[Stack];
+        BihStack const stack = { nodes, Stack, &overflow };
 
         // 1. The collision trees, the static and the doors apart.
         Surface const model = StaticSurface(scene, origin, end, stack);
@@ -1397,17 +1417,39 @@ namespace Animus::GpuVision
             float(sin(double(elevation))));
     }
 
-    /// One cast pixel, written to `out` (4 bytes): Vision::Render's loop body (CastRay, ObjectiveFlag, EncodePixel).
-    FORGE_HD inline void CastPixel(FrameRequest const& request, SceneView const& scene, DeviceUnit const* units,
+    /// One cast pixel, written to `out` (4 bytes): Vision::Render's loop body (CastRay, ObjectiveFlag, EncodePixel),
+    /// on a stack of `Stack` entries. True when a walk overflowed it (the pixel may then differ from the CPU's).
+    template <int Stack>
+    FORGE_HD inline bool CastPixel(FrameRequest const& request, SceneView const& scene, DeviceUnit const* units,
         uint32_t row, uint32_t col, uint8_t* out)
     {
         V3 const camera = Make(request.CameraX, request.CameraY, request.CameraZ);
         V3 const dir = PixelDirection(request, row, col);
         float const reach = Reach(camera, dir, scene);
-        Hit const hit = Nearest(camera, dir, reach, scene, request.PhaseMask, units + request.UnitOffset,
-            request.UnitCount);
+        bool overflow = false;
+        Hit const hit = Nearest<Stack>(camera, dir, reach, scene, request.PhaseMask, units + request.UnitOffset,
+            request.UnitCount, overflow);
         bool const flag = ObjectiveFlag(camera, dir, hit.Distance, request);
         EncodePixel(hit, request.FeetZ, flag, out);
+        return overflow;
+    }
+
+    /// CastPixel at STACK_SIZES[index], chosen at run time (the host's; a kernel is compiled at each size).
+    inline bool CastPixelSized(int index, FrameRequest const& request, SceneView const& scene,
+        DeviceUnit const* units, uint32_t row, uint32_t col, uint8_t* out)
+    {
+        static_assert(STACK_COUNT == 4, "one case a stack size");
+        switch (index)
+        {
+            case 0:
+                return CastPixel<STACK_SIZES[0]>(request, scene, units, row, col, out);
+            case 1:
+                return CastPixel<STACK_SIZES[1]>(request, scene, units, row, col, out);
+            case 2:
+                return CastPixel<STACK_SIZES[2]>(request, scene, units, row, col, out);
+            default:
+                return CastPixel<STACK_SIZES[3]>(request, scene, units, row, col, out);
+        }
     }
 
     /// Whether the frame is cast at a size other than the canonical one (and so into scratch, then scaled up).
@@ -1447,6 +1489,11 @@ extern "C"
         Animus::GpuVision::SceneView const* Scenes;
         uint8_t* Scratch;
         uint8_t* Image;
+        /// The stack the launch's scenes can need at worst (STACK_SIZES picks the kernel), and a device counter
+        /// the kernel adds every overflowing pixel to (zeroed by the caller).
+        uint32_t StackDepth;
+        uint32_t Pad;
+        uint32_t* Overflows;
     };
 }
 

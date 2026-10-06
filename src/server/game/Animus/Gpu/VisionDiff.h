@@ -70,6 +70,9 @@ namespace Animus::GpuVision
         std::map<std::pair<uint32_t, uint32_t>, uint64_t> KindPairs;  // (CPU kind, other kind) of kind mismatches
         std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> BySize;  // (w, h): pixels, identical
         uint32_t UpscaleExact = 0;      // frames whose canonical image is exactly Upscale of their cast frame
+        /// The first few mismatches, for a look: "frame f (row, col) w x h: CPU b0 b1 b2 b3, other b0 b1 b2 b3".
+        std::vector<std::string> Samples;
+        uint32_t Frame = 0;             // the frame CompareFrame is given (RunDiff sets it)
         uint32_t Frames = 0;
 
         [[nodiscard]] uint64_t NonEdge() const { return Pixels - EdgeMismatches; }
@@ -91,6 +94,7 @@ namespace Animus::GpuVision
         DiffTally GpuTally;
         bool Emulated = false;
         double EmulatedMs = 0.0;
+        uint32_t EmulatedOverflows = 0;
         DiffTally EmulatedTally;
     };
 

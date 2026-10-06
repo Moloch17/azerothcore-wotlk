@@ -38,6 +38,7 @@ namespace
     constexpr uint32_t TILE_W = 8;
     constexpr uint32_t TILE_H = THREADS / TILE_W;
 
+    template <int Stack>
     __global__ void __launch_bounds__(THREADS) CastKernel(ForgeVisionLaunch launch)
     {
         FrameRequest const& request = launch.Requests[blockIdx.y];
@@ -52,8 +53,9 @@ namespace
         uint32_t const pixel = row * request.CastWidth + col;
         uint8_t* target = Scaled(request) ? launch.Scratch + request.ScratchOffset
             : launch.Image + request.ImageOffset;
-        CastPixel(request, launch.Scenes[request.Scene], launch.Units, row, col,
-            target + uint64_t(pixel) * Animus::Vision::BYTES_PER_PIXEL);
+        if (CastPixel<Stack>(request, launch.Scenes[request.Scene], launch.Units, row, col,
+            target + uint64_t(pixel) * Animus::Vision::BYTES_PER_PIXEL))
+            atomicAdd(launch.Overflows, 1u);
     }
 
     __global__ void __launch_bounds__(THREADS) UpscaleKernel(ForgeVisionLaunch launch)
@@ -80,7 +82,22 @@ int ForgeGpuDevice::CastVision(ForgeVisionLaunch const* launch)
     uint32_t const tiles = ((launch->MaxCastWidth + TILE_W - 1) / TILE_W) * ((launch->MaxCastHeight + TILE_H - 1)
         / TILE_H);
     dim3 const cast(tiles, launch->RequestCount);
-    CastKernel<<<cast, block, 0, Stream()>>>(*launch);
+    static_assert(STACK_COUNT == 4, "one kernel a stack size");
+    switch (StackIndexFor(launch->StackDepth))
+    {
+        case 0:
+            CastKernel<STACK_SIZES[0]><<<cast, block, 0, Stream()>>>(*launch);
+            break;
+        case 1:
+            CastKernel<STACK_SIZES[1]><<<cast, block, 0, Stream()>>>(*launch);
+            break;
+        case 2:
+            CastKernel<STACK_SIZES[2]><<<cast, block, 0, Stream()>>>(*launch);
+            break;
+        default:
+            CastKernel<STACK_SIZES[3]><<<cast, block, 0, Stream()>>>(*launch);
+            break;
+    }
     if (int const failed = Check(hipGetLastError(), "CastKernel"))
         return failed;
     dim3 const upscale((launch->MaxPixels + THREADS - 1) / THREADS, launch->RequestCount);

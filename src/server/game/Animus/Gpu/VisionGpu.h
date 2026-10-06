@@ -90,6 +90,9 @@ namespace Animus::GpuVision
         uint32_t TerrainGrids = 0;      // ... with a terrain grid packed
         uint64_t TerrainBytes = 0;
         uint64_t DeviceBytes = 0;       // what this renderer holds on the device in all
+        uint32_t StackDepth = 0;        // the shared stack a ray can need here (static, liquid or door walk)
+        uint32_t StaticTopDepth = 0;    // ... of which the spawn tree's
+        uint32_t ModelStackDepth = 0;   // ... and the deepest model's
     };
 
     struct CastTiming
@@ -98,6 +101,11 @@ namespace Animus::GpuVision
         double KernelMs = 0.0;
         double DownloadMs = 0.0;
         uint64_t Rays = 0;
+        /// Pixels whose walk overflowed the stack (it dropped a node, and may differ from the CPU's): 0, or the
+        /// scenes' depth estimate is wrong.
+        uint32_t Overflows = 0;
+        uint32_t StackDepth = 0;        // the worst case the launch's scenes can need
+        uint32_t StackSize = 0;         // the kernel's stack it ran with
     };
 
     /// The GPU path of Vision::Render for one seat: the request for its pixels, the rig the CPU placed (the boom is
@@ -136,11 +144,14 @@ namespace Animus::GpuVision
         /// into `casts`.
         bool Cast(std::vector<FrameRequest> const& requests, std::vector<DeviceUnit> const& units,
             std::vector<uint8_t>& images, std::vector<uint8_t>& casts, CastTiming& timing, std::string& error);
-        /// The same on the host, over the host copy of the scenes.
-        void Emulate(std::vector<FrameRequest> const& requests, std::vector<DeviceUnit> const& units,
+        /// The same on the host, over the host copy of the scenes: the pixels that overflowed the stack.
+        uint32_t Emulate(std::vector<FrameRequest> const& requests, std::vector<DeviceUnit> const& units,
             std::vector<uint8_t>& images, std::vector<uint8_t>& casts) const;
 
         [[nodiscard]] SceneReport Report(int32_t scene) const;
+        /// The last launch's overflowing pixels, and every launch's since this renderer was made (G3's status row).
+        [[nodiscard]] uint32_t LastOverflows() const { return _lastOverflows; }
+        [[nodiscard]] uint64_t TotalOverflows() const { return _totalOverflows; }
         [[nodiscard]] GridReport ReportGrid(int32_t scene, int32_t tileX, int32_t tileY) const;
         /// The host view of a scene (the tests read it).
         [[nodiscard]] SceneView const& HostView(int32_t scene) const;
@@ -186,8 +197,10 @@ namespace Animus::GpuVision
             Buffer DoorModels;
             SceneView Host;
             SceneView Device;
+            uint32_t WarnedDepth = 0;
         };
 
+        static uint32_t SceneStackDepth(Scene const& scene);
         bool Ensure(Buffer& buffer, std::size_t bytes, std::string& error, bool* moved = nullptr);
         bool Upload(Buffer& buffer, void const* host, std::size_t bytes, std::size_t at, std::string& error);
         bool UploadWords(Buffer& buffer, Words const& words, std::string& error);
@@ -203,6 +216,9 @@ namespace Animus::GpuVision
         Buffer _views;
         Buffer _scratch;
         Buffer _image;
+        Buffer _overflows;
+        uint32_t _lastOverflows = 0;
+        uint64_t _totalOverflows = 0;
         uint64_t _deviceBytes = 0;
     };
 

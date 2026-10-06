@@ -310,10 +310,12 @@ namespace
         Gv::GridReport const grid = renderer.ReportGrid(scene, tileX, tileY);
         std::cout << Acore::StringFormat("[{}] scene: {} spawns, {} loaded (CPU tree {}), triangles {} (CPU {}); {} "
             "models ({} groups, {} triangles, {} BIH node words, {} liquids), static {:.2f} MB; {} doors; {} grids, "
-            "{} with terrain ({:.2f} MB); device {:.2f} MB\n", label, all.Slots, all.LoadedSlots, all.CpuLoadedSlots,
+            "{} with terrain ({:.2f} MB); device {:.2f} MB; stack depth {} (spawn tree {}, deepest model {})\n",
+            label, all.Slots, all.LoadedSlots, all.CpuLoadedSlots,
             all.Triangles, all.CpuTriangles, all.Models, all.Counts.Groups, all.Counts.Triangles,
             all.Counts.BihNodeWords, all.Counts.Liquids, mb(all.StaticBytes), all.Doors, all.Grids,
-            all.TerrainGrids, mb(all.TerrainBytes), mb(all.DeviceBytes));
+            all.TerrainGrids, mb(all.TerrainBytes), mb(all.DeviceBytes), all.StackDepth, all.StaticTopDepth,
+            all.ModelStackDepth);
         std::cout << Acore::StringFormat("[{}] grid ({}, {}): terrain {:.2f} MB, {} spawns touch it ({} triangles), "
             "{} models {:.2f} MB: {:.2f} MB with its terrain\n", label, tileX, tileY, mb(grid.TerrainBytes),
             grid.Spawns, grid.Triangles, grid.Models, mb(grid.ModelBytes), mb(grid.TerrainBytes + grid.ModelBytes));
@@ -356,8 +358,10 @@ namespace
         for (std::string const& line : Gv::FormatDiff(diff))
             std::cout << "[" << label << "] " << line << "\n";
         EXPECT_EQ(diff.ScalarsExact, diff.Frames);
+        EXPECT_EQ(diff.EmulatedOverflows, 0u) << label;
         if (diff.Device)
         {
+            EXPECT_EQ(diff.Gpu.Overflows, 0u) << label;
             EXPECT_EQ(diff.GpuTally.UpscaleExact, diff.Frames);
             EXPECT_GE(diff.GpuTally.NonEdgeShare(), 0.999) << label;
             EXPECT_LE(diff.GpuTally.EdgeMismatches, diff.GpuTally.Pixels / 100) << label;
@@ -471,12 +475,14 @@ TEST_F(VisionGpuDataTest, DoorOpenAndShut)
         std::string error;
         int32_t const scene = renderer.Sync(world.Source(), error);
         ASSERT_GE(scene, 0) << error;
-        Gv::DiffReport const diff = Gv::RunDiff(renderer, scene, world, DataWorld::PHASE, settings, frames, false);
+        Gv::DiffReport const diff = Gv::RunDiff(renderer, scene, world, DataWorld::PHASE, settings, frames,
+            Env("FORGE_VISION_EMULATE") != nullptr);
         std::string const label = shut ? "door shut" : "door open";
         for (std::string const& line : Gv::FormatDiff(diff))
             std::cout << "[" << label << "] " << line << "\n";
         if (diff.Device)
         {
+            EXPECT_EQ(diff.Gpu.Overflows, 0u) << label;
             EXPECT_GE(diff.GpuTally.NonEdgeShare(), 0.999) << label;
             EXPECT_EQ(diff.GpuTally.UpscaleExact, diff.Frames);
             // The door is seen while shut and gone once open.

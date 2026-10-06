@@ -24,10 +24,40 @@
 #include "ModelInstance.h"
 #include "VisionCaster.h"
 #include "WorldModel.h"
+#include <algorithm>
 
 namespace
 {
     using namespace Animus::GpuVision;
+
+    /// A BIH node's real children (BIH::subdivide): a BVH2 node has one, at its offset; a split has two, at offset
+    /// and offset + 3, except where subdivide made a single-child split over empty space -- its missing side's
+    /// clip is -inf (no left child) or +inf (no right child), and the offset then points 3 words short, at
+    /// whatever node lies there. A leaf has none. Returns how many were written.
+    uint32_t RealChildren(std::vector<uint32_t> const& nodes, uint32_t node, uint32_t (&children)[2])
+    {
+        if (node + 2 >= nodes.size() && !(node + 1 < nodes.size()))
+            return 0;
+        uint32_t const tn = nodes[node];
+        uint32_t const axis = (tn & (3u << 30)) >> 30;
+        uint32_t const offset = tn & ~(7u << 29);
+        uint32_t count = 0;
+        if (tn & (1u << 29))
+        {
+            if (axis < 3 && offset < nodes.size())
+                children[count++] = offset;
+            return count;
+        }
+        if (axis == 3 || node + 2 >= nodes.size())
+            return 0;
+        constexpr uint32_t MINUS_INF = 0xFF800000u;
+        constexpr uint32_t PLUS_INF = 0x7F800000u;
+        if (nodes[node + 1] != MINUS_INF && offset < nodes.size())
+            children[count++] = offset;
+        if (nodes[node + 2] != PLUS_INF && offset + 3 < nodes.size())
+            children[count++] = offset + 3;
+        return count;
+    }
 
     void PutFloat(uint32_t* at, float value)
     {
@@ -97,6 +127,33 @@ namespace
     }
 }
 
+uint32_t Animus::GpuVision::BihPushDepth(BIH const& tree)
+{
+    return BihPushDepth(tree.GetNodes());
+}
+
+uint32_t Animus::GpuVision::BihPushDepth(std::vector<uint32_t> const& nodes)
+{
+    uint32_t deepest = 0;
+    // (node, splits above it), walked without recursion: a broken tree must not take the server down.
+    std::vector<std::pair<uint32_t, uint32_t>> open = { { 0, 0 } };
+    while (!open.empty())
+    {
+        auto const [node, splits] = open.back();
+        open.pop_back();
+        if (node >= nodes.size() || open.size() > nodes.size())
+            continue;
+        uint32_t children[2];
+        uint32_t const count = RealChildren(nodes, node, children);
+        deepest = std::max(deepest, splits);
+        // A split with both children pushes the far one; a single-child split or a BVH2 node pushes nothing.
+        for (uint32_t i = 0; i < count; ++i)
+            if (children[i] > node)
+                open.push_back({ children[i], splits + (count == 2 ? 1 : 0) });
+    }
+    return deepest;
+}
+
 void Animus::GpuVision::PackBih(BIH const& tree, Words& out, uint32_t record)
 {
     PutBox(&out[record], tree.bound());
@@ -121,6 +178,9 @@ uint32_t Animus::GpuVision::PackModel(VMAP::WorldModel const& model, Words& pool
     ModelCounts local;
     local.Groups = uint32_t(groups.size());
     local.BihNodeWords += uint32_t(model.GetGroupTree().GetNodes().size());
+    // WorldModel::IntersectRay walks a single group straight, more through the group tree.
+    uint32_t const groupDepth = groups.size() == 1 ? 0 : BihPushDepth(model.GetGroupTree());
+    uint32_t meshDepth = 0;
     for (uint32_t i = 0; i < groups.size(); ++i)
     {
         VMAP::GroupModel const& group = groups[i];
@@ -153,7 +213,11 @@ uint32_t Animus::GpuVision::PackModel(VMAP::WorldModel const& model, Words& pool
         local.Triangles += uint32_t(triangles.size());
         local.Vertices += uint32_t(vertices.size());
         local.BihNodeWords += uint32_t(group.GetMeshTree().GetNodes().size());
+        if (!triangles.empty())
+            meshDepth = std::max(meshDepth, BihPushDepth(group.GetMeshTree()));
     }
+    local.StackDepth = groupDepth + meshDepth;
+    local.LiquidStackDepth = groupDepth;
     if (counts)
         *counts = local;
     return offset;
@@ -231,6 +295,8 @@ uint32_t Animus::GpuVision::ModelPool::Acquire(VMAP::WorldModel const* model, Li
     _counts.Vertices += entry.Counts.Vertices;
     _counts.BihNodeWords += entry.Counts.BihNodeWords;
     _counts.Liquids += entry.Counts.Liquids;
+    _counts.StackDepth = std::max(_counts.StackDepth, entry.Counts.StackDepth);
+    _counts.LiquidStackDepth = std::max(_counts.LiquidStackDepth, entry.Counts.LiquidStackDepth);
     _offsets.emplace(model, entry);
     return entry.Offset;
 }
@@ -288,40 +354,101 @@ bool Animus::GpuVision::StaticScene::Sync(VMAP::StaticMapTree const& tree, Liqui
         ++LoadedSlots;
     }
     if (changed)
-        BuildTrees();
+        BuildTrees(tree.GetTree());
     return changed;
 }
 
-void Animus::GpuVision::StaticScene::BuildTrees()
+void Animus::GpuVision::StaticScene::BuildTrees(BIH const& tree)
 {
-    // Each tree over the loaded spawns' own bounds (the CPU tree's primitives), its objects mapped to the instance
-    // records: every spawn the CPU's walk could reach and no other, so the nearest hit is the same.
-    auto const build = [&](bool liquidsOnly, Words& top, Words& slots)
-    {
-        std::vector<G3D::AABox> bounds;
-        slots.clear();
-        for (uint32_t slot = 0; slot < SlotTable.size(); ++slot)
+    DeepestSlot = NO_INSTANCE;
+    uint32_t deepest = 0;
+    for (uint32_t slot = 0; slot < SlotTable.size(); ++slot)
+        if (SlotTable[slot] != NO_INSTANCE && (DeepestSlot == NO_INSTANCE
+            || Models.CountsOf(SlotModels[slot]).StackDepth > deepest))
         {
-            uint32_t const instance = SlotTable[slot];
-            if (instance == NO_INSTANCE)
-                continue;
-            uint32_t const* record = &Instances[std::size_t(instance) * INSTANCE_WORDS];
-            // ModelInstance::intersectLiquid: an M2 has none, nor has a model without a liquid surface.
-            if (liquidsOnly && ((record[INSTANCE_FLAGS] & SPAWN_M2) || !Models.CountsOf(SlotModels[slot]).Liquids))
-                continue;
-            uint32_t const* b = record + INSTANCE_BOUND;
-            bounds.emplace_back(G3D::Vector3(AsFloat(b[0]), AsFloat(b[1]), AsFloat(b[2])),
-                G3D::Vector3(AsFloat(b[3]), AsFloat(b[4]), AsFloat(b[5])));
-            slots.push_back(instance);
+            DeepestSlot = slot;
+            deepest = Models.CountsOf(SlotModels[slot]).StackDepth;
         }
-        BIH bih;
-        auto const boundsOf = [](G3D::AABox const& box, G3D::AABox& out) { out = box; };
-        bih.build(bounds, boundsOf);
+
+    // The CPU's own tree, its split planes and leaves as they are, with every subtree that holds no spawn a ray
+    // could hit made an empty leaf: the walk then meets the loaded spawns in the CPU's order with the CPU's
+    // intervals (so the same nearest hit, ties and all), without descending the thousands of subtrees of tiles
+    // never loaded. A tree built afresh over the loaded spawns' bounds was as fast but not the same: the CPU's
+    // tree file bounds a spawn otherwise, and the two found different triangles at a few pixels.
+    auto const build = [&](bool liquidsOnly, Words& top) -> uint32_t
+    {
         top.assign(BIH_WORDS, 0);
-        PackBih(bih, top, 0);
+        PackBih(tree, top, 0);
+        uint32_t* nodes = &top[top[BIH_NODES]];
+        uint32_t const nodeWords = top[BIH_OBJECTS] - top[BIH_NODES];
+        std::vector<uint32_t> const original(nodes, nodes + nodeWords);
+        uint32_t const* objects = &top[top[BIH_OBJECTS]];
+        uint32_t const objectCount = uint32_t(top.size()) - top[BIH_OBJECTS];
+        auto const live = [&](uint32_t object)
+        {
+            if (object >= SlotTable.size() || SlotTable[object] == NO_INSTANCE)
+                return false;
+            if (!liquidsOnly)
+                return true;
+            // ModelInstance::intersectLiquid: an M2 has none, nor has a model without a liquid surface.
+            uint32_t const* record = &Instances[std::size_t(SlotTable[object]) * INSTANCE_WORDS];
+            return !(record[INSTANCE_FLAGS] & SPAWN_M2) && Models.CountsOf(SlotModels[object]).Liquids > 0;
+        };
+
+        // Which nodes hold a live spawn, children before parents (every child lies after its parent).
+        std::vector<uint8_t> holds(nodeWords, 0);
+        std::vector<uint32_t> order;
+        std::vector<uint32_t> open = { 0 };
+        while (!open.empty())
+        {
+            uint32_t const node = open.back();
+            open.pop_back();
+            if (node + 1 >= nodeWords)
+                continue;
+            order.push_back(node);
+            uint32_t children[2];
+            uint32_t const count = RealChildren(original, node, children);
+            for (uint32_t i = 0; i < count; ++i)
+                if (children[i] > node)
+                    open.push_back(children[i]);
+        }
+        for (auto it = order.rbegin(); it != order.rend(); ++it)
+        {
+            uint32_t const node = *it;
+            uint32_t const tn = original[node];
+            uint32_t const offset = tn & ~(7u << 29);
+            uint32_t children[2];
+            uint32_t const count = RealChildren(original, node, children);
+            bool any = false;
+            if (!(tn & (1u << 29)) && ((tn & (3u << 30)) >> 30) == 3)
+            {
+                for (uint32_t i = 0; i < original[node + 1] && offset + i < objectCount && !any; ++i)
+                    any = live(objects[offset + i]);
+            }
+            else
+                for (uint32_t i = 0; i < count; ++i)
+                    any = any || (children[i] > node && holds[children[i]]);
+            holds[node] = any;
+        }
+        // An empty leaf where nothing is: the walk enters it and leaves (the root too, for a tree with nothing).
+        for (uint32_t node : order)
+            if (!holds[node])
+            {
+                nodes[node] = 3u << 30;
+                nodes[node + 1] = 0;
+            }
+        return BihPushDepth(std::vector<uint32_t>(nodes, nodes + nodeWords));
     };
-    build(false, Top, Slots);
-    build(true, LiquidTop, LiquidSlots);
+    Slots = SlotTable;
+    LiquidSlots = SlotTable;
+    TopDepth = build(false, Top);
+    LiquidTopDepth = build(true, LiquidTop);
+}
+
+uint32_t Animus::GpuVision::StaticScene::StackDepth() const
+{
+    ModelCounts const& counts = Models.Counts();
+    return std::max(TopDepth + counts.StackDepth, LiquidTopDepth + counts.LiquidStackDepth);
 }
 
 bool Animus::GpuVision::DoorScene::Sync(DynamicMapTree const& tree, LiquidDeadly const& deadly)

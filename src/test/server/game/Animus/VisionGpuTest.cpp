@@ -16,6 +16,7 @@
  */
 
 #include "BoundingIntervalHierarchy.h"
+#include "GpuRuntime.h"
 #include "ModelIgnoreFlags.h"
 #include "ModelInstance.h"
 #include "VisionDiff.h"
@@ -229,9 +230,11 @@ TEST(VisionGpuTest, PackedSpawnCastsAsModelInstance)
                 &cpuNormal);
             float gpuDistance = reach;
             Gv::V3 gpuNormal = Gv::Make(0.0f, 0.0f, 0.0f);
-            Gv::BihStackNode nodes[Gv::SHARED_STACK];
+            Gv::BihStackNode nodes[Gv::MAX_STACK];
+            bool overflow = false;
             bool const gpuHit = Gv::InstanceRay(record, pool.data(), ToV3(ray.origin()), ToV3(ray.direction()),
-                gpuDistance, gpuNormal, Gv::BihStack{ nodes, Gv::SHARED_STACK });
+                gpuDistance, gpuNormal, Gv::BihStack{ nodes, Gv::MAX_STACK, &overflow });
+            EXPECT_FALSE(overflow);
             hits += cpuHit;
             if (cpuHit != gpuHit)
                 continue;
@@ -273,8 +276,9 @@ TEST(VisionGpuTest, PackedLiquidMatchesModelInstance)
         bool const cpuHit = spawn.intersectLiquid(ray, cpuDistance, cpuType);
         float gpuDistance = 100.0f;
         Gv::LiquidFound found = { 0, false };
-        Gv::BihStackNode nodes[Gv::SHARED_STACK];
-        Gv::BihStack const stack = { nodes, Gv::SHARED_STACK };
+        Gv::BihStackNode nodes[Gv::MAX_STACK];
+        bool overflow = false;
+        Gv::BihStack const stack = { nodes, Gv::MAX_STACK, &overflow };
         bool const gpuHit = Gv::InstanceLiquid(record, pool.data(), ToV3(ray.origin()), ToV3(ray.direction()),
             gpuDistance, found, stack);
         float m2Distance = 100.0f;
@@ -288,6 +292,52 @@ TEST(VisionGpuTest, PackedLiquidMatchesModelInstance)
     }
     EXPECT_GT(hits, rays / 50);
     EXPECT_GE(agree, rays - rays / 1000);
+}
+
+TEST(VisionGpuTest, StackDepthBoundsTheWalk)
+{
+    // A tree's push depth bounds what its walk holds: a stack of exactly that never drops a node; a stack too
+    // small does, and says so.
+    std::mt19937 random(5);
+    std::uniform_real_distribution<float> coordinate(-200.0f, 200.0f);
+    std::vector<G3D::AABox> boxes;
+    for (int i = 0; i < 2000; ++i)
+    {
+        G3D::Vector3 const low(coordinate(random), coordinate(random), coordinate(random) * 0.2f);
+        boxes.emplace_back(low, low + G3D::Vector3(4.0f, 4.0f, 4.0f));
+    }
+    auto bounds = [](G3D::AABox const& box, G3D::AABox& out) { out = box; };
+    BIH tree;
+    tree.build(boxes, bounds);
+    uint32_t const depth = Gv::BihPushDepth(tree);
+    EXPECT_GT(depth, 3u);
+    EXPECT_LT(depth, uint32_t(Gv::MAX_STACK));
+    Gv::Words words(Gv::BIH_WORDS, 0);
+    Gv::PackBih(tree, words, 0);
+
+    std::vector<Gv::BihStackNode> nodes(depth);
+    bool everFull = false;
+    for (int i = 0; i < 3000; ++i)
+    {
+        G3D::Vector3 const origin(coordinate(random) * 1.5f, coordinate(random) * 1.5f, coordinate(random) * 0.1f);
+        G3D::Vector3 dir(coordinate(random), coordinate(random), coordinate(random) * 0.05f);
+        dir /= dir.magnitude();
+        float reach = 1000.0f;
+        bool overflow = false;
+        // Visits that never shorten the ray: the walk reaches every leaf it crosses, the deepest the stack gets.
+        Gv::BihRayOn(Gv::BihStack{ nodes.data(), int(depth), &overflow }, words.data(), 0, Gv::Make(origin.x,
+            origin.y, origin.z), Gv::Make(dir.x, dir.y, dir.z), reach, [](uint32_t, float&, Gv::BihStack) { });
+        ASSERT_FALSE(overflow) << "ray " << i;
+        // A stack of 1 holds no split's sibling past the first: the walk says it dropped one.
+        bool tight = false;
+        reach = 1000.0f;
+        Gv::BihRayOn(Gv::BihStack{ nodes.data(), 1, &tight }, words.data(), 0, Gv::Make(origin.x, origin.y,
+            origin.z), Gv::Make(dir.x, dir.y, dir.z), reach, [](uint32_t, float&, Gv::BihStack) { });
+        everFull |= tight;
+    }
+    EXPECT_TRUE(everFull);
+    EXPECT_EQ(Gv::STACK_SIZES[Gv::StackIndexFor(depth)] >= int(depth), true);
+    EXPECT_EQ(Gv::StackIndexFor(5000), Gv::STACK_COUNT - 1);
 }
 
 TEST(VisionGpuTest, BihWalkVisitsAsTheCpuTree)
@@ -482,6 +532,7 @@ TEST(VisionGpuTest, EmulatedFramesMatchRender)
     ASSERT_TRUE(diff.Emulated);
     EXPECT_EQ(diff.ScalarsExact, diff.Frames);
     EXPECT_EQ(diff.EmulatedTally.UpscaleExact, diff.Frames);
+    EXPECT_EQ(diff.EmulatedOverflows, 0u);
     EXPECT_EQ(diff.EmulatedTally.BySize.size(), 4u);
     EXPECT_GE(diff.EmulatedTally.NonEdgeShare(), 0.999);
     EXPECT_LE(diff.EmulatedTally.EdgeMismatches, diff.EmulatedTally.Pixels / 100);
@@ -514,6 +565,21 @@ TEST(VisionGpuTest, InstancesShareTerrainUntilTheLastLetsGo)
     renderer.Forget(4242, 3);
     renderer.Forget(4242, 2);
     EXPECT_EQ(renderer.TerrainGrids(), 0u);
+}
+
+TEST(VisionGpuTest, ALibraryFromAnotherBuildIsRefused)
+{
+    ForgeGpuApi api{};
+    std::string why;
+    api.Version = FORGE_GPU_API_VERSION;
+    EXPECT_TRUE(Animus::Gpu::AcceptApi(&api, "libforge-gpu.so", why));
+    api.Version = FORGE_GPU_API_VERSION - 1;
+    EXPECT_FALSE(Animus::Gpu::AcceptApi(&api, "/x/libforge-gpu.so", why));
+    EXPECT_NE(why.find("/x/libforge-gpu.so is from another build (API version "
+        + std::to_string(FORGE_GPU_API_VERSION - 1) + ", this worldserver wants "
+        + std::to_string(FORGE_GPU_API_VERSION) + ")"), std::string::npos) << why;
+    EXPECT_FALSE(Animus::Gpu::AcceptApi(nullptr, "libforge-gpu.so", why));
+    EXPECT_NE(why.find("API version 0"), std::string::npos) << why;
 }
 
 TEST(VisionGpuTest, NothingRunsUnlessAsked)

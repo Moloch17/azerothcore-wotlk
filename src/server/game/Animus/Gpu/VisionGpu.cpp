@@ -19,6 +19,7 @@
 #include "VisionGpu.h"
 #include "DBCStores.h"
 #include "GpuRuntime.h"
+#include "Log.h"
 #include "Map.h"
 #include "MapTree.h"
 #include "ModelInstance.h"
@@ -26,6 +27,7 @@
 #include "WorldModel.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace
 {
@@ -122,6 +124,11 @@ void Animus::GpuVision::LayOut(std::vector<FrameRequest>& requests, std::size_t&
 
 Animus::GpuVision::Renderer::Renderer(ForgeGpuApi const* api) : _api(api) { }
 
+uint32_t Animus::GpuVision::Renderer::SceneStackDepth(Scene const& scene)
+{
+    return std::max(scene.Tree ? scene.Tree->Scene.StackDepth() : 0u, scene.Doors.StackDepth());
+}
+
 Animus::GpuVision::Renderer::~Renderer()
 {
     if (!_api)
@@ -136,7 +143,7 @@ Animus::GpuVision::Renderer::~Renderer()
         if (scene)
             for (Buffer* buffer : { &scene->GridTable, &scene->DoorRecords, &scene->DoorCells, &scene->DoorModels })
                 Release(*buffer);
-    for (Buffer* buffer : { &_requests, &_units, &_views, &_scratch, &_image })
+    for (Buffer* buffer : { &_requests, &_units, &_views, &_scratch, &_image, &_overflows })
         Release(*buffer);
 }
 
@@ -331,6 +338,29 @@ int32_t Animus::GpuVision::Renderer::Sync(SceneSource const& source, std::string
             || !UploadWords(scene.DoorModels, scene.Doors.Models.Data(), error))
             return -1;
 
+    // The worst stack a ray can need here, against the largest the kernel is compiled with: past it a walk drops
+    // nodes, which the overflow count then shows. Said once a scene and depth.
+    uint32_t const depth = SceneStackDepth(scene);
+    if (depth > uint32_t(MAX_STACK) && depth != scene.WarnedDepth)
+    {
+        scene.WarnedDepth = depth;
+        int32_t gridX = -1;
+        int32_t gridY = -1;
+        if (scene.Tree && scene.Tree->Scene.DeepestSlot != NO_INSTANCE)
+        {
+            StaticScene const& packed = scene.Tree->Scene;
+            uint32_t const* record = &packed.Instances[std::size_t(packed.SlotTable[packed.DeepestSlot])
+                * INSTANCE_WORDS];
+            // The static tree's space: x and y mirrored about the middle, so its grid is the coordinate's.
+            gridX = int32_t(std::floor(AsFloat(record[INSTANCE_POS]) / Vi::GRID_SIZE));
+            gridY = int32_t(std::floor(AsFloat(record[INSTANCE_POS + 1]) / Vi::GRID_SIZE));
+        }
+        LOG_WARN("module.animus", "GPU camera: map {} instance {} needs a {}-deep BIH stack (its spawn tree {}, its "
+            "deepest model near grid ({}, {})), past the kernel's largest ({}): rays there may drop nodes, which "
+            "the overflow count shows", source.MapId, source.InstanceId, depth,
+            scene.Tree ? scene.Tree->Scene.TopDepth : 0, gridX, gridY, MAX_STACK);
+    }
+
     if (_api && _api->Synchronize())
     {
         error = std::string("device sync: ") + _api->LastError();
@@ -395,8 +425,11 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     uint32_t maxPixels = 0;
     uint32_t maxCastWidth = 0;
     uint32_t maxCastHeight = 0;
+    uint32_t stackDepth = 0;
     for (FrameRequest const& request : requests)
     {
+        if (request.Scene < _scenes.size() && _scenes[request.Scene])
+            stackDepth = std::max(stackDepth, SceneStackDepth(*_scenes[request.Scene]));
         maxCastWidth = std::max(maxCastWidth, request.CastWidth);
         maxCastHeight = std::max(maxCastHeight, request.CastHeight);
         imageBytes = std::max<std::size_t>(imageBytes, request.ImageOffset
@@ -441,9 +474,13 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
         || !Ensure(_views, std::max<std::size_t>(views.size(), 1) * sizeof(SceneView), error)
         || !Ensure(_scratch, std::max<std::size_t>(castBytes, 4), error)
         || !Ensure(_image, std::max<std::size_t>(imageBytes, 4), error)
+        || !Ensure(_overflows, sizeof(uint32_t), error)
         || !Upload(_requests, requests.data(), requests.size() * sizeof(FrameRequest), 0, error)
         || !Upload(_units, units.data(), units.size() * sizeof(DeviceUnit), 0, error)
         || !Upload(_views, views.data(), views.size() * sizeof(SceneView), 0, error))
+        return false;
+    uint32_t overflows = 0;
+    if (!Upload(_overflows, &overflows, sizeof(overflows), 0, error))
         return false;
     if (_api->Synchronize())
     {
@@ -459,6 +496,10 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     launch.MaxPixels = maxPixels;
     launch.MaxCastWidth = maxCastWidth;
     launch.MaxCastHeight = maxCastHeight;
+    launch.StackDepth = stackDepth;
+    launch.Overflows = static_cast<uint32_t*>(_overflows.Pointer);
+    timing.StackSize = uint32_t(STACK_SIZES[StackIndexFor(stackDepth)]);
+    timing.StackDepth = stackDepth;
     launch.Units = static_cast<DeviceUnit const*>(_units.Pointer);
     launch.Scenes = static_cast<SceneView const*>(_views.Pointer);
     launch.Scratch = static_cast<uint8_t*>(_scratch.Pointer);
@@ -473,7 +514,8 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     images.assign(imageBytes, 0);
     casts.assign(castBytes, 0);
     if (_api->CopyToHost(images.data(), _image.Pointer, imageBytes)
-        || _api->CopyToHost(casts.data(), _scratch.Pointer, castBytes) || _api->Synchronize())
+        || _api->CopyToHost(casts.data(), _scratch.Pointer, castBytes)
+        || _api->CopyToHost(&overflows, _overflows.Pointer, sizeof(overflows)) || _api->Synchronize())
     {
         error = std::string("download: ") + _api->LastError();
         return false;
@@ -485,15 +527,24 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
                 std::size_t(request.Width) * request.Height * Vi::BYTES_PER_PIXEL,
                 casts.begin() + std::ptrdiff_t(request.ScratchOffset));
     Clock::time_point const done = Clock::now();
+    timing.Overflows = overflows;
+    _lastOverflows = overflows;
+    _totalOverflows += overflows;
     timing.UploadMs = Ms(start, uploaded);
     timing.KernelMs = Ms(uploaded, cast);
     timing.DownloadMs = Ms(cast, done);
     return true;
 }
 
-void Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& requests,
+uint32_t Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& requests,
     std::vector<DeviceUnit> const& units, std::vector<uint8_t>& images, std::vector<uint8_t>& casts) const
 {
+    uint32_t stackDepth = 0;
+    for (FrameRequest const& request : requests)
+        if (request.Scene < _scenes.size() && _scenes[request.Scene])
+            stackDepth = std::max(stackDepth, SceneStackDepth(*_scenes[request.Scene]));
+    int const stack = StackIndexFor(stackDepth);
+    uint32_t overflows = 0;
     std::size_t imageBytes = 0;
     std::size_t castBytes = 0;
     for (FrameRequest const& request : requests)
@@ -511,7 +562,7 @@ void Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& reque
         uint8_t* cast = casts.data() + request.ScratchOffset;
         for (uint32_t row = 0; row < request.CastHeight; ++row)
             for (uint32_t col = 0; col < request.CastWidth; ++col)
-                CastPixel(request, view, units.data(), row, col,
+                overflows += CastPixelSized(stack, request, view, units.data(), row, col,
                     cast + (std::size_t(row) * request.CastWidth + col) * Vi::BYTES_PER_PIXEL);
         uint8_t* image = images.data() + request.ImageOffset;
         for (uint32_t r = 0; r < request.Height; ++r)
@@ -519,6 +570,7 @@ void Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& reque
                 UpscalePixel(cast, request.CastWidth, request.CastHeight, image, request.Width, request.Height, r,
                     c);
     }
+    return overflows;
 }
 
 Animus::GpuVision::SceneReport Animus::GpuVision::Renderer::Report(int32_t index) const
@@ -555,6 +607,12 @@ Animus::GpuVision::SceneReport Animus::GpuVision::Renderer::Report(int32_t index
         report.TerrainBytes += TERRAIN_WORDS * sizeof(uint32_t);
     }
     report.DeviceBytes = _deviceBytes;
+    report.StackDepth = SceneStackDepth(scene);
+    if (scene.Tree)
+    {
+        report.StaticTopDepth = scene.Tree->Scene.TopDepth;
+        report.ModelStackDepth = scene.Tree->Scene.Models.Counts().StackDepth;
+    }
     return report;
 }
 

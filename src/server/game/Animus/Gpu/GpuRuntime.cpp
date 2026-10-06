@@ -83,13 +83,8 @@ namespace
 
         auto const get = reinterpret_cast<ForgeGpuApi const* (*)()>(dlsym(handle, "ForgeGpuGetApi"));
         ForgeGpuApi const* api = get ? get() : nullptr;
-        if (!api || api->Version != FORGE_GPU_API_VERSION)
-        {
-            g_why = library + " is from another build (API version " + std::to_string(api ? api->Version : 0)
-                + ", this worldserver wants " + std::to_string(FORGE_GPU_API_VERSION) + ")";
-            return;
-        }
-        g_api = api;
+        if (Animus::Gpu::AcceptApi(api, library, g_why))
+            g_api = api;
     }
 }
 
@@ -117,6 +112,16 @@ namespace Animus::Gpu
         });
         why = g_why;
         return g_api != nullptr;
+    }
+
+    bool AcceptApi(ForgeGpuApi const* api, std::string const& library, std::string& why)
+    {
+        if (api && api->Version == FORGE_GPU_API_VERSION)
+            return true;
+        why = library + " is from another build (API version " + std::to_string(api ? api->Version : 0)
+            + ", this worldserver wants " + std::to_string(FORGE_GPU_API_VERSION) + "): rebuild it with the "
+            "worldserver";
+        return false;
     }
 
     ForgeGpuApi const* Api()

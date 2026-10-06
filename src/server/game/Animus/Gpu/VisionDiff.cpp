@@ -63,7 +63,8 @@ namespace
         lines.push_back(Acore::StringFormat("  {}: {} of {} pixels identical within the tolerances ({}), {} "
             "byte-exact; non-edge {} identical (gate 99.9%); edge mismatches {} of all (gate ~1%)", name,
             tally.Identical, tally.Pixels, Percent(tally.Identical, tally.Pixels),
-            Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()), Percent(tally.EdgeMismatches, tally.Pixels)));
+            Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()),
+            Percent(tally.EdgeMismatches, tally.Pixels)));
         lines.push_back(Acore::StringFormat("    mismatches by cause: kind {}, objective {}, distance {}, height {}, "
             "normal {}", tally.Kind, tally.Objective, tally.Distance, tally.Height, tally.Normal));
         if (!tally.KindPairs.empty())
@@ -91,6 +92,8 @@ namespace
                 kinds += Acore::StringFormat("{}{} {}", kinds.empty() ? "" : ", ", Vi::KIND_NAMES[kind],
                     Percent(tally.CpuKinds[kind], tally.Pixels));
         lines.push_back("    the CPU's pixels by kind: " + kinds);
+        for (std::string const& sample : tally.Samples)
+            lines.push_back("    mismatch: " + sample);
     }
 }
 
@@ -185,6 +188,9 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
                 ++bySize.second;
                 continue;
             }
+            if (tally.Samples.size() < 6)
+                tally.Samples.push_back(Acore::StringFormat("frame {} ({}, {}) {}x{}: CPU {} {} {} {:#x}, other {} {} "
+                    "{} {:#x}", tally.Frame, row, col, w, h, a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]));
             tally.Kind += kind;
             tally.Objective += objective;
             tally.Distance += distance;
@@ -260,6 +266,7 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
         std::vector<uint8_t> upscaled(bytes);
         for (FrameRequest const& request : requests)
         {
+            tally.Frame = tally.Frames;
             ++tally.Frames;
             CompareFrame(cpuCasts.data() + request.ScratchOffset, casts.data() + request.ScratchOffset,
                 request.CastWidth, request.CastHeight, tally);
@@ -283,6 +290,7 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
             if (!renderer.Cast(requests, units, images, casts, again, report.DeviceError))
                 break;
             report.Gpu.KernelMs = std::min(report.Gpu.KernelMs, again.KernelMs);
+            report.Gpu.Overflows = std::max(report.Gpu.Overflows, again.Overflows);
         }
     }
     else
@@ -294,7 +302,7 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
         std::vector<uint8_t> images;
         std::vector<uint8_t> casts;
         Clock::time_point const start = Clock::now();
-        renderer.Emulate(requests, units, images, casts);
+        report.EmulatedOverflows = renderer.Emulate(requests, units, images, casts);
         report.EmulatedMs = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
         report.Emulated = true;
         compare(images, casts, report.EmulatedTally);
@@ -317,6 +325,9 @@ std::vector<std::string> Animus::GpuVision::FormatDiff(DiffReport const& report)
             "the {} frames in one launch); upload {:.2f} ms, download {:.2f} ms", report.Gpu.KernelMs / frames,
             raysPerSecond(report.Gpu.KernelMs) / 1e6, report.Gpu.KernelMs, report.Frames, report.Gpu.UploadMs,
             report.Gpu.DownloadMs));
+        lines.push_back(Acore::StringFormat("  GPU stack: {} entries (the scenes' worst case {}); {} pixels "
+            "overflowed it{}", report.Gpu.StackSize, report.Gpu.StackDepth, report.Gpu.Overflows,
+            report.Gpu.Overflows ? ": GATE FAILED" : ""));
         FormatTally(lines, "GPU vs CPU", report.GpuTally);
     }
     else
@@ -325,6 +336,8 @@ std::vector<std::string> Animus::GpuVision::FormatDiff(DiffReport const& report)
     {
         lines.push_back(Acore::StringFormat("  emulated (the kernel's code on the host, one thread): {:.3f} ms a frame",
             report.EmulatedMs / frames));
+        lines.push_back(Acore::StringFormat("  emulated stack: {} pixels overflowed it{}", report.EmulatedOverflows,
+            report.EmulatedOverflows ? ": GATE FAILED" : ""));
         FormatTally(lines, "emulated vs CPU", report.EmulatedTally);
     }
     return lines;
