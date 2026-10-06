@@ -163,6 +163,8 @@ namespace Animus::GpuVision
         Words Records;
         Words Cells;
         ModelPool Models;
+        /// Each record's GameObjectModel: what a frame's DoorShapes name (perception-goals 1a).
+        std::vector<void const*> Owners;
         uint32_t Count = 0;
         /// A door's walk needs its model's stack alone (the cells are a list, not a tree).
         [[nodiscard]] uint32_t StackDepth() const { return Models.Counts().StackDepth; }

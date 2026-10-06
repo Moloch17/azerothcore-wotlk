@@ -18,6 +18,7 @@
 
 #include "VisionDiff.h"
 #include "FrameImage.h"
+#include "GameObjectModel.h"
 #include "Random.h"
 #include "StringFormat.h"
 #include <algorithm>
@@ -40,6 +41,23 @@ namespace
     char const* ClassName(uint32_t value)
     {
         return value < Vi::CLASSES ? Vi::CLASS_NAMES[value] : "?";
+    }
+
+    /// The entity number a pixel's slot names in its frame's list (0 none).
+    uint32_t EntityOf(uint8_t const* pixel, Vi::FrameSlots const& slots)
+    {
+        uint8_t const slot = pixel[Vi::SLOT_BYTE];
+        return slot && slot <= slots.Count ? slots.Slots[slot - 1].Entity : 0;
+    }
+
+    bool SameList(Vi::FrameSlots const& a, Vi::FrameSlots const& b)
+    {
+        if (a.Count != b.Count)
+            return false;
+        for (uint32_t slot = 0; slot < a.Count; ++slot)
+            if (!(a.Slots[slot] == b.Slots[slot]))
+                return false;
+        return true;
     }
 
     /// The cast frame (w x h) a canonical image was scaled up from: cast pixel (sr, sc) is at the first canonical
@@ -70,8 +88,12 @@ namespace
             tally.Identical, tally.Pixels, Percent(tally.Identical, tally.Pixels),
             Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()),
             Percent(tally.EdgeMismatches, tally.Pixels)));
-        lines.push_back(Acore::StringFormat("    mismatches by cause: class {}, objective {}, distance {}, height {}, "
-            "normal {}", tally.Class, tally.Objective, tally.Distance, tally.Height, tally.Normal));
+        lines.push_back(Acore::StringFormat("    mismatches by cause: class {}, identity {}, objective {}, "
+            "distance {}, height {}, normal {}", tally.Class, tally.Identity, tally.Objective, tally.Distance, tally.Height,
+            tally.Normal));
+        lines.push_back(Acore::StringFormat("    identity: {} class or entity mismatches off an edge (gate 0); entity "
+            "lists equal in {} of {} frames (gate all); {} entities listed by the CPU, {} frames with a full list",
+            tally.OffEdgeIdentity, tally.SlotTablesExact, tally.Frames, tally.Listed, tally.FullLists));
         if (!tally.ClassPairs.empty())
         {
             std::vector<std::pair<uint64_t, std::pair<uint32_t, uint32_t>>> pairs;
@@ -102,7 +124,8 @@ namespace
 }
 
 std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision::VisionWorld const& world,
-    Vision::Settings const& settings, float x, float y, float z, uint32_t count, float radius)
+    Vision::Settings const& settings, float x, float y, float z, uint32_t count, float radius, uint32_t units,
+    uint32_t boxes, std::span<Vision::DoorShape const> doors)
 {
     // Every size a seat can draw, and the canonical one (a single-size conf, or the cast that is not scaled).
     std::vector<Vision::Resolution> sizes = settings.RenderSizes;
@@ -138,7 +161,7 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
         self.Height = frame.Pose.BodyHeight;
         self.Self = true;
         frame.Units.push_back(self);
-        uint32_t const others = urand(0, 6);
+        uint32_t const others = urand(0, units);
         for (uint32_t u = 0; u < others; ++u)
         {
             Vision::UnitShape unit;
@@ -149,9 +172,59 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
             unit.Z = frame.Pose.Z + frand(-1.0f, 1.0f);
             unit.Radius = frand(0.3f, 1.5f);
             unit.Height = frand(1.0f, 3.0f);
-            unit.What = urand(0, 1) == 1 ? Vi::Class::HostileCreature : Vi::Class::NeutralCreature;
+            unit.What = Vi::Class(urand(uint32_t(Vi::Class::HostileCreature), uint32_t(Vi::Class::Corpse)));
             frame.Units.push_back(unit);
         }
+
+        // Colliderless game objects: boxes of a chest's to a cart's size, turned about z at random.
+        uint32_t const objects = urand(0, boxes);
+        for (uint32_t b = 0; b < objects; ++b)
+        {
+            Vision::BoxShape box;
+            float const at = frand(0.0f, 2.0f * Vi::PI);
+            float const away = frand(1.5f, 15.0f);
+            box.X = frame.Pose.X + away * std::cos(at);
+            box.Y = frame.Pose.Y + away * std::sin(at);
+            box.Z = frame.Pose.Z + frand(-0.5f, 0.5f);
+            float const yaw = frand(0.0f, 2.0f * Vi::PI);
+            float const c = std::cos(yaw);
+            float const s = std::sin(yaw);
+            float const inverse[9] = { c, s, 0.0f, -s, c, 0.0f, 0.0f, 0.0f, 1.0f };
+            std::copy(std::begin(inverse), std::end(inverse), box.InvRot);
+            for (int32_t i = 0; i < 3; ++i)
+            {
+                float const half = frand(0.2f, 1.2f);
+                box.Low[i] = i == 2 ? 0.0f : -half;
+                box.High[i] = i == 2 ? 2.0f * half : half;
+            }
+            box.What = Vi::Class(urand(uint32_t(Vi::Class::Chest), uint32_t(Vi::Class::OtherObject)));
+            frame.Boxes.push_back(box);
+        }
+        frame.Doors.assign(doors.begin(), doors.end());
+
+        // Numbered nearest the head first, as GatherSight numbers a seat's entities.
+        Vi::Vec3 const pivot{ frame.Pose.X, frame.Pose.Y, frame.Pose.Z + Vi::PIVOT_SHARE * frame.Pose.BodyHeight };
+        std::vector<float> distances;
+        auto const measure = [&](float px, float py, float pz)
+        {
+            Vi::Vec3 const offset = Vi::Vec3{ px, py, pz } - pivot;
+            distances.push_back(Vi::Dot(offset, offset));
+        };
+        for (std::size_t u = 1; u < frame.Units.size(); ++u)
+            measure(frame.Units[u].X, frame.Units[u].Y, frame.Units[u].Z + 0.5f * frame.Units[u].Height);
+        for (Vision::BoxShape const& box : frame.Boxes)
+            measure(box.X, box.Y, box.Z + 0.5f * box.High[2]);
+        for (Vision::DoorShape const& door : frame.Doors)
+            measure(door.X, door.Y, door.Z);
+        std::vector<uint8_t> numbers(distances.size());
+        Vi::NumberNearest(distances, numbers);
+        std::size_t next = 0;
+        for (std::size_t u = 1; u < frame.Units.size(); ++u)
+            frame.Units[u].Entity = numbers[next++];
+        for (Vision::BoxShape& box : frame.Boxes)
+            box.Entity = numbers[next++];
+        for (Vision::DoorShape& door : frame.Doors)
+            door.Entity = numbers[next++];
         frame.HasObjective = urand(0, 9) < 7;
         if (frame.HasObjective)
         {
@@ -164,9 +237,31 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
     return frames;
 }
 
-void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, uint32_t w, uint32_t h,
-    DiffTally& tally)
+std::vector<Animus::Vision::DoorShape> Animus::GpuVision::KnownDoors(Renderer const& renderer, int32_t scene)
 {
+    static constexpr Vi::Class CLASSES[] = { Vi::Class::Door, Vi::Class::Chest, Vi::Class::QuestObject,
+        Vi::Class::UsableObject, Vi::Class::OtherObject, Vi::Class::Mailbox };
+    std::vector<Vision::DoorShape> doors;
+    for (void const* owner : renderer.DoorOwners(scene))
+    {
+        GameObjectModel const* model = static_cast<GameObjectModel const*>(owner);
+        Vision::DoorShape door;
+        door.Model = owner;
+        door.X = model->GetPosition().x;
+        door.Y = model->GetPosition().y;
+        door.Z = model->GetPosition().z;
+        door.What = CLASSES[doors.size() % std::size(CLASSES)];
+        doors.push_back(door);
+    }
+    return doors;
+}
+
+void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, uint32_t w, uint32_t h,
+    Vision::FrameSlots const& cpuSlots, Vision::FrameSlots const& otherSlots, DiffTally& tally)
+{
+    tally.SlotTablesExact += SameList(cpuSlots, otherSlots);
+    tally.Listed += cpuSlots.Count;
+    tally.FullLists += cpuSlots.Count == Vi::ENTITY_SLOTS;
     auto& bySize = tally.BySize[{ w, h }];
     for (uint32_t row = 0; row < h; ++row)
         for (uint32_t col = 0; col < w; ++col)
@@ -183,10 +278,11 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
             ++tally.CpuClasses[std::min<uint32_t>(kindA, Vi::CLASSES - 1)];
             bool const kind = kindA != kindB;
             bool const objective = (a[Vi::CLASS_BYTE] & Vi::OBJECTIVE_BIT) != (b[Vi::CLASS_BYTE] & Vi::OBJECTIVE_BIT);
+            bool const identity = EntityOf(a, cpuSlots) != EntityOf(b, otherSlots);
             bool const distance = std::abs(int32_t(a[0]) - int32_t(b[0])) > 1;
             bool const height = std::abs(int32_t(a[1]) - int32_t(b[1])) > 1;
             bool const normal = std::abs(int32_t(a[2]) - int32_t(b[2])) > 2;
-            if (!kind && !objective && !distance && !height && !normal)
+            if (!kind && !identity && !objective && !distance && !height && !normal)
             {
                 ++tally.Identical;
                 ++bySize.second;
@@ -197,6 +293,7 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
                     "{} {} {:#x} {}", tally.Frame, row, col, w, h, a[0], a[1], a[2], a[3], a[4], b[0], b[1], b[2], b[3],
                     b[4]));
             tally.Class += kind;
+            tally.Identity += identity;
             tally.Objective += objective;
             tally.Distance += distance;
             tally.Height += height;
@@ -216,8 +313,14 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
                     uint32_t const nearA = ClassOf(cpu + near);
                     uint32_t const nearB = ClassOf(other + near);
                     edge = kind ? (nearA == kindB || nearB == kindA) : nearA != kindA;
+                    // An entity mismatch of one class (two hostile creatures side by side) is on their boundary
+                    // when a neighbour shows the other caster's entity.
+                    if (!edge && identity && !kind)
+                        edge = EntityOf(cpu + near, cpuSlots) == EntityOf(b, otherSlots)
+                            || EntityOf(other + near, otherSlots) == EntityOf(a, cpuSlots);
                 }
             tally.EdgeMismatches += edge;
+            tally.OffEdgeIdentity += (kind || identity) && !edge;
         }
 }
 
@@ -230,7 +333,8 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
     uint32_t const bytes = Vision::ImageBytes(settings);
     std::vector<uint8_t> cpuImages(std::size_t(bytes) * frames.size());
     std::vector<FrameRequest> requests;
-    std::vector<DeviceUnit> units;
+    FrameLists lists;
+    std::vector<Vision::FrameSlots> cpuSlots(frames.size());
 
     // 1. The CPU: each frame exactly as a seat renders it; and the request the GPU path makes of the same seat
     // (the rig and the scalars stay on the CPU: the boom is one ray, the floor and liquid queries are its own).
@@ -240,18 +344,18 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
         Vision::Vec3 const* objective = frame.HasObjective ? &frame.Objective : nullptr;
         std::array<float, Vision::SCALARS> cpuScalars{};
         Clock::time_point const start = Clock::now();
-        Vision::Render(settings, frame.Pose, frame.Camera, world, frame.Units, objective,
-            cpuImages.data() + std::size_t(bytes) * i, cpuScalars.data());
+        Vision::Render(settings, frame.Pose, frame.Camera, world, frame.View(), objective,
+            cpuImages.data() + std::size_t(bytes) * i, cpuScalars.data(), nullptr, &cpuSlots[i]);
         report.CpuMs += std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 
         std::array<float, Vision::SCALARS> gpuScalars{};
-        Vision::Render(settings, frame.Pose, frame.Camera, world, frame.Units, objective, nullptr,
+        Vision::Render(settings, frame.Pose, frame.Camera, world, frame.View(), objective, nullptr,
             gpuScalars.data());
         report.ScalarsExact += !std::memcmp(cpuScalars.data(), gpuScalars.data(), sizeof(float) * Vision::SCALARS);
 
         Vision::Rig const rig = Vision::PlaceCamera(frame.Pose, frame.Camera, world);
-        FrameRequest const request = MakeRequest(settings, frame.Pose, frame.Camera, rig, frame.Units, objective,
-            uint32_t(scene), phaseMask, units);
+        FrameRequest const request = MakeRequest(settings, frame.Pose, frame.Camera, rig, frame.View(), objective,
+            uint32_t(scene), phaseMask, renderer.DoorOwners(scene), lists);
         report.Rays += uint64_t(request.CastWidth) * request.CastHeight;
         requests.push_back(request);
     }
@@ -266,15 +370,16 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
             cpuCasts.data() + requests[i].ScratchOffset, requests[i].CastWidth, requests[i].CastHeight);
 
     auto const compare = [&](std::vector<uint8_t> const& images, std::vector<uint8_t> const& casts,
-        DiffTally& tally)
+        std::vector<Vision::FrameSlots> const& slots, DiffTally& tally)
     {
         std::vector<uint8_t> upscaled(bytes);
-        for (FrameRequest const& request : requests)
+        for (std::size_t i = 0; i < requests.size(); ++i)
         {
+            FrameRequest const& request = requests[i];
             tally.Frame = tally.Frames;
             ++tally.Frames;
             CompareFrame(cpuCasts.data() + request.ScratchOffset, casts.data() + request.ScratchOffset,
-                request.CastWidth, request.CastHeight, tally);
+                request.CastWidth, request.CastHeight, cpuSlots[i], slots[i], tally);
             Vision::Upscale(casts.data() + request.ScratchOffset, request.CastWidth, request.CastHeight,
                 upscaled.data(), request.Width, request.Height);
             tally.UpscaleExact += !std::memcmp(upscaled.data(), images.data() + request.ImageOffset, bytes);
@@ -286,15 +391,17 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
     {
         std::vector<uint8_t> images;
         std::vector<uint8_t> casts;
-        report.Device = renderer.Cast(requests, units, images, casts, report.Gpu, report.DeviceError);
+        std::vector<Vision::FrameSlots> slots;
+        report.Device = renderer.Cast(requests, lists, images, casts, slots, report.Gpu, report.DeviceError);
         if (report.Device)
-            compare(images, casts, report.GpuTally);
+            compare(images, casts, slots, report.GpuTally);
         for (uint32_t i = 1; report.Device && i < repeats; ++i)
         {
             CastTiming again;
-            if (!renderer.Cast(requests, units, images, casts, again, report.DeviceError))
+            if (!renderer.Cast(requests, lists, images, casts, slots, again, report.DeviceError))
                 break;
             report.Gpu.KernelMs = std::min(report.Gpu.KernelMs, again.KernelMs);
+            report.Gpu.SlotsMs = std::min(report.Gpu.SlotsMs, again.SlotsMs);
             report.Gpu.Overflows = std::max(report.Gpu.Overflows, again.Overflows);
         }
     }
@@ -306,11 +413,12 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
     {
         std::vector<uint8_t> images;
         std::vector<uint8_t> casts;
+        std::vector<Vision::FrameSlots> slots;
         Clock::time_point const start = Clock::now();
-        report.EmulatedOverflows = renderer.Emulate(requests, units, images, casts);
+        report.EmulatedOverflows = renderer.Emulate(requests, lists, images, casts, slots);
         report.EmulatedMs = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
         report.Emulated = true;
-        compare(images, casts, report.EmulatedTally);
+        compare(images, casts, slots, report.EmulatedTally);
     }
     return report;
 }
@@ -330,6 +438,8 @@ std::vector<std::string> Animus::GpuVision::FormatDiff(DiffReport const& report)
             "the {} frames in one launch); upload {:.2f} ms, download {:.2f} ms", report.Gpu.KernelMs / frames,
             raysPerSecond(report.Gpu.KernelMs) / 1e6, report.Gpu.KernelMs, report.Frames, report.Gpu.UploadMs,
             report.Gpu.DownloadMs));
+        lines.push_back(Acore::StringFormat("  GPU entity lists: {} bytes read back for the {} frames in {:.3f} ms "
+            "(the entity block's sync point)", report.Gpu.SlotBytes, report.Frames, report.Gpu.SlotsMs));
         lines.push_back(Acore::StringFormat("  GPU stack: {} entries (the scenes' worst case {}); {} pixels "
             "overflowed it{}", report.Gpu.StackSize, report.Gpu.StackDepth, report.Gpu.Overflows,
             report.Gpu.Overflows ? ": GATE FAILED" : ""));

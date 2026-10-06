@@ -26,6 +26,7 @@
 #include "VisionCaster.h"
 #include "WorldModel.h"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 
@@ -71,8 +72,8 @@ Animus::GpuVision::SceneSource Animus::GpuVision::SourceOf(Map* map, Vision::Vis
 
 Animus::GpuVision::FrameRequest Animus::GpuVision::MakeRequest(Vision::Settings const& settings,
     Vision::Pose const& pose, Vision::CameraState const& camera, Vision::Rig const& rig,
-    std::span<Vision::UnitShape const> units, Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask,
-    std::vector<DeviceUnit>& unitsOut)
+    Vision::Sight const& sight, Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask,
+    std::span<void const* const> doorOwners, FrameLists& lists)
 {
     FrameRequest request{};
     request.CameraX = rig.Camera.X;
@@ -101,11 +102,38 @@ Animus::GpuVision::FrameRequest Animus::GpuVision::MakeRequest(Vision::Settings 
     }
     request.Scene = scene;
     request.PhaseMask = phaseMask;
-    request.UnitOffset = uint32_t(unitsOut.size());
-    for (Vision::UnitShape const& unit : units)
+    request.UnitOffset = uint32_t(lists.Units.size());
+    for (Vision::UnitShape const& unit : sight.Units)
         if (!unit.Self)
-            unitsOut.push_back({ unit.X, unit.Y, unit.Z, unit.Radius, unit.Height, uint32_t(unit.What) });
-    request.UnitCount = uint32_t(unitsOut.size()) - request.UnitOffset;
+            lists.Units.push_back({ unit.X, unit.Y, unit.Z, unit.Radius, unit.Height, uint32_t(unit.What),
+                unit.Entity });
+    request.UnitCount = uint32_t(lists.Units.size()) - request.UnitOffset;
+
+    request.BoxOffset = uint32_t(lists.Boxes.size());
+    for (Vision::BoxShape const& box : sight.Boxes)
+    {
+        DeviceBox entry{};
+        entry.X = box.X;
+        entry.Y = box.Y;
+        entry.Z = box.Z;
+        std::copy(std::begin(box.InvRot), std::end(box.InvRot), entry.InvRot);
+        std::copy(std::begin(box.Low), std::end(box.Low), entry.Low);
+        std::copy(std::begin(box.High), std::end(box.High), entry.High);
+        entry.Class = uint32_t(box.What);
+        entry.Entity = box.Entity;
+        lists.Boxes.push_back(entry);
+    }
+    request.BoxCount = uint32_t(lists.Boxes.size()) - request.BoxOffset;
+
+    // The doors the frame knows, by their records in the scene (a model the scene has no record of is never hit).
+    request.DoorOffset = uint32_t(lists.Doors.size());
+    for (Vision::DoorShape const& door : sight.Doors)
+    {
+        auto const found = std::find(doorOwners.begin(), doorOwners.end(), door.Model);
+        if (found != doorOwners.end())
+            lists.Doors.push_back({ uint32_t(found - doorOwners.begin()), uint32_t(door.What), door.Entity, 0 });
+    }
+    request.DoorCount = uint32_t(lists.Doors.size()) - request.DoorOffset;
     return request;
 }
 
@@ -113,8 +141,10 @@ void Animus::GpuVision::LayOut(std::vector<FrameRequest>& requests, std::size_t&
 {
     imageBytes = 0;
     castBytes = 0;
-    for (FrameRequest& request : requests)
+    for (std::size_t i = 0; i < requests.size(); ++i)
     {
+        FrameRequest& request = requests[i];
+        request.Frame = uint32_t(i);
         request.ImageOffset = imageBytes;
         request.ScratchOffset = castBytes;
         imageBytes += std::size_t(request.Width) * request.Height * Vi::BYTES_PER_PIXEL;
@@ -143,7 +173,8 @@ Animus::GpuVision::Renderer::~Renderer()
         if (scene)
             for (Buffer* buffer : { &scene->GridTable, &scene->DoorRecords, &scene->DoorCells, &scene->DoorModels })
                 Release(*buffer);
-    for (Buffer* buffer : { &_requests, &_units, &_views, &_scratch, &_image, &_overflows })
+    for (Buffer* buffer : { &_requests, &_units, &_boxes, &_doors, &_counts, &_slots, &_slotOf, &_views, &_scratch,
+        &_image, &_overflows })
         Release(*buffer);
 }
 
@@ -409,8 +440,15 @@ Animus::GpuVision::SceneView const& Animus::GpuVision::Renderer::HostView(int32_
     return view;
 }
 
-bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests,
-    std::vector<DeviceUnit> const& units, std::vector<uint8_t>& images, std::vector<uint8_t>& casts,
+std::span<void const* const> Animus::GpuVision::Renderer::DoorOwners(int32_t scene) const
+{
+    if (scene < 0 || std::size_t(scene) >= _scenes.size() || !_scenes[std::size_t(scene)])
+        return {};
+    return _scenes[std::size_t(scene)]->Doors.Owners;
+}
+
+bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests, FrameLists const& lists,
+    std::vector<uint8_t>& images, std::vector<uint8_t>& casts, std::vector<Vision::FrameSlots>& slots,
     CastTiming& timing, std::string& error)
 {
     timing = CastTiming();
@@ -469,14 +507,22 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     }
 
     Clock::time_point const start = Clock::now();
-    if (!Ensure(_requests, std::max<std::size_t>(requests.size(), 1) * sizeof(FrameRequest), error)
-        || !Ensure(_units, std::max<std::size_t>(units.size(), 1) * sizeof(DeviceUnit), error)
+    std::size_t const frames = std::max<std::size_t>(requests.size(), 1);
+    if (!Ensure(_requests, frames * sizeof(FrameRequest), error)
+        || !Ensure(_units, std::max<std::size_t>(lists.Units.size(), 1) * sizeof(DeviceUnit), error)
+        || !Ensure(_boxes, std::max<std::size_t>(lists.Boxes.size(), 1) * sizeof(DeviceBox), error)
+        || !Ensure(_doors, std::max<std::size_t>(lists.Doors.size(), 1) * sizeof(DeviceDoor), error)
+        || !Ensure(_counts, frames * COUNTS_PER_FRAME * sizeof(Vision::SlotStat), error)
+        || !Ensure(_slots, frames * Vision::ENTITY_SLOTS * sizeof(Vision::SlotStat), error)
+        || !Ensure(_slotOf, frames * COUNTS_PER_FRAME, error)
         || !Ensure(_views, std::max<std::size_t>(views.size(), 1) * sizeof(SceneView), error)
         || !Ensure(_scratch, std::max<std::size_t>(castBytes, 4), error)
         || !Ensure(_image, std::max<std::size_t>(imageBytes, 4), error)
         || !Ensure(_overflows, sizeof(uint32_t), error)
         || !Upload(_requests, requests.data(), requests.size() * sizeof(FrameRequest), 0, error)
-        || !Upload(_units, units.data(), units.size() * sizeof(DeviceUnit), 0, error)
+        || !Upload(_units, lists.Units.data(), lists.Units.size() * sizeof(DeviceUnit), 0, error)
+        || !Upload(_boxes, lists.Boxes.data(), lists.Boxes.size() * sizeof(DeviceBox), 0, error)
+        || !Upload(_doors, lists.Doors.data(), lists.Doors.size() * sizeof(DeviceDoor), 0, error)
         || !Upload(_views, views.data(), views.size() * sizeof(SceneView), 0, error))
         return false;
     uint32_t overflows = 0;
@@ -501,6 +547,11 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     timing.StackSize = uint32_t(STACK_SIZES[StackIndexFor(stackDepth)]);
     timing.StackDepth = stackDepth;
     launch.Units = static_cast<DeviceUnit const*>(_units.Pointer);
+    launch.Boxes = static_cast<DeviceBox const*>(_boxes.Pointer);
+    launch.Doors = static_cast<DeviceDoor const*>(_doors.Pointer);
+    launch.Counts = static_cast<Vision::SlotStat*>(_counts.Pointer);
+    launch.Slots = static_cast<Vision::SlotStat*>(_slots.Pointer);
+    launch.SlotOf = static_cast<uint8_t*>(_slotOf.Pointer);
     launch.Scenes = static_cast<SceneView const*>(_views.Pointer);
     launch.Scratch = static_cast<uint8_t*>(_scratch.Pointer);
     launch.Image = static_cast<uint8_t*>(_image.Pointer);
@@ -510,6 +561,31 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
         return false;
     }
     Clock::time_point const cast = Clock::now();
+
+    // The entity lists first, on their own (the read-back the entity block waits on): ENTITY_SLOTS a frame.
+    std::vector<Vision::SlotStat> tables(requests.size() * Vision::ENTITY_SLOTS);
+    timing.SlotBytes = tables.size() * sizeof(Vision::SlotStat);
+    if (_api->CopyToHost(tables.data(), _slots.Pointer, timing.SlotBytes) || _api->Synchronize())
+    {
+        error = std::string("slot read-back: ") + _api->LastError();
+        return false;
+    }
+    Clock::time_point const read = Clock::now();
+    slots.assign(requests.size(), Vision::FrameSlots());
+    for (std::size_t i = 0; i < requests.size(); ++i)
+    {
+        Vision::FrameSlots& frame = slots[i];
+        frame.CastWidth = requests[i].CastWidth;
+        frame.CastHeight = requests[i].CastHeight;
+        for (uint32_t slot = 0; slot < Vision::ENTITY_SLOTS; ++slot)
+        {
+            Vision::SlotStat const& stat = tables[i * Vision::ENTITY_SLOTS + slot];
+            if (!stat.Entity)
+                break;
+            frame.Slots[slot] = stat;
+            frame.Count = slot + 1;
+        }
+    }
 
     images.assign(imageBytes, 0);
     casts.assign(castBytes, 0);
@@ -532,12 +608,13 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     _totalOverflows += overflows;
     timing.UploadMs = Ms(start, uploaded);
     timing.KernelMs = Ms(uploaded, cast);
-    timing.DownloadMs = Ms(cast, done);
+    timing.SlotsMs = Ms(cast, read);
+    timing.DownloadMs = Ms(read, done);
     return true;
 }
 
-uint32_t Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& requests,
-    std::vector<DeviceUnit> const& units, std::vector<uint8_t>& images, std::vector<uint8_t>& casts) const
+uint32_t Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& requests, FrameLists const& lists,
+    std::vector<uint8_t>& images, std::vector<uint8_t>& casts, std::vector<Vision::FrameSlots>& slots) const
 {
     uint32_t stackDepth = 0;
     for (FrameRequest const& request : requests)
@@ -556,19 +633,51 @@ uint32_t Animus::GpuVision::Renderer::Emulate(std::vector<FrameRequest> const& r
     }
     images.assign(imageBytes, 0);
     casts.assign(castBytes, 0);
-    for (FrameRequest const& request : requests)
+    slots.assign(requests.size(), Vision::FrameSlots());
+    std::array<Vision::SlotStat, COUNTS_PER_FRAME> counts;
+    std::array<Vision::SlotStat, Vision::ENTITY_SLOTS> table;
+    std::array<uint8_t, COUNTS_PER_FRAME> slotOf;
+    for (std::size_t i = 0; i < requests.size(); ++i)
     {
+        FrameRequest const& request = requests[i];
         SceneView const& view = HostView(int32_t(request.Scene));
+        FrameSight const sight = SightOf(request, lists.Units.data(), lists.Boxes.data(), lists.Doors.data());
         uint8_t* cast = casts.data() + request.ScratchOffset;
         for (uint32_t row = 0; row < request.CastHeight; ++row)
             for (uint32_t col = 0; col < request.CastWidth; ++col)
-                overflows += CastPixelSized(stack, request, view, units.data(), row, col,
+                overflows += CastPixelSized(stack, request, view, sight, row, col,
                     cast + (std::size_t(row) * request.CastWidth + col) * Vi::BYTES_PER_PIXEL);
+
+        // The kernels' reduction and slots, in the same steps.
+        counts.fill(Vision::SlotStat());
+        for (uint32_t row = 0; row < request.CastHeight; ++row)
+            for (uint32_t col = 0; col < request.CastWidth; ++col)
+                if (uint8_t const number = NumberAt(request, cast, row, col))
+                {
+                    ++counts[number].Pixels;
+                    counts[number].SumRow += row;
+                    counts[number].SumCol += col;
+                }
+        AssignFrameSlots(counts.data(), table.data(), slotOf.data());
+        Vision::FrameSlots& frame = slots[i];
+        frame.CastWidth = request.CastWidth;
+        frame.CastHeight = request.CastHeight;
+        for (uint32_t slot = 0; slot < Vision::ENTITY_SLOTS && table[slot].Entity; ++slot)
+        {
+            frame.Slots[slot] = table[slot];
+            frame.Count = slot + 1;
+        }
+
         uint8_t* image = images.data() + request.ImageOffset;
         for (uint32_t r = 0; r < request.Height; ++r)
             for (uint32_t c = 0; c < request.Width; ++c)
                 UpscalePixel(cast, request.CastWidth, request.CastHeight, image, request.Width, request.Height, r,
-                    c);
+                    c, slotOf.data());
+        for (std::size_t pixel = 0; pixel < std::size_t(request.CastWidth) * request.CastHeight; ++pixel)
+        {
+            uint8_t& slot = cast[pixel * Vi::BYTES_PER_PIXEL + Vi::SLOT_BYTE];
+            slot = slotOf[slot];
+        }
     }
     return overflows;
 }

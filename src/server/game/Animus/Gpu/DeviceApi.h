@@ -39,7 +39,7 @@ extern "C"
     struct ForgeVisionLaunch;
 
     /// Bump when a member is added or changed: the loader refuses a library built against another.
-    constexpr uint32_t FORGE_GPU_API_VERSION = 4;
+    constexpr uint32_t FORGE_GPU_API_VERSION = 5;
     /// hipIpcMemHandle_t's size: the handle a learner opens a buffer by.
     constexpr size_t FORGE_GPU_HANDLE_BYTES = 64;
 
@@ -61,8 +61,9 @@ extern "C"
         int (*AllocHost)(void** pointer, size_t bytes);
         int (*FreeHost)(void* pointer);
         char const* (*LastError)();
-        /// The camera's frames (VisionDevice.h, camera-vision.GPU.md G2): every request's pixels cast, then the
-        /// scaled ones scaled up into the image, on the library's stream (Synchronize waits for them).
+        /// The camera's frames (VisionDevice.h, camera-vision.GPU.md G2): every request's pixels cast, its entities'
+        /// pixels counted and its slots assigned (perception-goals P2, version 5), the scaled ones scaled up into
+        /// the image and every byte 4 made a slot, on the library's stream (Synchronize waits for them).
         int (*CastVision)(ForgeVisionLaunch const* launch);
     };
 

@@ -173,10 +173,12 @@ namespace
             Vi::SurfaceHit hit;
             float distance = 0.0f;
             float normalZ = 0.0f;
-            if (_doors.GetSurfaceHit(PHASE, from.X, from.Y, from.Z, to.X, to.Y, to.Z, distance, normalZ))
+            GameObjectModel const* model = nullptr;
+            if (_doors.GetSurfaceHit(PHASE, from.X, from.Y, from.Z, to.X, to.Y, to.Z, distance, normalZ, &model))
             {
                 hit.Distance = distance;
                 hit.NormalZ = normalZ;
+                hit.Object = model;
             }
             return hit;
         }
@@ -321,10 +323,27 @@ namespace
             grid.Spawns, grid.Triangles, grid.Models, mb(grid.ModelBytes), mb(grid.TerrainBytes + grid.ModelBytes));
     }
 
-    /// One place: its grids created, its scene synced (counts checked against the CPU tree), and a diff run.
-    /// `surface`, when given, is a liquid's level there: the frames whose camera is under it are counted.
+    /// The P2 gate (perception-goals): class and entity identity exactly -- none off an edge -- and every frame's
+    /// entity list, the device's reduction, equal to the CPU's.
+    void ExpectIdentity(std::string const& label, Gv::DiffReport const& diff)
+    {
+        if (diff.Device)
+        {
+            EXPECT_EQ(diff.GpuTally.OffEdgeIdentity, 0u) << label;
+            EXPECT_EQ(diff.GpuTally.SlotTablesExact, diff.Frames) << label;
+        }
+        if (diff.Emulated)
+        {
+            EXPECT_EQ(diff.EmulatedTally.OffEdgeIdentity, 0u) << label;
+            EXPECT_EQ(diff.EmulatedTally.SlotTablesExact, diff.Frames) << label;
+        }
+    }
+
+    /// One place: its grids created, its scene synced (counts checked against the CPU tree), and a diff run with
+    /// `units` units and `boxes` colliderless game objects at most round each frame. `surface`, when given, is a
+    /// liquid's level there: the frames whose camera is under it are counted.
     void RunPlace(std::string const& label, uint32_t mapId, float x, float y, float z, float radius,
-        float surface = -1.0e9f)
+        float surface = -1.0e9f, uint32_t units = 6, uint32_t boxes = 4, bool fullLists = false)
     {
         char const* data = Env("FORGE_VISION_DATA");
         DataWorld world(std::string(data) + (std::string(data).back() == '/' ? "" : "/"), mapId);
@@ -341,7 +360,8 @@ namespace
         EXPECT_EQ(report.Triangles, report.CpuTriangles);
 
         Vi::Settings const settings;
-        std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, Frames(), radius);
+        std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, Frames(), radius, units,
+            boxes);
         if (surface > -1.0e8f)
         {
             uint32_t under = 0;
@@ -366,6 +386,10 @@ namespace
             EXPECT_GE(diff.GpuTally.NonEdgeShare(), 0.999) << label;
             EXPECT_LE(diff.GpuTally.EdgeMismatches, diff.GpuTally.Pixels / 100) << label;
         }
+        ExpectIdentity(label, diff);
+        // A crowd: some frames see more entities than the list holds, so the cap is compared too.
+        if (fullLists)
+            EXPECT_GT(diff.Emulated ? diff.EmulatedTally.FullLists : diff.GpuTally.FullLists, 0u) << label;
     }
 }
 
@@ -406,6 +430,14 @@ TEST_F(VisionGpuDataTest, Forest)
 TEST_F(VisionGpuDataTest, Elwynn)
 {
     RunPlace("elwynn", 0, -9450.0f, 60.0f, 56.0f, 40.0f);
+}
+
+// Identity (perception-goals P2): a crowd of units and colliderless game objects round each frame -- more than the
+// entity list holds -- in the Crossroads, so the classes, the slots past the cap and the device's reduction are
+// checked against the CPU's.
+TEST_F(VisionGpuDataTest, CrowdOfUnitsAndObjects)
+{
+    RunPlace("crowd", 1, -450.0f, -2650.0f, 95.0f, 25.0f, -1.0e9f, 100, 60, true);
 }
 
 TEST_F(VisionGpuDataTest, DoorOpenAndShut)
@@ -457,7 +489,12 @@ TEST_F(VisionGpuDataTest, DoorOpenAndShut)
 
     Gv::Renderer renderer(Device());
     Vi::Settings const settings;
-    std::vector<Gv::DiffFrame> frames = Gv::RandomFrames(world, settings, x, y, ground, Frames(), 2.0f);
+    // The door named as the frames' entity (its model is the scene's door record), with the units and boxes.
+    std::string syncError;
+    ASSERT_GE(renderer.Sync(world.Source(), syncError), 0) << syncError;
+    std::vector<Vi::DoorShape> const doors = Gv::KnownDoors(renderer, 0);
+    ASSERT_EQ(doors.size(), 1u);
+    std::vector<Gv::DiffFrame> frames = Gv::RandomFrames(world, settings, x, y, ground, Frames(), 2.0f, 6, 4, doors);
     for (Gv::DiffFrame& frame : frames)
     {
         // Facing the door (+x), the camera turned a little either way.
@@ -480,12 +517,13 @@ TEST_F(VisionGpuDataTest, DoorOpenAndShut)
         std::string const label = shut ? "door shut" : "door open";
         for (std::string const& line : Gv::FormatDiff(diff))
             std::cout << "[" << label << "] " << line << "\n";
+        ExpectIdentity(label, diff);
         if (diff.Device)
         {
             EXPECT_EQ(diff.Gpu.Overflows, 0u) << label;
             EXPECT_GE(diff.GpuTally.NonEdgeShare(), 0.999) << label;
             EXPECT_EQ(diff.GpuTally.UpscaleExact, diff.Frames);
-            // The door is seen while shut and gone once open.
+            // The door is seen while shut, by its class, and gone once open.
             uint64_t const doorPixels = diff.GpuTally.CpuClasses[uint32_t(Vi::Class::Door)];
             if (shut)
                 EXPECT_GT(doorPixels, diff.GpuTally.Pixels / 200) << label;

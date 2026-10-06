@@ -99,6 +99,10 @@ namespace Animus::GpuVision
     {
         double UploadMs = 0.0;
         double KernelMs = 0.0;
+        /// The entity slot tables' read-back (perception-goals amendment 11: ENTITY_SLOTS entries a seat, the sync
+        /// point the entity block waits on), apart from the images' download.
+        double SlotsMs = 0.0;
+        uint64_t SlotBytes = 0;
         double DownloadMs = 0.0;
         uint64_t Rays = 0;
         /// Pixels whose walk overflowed the stack (it dropped a node, and may differ from the CPU's): 0, or the
@@ -108,16 +112,27 @@ namespace Animus::GpuVision
         uint32_t StackSize = 0;         // the kernel's stack it ran with
     };
 
+    /// What a launch's requests point into: every frame's units, boxes and known doors, one after another.
+    struct FrameLists
+    {
+        std::vector<DeviceUnit> Units;
+        std::vector<DeviceBox> Boxes;
+        std::vector<DeviceDoor> Doors;
+    };
+
     /// The GPU path of Vision::Render for one seat: the request for its pixels, the rig the CPU placed (the boom is
     /// one CPU ray, as the pivot floor and the underwater test are: the scalars stay Render's), the size drawn
-    /// clamped to the canonical one as Render clamps it, and its units appended to `unitsOut` without its own.
+    /// clamped to the canonical one as Render clamps it, and its entities appended to `lists`: its units without
+    /// its own, its boxes, and each DoorShape whose model is one of the scene's doors (`doorOwners`, a door record's
+    /// GameObjectModel by its index: Renderer::DoorOwners) as that record.
     [[nodiscard]] FrameRequest MakeRequest(Vision::Settings const& settings, Vision::Pose const& pose,
-        Vision::CameraState const& camera, Vision::Rig const& rig, std::span<Vision::UnitShape const> units,
-        Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask, std::vector<DeviceUnit>& unitsOut);
+        Vision::CameraState const& camera, Vision::Rig const& rig, Vision::Sight const& sight,
+        Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask, std::span<void const* const> doorOwners,
+        FrameLists& lists);
 
     /// Lays the frames out: each request's canonical image at ImageOffset of `imageBytes`, its cast frame at
     /// ScratchOffset of `castBytes` (an unscaled frame is cast straight into the image; its copy there is filled
-    /// after the cast).
+    /// after the cast), and its index (Frame).
     void LayOut(std::vector<FrameRequest>& requests, std::size_t& imageBytes, std::size_t& castBytes);
 
     class Renderer
@@ -141,12 +156,17 @@ namespace Animus::GpuVision
         [[nodiscard]] uint32_t TerrainGrids() const { return uint32_t(_terrain.size()); }
 
         /// Every request cast on the device (LayOut first): the canonical images into `images`, the cast frames
-        /// into `casts`.
-        bool Cast(std::vector<FrameRequest> const& requests, std::vector<DeviceUnit> const& units,
-            std::vector<uint8_t>& images, std::vector<uint8_t>& casts, CastTiming& timing, std::string& error);
+        /// into `casts`, and each frame's entity list into `slots` (the reduction's table, read back first: the
+        /// entity block's sync point).
+        bool Cast(std::vector<FrameRequest> const& requests, FrameLists const& lists, std::vector<uint8_t>& images,
+            std::vector<uint8_t>& casts, std::vector<Vision::FrameSlots>& slots, CastTiming& timing,
+            std::string& error);
         /// The same on the host, over the host copy of the scenes: the pixels that overflowed the stack.
-        uint32_t Emulate(std::vector<FrameRequest> const& requests, std::vector<DeviceUnit> const& units,
-            std::vector<uint8_t>& images, std::vector<uint8_t>& casts) const;
+        uint32_t Emulate(std::vector<FrameRequest> const& requests, FrameLists const& lists,
+            std::vector<uint8_t>& images, std::vector<uint8_t>& casts, std::vector<Vision::FrameSlots>& slots) const;
+
+        /// A scene's door records' GameObjectModels, by record (what MakeRequest maps a DoorShape by).
+        [[nodiscard]] std::span<void const* const> DoorOwners(int32_t scene) const;
 
         [[nodiscard]] SceneReport Report(int32_t scene) const;
         /// The last launch's overflowing pixels, and every launch's since this renderer was made (G3's status row).
@@ -213,6 +233,11 @@ namespace Animus::GpuVision
         std::vector<std::unique_ptr<Scene>> _scenes;
         Buffer _requests;
         Buffer _units;
+        Buffer _boxes;
+        Buffer _doors;
+        Buffer _counts;
+        Buffer _slots;
+        Buffer _slotOf;
         Buffer _views;
         Buffer _scratch;
         Buffer _image;

@@ -454,11 +454,13 @@ uint32_t Animus::GpuVision::StaticScene::StackDepth() const
 bool Animus::GpuVision::DoorScene::Sync(DynamicMapTree const& tree, LiquidDeadly const& deadly)
 {
     Words records;
+    std::vector<void const*> owners;
     std::vector<std::vector<uint32_t>> lists(DOOR_GRID_CELLS);
     uint32_t const before = uint32_t(Models.Data().size());
     tree.VisitModels([&](GameObjectModel const& door, uint16 const* cells, uint32_t cellCount)
     {
         uint32_t const index = uint32_t(records.size() / INSTANCE_WORDS);
+        owners.push_back(&door);
         records.resize(records.size() + INSTANCE_WORDS, 0);
         uint32_t const offset = Models.Acquire(door.GetRayView().Model, deadly);
         PackDoor(door, offset, &records[std::size_t(index) * INSTANCE_WORDS]);
@@ -474,9 +476,11 @@ bool Animus::GpuVision::DoorScene::Sync(DynamicMapTree const& tree, LiquidDeadly
         cells.insert(cells.end(), lists[cell].begin(), lists[cell].end());
     }
 
-    bool const changed = records != Records || cells != Cells || Models.Data().size() != before;
+    bool const changed = records != Records || cells != Cells || Models.Data().size() != before
+        || owners != Owners;
     Records.swap(records);
     Cells.swap(cells);
+    Owners.swap(owners);
     Count = uint32_t(Records.size() / INSTANCE_WORDS);
     return changed;
 }

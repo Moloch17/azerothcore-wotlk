@@ -164,7 +164,8 @@ namespace Animus::GpuVision
         uint32_t Pad = 0;
     };
 
-    /// A unit's cylinder (Vision::UnitShape without the seat's own: the host drops it), and its pixels' class.
+    /// A unit's cylinder (Vision::UnitShape without the seat's own: the host drops it), its pixels' class and its
+    /// number in the frame (perception-goals 1b).
     struct DeviceUnit
     {
         float X;
@@ -173,6 +174,30 @@ namespace Animus::GpuVision
         float Radius;
         float Height;
         uint32_t Class;
+        uint32_t Entity;
+    };
+
+    /// A colliderless game object's box (Vision::BoxShape), with its class and number.
+    struct DeviceBox
+    {
+        float X;
+        float Y;
+        float Z;
+        float InvRot[9];
+        float Low[3];
+        float High[3];
+        uint32_t Class;
+        uint32_t Entity;
+    };
+
+    /// A collision game object the frame knows (Vision::DoorShape): its record in the scene's doors (DoorScene's
+    /// index), its class and number. A door hit on a record no frame entry names is Class::Door with no entity.
+    struct DeviceDoor
+    {
+        uint32_t Record;
+        uint32_t Class;
+        uint32_t Entity;
+        uint32_t Pad;
     };
 
     /// One frame to cast: the rig the CPU placed (PlaceCamera: the boom is one CPU ray), the size it is cast at and
@@ -199,6 +224,13 @@ namespace Animus::GpuVision
         uint32_t PhaseMask;
         uint32_t UnitOffset;
         uint32_t UnitCount;
+        uint32_t BoxOffset;
+        uint32_t BoxCount;
+        uint32_t DoorOffset;
+        uint32_t DoorCount;
+        /// The request's index in its launch: its rows of the entity counts and the slot tables.
+        uint32_t Frame;
+        uint32_t Pad;
         /// Byte offsets: the cast frame (in the scratch buffer when it is scaled up, else straight into the image)
         /// and the canonical one in the image buffer.
         uint64_t ScratchOffset;
@@ -809,11 +841,13 @@ namespace Animus::GpuVision
         return Make(mid - p.X, mid - p.Y, p.Z);
     }
 
-    /// A tree's first solid (Vision::SurfaceHit): the distance or < 0, and the hit's normal z facing the start.
+    /// A tree's first solid (Vision::SurfaceHit): the distance or < 0, and the hit's normal z facing the start; for
+    /// the doors, the record hit (its index + 1, 0 none: Vision::SurfaceHit's Object).
     struct Surface
     {
         float Distance;
         float NormalZ;
+        uint32_t Door;
     };
 
     /// MapCollisionData.cpp's FacingNormalZ.
@@ -828,7 +862,7 @@ namespace Animus::GpuVision
     /// StaticVMapCollisionData::GetSurfaceHit through StaticMapTree::GetSurfaceIntersection.
     FORGE_HD inline Surface StaticSurface(SceneView const& scene, V3 from, V3 to, BihStack stack)
     {
-        Surface result = { -1.0f, 0.0f };
+        Surface result = { -1.0f, 0.0f, 0 };
         if (!scene.Top)
             return result;
         V3 const pos1 = InternalRep(from);
@@ -860,7 +894,7 @@ namespace Animus::GpuVision
     /// MapVisionWorld::ModelLiquid reads the type.
     FORGE_HD inline Surface StaticLiquid(SceneView const& scene, V3 from, V3 to, bool& deadly, BihStack stack)
     {
-        Surface result = { -1.0f, 0.0f };
+        Surface result = { -1.0f, 0.0f, 0 };
         if (!scene.Top)
             return result;
         V3 const pos1 = InternalRep(from);
@@ -906,7 +940,7 @@ namespace Animus::GpuVision
     FORGE_HD inline Surface DynamicSurface(SceneView const& scene, uint32_t phaseMask, V3 from, V3 to,
         BihStack stack)
     {
-        Surface result = { -1.0f, 0.0f };
+        Surface result = { -1.0f, 0.0f, 0 };
         V3 const delta = to - from;
         float const length = Length(delta);
         if (!(length > 1e-6f) || !Finite(length))
@@ -917,6 +951,7 @@ namespace Animus::GpuVision
         float maxDist = length;
         V3 normal = Make(0.0f, 0.0f, 0.0f);
         bool hit = false;
+        uint32_t record = 0;
         auto const visitCell = [&](int32_t cx, int32_t cy)
         {
             uint32_t const cell = uint32_t(cx * DOOR_GRID + cy);
@@ -924,11 +959,16 @@ namespace Animus::GpuVision
             uint32_t const count = scene.DoorCells[cell * 2 + 1];
             for (uint32_t i = 0; i < count; ++i)
             {
-                uint32_t const* door = scene.Doors + scene.DoorCells[offset + i] * INSTANCE_WORDS;
+                uint32_t const index = scene.DoorCells[offset + i];
+                uint32_t const* door = scene.Doors + index * INSTANCE_WORDS;
                 if (!(door[INSTANCE_PHASE] & phaseMask) || !door[INSTANCE_SPAWNED])
                     continue;
+                // As the CPU's callback: a hit only shortens the distance, so the last door hit is the nearest.
                 if (InstanceRay(door, scene.DoorModels, from, dir, maxDist, normal, stack))
+                {
                     hit = true;
+                    record = index + 1;
+                }
             }
         };
 
@@ -1001,6 +1041,7 @@ namespace Animus::GpuVision
             return result;
         result.Distance = maxDist;
         result.NormalZ = FacingNormalZ(normal, dir);
+        result.Door = record;
         return result;
     }
 
@@ -1012,6 +1053,7 @@ namespace Animus::GpuVision
         uint32_t What;
         float Z;
         float NormalZ;
+        uint32_t Entity;
     };
 
     FORGE_HD inline float GridU(float x)
@@ -1157,7 +1199,7 @@ namespace Animus::GpuVision
     /// Vision::CastTerrain, over the scene's terrain grids.
     FORGE_HD inline Hit CastTerrain(V3 origin, V3 dir, float limit, SceneView const& scene, bool liquids)
     {
-        Hit best = { limit, uint32_t(Vision::Class::Sky), origin.Z + dir.Z * limit, 0.0f };
+        Hit best = { limit, uint32_t(Vision::Class::Sky), origin.Z + dir.Z * limit, 0.0f, 0 };
         bool found = false;
         float const u0 = GridU(origin.X);
         float const v0 = GridU(origin.Y);
@@ -1316,14 +1358,69 @@ namespace Animus::GpuVision
         return best;
     }
 
-    /// VisionCaster's Nearest (liquids and units always: the pixels' cast; the boom stays on the CPU), on a stack
-    /// of `Stack` entries; `overflow` is set when a walk dropped a node.
+    /// Vision::RayBox.
+    FORGE_HD inline float RayBox(V3 origin, V3 dir, float limit, DeviceBox const& box, float& normalZ)
+    {
+        V3 const rel = origin - Make(box.X, box.Y, box.Z);
+        float const* m = box.InvRot;
+        float const o[3] = { m[0] * rel.X + m[1] * rel.Y + m[2] * rel.Z, m[3] * rel.X + m[4] * rel.Y + m[5] * rel.Z,
+            m[6] * rel.X + m[7] * rel.Y + m[8] * rel.Z };
+        float const d[3] = { m[0] * dir.X + m[1] * dir.Y + m[2] * dir.Z, m[3] * dir.X + m[4] * dir.Y + m[5] * dir.Z,
+            m[6] * dir.X + m[7] * dir.Y + m[8] * dir.Z };
+        float const inf = Inf();
+        float enter = -inf;
+        float leave = inf;
+        int axis = -1;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (fabsf(d[i]) < 1e-12f)
+            {
+                if (o[i] < box.Low[i] || o[i] > box.High[i])
+                    return -1.0f;
+                continue;
+            }
+            float const inv = 1.0f / d[i];
+            float entry = (box.Low[i] - o[i]) * inv;
+            float exit = (box.High[i] - o[i]) * inv;
+            if (entry > exit)
+            {
+                float const swap = entry;
+                entry = exit;
+                exit = swap;
+            }
+            if (entry > enter)
+            {
+                enter = entry;
+                axis = i;
+            }
+            if (exit < leave)
+                leave = exit;
+        }
+        if (axis < 0 || enter > leave || enter < 0.0f || enter > limit)
+            return -1.0f;
+        normalZ = (d[axis] > 0.0f ? -1.0f : 1.0f) * m[axis * 3 + 2];
+        return enter;
+    }
+
+    /// What a frame's entities are on the device: its units, boxes and known doors (pointers at the request's own).
+    struct FrameSight
+    {
+        DeviceUnit const* Units;
+        uint32_t UnitCount;
+        DeviceBox const* Boxes;
+        uint32_t BoxCount;
+        DeviceDoor const* Doors;
+        uint32_t DoorCount;
+    };
+
+    /// VisionCaster's Nearest (liquids, units and boxes always: the pixels' cast; the boom stays on the CPU), on a
+    /// stack of `Stack` entries; `overflow` is set when a walk dropped a node.
     template <int Stack>
     FORGE_HD inline Hit Nearest(V3 origin, V3 dir, float limit, SceneView const& scene, uint32_t phaseMask,
-        DeviceUnit const* units, uint32_t unitCount, bool& overflow)
+        FrameSight const& sight, bool& overflow)
     {
         V3 const end = origin + dir * limit;
-        Hit best = { limit, uint32_t(Vision::Class::Sky), end.Z, 0.0f };
+        Hit best = { limit, uint32_t(Vision::Class::Sky), end.Z, 0.0f, 0 };
         BihStackNode nodes[Stack];
         BihStack const stack = { nodes, Stack, &overflow };
 
@@ -1338,6 +1435,15 @@ namespace Animus::GpuVision
             Surface const& hit = isDoor ? door : model;
             best.Distance = hit.Distance;
             best.What = uint32_t(isDoor ? Vision::Class::Door : Vision::Class::Model);
+            // A door record the frame knows is what it is (its class and number); one it does not, a door.
+            if (isDoor && hit.Door)
+                for (uint32_t i = 0; i < sight.DoorCount; ++i)
+                    if (sight.Doors[i].Record == hit.Door - 1)
+                    {
+                        best.What = sight.Doors[i].Class;
+                        best.Entity = sight.Doors[i].Entity;
+                        break;
+                    }
             best.Z = (origin + dir * best.Distance).Z;
             best.NormalZ = hit.NormalZ;
         }
@@ -1362,16 +1468,32 @@ namespace Animus::GpuVision
             best = terrain;
 
         // 4. The units (the seat's own already left out).
-        for (uint32_t i = 0; i < unitCount; ++i)
+        for (uint32_t i = 0; i < sight.UnitCount; ++i)
         {
             bool top = false;
-            float const distance = RayCylinder(origin, dir, best.Distance, units[i], top);
+            float const distance = RayCylinder(origin, dir, best.Distance, sight.Units[i], top);
             if (distance >= 0.0f && distance < best.Distance)
             {
                 best.Distance = distance;
-                best.What = units[i].Class;
+                best.What = sight.Units[i].Class;
+                best.Entity = sight.Units[i].Entity;
                 best.Z = origin.Z + dir.Z * distance;
                 best.NormalZ = top ? 1.0f : 0.0f;
+            }
+        }
+
+        // 5. The colliderless game objects' boxes.
+        for (uint32_t i = 0; i < sight.BoxCount; ++i)
+        {
+            float normalZ = 0.0f;
+            float const distance = RayBox(origin, dir, best.Distance, sight.Boxes[i], normalZ);
+            if (distance >= 0.0f && distance < best.Distance)
+            {
+                best.Distance = distance;
+                best.What = sight.Boxes[i].Class;
+                best.Entity = sight.Boxes[i].Entity;
+                best.Z = origin.Z + dir.Z * distance;
+                best.NormalZ = normalZ;
             }
         }
         return best;
@@ -1419,39 +1541,85 @@ namespace Animus::GpuVision
             float(sin(double(elevation))));
     }
 
+    /// The entities a request names, at its offsets in the launch's lists.
+    FORGE_HD inline FrameSight SightOf(FrameRequest const& request, DeviceUnit const* units, DeviceBox const* boxes,
+        DeviceDoor const* doors)
+    {
+        FrameSight sight;
+        sight.Units = units + request.UnitOffset;
+        sight.UnitCount = request.UnitCount;
+        sight.Boxes = boxes + request.BoxOffset;
+        sight.BoxCount = request.BoxCount;
+        sight.Doors = doors + request.DoorOffset;
+        sight.DoorCount = request.DoorCount;
+        return sight;
+    }
+
     /// One cast pixel, written to `out` (BYTES_PER_PIXEL): Vision::Render's loop body (CastRay, ObjectiveFlag,
-    /// EncodePixel), on a stack of `Stack` entries. True when a walk overflowed it (the pixel may then differ from the CPU's).
+    /// EncodePixel; byte 4 the hit's entity number until the slots are known), on a stack of `Stack` entries. True
+    /// when a walk overflowed it (the pixel may then differ from the CPU's).
     template <int Stack>
-    FORGE_HD inline bool CastPixel(FrameRequest const& request, SceneView const& scene, DeviceUnit const* units,
+    FORGE_HD inline bool CastPixel(FrameRequest const& request, SceneView const& scene, FrameSight const& sight,
         uint32_t row, uint32_t col, uint8_t* out)
     {
         V3 const camera = Make(request.CameraX, request.CameraY, request.CameraZ);
         V3 const dir = PixelDirection(request, row, col);
         float const reach = Reach(camera, dir, scene);
         bool overflow = false;
-        Hit const hit = Nearest<Stack>(camera, dir, reach, scene, request.PhaseMask, units + request.UnitOffset,
-            request.UnitCount, overflow);
+        Hit const hit = Nearest<Stack>(camera, dir, reach, scene, request.PhaseMask, sight, overflow);
         bool const flag = ObjectiveFlag(camera, dir, hit.Distance, request);
-        EncodePixel(hit, request.FeetZ, flag, 0, out);
+        EncodePixel(hit, request.FeetZ, flag, uint8_t(hit.Entity), out);
         return overflow;
     }
 
     /// CastPixel at STACK_SIZES[index], chosen at run time (the host's; a kernel is compiled at each size).
     inline bool CastPixelSized(int index, FrameRequest const& request, SceneView const& scene,
-        DeviceUnit const* units, uint32_t row, uint32_t col, uint8_t* out)
+        FrameSight const& sight, uint32_t row, uint32_t col, uint8_t* out)
     {
         static_assert(STACK_COUNT == 4, "one case a stack size");
         switch (index)
         {
             case 0:
-                return CastPixel<STACK_SIZES[0]>(request, scene, units, row, col, out);
+                return CastPixel<STACK_SIZES[0]>(request, scene, sight, row, col, out);
             case 1:
-                return CastPixel<STACK_SIZES[1]>(request, scene, units, row, col, out);
+                return CastPixel<STACK_SIZES[1]>(request, scene, sight, row, col, out);
             case 2:
-                return CastPixel<STACK_SIZES[2]>(request, scene, units, row, col, out);
+                return CastPixel<STACK_SIZES[2]>(request, scene, sight, row, col, out);
             default:
-                return CastPixel<STACK_SIZES[3]>(request, scene, units, row, col, out);
+                return CastPixel<STACK_SIZES[3]>(request, scene, sight, row, col, out);
         }
+    }
+
+    // ---- The entity slots (perception-goals 1b, amendment 11): Vision::CountEntities and AssignSlots ----------
+    //
+    // A frame's counts are MAX_SEEN + 1 SlotStats at Frame * COUNTS_PER_FRAME (one an entity number), its slot table
+    // ENTITY_SLOTS SlotStats at Frame * ENTITY_SLOTS (an Entity of 0 ends it) and its slot-of table MAX_SEEN + 1
+    // bytes at Frame * COUNTS_PER_FRAME.
+    constexpr uint32_t COUNTS_PER_FRAME = Vision::MAX_SEEN + 1;
+
+    /// The cast frame's pixel (row, col) counted under its entity number (the kernel adds atomically).
+    FORGE_HD inline uint8_t NumberAt(FrameRequest const& request, uint8_t const* cast, uint32_t row, uint32_t col)
+    {
+        return cast[(uint64_t(row) * request.CastWidth + col) * Vision::BYTES_PER_PIXEL + Vision::SLOT_BYTE];
+    }
+
+    /// The slots of one frame from its counts: the numbers with a pixel, ascending, up to ENTITY_SLOTS.
+    FORGE_HD inline void AssignFrameSlots(Vision::SlotStat const* counts, Vision::SlotStat* slots, uint8_t* slotOf)
+    {
+        uint32_t filled = 0;
+        slotOf[0] = 0;
+        for (uint32_t number = 1; number <= Vision::MAX_SEEN; ++number)
+        {
+            slotOf[number] = 0;
+            if (!counts[number].Pixels || filled >= Vision::ENTITY_SLOTS)
+                continue;
+            slots[filled] = counts[number];
+            slots[filled].Entity = number;
+            ++filled;
+            slotOf[number] = uint8_t(filled);
+        }
+        for (uint32_t slot = filled; slot < Vision::ENTITY_SLOTS; ++slot)
+            slots[slot] = Vision::SlotStat();
     }
 
     /// Whether the frame is cast at a size other than the canonical one (and so into scratch, then scaled up).
@@ -1460,9 +1628,9 @@ namespace Animus::GpuVision
         return request.CastWidth != request.Width || request.CastHeight != request.Height;
     }
 
-    /// Camera.h's Upscale, for one canonical pixel.
+    /// Camera.h's Upscale, for one canonical pixel, its entity number made its slot (slotOf) on the way.
     FORGE_HD inline void UpscalePixel(uint8_t const* from, uint32_t w, uint32_t h, uint8_t* to, uint32_t W,
-        uint32_t H, uint32_t r, uint32_t c)
+        uint32_t H, uint32_t r, uint32_t c, uint8_t const* slotOf)
     {
         uint32_t const sr = uint32_t(uint64_t(r) * h / H);
         uint32_t const sc = uint32_t(uint64_t(c) * w / W);
@@ -1470,6 +1638,7 @@ namespace Animus::GpuVision
         uint8_t* out = to + (uint64_t(r) * W + c) * Vision::BYTES_PER_PIXEL;
         for (uint32_t b = 0; b < Vision::BYTES_PER_PIXEL; ++b)
             out[b] = in[b];
+        out[Vision::SLOT_BYTE] = slotOf[in[Vision::SLOT_BYTE]];
     }
 }
 
@@ -1481,6 +1650,7 @@ extern "C"
     {
         Animus::GpuVision::FrameRequest const* Requests;
         uint32_t RequestCount;
+        uint32_t PadRequests;
         /// The largest cast frame's pixel count and the largest canonical one's: the grids' widths.
         uint32_t MaxCastPixels;
         uint32_t MaxPixels;
@@ -1488,9 +1658,16 @@ extern "C"
         uint32_t MaxCastWidth;
         uint32_t MaxCastHeight;
         Animus::GpuVision::DeviceUnit const* Units;
+        Animus::GpuVision::DeviceBox const* Boxes;
+        Animus::GpuVision::DeviceDoor const* Doors;
         Animus::GpuVision::SceneView const* Scenes;
         uint8_t* Scratch;
         uint8_t* Image;
+        /// The entity slots (perception-goals amendment 11): per request its counts (COUNTS_PER_FRAME, zeroed by the
+        /// launch), its slot table (ENTITY_SLOTS: what the host reads back) and its slot-of table.
+        Animus::Vision::SlotStat* Counts;
+        Animus::Vision::SlotStat* Slots;
+        uint8_t* SlotOf;
         /// The stack the launch's scenes can need at worst (STACK_SIZES picks the kernel), and a device counter
         /// the kernel adds every overflowing pixel to (zeroed by the caller).
         uint32_t StackDepth;

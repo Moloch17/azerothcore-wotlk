@@ -653,10 +653,11 @@ namespace
 
         /// `forge camera diff <map> <x> <y> <z> <N> [radius]` (camera-vision.GPU.md, G2): N random frames round
         /// (x, y, z) on the base map (RandomFrames: positions within radius yd, default 20; yaw, pitch and zoom
-        /// random; the render sizes cycling through RenderSizes and the canonical size; random units and an
-        /// objective) cast by the CPU caster and by the GPU (and by the kernel's code on the host), compared ray by
-        /// ray (VisionDiff.h's tolerances and edges), with the time a frame of each. The grids within the radius
-        /// and one beyond are created, as round a seat. Only while idle; writes nothing.
+        /// random; the render sizes cycling through RenderSizes and the canonical size; random units, colliderless
+        /// boxes, the map's doors named as entities, and an objective) cast by the CPU caster and by the GPU (and by
+        /// the kernel's code on the host), compared ray by ray (VisionDiff.h's tolerances and edges; class and
+        /// entity identity exactly, and each frame's entity list), with the time a frame of each. The grids within the
+        /// radius and one beyond are created, as round a seat. Only while idle; writes nothing.
         static bool HandleCameraDiff(ChatHandler* handler, uint32 mapId, float x, float y, float z, uint32 count,
             Optional<float> radius)
         {
@@ -689,7 +690,11 @@ namespace
                 return true;
             }
             Vi::Settings const settings = Vi::Current();
-            std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, count, around);
+            // Random units and colliderless boxes, and every door the scene has named, all numbered: the classes
+            // and the entity slots must agree as the geometry does (perception-goals P2).
+            std::vector<Vi::DoorShape> const doors = Gv::KnownDoors(renderer, scene);
+            std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, count, around, 6, 4,
+                doors);
             Gv::DiffReport const report = Gv::RunDiff(renderer, scene, world, PHASEMASK_NORMAL, settings, frames,
                 true);
             for (std::string const& line : Gv::FormatDiff(report))

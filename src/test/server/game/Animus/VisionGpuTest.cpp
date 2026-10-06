@@ -451,14 +451,32 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     units[0].Self = true;
     units[1].X = 5.0f;
     units[1].What = Vi::Class::HostileCreature;
+    units[1].Entity = 7;
     units[2].Radius = 0.7f;
     Vi::Vec3 const objective{ 1.0f, 2.0f, 3.0f };
+    // A box, a door the scene has (record 1) and one it does not.
+    std::vector<Vi::BoxShape> boxes(1);
+    boxes[0].X = 4.0f;
+    boxes[0].High[2] = 1.5f;
+    boxes[0].What = Vi::Class::Herb;
+    boxes[0].Entity = 2;
+    int const doorA = 0;
+    int const doorB = 0;
+    int const stranger = 0;
+    std::vector<Vi::DoorShape> doors = { { &doorB, 0.0f, 0.0f, 0.0f, Vi::Class::Chest, 3 },
+        { &stranger, 0.0f, 0.0f, 0.0f, Vi::Class::Door, 4 } };
+    std::vector<void const*> const owners = { &doorA, &doorB };
+    Vi::Sight sight(units);
+    sight.Boxes = boxes;
+    sight.Doors = doors;
 
-    std::vector<Gv::DeviceUnit> packed(2);  // two units of an earlier seat already there
+    Gv::FrameLists packed;
+    packed.Units.resize(2);  // two units of an earlier seat already there
     Vi::CameraState camera;
     camera.RenderWidth = 48;
     camera.RenderHeight = 24;
-    Gv::FrameRequest const drawn = Gv::MakeRequest(settings, pose, camera, rig, units, &objective, 3, 5, packed);
+    Gv::FrameRequest const drawn = Gv::MakeRequest(settings, pose, camera, rig, sight, &objective, 3, 5, owners,
+        packed);
     EXPECT_EQ(drawn.CastWidth, 48u);
     EXPECT_EQ(drawn.CastHeight, 24u);
     EXPECT_EQ(drawn.Width, 128u);
@@ -476,21 +494,35 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     // The seat's own cylinder is left out; the others follow the earlier seat's, in order.
     EXPECT_EQ(drawn.UnitOffset, 2u);
     EXPECT_EQ(drawn.UnitCount, 2u);
-    ASSERT_EQ(packed.size(), 4u);
-    EXPECT_EQ(packed[2].X, 5.0f);
-    EXPECT_EQ(packed[2].Class, uint32_t(Vi::Class::HostileCreature));
-    EXPECT_EQ(packed[3].Radius, 0.7f);
+    ASSERT_EQ(packed.Units.size(), 4u);
+    EXPECT_EQ(packed.Units[2].X, 5.0f);
+    EXPECT_EQ(packed.Units[2].Class, uint32_t(Vi::Class::HostileCreature));
+    EXPECT_EQ(packed.Units[2].Entity, 7u);
+    EXPECT_EQ(packed.Units[3].Radius, 0.7f);
+    EXPECT_EQ(drawn.BoxOffset, 0u);
+    ASSERT_EQ(drawn.BoxCount, 1u);
+    EXPECT_EQ(packed.Boxes[0].X, 4.0f);
+    EXPECT_EQ(packed.Boxes[0].High[2], 1.5f);
+    EXPECT_EQ(packed.Boxes[0].InvRot[4], 1.0f);
+    EXPECT_EQ(packed.Boxes[0].Class, uint32_t(Vi::Class::Herb));
+    EXPECT_EQ(packed.Boxes[0].Entity, 2u);
+    // Only the door the scene has a record of, by that record.
+    ASSERT_EQ(drawn.DoorCount, 1u);
+    EXPECT_EQ(packed.Doors[0].Record, 1u);
+    EXPECT_EQ(packed.Doors[0].Class, uint32_t(Vi::Class::Chest));
+    EXPECT_EQ(packed.Doors[0].Entity, 3u);
 
     // No size, or one past the canonical, casts at (or clamped to) the canonical size, as Render does.
     camera.RenderWidth = 0;
-    Gv::FrameRequest const canonical = Gv::MakeRequest(settings, pose, camera, rig, units, nullptr, 0, 1, packed);
+    Gv::FrameRequest const canonical = Gv::MakeRequest(settings, pose, camera, rig, sight, nullptr, 0, 1, owners,
+        packed);
     EXPECT_EQ(canonical.CastWidth, 128u);
     EXPECT_EQ(canonical.CastHeight, 64u);
     EXPECT_FALSE(Gv::Scaled(canonical));
     EXPECT_EQ(canonical.HasObjective, 0u);
     camera.RenderWidth = 400;
     camera.RenderHeight = 32;
-    Gv::FrameRequest const wide = Gv::MakeRequest(settings, pose, camera, rig, units, nullptr, 0, 1, packed);
+    Gv::FrameRequest const wide = Gv::MakeRequest(settings, pose, camera, rig, sight, nullptr, 0, 1, owners, packed);
     EXPECT_EQ(wide.CastWidth, 128u);
     EXPECT_EQ(wide.CastHeight, 32u);
 
@@ -498,6 +530,7 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     std::size_t imageBytes = 0;
     std::size_t castBytes = 0;
     Gv::LayOut(requests, imageBytes, castBytes);
+    EXPECT_EQ(requests[2].Frame, 2u);
     EXPECT_EQ(requests[0].ImageOffset, 0u);
     EXPECT_EQ(requests[1].ImageOffset, 128u * 64 * Vi::BYTES_PER_PIXEL);
     EXPECT_EQ(requests[2].ImageOffset, 2u * 128 * 64 * Vi::BYTES_PER_PIXEL);
@@ -524,7 +557,9 @@ TEST(VisionGpuTest, EmulatedFramesMatchRender)
 
     Vi::Settings const settings;
     // Round the pond, the lava and the hole, every render size in turn.
-    std::vector<Gv::DiffFrame> frames = Gv::RandomFrames(world, settings, -210.0f, -230.0f, 5.0f, 24, 120.0f);
+    // Units and colliderless boxes round each, numbered: the classes, slots and entity lists must agree too.
+    std::vector<Gv::DiffFrame> frames = Gv::RandomFrames(world, settings, -210.0f, -230.0f, 5.0f, 24, 120.0f, 12,
+        8);
     Gv::DiffReport const diff = Gv::RunDiff(renderer, scene, world, 1, settings, frames, true);
     for (std::string const& line : Gv::FormatDiff(diff))
         std::cout << line << "\n";
@@ -536,6 +571,11 @@ TEST(VisionGpuTest, EmulatedFramesMatchRender)
     EXPECT_EQ(diff.EmulatedTally.BySize.size(), 4u);
     EXPECT_GE(diff.EmulatedTally.NonEdgeShare(), 0.999);
     EXPECT_LE(diff.EmulatedTally.EdgeMismatches, diff.EmulatedTally.Pixels / 100);
+    // Identity exactly (perception-goals P2): no class or entity mismatch off an edge, every entity list equal,
+    // and some entities seen to make the check mean something.
+    EXPECT_EQ(diff.EmulatedTally.OffEdgeIdentity, 0u);
+    EXPECT_EQ(diff.EmulatedTally.SlotTablesExact, diff.Frames);
+    EXPECT_GT(diff.EmulatedTally.Listed, 0u);
 }
 
 TEST(VisionGpuTest, InstancesShareTerrainUntilTheLastLetsGo)
