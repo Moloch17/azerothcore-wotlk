@@ -320,7 +320,9 @@ namespace
     }
 
     /// One place: its grids created, its scene synced (counts checked against the CPU tree), and a diff run.
-    void RunPlace(std::string const& label, uint32_t mapId, float x, float y, float z, float radius)
+    /// `surface`, when given, is a liquid's level there: the frames whose camera is under it are counted.
+    void RunPlace(std::string const& label, uint32_t mapId, float x, float y, float z, float radius,
+        float surface = -1.0e9f)
     {
         char const* data = Env("FORGE_VISION_DATA");
         DataWorld world(std::string(data) + (std::string(data).back() == '/' ? "" : "/"), mapId);
@@ -338,6 +340,16 @@ namespace
 
         Vi::Settings const settings;
         std::vector<Gv::DiffFrame> const frames = Gv::RandomFrames(world, settings, x, y, z, Frames(), radius);
+        if (surface > -1.0e8f)
+        {
+            uint32_t under = 0;
+            for (Gv::DiffFrame const& frame : frames)
+                under += Vi::PlaceCamera(frame.Pose, frame.Camera, world).Camera.Z < surface;
+            std::cout << Acore::StringFormat("[{}] {} of {} cameras under the surface at {}, {} above it\n", label,
+                under, frames.size(), surface, frames.size() - under);
+            EXPECT_GT(under, 0u) << label;
+            EXPECT_LT(under, frames.size()) << label;
+        }
         Gv::DiffReport const diff = Gv::RunDiff(renderer, scene, world, DataWorld::PHASE, settings, frames,
             Env("FORGE_VISION_EMULATE") != nullptr);
         for (std::string const& line : Gv::FormatDiff(diff))
@@ -377,7 +389,7 @@ TEST_F(VisionGpuDataTest, LakeFromAboveAndBelow)
 {
     // Stonebull Lake, Mulgore: its surface is at -15 and its bed 30 yd down; poses on the shore and the bed (the
     // floor under the jittered feet), so the cameras see the water from above and from under it.
-    RunPlace("lake", 1, -1996.0f, -754.0f, -20.0f, 60.0f);
+    RunPlace("lake", 1, -1996.0f, -754.0f, -20.0f, 60.0f, -15.0f);
 }
 
 TEST_F(VisionGpuDataTest, Forest)
