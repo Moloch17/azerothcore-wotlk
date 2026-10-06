@@ -17,7 +17,7 @@
  */
 
 #include "../DeviceApi.h"
-#include <hip/hip_runtime.h>
+#include "DeviceRuntime.h"
 #include <cstring>
 #include <string>
 
@@ -96,6 +96,8 @@ namespace
         return t_error.c_str();
     }
 
+    int CastVision(ForgeVisionLaunch const* launch);
+
     ForgeGpuApi const API = {
         FORGE_GPU_API_VERSION,
         Init,
@@ -108,7 +110,23 @@ namespace
         AllocHost,
         FreeHost,
         LastError,
+        CastVision,
     };
+
+    int CastVision(ForgeVisionLaunch const* launch)
+    {
+        return ForgeGpuDevice::CastVision(launch);
+    }
+}
+
+hipStream_t ForgeGpuDevice::Stream()
+{
+    return g_stream;
+}
+
+int ForgeGpuDevice::Check(hipError_t result, char const* what)
+{
+    return ::Check(result, what);
 }
 
 extern "C" __attribute__((visibility("default"))) ForgeGpuApi const* ForgeGpuGetApi()

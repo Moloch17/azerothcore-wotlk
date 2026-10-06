@@ -110,6 +110,10 @@ find_program(FORGE_HIPCC hipcc)
 set(FORGE_GPU_ARCHS "gfx1100" CACHE STRING "GPU architectures libforge-gpu.so is compiled for (a ;-list)")
 if (FORGE_HIPCC)
   file(GLOB FORGE_GPU_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/Device/*.hip)
+  # Every header a kernel includes: the camera's (VisionDevice.h, shared with the host) and the constants it reads.
+  file(GLOB FORGE_GPU_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/Device/*.h)
+  list(APPEND FORGE_GPU_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Vision/Camera.h)
   set(FORGE_GPU_ARCH_FLAGS)
   foreach(arch ${FORGE_GPU_ARCHS})
     list(APPEND FORGE_GPU_ARCH_FLAGS --offload-arch=${arch})
@@ -121,9 +125,11 @@ if (FORGE_HIPCC)
     add_custom_command(
       OUTPUT ${object}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/forge-gpu
-      COMMAND ${FORGE_HIPCC} ${FORGE_GPU_ARCH_FLAGS} -O3 -fPIC -std=c++20 -fvisibility=hidden
-        -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu -c ${source} -o ${object}
-      DEPENDS ${source} ${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu/DeviceApi.h
+      # No contracted multiply-adds and no fast math: the camera's kernels follow the CPU caster's arithmetic
+      # (camera-vision.GPU.md, amendment 5).
+      COMMAND ${FORGE_HIPCC} ${FORGE_GPU_ARCH_FLAGS} -O3 -fPIC -std=c++20 -fvisibility=hidden -ffp-contract=off
+        -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Gpu -I${CMAKE_CURRENT_SOURCE_DIR}/Animus/Vision -c ${source} -o ${object}
+      DEPENDS ${source} ${FORGE_GPU_HEADERS}
       COMMENT "hipcc Animus/Gpu/Device/${name}.hip"
       VERBATIM)
     list(APPEND FORGE_GPU_OBJECTS ${object})
