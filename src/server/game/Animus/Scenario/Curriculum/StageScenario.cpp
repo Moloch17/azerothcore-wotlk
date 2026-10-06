@@ -104,6 +104,9 @@ namespace
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
+    /// Yards round the spawn an instance used as empty ground is cleared over (SpawnArea::ClearMap): the whole of a
+    /// small dungeon -- the Stockades spans about 150 by 290 yards.
+    constexpr float INSTANCE_CLEAR_RADIUS = 300.0f;
     constexpr float GOAL_RANGE_SLACK_YARDS = 5.0f;  // a ranged spec holds its range to within this (SeatGoal::Position)
     constexpr float LOW_HEALTH_PCT = 35.0f;         // a friend below this is low (low_health_seconds)
     /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
@@ -2535,8 +2538,15 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     Player* lead = SeatBot(env, 0);
     // A continent's own creatures are in another phase than the env's, and belong to every env.
+    // An instance used as empty ground (a marker arena: M1's Stockades) is cleared whole, its far grids loaded first,
+    // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
     if (firstBuild && map->Instanceable())
-        SpawnArea::Clear(lead);
+    {
+        if (Arena(env).Against == Opposition::Markers)
+            SpawnArea::ClearMap(lead, INSTANCE_CLEAR_RADIUS);
+        else
+            SpawnArea::Clear(lead);
+    }
 
     env.MapId = map->GetId();
     env.InstanceId = map->GetInstanceId();

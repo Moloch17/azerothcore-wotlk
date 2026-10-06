@@ -19,12 +19,19 @@
 #ifndef ANIMUS_LIB_SPAWN_AREA_H
 #define ANIMUS_LIB_SPAWN_AREA_H
 
+class Map;
 class Player;
 
 namespace Animus::SpawnArea
 {
     /// Remove every creature near the bot that a scenario did not spawn (the spawn point's own creatures).
     void Clear(Player* bot);
+
+    /// Remove every creature a map spawns from the database within `radius` yards of `bot`, loading those grids first,
+    /// so creatures further off do not appear later as the grids load. An instance a stage uses as empty ground (M1's
+    /// Stockades) is cleared this way: Clear's 60 yards left the hallway's far half full of its mobs, which killed the
+    /// level 1 seats (2026-10-05).
+    void ClearMap(Player* bot, float radius);
 }
 
 #endif
