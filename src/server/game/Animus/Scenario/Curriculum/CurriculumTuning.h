@@ -938,7 +938,12 @@ namespace Animus::Curriculum
         struct MarkerTuning
         {
             float Arrive = 3.0f;                // per marker stopped on (Outcome)
-            float StepCost = 0.0002f;           // per decision (Cost)
+            /// Per decision (Cost), per 50 ms of tuning (DecisionScale): the time a run takes. M1 is "as fast
+            /// as possible" (the user, 2026-10-05), so time is priced to matter beside Arrive 3: about 0.04 a
+            /// second, a straight 16 s hallway run nets about +2.4, a 40 s wander +1.4, and the 60 s clock
+            /// running out costs 2.4. Paid in full, never on the noise ladder. It was 0.0002 (0.004 a second),
+            /// which the discount alone outweighed.
+            float StepCost = 0.002f;
             float Death = 3.0f;
             /// Potential shaping on the straight-line distance to the marker, spread over the leg so closing the
             /// whole of it pays Progress once (Shaping: M1's ground is open, the straight line is the way).

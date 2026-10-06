@@ -157,6 +157,7 @@ namespace Animus::Curriculum
 
             // The episode's measures.
             float TimeRatioSum = 0.0f;      // reached legs: time taken over the straight-line optimum
+            float ArriveSecondsSum = 0.0f;  // reached legs: seconds from the leg's start to stopping on it
             float OvershootSum = 0.0f;      // legs that entered the radius
             uint32 OvershootLegs = 0;
             float StopDistanceSum = 0.0f;   // stops within StopNear of the marker

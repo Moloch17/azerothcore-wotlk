@@ -843,7 +843,9 @@ class TrainingRun:
             columns += ["foresight_loss", "forecast_health_8_error", "forecast_health_20_error",
                         "forecast_goal_reached_16_brier"]
         self.logger = RunLogger(self.run_dir, columns, append=self.resume_path is not None) if leader else Silent()
-        self.report = tuple(config.eval.report)
+        # eval.report's columns, then the stage's headline measures (status.headline) that it does not list, so forge
+        # status always has what the stage is read by.
+        self.report = tuple(dict.fromkeys((*config.eval.report, *config.status.headline)))
         self.eval_log = EvalLog(self.run_dir, self.logger.tb,
                                 realism.columns(self.realism_reference) if self.realism_reference else ()) \
             if leader else Silent()
@@ -1312,7 +1314,8 @@ class TrainingRun:
             self.score_motion(result, summary)
             self.eval_log.write(self.update, self.env_steps, result, summary, tracker)
             self.progress.evaluated(self.env_steps, result.score,
-                                    baseline_summary["score"] if baseline_summary else None, tracker, controller)
+                                    baseline_summary["score"] if baseline_summary else None, tracker, controller,
+                                    summary=summary)
             self.progress.write("training", self.update, self.env_steps)
 
             against = f", baseline {baseline_summary['score']:.4g}" if baseline_summary else ""

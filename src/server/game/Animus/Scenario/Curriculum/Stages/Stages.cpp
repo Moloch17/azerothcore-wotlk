@@ -55,237 +55,22 @@ namespace
     // The highest role a party drill can fix (ArenaDefinition::DrillRole: 1 tank, 2 healer, 3 damage).
     constexpr uint8 DRILL_DAMAGE = 3;
 
-    /// Open, flat ground on Kalimdor for the controls stage (M1): the Barrens' scrub and Mulgore's grass, from the
-    /// first curriculum's training ground (curriculum-v1 KalimdorGround), every point stood on with `forge rays` then.
-    /// Its Durotar and Dustwallow points are left out: they are canyon, rock and broken shore, M2's ground.
-    std::vector<Position> KalimdorFlats()
+    /// M1's ground: the Stockades (map 34), an instance of its own for every env, its creatures cleared on the env's
+    /// first build (StageScenario's SpawnArea::Clear), so the dungeon is empty. The seat stands where the entrance's
+    /// area trigger puts a player (areatrigger_teleport 101: 54.23, 0.28, -18.34, facing 6.26); behind it is the
+    /// portal, which only a client's CMSG_AREATRIGGER uses and the player controller never sends, so backing into it
+    /// leaves nothing. Ahead a ramp drops to the entrance hallway's floor (z -25.6 from x 76), which runs straight
+    /// east, about sixteen yards wide, to its end wall a little past x 172 (forge controller probe, 2026-10-05).
+    Position StockadeEntrance()
     {
-        return {
-            // The Barrens
-            { -872.0f, -2642.0f, 92.0f, 0.0f },   { -2298.0f, -1948.0f, 96.0f, 0.0f },
-            { -1967.0f, -2544.0f, 94.0f, 0.0f },  { -2605.0f, -2286.0f, 92.0f, 0.0f },
-            { -609.0f, -1614.0f, 94.0f, 0.0f },   { -881.0f, -3221.0f, 92.0f, 0.0f },
-            { -3077.0f, -1786.0f, 92.0f, 0.0f },  { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            // Northern Barrens. Three curriculum-v1 points near the Wailing Caverns were left out (dry check,
-            // 2026-10-05): (-652, -2060, 87), (-767, -2062, 81) and (-580, -2070, 55) stand 36, 25 and 86 yd under the
-            // terrain's height there (the map tiles) -- in the caverns' ravine and caves, not on open ground.
-            { -2068.0f, -2106.0f, 93.0f, 0.0f },
-            { -1942.0f, -1985.0f, 92.0f, 0.0f },  { -1991.0f, -2090.0f, 92.0f, 0.0f },
-            // Mulgore (its other point, (-1210, -93), is on the ridge the broken list climbs)
-            { -1225.2f, 106.6f, 131.4f, 0.0f },
-        };
+        return { 54.23f, 0.28f, -18.34f, 6.26f };
     }
 
-    /// Kalimdor's control ground (curriculum-v1 KalimdorControl): three regions in no training list, each point with
-    /// five of its eight bearings open for forty yards. The plan named the Durotar flats for this; the Durotar points
-    /// the first curriculum validated are canyon and rock, so the open control ground it held out stands in until
-    /// flat Durotar points are stood on.
-    std::vector<Position> KalimdorFlatsControl()
+    /// The end of the entrance hallway, on its centre line, two yards short of the end wall: about 116 yards from the
+    /// entrance, some sixteen seconds at run speed.
+    Position StockadeHallwayEnd()
     {
-        return {
-            { -1637.9f, 3082.9f, 31.9f, 0.0f },   { -1168.4f, 2713.1f, 112.1f, 0.0f },
-            { -561.0f, 2069.0f, 90.0f, 0.0f },    { 4012.0f, -788.0f, 286.0f, 0.0f },
-            { 1969.6f, -2339.0f, 89.4f, 0.0f },
-            // (1813, -2424, 93) and (1965, -2559, 86), by the Dor'Danil Barrow Den, were left out (dry check,
-            // 2026-10-05): M1's evaluations could not build an episode from either. They are the roughest of the
-            // list -- the terrain within 40 yd rises and falls 9 and 17 yd (the map tiles), and the points stand 3.5
-            // and 4.8 yd over it -- where M1's first rungs ask for a marker 5-10 yd off within 20 degrees of the
-            // facing, its way within 1.1 times the straight line and walkable by the controller: open ground's task.
-        };
-    }
-
-    /// Nagrand's plateaus (map 530; curriculum-v1 NagrandControl): the Throne of the Elements' grass trains, the
-    /// two points far off to the east and south are held out.
-    std::vector<Position> NagrandPlateaus()
-    {
-        return {
-            { -850.6f, 6517.2f, 172.6f, 0.0f },   { -842.4f, 6578.1f, 172.7f, 0.0f },
-            { -652.9f, 6576.9f, 170.4f, 0.0f },   { -685.5f, 6609.0f, 176.6f, 0.0f },
-        };
-    }
-
-    /// Nagrand's held-out grass, far from the plateau the arena trains on. Both curriculum-v1 points were replaced
-    /// (dry check, 2026-10-05): (-974.2, 8136.0, -93.8) is a hollow in Northwind Cleft 58 yd under the terrain
-    /// (navmesh reach 5-8 yd on 12 of 16 bearings), and (-533.9, 8870.4, 209.0) is 111 yd under Warmaul Hill's
-    /// terrain (320.6 there): a cave, whose "open sky" was the collision trees' alone (they hold no terrain). These two
-    /// are from the map tiles (var/lakes' reader over map 530): Nagrand's own area, dry and within 2.7 and 3.2 yd of
-    /// level over a 40 yd ring, 1849 and 817 yd from the training points, z the terrain's. To be stood on with
-    /// `forge rays` / `forge controller probe` before M1's first run.
-    std::vector<Position> NagrandPlateausControl()
-    {
-        return {
-            { -1160.0f, 8400.0f, 20.5f, 0.0f },
-            { -1080.0f, 7360.0f, 36.0f, 0.0f },
-        };
-    }
-
-    /// Broken ground on Kalimdor for the ground stage (M2; curriculum-v1 BrokenGround): chosen by local relief and then
-    /// stood on with `forge rays` -- at least ~4.5 yd of clearance, short reaches on several bearings, so there is
-    /// something to walk round. The cliff feet at the end are low ground under a plateau 30-50 yd up whose top the
-    /// route reaches by one ramp at 1.3-1.8x the straight line.
-    std::vector<Position> KalimdorBroken()
-    {
-        return {
-            // Mulgore/Barrens ridge, relief 78 over a 179 yard span
-            { -1401.0f, -85.0f, 159.0f, 0.0f },   { -1286.0f, 107.0f, 130.9f, 0.0f },
-            // Barrens ridge, relief 64 over 200
-            { -454.0f, -2419.0f, 93.0f, 0.0f },   { -373.0f, -2323.0f, 94.0f, 0.0f },
-            // Durotar: canyon and rock. (-49.4, -4313.6, 68.7) and (-107.5, -4302.0, 61.7) were left out (dry check,
-            // 2026-10-05): 58 and 72 yd under the terrain, and `forge controller probe` read caves at both (feet
-            // inside the terrain, ceilings 15-18 yd, 5-10 yd free on most headings).
-            { 642.0f, -4185.0f, 15.0f, 0.0f },    { 633.0f, -4298.0f, 18.0f, 0.0f },
-            // Dustwallow Marsh: broken shore (the markers' walking way never swims: TravelPlaceRules::DryOnly)
-            { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
-            { -2851.0f, -3650.0f, 33.0f, 0.0f },
-            // (-2987, -3940, 39) at Witch Hill was left out (dry check, 2026-10-05): no floor within a step of it
-            // (the probe), the terrain 10 yd lower under 1.3 yd of marsh water (the map tiles).
-            // Cliff feet
-            { -2032.2f, -3618.1f, 22.3f, 0.0f },  { -2563.7f, -3798.6f, 7.0f, 0.0f },
-            { 190.8f, -4516.5f, 27.1f, 0.0f },    { 479.5f, -4658.7f, 41.7f, 0.0f },
-        };
-    }
-
-    /// The southern Barrens escarpment, relief 47, in no training list (curriculum-v1 BrokenControl).
-    std::vector<Position> KalimdorBrokenControl()
-    {
-        return {
-            { -623.5f, -3166.8f, 91.7f, 0.0f },   { -405.9f, -3207.1f, 186.5f, 0.0f },
-            { -441.9f, -3162.0f, 210.3f, 0.0f },
-        };
-    }
-
-    /// Cliff feet under plateaus 30-50 yd up whose tops the route reaches by one ramp at 1.3-1.8x the straight line
-    /// (curriculum-v1 BrokenGround's last four): the vertical stage's climbs.
-    std::vector<Position> CliffFeet()
-    {
-        return {
-            { -2032.2f, -3618.1f, 22.3f, 0.0f },  // southern Barrens, plateau +40..50
-            { -2563.7f, -3798.6f, 7.0f, 0.0f },   // Barrens/Dustwallow edge, +41..49
-            { 190.8f, -4516.5f, 27.1f, 0.0f },    // Durotar canyon, +30..37
-            { 479.5f, -4658.7f, 41.7f, 0.0f },    // Durotar canyon, +28..34
-        };
-    }
-
-    /// The foot of the southern Barrens escarpment, whose top LedgeTopsControl holds out (curriculum-v1 BrokenControl).
-    std::vector<Position> CliffFeetControl()
-    {
-        return {
-            { -623.5f, -3166.8f, 91.7f, 0.0f },
-        };
-    }
-
-    /// Plateau tops above the cliff feet (curriculum-v1 LedgeTops), stood on with `forge rays` facing the edge; the way
-    /// round 1.9-12x the straight line, drops of 11-44 yd.
-    std::vector<Position> LedgeTops()
-    {
-        return {
-            { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618): 44 yd
-            { -2094.8f, -3644.6f, 72.4f, 0.0f },   // beside it: 11 yd
-            { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659): 23 yd
-            { 85.4f, -4543.8f, 58.4f, 0.0f },      // Durotar canyon: 18 yd
-            { -519.0f, -4076.9f, 69.9f, 0.0f },    // southern Barrens: 27 yd
-            // (-2380, 459, 77), Mulgore, was left out (dry check, 2026-10-05): 148 yd under the terrain there, a cave
-            // and not a ledge top.
-            { -4052.7f, -2145.5f, 90.2f, 0.0f },   // Thousand Needles: 40 yd
-            { -4449.9f, -2914.0f, 40.0f, 0.0f },   // Thousand Needles: 16-18 yd
-        };
-    }
-
-    /// The southern Barrens escarpment's top (curriculum-v1 LedgeControl); the deep ones kill without Slow Fall.
-    std::vector<Position> LedgeTopsControl()
-    {
-        return {
-            { -545.9f, -3054.0f, 138.1f, 0.0f },   // 46 yd
-            { -515.9f, -3149.0f, 161.5f, 0.0f },   // 67 yd
-            { -481.2f, -3249.9f, 164.5f, 0.0f },   // 70 yd
-        };
-    }
-
-    /// Inns on Kalimdor (curriculum-v1 Inns): on the mesh, inside by their WMO group, z on the floor; clearance 2.3-6.6
-    /// yd. Feralas and Thousand Needles are among the plan's arenas. Brackenwall Village's, (-3182.4, -2920.8, 33.56),
-    /// was left out (dry check, 2026-10-05): its floor reads normal.z 0.659 there (49 degrees, at the walkable limit)
-    /// -- a ramp or a stair's edge, not a room's floor; a flat spot in the same building can come back once probed.
-    std::vector<Position> Inns()
-    {
-        return {
-            { -4461.9f, 242.6f, 39.11f, 0.0f },    // Feralas
-            { -4622.3f, -3172.1f, 34.81f, 0.0f },  // Mudsprocket
-            { -2366.7f, -346.0f, -8.96f, 0.0f },   // Mulgore
-            { -1051.4f, -3653.8f, 23.88f, 0.0f },  // The Barrens
-            { -5477.9f, -2460.3f, 89.28f, 0.0f },  // Thousand Needles
-            { 6688.0f, -4670.1f, 721.69f, 0.0f },  // Winterspring
-        };
-    }
-
-    /// Rooms no training episode stands in (curriculum-v1 InnsControl): Tanaris is the plan's held-out ground; Desolace
-    /// never once built an episode in the first curriculum (too tight for its objectives) and is left out.
-    std::vector<Position> InnsControl()
-    {
-        return {
-            { -3615.5f, -4467.3f, 21.10f, 0.0f },  // Theramore Isle
-            { -7162.1f, -3845.9f, 9.51f, 0.0f },   // Tanaris
-        };
-    }
-
-    /// The banks of the Barrens oases (curriculum-v1 OasisShore), on the shore, not in the pool: a crossing whose dry
-    /// way round is the longer one.
-    std::vector<Position> OasisShore()
-    {
-        return {
-            { -3923.0f, -2981.0f, 31.0f, 0.0f }, { -3952.0f, -2947.0f, 40.0f, 0.0f },
-            { -3964.0f, -3068.0f, 39.0f, 0.0f }, { -3879.0f, -3004.0f, 37.0f, 0.0f },
-            { -4048.0f, -3051.0f, 43.0f, 0.0f }, { -3985.0f, -2911.0f, 37.0f, 0.0f },
-        };
-    }
-
-    /// The far side of the same pond, held out (curriculum-v1 OasisControl): no second pond wide enough was found.
-    std::vector<Position> OasisControl()
-    {
-        return {
-            { -4017.0f, -3086.0f, 37.0f, 0.0f }, { -3926.0f, -2911.0f, 39.0f, 0.0f },
-        };
-    }
-
-    /// Stonebull Lake's banks in Mulgore (curriculum-v1 StonebullShore): 33 yd deep in the middle, banks that slope in
-    /// at the water line, chosen from the map tiles so a tenth to a third of 20-120 yd draws land on a bed under 6-40
-    /// yd of water.
-    std::vector<Position> StonebullShore()
-    {
-        return {
-            { -1946.0f, -558.0f, -11.9f, 0.0f }, { -1954.0f, -521.0f, -11.1f, 0.0f },
-            { -2192.0f, -712.0f, -14.5f, 0.0f }, { -2192.0f, -571.0f, -14.9f, 0.0f },
-            { -2196.0f, -175.0f, -13.1f, 0.0f }, { -2254.0f, -137.0f, -10.8f, 0.0f },
-        };
-    }
-
-    /// Lake Elune'ara in Moonglade, held out from the lakebeds (curriculum-v1 EluneAraShore): up to 66 yd deep.
-    std::vector<Position> EluneAraShore()
-    {
-        return {
-            { 7675.0f, -2775.0f, 454.5f, 0.0f }, { 7508.0f, -2617.0f, 453.3f, 0.0f },
-        };
-    }
-
-    /// Outland's ground to take off from (curriculum-v1 OutlandGround): Hellfire's broken flats, Zangarmarsh's mushroom
-    /// basins and Shadowmoon's ridges. Terokkar's two points are held out (the plan's held-out flight ground).
-    std::vector<Position> OutlandGround()
-    {
-        return {
-            { 170.0f, 2589.0f, 93.0f, 0.0f },     { 169.0f, 2708.0f, 101.0f, 0.0f },     // Hellfire Peninsula
-            { -3260.0f, 2690.0f, 85.0f, 0.0f },   { -3293.0f, 2832.0f, 125.0f, 0.0f },   // Zangarmarsh
-            { -3631.0f, 3741.0f, 298.0f, 0.0f },  { -3721.0f, 3746.0f, 284.0f, 0.0f },   // Shadowmoon Valley
-        };
-    }
-
-    /// Terokkar's held-out ground. curriculum-v1's two points, (-1750, 5154, -37) and (-1730, 5282, -32), are in
-    /// Shattrath City (the map tiles' area), where the dry check's evaluations fell through with no terrain under them
-    /// (2026-10-05). These are from the tiles: Terokkar Forest's own area, dry and within 4.3 / 6.2 yd of level over a
-    /// 40 yd ring, 600 yd or more from Shattrath, z the terrain's. To be probed before M6's first run.
-    std::vector<Position> OutlandControl()
-    {
-        return {
-            { -1960.0f, 4520.0f, 13.9f, 0.0f },   { -2600.0f, 5280.0f, 8.3f, 0.0f },
-        };
+        return { 170.0f, 1.0f, -25.61f, 0.0f };
     }
 
     /// Every stage, every base before the stages that extend it.
@@ -295,197 +80,33 @@ namespace
 
         std::vector<StageDefinition> stages;
 
-        // M1 -- controls: what a new player learns in the first minute. Forward, turning, strafing, and stopping
-        // where it meant to: a marker 5 to 60 yards off, anywhere round (behind included, by the last rung), stopped
-        // on inside a radius that tightens from four yards to half a yard (the user's "stop exactly on the marker",
-        // 2026-10-05), then the next, three to eight an episode. Open ground only: the straight line is the way.
+        // M1 -- controls (the user's design, 2026-10-05): stopping exactly on a marker. An empty Stockades, the seat at
+        // the entrance, and one objective that never changes, at the end of the entrance hallway: reach it as fast
+        // as possible and stop on it, within a yard. The straight line is the way, so a stop, a detour or a turn
+        // there and back is time lost: the time cost (Markers.StepCost each decision until the stop) is the price of
+        // all of them, and Arrive is paid once, on the stop.
+        //
+        // Every class and race, at level 1 (a death knight at its 55): a level 1 kit is one or two spells, so the
+        // lesson is the movement alone, and every class's layout learns it from the start.
         //
         // Core and the goal block stay as the layout's frame (the character and its kit, the goal head the learner
-        // sizes from the goal block); Move is the whole lesson. Nothing to fight, so no duel block.
+        // sizes from the goal block); Move is the whole lesson. Nothing to fight, so no duel block. One place and one
+        // objective: there is no held-out ground, and the evaluation is the training task itself.
         stages.push_back({
             .Name = "move1_controls",
             .Suffix = "_controls",
             .Extends = "",
-            .Summary = "markers on open ground, 5 to 60 yd off and anywhere round: get there and stop exactly on them",
+            .Summary = "an empty Stockades: from the entrance to the end of the hallway as fast as possible, and stop "
+                "within a yard of the mark",
             .Blocks = { Core, Move, Goal },
             .Arenas = {
-                { .Name = "plains", .Weight = 3, .Against = Opposition::Markers, .EpisodeSeconds = 120 },
-                { .Name = "nagrand", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 120,
-                    .SpawnPoints = NagrandPlateaus(), .MapId = MAP_OUTLAND,
-                    .HeldOutSpawnPoints = NagrandPlateausControl() },
+                { .Name = "hallway", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 60,
+                    .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
+                    .Objective = StockadeHallwayEnd(), .ObjectiveRadius = 1.0f },
             },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorFlats(),
-            .HeldOutSpawnPoints = KalimdorFlatsControl(),
-        });
-
-        // M2 -- ground: real ground, slopes the client can and cannot climb, rocks, ridges, cliff feet and their
-        // ramps, getting round things and not getting stuck. Markers 20 to 120 yards off with something in the way:
-        // the walking way is 1.0 to 1.6 times the straight line and more as the ladder climbs, so the straight line
-        // is often not walkable. Stopping on them as M1 taught, inside a yard. Stuck and Wall are charged as noise
-        // prices (MarkerGround.*), and the progress shaping follows the route (a training signal, never seen).
-        //
-        // Kalimdor only for now: the plan's forests and fenced farms (Ashenvale, Duskwood, Westfall, Goldshire) and
-        // its Eastern Kingdoms hills need points stood on first (§7.5's dry check); Hillsbrad, its held-out ground,
-        // likewise -- the first curriculum's Hillsbrad points are map 560's, not Eastern Kingdoms'.
-        stages.push_back({
-            .Name = "move2_ground",
-            .Suffix = "_ground",
-            .Extends = "move1_controls",
-            .Summary = "markers on broken ground with something in the way: find the way round, do not get stuck",
-            .Blocks = { Core, Move, Goal },
-            .Arenas = {
-                { .Name = "broken", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 150,
-                    .Course = MarkerCourse::Ground },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorBroken(),
-            .HeldOutSpawnPoints = KalimdorBrokenControl(),
-        });
-
-        // M3 -- verticality: up and down. Markers above the seat from a cliff foot (the way up a ramp, a stair or a
-        // jump), below it from a ledge top (the drop is the shortcut, the way round the safe one, at least LedgeDetour
-        // times the line with no drop past SafeDrop), or on another floor of an inn. The height window climbs from a
-        // step or two to 15-45 yd (MarkerVertical.*), so the drops come to cost health and then to kill. Movement
-        // only (user, 2026-10-05): no interactions, no closed doors -- a marker the player controller cannot walk to
-        // is never placed, and a closed door is a wall to it.
-        stages.push_back({
-            .Name = "move3_vertical",
-            .Suffix = "_vertical",
-            .Extends = "move2_ground",
-            .Summary = "markers above, below and on other floors: steps, jumps, safe drops and the long way round",
-            .Blocks = { Core, Move, Goal },
-            .Arenas = {
-                { .Name = "climb", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
-                    .Course = MarkerCourse::Vertical, .SpawnPoints = CliffFeet(),
-                    .HeldOutSpawnPoints = CliffFeetControl() },
-                { .Name = "ledges", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
-                    .Course = MarkerCourse::Vertical, .SpawnPoints = LedgeTops(),
-                    .HeldOutSpawnPoints = LedgeTopsControl(), .Ledges = true },
-                { .Name = "rooms", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 90,
-                    .Course = MarkerCourse::Vertical, .Indoors = true, .SpawnPoints = Inns(),
-                    .HeldOutSpawnPoints = InnsControl(), .SpawnScatter = 4.0f },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorBroken(),
-            .HeldOutSpawnPoints = KalimdorBrokenControl(),
-        });
-
-        // M4 -- water: getting in, swimming, the surface and the swim jump, diving to the bed, breath, getting out
-        // onto banks (a bank taller than a step takes the swim jump), and choosing between swimming and going round.
-        // A crossing at the Barrens oases (the dry way round always the longer, both ways ones the controller makes),
-        // lakebeds in Stonebull Lake down to forty yards as the ladder climbs, and a chain of four to six lakebeds
-        // longer than a breath. Drowning is a cost at full price; a drowned seat dies (Markers.Death).
-        //
-        // Kalimdor only until the dry check: the plan's Loch Modan, coasts, Stormwind's canals and Zoram Strand need
-        // points stood on, and its held-out Lake Everstill likewise; Lake Elune'ara is the held-out lake here.
-        stages.push_back({
-            .Name = "move4_water",
-            .Suffix = "_water",
-            .Extends = "move3_vertical",
-            .Summary = "markers across water, on lakebeds and in chains longer than a breath: swim, dive, climb out",
-            .Blocks = { Core, Move, Goal },
-            .Arenas = {
-                { .Name = "crossing", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
-                    .Course = MarkerCourse::Water, .Water = true, .SpawnPoints = OasisShore(),
-                    .HeldOutSpawnPoints = OasisControl() },
-                { .Name = "lakebed", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 150,
-                    .Course = MarkerCourse::Water, .SpawnPoints = StonebullShore(),
-                    .HeldOutSpawnPoints = EluneAraShore(), .Underwater = true },
-                { .Name = "chain", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 240,
-                    .Course = MarkerCourse::Water, .SpawnPoints = StonebullShore(),
-                    .HeldOutSpawnPoints = EluneAraShore(), .Underwater = true, .Checkpoints = true },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorBroken(),
-            .HeldOutSpawnPoints = KalimdorBrokenControl(),
-        });
-
-        // M5 -- long routes: one trip an episode, 150 to 600 yards across mixed ground, where the way is not visible
-        // from the start -- round lakes, through canyons and over ridges, out of a pocket the straight line walks
-        // into. The detour climbs from 1.3 to 3.0 times the straight line; the route planner plans the whole way
-        // (a training signal only), and the controller has to be able to walk or swim every yard of it. This is
-        // where the perception plan's local map and route tiers (.agents/plans/local-map-perception/) earn their
-        // keep; until they land the stage runs on today's ground probe and the marker's bearing, and is expected to
-        // plateau lower.
-        //
-        // Kalimdor's validated ground until the dry check: the plan's canyons and valleys (Thousand Needles,
-        // Desolace, Badlands), cities on foot and Stranglethorn need points stood on; Feralas, its held-out ground,
-        // likewise. Human trips (AnimusForge.Human.Trips) join once capture data exists.
-        stages.push_back({
-            .Name = "move5_routes",
-            .Suffix = "_routes",
-            .Extends = "move4_water",
-            .Summary = "one long trip, 150 to 600 yd, the way not visible from the start: find it and arrive",
-            .Blocks = { Core, Move, Goal },
-            .Arenas = {
-                { .Name = "canyons", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 420,
-                    .Course = MarkerCourse::Routes, .SpawnPoints = KalimdorBroken(),
-                    .HeldOutSpawnPoints = KalimdorBrokenControl() },
-                { .Name = "open", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 420,
-                    .Course = MarkerCourse::Routes, .SpawnPoints = KalimdorFlats(),
-                    .HeldOutSpawnPoints = KalimdorFlatsControl() },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorBroken(),
-            .HeldOutSpawnPoints = KalimdorBrokenControl(),
-        });
-
-        // M6 -- riding and flight: mounting when it pays, steering at mount speed, dismounting where it must, and
-        // flying -- take off, climb over what is in the way, cruise, land on the marker. A ride across Kalimdor's
-        // flats (150-500 yd, the ground mount from level 20), flights in Outland (200-900 yd, a flying mount from
-        // 60, under open sky), and air-only markers the ground route does not reach (a ground mount there is only
-        // useless, never masked: ground_mount_on_air_leg). Mounting is
-        // a cast the seat must stand still for, and a hit interrupts it (ruling f: the game's own rules). The travel
-        // block joins the layout here, with the mounts; arriving is landing and stopping on the marker.
-        //
-        // Outland's held-out ground is Terokkar (the plan's); Northrend's flight-only plateaus need points stood on.
-        stages.push_back({
-            .Name = "move6_mounted",
-            .Suffix = "_mounted",
-            .Extends = "move5_routes",
-            .Summary = "trips worth mounting for: ride, fly over what is in the way, land on the marker",
-            .Blocks = { Core, Move, Travel, Goal },
-            .Arenas = {
-                { .Name = "ride", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 240,
-                    .Course = MarkerCourse::Mounted, .SpawnPoints = KalimdorFlats(), .MinLevel = 20,
-                    .HeldOutSpawnPoints = KalimdorFlatsControl() },
-                { .Name = "flight", .Weight = 2, .Against = Opposition::Markers, .EpisodeSeconds = 240,
-                    .Course = MarkerCourse::Mounted, .Flying = true, .SpawnPoints = OutlandGround(),
-                    .MapId = MAP_OUTLAND, .MinLevel = 60, .HeldOutSpawnPoints = OutlandControl() },
-                { .Name = "flight_air", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 240,
-                    .Course = MarkerCourse::Mounted, .Flying = true, .AirOnly = true, .SpawnPoints = OutlandGround(),
-                    .MapId = MAP_OUTLAND, .MinLevel = 60, .HeldOutSpawnPoints = OutlandControl() },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorFlats(),
-            .HeldOutSpawnPoints = KalimdorFlatsControl(),
-        });
-
-        // M7 -- company: moving with someone. Keep within three to ten yards of a leader for the whole episode,
-        // catching up after falling behind, not crowding it, going where it went, and keeping clear of hostile
-        // camps on the way -- no combat yet. The leader is an agent in the owner's slot moved by the player
-        // controller and reported as a client, never a spline: on the early rungs the seek helper's keys walk it
-        // over trips of the ground (at a walk, then running, the trips lengthening), and from Follow.CastFromRung
-        // half the training episodes give it to a frozen M6 checkpoint (cast.agents.leader) that rides, swims and
-        // jumps as it likes. Recorded human trips replace both once capture data exists (plan §8.4).
-        //
-        // Movement only, in the forge: the realm's companions are parked (user, 2026-10-05).
-        stages.push_back({
-            .Name = "move7_follow",
-            .Suffix = "_follow",
-            .Extends = "move6_mounted",
-            .Summary = "keep within 3-10 yd of a moving leader: fall behind, catch up, go where it went",
-            .Blocks = { Core, Move, Travel, Goal },
-            .Arenas = {
-                { .Name = "open", .Weight = 1, .Against = Opposition::Follow, .EpisodeSeconds = 180,
-                    .SpawnPoints = KalimdorFlats(), .HeldOutSpawnPoints = KalimdorFlatsControl() },
-                { .Name = "broken", .Weight = 1, .Against = Opposition::Follow, .EpisodeSeconds = 180,
-                    .SpawnPoints = KalimdorBroken(), .HeldOutSpawnPoints = KalimdorBrokenControl() },
-            },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = KalimdorFlats(),
-            .HeldOutSpawnPoints = KalimdorFlatsControl(),
+            .MapId = MAP_STORMWIND_STOCKADE,
+            .SpawnPoints = { StockadeEntrance() },
+            .Level = 1,
         });
 
         return stages;

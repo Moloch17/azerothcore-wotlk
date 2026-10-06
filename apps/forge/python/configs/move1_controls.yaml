@@ -1,22 +1,25 @@
-# M1 -- controls (movement-curriculum plan §2): the root of the movement curriculum, and the file every later movement
-# stage's config extends. What a new player learns in the first minute: forward, turning, strafing, and stopping where
-# it meant to. A marker 5-60 yd off on open ground, anywhere round by the last rung, stopped on inside a radius that
-# tightens from 4 to 0.5 yd (Stages.cpp, MarkerEncounter; the ladder is the sim's, Markers.* in the conf template),
-# then the next, 3-8 an episode. One policy for every class of AnimusForge.Classes: each class is a layout (its own
-# adapter and head around a shared trunk) and exports as its own model (warrior_controls.amdl, ...).
+# M1 -- controls (the user's design, 2026-10-05): stopping exactly on a marker. An empty instance of the Stockades;
+# the seat spawns at the entrance (backing into the portal leaves nothing: only a client's area-trigger packet uses it,
+# and the player controller never sends one), and the objective is one fixed point at the end of the entrance
+# hallway, about 116 yd off. Reach it as fast as possible and stop within a yard of it: the straight line with no
+# stops or detours is the fastest way, and the time cost (Markers.StepCost, paid each decision until the stop) is the
+# price of everything else. Arrive is paid once, on the stop (Stages.cpp, MarkerEncounter's fixed Objective).
 #
-# The hyperparameters are the archived curriculum's base (configs/archive/stage4_duel.yaml, git tag curriculum-v1),
-# with the movement stage's own changes marked. Every movement stage uses the same network widths, or seeding cannot
-# copy the trunk.
+# Every class and race, at level 1 (death knights at 55): one policy, one layout per class (its own adapter and head
+# around a shared trunk), so every class learns the movement from the start, with a kit too small to matter.
+#
+# The first movement curriculum (move1_controls ... move7_follow) is archived: configs/archive/movement-v1/, the
+# definitions on the git tag curriculum-movement-v1. The hyperparameters here are its M1's, so a later movement stage
+# can seed from this one (every movement stage uses the same network widths).
 
 run_name: move1_controls
 socket: /tmp/animus-forge.sock
 seed: 1
 
-# The first stage: nothing to seed from. The later movement stages seed from the closest trained one (stage.json).
+# The first stage: nothing to seed from.
 init_from: auto
 
-# A ceiling, not a target (plan §4: 150M, expected 1-2 h): convergence ends the stage.
+# A ceiling, not a target: convergence ends the stage.
 total_env_steps: 150000000
 rollout_length: 128
 
@@ -80,25 +83,42 @@ mappo:
   min_layout_rows: 32
   target_kl: 0.02
 
-# Seeded evaluation: spread over every rung of the marker ladder (the sim's DifficultyLadder), so eval.jsonl's
-# per-tier rows hold `arrived` at the top rung, which is the stage's real task (user, 2026-10-05). Every third
-# evaluation also plays sampled actions on the same seeds: the movement stages' jitter is what a sampled policy shows
-# and an argmax one can hide.
+# Seeded evaluation of the task itself: one place and one objective, so there is no held-out ground and no ladder;
+# the evaluation spreads over every class and race. Every third evaluation also plays sampled actions on the same
+# seeds: the jitter a sampled policy shows, an argmax one can hide.
 eval:
   every_env_steps: 5000000
   at_start: true
-  episodes: 2048
+  episodes: 512
   seed: 1000
   deterministic: true
   sampled_every: 3
   trace_episodes: 64
-  report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, marker_radius, time_ratio,
-           overshoot, stop_distance, stops_near, distance_travelled, movement_casts, speed_casts, died, timed_out,
-           reward_arrive, reward_progress, reward_facing, reward_jitter, reward_effort, reward_repeat]
+  report: [arrived, arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, distance_travelled,
+           course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, movement_casts, died, timed_out,
+           reward_arrive, reward_step_cost, reward_progress, reward_facing, reward_jitter, reward_effort,
+           reward_repeat]
+
+# forge status for this stage (the user, 2026-10-05): did it stop on the mark, how fast, how precisely, and how
+# cleanly it got there. The optimum run is about 16.6 s (116 yd at run speed, time_ratio 1); targets are a readout,
+# never a gate.
+status:
+  headline: [arrived, arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, course_kinks,
+             control_changes_per_minute, wall_seconds, timed_out, died]
+  targets:
+    arrived: ">= 0.95"
+    arrive_seconds: "<= 18"
+    time_ratio: "<= 1.1"
+    stop_distance: "<= 0.5"
+    overshoot: "<= 0.5"
+    stops_near: "<= 1.2"
+    course_kinks: "<= 5"
+    wall_seconds: "<= 0.5"
+    timed_out: "<= 0.02"
+    died: "<= 0.01"
 
 convergence:
-  # Converged on the top rung's evaluation episodes (C7's top_rung, on by default) and on the stage's own measure:
-  # the share of markers stopped on. The score alone is not the readout (plan §1.2).
+  # Converged on the stage's own measure, the share of runs stopped on the mark. The score alone is not the readout.
   measure: arrived
   patience: 3
   window: 4
@@ -110,9 +130,8 @@ convergence:
   hold_share: 0.02
   lr_hold_until_plateau: true
 
-# The shaping (Progress on the straight-line distance, Facing on the marker's bearing) is a start, not the lesson:
-# it fades rung by rung once markers are being stopped on 80% of the time, never on a plateau before (plan §1.2, the
-# stage3 lesson of 2026-10-05: shaping pulled before the stage's own measure is learned stops the learning).
+# The shaping (Progress on the straight-line distance, Facing on the objective's bearing) is a start, not the lesson:
+# it fades once 80% of runs stop on the mark, never on a plateau before.
 fade:
   enabled: true
   rungs: [1.0, 0.5, 0.25, 0.0]
@@ -122,9 +141,8 @@ fade:
   gate_metric: arrived
   gate_value: 0.8
 
-# The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until the evaluation stops on 80% of its markers,
-# then in to full price, each step on a plateau, and the ladder ends at full price -- habits do not stick without it
-# (plan §1.3; stage1, 2026-10-04: full prices from step 0 stood the bot still).
+# The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until 80% of runs stop on the mark, then in to full
+# price. The time cost is not on this ladder: it is paid in full from the first step.
 costs:
   enabled: true
   rungs: [0.0, 0.25, 0.5, 1.0]
@@ -136,8 +154,8 @@ entropy_floor:
   max_boost: 4.0
   rate: 0.05
 
-# More episodes for the classes stopping on the fewest markers, and a fifth of training resets replay an evaluation
-# episode that missed one.
+# More episodes for the classes stopping on the mark least often, and a fifth of training resets replay an evaluation
+# episode that missed it.
 layout_sampling:
   enabled: true
   strength: 1.0
@@ -145,7 +163,6 @@ layout_sampling:
   metric: arrived
   replay_fraction: 0.2
 
-# The movement-style reward (animus.style): off until human data exists (plan §3), then on from M1, on the cost
-# ladder's scale.
+# The movement-style reward (animus.style): off until human data exists.
 style:
   enabled: false

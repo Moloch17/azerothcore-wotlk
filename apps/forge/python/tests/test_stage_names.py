@@ -48,8 +48,9 @@ def defined_names() -> set[str]:
 
 
 def archived_names() -> set[str]:
-    """The archived curriculum's stages: one config each in configs/archive/ (per-class ones included)."""
-    names = {p.stem for p in ARCHIVE.rglob("stage*.yaml")}
+    """The archived curricula's stages: one config each in configs/archive/ (per-class ones included), the first
+    curriculum's and the first movement curriculum's (movement-v1/, git tag curriculum-movement-v1)."""
+    names = {p.stem for p in ARCHIVE.rglob("*.yaml") if TOKEN.fullmatch(p.stem)}
     assert len(names) >= 15, "configs/archive/ parsed badly"
     return names
 

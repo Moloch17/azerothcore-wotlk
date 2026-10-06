@@ -20,8 +20,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[4]
 STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
 COMPILE_DB = Path(os.environ.get("ANIMUS_COMPILE_DB", "/azerothcore/var/build/obj/compile_commands.json"))
-MOVEMENT = [f"move{n}_{name}" for n, name in enumerate(
-    ("controls", "ground", "vertical", "water", "routes", "mounted", "follow"), start=1)]
+# The movement curriculum as rebuilt (2026-10-05): M1 so far; M2 onward add themselves here as they land.
+MOVEMENT = ["move1_controls"]
 
 LOG_STUB = """#pragma once
 #define LOG_ERROR(category, ...) ((void)0)

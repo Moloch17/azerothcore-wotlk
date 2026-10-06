@@ -2434,7 +2434,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // scored stage6 mostly on levels the stage never trains (2026-10-03).
     bool const focusEval = !_level && _stage.FocusChance >= 100 && env.EpisodeSeedIndex != NO_EPISODE_SEED
         && _stage.FocusLevelLast >= std::max<uint8>(minLevel, _stage.FocusLevelFirst);
+    // A stage fixed at one level (StageDefinition::Level) holds every character there, raised to its class's minimum.
     uint8 const level = data.EpisodeLevel ? std::clamp<uint8>(data.EpisodeLevel, minLevel, DEFAULT_MAX_LEVEL)
+        : _stage.Level ? std::clamp<uint8>(_stage.Level, minLevel, DEFAULT_MAX_LEVEL)
         : keptLevel ? keptLevel
         : focus || focusEval ? uint8(urand(std::max<uint8>(minLevel, _stage.FocusLevelFirst), _stage.FocusLevelLast))
         : RandomLevel(minLevel, _level, _tuning.Characters, env.EpisodeSeedIndex, uint32(_layouts.size()));
