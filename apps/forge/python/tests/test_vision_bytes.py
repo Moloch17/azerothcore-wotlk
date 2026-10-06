@@ -1,4 +1,5 @@
-"""The camera's frames as bytes (protocol 21, camera-vision.BYTES.md), against the sim's C++ as it writes them:
+"""The camera's frames as bytes (protocol 21, camera-vision.BYTES.md; five bytes a pixel since protocol 23,
+perception-goals P2), against the sim's C++ as it writes them:
 SpecMsg's ImageBytes, the STEP's image and final_image sections (only with a camera), the DEVICE message's image handle,
 the exact decode table (Vision::DecodePixel), the no-frame pattern, the stage.json cross-check, and a stage without a
 camera on the wire exactly as protocol 20 (apart from SPEC's four bytes)."""
@@ -15,21 +16,22 @@ from sim_threads import accept, joined, sim_thread  # noqa: E402
 from animus import protocol as p
 from animus.env import ForgeEnv
 from animus.mappo.buffer import RolloutBuffer
-from animus.mappo.networks import check_image_bytes, decode_image, vision_image_bytes
+from animus.mappo.networks import check_image_bytes, decode_image, decode_slots, vision_image_bytes
 
 H, W = 4, 8
-I = H * W * 4
+I = H * W * 5
 SPEC = p.Spec(version=p.PROTOCOL_VERSION, num_envs=3, agents_per_env=2, obs_dim=4, state_dim=5, num_actions=3,
               episode_info_dim=2, goal_count=0, tick_ms=50, decision_ticks=1, episode_seconds=60, scenario="seeing",
               layouts=(p.Layout("warrior", 4, 3),), episode_info_names=("damage", "dps"), kinematics_dim=10,
               image_bytes=I)
 PLAIN = dataclasses.replace(SPEC, image_bytes=0)
 
-# Vision/Camera.h and VisionCaster.cpp (vision-bytes 9eca0b841), ported as written.
+# Vision/Camera.h and VisionCaster.cpp (revision 5, perception-goals P2), ported as written.
 NEAR, DISTANCE_REFERENCE, DISTANCE_LEVELS = 0.25, 1000.0, 254.0
 SKY_BYTE, HEIGHT_ZERO, HEIGHT_STEP, HEIGHT_LIMIT = 255, 128, 0.2, 125
-KIND_MASK, OBJECTIVE_BIT = 0x0F, 0x10
+CLASS_MASK, OBJECTIVE_BIT = 0x1F, 0x20
 SKY = 0
+CLASSES, SLOTS = 23, 32
 
 
 def cpp_round(value: float) -> int:
@@ -37,8 +39,8 @@ def cpp_round(value: float) -> int:
     return int(np.sign(value) * np.floor(abs(value) + 0.5))
 
 
-def encode_pixel(kind: int, distance: float, rise: float, normal: float, objective: bool) -> list[int]:
-    """Vision::EncodePixel, in float32 as the C++ computes it."""
+def encode_pixel(kind: int, distance: float, rise: float, normal: float, objective: bool, slot: int = 0) -> list[int]:
+    """Vision::EncodePixel, in float32 as the C++ computes it (`kind` is the class)."""
     f = np.float32
     sky = kind == SKY
     scaled = np.clip(f(np.log(f(max(distance, NEAR)) / f(NEAR))) / f(np.log(f(DISTANCE_REFERENCE) / f(NEAR))), 0, 1)
@@ -46,7 +48,8 @@ def encode_pixel(kind: int, distance: float, rise: float, normal: float, objecti
     return [SKY_BYTE if sky else cpp_round(f(DISTANCE_LEVELS) * f(scaled)),
             HEIGHT_ZERO if sky else HEIGHT_ZERO + steps,
             cpp_round(f(255.0) * f(np.clip(normal, 0.0, 1.0))),
-            (kind & KIND_MASK) | (OBJECTIVE_BIT if objective else 0)]
+            (kind & CLASS_MASK) | (OBJECTIVE_BIT if objective else 0),
+            slot]
 
 
 def decode_pixel(pixel) -> list[float]:
@@ -55,8 +58,8 @@ def decode_pixel(pixel) -> list[float]:
     return [f(1.0) if pixel[0] == SKY_BYTE else f(pixel[0]) / f(DISTANCE_LEVELS),
             f(int(pixel[1]) - HEIGHT_ZERO) / f(HEIGHT_LIMIT),
             f(pixel[2]) / f(255.0),
-            f(pixel[3] & KIND_MASK),
-            f((pixel[3] >> 4) & 1)]
+            f(pixel[3] & CLASS_MASK),
+            f((pixel[3] >> 5) & 1)]
 
 
 def cpp_spec_bytes(spec: p.Spec) -> bytes:
@@ -175,28 +178,32 @@ def test_a_stage_without_a_camera_is_protocol_20_on_the_wire():
 
 def test_decoding_every_byte_is_the_sims_decode_pixel_exactly():
     values = torch.arange(256, dtype=torch.uint8)
-    pixels = torch.stack([values, values, values, values], dim=-1)   # 256 pixels, every value in every byte
+    pixels = torch.stack([values, values, values, values, values], dim=-1)   # 256 pixels, every value in every byte
     image = pixels.reshape(1, -1)                                    # one frame of 16 x 16
     decoded = decode_image(image, 16, 16).reshape(256, 5).numpy()
     expected = np.array([decode_pixel(pixel) for pixel in pixels.numpy()], dtype=np.float32)
     np.testing.assert_array_equal(decoded, expected)
-    # The table: 255 -> 1.0 else b / 254; (b - 128) / 125; b / 255; b & 15; (b >> 4) & 1.
+    # The table: 255 -> 1.0 else b / 254; (b - 128) / 125; b / 255; b & 31; (b >> 5) & 1; the slot byte apart.
     assert decoded[255, 0] == 1.0 and decoded[254, 0] == 1.0 and decoded[127, 0] == np.float32(127) / np.float32(254)
     assert decoded[3, 1] == -1.0 and decoded[253, 1] == 1.0 and decoded[128, 1] == 0.0
-    assert decoded[0x1F, 3] == 15.0 and decoded[0x1F, 4] == 1.0 and decoded[0x27, 3] == 7.0 and decoded[0x27, 4] == 0
+    assert decoded[0x3F, 3] == 31.0 and decoded[0x3F, 4] == 1.0 and decoded[0x47, 3] == 7.0 and decoded[0x47, 4] == 0
+    assert decoded[0x96, 3] == 22.0 and decoded[0x96, 4] == 0.0      # bits 6-7 (reserved) are no part of either
+    np.testing.assert_array_equal(decode_slots(image, 16, 16).reshape(256).numpy(), np.arange(256))
 
 
 def test_the_sims_encoding_round_trips_through_the_learners_decoding():
-    hits = [  # kind, distance, rise over the feet, normal z, objective
-        (SKY, 2000.0, 0.0, 0.0, False), (1, 0.25, 0.0, 1.0, False), (1, 1.0, -25.0, 0.5, True),
-        (2, 100.0, 25.0, 0.0, False), (2, 1000.0, 40.0, 0.25, True), (3, 5.0, -40.0, 0.75, False),
-        *[(kind, 10.0, 1.0, 0.5, flag) for kind in range(1, 8) for flag in (False, True)]]
+    hits = [  # class, distance, rise over the feet, normal z, objective, slot
+        (SKY, 2000.0, 0.0, 0.0, False, 0), (1, 0.25, 0.0, 1.0, False, 0), (1, 1.0, -25.0, 0.5, True, 0),
+        (2, 100.0, 25.0, 0.0, False, 0), (2, 1000.0, 40.0, 0.25, True, 0), (3, 5.0, -40.0, 0.75, False, 7),
+        *[(kind, 10.0, 1.0, 0.5, flag, (kind * 3) % (SLOTS + 1)) for kind in range(1, CLASSES)
+          for flag in (False, True)]]
     pixels = np.array([encode_pixel(*hit) for hit in hits], dtype=np.uint8)
-    frame = np.zeros((len(hits) * 4,), np.uint8)
+    frame = np.zeros((len(hits) * 5,), np.uint8)
     frame[: pixels.size] = pixels.reshape(-1)
     decoded = decode_image(torch.from_numpy(frame)[None], 1, len(hits))[0, 0].numpy()
-    for (kind, distance, rise, normal, flag), (d, h, n, k, o) in zip(hits, decoded):
-        assert k == kind and o == float(flag)
+    slots = decode_slots(torch.from_numpy(frame)[None], 1, len(hits))[0, 0].numpy()
+    for (kind, distance, rise, normal, flag, slot), (d, h, n, k, o), s in zip(hits, decoded, slots):
+        assert k == kind and o == float(flag) and s == slot
         assert n == pytest.approx(normal, abs=0.5 / 255 + 1e-6)
         if kind == SKY:
             assert (d, h) == (1.0, 0.0)
@@ -208,16 +215,17 @@ def test_the_sims_encoding_round_trips_through_the_learners_decoding():
 
 def test_a_row_without_a_frame_is_sky_at_height_zero():
     blank = p.no_frame((2, 3, I))
-    assert blank.dtype == np.uint8 and tuple(blank[1, 2, :4]) == p.NO_FRAME_PIXEL == (255, 128, 0, 0)
+    assert blank.dtype == np.uint8 and tuple(blank[1, 2, :5]) == p.NO_FRAME_PIXEL == (255, 128, 0, 0, 0)
     decoded = decode_image(torch.from_numpy(blank).reshape(6, I), H, W)
     assert bool((decoded == torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0])).all())
+    assert bool((decode_slots(torch.from_numpy(blank).reshape(6, I), H, W) == 0).all())
 
 
 # ------------------------------------------------------------------ stage.json and the rollout buffer
 
 
 def test_the_sim_and_stage_json_must_agree_about_the_camera():
-    vision = [{"first": 3, "height": H, "width": W, "bytes_per_pixel": 4, "image_bytes": I}, None]
+    vision = [{"first": 3, "height": H, "width": W, "bytes_per_pixel": 5, "image_bytes": I}, None]
     assert vision_image_bytes(vision) == I and vision_image_bytes(None) == 0
     check_image_bytes(vision, I)
     check_image_bytes(None, 0)
@@ -269,7 +277,7 @@ def test_a_sim_with_a_camera_over_the_socket(tmp_path):
         conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
-            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 22
+            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 23
             spec = cpp_spec_bytes(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
             device = struct.pack("<II", 0, SPEC.num_envs) + bytes(range(64)) * 3 + bytes(range(64, 128))

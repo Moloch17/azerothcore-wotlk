@@ -26,12 +26,12 @@ from animus.mappo.networks import (LOOK_HOLD_BIAS, LayoutActor, LookHead, Vision
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
 
-H, W, PATCH, SCALARS, KINDS = 16, 32, 8, 11, 8
-BYTES = H * W * 4
+H, W, PATCH, SCALARS, CLASSES = 16, 32, 8, 11, 23
+BYTES = H * W * 5
 HEADS = (7, 5, 5)          # yaw rate, pitch rate, {hold, in, out, recentre, face}
 LOOK_NAMES = ("yaw_rate", "pitch_rate", "zoom")
-IMAGE = {"height": H, "width": W, "channels": 5, "kinds": KINDS, "kind_channel": 3, "scalars": SCALARS,
-         "transport": "bytes", "bytes_per_pixel": 4, "patch": PATCH, "render_sizes": [[8, 4], [16, 8], [32, 16]]}
+IMAGE = {"height": H, "width": W, "channels": 5, "classes": CLASSES, "class_channel": 3, "scalars": SCALARS,
+         "transport": "bytes", "bytes_per_pixel": 5, "patch": PATCH, "render_sizes": [[8, 4], [16, 8], [32, 16]]}
 NAMES = ["warrior", "priest", "director"]
 FIRST = {"warrior": 8, "priest": 12}
 
@@ -82,7 +82,7 @@ def trainer_of(config: MappoConfig | None = None, **kwargs) -> MappoTrainer:
 # ------------------------------------------------------------------ the manifest
 
 
-def test_vision_of_reads_revision_4s_patch_render_sizes_and_look():
+def test_vision_of_reads_the_patch_render_sizes_and_look():
     vision = vision_of(stage(), NAMES)
     entry = vision[0]
     assert entry["patch"] == PATCH and entry["render_sizes"] == ((8, 4), (16, 8), (32, 16))
@@ -105,23 +105,23 @@ def test_vision_of_reads_revision_4s_patch_render_sizes_and_look():
 
 
 def test_the_encoder_at_128_x_64_with_patch_8_is_the_16_x_8_grid():
-    image = {"height": 64, "width": 128, "channels": 5, "kinds": 8, "kind_channel": 3, "scalars": 11,
-             "bytes_per_pixel": 4, "patch": 8, "image_bytes": 64 * 128 * 4}
+    image = {"height": 64, "width": 128, "channels": 5, "classes": 23, "class_channel": 3, "scalars": 11,
+             "bytes_per_pixel": 5, "patch": 8, "image_bytes": 64 * 128 * 5}
     encoder = VisionEncoder([{"first": 3, **image}, None])
     assert encoder.PATCH == 8 and encoder.grid == (8, 16) and encoder.feature_shape == (64, 8, 16)
-    # 8 x 8 pixels x 12 planes a patch; 128 keypoints and 11 scalars into the embedding.
-    assert (encoder.patch.in_features, encoder.patch.out_features) == (768, 64)
+    # 8 x 8 pixels x 10 planes a patch (the class embedded in 6); 128 keypoints and 11 scalars into the embedding.
+    assert (encoder.patch.in_features, encoder.patch.out_features) == (640, 64)
     assert (encoder.mix.in_features, encoder.mix.out_features) == (64, 64)
     assert (encoder.embed.in_features, encoder.embed.out_features) == (139, 256)
     obs = torch.rand(3, 3 + 11)
-    pixels = torch.randint(0, 256, (3, 64 * 128 * 4), dtype=torch.uint8)
+    pixels = torch.randint(0, 256, (3, 64 * 128 * 5), dtype=torch.uint8)
     with torch.no_grad():
         embedding = encoder(obs, torch.tensor([0, 1, 0]), pixels)
         features = encoder.features(encoder.patches(encoder.planes(encoder.gather(obs, torch.tensor([0, 1, 0]),
                                                                                    pixels)[0])))
     assert embedding.shape == (3, 256) and features.shape == (3, 128, 64)
     # A manifest without a patch (revision 3) keeps 4 x 4.
-    old = {**image, "height": 32, "width": 64, "scalars": 7, "image_bytes": 32 * 64 * 4}
+    old = {**image, "height": 32, "width": 64, "scalars": 7, "image_bytes": 32 * 64 * 5}
     del old["patch"]
     assert VisionEncoder([{"first": 3, **old}]).PATCH == 4
 
@@ -381,15 +381,15 @@ def test_a_rollout_graph_captures_the_look_head():
 SPEC = p.Spec(version=p.PROTOCOL_VERSION, num_envs=3, agents_per_env=2, obs_dim=4, state_dim=5, num_actions=3,
               episode_info_dim=2, goal_count=0, tick_ms=50, decision_ticks=1, episode_seconds=60, scenario="looking",
               layouts=(p.Layout("warrior", 4, 3),), episode_info_names=("damage",), kinematics_dim=10,
-              image_bytes=16, look_heads=3)
+              image_bytes=20, look_heads=3)    # four pixels of five bytes
 PLAIN = dataclasses.replace(SPEC, image_bytes=0, look_heads=0)
 
 
 def test_spec_is_92_bytes_ending_with_the_look_heads():
-    assert p.PROTOCOL_VERSION == 22
+    assert p.PROTOCOL_VERSION == 23
     assert p.SPEC.format == "<12I32s3I" and p.SPEC.size == 92
     payload = p.encode_spec(SPEC)
-    assert payload[84:92] == struct.pack("<II", 16, 3)
+    assert payload[84:92] == struct.pack("<II", 20, 3)
     assert p.decode_spec(payload) == SPEC and p.decode_spec(p.encode_spec(PLAIN)).look_heads == 0
 
 
@@ -458,14 +458,14 @@ def test_a_sim_with_look_heads_over_the_socket(tmp_path):
                   reward=np.zeros((3, 2), np.float32), done=np.zeros(3, bool), terminated=np.zeros(3, bool),
                   final_obs=np.zeros((3, 2, 4), np.float32), final_state=np.zeros((3, 5), np.float32),
                   episode_info=np.zeros((3, 2, 2), np.float32), episode_seed=np.zeros(3, np.uint32),
-                  image=p.no_frame((3, 2, 16)), final_image=p.no_frame((3, 2, 16)))
+                  image=p.no_frame((3, 2, 20)), final_image=p.no_frame((3, 2, 20)))
     received = []
 
     def sim():
         conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
-            assert p.HELLO.unpack(read_exact(conn, length))[0] == 22
+            assert p.HELLO.unpack(read_exact(conn, length))[0] == 23
             spec = p.encode_spec(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
             payload = p.encode_header(p.MsgType.STEP, len(p.encode_step(SPEC, step))) + p.encode_step(SPEC, step)

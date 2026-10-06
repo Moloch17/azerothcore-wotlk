@@ -11,7 +11,9 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 22
+PROTOCOL_VERSION = 23
+# 23: identity (perception-goals P2): a camera pixel is five bytes -- the class byte (class and objective) and the
+# entity slot -- so Spec.image_bytes is height x width x 5; the messages' layout is protocol 22's.
 # 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
 # agent (FORMAT.md section 3, animus.human.motion): the body the style reward and the realism score read.
 # 21: the camera's image travels as bytes (camera-vision.BYTES.md): SPEC ends with the image bytes per agent (0 without
@@ -71,10 +73,11 @@ DEVICE_IMAGE = struct.Struct("<64s")
 DEVICE_ACK = struct.Struct("<I")
 # What a STEP leaves out when the learner reads them from the device buffers.
 DEVICE_FIELDS = ("obs", "state", "mask", "image")
-# The camera's image as bytes (protocol 21, Vision::EncodePixel): 4 a pixel, [row][col][byte]. A row without a frame
-# (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0.
+# The camera's image as bytes (protocol 23, Vision::EncodePixel): 5 a pixel, [row][col][byte]. A row without a frame
+# (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0, class sky
+# with no objective, no entity.
 IMAGE_FIELDS = ("image", "final_image")
-NO_FRAME_PIXEL = (255, 128, 0, 0)
+NO_FRAME_PIXEL = (255, 128, 0, 0, 0)
 # The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
 LOOK_HOLD = (3, 2, 0)
@@ -197,7 +200,9 @@ class Step:
 def no_frame(shape: tuple[int, ...]) -> np.ndarray:
     """Images of `shape` [..., I] holding no frame: every pixel NO_FRAME_PIXEL (sky, height 0), as the sim fills a row
     without one."""
-    return np.broadcast_to(np.array(NO_FRAME_PIXEL, np.uint8), (*shape[:-1], shape[-1] // 4, 4)).reshape(shape).copy()
+    width = len(NO_FRAME_PIXEL)
+    return np.broadcast_to(np.array(NO_FRAME_PIXEL, np.uint8),
+                           (*shape[:-1], shape[-1] // width, width)).reshape(shape).copy()
 
 
 def rows_of(step: Step, begin: int, count: int) -> Step:

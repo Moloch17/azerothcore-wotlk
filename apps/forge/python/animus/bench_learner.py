@@ -69,7 +69,8 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
         for index, item in enumerate(spec.layouts):
             frame[layout == index, item.obs_dim:] = 0.0
     state = rng.standard_normal((envs, spec.state_dim), dtype=np.float32)
-    # A camera's frames (protocol 21): random bytes, the kind byte's low bits a kind and its bit 4 the objective.
+    # A camera's frames (protocol 23): random bytes, the class byte's low bits a class and its bit 5 the objective,
+    # byte 4 a slot (the encoder clamps both, so noise is in range).
     images = [rng.integers(0, 256, (envs, agents, spec.image_bytes), dtype=np.uint8) for _ in range(len(frames))]
     episode = max(1, int(spec.episode_seconds * 1000 / (spec.tick_ms * spec.decision_ticks)))
     clock = rng.integers(0, episode, size=envs)

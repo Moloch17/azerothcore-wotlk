@@ -1,5 +1,6 @@
 """The camera's encoder (camera-vision): stage.json's vision block read per layout, the image's bytes decoded on the
-device into [N, H, W, C], the kind one-hot, the scalar columns kept from the adapters and their normalisers, the join,
+device into [N, H, W, C], the class embedded, the entity list linked to its pixels, the scalar and list columns kept
+from the adapters and their normalisers, the join,
 the encoder shared by the actor and the critic, the rollout graph kept on, export refused, and the networks of a stage
 without a camera exactly as they were."""
 
@@ -18,11 +19,16 @@ from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, Vis
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
 
-H, W, C, KINDS, KIND_CHANNEL, SCALARS = 8, 12, 5, 8, 3, 7
-BYTES = H * W * 4
+H, W, C, CLASSES, CLASS_CHANNEL, SCALARS = 8, 12, 5, 23, 3, 7
+BYTES = H * W * 5
 SPAN = SCALARS
-IMAGE = {"height": H, "width": W, "channels": C, "kinds": KINDS, "kind_channel": KIND_CHANNEL, "scalars": SCALARS,
-         "transport": "bytes", "bytes_per_pixel": 4}
+IMAGE = {"height": H, "width": W, "channels": C, "classes": CLASSES, "class_channel": CLASS_CHANNEL, "class_limit": 32,
+         "scalars": SCALARS, "transport": "bytes", "bytes_per_pixel": 5}
+# The entity list after the camera (perception-goals 1b): a short one here, its columns as the sim's.
+SLOTS, FEATURES = 3, 20
+ENTITY_NAMES = ["present", "class", "type", "object", "level", "level_delta", "health", "reaction", "quest", "lootable",
+                "usable", "distance", "yaw_sin", "yaw_cos", "pitch_sin", "pitch_cos", "centroid_x", "centroid_y",
+                "share", "memory"]
 # Two layouts with a camera at different columns (their core blocks differ in width, as the classes' do) and one
 # without.
 NAMES = ["warrior", "priest", "director"]
@@ -33,9 +39,14 @@ def block(name: str, first: int, count: int, actions=(0, 0), **extra) -> dict:
     return {"name": name, "obs": [first, count], "actions": list(actions), **extra}
 
 
-def stage(image: dict | None = IMAGE, vision_revision: int = 3) -> dict:
+def entities(first: int) -> dict:
+    return {"name": "visible", "slots": SLOTS, "width": FEATURES, "first": first, "present": 0, "class_column": 1,
+            "type_column": 2, "classes": 32, "type_buckets": 64, "features": list(ENTITY_NAMES)}
+
+
+def stage(image: dict | None = IMAGE, vision_revision: int = 5) -> dict:
     """A stage.json: warrior core 5 + move 3, priest core 9 + move 3, then the vision block (its 7 scalars; the image
-    travels as bytes) and a goal block of 2; the director core 6 + goal 2."""
+    travels as bytes), its entity list (SLOTS of FEATURES) and a goal block of 2; the director core 6 + goal 2."""
     layouts = {}
     for name, core in (("warrior", 5), ("priest", 9)):
         blocks = [block("core", 0, core, (0, 3)), block("move", core, 3, (3, 2))]
@@ -43,6 +54,8 @@ def stage(image: dict | None = IMAGE, vision_revision: int = 3) -> dict:
         if image is not None:
             blocks.append(block("vision", at, SPAN, revision=vision_revision, image=dict(image)))
             at += SPAN
+            blocks.append(block("entities", at, SLOTS * FEATURES, revision=1, entities=entities(at)))
+            at += SLOTS * FEATURES
         blocks.append(block("goal", at, 2))
         layouts[name] = {"obs_dim": at + 2, "blocks": blocks}
     layouts["director"] = {"obs_dim": 8, "blocks": [block("core", 0, 6, (0, 4)), block("goal", 6, 2)]}
@@ -60,12 +73,13 @@ def actor(vision=True, seed=0, **kwargs) -> LayoutActor:
 
 
 def frame(generator: torch.Generator) -> torch.Tensor:
-    """A plausible frame's bytes [I]: any distance, height and normal, a kind 0-7 with the objective bit now and
-    then."""
-    pixels = torch.randint(0, 256, (H, W, 4), generator=generator, dtype=torch.uint8)
-    kind = torch.randint(0, KINDS, (H, W), generator=generator, dtype=torch.uint8)
-    flag = (torch.rand(H, W, generator=generator) < 0.1).to(torch.uint8) << 4
+    """A plausible frame's bytes [I]: any distance, height and normal, a class with the objective bit now and then,
+    and a slot of the list or none."""
+    pixels = torch.randint(0, 256, (H, W, 5), generator=generator, dtype=torch.uint8)
+    kind = torch.randint(0, CLASSES, (H, W), generator=generator, dtype=torch.uint8)
+    flag = (torch.rand(H, W, generator=generator) < 0.1).to(torch.uint8) << 5
     pixels[..., 3] = kind | flag
+    pixels[..., 4] = torch.randint(0, SLOTS + 1, (H, W), generator=generator, dtype=torch.uint8)
     return pixels.reshape(-1)
 
 
@@ -78,7 +92,7 @@ def observations(rows: int, seed: int = 0, layouts=None) -> tuple[torch.Tensor, 
     layout = (torch.tensor(layouts) if layouts is not None
               else torch.arange(rows) % len(NAMES))
     obs = torch.zeros(rows, max(widths))
-    image = blank(rows, (255, 128, 0, 0))
+    image = blank(rows, (255, 128, 0, 0, 0))
     for row in range(rows):
         index = int(layout[row])
         obs[row, : widths[index]] = torch.randn(widths[index], generator=generator)
@@ -100,9 +114,12 @@ def blank(rows: int, pixel) -> torch.Tensor:
 def test_vision_of_keeps_each_layouts_own_first_column():
     vision = vision_of(stage(), NAMES)
     assert [entry and entry["first"] for entry in vision] == [8, 12, None]
-    # A manifest from before revision 4: patch 4, no render sizes, no look.
+    # A manifest with no patch, render sizes or look: patch 4, none, none; and its entity list after the scalars.
+    listed = {"first": 8 + SPAN, "slots": SLOTS, "width": FEATURES, "present": 0, "class_column": 1, "type_column": 2,
+              "classes": 32, "type_buckets": 64, "object_column": 3}
     assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES,
-                         "patch": 4, "render_sizes": (), "look": (), "look_names": ()}
+                         "patch": 4, "render_sizes": (), "look": (), "look_names": (), "entities": listed}
+    assert vision[1]["entities"]["first"] == 12 + SPAN
 
 
 def test_vision_of_is_none_without_a_camera():
@@ -129,8 +146,19 @@ def test_vision_of_refuses_what_it_cannot_read():
         vision_of(floats, NAMES)
     three = stage()
     three["layouts"]["warrior"]["blocks"][2]["image"] = {**IMAGE, "bytes_per_pixel": 3}
-    with pytest.raises(ValueError, match="decodes 4 bytes"):
+    with pytest.raises(ValueError, match="decodes 5 bytes"):
         vision_of(three, NAMES)
+    # Revision 4's image: kinds, four bytes a pixel, no class table.
+    kinds = stage(vision_revision=4)
+    kinds["layouts"]["warrior"]["blocks"][2]["image"] = {k: v for k, v in IMAGE.items()
+                                                         if k not in ("classes", "class_channel", "class_limit")}
+    kinds["layouts"]["warrior"]["blocks"][2]["image"].update(kinds=8, kind_channel=3, bytes_per_pixel=4)
+    with pytest.raises(ValueError, match="before revision 5"):
+        vision_of(kinds, NAMES)
+    unlisted = stage()
+    unlisted["layouts"]["warrior"]["blocks"][3]["entities"]["slots"] = SLOTS + 1
+    with pytest.raises(ValueError, match="its description"):
+        vision_of(unlisted, NAMES)
     past = stage()
     past["layouts"]["warrior"]["obs_dim"] = FIRST["warrior"] + SPAN - 1
     with pytest.raises(ValueError, match="past the layout"):
@@ -159,21 +187,22 @@ def test_a_stage_without_a_camera_builds_the_networks_it_always_did():
 
 
 def test_the_image_bytes_are_decoded_row_col_channel_and_the_scalars_read_from_each_layouts_columns():
-    """Revision 2's channels, decoded from the bytes exactly (Vision::DecodePixel), in the patch encoder's
-    [N, H, W, C]; the scalars from each layout's own columns."""
+    """The five image channels, decoded from the bytes exactly (Vision::DecodePixel), in the patch encoder's
+    [N, H, W, C] -- the class from the class byte's low five bits, the objective from its bit 5, the slot byte apart;
+    the scalars from each layout's own columns."""
     encoder = VisionEncoder(vision_of(stage(), NAMES))
-    obs = torch.zeros(2, 12 + SPAN + 2)
+    obs = torch.zeros(2, 12 + SPAN + SLOTS * FEATURES + 2)
     layout = torch.tensor([0, 1])
-    image = blank(2, (255, 128, 0, 0))                  # no frame: sky, height 0
+    image = blank(2, (255, 128, 0, 0, 0))               # no frame: sky, height 0
     row, col = 5, 6
-    at = (row * W + col) * 4
-    image[0, at : at + 4] = torch.tensor([127, 3, 51, 0x10 | 6], dtype=torch.uint8)
-    image[1, at : at + 4] = torch.tensor([0, 253, 255, 2], dtype=torch.uint8)
+    at = (row * W + col) * 5
+    image[0, at : at + 5] = torch.tensor([127, 3, 51, 0x20 | 22, 2], dtype=torch.uint8)
+    image[1, at : at + 5] = torch.tensor([0, 253, 255, 2, 0], dtype=torch.uint8)
     for index, name in enumerate(("warrior", "priest")):
         obs[index, FIRST[name] + 5] = 0.5 + index        # the sixth scalar (underwater)
     decoded, scalars = encoder.gather(obs, layout, image)
     assert decoded.shape == (2, H, W, C) and scalars.shape == (2, SCALARS)
-    torch.testing.assert_close(decoded[0, row, col], torch.tensor([127 / 254, -125 / 125, 51 / 255, 6.0, 1.0]))
+    torch.testing.assert_close(decoded[0, row, col], torch.tensor([127 / 254, -125 / 125, 51 / 255, 22.0, 1.0]))
     torch.testing.assert_close(decoded[1, row, col], torch.tensor([0.0, 125 / 125, 1.0, 2.0, 0.0]))
     sky = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0])
     torch.testing.assert_close(decoded[0, 0, 0], sky)
@@ -192,57 +221,62 @@ def test_a_network_with_a_camera_refuses_to_act_without_its_image():
         net(obs, layout, torch.ones(3, 5))
 
 
-def test_the_kind_channel_becomes_a_one_hot_of_the_kinds():
+def test_the_class_channel_is_embedded_not_one_hot():
+    """Perception-goals amendment 10: the class becomes a learned CLASS_EMBED-wide vector from a table of 32 (the
+    wire's 5 bits), so a pixel is 4 + 6 planes whatever the number of classes."""
     encoder = VisionEncoder(vision_of(stage(), NAMES))
+    assert encoder.class_embed.num_embeddings == 32 and encoder.class_embed.embedding_dim == VisionEncoder.CLASS_EMBED
+    assert 4 <= VisionEncoder.CLASS_EMBED <= 8
     image = torch.zeros(1, H, W, C)
     image[0, ..., 0] = 0.7                              # distance
     image[0, ..., 4] = 1.0                              # objective
-    kinds = torch.tensor([0.0, 1.0, 2.6, 3.4, -1.0, 9.0, 6.0, 7.0])   # rounded, clamped to 0..7
-    image[0, 0, : len(kinds), KIND_CHANNEL] = kinds
+    classes = torch.tensor([0.0, 1.0, 2.6, 3.4, -1.0, 40.0, 22.0, 31.0])   # rounded, clamped to 0..31
+    image[0, 0, : len(classes), CLASS_CHANNEL] = classes
     planes = encoder.planes(image)
-    assert planes.shape == (1, H, W, C - 1 + KINDS) == (1, H, W, 12)
-    # The other channels in order (distance, height, normal, objective), then the one-hot.
+    assert planes.shape == (1, H, W, C - 1 + VisionEncoder.CLASS_EMBED) == (1, H, W, 10)
+    # The other channels in order (distance, height, normal, objective), then the class's embedding.
     torch.testing.assert_close(planes[0, ..., 0], image[0, ..., 0])
     torch.testing.assert_close(planes[0, ..., 3], image[0, ..., 4])
-    expected = [0, 1, 3, 3, 0, 7, 6, 7]
-    for col, kind in enumerate(expected):
-        hot = planes[0, 0, col, 4:]
-        assert float(hot.sum()) == 1.0 and int(hot.argmax()) == kind
-    assert bool((planes[0, 1:, :, 4] == 1.0).all())     # the rest of the image is kind 0 (sky)
+    expected = [0, 1, 3, 3, 0, 31, 22, 31]
+    table = encoder.class_embed.weight.detach()
+    for col, value in enumerate(expected):
+        torch.testing.assert_close(planes[0, 0, col, 4:], table[value])
+    torch.testing.assert_close(planes[0, 1:, :, 4:], table[0].expand(H - 1, W, -1))     # the rest is sky
 
 
 def test_a_patch_is_its_square_of_pixels_row_by_row():
     encoder = VisionEncoder(vision_of(stage(), NAMES))
-    planes = torch.zeros(1, H, W, 12)
+    planes = torch.zeros(1, H, W, 10)
     # Pixel (row 5, col 6) is in patch (1, 1) of the 2 x 3 grid -- the fifth patch -- at (1, 2) inside it.
     planes[0, 5, 6, 9] = 3.0
     patches = encoder.patches(planes)
-    assert patches.shape == (1, (H // 4) * (W // 4), 4 * 4 * 12) == (1, 6, 192)
-    assert float(patches[0, 1 * 3 + 1, (1 * 4 + 2) * 12 + 9]) == 3.0
+    assert patches.shape == (1, (H // 4) * (W // 4), 4 * 4 * 10) == (1, 6, 160)
+    assert float(patches[0, 1 * 3 + 1, (1 * 4 + 2) * 10 + 9]) == 3.0
     assert float(patches.abs().sum()) == 3.0
 
 
 def test_an_image_the_patches_do_not_tile_is_refused():
     image = {**IMAGE, "height": 30}
     with pytest.raises(ValueError, match="multiples of 4"):
-        VisionEncoder([{"first": 0, **image, "image_bytes": 30 * W * 4}])
+        VisionEncoder([{"first": 0, **image, "image_bytes": 30 * W * 5}])
 
 
 def test_shapes_at_the_default_camera():
-    image = {"height": 32, "width": 64, "channels": 5, "kinds": 8, "kind_channel": 3, "scalars": 7,
-             "bytes_per_pixel": 4, "image_bytes": 32 * 64 * 4}
+    image = {"height": 32, "width": 64, "channels": 5, "classes": 23, "class_channel": 3, "scalars": 7,
+             "bytes_per_pixel": 5, "image_bytes": 32 * 64 * 5}
     descriptors = [{"first": 3, **image}, None]
     encoder = VisionEncoder(descriptors)
     join = VisionJoin(encoder.has_vision, 24)
-    # 4 x 4 patches: 32 x 64 -> an 8 x 16 grid of 192 features each, 64 channels after the two layers.
+    # 4 x 4 patches: 32 x 64 -> an 8 x 16 grid of 160 features each, 64 channels after the two layers.
     assert encoder.feature_shape == (64, 8, 16)
-    assert (encoder.patch.in_features, encoder.patch.out_features) == (192, 64)
+    assert (encoder.patch.in_features, encoder.patch.out_features) == (160, 64)
+    assert encoder.entities is None                                    # no entity list described
     assert (encoder.mix.in_features, encoder.mix.out_features) == (64, 64)
     assert encoder.embed.in_features == 128 + 7 and encoder.embed.out_features == 256
     assert join.linear.in_features == 256 and join.linear.out_features == 24
     obs = torch.rand(5, 3 + 7)
     layout = torch.tensor([0, 1, 0, 1, 0])
-    image = torch.randint(0, 256, (5, 32 * 64 * 4), dtype=torch.uint8)
+    image = torch.randint(0, 256, (5, 32 * 64 * 5), dtype=torch.uint8)
     with torch.no_grad():
         join.linear.bias.normal_()
         embedding = encoder(obs, layout, image)
@@ -310,7 +344,7 @@ def test_a_fresh_camera_takes_part_from_the_first_update():
     with torch.no_grad():
         # A frame with something in it against an even one (a spatial softmax reads where things are, so two even
         # frames of different colours look alike to it).
-        dark = net(obs, layout, mask, image=blank(12, (0, 128, 0, 1))).logits
+        dark = net(obs, layout, mask, image=blank(12, (0, 128, 0, 1, 0))).logits
         lit = net(obs, layout, mask, image=image).logits
     assert not torch.allclose(dark, lit)
     net(obs, layout, mask, image=image).logits.sum().backward()
@@ -341,7 +375,7 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
     mask = torch.ones(12, 5)
     with torch.no_grad():
         torch.testing.assert_close(seeded.actor(obs, layout, mask, image=image).logits,
-                                   seeded.actor(obs, layout, mask, image=blank(12, (0, 128, 0, 1))).logits)
+                                   seeded.actor(obs, layout, mask, image=blank(12, (0, 128, 0, 1, 0))).logits)
 
 
 def test_the_actor_and_the_critic_share_one_camera_encoder():
@@ -464,7 +498,7 @@ def test_the_graph_decides_with_the_camera_as_the_eager_path_does():
     np.testing.assert_allclose(eager_state.memory, graph_state.memory, rtol=1e-4, atol=1e-5)
     # The graph read the camera: another image, other values.
     other = trainer.act_and_value(*arrays, deterministic=True, state=copy.deepcopy(eager_state),
-                                  image=blank(6, (0, 128, 0, 1)).numpy().reshape(3, 2, -1))
+                                  image=blank(6, (0, 128, 0, 1, 0)).numpy().reshape(3, 2, -1))
     assert not np.allclose(other[2], graphed[2])
 
 
