@@ -19,6 +19,7 @@
 #include "FrameImage.h"
 #include "VisionCaster.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <zlib.h>
 
@@ -66,6 +67,29 @@ namespace
         tagged += body;
         out += tagged;
         Put32(out, uint32_t(crc32(0L, reinterpret_cast<Bytef const*>(tagged.data()), uInt(tagged.size()))));
+    }
+
+    /// An RGB PNG of `width` x `height` from its scanlines, each already led by filter byte 0; empty on failure.
+    std::string WritePng(uint32_t width, uint32_t height, std::string const& raw)
+    {
+        uLongf packedSize = compressBound(uLong(raw.size()));
+        std::string packed(packedSize, '\0');
+        if (compress2(reinterpret_cast<Bytef*>(packed.data()), &packedSize, reinterpret_cast<Bytef const*>(raw.data()),
+            uLong(raw.size()), Z_BEST_SPEED) != Z_OK)
+            return {};
+        packed.resize(packedSize);
+
+        std::string png("\x89PNG\r\n\x1a\n", 8);
+        std::string header;
+        Put32(header, width);
+        Put32(header, height);
+        header += char(8);  // bit depth
+        header += char(2);  // RGB
+        header += std::string(3, '\0');     // deflate, adaptive filtering, no interlace
+        Chunk(png, "IHDR", header);
+        Chunk(png, "IDAT", packed);
+        Chunk(png, "IEND", {});
+        return png;
     }
 }
 
@@ -128,22 +152,69 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
         }
     }
 
-    uLongf packedSize = compressBound(uLong(raw.size()));
-    std::string packed(packedSize, '\0');
-    if (compress2(reinterpret_cast<Bytef*>(packed.data()), &packedSize, reinterpret_cast<Bytef const*>(raw.data()),
-        uLong(raw.size()), Z_BEST_SPEED) != Z_OK)
-        return {};
-    packed.resize(packedSize);
+    return WritePng(outWidth, outHeight, raw);
+}
 
-    std::string png("\x89PNG\r\n\x1a\n", 8);
-    std::string header;
-    Put32(header, outWidth);
-    Put32(header, outHeight);
-    header += char(8);  // bit depth
-    header += char(2);  // RGB
-    header += std::string(3, '\0');     // deflate, adaptive filtering, no interlace
-    Chunk(png, "IHDR", header);
-    Chunk(png, "IDAT", packed);
-    Chunk(png, "IEND", {});
-    return png;
+std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale)
+{
+    scale = std::max<uint32_t>(scale, 1);
+    uint32_t const width = settings.Width;
+    uint32_t const height = settings.Height;
+
+    // Every pixel decoded once, as the learner decodes the bytes.
+    std::vector<std::array<float, CHANNELS>> decoded(std::size_t(width) * height);
+    for (uint32_t pixel = 0; pixel < width * height; ++pixel)
+        DecodePixel(&image[std::size_t(pixel) * BYTES_PER_PIXEL], decoded[pixel].data());
+    auto const rise = [&](uint32_t pixel) { return decoded[pixel][CHANNEL_HEIGHT] * HEIGHT_SCALE; };
+    auto const level = [](float yards) { return int32_t(std::floor((yards + 100.0f) / COMPOSITE_CONTOUR)); };
+
+    std::vector<std::array<uint8_t, 3>> colours(std::size_t(width) * height);
+    for (uint32_t row = 0; row < height; ++row)
+        for (uint32_t col = 0; col < width; ++col)
+        {
+            uint32_t const pixel = row * width + col;
+            std::array<float, CHANNELS> const& in = decoded[pixel];
+            std::array<uint8_t, 3>& out = colours[pixel];
+            if (in[CHANNEL_OBJECTIVE] > 0.5f)
+            {
+                out = { 255, 255, 255 };
+                continue;
+            }
+            if (in[CHANNEL_DISTANCE] >= 0.999f)     // sky, or nothing loaded that way
+            {
+                out = { COMPOSITE_SKY[0], COMPOSITE_SKY[1], COMPOSITE_SKY[2] };
+                continue;
+            }
+
+            // Back from the log encoding to yards; floors lit, walls dark; far fades towards the haze.
+            float const yards = NEAR * std::pow(DISTANCE_REFERENCE / NEAR, in[CHANNEL_DISTANCE]);
+            float const shade = 0.45f + 0.55f * std::clamp(in[CHANNEL_NORMAL], 0.0f, 1.0f);
+            float const fog = std::pow(std::min(1.0f, yards / COMPOSITE_FOG_YARDS), 0.7f);
+            uint32_t const kind = std::min<uint32_t>(uint32_t(in[CHANNEL_KIND]), KINDS - 1);
+            float colour[3];
+            for (uint32_t c = 0; c < 3; ++c)
+                colour[c] = float(KIND_COLOURS[kind][c]) * shade * (1.0f - fog) + float(COMPOSITE_HAZE[c]) * fog * 0.6f;
+
+            // A contour where this pixel and its right or lower neighbour lie across a level, inside the height
+            // channel's range (its clamped ends are no level at all).
+            float const here = rise(pixel);
+            bool const across = std::fabs(here) < HEIGHT_SCALE - 0.5f
+                && ((col + 1 < width && level(here) != level(rise(pixel + 1)))
+                    || (row + 1 < height && level(here) != level(rise(pixel + width))));
+            for (uint32_t c = 0; c < 3; ++c)
+                out[c] = uint8_t(std::clamp(colour[c] * (across ? 0.35f : 1.0f), 0.0f, 255.0f));
+        }
+
+    uint32_t const outWidth = width * scale;
+    uint32_t const outHeight = height * scale;
+    std::string raw;
+    raw.reserve(std::size_t(outHeight) * (1 + std::size_t(outWidth) * 3));
+    for (uint32_t y = 0; y < outHeight; ++y)
+    {
+        raw += char(0);
+        for (uint32_t x = 0; x < outWidth; ++x)
+            for (uint8_t c : colours[std::size_t(y / scale) * width + x / scale])
+                raw += char(c);
+    }
+    return WritePng(outWidth, outHeight, raw);
 }

@@ -1464,8 +1464,8 @@ void AnimusForge::Forge::MaybeAuditCamera()
 
         std::string const file = Acore::StringFormat("{}-e{}a{}-{}.png", stamp, e, a, layout);
         // A 128-wide frame at 2x, a 64-wide one at 4x: about 256 pixels a panel whatever the canonical size.
-        std::string const png = Vi::FramePng(settings, image, std::max<uint32>(1, 256 / std::max<uint32>(1,
-            settings.Width)));
+        uint32 const scale = std::max<uint32>(1, 256 / std::max<uint32>(1, settings.Width));
+        std::string const png = Vi::FramePng(settings, image, scale);
         std::ofstream out(dir / file, std::ios::binary);
         out << png;
         if (png.empty() || !out)
@@ -1474,6 +1474,13 @@ void AnimusForge::Forge::MaybeAuditCamera()
             continue;
         }
         ++saved;
+        // Every layer in one picture beside it (Vi::CompositePng), named after the frame: no CSV column needed.
+        std::string const compositeFile = Acore::StringFormat("{}-e{}a{}-{}-composite.png", stamp, e, a, layout);
+        std::string const composite = Vi::CompositePng(settings, image, scale);
+        std::ofstream compositeOut(dir / compositeFile, std::ios::binary);
+        compositeOut << composite;
+        if (composite.empty() || !compositeOut)
+            LOG_WARN("module.animus", "Camera audit: cannot write {}", (dir / compositeFile).string());
 
         csv << stamp << ',' << Acore::StringFormat("{:.0f}", scenarioSeconds) << ',' << _ticks << ',' << e << ','
             << a << ',' << layout;

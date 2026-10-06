@@ -19,6 +19,7 @@
 #include "FrameImage.h"
 #include "VisionCaster.h"
 #include "gtest/gtest.h"
+#include <array>
 #include <vector>
 #include <zlib.h>
 
@@ -131,4 +132,81 @@ TEST(VisionFrameImageTest, FourPanelsAsTheLearnerDecodesThem)
 
     // The gap between panels is grey.
     EXPECT_EQ(rgb[(std::size_t(0) * width + panel) * 3], 64);
+}
+
+// The composite (CompositePng, var/camera/composite.py from the bytes): one panel, the image scaled; sky the sky
+// colour, the objective white, a near level floor brighter than a near wall of the same kind at the same distance,
+// and a pixel across a whole yard of height from its right neighbour darker (a contour) than a plain one.
+TEST(VisionFrameImageTest, CompositeIsEveryLayerInOnePicture)
+{
+    Vi::Settings settings;
+    settings.Width = 8;
+    settings.Height = 6;
+    std::vector<uint8_t> image(Vi::ImageBytes(settings));
+    Vi::FillNoFrame(image.data(), uint32_t(image.size()));
+    auto const put = [&](uint32_t row, uint32_t col, Vi::Kind kind, float distance, float z, float normal,
+        bool objective)
+    {
+        Vi::Hit hit;
+        hit.Distance = distance;
+        hit.What = kind;
+        hit.Z = z;
+        hit.NormalZ = normal;
+        Vi::EncodePixel(hit, 0.0f, objective, &image[(std::size_t(row) * 8 + col) * Vi::BYTES_PER_PIXEL]);
+    };
+    // A floor block and a wall block, both models 5 yd off, at a height on the sky's level (no contour round them).
+    for (uint32_t row : { 1u, 2u })
+        for (uint32_t col : { 1u, 2u })
+        {
+            put(row, col, Vi::Kind::Model, 5.0f, 0.3f, 1.0f, false);
+            put(row, col + 3, Vi::Kind::Model, 5.0f, 0.3f, 0.0f, false);
+        }
+    // Terrain: column 1 at 0.6 yd, columns 2 to 7 at 1.2 -- a level (1 yd) between columns 1 and 2.
+    for (uint32_t row : { 4u, 5u })
+    {
+        put(row, 1, Vi::Kind::Terrain, 8.0f, 0.6f, 1.0f, false);
+        for (uint32_t col = 2; col < 8; ++col)
+            put(row, col, Vi::Kind::Terrain, 8.0f, 1.2f, 1.0f, false);
+    }
+    put(0, 6, Vi::Kind::Model, 5.0f, 0.3f, 1.0f, true);
+
+    uint32_t const scale = 2;
+    std::string const png = Vi::CompositePng(settings, image.data(), scale);
+    ASSERT_GT(png.size(), 33u);
+    EXPECT_EQ(png.substr(0, 8), std::string("\x89PNG\r\n\x1a\n", 8));
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> const rgb = Pixels(png, width, height);
+    ASSERT_EQ(width, 8 * scale);
+    ASSERT_EQ(height, 6 * scale);
+    auto const at = [&](uint32_t row, uint32_t col)
+    {
+        return &rgb[(std::size_t(row * scale + scale / 2) * width + col * scale + scale / 2) * 3];
+    };
+    auto const brightness = [&](uint32_t row, uint32_t col)
+    {
+        uint8_t const* p = at(row, col);
+        return uint32_t(p[0]) + p[1] + p[2];
+    };
+
+    EXPECT_EQ(at(0, 0)[0], 30);
+    EXPECT_EQ(at(0, 0)[1], 30);
+    EXPECT_EQ(at(0, 0)[2], 80);
+    EXPECT_EQ(at(0, 6)[0], 255);
+    EXPECT_EQ(at(0, 6)[1], 255);
+    EXPECT_EQ(at(0, 6)[2], 255);
+
+    // Floors lit, walls dark: same kind, same distance.
+    EXPECT_GT(brightness(1, 1), brightness(1, 4));
+    // The floor is near: about the model grey, barely fogged.
+    EXPECT_GT(at(1, 1)[0], 100);
+
+    // The contour: (4, 1) lies across a level from its right neighbour; (4, 3) is plain ground of the same kind and
+    // distance.
+    EXPECT_LT(brightness(4, 1), brightness(4, 3));
+    EXPECT_NEAR(double(brightness(4, 1)), 0.35 * double(brightness(4, 3)), 3.0);
+
+    // Scaled by nearest pixel: every output pixel of a source pixel is the same.
+    EXPECT_EQ(rgb[0], rgb[3]);
+    EXPECT_EQ(rgb[0], rgb[std::size_t(width) * 3]);
 }

@@ -526,12 +526,19 @@ namespace
             write(base + "-kind.ppm", "P6", kind);
             write(base + "-height.pgm", "P5", rise);
             // The four panels in one image, as the training audit saves them (AnimusForge.Vision.AuditInterval).
+            // And every layer in one picture beside it (Vi::CompositePng), as the audit writes it too.
+            uint32 const pngScale = std::max<uint32>(1, 256 / std::max<uint32>(1, settings.Width));
             {
                 std::ofstream png(base + ".png", std::ios::binary);
-                png << Vi::FramePng(settings, image.data(), std::max<uint32>(1, 256 / std::max<uint32>(1,
-                    settings.Width)));
+                png << Vi::FramePng(settings, image.data(), pngScale);
                 if (!png)
                     handler->PSendSysMessage("Could not write {}", base + ".png");
+            }
+            {
+                std::ofstream png(base + "-composite.png", std::ios::binary);
+                png << Vi::CompositePng(settings, image.data(), pngScale);
+                if (!png)
+                    handler->PSendSysMessage("Could not write {}", base + "-composite.png");
             }
 
             handler->PSendSysMessage("camera snapshot map {} feet ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f} pitch {:.1f} "
@@ -554,7 +561,8 @@ namespace
                     histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", Vi::KIND_NAMES[what],
                         kinds[what]);
             handler->PSendSysMessage("  pixels by kind: {}", histogram);
-            handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm and {0}.png", base);
+            handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm, {0}.png and "
+                "{0}-composite.png", base);
             return true;
         }
 
