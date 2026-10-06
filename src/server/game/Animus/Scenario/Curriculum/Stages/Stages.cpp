@@ -169,8 +169,12 @@ namespace
     /// The foot of the southern Barrens escarpment, whose top LedgeTopsControl holds out (curriculum-v1 BrokenControl).
     std::vector<Position> CliffFeetControl()
     {
+        // (-623.5, -3166.8, 91.7) fell back on 11 of 51 climb legs (over the 20% ceiling; dry check round 3,
+        // 2026-10-05) and was left out. These two, at the same escarpment's foot, are from the map tiles: on
+        // 16-20 of 30 draws 10-40 yd off a rise of 1-17 yd is walkable within 1.8x the line (the terrain alone, no
+        // models). To be probed.
         return {
-            { -623.5f, -3166.8f, 91.7f, 0.0f },
+            { -755.0f, -3262.0f, 93.7f, 0.0f },   { -640.0f, -3105.0f, 91.7f, 0.0f },
         };
     }
 
@@ -178,16 +182,18 @@ namespace
     /// round 1.9-12x the straight line, drops of 11-44 yd.
     std::vector<Position> LedgeTops()
     {
+        // Five curriculum-v1 tops fell back on 20-100% of their ledge legs in dry check round 3 (2026-10-05) and were
+        // left out: (-2095, -3645), (394, -4599), (85, -4544), (-4053, -2146), (-4450, -2914) -- no drop of the
+        // rung's window with a walkable way down in reach. (-2380, 459, 77), Mulgore, was left out before: a cave.
+        // The four added are from the map tiles: on 14-24 of 30 draws 10-40 yd off a drop of 5-17 yd is reachable
+        // walking within 1.8x the line with no drop over 6 yd (the terrain alone, no models). To be probed.
         return {
             { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618): 44 yd
-            { -2094.8f, -3644.6f, 72.4f, 0.0f },   // beside it: 11 yd
-            { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659): 23 yd
-            { 85.4f, -4543.8f, 58.4f, 0.0f },      // Durotar canyon: 18 yd
             { -519.0f, -4076.9f, 69.9f, 0.0f },    // southern Barrens: 27 yd
-            // (-2380, 459, 77), Mulgore, was left out (dry check, 2026-10-05): 148 yd under the terrain there, a cave
-            // and not a ledge top.
-            { -4052.7f, -2145.5f, 90.2f, 0.0f },   // Thousand Needles: 40 yd
-            { -4449.9f, -2914.0f, 40.0f, 0.0f },   // Thousand Needles: 16-18 yd
+            { -2117.0f, -3556.0f, 98.2f, 0.0f },   // Northwatch Hold (tiles: 19 of 30)
+            { -291.0f, -4245.0f, 68.1f, 0.0f },    // Valley of Trials' rim (24 of 30)
+            { -3773.0f, -2529.0f, 83.6f, 0.0f },   // southern Barrens by Thousand Needles (16 of 30)
+            { -4831.0f, -2275.0f, 97.1f, 0.0f },   // Razorfen Downs' heights (14 of 30)
         };
     }
 
@@ -231,18 +237,28 @@ namespace
     /// way round is the longer one.
     std::vector<Position> OasisShore()
     {
+        // Crossings. Every curriculum-v1 oasis point fell back on 22-92% of its crossing legs in dry check round 3
+        // (2026-10-05): by the map tiles, from those banks a 40-160 yd draw lands dry with water on its line and a dry
+        // way round 1.35x the line or more on 0-33% of draws (the pond is small and the points face the wrong way).
+        // Kept: the two the check did not name. Added, from the tiles' best banks (a crossing on 17-21 of 40 draws):
+        // two more at the oasis and three on the Blackwolf River. To be probed.
         return {
-            { -3923.0f, -2981.0f, 31.0f, 0.0f }, { -3952.0f, -2947.0f, 40.0f, 0.0f },
-            { -3964.0f, -3068.0f, 39.0f, 0.0f }, { -3879.0f, -3004.0f, 37.0f, 0.0f },
-            { -4048.0f, -3051.0f, 43.0f, 0.0f }, { -3985.0f, -2911.0f, 37.0f, 0.0f },
+            { -3879.0f, -3004.0f, 37.0f, 0.0f }, { -4048.0f, -3051.0f, 43.0f, 0.0f },
+            { -4038.0f, -3135.0f, 32.1f, 0.0f }, { -3853.0f, -3044.0f, 35.4f, 0.0f },
+            { 1302.0f, 142.0f, 3.6f, 0.0f },     { 1444.0f, 158.0f, 11.5f, 0.0f },
+            { 1455.0f, 136.0f, 14.2f, 0.0f },
         };
     }
 
     /// The far side of the same pond, held out (curriculum-v1 OasisControl): no second pond wide enough was found.
     std::vector<Position> OasisControl()
     {
+        // Held-out crossings on water no training episode stands by: Wildwind Lake at Camp Mojache, Feralas (a crossing
+        // on 15-18 of 40 tile draws). The oasis's far side, curriculum-v1's control, fell back on 42% and 78% of its
+        // legs (dry check round 3, 2026-10-05). To be probed.
         return {
-            { -4017.0f, -3086.0f, 37.0f, 0.0f }, { -3926.0f, -2911.0f, 39.0f, 0.0f },
+            { -4337.0f, 186.0f, 32.6f, 0.0f },   { -4374.0f, 171.0f, 30.7f, 0.0f },
+            { -4427.0f, 167.0f, 21.4f, 0.0f },
         };
     }
 
@@ -373,7 +389,8 @@ namespace
 
         // M4 -- water: getting in, swimming, the surface and the swim jump, diving to the bed, breath, getting out
         // onto banks (a bank taller than a step takes the swim jump), and choosing between swimming and going round.
-        // A crossing at the Barrens oases (the dry way round always the longer, both ways ones the controller makes),
+        // A crossing at the Barrens oasis and the Blackwolf River, held out at Wildwind Lake (the dry way round always
+        // the longer, both ways ones the controller makes),
         // lakebeds in Stonebull Lake down to forty yards as the ladder climbs, and a chain of four to six lakebeds
         // longer than a breath. Drowning is a cost at full price; a drowned seat dies (Markers.Death).
         //
