@@ -19,8 +19,10 @@
 #include "SpawnArea.h"
 #include "Creature.h"
 #include "Log.h"
+#include "Map.h"
 #include "Player.h"
 #include <list>
+#include <vector>
 
 namespace
 {
@@ -40,4 +42,25 @@ void Animus::SpawnArea::Clear(Player* bot)
     if (!creatures.empty())
         LOG_WARN("module.animus", "Removed {} creatures from the spawn area around {}", creatures.size(),
             bot->GetName());
+}
+
+void Animus::SpawnArea::ClearMap(Player* bot, float radius)
+{
+    Map* map = bot->GetMap();
+    if (!map)
+        return;
+
+    map->LoadGridsInRange(*bot, radius);
+    // Copied first: despawning a creature takes it out of the store being walked.
+    std::vector<Creature*> creatures;
+    for (auto const& [spawnId, creature] : map->GetCreatureBySpawnIdStore())
+        if (creature && creature->IsInWorld() && bot->GetExactDist2d(creature) <= radius)
+            creatures.push_back(creature);
+
+    for (Creature* creature : creatures)
+        creature->DespawnOrUnsummon(0ms, Seconds(WEEK));
+
+    if (!creatures.empty())
+        LOG_WARN("module.animus", "Removed {} creatures from map {} instance {} within {:.0f} yd of {}",
+            creatures.size(), map->GetId(), map->GetInstanceId(), radius, bot->GetName());
 }
