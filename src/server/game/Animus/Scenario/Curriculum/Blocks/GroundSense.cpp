@@ -20,6 +20,7 @@
 #include "DetourExtended.h"
 #include "DetourNavMeshQuery.h"
 #include "Map.h"
+#include "MapCollisionData.h"
 #include "MapDefines.h"
 #include "MoveBlock.h"
 #include <algorithm>
@@ -321,37 +322,6 @@ namespace Animus::Curriculum::GroundSense
         return bearing;
     }
 
-    Bearing Sense(Map* map, dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at, float heading,
-        float pitch)
-    {
-        return Combine(MarchBearing(map, at, heading, pitch), CastRays(query, startRef, at, heading));
-    }
-
-    Bearing Worst(Bearing const& a, Bearing const& b)
-    {
-        Bearing worst = a.Reach <= b.Reach ? a : b;
-        worst.Shore = std::min(a.Shore, b.Shore);
-        worst.Burns = std::max(a.Burns, b.Burns);
-        return worst;
-    }
-
-    Bearing SenseWedge(Map* map, dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at, float heading,
-        float halfWidth, uint32 rays, float pitch)
-    {
-        if (rays <= 1)
-            return Sense(map, query, startRef, at, heading, pitch);
-
-        // Evenly across the wedge, edges included: rays - 1 gaps from one side to the other.
-        Bearing worst;
-        for (uint32 ray = 0; ray < rays; ++ray)
-        {
-            float const offset = -halfWidth + 2.0f * halfWidth * float(ray) / float(rays - 1);
-            Bearing const one = Sense(map, query, startRef, at, heading + offset, pitch);
-            worst = ray == 0 ? one : Worst(worst, one);
-        }
-        return worst;
-    }
-
     Room MeasureRoom(dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at)
     {
         // How much room there is, and which way is out. The filter is the walkable set a seat actually uses, so a
@@ -405,5 +375,23 @@ namespace Animus::Curriculum::GroundSense
             room.Away = std::atan2(outY, outX);
         }
         return room;
+    }
+
+    float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch)
+    {
+        float const dx = std::cos(heading);
+        float const dy = std::sin(heading);
+        float rx = 0.0f, ry = 0.0f, rz = 0.0f;
+        float reach = range;
+        if (map->GetMapCollisionData().GetStaticTree().GetObjectHitPos(x, y, z, x + range * dx, y + range * dy, z, rx,
+            ry, rz, 0.0f))
+            reach = std::sqrt((rx - x) * (rx - x) + (ry - y) * (ry - y));
+        for (float along = pitch; along < reach; along += pitch)
+        {
+            float const ground = map->GetGridHeight(x + along * dx, y + along * dy);
+            if (ground > INVALID_HEIGHT && ground > z)
+                return along - pitch;
+        }
+        return reach;
     }
 }

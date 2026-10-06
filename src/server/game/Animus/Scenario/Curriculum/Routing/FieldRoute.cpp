@@ -19,7 +19,7 @@
 #include "FieldRoute.h"
 #include "LayeredField.h"
 #include "MapDefines.h"
-#include "ProbeBake.h"
+#include "FieldGrids.h"
 #include <cmath>
 #include <map>
 #include <memory>
@@ -56,8 +56,8 @@ namespace FieldRouteSearch
 
         Lhf::Grid const* At(float x, float y)
         {
-            std::pair<int32, int32> const key{ Animus::Curriculum::ProbeBake::GridIndex(x),
-                Animus::Curriculum::ProbeBake::GridIndex(y) };
+            std::pair<int32, int32> const key{ Animus::Curriculum::FieldGrids::GridIndex(x),
+                Animus::Curriculum::FieldGrids::GridIndex(y) };
             auto found = Held.find(key);
             if (found == Held.end())
                 found = Held.emplace(key, Lhf::Store::Find(MapId, key.first, key.second)).first;

@@ -22,7 +22,7 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MoveBlock.h"
-#include "ProbeBake.h"
+#include "FieldGrids.h"
 #include "LayeredField.h"
 #include "MapWorldQuery.h"
 #include "MapVisionWorld.h"
@@ -197,9 +197,6 @@ namespace
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "floorscan", HandleFloorScan, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
-                { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
-                { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
-                { "lhfbake",   HandleLhfBake,   SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldstage", HandleFieldStage, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldworld", HandleFieldWorld, SEC_ADMINISTRATOR, Console::Yes },
                 { "controller", controllerCommandTable },
@@ -238,16 +235,6 @@ namespace
             table.AddRow({ "forge run <scenario> <policy> [episodes]", "run a scripted or random policy, no learner" });
             table.AddRow({ "forge rays <map> <x> <y> <z> [facing]", "what the navmesh senses read standing there: "
                 "reach, shore, water width, burning edge and clearance" });
-            table.AddRow({ "forge probebake <map> <x> <y> [cell] [bearings] [wedge] [pitch] [samples] "
-                "[radius]",
-                "bake the ground probe for the grid holding (x, y), in memory, and compare it with the live "
-                "probe (within radius of (x, y) if given)" });
-            table.AddRow({ "forge probestage <scenario> [rebake]", "bake the ground probe tables the scenario "
-                "needs to AnimusForge.Probe.Dir: its spawn points' grids on a continent, every grid of an instanced "
-                "map (kept if already baked, unless rebake)" });
-            table.AddRow({ "forge lhfbake <map> <x> <y> [cell] [samples] [radius]", "bake the layered height field "
-                "of the grid holding (x, y) in memory; its size, and the ground probe and flight readings worked out "
-                "from it against live ones (ground within radius of (x, y) if given)" });
             table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
@@ -257,9 +244,9 @@ namespace
                 "<file>-depth.pgm, <file>-kind.ppm and <file>-height.pgm (default file camera-snapshot) and prints the "
                 "rays and the wall time, split into tree casts, WMO liquids, terrain cells and units; no range: a ray "
                 "leaving the grids created round the feet is sky (idle only)" });
-            table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
-                "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
-                "their neighbours (kept if already baked, unless rebake)" });
+            table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields the dungeon wings' routes "
+                "read for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and their "
+                "neighbours (kept if already baked, unless rebake)" });
             table.AddRow({ "forge fieldworld <all|map id> [rebake]", "bake the layered fields of every grid of a map's "
                 "navmesh, or of every map, for a realm's companions (mod-animus): into <Probe.Dir>/world, taking the "
                 "stage fields already baked, and never read by the forge itself" });
@@ -445,118 +432,12 @@ namespace
             return true;
         }
 
-        /// `forge probebake <map> <x> <y> [cell] [bearings] [wedge] [pitch] [samples] [radius]`: bake the ground
-        /// probe for one grid in memory and report what it costs and how far its readings are from the live
-        /// probe's.
-        ///
-        /// It takes every core for as long as the bake runs, on the world thread: run it with nothing training.
-        static bool HandleProbeBake(ChatHandler* handler, uint32 mapId, float x, float y, Optional<float> cell,
-            Optional<uint32> bearings, Optional<uint32> wedge, Optional<float> pitch, Optional<uint32> samples,
-            Optional<float> radius)
-        {
-            Map* map = sMapMgr->CreateBaseMap(mapId);
-            if (!map)
-            {
-                handler->PSendSysMessage("No such map: {}", mapId);
-                return true;
-            }
-
-            // The grid and its eight neighbours, terrain and collision only: a march from the grid's edge runs forty
-            // yards into the next one.
-            for (int32 dx = -1; dx <= 1; ++dx)
-                for (int32 dy = -1; dy <= 1; ++dy)
-                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
-                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
-
-            Animus::Curriculum::ProbeBake::Settings settings;
-            settings.Cell = std::clamp(cell.value_or(settings.Cell), 0.25f, 16.0f);
-            settings.Bearings = std::clamp<uint32>(bearings.value_or(settings.Bearings), 4, 64);
-            settings.WedgeRays = std::clamp<uint32>(wedge.value_or(settings.WedgeRays), 1, 9);
-            settings.Pitch = std::clamp(pitch.value_or(settings.Pitch), 0.0f, 10.0f);
-
-            Animus::Curriculum::ProbeBake::Table const table = Animus::Curriculum::ProbeBake::Bake(map, x, y, settings);
-            std::string const report =
-                Animus::Curriculum::ProbeBake::Compare(map, table, samples.value_or(2000), 1, x, y,
-                    radius.value_or(0.0f));
-
-            std::string line;
-            for (char c : report)
-            {
-                if (c == '\n')
-                {
-                    handler->SendSysMessage(line);
-                    line.clear();
-                }
-                else
-                    line += c;
-            }
-
-            if (!line.empty())
-                handler->SendSysMessage(line);
-
-            return true;
-        }
-
-        /// A map's grid as the core names it (GridCoord, the mmtile file name) from a probe table's grid index:
-        /// the core counts grids from +x/+y down, the tables from 0 up.
+        /// A map's grid as the core names it (GridCoord, the mmtile file name) from a field's grid index
+        /// (FieldGrids::GridIndex): the core counts grids from +x/+y down, the fields from 0 up.
         static GridCoord CoreGrid(int32 gridX, int32 gridY)
         {
             return GridCoord(uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridX, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)),
                 uint32(std::clamp(int32(CENTER_GRID_ID) - 1 - gridY, 0, int32(MAX_NUMBER_OF_GRIDS) - 1)));
-        }
-
-        /// `forge lhfbake <map> <x> <y> [cell] [samples]`: the layered height field prototype (LayeredField) on one
-        /// grid. Every core for the bake, on the world thread: run it with nothing training.
-        static bool HandleLhfBake(ChatHandler* handler, uint32 mapId, float x, float y, Optional<float> cell,
-            Optional<uint32> samples, Optional<float> radius)
-        {
-            namespace Field = Animus::Curriculum::LayeredField;
-            Map* map = sMapMgr->CreateBaseMap(mapId);
-            if (!map)
-            {
-                handler->PSendSysMessage("No such map: {}", mapId);
-                return true;
-            }
-
-            for (int32 dx = -1; dx <= 1; ++dx)
-                for (int32 dy = -1; dy <= 1; ++dy)
-                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
-                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
-
-            // The grid and its eight neighbours, so a probe near an edge reads on across it.
-            float const size = std::clamp(cell.value_or(1.0f), 0.25f, 8.0f);
-            std::vector<Field::Grid> grids;
-            grids.reserve(9);
-            Field::View view;
-            view.CentreX = Animus::Curriculum::ProbeBake::GridIndex(x);
-            view.CentreY = Animus::Curriculum::ProbeBake::GridIndex(y);
-            view.Cell = size;
-            double seconds = 0.0;
-            for (int32 dx = -1; dx <= 1; ++dx)
-                for (int32 dy = -1; dy <= 1; ++dy)
-                {
-                    grids.push_back(Field::Bake(map, x + float(dx) * SIZE_OF_GRIDS, y + float(dy) * SIZE_OF_GRIDS,
-                        size));
-                    view.Grids[dx + 1][dy + 1] = &grids.back();
-                    seconds += grids.back().Seconds;
-                }
-            handler->PSendSysMessage("Baked the grid and its 8 neighbours in {:.1f} s", seconds);
-            std::string const report = Field::Compare(map, view, samples.value_or(4000), 1, x, y,
-                radius.value_or(0.0f));
-            std::string line;
-            for (char c : report)
-            {
-                if (c == '\n')
-                {
-                    handler->SendSysMessage(line);
-                    line.clear();
-                }
-                else
-                    line += c;
-            }
-            if (!line.empty())
-                handler->SendSysMessage(line);
-            return true;
         }
 
         /// `forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]`: one frame of the vision block's
@@ -698,8 +579,8 @@ namespace
             }
             for (int32 dx = -1; dx <= 1; ++dx)
                 for (int32 dy = -1; dy <= 1; ++dy)
-                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::ProbeBake::GridIndex(x) + dx,
-                        Animus::Curriculum::ProbeBake::GridIndex(y) + dy));
+                    map->EnsureGridCreated(CoreGrid(Animus::Curriculum::FieldGrids::GridIndex(x) + dx,
+                        Animus::Curriculum::FieldGrids::GridIndex(y) + dy));
 
             Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
             Mv::Body const body;
@@ -851,8 +732,8 @@ namespace
             for (Cap::MoveRecord const& move : moves)
                 for (int32 dx = -1; dx <= 1; ++dx)
                     for (int32 dy = -1; dy <= 1; ++dy)
-                        grids.emplace(Animus::Curriculum::ProbeBake::GridIndex(move.X) + dx,
-                            Animus::Curriculum::ProbeBake::GridIndex(move.Y) + dy);
+                        grids.emplace(Animus::Curriculum::FieldGrids::GridIndex(move.X) + dx,
+                            Animus::Curriculum::FieldGrids::GridIndex(move.Y) + dy);
             for (auto const& [gx, gy] : grids)
                 map->EnsureGridCreated(CoreGrid(gx, gy));
 
@@ -911,14 +792,14 @@ namespace
             return true;
         }
 
-        /// `forge fieldstage <scenario> [rebake]`: the layered fields AnimusForge.Probe.Source = geometry reads for
-        /// this scenario -- every grid of its maps' navmeshes, continents whole, and their neighbours, since a probe
-        /// near a grid's edge reads forty yards across it. A grid with no floor in it (past a dungeon's edge) is
+        /// `forge fieldstage <scenario> [rebake]`: the layered fields the dungeon wings' routes read for this
+        /// scenario (FieldRoute) -- every grid of its maps' navmeshes, continents whole, and their neighbours, since a
+        /// route near a grid's edge crosses it. A grid with no floor in it (past a dungeon's edge) is
         /// written too, a few bytes, so that a missing file means a grid not baked and never "no floor here".
-        /// Static geometry only, as for the tables; a grid takes a fraction of a second.
+        /// Static geometry only; a grid takes a fraction of a second.
         static bool HandleFieldStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
         {
-            namespace Bake = Animus::Curriculum::ProbeBake;
+            namespace Bake = Animus::Curriculum::FieldGrids;
             namespace Field = Animus::Curriculum::LayeredField;
             Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
             if (!stage)
@@ -938,7 +819,7 @@ namespace
                             grids.insert(Bake::GridRef{ grid.MapId, grid.X + dx, grid.Y + dy });
             handler->PSendSysMessage("{}: {} grids (every grid of its maps' navmeshes and their neighbours), into {}",
                 scenario,
-                grids.size(), Bake::Store::Dir());
+                grids.size(), Field::Store::Dir());
             uint32 baked = 0;
             uint32 kept = 0;
             uint32 empty = 0;
@@ -994,7 +875,7 @@ namespace
         /// rebaked.
         static bool HandleFieldWorld(ChatHandler* handler, std::string which, Optional<std::string> mode)
         {
-            namespace Bake = Animus::Curriculum::ProbeBake;
+            namespace Bake = Animus::Curriculum::FieldGrids;
             namespace Field = Animus::Curriculum::LayeredField;
             bool const rebake = mode && *mode == "rebake";
             Optional<uint32> onlyMap;
@@ -1028,7 +909,7 @@ namespace
                             grids.insert(Bake::GridRef{ mapId, x + dx, y + dy });
             }
 
-            std::filesystem::path const dir = std::filesystem::path(Bake::Store::Dir()) / "world";
+            std::filesystem::path const dir = std::filesystem::path(Field::Store::Dir()) / "world";
             std::filesystem::create_directories(dir, error);
             handler->PSendSysMessage("fieldworld {}: {} grids, into {}", which, grids.size(), dir.string());
             uint32 baked = 0;
@@ -1082,77 +963,6 @@ namespace
             double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             handler->PSendSysMessage("fieldworld {}: {} grids baked, {} copied from the stage fields, {} already "
                 "there, {} failed, in {:.0f} s", which, baked, copied, kept, failed, seconds);
-            return true;
-        }
-
-        /// `forge probestage <scenario> [rebake]`: the tables AnimusForge.Probe.Source = baked reads for this
-        /// scenario. On a continent, the grid under every spawn point and a neighbour when the point is near enough
-        /// its edge for a march or an objective to cross it; on an instanced map (a dungeon, a raid, a
-        /// battleground, the stage's own or its instance ladder's), every grid its navmesh covers. A grid with a
-        /// file already is kept unless `rebake` is given.
-        ///
-        /// What is baked is the map's static geometry -- terrain, liquid, the collision tree and the navmesh --
-        /// with no creatures or gameobjects loaded, so a map's tables are the same whatever was spawned when they
-        /// were made. Each grid takes about half a minute of every core, on the world thread: run it with nothing
-        /// training.
-        static bool HandleProbeStage(ChatHandler* handler, std::string scenario, Optional<std::string> mode)
-        {
-            namespace Bake = Animus::Curriculum::ProbeBake;
-            Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
-            if (!stage)
-            {
-                handler->PSendSysMessage("No such scenario: {}", scenario);
-                return true;
-            }
-            bool const rebake = mode && *mode == "rebake";
-
-            std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage);
-            handler->PSendSysMessage("{}: {} grids (spawn points' grids on a continent, every navmesh grid of an "
-                "instanced map), into {}", scenario, grids.size(), Bake::Store::Dir());
-            uint32 baked = 0;
-            uint32 kept = 0;
-            uint32 recompressed = 0;
-            uint32 failed = 0;
-            auto const started = std::chrono::steady_clock::now();
-            for (Bake::GridRef const& grid : grids)
-            {
-                Map* map = sMapMgr->CreateBaseMap(grid.MapId);
-                if (!map)
-                    continue;
-
-                std::string const path = Bake::Store::FileFor(grid.MapId, grid.X, grid.Y);
-                std::error_code error;
-                if (!rebake && std::filesystem::exists(path, error))
-                {
-                    // A table of the first, uncompressed format is written again compressed: the same readings.
-                    Bake::Table old;
-                    if (Bake::FileVersion(path) == 1 && Bake::Read(path, old) && Bake::Write(old, path))
-                        ++recompressed;
-                    else
-                        ++kept;
-                    continue;
-                }
-
-                // The grid and its eight neighbours, terrain and collision only: no objects are spawned.
-                for (int32 dx = -1; dx <= 1; ++dx)
-                    for (int32 dy = -1; dy <= 1; ++dy)
-                        map->EnsureGridCreated(CoreGrid(grid.X + dx, grid.Y + dy));
-
-                float const centreX = (float(grid.X) + 0.5f) * SIZE_OF_GRIDS;
-                float const centreY = (float(grid.Y) + 0.5f) * SIZE_OF_GRIDS;
-                Bake::Table const table = Bake::Bake(map, centreX, centreY, Bake::StandardSettings());
-                if (Bake::Write(table, path))
-                    ++baked;
-                else
-                {
-                    ++failed;
-                    handler->PSendSysMessage("  could not write {}", path);
-                }
-            }
-
-            double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            handler->PSendSysMessage("{}: {} grids baked, {} already there, {} recompressed, {} failed, in {:.0f} s",
-                scenario, baked, kept, recompressed, failed, seconds);
             return true;
         }
 

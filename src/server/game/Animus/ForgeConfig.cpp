@@ -268,15 +268,9 @@ void AnimusForge::ForgeConfig::Load()
     fs::path const outputDir = sConfigMgr->GetOption<std::string>("AnimusForge.OutputDir", "");
     OutputDir = (outputDir.empty() ? workDir : Resolve(outputDir, configDir)).lexically_normal().string();
 
-    std::string const probeSource = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Source", "geometry");
-    ProbeBaked = probeSource == "baked";
-    ProbeGeometry = probeSource != "live" && !ProbeBaked;
-    if (ProbeGeometry && probeSource != "geometry")
-        LOG_ERROR("server.loading", "AnimusForge.Probe.Source = \"{}\" is not live, baked or geometry: reading "
-            "geometry", probeSource);
     fs::path const probeDir = sConfigMgr->GetOption<std::string>("AnimusForge.Probe.Dir", "");
-    // The tables ship with the forge, beside its models: baked ahead of time (`forge probestage`), never by a
-    // running server.
+    // The layered fields ship with the forge, beside its models: baked ahead of time (`forge fieldstage`), never by
+    // a running server.
     ProbeDir = (probeDir.empty() ? DefaultLearnerWorkDir().parent_path() / "probes" : Resolve(probeDir, configDir))
         .lexically_normal().string();
     ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AnimusForge.Probe.CacheGrids", 64));

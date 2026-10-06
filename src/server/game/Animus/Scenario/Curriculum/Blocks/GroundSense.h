@@ -27,10 +27,8 @@ class dtNavMeshQuery;
 
 /// What the move block's ground probe measures, as functions of a place and a heading rather than of a seat.
 ///
-/// The probe used to take the Player it was describing; nothing it asked of the player but where it stood, its
-/// phase and its height. Taking those as numbers is what lets the same measurement run anywhere the geometry is
-/// loaded: live for a seat, and offline for every cell of a map (the probe bake), so a baked table and a live
-/// fallback are one definition, not two that are hoped to agree.
+/// It takes where the seat stands, its phase and its height as numbers rather than a Player, and measures live
+/// against the loaded geometry: the move block's probe (MoveBlock::RefreshProbe) and `forge rays` are its callers.
 namespace Animus::Curriculum::GroundSense
 {
     /// Where a measurement is taken from.
@@ -94,20 +92,11 @@ namespace Animus::Curriculum::GroundSense
     /// The march and the rays made one bearing: the nearer of the two senses wins.
     Bearing Combine(March const& march, Rays const& rays);
 
-    /// One bearing, whole: the march and the rays along `heading`.
-    Bearing Sense(Map* map, dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at, float heading,
-        float pitch);
-
-    /// A wedge `halfWidth` either side of `heading`, sampled by `rays` headings across it: the worst of them, so
-    /// a pillar between two rays is not invisible. Reach and Shore are the least, Burns the most, and Step
-    /// comes from the ray that set the Reach. `rays` 1 is Sense at `heading`.
-    Bearing SenseWedge(Map* map, dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at, float heading,
-        float halfWidth, uint32 rays, float pitch);
-
-    /// The worse of two readings of one bearing, by SenseWedge's rules.
-    Bearing Worst(Bearing const& a, Bearing const& b);
-
     Room MeasureRoom(dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at);
+
+    /// The flight sense: yards of open air ahead along `heading` from (x, y, z), level, out to `range` -- the static
+    /// collision's first hit along the line, or the terrain rising above it, looked at every `pitch`.
+    float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch);
 
     /// How far behind a dense march's sample the slope is judged from: the first legacy cell's gap, so a dense
     /// march admits the same climb over the same distance as the five cells did.

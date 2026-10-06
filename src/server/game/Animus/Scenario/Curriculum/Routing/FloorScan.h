@@ -100,7 +100,7 @@ namespace Animus::Curriculum::FloorScan
         }
     }
 
-    /// The grids (ProbeBake::GridIndex's numbering: floor(coordinate / GRID_YARDS)) a span [a, b] touches, widened by
+    /// The grids (FieldGrids::GridIndex's numbering: floor(coordinate / GRID_YARDS)) a span [a, b] touches, widened by
     /// `margin` yards: first and last.
     inline std::pair<int32_t, int32_t> GridSpan(float a, float b, float margin = 0.0f)
     {

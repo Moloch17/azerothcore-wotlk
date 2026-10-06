@@ -32,8 +32,10 @@ namespace Animus::Curriculum::MoveControls
 {
     /// The move block's layout revision (Block::Revision). 0 and 1 were the bearing / turn-lattice design, which is
     /// gone (§0); a checkpoint or a manifest of either describes a model that no longer fits, and is refused on resume
-    /// and seeded fresh (bootstrap: a block whose revision differs starts from nothing).
-    constexpr uint32_t REVISION = 2;
+    /// and seeded fresh (bootstrap: a block whose revision differs starts from nothing). 3: the ground probe is
+    /// always measured live (the baked tables and layered fields it was read from are gone, and on a grid without
+    /// one it read nothing at all), and the three clearance columns are gone.
+    constexpr uint32_t REVISION = 3;
 
     /// Turn rates, degrees a second, + left (counter-clockwise, the client's yaw direction): the mouse's, not slowed
     /// while moving. 0 lets go of the turn.

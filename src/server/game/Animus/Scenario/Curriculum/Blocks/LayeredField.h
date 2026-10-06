@@ -20,7 +20,6 @@
 #define ANIMUS_CURRICULUM_LAYERED_FIELD_H
 
 #include "Define.h"
-#include "ProbeBake.h"
 #include <atomic>
 #include <memory>
 #include <string>
@@ -30,8 +29,8 @@ class Map;
 
 /// A layered height field of a grid: per cell, the intervals of open air above each floor -- how high the floor is,
 /// how much room there is above it before the next solid, and whether liquid fills the bottom of it. Everything else
-/// in the column is solid. It is the world's geometry, not a reading of it: the ground probe and a flight sense can
-/// both be worked out from it at any position and heading, where a baked probe holds readings at fixed ones.
+/// in the column is solid. It is the world's geometry, not a reading of it: the dungeon wings' routes are planned over
+/// it (FieldRoute).
 ///
 /// A column is every surface a downward ray finds in it (the core's own height query, repeated from under each surface
 /// it finds), every navmesh floor (walkable ground and water) and the terrain, with less than MIN_HEADROOM of room
@@ -41,10 +40,9 @@ class Map;
 /// shores and burning edges are made of. What is baked is static: grids are created for a bake without their
 /// creatures or gameobjects, so no door or elevator is in a field.
 ///
-/// A grid's field is about 0.3 MB on disk at 1 yd cells and bakes in a fraction of a second. With
-/// AnimusForge.Probe.Source = geometry the move block works its ground probe out of the fields shipped in
-/// AnimusForge.Probe.Dir (`forge fieldstage`); `forge lhfbake` bakes one grid in memory and compares what is worked out
-/// from it with what is measured live.
+/// A grid's field is about 0.3 MB on disk at 1 yd cells and bakes in a fraction of a second. The fields ship in
+/// AnimusForge.Probe.Dir (`forge fieldstage`, `forge fieldworld`). The move block's ground probe used to be worked out
+/// of them too; it is measured live now, and nothing reads a field but the routes.
 namespace Animus::Curriculum::LayeredField
 {
     /// Headroom that means open sky.
@@ -82,7 +80,7 @@ namespace Animus::Curriculum::LayeredField
     struct Grid
     {
         uint32 MapId = 0;
-        int32 GridX = 0;                // ProbeBake::GridIndex of its x and y
+        int32 GridX = 0;                // FieldGrids::GridIndex of its x and y
         int32 GridY = 0;
         float MinX = 0.0f;              // the first cell's centre
         float MinY = 0.0f;
@@ -96,51 +94,8 @@ namespace Animus::Curriculum::LayeredField
         [[nodiscard]] std::size_t Bytes() const;
     };
 
-    /// The grids around one, as a probe reads them: a march runs 40 yd and crosses into a neighbour. A missing
-    /// grid is nullptr, and a probe reading into it sees no floor there.
-    struct View
-    {
-        Grid const* Grids[3][3] = {};   // [x - centre + 1][y - centre + 1]
-        int32 CentreX = 0;
-        int32 CentreY = 0;
-        float Cell = 1.0f;
-    };
-
     /// Bake the grid holding (x, y); its terrain, collision and navmesh (and its neighbours') must be loaded.
     Grid Bake(Map* map, float x, float y, float cell, uint32 threads = 0);
-
-    /// Whether (x, y, z) is open air, by the nearest cell.
-    bool Open(Grid const& grid, float x, float y, float z);
-
-    /// Yards of open air ahead along `heading` from (x, y, z), level, out to `range`, looked at every `pitch`.
-    float FlightReach(Grid const& grid, float x, float y, float z, float heading, float range, float pitch);
-
-    /// The same across the grids of a view, as a march crosses into a neighbour: a missing grid is open air.
-    bool Open(View const& view, float x, float y, float z);
-    float FlightReach(View const& view, float x, float y, float z, float heading, float range, float pitch);
-
-    /// The same, measured live: the static collision's first hit along the line, or the terrain rising above it.
-    float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch);
-
-    /// The ground probe of a seat standing at (x, y, z) facing `facing`, worked out from the field: per ray the
-    /// dense march, the three navmesh rays and their combination, across the seat's wedge, and the room around it
-    /// -- the same measurement ProbeBake::SenseLive makes against the live geometry. False when the field has no
-    /// floor there (off the grid).
-    bool Sense(View const& view, float x, float y, float z, float facing, ProbeBake::Reading& out);
-
-    /// The same probe along fixed compass headings: heading i is -i * pi / SENSE_RAYS (heading 0 due east, then
-    /// clockwise), SENSE_RAYS * 2 of them, which is every ray and wedge edge of a seat facing any multiple of
-    /// pi / SENSE_RAYS. RaysFor turns it to a facing, to that step (11.25 degrees). A seat turning needs no new
-    /// sense, only one that has walked somewhere else: what makes the field cheap enough to be the only sense.
-    struct Compass
-    {
-        GroundSense::Bearing Headings[2 * SENSE_RAYS];
-        GroundSense::Room Room;
-    };
-    bool SenseCompass(View const& view, float x, float y, float z, Compass& out);
-    /// The rays of a seat facing `facing`, from a compass sense: Sense's worst-of-three wedges over the nearest
-    /// headings. `headings` is Compass::Headings or a copy of it.
-    void RaysFor(GroundSense::Bearing const* headings, float facing, ProbeBake::Reading& out);
 
     /// The cell size of the fields a running sim reads.
     constexpr float STANDARD_CELL = 1.0f;
@@ -150,43 +105,27 @@ namespace Animus::Curriculum::LayeredField
     bool Write(Grid const& grid, std::string const& path);
     bool Read(std::string const& path, Grid& grid);
 
-    /// The fields of AnimusForge.Probe.Source = geometry, one file a grid in AnimusForge.Probe.Dir, loaded the first
-    /// time a probe reads the grid. At most AnimusForge.Probe.CacheGrids are held: past that the one read longest ago
-    /// is let go, and read from disk again if a probe comes back to it.
+    /// The fields, one file a grid in AnimusForge.Probe.Dir, loaded the first time a route reads the grid. At most
+    /// AnimusForge.Probe.CacheGrids are held: past that the one read longest ago is let go, and read from disk again
+    /// if a route comes back to it.
     namespace Store
     {
-        void Configure(bool enabled, std::string const& dir, uint32 cacheGrids);
+        void Configure(std::string const& dir, uint32 cacheGrids);
+        /// Configured with a directory (FieldRoute plans nothing without one).
         bool Enabled();
+        std::string const& Dir();
         std::string FileFor(uint32 mapId, int32 gridX, int32 gridY);
 
         /// The field of one grid, or nullptr when there is no file for it. Thread safe; the pointer keeps the field
         /// alive while it is used even if the cache lets it go meanwhile.
         std::shared_ptr<Grid const> Find(uint32 mapId, int32 gridX, int32 gridY);
 
-        /// The grid holding (x, y) and its neighbours, as a probe reads them, kept alive while this is.
-        struct Neighbourhood
-        {
-            std::shared_ptr<Grid const> Held[3][3];
-            LayeredField::View View;
-        };
-
-        /// False when the grid holding (x, y) has no field; a missing neighbour is only a missing neighbour.
-        bool Gather(uint32 mapId, float x, float y, Neighbourhood& out);
-
-        /// Seat probes worked out from a field, measured live because none was there, and field files read.
-        inline std::atomic<uint64> Reads{ 0 };
-        inline std::atomic<uint64> Fallbacks{ 0 };
+        /// Field files read.
         inline std::atomic<uint64> FileReads{ 0 };
         /// Fields held now, and the memory they take.
         uint32 Loaded();
         std::size_t Bytes();
     }
-
-    /// Bake time, size (raw and zstd), intervals per cell, the ground probe read from the field against the dense
-    /// live one at `samples` places on the grid's floors (within `radius` of (nearX, nearY) when it is above 0), and
-    /// the flight reading against the live one in the grid's open air.
-    std::string Compare(Map* map, View const& view, uint32 samples, uint32 seed, float nearX = 0.0f,
-        float nearY = 0.0f, float radius = 0.0f);
 }
 
 #endif

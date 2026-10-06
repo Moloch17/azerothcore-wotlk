@@ -19,10 +19,8 @@
 #include "MoveBlock.h"
 #include "EncoderSupport.h"
 #include "GroundSense.h"
-#include "LayeredField.h"
 #include "Layout.h"
 #include "MapWorldQuery.h"
-#include "ProbeBake.h"
 #include "SeatEncoder.h"
 #include "SeatView.h"
 #include "TravelBlock.h"
@@ -47,7 +45,6 @@ namespace
     using Animus::Curriculum::MoveBlock;
     namespace Encoding = Animus::Curriculum::Encoding;
     namespace Ground = Animus::Curriculum::GroundSense;
-    namespace LayeredField = Animus::Curriculum::LayeredField;
     namespace MC = Animus::Curriculum::MoveControls;
     namespace Mv = Animus::Movement;
     using Ground::NavRay;
@@ -87,13 +84,14 @@ namespace
         Animus::Curriculum::GroundSense::Origin const& at, float facing,
         std::chrono::steady_clock::time_point& partMark);
 
-    /// Redo the march if it has stopped describing where the seat is standing, and say whether it is usable.
+    /// Redo the march if it has stopped describing where the seat is standing.
     ///
     /// Eighty height samples and forty-eight rays against the eight queries the old probe made is too much to
     /// repeat every 250 ms for 128 environments, and it does not need repeating: the ground does not move, only
-    /// the seat does. Movement is
-    /// the trigger that matters -- at seven yards a second a one-second-old march is seven yards stale and its
-    /// nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as a backstop.
+    /// the seat does. Movement is the trigger that matters -- at seven yards a second a one-second-old march is seven
+    /// yards stale and its nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as
+    /// a backstop. Always measured live (revision 3): the baked tables and the layered fields it could be read from
+    /// are gone, since a seat on a grid without one read nothing at all.
     void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, Position const& self, float facing)
     {
         Animus::Curriculum::GroundProbe* probe = view.Probe;
@@ -104,8 +102,6 @@ namespace
         if (!map)
             return;
 
-        namespace Bake = Animus::Curriculum::ProbeBake;
-        namespace Field = Animus::Curriculum::LayeredField;
         bool stale = !probe->Valid;
         if (probe->Valid)
         {
@@ -121,13 +117,7 @@ namespace
             else if (stale)
                 MoveBlock::StaleClock.fetch_add(1, std::memory_order_relaxed);
         }
-
-        // A baked probe is a lookup, so it is read every decision and is never stale; only the march's own
-        // bookkeeping below keeps the refresh cadence. A field probe is turned to the facing every decision, and worked out again
-        // only where the seat has walked to (below). A live one is measured when it has gone stale.
-        bool const baked = Bake::Store::Baked();
-        bool const fields = Field::Store::Enabled();
-        if (!baked && !fields && !stale)
+        if (!stale)
             return;
 
         namespace Encoder = Animus::Curriculum::SeatEncoder;
@@ -137,106 +127,7 @@ namespace
         Ground::Origin const at{ self.GetPositionX(), self.GetPositionY(), self.GetPositionZ(), bot->GetPhaseMask(),
             bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
-
-        // Where there is no table the probe is the old live one, on its own cadence: a grid missing from the shipped
-        // tables costs what it always did, not the dense probe every decision. It is counted, and logged once.
-        bool fromTable = false;
-        if (baked)
-        {
-            // The rays from the nearest cell and the clearance blended over the four around the seat -- what the
-            // bake measured best.
-            Bake::Reading reading;
-            Bake::Reading room;
-            std::shared_ptr<Bake::Table const> const table = Bake::Store::Find(map->GetId(), at.X, at.Y);
-            fromTable = table
-                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
-                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room);
-            if (fromTable)
-            {
-                Bake::Store::Reads.fetch_add(1, std::memory_order_relaxed);
-                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-                {
-                    probe->Reach[ray] = reading.Rays[ray].Reach;
-                    probe->Step[ray] = reading.Rays[ray].Step;
-                    probe->Shore[ray] = reading.Rays[ray].Shore;
-                    probe->Burns[ray] = reading.Rays[ray].Burns;
-                }
-                probe->Clearance = room.Room.Clearance;
-                probe->ClearanceSin = room.Room.Directed ? std::sin(room.Room.Away - facing) : 0.0f;
-                probe->ClearanceCos = room.Room.Directed ? std::cos(room.Room.Away - facing) : 0.0f;
-                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
-            }
-            else
-                Bake::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
-
-            if (!stale)
-            {
-                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
-                return;
-            }
-        }
-        // Worked out from the layered fields where the seat stands, along the compass: the dense probe the tables
-        // hold, at the seat's own place. Only walking makes it stale -- the ground does not move, and a turn is the
-        // same headings read from another start (RaysFor) -- so a seat turning in place, or standing still, never
-        // works it out again. Counted as worked out only when it is.
-        bool fromField = false;
-        if (!fromTable && fields)
-        {
-            if (!probe->CompassValid || self.GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
-            {
-                Field::Store::Neighbourhood around;
-                Field::Compass compass;
-                if (Field::Store::Gather(map->GetId(), at.X, at.Y, around)
-                    && Field::SenseCompass(around.View, at.X, at.Y, at.Z, compass))
-                {
-                    Field::Store::Reads.fetch_add(1, std::memory_order_relaxed);
-                    for (uint32 index = 0; index < 2 * Animus::Curriculum::SENSE_RAYS; ++index)
-                    {
-                        probe->CompassReach[index] = compass.Headings[index].Reach;
-                        probe->CompassStep[index] = compass.Headings[index].Step;
-                        probe->CompassShore[index] = compass.Headings[index].Shore;
-                        probe->CompassBurns[index] = compass.Headings[index].Burns;
-                    }
-                    probe->CompassClearance = compass.Room.Clearance;
-                    probe->CompassDirected = compass.Room.Directed;
-                    probe->CompassAway = compass.Room.Away;
-                    probe->CompassFrom.Relocate(self);
-                    probe->CompassValid = true;
-                }
-                else
-                    Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
-            }
-            if (probe->CompassValid)
-            {
-                Animus::Curriculum::GroundSense::Bearing headings[2 * Animus::Curriculum::SENSE_RAYS];
-                for (uint32 index = 0; index < 2 * Animus::Curriculum::SENSE_RAYS; ++index)
-                    headings[index] = { probe->CompassReach[index], probe->CompassStep[index],
-                        probe->CompassShore[index], probe->CompassBurns[index] };
-                Bake::Reading reading;
-                Field::RaysFor(headings, facing, reading);
-                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-                {
-                    probe->Reach[ray] = reading.Rays[ray].Reach;
-                    probe->Step[ray] = reading.Rays[ray].Step;
-                    probe->Shore[ray] = reading.Rays[ray].Shore;
-                    probe->Burns[ray] = reading.Rays[ray].Burns;
-                }
-                probe->Clearance = probe->CompassClearance;
-                probe->ClearanceSin = probe->CompassDirected ? std::sin(probe->CompassAway - facing) : 0.0f;
-                probe->ClearanceCos = probe->CompassDirected ? std::cos(probe->CompassAway - facing) : 0.0f;
-                fromField = true;
-            }
-            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
-
-            // Only the march's bookkeeping keeps the refresh cadence.
-            if (!stale)
-            {
-                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
-                return;
-            }
-        }
-        if (!fromTable && !fromField && !Field::Store::Enabled())
-            RefreshLive(probe, map, query, at, facing, partMark);
+        RefreshLive(probe, map, query, at, facing, partMark);
 
         probe->From.Relocate(self);
         probe->Facing = facing;
@@ -271,11 +162,9 @@ namespace
             probe->Burns[ray] = bearing.Burns;
         }
 
-        // How much room the seat has, and which way is out: one query, from the same polygon as the rays.
-        Ground::Room const room = Ground::MeasureRoom(query, startRef, at);
-        probe->Clearance = room.Clearance;
-        probe->ClearanceSin = room.Directed ? std::sin(room.Away - facing) : 0.0f;
-        probe->ClearanceCos = room.Directed ? std::cos(room.Away - facing) : 0.0f;
+        // How much room the seat has: one query, from the same polygon as the rays. Not observed (revision 3); the
+        // travel encounter's clearance charge reads it.
+        probe->Clearance = Ground::MeasureRoom(query, startRef, at).Clearance;
     }
 
     /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset
@@ -503,27 +392,10 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
         ranges.push_back(double(range));
     block["march_ranges"] = std::move(ranges);
     block["march_max"] = double(MARCH_MAX);
-    block["clearance_range"] = double(CLEARANCE_RANGE);
-
-    // Which ground probe the model was trained on: the observation's reach, step, shore, burns and clearance are
-    // its definition. "baked" (tables) and "geometry" (layered fields) are the same dense probe, taken at 2 yd cells
-    // and 16 compass bearings, or worked out at the seat; "live" is the old five-cell one, a different observation.
-    // A runtime reading the model with another should know it is fine-tuning territory.
-    namespace Bake = Animus::Curriculum::ProbeBake;
-    boost::json::object probe;
-    probe["source"] = Bake::Store::Baked() ? "baked"
-        : Animus::Curriculum::LayeredField::Store::Enabled() ? "geometry" : "live";
-    probe["dense"] = Bake::Store::Baked() || Animus::Curriculum::LayeredField::Store::Enabled();
-    Bake::Settings const standard = Bake::StandardSettings();
-    probe["table_cell"] = double(standard.Cell);
-    probe["table_bearings"] = standard.Bearings;
-    probe["wedge_rays"] = standard.WedgeRays;
-    probe["march_pitch"] = double(standard.Pitch);
-    probe["march_window"] = double(GroundSense::MARCH_WINDOW);
-    probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
-    // The fields are sensed along the compass and turned to the facing to the nearest of these (RaysFor).
-    probe["field_compass_headings"] = 2 * Animus::Curriculum::SENSE_RAYS;
-    block["ground_probe"] = std::move(probe);
+    // The ground probe is always the live five-cell march and the navmesh rays along the sixteen rays (revision 3):
+    // the baked tables and layered fields it could be read from are gone, and with them the manifest's
+    // "ground_probe" object and the clearance columns.
+    block["ground_probe"] = "live";
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
@@ -648,12 +520,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                     out[OBS_BURNS_FIRST + ray] = probe->Burns[ray];
                 }
 
-            if (GroundProbe const* probe = view.Probe)
-            {
-                out[OBS_CLEARANCE] = probe->Clearance;
-                out[OBS_CLEARANCE_SIN] = probe->ClearanceSin;
-                out[OBS_CLEARANCE_COS] = probe->ClearanceCos;
-            }
         }
         else
         {
@@ -666,39 +532,20 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // before something solid (a collision ray at the seat's altitude, and the terrain rising above it), in
             // the reach's slot, and in the step's whether climbing FLIGHT_CLIMB higher opens the way -- positive
             // where it does, negative where it closes it. OBS_AIRBORNE tells the policy which meaning it is
-            // reading. With the layered fields on it is read from them every decision, as the ground probe is;
-            // with Probe.Source = live it is measured live (~1.3 us a ray). A seat over a grid with no field sees
-            // open air. A swimmer's rays stay open, as they were.
+            // reading. Measured live (~1.3 us a ray). A swimmer's rays stay open, as they were.
             bool const flying = !bot->IsInWater();
             Map* map = bot->GetMap();
             float const z = self.GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
-            bool const fields = LayeredField::Store::Enabled();
-            LayeredField::Store::Neighbourhood around;
-            bool const fromField = flying && map && fields
-                && LayeredField::Store::Gather(map->GetId(), self.GetPositionX(), self.GetPositionY(), around);
-            if (flying && map && fields)
-                (fromField ? LayeredField::Store::Reads : LayeredField::Store::Fallbacks)
-                    .fetch_add(1, std::memory_order_relaxed);
             for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
             {
                 float reach = 1.0f;
                 float climb = 0.0f;
-                if (fromField)
+                if (flying && map)
                 {
                     float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::FlightReach(around.View, self.GetPositionX(),
-                        self.GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::FlightReach(around.View, self.GetPositionX(),
-                        self.GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
-                    reach = level / MARCH_MAX;
-                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
-                }
-                else if (flying && map && !fields)
-                {
-                    float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
-                        z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
+                    float const level = Ground::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(), z,
+                        heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = Ground::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
                         z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
                     reach = level / MARCH_MAX;
                     climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
@@ -707,13 +554,10 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 out[OBS_STEP_FIRST + ray] = climb;
                 out[OBS_SHORE_FIRST + ray] = bot->IsInWater() ? 0.0f : 1.0f;
             }
-            out[OBS_CLEARANCE] = 1.0f;
             if (view.Probe)
             {
                 view.Probe->Valid = false;
                 view.Probe->Clearance = 1.0f;
-                view.Probe->ClearanceSin = 0.0f;
-                view.Probe->ClearanceCos = 0.0f;
             }
         }
 

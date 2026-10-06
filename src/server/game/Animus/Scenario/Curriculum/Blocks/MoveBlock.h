@@ -39,7 +39,7 @@ namespace Animus::Curriculum
     ///
     /// This replaced the bearing / turn-lattice design (revisions 0 and 1: eight egocentric bearings walked as
     /// navmesh splines, chosen turns and pitches, facing modes), which the user had stripped outright (plan §0). The
-    /// engine still senses -- the ground rays, the clearance, the trail -- and still measures; it no longer moves.
+    /// engine still senses -- the ground rays (measured live) and the trail -- and still measures; it no longer moves.
     ///
     /// The block needs no target, no enemy and no objective: only legs (the hazard drill's lesson).
     class MoveBlock final : public Block
@@ -179,23 +179,6 @@ namespace Animus::Curriculum
             /// every lost episode dies in spans half the range instead of a twelfth of it. A coarse feature and
             /// a fine one, which is the only way one number covers both five hundred yards and six.
             OBS_OBJECTIVE_NEAR,
-            /// **How much room the seat has**: yards to the nearest edge of walkable space, over
-            /// CLEARANCE_RANGE, and which way is out -- sine and cosine of the direction away from it, in the
-            /// seat's own frame.
-            ///
-            /// The rays say how far it could go each way; this says how close the nearest thing already is,
-            /// which is a different question and the one that matters in a corridor. It is one
-            /// dtNavMeshQuery::findDistanceToWall, which returns the distance, the point and a normal pointing
-            /// back at the seat -- so the direction out comes free with the distance.
-            ///
-            /// Measured against the navmesh, which rcErodeWalkableArea already shrank by one agent radius
-            /// (walkableRadius 2 cells, about 0.53 yd), and whose edges are simplified to within
-            /// maxSimplificationError (1.8 yd). It is a coarse signal by construction: it shapes where the seat
-            /// puts itself, and is never allowed to forbid a move -- a doorway is narrower than any margin worth
-            /// keeping in open ground.
-            OBS_CLEARANCE,
-            OBS_CLEARANCE_SIN,
-            OBS_CLEARANCE_COS,
             /// **Where it has been** (MovementTrail): its last TRAIL_SAMPLES positions, one a second, each as an
             /// offset from where it stands now in its own frame (ahead, left) over YARD_SCALE, oldest first with
             /// the newest in the last pair, then the share of them it is still within six yards of.
@@ -259,9 +242,9 @@ namespace Animus::Curriculum
         /// simply going uphill. Over a six yard gap that admits 5.5 yards of rise; over ten, 7.5.
         static constexpr float MARCH_SEARCH = 20.0f;
         static constexpr float MARCH_SLOPE = 0.5f;
-        /// How far out clearance is measured and reported against. Kept small on purpose: findDistanceToWall
-        /// searches outward through the polygon graph and the shared query has a 1024-node pool, and room
-        /// beyond a few yards is not a thing a seat needs to tell apart.
+        /// How far out clearance is measured against (the travel encounter's charge; no longer observed). Kept small
+        /// on purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
+        /// 1024-node pool, and room beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
         /// How much further the ray that may cross magma must run than the ray that may not, before the gap
         /// between them is called a burning edge rather than float noise. Both rays start from one polygon and
@@ -269,7 +252,7 @@ namespace Animus::Curriculum
         /// arithmetic.
         static constexpr float BURN_EDGE_MARGIN = 0.5f;
 
-        /// Its layout revision: MoveControls::REVISION (2), past the bearing design's 0 and 1.
+        /// Its layout revision: MoveControls::REVISION (3), past the bearing design's 0 and 1 and the controls' 2.
         [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;

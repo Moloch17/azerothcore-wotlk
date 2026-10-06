@@ -5328,38 +5328,17 @@ AnimusForge.Human.HardSpots = ""
 AnimusForge.Human.HardSpotShare = 0
 
 ###################################################################################################
-# GROUND PROBE
+# LAYERED FIELDS
 #
-#    AnimusForge.Probe.Source
-#        Description: Where the move block's ground probe (reach, step, shore and burns along
-#                     sixteen rays, and the clearance around the seat) and an airborne seat's flight
-#                     rays come from.
-#                     geometry works the dense probe out at the seat's own place and facing from the
-#                     layered fields shipped in AnimusForge.Probe.Dir (per 1 yd cell every floor, the
-#                     room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made with
-#                     `forge fieldstage <scenario>`, which covers every grid of the stage's maps),
-#                     whenever the seat has moved three yards, turned 22.5 degrees or half a second
-#                     has passed; the flight rays are read from the same fields every decision. There
-#                     is no live stand-in: a seat on a grid with no field keeps its last reading, and
-#                     `forge status` counts how often and the grid is logged once so it can be baked
-#                     and shipped. A running server never bakes.
-#                     baked reads the probe every decision from the tables shipped in
-#                     AnimusForge.Probe.Dir (2 yd cells, 16 compass bearings; `forge probestage`)
-#                     and works it out from the fields where a grid has no table, as geometry does.
-#                     live measures the old five-cell probe and the flight rays against the live
-#                     geometry instead.
-#                     baked and geometry are one observation; live is a different one: a policy
-#                     trained on one should be fine-tuned before it is used with the other.
-#        Default:     "geometry"
-#                     "baked"
-#                     "live"
-
-AnimusForge.Probe.Source = "geometry"
-
+#    The layered fields the dungeon wings' routes are planned over (per 1 yd cell every floor, the
+#    room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made with
+#    `forge fieldstage <scenario>`). The move block's ground probe (reach, step, shore and burns
+#    along sixteen rays) and an airborne seat's flight rays are always measured live against the
+#    loaded geometry, whenever the seat has moved three yards, turned 22.5 degrees or half a second
+#    has passed; they read no field. (AnimusForge.Probe.Source and the baked probe tables are gone.)
 #
 #    AnimusForge.Probe.Dir
-#        Description: Where the baked tables are, one zstd-compressed file a grid (about 1.7 MB,
-#                     <map>_<gridX>_<gridY>.probe), and the layered fields (about 0.3 MB,
+#        Description: Where the layered fields are, one zstd-compressed file a grid (about 0.3 MB,
 #                     <map>_<gridX>_<gridY>.field). Relative paths are relative to this config file's
 #                     directory.
 #        Default:     "" - (apps/forge/probes, beside the forge's models)
@@ -5368,9 +5347,9 @@ AnimusForge.Probe.Dir = ""
 
 #
 #    AnimusForge.Probe.CacheGrids
-#        Description: Most grid tables held in memory at once (about 5 MB each), or layered fields
-#                     (about 4 MB each; at least 9, a grid and its neighbours). Past it the one read
-#                     longest ago is let go, and read from disk again if a seat comes back to it.
+#        Description: Most layered fields held in memory at once (about 4 MB each; at least 9).
+#                     Past it the one read longest ago is let go, and read from disk again if a route
+#                     comes back to it.
 #        Default:     64
 
 AnimusForge.Probe.CacheGrids = 64

@@ -190,26 +190,13 @@ namespace Animus::Curriculum
         float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
         float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
         float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
-        float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
-        float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
-        float ClearanceCos = 0.0f;
+        /// Yards to the nearest edge of walkable space / CLEARANCE_RANGE: not observed (move block revision 3), only
+        /// the travel encounter's clearance charge reads it.
+        float Clearance = 1.0f;
         Position From;                          // where it was marched from
         float Facing = 0.0f;                    // and which way the seat was looking at the time
         uint32 Ms = 0;
         bool Valid = false;
-        /// With the layered fields the probe is worked out along fixed compass headings, SENSE_RAYS * 2 of them
-        /// (LayeredField::SenseCompass), and turned to the seat's facing every decision (RaysFor): turning costs
-        /// nothing, and only walking MARCH_REFRESH_YARDS from CompassFrom works it out again. The room's way out
-        /// is kept in the world's frame for the same reason.
-        float CompassReach[2 * SENSE_RAYS] = {};
-        float CompassStep[2 * SENSE_RAYS] = {};
-        float CompassShore[2 * SENSE_RAYS] = {};
-        float CompassBurns[2 * SENSE_RAYS] = {};
-        float CompassClearance = 1.0f;
-        bool CompassDirected = false;
-        float CompassAway = 0.0f;
-        Position CompassFrom;
-        bool CompassValid = false;
     };
 
     /// Where the seat has been: its last TRAIL_SAMPLES positions, one every INTERVAL_MS, kept between decisions

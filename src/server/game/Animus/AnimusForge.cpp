@@ -22,7 +22,8 @@
 #include "LayeredField.h"
 #include "MoveBlock.h"
 #include "ReportCadence.h"
-#include "ProbeBake.h"
+#include "FieldGrids.h"
+#include "InstanceBosses.h"
 #include "CurriculumTuning.h"
 #include "EncoderSupport.h"
 #include "Encounters.h"
@@ -70,21 +71,19 @@
 namespace
 {
     /// What this machine runs, for a cluster's check that its workers run the same (ClusterLink::SetFingerprint): the
-    /// forge's sources, the learner protocol, the ground probe and the probe data it reads, and the settings every
+    /// forge's sources, the learner protocol, the layered fields the dungeon routes read, and the settings every
     /// episode is built from. Each "key=value", no spaces in a value.
     std::string ClusterFingerprint(AnimusForge::ForgeConfig const& config)
     {
-        // The probe data: how many table and field files, and their bytes. Not a hash of 350 MB at every start; a
-        // copy that lost or truncated files, or never had the fields, differs here.
-        uint64 tables = 0, tableBytes = 0, fields = 0, fieldBytes = 0;
+        // The field data: how many field files, and their bytes. Not a hash of 350 MB at every start; a copy that
+        // lost or truncated files, or never had the fields, differs here.
+        uint64 fields = 0, fieldBytes = 0;
         std::error_code error;
         for (auto const& entry : std::filesystem::directory_iterator(config.ProbeDir, error))
         {
             std::string const extension = entry.path().extension().string();
             uint64 const size = entry.is_regular_file(error) ? uint64(entry.file_size(error)) : 0;
-            if (extension == ".probe")
-                ++tables, tableBytes += size;
-            else if (extension == ".field")
+            if (extension == ".field")
                 ++fields, fieldBytes += size;
         }
 
@@ -97,10 +96,9 @@ namespace
         for (unsigned char c : settings)
             hash = (hash ^ c) * 1099511628211ull;
 
-        std::string const probe = config.ProbeGeometry ? "geometry" : config.ProbeBaked ? "baked" : "live";
-        return Acore::StringFormat("src={} protocol={} probe={} tables={}/{} fields={}/{} curriculum={:016x} "
-            "decision={}/{}", FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, probe, tables, tableBytes, fields,
-            fieldBytes, hash, config.DecisionMs, config.TicksPerDecision);
+        return Acore::StringFormat("src={} protocol={} fields={}/{} curriculum={:016x} decision={}/{}",
+            FORGE_SOURCE_HASH, AnimusForge::PROTOCOL_VERSION, fields, fieldBytes, hash, config.DecisionMs,
+            config.TicksPerDecision);
     }
 
     /// How long an idle or paused world thread sleeps per tick: an idle sim would otherwise spin a core.
@@ -185,13 +183,9 @@ void AnimusForge::Forge::OnStartup()
         Animus::Movement::STEP_UP, Animus::Movement::JUMP_SPEED, Animus::Movement::SWIM_JUMP_SPEED,
         Animus::Movement::Cadence::HEARTBEAT_MS, Animus::Movement::Cadence::MOUSE_FACING_THRESHOLD,
         Animus::Movement::MAX_SUBSTEP * 1000.0f);
-    Animus::Curriculum::ProbeBake::Store::Configure(_config.ProbeBaked, _config.ProbeDir,
-        _config.ProbeCacheGrids);
-    // Fields with tables too: where a seat stands on a grid with no table, the field works the same dense probe out
-    // (on the live probe's cadence) instead of the old five-cell live one, which was both slower and another
-    // observation.
-    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeGeometry || _config.ProbeBaked, _config.ProbeDir,
-        _config.ProbeCacheGrids);
+    // The layered fields the dungeon wings' routes are planned over (FieldRoute); the move block's ground probe is
+    // measured live and reads none.
+    Animus::Curriculum::LayeredField::Store::Configure(_config.ProbeDir, _config.ProbeCacheGrids);
     // Before anything HIP starts, here or in the learner spawned later, which inherits it.
     Animus::Gpu::PrepareEnvironment();
     _fastConfig = _config.FastProfile(_config.FastBudget);
@@ -633,43 +627,32 @@ void AnimusForge::Forge::HoldWhilePaused()
     }
 }
 
-void AnimusForge::Forge::ReportProbeTables(std::string const& scenario) const
+void AnimusForge::Forge::ReportFields(std::string const& scenario) const
 {
-    // Only counted, never made: the tables and fields ship with the forge.
-    namespace Bake = Animus::Curriculum::ProbeBake;
+    // Only counted, never made: the fields ship with the forge. Only a stage with dungeon wings reads them (its
+    // routes, FieldRoute); every other stage reads none.
+    namespace Grids = Animus::Curriculum::FieldGrids;
     namespace Field = Animus::Curriculum::LayeredField;
     Animus::Curriculum::StageDefinition const* stage = Animus::Curriculum::FindStage(scenario);
-    if (!stage)
+    if (!stage || !Field::Store::Enabled())
         return;
-    if (!Bake::Store::Baked())
-    {
-        if (!Field::Store::Enabled())
-            return;
-        std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage, true);
-        uint32 shipped = 0;
-        std::error_code error;
-        for (Bake::GridRef const& grid : grids)
-            shipped += std::filesystem::exists(Field::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
-        if (shipped == grids.size())
-            LOG_INFO("module.animus", "Ground probe for {}: all {} grids have layered fields", scenario, grids.size());
-        else
-            LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have layered fields in {}; seats on the "
-                "others keep their last reading. Bake them with `forge fieldstage {}` and ship the files.", scenario,
-                shipped, grids.size(), Bake::Store::Dir(), scenario);
+    bool wings = false;
+    for (Animus::Curriculum::ArenaDefinition const& arena : stage->Arenas)
+        wings = wings || !Animus::Curriculum::InstanceLadderRows(arena.Instance).empty();
+    if (!wings)
         return;
-    }
 
-    std::vector<Bake::GridRef> const grids = Bake::StageGrids(*stage);
+    std::vector<Grids::GridRef> const grids = Grids::StageGrids(*stage, true);
     uint32 shipped = 0;
     std::error_code error;
-    for (Bake::GridRef const& grid : grids)
-        shipped += std::filesystem::exists(Bake::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
+    for (Grids::GridRef const& grid : grids)
+        shipped += std::filesystem::exists(Field::Store::FileFor(grid.MapId, grid.X, grid.Y), error) ? 1 : 0;
     if (shipped == grids.size())
-        LOG_INFO("module.animus", "Ground probe for {}: all {} grids have tables", scenario, grids.size());
+        LOG_INFO("module.animus", "Layered fields for {}: all {} grids", scenario, grids.size());
     else
-        LOG_WARN("module.animus", "Ground probe for {}: {} of {} grids have tables in {}; seats on the others read the "
-            "layered fields. Bake them with `forge probestage {}` and ship the files.", scenario, shipped, grids.size(),
-            Bake::Store::Dir(), scenario);
+        LOG_WARN("module.animus", "Layered fields for {}: {} of {} grids in {}; routes over the others are not "
+            "planned. Bake them with `forge fieldstage {}` and ship the files.", scenario, shipped, grids.size(),
+            Field::Store::Dir(), scenario);
 }
 
 bool AnimusForge::Forge::StartCurrent()
@@ -691,7 +674,7 @@ bool AnimusForge::Forge::StartCurrent()
         if (scenario->Playable())
         {
             _scenario = std::move(scenario);
-            ReportProbeTables(skipped.Scenario);
+            ReportFields(skipped.Scenario);
             break;
         }
 
@@ -2193,29 +2176,16 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 Travel::HardStartsUsed.load(std::memory_order_relaxed),
                 Travel::HardStartsFellBack.load(std::memory_order_relaxed));
     }
-    if (Animus::Curriculum::ProbeBake::Store::Baked())
     {
-        namespace Store = Animus::Curriculum::ProbeBake::Store;
-        uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
-        uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
-        sim.ProbeNote += Acore::StringFormat("baked: {} reads, {} grid tables held ({:.0f} MB), {} where no table "
-            "answered ({:.1f}%: worked out from a field where there is one); ", reads,
-            Store::Loaded(), double(Store::Bytes()) / (1024.0 * 1024.0), fallbacks,
-            reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
-    }
-    if (Animus::Curriculum::LayeredField::Store::Enabled())
-    {
+        // The live ground probe's refresh cadence, and the layered fields the routes hold.
         namespace Store = Animus::Curriculum::LayeredField::Store;
-        uint64 const reads = Store::Reads.load(std::memory_order_relaxed);
-        uint64 const fallbacks = Store::Fallbacks.load(std::memory_order_relaxed);
         using Move = Animus::Curriculum::MoveBlock;
-        sim.ProbeNote += Acore::StringFormat("refreshed for moving {}, turning {}, the clock {}; ",
+        sim.ProbeNote += Acore::StringFormat("probe refreshed for moving {}, turning {}, the clock {}",
             Move::StaleMoved.load(std::memory_order_relaxed), Move::StaleTurned.load(std::memory_order_relaxed),
             Move::StaleClock.load(std::memory_order_relaxed));
-        sim.ProbeNote += Acore::StringFormat("geometry: {} probes worked out, {} fields held ({:.0f} MB, {} files "
-            "read), {} with no field, the last reading held ({:.1f}%)", reads, Store::Loaded(),
-            double(Store::Bytes()) / (1024.0 * 1024.0), Store::FileReads.load(std::memory_order_relaxed), fallbacks,
-            reads + fallbacks ? 100.0 * double(fallbacks) / double(reads + fallbacks) : 0.0);
+        if (uint64 const reads = Store::FileReads.load(std::memory_order_relaxed))
+            sim.ProbeNote += Acore::StringFormat("; route fields held {} ({:.0f} MB, {} files read)", Store::Loaded(),
+                double(Store::Bytes()) / (1024.0 * 1024.0), reads);
     }
     sim.EpisodesPerSecond = _episodesPerSecond;
     sim.EnvStepsPerSecond = _ticksPerSecond * double(sim.Envs) * double(sim.AgentsPerEnv);
