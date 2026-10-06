@@ -5379,9 +5379,9 @@ AnimusForge.Probe.CacheGrids = 64
 # CAMERA VISION
 #
 #    The vision block's third-person camera (camera-vision): the seat turns it itself (free look: a
-#    yaw rate, a pitch rate and a zoom step chosen every decision, easing back behind the facing
-#    while it walks forward), rendered every decision by ray casts against the loaded terrain,
-#    collision trees and liquids.
+#    yaw rate, a pitch rate and a zoom step chosen every decision; it never adjusts itself, and the
+#    seat recentres it or turns to it), rendered every decision by ray casts against the loaded
+#    terrain, collision trees and liquids.
 #    A value outside its range is clamped into it and logged. `forge camera snapshot` renders one
 #    frame with these settings.
 #

@@ -356,7 +356,7 @@ namespace Animus::Curriculum
         uint8* Image = nullptr;
         /// **The seat's camera** (Vision::FreeLook::State, SeatState::Look): turned by its look head, advanced and
         /// rendered by the vision block. Borrowed like the controls; null for a view without one, which the block
-        /// renders in follow mode (yaw offset 0, the conf's pitch and zoom, at the canonical size).
+        /// renders from a fixed camera (yaw offset 0, the conf's pitch and zoom, at the canonical size).
         Vision::FreeLook::State* Look = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer

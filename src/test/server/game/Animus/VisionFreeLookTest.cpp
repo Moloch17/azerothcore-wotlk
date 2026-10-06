@@ -17,6 +17,7 @@
 
 #include "Camera.h"
 #include "FreeLook.h"
+#include "PlayerController.h"
 #include "VisionCaster.h"
 #include "gtest/gtest.h"
 #include <array>
@@ -106,18 +107,18 @@ TEST(VisionFreeLookTest, RateHeldOverTheDecision)
     EXPECT_FLOAT_EQ(state.YawRate, 90.0f * DEG);
     EXPECT_FLOAT_EQ(state.PitchRate, 20.0f * DEG);
 
-    FL::Integrate(state, 0.25f, false);
+    FL::Integrate(state, 0.25f);
     EXPECT_NEAR(state.YawOffset, 22.5f * DEG, 1e-5f);
     EXPECT_NEAR(state.Pitch, (-15.0f + 5.0f) * DEG, 1e-5f);
     // Held: a second decision with no new choice turns as far again.
-    FL::Integrate(state, 0.25f, false);
+    FL::Integrate(state, 0.25f);
     EXPECT_NEAR(state.YawOffset, 45.0f * DEG, 1e-5f);
     EXPECT_NEAR(state.Pitch, (-15.0f + 10.0f) * DEG, 1e-5f);
 
     // + is left, - is right.
     choice = Choice(-30.0f, 0.0f, FL::ZOOM_HOLD);
     FL::Apply(state, choice.data(), settings);
-    FL::Integrate(state, 0.5f, false);
+    FL::Integrate(state, 0.5f);
     EXPECT_NEAR(state.YawOffset, 30.0f * DEG, 1e-5f);
     EXPECT_NEAR(state.Pitch, -5.0f * DEG, 1e-5f);
 
@@ -143,13 +144,13 @@ TEST(VisionFreeLookTest, YawWrapsAtPi)
     auto const left = Choice(180.0f, 0.0f, FL::ZOOM_HOLD);
     FL::Apply(state, left.data(), settings);
     // 170 degrees, then 20 more: -170.
-    FL::Integrate(state, 170.0f / 180.0f, false);
+    FL::Integrate(state, 170.0f / 180.0f);
     EXPECT_NEAR(state.YawOffset, 170.0f * DEG, 1e-4f);
-    FL::Integrate(state, 20.0f / 180.0f, false);
+    FL::Integrate(state, 20.0f / 180.0f);
     EXPECT_NEAR(state.YawOffset, -170.0f * DEG, 1e-4f);
     for (int i = 0; i < 50; ++i)
     {
-        FL::Integrate(state, 0.25f, false);
+        FL::Integrate(state, 0.25f);
         EXPECT_GT(state.YawOffset, -Vi::PI);
         EXPECT_LE(state.YawOffset, Vi::PI);
     }
@@ -162,11 +163,11 @@ TEST(VisionFreeLookTest, PitchClamps)
     FL::State state = Fresh(settings);
     auto const up = Choice(0.0f, 60.0f, FL::ZOOM_HOLD);
     FL::Apply(state, up.data(), settings);
-    FL::Integrate(state, 10.0f, false);
+    FL::Integrate(state, 10.0f);
     EXPECT_FLOAT_EQ(state.Pitch, 80.0f * DEG);
     auto const down = Choice(0.0f, -60.0f, FL::ZOOM_HOLD);
     FL::Apply(state, down.data(), settings);
-    FL::Integrate(state, 10.0f, false);
+    FL::Integrate(state, 10.0f);
     EXPECT_FLOAT_EQ(state.Pitch, -80.0f * DEG);
 }
 
@@ -202,7 +203,7 @@ TEST(VisionFreeLookTest, RecentreReturnsBehindTheFacing)
     FL::State state = Fresh(settings);
     auto const turn = Choice(90.0f, 60.0f, FL::ZOOM_OUT);
     FL::Apply(state, turn.data(), settings);
-    FL::Integrate(state, 1.0f, false);
+    FL::Integrate(state, 1.0f);
     ASSERT_NE(state.YawOffset, 0.0f);
     ASSERT_EQ(state.ZoomLevel, 3u);
 
@@ -213,41 +214,43 @@ TEST(VisionFreeLookTest, RecentreReturnsBehindTheFacing)
     EXPECT_FLOAT_EQ(state.YawRate, 0.0f);
     EXPECT_FLOAT_EQ(state.PitchRate, 0.0f);
     EXPECT_EQ(state.ZoomLevel, 3u);
-    FL::Integrate(state, 1.0f, false);
+    FL::Integrate(state, 1.0f);
     EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
 }
 
-// Follow mode: with the forward key held and no yaw rate, the offset eases back to 0 at 180 degrees a second and
-// stops there; a held yaw rate, or no forward key, keeps it where it is.
-TEST(VisionFreeLookTest, FollowEasing)
+// Never adjust camera: a sideways look held while running stays exactly where the look head put it. The forward key is
+// held and the body runs for five seconds; nothing pulls the offset back behind the facing. Only the held rates move
+// it, and recentre brings it back.
+TEST(VisionFreeLookTest, ASidewaysLookHoldsWhileRunning)
 {
     Vi::Settings settings;
     FL::State state = Fresh(settings);
     state.YawOffset = 60.0f * DEG;
+    Animus::Movement::ControlState held;
+    held.Forward = 1;
+    Animus::Movement::BodyState body;
+    body.Vx = 7.0f;
+    FL::Advance(state, 0.25f);
+    for (int decision = 0; decision < 20; ++decision)
+    {
+        body.X += body.Vx * 0.25f;
+        FL::Advance(state, 0.25f);
+        ASSERT_FLOAT_EQ(state.YawOffset, 60.0f * DEG) << "decision " << decision;
+    }
+    EXPECT_EQ(held.Forward, 1);
+    EXPECT_FLOAT_EQ(body.X, 35.0f);
 
-    // Not moving forward: held.
-    FL::Integrate(state, 0.25f, false);
-    EXPECT_NEAR(state.YawOffset, 60.0f * DEG, 1e-6f);
-
-    // Forward, rate 0: 45 degrees a quarter second, then the last 15 without passing 0.
-    FL::Integrate(state, 0.25f, true);
-    EXPECT_NEAR(state.YawOffset, 15.0f * DEG, 1e-5f);
-    FL::Integrate(state, 0.25f, true);
-    EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
-    FL::Integrate(state, 0.25f, true);
-    EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
-
-    // From the right side too.
-    state.YawOffset = -100.0f * DEG;
-    FL::Integrate(state, 0.25f, true);
-    EXPECT_NEAR(state.YawOffset, -55.0f * DEG, 1e-5f);
-
-    // A held yaw rate: no easing, only the rate.
-    state.YawOffset = 60.0f * DEG;
+    // A held yaw rate turns it, by the rate alone.
     auto const turn = Choice(30.0f, 0.0f, FL::ZOOM_HOLD);
     FL::Apply(state, turn.data(), settings);
-    FL::Integrate(state, 0.5f, true);
+    FL::Advance(state, 0.5f);
     EXPECT_NEAR(state.YawOffset, 75.0f * DEG, 1e-5f);
+
+    // Recentre is how it comes back.
+    auto const recentre = Choice(0.0f, 0.0f, FL::ZOOM_RECENTRE);
+    FL::Apply(state, recentre.data(), settings);
+    FL::Advance(state, 0.25f);
+    EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
 }
 
 // The episode's first observation renders where the reset put the camera: dt = 0, whatever the rates. Every later
@@ -259,17 +262,17 @@ TEST(VisionFreeLookTest, FirstObservationDoesNotAdvance)
     state.YawRate = 90.0f * DEG;
     state.PitchRate = 20.0f * DEG;
     state.YawOffset = 30.0f * DEG;
-    FL::Advance(state, 0.25f, true);
+    FL::Advance(state, 0.25f);
     EXPECT_FLOAT_EQ(state.YawOffset, 30.0f * DEG);
     EXPECT_FLOAT_EQ(state.Pitch, -15.0f * DEG);
     EXPECT_TRUE(state.Observed);
-    FL::Advance(state, 0.25f, false);
+    FL::Advance(state, 0.25f);
     EXPECT_NEAR(state.YawOffset, 52.5f * DEG, 1e-5f);
 
     // A new episode: the first observation again.
     FL::Reset(state, settings);
     state.YawRate = 90.0f * DEG;
-    FL::Advance(state, 0.25f, false);
+    FL::Advance(state, 0.25f);
     EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
 }
 
@@ -441,7 +444,7 @@ TEST(VisionFreeLookTest, FaceTurnsTheBodyToTheCamera)
     FL::State state = Fresh(settings);
     auto const turn = Choice(90.0f, 20.0f, FL::ZOOM_HOLD);
     FL::Apply(state, turn.data(), settings);
-    FL::Integrate(state, 1.0f, false);
+    FL::Integrate(state, 1.0f);
     ASSERT_NEAR(state.YawOffset, 90.0f * DEG, 1e-5f);
     float const pitch = state.Pitch;
 

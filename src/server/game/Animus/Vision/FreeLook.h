@@ -79,9 +79,6 @@ namespace Animus::Vision::FreeLook
     constexpr std::array<float, ZOOM_LEVEL_COUNT> ZOOM_LEVELS = { 0.0f, 3.0f, 6.0f, 12.0f };
     /// The pitch's limits, either way.
     constexpr float PITCH_LIMIT = 80.0f * DEGREES;
-    /// Follow mode: the yaw offset eases back toward 0 at this rate while the forward key is held and the yaw rate
-    /// is let go.
-    constexpr float FOLLOW_RATE = 180.0f * DEGREES;
     /// A face choice with the yaw offset nearer 0 than this turns nothing and sends nothing.
     constexpr float FACE_MIN = 1e-3f;
 
@@ -178,27 +175,21 @@ namespace Animus::Vision::FreeLook
         return 0.0f;
     }
 
-    /// The held rates over `dt` seconds: the yaw offset turns (wrapped), the pitch turns (clamped); then follow mode,
-    /// while `forwardHeld` (the forward key in the seat's controls, never the body's motion: FREELOOK R2) and the yaw
-    /// rate is let go, eases the yaw offset toward 0 at FOLLOW_RATE without passing it.
-    inline void Integrate(State& state, float dt, bool forwardHeld)
+    /// The held rates over `dt` seconds: the yaw offset turns (wrapped), the pitch turns (clamped). Nothing else
+    /// moves the camera -- WoW's "Never adjust camera": running does not swing it back behind the facing, so a steady
+    /// sideways look while running holds, and the seat brings it back itself with recentre.
+    inline void Integrate(State& state, float dt)
     {
         if (dt <= 0.0f)
             return;
         state.YawOffset = Wrap(state.YawOffset + state.YawRate * dt);
         state.Pitch = std::clamp(state.Pitch + state.PitchRate * dt, -PITCH_LIMIT, PITCH_LIMIT);
-        if (forwardHeld && state.YawRate == 0.0f)
-        {
-            float const step = FOLLOW_RATE * dt;
-            state.YawOffset = std::fabs(state.YawOffset) <= step ? 0.0f
-                : state.YawOffset - std::copysign(step, state.YawOffset);
-        }
     }
 
     /// An observation: the camera advances by the decision's length, except at the episode's first (dt = 0).
-    inline void Advance(State& state, float decisionSeconds, bool forwardHeld)
+    inline void Advance(State& state, float decisionSeconds)
     {
-        Integrate(state, state.Observed ? decisionSeconds : 0.0f, forwardHeld);
+        Integrate(state, state.Observed ? decisionSeconds : 0.0f);
         state.Observed = true;
     }
 

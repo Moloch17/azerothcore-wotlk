@@ -80,7 +80,7 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
 
     // What the image means beyond its shape: the camera it was rendered with (informational).
     boost::json::object camera;
-    camera["mode"] = "free";
+    camera["mode"] = "free, never adjust";
     boost::json::array yawRates;
     for (float rate : Vi::FreeLook::YAW_RATES_DEG)
         yawRates.push_back(double(rate));
@@ -108,13 +108,12 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
 void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
     // The camera first, whatever else this seat can render: the held rates over the decision (none at the episode's
-    // first observation), follow mode easing it back while the forward key is held (R2: the key, not the body).
+    // first observation), and nothing else: the camera never adjusts itself.
     // The state is advanced from a const block, which is safe only because Observe runs once per seat per decision:
     // a reset clears Observed, and ObserveAfterJoin is refused for vision stages. Anything that observes a seat twice
     // in a decision would advance its camera twice.
     if (Vi::FreeLook::State* look = view.Look)
-        Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f,
-            view.Controls && view.Controls->Held.Forward > 0);
+        Vi::FreeLook::Advance(*look, float(view.DecisionMs) / 1000.0f);
 
     Player* bot = view.Bot;
     Map* map = bot && bot->IsInWorld() ? bot->GetMap() : nullptr;
@@ -144,7 +143,7 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     pose.Yaw = view.Facing;
     pose.BodyHeight = Movement::ShapeOf(bot).Height;
 
-    // The seat's own camera; a view without one sees in follow mode, behind the facing at the conf's pitch and zoom.
+    // The seat's own camera; a view without one sees from a fixed camera behind the facing, the conf's pitch and zoom.
     Vi::CameraState camera;
     if (view.Look)
         camera = Vi::FreeLook::CameraOf(*view.Look);

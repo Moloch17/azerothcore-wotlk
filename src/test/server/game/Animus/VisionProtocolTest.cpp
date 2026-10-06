@@ -154,8 +154,8 @@ TEST(VisionProtocolTest, LookingIsFree)
         EXPECT_FLOAT_EQ(pa.JitterWeight, pb.JitterWeight);
         EXPECT_FLOAT_EQ(pa.Effort, pb.Effort);
         EXPECT_EQ(pa.TurnReversals, pb.TurnReversals);
-        FL::Advance(a.Look, 0.25f, a.Controls.Held.Forward > 0);
-        FL::Advance(b.Look, 0.25f, b.Controls.Held.Forward > 0);
+        FL::Advance(a.Look, 0.25f);
+        FL::Advance(b.Look, 0.25f);
     }
 
     EXPECT_EQ(a.Controls.Held.Forward, b.Controls.Held.Forward);

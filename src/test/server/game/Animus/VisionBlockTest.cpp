@@ -79,7 +79,7 @@ TEST(VisionBlockTest, ScalarsAloneAndTheImageAsBytes)
     EXPECT_EQ(names[0].as_string(), "yaw_rate");
     EXPECT_EQ(names[1].as_string(), "pitch_rate");
     EXPECT_EQ(names[2].as_string(), "zoom");
-    EXPECT_EQ(entry.at("camera").as_object().at("mode").as_string(), "free");
+    EXPECT_EQ(entry.at("camera").as_object().at("mode").as_string(), "free, never adjust");
 }
 
 // The contract's defaults (FREELOOK A): a 128 x 64 canonical image, 32 KB an agent, patch 8 (a 16 x 8 grid), and
