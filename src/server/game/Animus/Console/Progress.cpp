@@ -477,7 +477,7 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         table.AddRow({ "observe blocks", Acore::StringFormat("{:.2f} ms {}", sim.ObserveBlocks.front().second,
             sim.ObserveBlocks.front().first), ObserveBlocksNote(sim.ObserveBlocks) });
     if (!sim.ProbeNote.empty())
-        table.AddRow({ "ground probe", "", sim.ProbeNote });
+        table.AddRow({ "travel", "", sim.ProbeNote });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
     ControllerRows(table, sim);
@@ -693,7 +693,7 @@ void AnimusForge::ProgressMonitor::ReportLocal(SimSnapshot const& sim, LineSink 
         table.AddRow({ "observe blocks", Acore::StringFormat("{:.2f} ms {}", sim.ObserveBlocks.front().second,
             sim.ObserveBlocks.front().first), ObserveBlocksNote(sim.ObserveBlocks) });
     if (!sim.ProbeNote.empty())
-        table.AddRow({ "ground probe", "", sim.ProbeNote });
+        table.AddRow({ "travel", "", sim.ProbeNote });
     table.AddRow({ "map tasks", Acore::StringFormat("{:.2f} ms wall", sim.MapTasks.Wall),
         MapTasksNote(sim.MapTasks) });
     ControllerRows(table, sim);

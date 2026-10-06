@@ -185,7 +185,7 @@ namespace AnimusForge
         /// Observation thread time per decision by block (and "view", the seat's work before its blocks), largest
         /// first.
         std::vector<std::pair<std::string, double>> ObserveBlocks;
-        std::string ProbeNote;          // the live ground probe's refreshes, the routes and the fields they hold
+        std::string ProbeNote;          // the travel arenas' route plans and searches, and the route fields held
         bool LearnerRunning = false;
         int32 LearnerPid = -1;
         bool LearnerConnected = false;

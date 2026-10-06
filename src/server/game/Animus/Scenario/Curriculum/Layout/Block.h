@@ -209,9 +209,6 @@ namespace Animus::Curriculum
     /// features were trained, so a seeded policy reads them as it did. Not a cap: eight attackers read 2.
     constexpr float ENEMY_COUNT_SCALE = 4.0f;
     constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
-    /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
-    /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
-    constexpr uint32 SENSE_RAYS = 16;
     /// Positions the movement block remembers of where the seat has been (MovementTrail), one a second.
     constexpr uint32 TRAIL_SAMPLES = 8;
     constexpr uint32 STABLE_SLOTS = 4;      // a hunter's stabled beasts

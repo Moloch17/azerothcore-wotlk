@@ -193,7 +193,6 @@ namespace
                 { "cancel",    HandleCancel,    SEC_ADMINISTRATOR, Console::Yes },
                 { "skip",      HandleSkip,      SEC_ADMINISTRATOR, Console::Yes },
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
-                { "rays",      HandleRays,      SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "floorscan", HandleFloorScan, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
@@ -233,8 +232,6 @@ namespace
             table.AddRow({ "forge cancel", "stop the plan; the learner saves latest.pt first" });
             table.AddRow({ "forge skip", "end the current scenario and start the next one" });
             table.AddRow({ "forge run <scenario> <policy> [episodes]", "run a scripted or random policy, no learner" });
-            table.AddRow({ "forge rays <map> <x> <y> <z> [facing]", "what the navmesh senses read standing there: "
-                "reach, shore, water width, burning edge and clearance" });
             table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
@@ -1028,51 +1025,6 @@ namespace
             Position const from(fromX, fromY, fromZ, 0.0f);
             Position const to(toX, toY, toZ, 0.0f);
             std::string const report = Animus::Curriculum::RoutePlanner::Instance().Report(map, from, to);
-
-            std::string line;
-            for (char c : report)
-            {
-                if (c == '\n')
-                {
-                    handler->SendSysMessage(line);
-                    line.clear();
-                }
-                else
-                    line += c;
-            }
-
-            if (!line.empty())
-                handler->SendSysMessage(line);
-
-            return true;
-        }
-
-        /// Read the movement block's navmesh senses at one point, without a seat, a policy or a run.
-        ///
-        /// Every one of those senses is a Detour query, and Detour's axes are {y, z, x} rather than the world's.
-        /// A swizzle that is wrong is silent: the rays go somewhere else and return entirely plausible numbers
-        /// about the wrong place. Training cannot catch it -- it shows up only as a policy that learns worse
-        /// than it should, hours later, with nothing to point at. This puts the numbers next to geometry whose
-        /// answer is already known: a wall at a measured distance, a corridor, a lake that has been swum.
-        static bool HandleRays(ChatHandler* handler, uint32 mapId, float x, float y, float z,
-            Optional<float> facing)
-        {
-            Map* map = sMapMgr->CreateBaseMap(mapId);
-            if (!map)
-            {
-                handler->PSendSysMessage("No such map: {}", mapId);
-                return true;
-            }
-
-            // The navmesh tile comes in with the grid, so an unvisited corner of the world answers nothing until
-            // it is asked for.
-            map->LoadGrid(x, y);
-
-            handler->PSendSysMessage("Rays at map {} ({:.2f}, {:.2f}, {:.2f}) facing {:.2f}:",
-                mapId, x, y, z, facing.value_or(0.0f));
-
-            std::string const report =
-                Animus::Curriculum::MoveBlock::RayReport(map, x, y, z, facing.value_or(0.0f));
 
             std::string line;
             for (char c : report)

@@ -2045,9 +2045,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 {
                     namespace Curriculum = Animus::Curriculum;
                     std::string const name = slot == Curriculum::SeatEncoder::OBSERVE_VIEW ? std::string("view")
-                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE ? std::string("move.probe")
-                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_MARCH ? std::string("probe.marches")
-                        : slot == Curriculum::SeatEncoder::OBSERVE_PROBE_RAYS ? std::string("probe.rays")
                         : std::string(Curriculum::BlockName(Curriculum::BlockId(slot)));
                     _observeBlockMs.emplace_back(name, ms);
                 }
@@ -2184,14 +2181,10 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
                 Travel::HardStartsFellBack.load(std::memory_order_relaxed));
     }
     {
-        // The live ground probe's refresh cadence, and the layered fields the routes hold.
+        // The layered fields the routes hold.
         namespace Store = Animus::Curriculum::LayeredField::Store;
-        using Move = Animus::Curriculum::MoveBlock;
-        sim.ProbeNote += Acore::StringFormat("probe refreshed for moving {}, turning {}, the clock {}",
-            Move::StaleMoved.load(std::memory_order_relaxed), Move::StaleTurned.load(std::memory_order_relaxed),
-            Move::StaleClock.load(std::memory_order_relaxed));
         if (uint64 const reads = Store::FileReads.load(std::memory_order_relaxed))
-            sim.ProbeNote += Acore::StringFormat("; route fields held {} ({:.0f} MB, {} files read)", Store::Loaded(),
+            sim.ProbeNote += Acore::StringFormat("route fields held {} ({:.0f} MB, {} files read)", Store::Loaded(),
                 double(Store::Bytes()) / (1024.0 * 1024.0), reads);
     }
     sim.EpisodesPerSecond = _episodesPerSecond;

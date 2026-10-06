@@ -52,12 +52,7 @@ namespace Animus::Curriculum::SeatEncoder
     /// character), and at OBSERVE_VIEW what the seat does before its blocks (StageScenario::ObserveSeat: the
     /// liquid check, target and motion tracking, the memory, SeatView). `forge status` shows where it goes.
     constexpr std::size_t OBSERVE_VIEW = BLOCK_COUNT;
-    /// Parts of the move block's time (inside "move", not beside it): the ground probe's refresh as a whole, its
-    /// height marches, and its navmesh raycasts.
-    constexpr std::size_t OBSERVE_PROBE = BLOCK_COUNT + 1;
-    constexpr std::size_t OBSERVE_PROBE_MARCH = BLOCK_COUNT + 2;
-    constexpr std::size_t OBSERVE_PROBE_RAYS = BLOCK_COUNT + 3;
-    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 4;
+    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 1;
 
     /// One map thread's share of it, on cache lines of its own: shared counters that every map thread added to
     /// bounced the same lines between cores every block of every seat. Written by its thread alone (a relaxed store,

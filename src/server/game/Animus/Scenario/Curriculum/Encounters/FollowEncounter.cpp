@@ -236,6 +236,9 @@ void Animus::Curriculum::FollowEncounter::Update(Env& env)
         held = Movement::Seek(seat.Mover.Body, x, y);
         held.Walk = follow.Rung < _scenario.Tuning().Follow.WalkRungs;
     }
+    // The scripted leader's keys replace the held controls wholesale; a face turn the controller applied and the
+    // camera has not yet taken off its offset (ControlState::FaceTurnApplied) is kept, so it is never lost.
+    held.FaceTurnApplied = seat.Controls.Held.FaceTurnApplied;
     seat.Controls.Held = held;
 }
 

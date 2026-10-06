@@ -39,15 +39,14 @@ namespace Animus::Curriculum
     ///
     /// This replaced the bearing / turn-lattice design (revisions 0 and 1: eight egocentric bearings walked as
     /// navmesh splines, chosen turns and pitches, facing modes), which the user had stripped outright (plan §0). The
-    /// engine still senses -- the ground rays (measured live) and the trail -- and still measures; it no longer moves.
+    /// engine still keeps the trail and still measures; it no longer moves. Nor does it sense the ground for the seat
+    /// any more (revision 4): the sixteen ground and flight rays and the clearance are gone, and the camera (the
+    /// vision block, free look) is how a seat sees what is around it.
     ///
     /// The block needs no target, no enemy and no objective: only legs (the hazard drill's lesson).
     class MoveBlock final : public Block
     {
     public:
-        /// Rays the ground is sensed along, sixteen round the seat (SENSE_RAYS), clockwise from straight ahead.
-        static constexpr uint32 RAY_COUNT = SENSE_RAYS;
-
         using Action = MoveControls::Action;
 
         enum Obs : uint32
@@ -109,49 +108,7 @@ namespace Animus::Curriculum
             OBS_OBJECTIVE_BEARING_SIN,
             OBS_OBJECTIVE_BEARING_COS,
             OBS_OBJECTIVE_DISTANCE,         // yards / 500
-            /// **What the ground ahead is like along each of the RAY_COUNT rays**: how far it runs before the first
-            /// thing that stops it, over MARCH_MAX. Ray r lies r sixteenths of a turn clockwise from straight
-            /// ahead, so a doorway or a gully's mouth is seen at 22.5 degrees and not only at 45. Without this the
-            /// seat steers blind: one that holds forward into a cliff should be able to tell that it did.
-            OBS_GROUND_FIRST,
-            /// **How the ground changes along each ray**, signed, / MAX_STEP and clamped: positive is a step up,
-            /// negative a drop, zero flat. In flight (OBS_AIRBORNE, not swimming) OBS_GROUND_FIRST is instead the
-            /// level flight reach along the ray, and this is what climbing FLIGHT_CLIMB higher would add to it.
-            ///
-            /// The reach above collapses a wall, a cliff, a lava lake and the edge of the map into one number,
-            /// and this is what tells the first two apart -- which matters because they are opposite things to a
-            /// pair of legs. A step up is a wall to walk round; a drop is a shortcut worth taking when it is
-            /// shallow and a death when it is not, and a seat that cannot see which is which can only treat every
-            /// descent as forbidden.
-            OBS_STEP_FIRST          = OBS_GROUND_FIRST + RAY_COUNT,
-            /// **How far dry ground runs along each ray**, against OBS_GROUND_FIRST's "how far anything runs" --
-            /// so the gap between the two is water that way.
-            ///
-            /// Both come from the same navmesh raycast under different filters: NAV_GROUND alone stops at the
-            /// shore, NAV_GROUND | NAV_WATER swims on. Reading the pair together is the whole encoding -- equal
-            /// means a wall or a cliff (or a lava edge, which OBS_BURNS_FIRST names), and shore short of reach
-            /// means water that many yards away.
-            ///
-            /// How many yards *across* it is, this does not say. The wet filter crosses ground as well as water,
-            /// so past a shore it runs on over the far bank and stops at a wall: a two yard channel and the near
-            /// edge of a forty yard lake report the same thing. The bench at the Barrens oasis is what caught it
-            /// (`forge rays`). Width would need a ray starting past the shore under a water-only filter, and is
-            /// not measured.
-            OBS_SHORE_FIRST         = OBS_STEP_FIRST + RAY_COUNT,
-            /// **How near the liquid that burns is** along each ray -- magma or slime -- as 1 at the seat's feet
-            /// falling to 0 at the far end of the march, and exactly 0 where there is none.
-            ///
-            /// Reported apart from water because they are not the same lesson: water is somewhere to go and be
-            /// slowed, and magma is somewhere to die. Both come back as no reach, so without this the seat cannot
-            /// tell a lava lake from a cliff, and the arena that teaches crossing one at its narrow point has
-            /// nothing to teach with. It comes from a third ray whose filter may cross magma: where that one runs
-            /// past the ray that may not, the shorter one stopped at the burning edge.
-            OBS_BURNS_FIRST         = OBS_SHORE_FIRST + RAY_COUNT,
-            /// Water it is already in. Whether it is in it, whether its head is under it, and how long its head
-            /// has been under -- against the breath a character has, and zero for one that does not need to
-            /// breathe. Without the last of these, going in is free and "is this crossing worth it" has no
-            /// downside to weigh.
-            OBS_IN_WATER            = OBS_BURNS_FIRST + RAY_COUNT,
+            OBS_IN_WATER,
             OBS_SUBMERGED,
             OBS_SUBMERGED_TIME,
             OBS_SWIM_SPEED,                 // / 7 yards a second, so under 1 means water is slower
@@ -197,80 +154,21 @@ namespace Animus::Curriculum
         static constexpr float FALL_TIME_SCALE_MS = 3000.0f;
         static constexpr float FALL_HEIGHT_SCALE = 50.0f;
 
-        /// How far ahead the ground is read along each bearing, and the height change a seat can walk up or drop
-        /// down without it counting as a wall.
-        ///
-        /// PROBE_YARDS was one sample, twelve yards out, compared against the seat's own height: "is the point
-        /// twelve yards that way roughly level with me". That collapses a gentle rise into a wall -- three
-        /// yards of climb over twelve reads as no reach at all -- and it cannot see anything at thirteen. It is
-        /// kept as the nearest march cell and as the manifest's idea of a probe.
-        static constexpr float PROBE_YARDS = 12.0f;
+        /// The height change a seat can walk up or drop down without it counting as a wall, and how much more a
+        /// rise may be per yard of ground between two samples (a slope rather than a step): the travel encounter's
+        /// ledges and the layered fields' floors are judged by them.
         static constexpr float MAX_STEP = 2.5f;
-        /// **How far the seat can see along a bearing, and where it looks on the way.** Five cells rather than
-        /// one, each judged against the cell before it, so a slope is a slope and only a real step is a step.
-        /// What is reported is the distance to the first thing that stops the ray, which is a number that means
-        /// the same at six yards and at forty -- unlike the old reach, where a wall and a cliff and the edge of
-        /// the map were all 0 and everything else was 1.
-        ///
-        /// Geometry, not a route: the march says what is there, and choosing a bearing stays the policy's job.
-        static constexpr uint32 MARCH_CELLS = 5;
-        static constexpr float MARCH_RANGES[MARCH_CELLS] = { 6.0f, 12.0f, 20.0f, 30.0f, 40.0f };
-        static constexpr float MARCH_MAX = 40.0f;
-        /// In the air the rays are flown, not marched (Observe): looked along every FLIGHT_PITCH yards, and again
-        /// FLIGHT_CLIMB higher for whether climbing opens the way.
-        static constexpr float FLIGHT_PITCH = 0.5f;
-        static constexpr float FLIGHT_CLIMB = 8.0f;
-        /// When a march stops describing where the seat is. Forty map queries is too many to repeat every
-        /// decision, and it does not have to be repeated: the ground does not move. Redone when the seat has
-        /// walked MARCH_REFRESH_YARDS from where it was marched, turned MARCH_REFRESH_RADIANS from the heading
-        /// it was marched along, or MARCH_REFRESH_MS have passed -- movement first, because at seven yards a
-        /// second a clock alone goes stale inside the nearest cell.
-        static constexpr float MARCH_REFRESH_YARDS = 3.0f;
-        static constexpr float MARCH_REFRESH_RADIANS = 0.3926991f;      // half a bearing, 22.5 degrees
-        static constexpr uint32 MARCH_REFRESH_MS = 500;
-        /// Which of the three made a probe stale (the first that holds, in that order), counted for `forge status`.
-        static inline std::atomic<uint64> StaleMoved{ 0 };
-        static inline std::atomic<uint64> StaleTurned{ 0 };
-        static inline std::atomic<uint64> StaleClock{ 0 };
-        /// How far up or down the ground is looked for at a march cell, and how much of a rise or drop between
-        /// two cells is still walkable.
-        ///
-        /// The old probe looked for ground only within MAX_STEP of the seat and called everything else a wall,
-        /// which is why broken ground read as cliffs in every direction: three yards of climb over twelve was
-        /// "no reach at all". A cell is judged against the cell before it now, and the allowance grows with the
-        /// gap between them -- MAX_STEP for the discontinuity a step really is, plus MARCH_SLOPE for the ground
-        /// simply going uphill. Over a six yard gap that admits 5.5 yards of rise; over ten, 7.5.
-        static constexpr float MARCH_SEARCH = 20.0f;
         static constexpr float MARCH_SLOPE = 0.5f;
-        /// How far out clearance is measured against (the travel encounter's charge; no longer observed). Kept small
-        /// on purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
+        /// How far out clearance is measured (the travel encounter's clearance charge; never observed). Kept small on
+        /// purpose: findDistanceToWall searches outward through the polygon graph and the shared query has a
         /// 1024-node pool, and room beyond a few yards is not a thing a seat needs to tell apart.
         static constexpr float CLEARANCE_RANGE = 8.0f;
-        /// How much further the ray that may cross magma must run than the ray that may not, before the gap
-        /// between them is called a burning edge rather than float noise. Both rays start from one polygon and
-        /// share the mesh's 1.8 yd simplification error, so that error cancels and this only has to cover the
-        /// arithmetic.
-        static constexpr float BURN_EDGE_MARGIN = 0.5f;
-
-        /// Its layout revision: MoveControls::REVISION (3), past the bearing design's 0 and 1 and the controls' 2.
+        /// Its layout revision: MoveControls::REVISION (4), past the bearing design's 0 and 1, the controls' 2 and
+        /// the rays' removal.
         [[nodiscard]] uint32 Revision() const override { return MoveControls::REVISION; }
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
-        /// What the navmesh senses read standing at one point, as a table, for a console to print.
-        ///
-        /// This exists because every one of those senses is a Detour call, Detour's axes are {y, z, x} rather
-        /// than the world's, and a swizzle that is wrong is completely silent: the rays simply go somewhere
-        /// else and come back with plausible numbers about the wrong place. Nothing downstream can catch it.
-        /// An eval cannot catch it either -- it would show only as a policy that learns worse than it should,
-        /// after hours.
-        ///
-        /// So the rays are run here against geometry whose answer is already known -- a wall at a measured
-        /// distance, a corridor, the width of a lake that has been swum -- and read directly. It calls the same
-        /// NavRay and findDistanceToWall the probe calls, from the same kind of start polygon, so what it
-        /// prints is what a seat standing there would sense and not a second implementation of it.
-        static std::string RayReport(Map* map, float x, float y, float z, float facing);
-
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;

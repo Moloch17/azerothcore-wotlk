@@ -3472,7 +3472,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.Facing = seat.Facing;
-    view.Probe = &seat.Probe;
     view.Trail = &seat.Trail;
     // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View
     // replaces the closing rate with the one toward the objective where there is one.

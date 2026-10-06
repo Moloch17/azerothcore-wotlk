@@ -5332,10 +5332,10 @@ AnimusForge.Human.HardSpotShare = 0
 #
 #    The layered fields the dungeon wings' routes are planned over (per 1 yd cell every floor, the
 #    room above it, its liquid and its navmesh flags; about 0.3 MB a grid, made with
-#    `forge fieldstage <scenario>`). The move block's ground probe (reach, step, shore and burns
-#    along sixteen rays) and an airborne seat's flight rays are always measured live against the
-#    loaded geometry, whenever the seat has moved three yards, turned 22.5 degrees or half a second
-#    has passed; they read no field. (AnimusForge.Probe.Source and the baked probe tables are gone.)
+#    `forge fieldstage <scenario>`), and a realm's companions read (`forge fieldworld`). The move
+#    block no longer senses the ground at all (no ground or flight rays, no clearance: the camera
+#    sees for the seat), so nothing a seat observes reads a field. (AnimusForge.Probe.Source, the
+#    baked probe tables and `forge rays` are gone.)
 #
 #    AnimusForge.Probe.Dir
 #        Description: Where the layered fields are, one zstd-compressed file a grid (about 0.3 MB,

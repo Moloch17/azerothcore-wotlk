@@ -272,12 +272,8 @@ namespace Animus::Curriculum
         /// Where the seat is looking, in its own keeping rather than the spline's (SeatView::Facing). Seeded from
         /// the bot when an episode starts, because a default of 0 would aim every seat due east.
         float Facing = 0.0f;
-        /// What the ground looks like each way it could go, marched out to MARCH_MAX and reused until the seat
-        /// has moved or turned enough to make it stale.
-        /// Mutable because it is a cache and nothing else: observing a seat does not change it, but it does
-        /// refresh what the seat has already looked at, and ViewSeat reads a const seat.
-        mutable GroundProbe Probe;
-        /// Where it has been (MovementTrail), a cache like the probe: the move block samples it in place.
+        /// Where it has been (MovementTrail): the move block samples it in place, mutable because ViewSeat reads a
+        /// const seat.
         mutable MovementTrail Trail;
         /// Whether its legs are getting anywhere, measured for every seat in every arena
         /// (StageScenario::TrackMotion): where it was at the last observation and how far it has covered since
@@ -576,7 +572,6 @@ namespace Animus::Curriculum
             HasCoursePos = false;
             ControlChanges = 0;
             Facing = 0.0f;
-            Probe = GroundProbe();
             Trail.Clear();
             MotionHasLast = false;
             MotionTravelled = 0.0f;

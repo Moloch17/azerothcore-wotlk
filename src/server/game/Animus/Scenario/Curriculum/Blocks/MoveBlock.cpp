@@ -18,48 +18,31 @@
 
 #include "MoveBlock.h"
 #include "EncoderSupport.h"
-#include "GroundSense.h"
 #include "Layout.h"
 #include "MapWorldQuery.h"
 #include "SeatEncoder.h"
 #include "SeatView.h"
 #include "TravelBlock.h"
 #include "UnitBody.h"
-#include "DetourExtended.h"
-#include "DetourNavMeshQuery.h"
 #include "Map.h"
-#include "MapCollisionData.h"
 #include "MapDefines.h"
 #include "Player.h"
 #include "SpellAuraDefines.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <iomanip>
-#include <sstream>
 
 namespace
 {
     using Animus::Curriculum::MoveBlock;
     namespace Encoding = Animus::Curriculum::Encoding;
-    namespace Ground = Animus::Curriculum::GroundSense;
     namespace MC = Animus::Curriculum::MoveControls;
     namespace Mv = Animus::Movement;
-    using Ground::NavRay;
 
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
-
-    /// The same for a sensing ray: sixteenths of a turn, so ray 2 * b lies along bearing b and the odd rays fall
-    /// half way between two bearings, where a doorway sits as often as not.
-    float RayHeading(float facing, uint32 ray)
-    {
-        float const heading = facing - float(ray) * float(M_PI) / 8.0f;
-        return Position::NormalizeOrientation(heading);
-    }
 
     /// `to`'s direction in the seat's own frame: 0 straight ahead, wrapped to (-pi, pi].
     float RelativeBearing(Position const& from, float facing, WorldObject const& to)
@@ -78,93 +61,6 @@ namespace
     bool Airborne(Player const* bot)
     {
         return bot && (bot->IsInWater() || bot->CanFly());
-    }
-
-    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
-        Animus::Curriculum::GroundSense::Origin const& at, float facing,
-        std::chrono::steady_clock::time_point& partMark);
-
-    /// Redo the march if it has stopped describing where the seat is standing.
-    ///
-    /// Eighty height samples and forty-eight rays against the eight queries the old probe made is too much to
-    /// repeat every 250 ms for 128 environments, and it does not need repeating: the ground does not move, only
-    /// the seat does. Movement is the trigger that matters -- at seven yards a second a one-second-old march is seven
-    /// yards stale and its nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as
-    /// a backstop. Always measured live (revision 3): the baked tables and the layered fields it could be read from
-    /// are gone, since a seat on a grid without one read nothing at all.
-    void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, Position const& self, float facing)
-    {
-        Animus::Curriculum::GroundProbe* probe = view.Probe;
-        if (!probe)
-            return;
-
-        Map* map = bot->GetMap();   // non-const: Map::GetLiquidData is not a const member
-        if (!map)
-            return;
-
-        bool stale = !probe->Valid;
-        if (probe->Valid)
-        {
-            float const moved = self.GetExactDist(&probe->From);
-            float const turned = std::fabs(std::atan2(std::sin(facing - probe->Facing),
-                std::cos(facing - probe->Facing)));
-            stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
-                || view.NowMs - probe->Ms >= MoveBlock::MARCH_REFRESH_MS;
-            if (moved >= MoveBlock::MARCH_REFRESH_YARDS)
-                MoveBlock::StaleMoved.fetch_add(1, std::memory_order_relaxed);
-            else if (turned >= MoveBlock::MARCH_REFRESH_RADIANS)
-                MoveBlock::StaleTurned.fetch_add(1, std::memory_order_relaxed);
-            else if (stale)
-                MoveBlock::StaleClock.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (!stale)
-            return;
-
-        namespace Encoder = Animus::Curriculum::SeatEncoder;
-        auto probeMark = std::chrono::steady_clock::now();
-        auto partMark = probeMark;
-
-        Ground::Origin const at{ self.GetPositionX(), self.GetPositionY(), self.GetPositionZ(), bot->GetPhaseMask(),
-            bot->GetCollisionHeight() };
-        dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
-        RefreshLive(probe, map, query, at, facing, partMark);
-
-        probe->From.Relocate(self);
-        probe->Facing = facing;
-        probe->Ms = view.NowMs;
-        probe->Valid = true;
-        Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
-    }
-
-    /// The probe measured where the seat stands: the five-cell march and the rays along its sixteen headings, and
-    /// the room around it.
-    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
-        Animus::Curriculum::GroundSense::Origin const& at, float facing,
-        std::chrono::steady_clock::time_point& partMark)
-    {
-        namespace Encoder = Animus::Curriculum::SeatEncoder;
-        // The seat's own polygon, once for all sixteen rays.
-        dtPolyRef const startRef = Ground::StartPoly(query, at);
-
-        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-        {
-            float const heading = RayHeading(facing, ray);
-            partMark = std::chrono::steady_clock::now();
-            Ground::March const march = Ground::MarchBearing(map, at, heading, 0.0f);
-            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
-            Ground::Rays const rays = Ground::CastRays(query, startRef, at, heading);
-            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_RAYS, partMark);
-
-            Ground::Bearing const bearing = Ground::Combine(march, rays);
-            probe->Reach[ray] = bearing.Reach;
-            probe->Step[ray] = bearing.Step;
-            probe->Shore[ray] = bearing.Shore;
-            probe->Burns[ray] = bearing.Burns;
-        }
-
-        // How much room the seat has: one query, from the same polygon as the rays. Not observed (revision 3); the
-        // travel encounter's clearance charge reads it.
-        probe->Clearance = Ground::MeasureRoom(query, startRef, at).Clearance;
     }
 
     /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset
@@ -213,153 +109,6 @@ namespace
     }
 }
 
-std::string Animus::Curriculum::MoveBlock::RayReport(Map* map, float x, float y, float z, float facing)
-{
-    if (!map)
-        return "no map\n";
-
-    dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
-    if (!query)
-        return "no navmesh query on this map -- mmaps are not loaded for it\n";
-
-    dtQueryFilterExt filter;
-    filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-    filter.setExcludeFlags(0);
-    float const at[3] = { y, z, x };
-    float const extents[3] = { 3.0f, 5.0f, 3.0f };
-    dtPolyRef startRef = 0;
-    if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &startRef, nullptr)) || !startRef)
-        return "that point is not on the navmesh within {3, 5, 3} of itself\n";
-
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(2);
-
-    // Whether this is a room, by the same test the objective generator applies, and where the floor under it
-    // actually is. Both are here because a spawn point taken from a table of coordinates is a guess until
-    // something stands on it: an areatrigger's centre can sit in a courtyard, on a roof, or -- as the Astranaar
-    // inn's does -- in the gap between two storeys, where it is on no floor at all.
-    {
-        uint32 mogpFlags = 0;
-        int32 adtId = 0;
-        int32 rootId = 0;
-        int32 groupId = 0;
-        if (!map->GetAreaInfo(PHASEMASK_NORMAL, x, y, z, mogpFlags, adtId, rootId, groupId))
-            out << "  inside       no -- no building here at all\n";
-        else if ((mogpFlags & 0x8) != 0)
-            out << "  inside       no -- in a building, but this group is flagged outdoors\n";
-        else
-            out << "  inside       yes\n";
-
-        // Downward from just above the point, which is the core's own idiom: GetHeight cannot see a floor above
-        // where it starts, so a point given too high finds the storey below and one given too low finds nothing.
-        float const floor = map->GetHeight(PHASEMASK_NORMAL, x, y, z + 2.0f, true, 20.0f);
-        if (floor > INVALID_HEIGHT)
-            out << "  floor        z " << floor << ", which is " << (z - floor) << " below the point given\n";
-        else
-            out << "  floor        none within 20 yd below z " << (z + 2.0f) << "\n";
-        out << "\n";
-    }
-
-    out << "  ray          heading     dry     wet     all  beyond   burn\n";
-    out << "  -----------  -------  ------  ------  ------  ------  -----\n";
-
-    // The eight bearings by name and, between each pair, the ray that lies half way: "fwd|fr" is the ray
-    // between forward and forward-right.
-    static constexpr char const* NAMES[RAY_COUNT] =
-    {
-        "forward", "fwd|fr", "fwd-right", "fr|right", "right", "right|br", "back-right", "br|back",
-        "back", "back|bl", "back-left", "bl|left", "left", "left|fl", "fwd-left", "fl|fwd"
-    };
-
-    for (uint32 bearing = 0; bearing < RAY_COUNT; ++bearing)
-    {
-        float const heading = RayHeading(facing, bearing);
-        float const wet = NavRay(query, startRef, x, y, z, heading, MARCH_MAX, NAV_GROUND | NAV_WATER);
-        float const dry = NavRay(query, startRef, x, y, z, heading, MARCH_MAX, NAV_GROUND);
-        float const all = NavRay(query, startRef, x, y, z, heading, MARCH_MAX,
-            NAV_GROUND | NAV_WATER | NAV_MAGMA | NAV_SLIME);
-
-        out << "  " << std::setw(11) << std::left << (bearing < RAY_COUNT ? NAMES[bearing] : "?") << std::right
-            << "  " << std::setw(7) << (heading * 180.0f / float(M_PI))
-            << "  " << std::setw(6) << dry
-            << "  " << std::setw(6) << wet
-            << "  " << std::setw(6) << all;
-
-        // How much further the wet ray got than the dry one. This is NOT the width of the water, though the
-        // plan that asked for these rays said it was, and the first bench run at the Barrens oasis is what
-        // showed otherwise: the wet filter crosses water *and* ground, so once past a shore it keeps going over
-        // whatever is on the far side and stops only at a wall. A two yard channel and a two yard shore of a
-        // forty yard lake both report the same thirty-eight. What the seat actually gets from the pair is the
-        // distance to the water's edge, which is `dry`, and that is real and is new -- the plane it replaced
-        // was a yes or no sampled at five fixed ranges. Width would need a ray that starts past the shore and
-        // is filtered to water alone; it is not derived here and is not claimed anywhere.
-        if (wet >= 0.0f && dry >= 0.0f && wet > dry)
-            out << "  " << std::setw(6) << (wet - dry);
-        else
-            out << "       -";
-
-        if (all >= 0.0f && wet >= 0.0f && all > wet + BURN_EDGE_MARGIN)
-            out << "  " << std::setw(5) << wet;
-        else
-            out << "      -";
-        out << "\n";
-    }
-
-    // Clearance, which is the one number a wrong swizzle shows up in on its own: in a corridor it must be
-    // small, in open country it must run to the full search radius, and the way out must point at the middle
-    // of the corridor rather than into the wall.
-    float distance = 0.0f;
-    float hit[3] = { 0.0f, 0.0f, 0.0f };
-    float normal[3] = { 0.0f, 0.0f, 0.0f };
-    if (dtStatusSucceed(query->findDistanceToWall(startRef, at, CLEARANCE_RANGE, &filter, &distance, hit,
-        normal)))
-    {
-        bool const directed = distance < CLEARANCE_RANGE && std::isfinite(normal[0]) && std::isfinite(normal[2])
-            && normal[0] * normal[0] + normal[2] * normal[2] > 1e-6f;
-        float const away = directed ? std::atan2(normal[0], normal[2]) : 0.0f;
-        if (!directed)
-        {
-            out << "\n  clearance    nothing within " << CLEARANCE_RANGE << " yd, so no way out to point at\n";
-        }
-        else
-        {
-            out << "\n  clearance    " << distance << " yd of " << CLEARANCE_RANGE
-                << ", the way out bears " << (away * 180.0f / float(M_PI)) << " deg world, "
-                << (std::atan2(std::sin(away - facing), std::cos(away - facing)) * 180.0f / float(M_PI))
-                << " deg from the facing\n";
-            out << "  nearest edge (" << hit[2] << ", " << hit[0] << ", " << hit[1] << ") world xyz\n";
-        }
-
-        // Three ways of measuring one wall, which must agree.
-        //
-        // This is the check the whole command exists for. Detour's axes are {y, z, x}, and a swizzle that is
-        // wrong returns plausible numbers about the wrong place, which no amount of staring at terrain will
-        // settle -- the ground around a lake is irregular enough to explain almost any reading. So the wall is
-        // measured three independent ways instead: the distance findDistanceToWall reports, the distance to the
-        // coordinates it hands back, and how far a ray cast at that wall's own bearing runs before it stops.
-        //
-        // The first two agreeing proves the input point and the returned position use the convention this code
-        // thinks they do. The third agreeing proves the ray's direction does too, because it is built from
-        // sin and cos of a bearing rather than from a position. Nothing here depends on knowing the terrain,
-        // so it is a real test anywhere there is a wall within range.
-        if (distance < CLEARANCE_RANGE)
-        {
-            float const edgeX = hit[2];
-            float const edgeY = hit[0];
-            float const measured = std::sqrt((edgeX - x) * (edgeX - x) + (edgeY - y) * (edgeY - y));
-            float const toEdge = std::atan2(edgeY - y, edgeX - x);
-            float const along = NavRay(query, startRef, x, y, z, toEdge, MARCH_MAX, NAV_GROUND | NAV_WATER);
-            out << "  self-check   reported " << distance << " yd, its coordinates are " << measured
-                << " yd away, a ray at its bearing stops at " << along << " yd -- these must agree\n";
-        }
-    }
-    else
-    {
-        out << "\n  clearance    no wall within " << CLEARANCE_RANGE << " yd\n";
-    }
-
-    return out.str();
-}
 Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
 {
     return BlockSize{ OBS_COUNT, MC::ACTION_COUNT };
@@ -368,7 +117,6 @@ Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& 
 void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
 {
     block["controls"] = "player-controller";
-    block["rays"] = uint32(RAY_COUNT);
     block["trail_samples"] = uint32(TRAIL_SAMPLES);
     block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
     boost::json::array turns;
@@ -386,16 +134,8 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["step_up"] = double(Mv::STEP_UP);
     block["fall_time_scale_ms"] = double(FALL_TIME_SCALE_MS);
     block["fall_height_scale"] = double(FALL_HEIGHT_SCALE);
-    block["probe_yards"] = double(PROBE_YARDS);
-    boost::json::array ranges;
-    for (float range : MARCH_RANGES)
-        ranges.push_back(double(range));
-    block["march_ranges"] = std::move(ranges);
-    block["march_max"] = double(MARCH_MAX);
-    // The ground probe is always the live five-cell march and the navmesh rays along the sixteen rays (revision 3):
-    // the baked tables and layered fields it could be read from are gone, and with them the manifest's
-    // "ground_probe" object and the clearance columns.
-    block["ground_probe"] = "live";
+    // No ground rays, flight rays or clearance since revision 4: the camera (the vision block) is how a seat sees.
+    block["ground_probe"] = "none";
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
@@ -506,61 +246,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             out[OBS_OBJECTIVE_NEAR] = std::min(1.0f, range / YARD_SCALE);
         }
 
-        // What the ground is like each way it could go. Skipped in the air and in the water, where the ground is
-        // not what the seat is steering against and the samples would only report the bottom.
-        if (!airborne)
-        {
-            RefreshProbe(view, bot, self, facing);
-            if (GroundProbe const* probe = view.Probe)
-                for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
-                {
-                    out[OBS_GROUND_FIRST + ray] = probe->Reach[ray];
-                    out[OBS_STEP_FIRST + ray] = probe->Step[ray];
-                    out[OBS_SHORE_FIRST + ray] = probe->Shore[ray];
-                    out[OBS_BURNS_FIRST + ray] = probe->Burns[ray];
-                }
-
-        }
-        else
-        {
-            // Off the ground there is nothing underfoot to walk onto or refuse: every way is open, the ground
-            // changes by nothing, and a seat that is swimming is surrounded by the water it is in. The march
-            // is dropped rather than kept, so the first one made after coming ashore is a fresh one -- and the
-            // clearance it held goes with it, because the travel encounter's clearance charge reads the probe
-            // too, and was charging a swimmer for the bank it stood beside before it got in.
-            // In the air the rays sense what a flyer steers against: how far it can fly level along each bearing
-            // before something solid (a collision ray at the seat's altitude, and the terrain rising above it), in
-            // the reach's slot, and in the step's whether climbing FLIGHT_CLIMB higher opens the way -- positive
-            // where it does, negative where it closes it. OBS_AIRBORNE tells the policy which meaning it is
-            // reading. Measured live (~1.3 us a ray). A swimmer's rays stay open, as they were.
-            bool const flying = !bot->IsInWater();
-            Map* map = bot->GetMap();
-            float const z = self.GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
-            for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
-            {
-                float reach = 1.0f;
-                float climb = 0.0f;
-                if (flying && map)
-                {
-                    float const heading = RayHeading(facing, ray);
-                    float const level = Ground::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(), z,
-                        heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = Ground::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
-                        z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
-                    reach = level / MARCH_MAX;
-                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
-                }
-                out[OBS_GROUND_FIRST + ray] = reach;
-                out[OBS_STEP_FIRST + ray] = climb;
-                out[OBS_SHORE_FIRST + ray] = bot->IsInWater() ? 0.0f : 1.0f;
-            }
-            if (view.Probe)
-            {
-                view.Probe->Valid = false;
-                view.Probe->Clearance = 1.0f;
-            }
-        }
-
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.BreathSpent);
@@ -570,7 +255,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
 
     // The way round against the way through, and whether the legs are getting anywhere. All three are the
     // scenario's to measure -- one at the episode's build, two over the last second -- because none of them can
-    // be seen from a probe of any length.
+    // be seen from where the seat stands.
     out[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
     out[OBS_MOVE_RATE] = std::clamp(view.MoveRate, 0.0f, 1.0f);
     out[OBS_CLOSE_RATE] = std::clamp(view.CloseRate, -1.0f, 1.0f);

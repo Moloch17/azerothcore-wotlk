@@ -25,10 +25,10 @@
 class Map;
 class dtNavMeshQuery;
 
-/// What the move block's ground probe measures, as functions of a place and a heading rather than of a seat.
-///
-/// It takes where the seat stands, its phase and its height as numbers rather than a Player, and measures live
-/// against the loaded geometry: the move block's probe (MoveBlock::RefreshProbe) and `forge rays` are its callers.
+/// How much room a seat has on the navmesh, as a function of a place rather than of a seat: what is left of the move
+/// block's ground probe once its rays went (move block revision 4). Its one caller is the travel encounter's
+/// clearance charge (TravelEncounter's SeatClearance), only while that charge is on; nothing in a seat's
+/// observation queries the navmesh.
 namespace Animus::Curriculum::GroundSense
 {
     /// Where a measurement is taken from.
@@ -41,32 +41,6 @@ namespace Animus::Curriculum::GroundSense
         float Collision = 2.0f;         // the height of whoever stands there (liquid depth is judged against it)
     };
 
-    /// The height march along one heading: how far it got, what stopped it.
-    struct March
-    {
-        float Reach = 1.0f;             // yards walked before something stopped it / MARCH_MAX
-        float Step = 0.0f;              // the height change that stopped it (or the steepest walked), / allowance
-        float Water = 0.0f;             // 1 when it crossed swimmable water
-        float Burns = 0.0f;             // 1 when it stopped at magma or slime
-    };
-
-    /// The three navmesh rays along one heading, in yards; negative is no answer (off the mesh, a failed query).
-    struct Rays
-    {
-        float Wet = -1.0f;              // ground and water
-        float Dry = -1.0f;              // ground alone
-        float All = -1.0f;              // anything liquid, magma and slime included
-    };
-
-    /// One bearing as the observation carries it: GroundProbe's Reach, Step, Shore and Burns.
-    struct Bearing
-    {
-        float Reach = 1.0f;
-        float Step = 0.0f;
-        float Shore = 1.0f;
-        float Burns = 0.0f;
-    };
-
     /// How much room there is, and which way is out, in the world's frame.
     struct Room
     {
@@ -75,32 +49,10 @@ namespace Animus::Curriculum::GroundSense
         float Away = 0.0f;              // and its world angle when there is
     };
 
-    /// The seat's own polygon, for every ray from `at`; 0 when the mesh does not cover it.
+    /// The seat's own polygon; 0 when the mesh does not cover it.
     dtPolyRef StartPoly(dtNavMeshQuery const* query, Origin const& at);
 
-    /// Yards along `heading` before the mesh refuses `includeFlags`, up to `range`; negative is no answer.
-    float NavRay(dtNavMeshQuery const* query, dtPolyRef startRef, float x, float y, float z, float heading,
-        float range, uint16 includeFlags);
-
-    /// The height march. `pitch` 0 is the five cells of MoveBlock::MARCH_RANGES; above 0 it samples every `pitch`
-    /// yards out to MARCH_MAX, judging each sample against the one before for a step and against the ground
-    /// MARCH_WINDOW behind it for a slope, so a gap narrower than a cell cannot be stepped over.
-    March MarchBearing(Map* map, Origin const& at, float heading, float pitch);
-
-    Rays CastRays(dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at, float heading);
-
-    /// The march and the rays made one bearing: the nearer of the two senses wins.
-    Bearing Combine(March const& march, Rays const& rays);
-
     Room MeasureRoom(dtNavMeshQuery const* query, dtPolyRef startRef, Origin const& at);
-
-    /// The flight sense: yards of open air ahead along `heading` from (x, y, z), level, out to `range` -- the static
-    /// collision's first hit along the line, or the terrain rising above it, looked at every `pitch`.
-    float LiveFlightReach(Map* map, float x, float y, float z, float heading, float range, float pitch);
-
-    /// How far behind a dense march's sample the slope is judged from: the first legacy cell's gap, so a dense
-    /// march admits the same climb over the same distance as the five cells did.
-    constexpr float MARCH_WINDOW = 6.0f;
 }
 
 #endif

@@ -173,32 +173,6 @@ namespace Animus::Curriculum
 
     /// A hostile ground effect: where its centre is and how wide it is, so a seat can see both which way out is
     /// shortest and, for one it is not in yet, which way not to walk.
-    /// The ray march along each of the SENSE_RAYS rays, kept between decisions.
-    ///
-    /// A march is eighty height samples and forty-eight navmesh rays where the old single probe was eight, which
-    /// is too much to redo every 250 ms for 128 environments. It does not have to be: the ground forty yards out
-    /// does not change, only the seat's place in it, so the march is redone when the seat has walked far enough
-    /// or turned far enough for the old one to be describing somewhere else -- the same trick the hazard search
-    /// already uses, with the triggers that matter here. A plain clock will not do, because at seven yards a
-    /// second a one-second-old march is seven yards stale and the nearest cell it reports is six.
-    ///
-    /// Sixteen rays: a gully's mouth or a doorway sits between two 45-degree rays as often as on one, and a seat
-    /// that cannot see it cannot choose the turn that lines it up.
-    struct GroundProbe
-    {
-        float Reach[SENSE_RAYS] = {};           // distance to the first obstruction along each ray / MARCH_MAX
-        float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
-        float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
-        float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
-        /// Yards to the nearest edge of walkable space / CLEARANCE_RANGE: not observed (move block revision 3), only
-        /// the travel encounter's clearance charge reads it.
-        float Clearance = 1.0f;
-        Position From;                          // where it was marched from
-        float Facing = 0.0f;                    // and which way the seat was looking at the time
-        uint32 Ms = 0;
-        bool Valid = false;
-    };
-
     /// Where the seat has been: its last TRAIL_SAMPLES positions, one every INTERVAL_MS, kept between decisions
     /// and read back in the seat's own frame (MoveBlock::OBS_TRAIL_FIRST). A policy has memory, but a recurrent
     /// state is a poor place to keep a map, and the episodes a trained policy loses are lost rather than wedged:
@@ -327,10 +301,8 @@ namespace Animus::Curriculum
         /// **Where the seat is looking**: the frame every bearing it observes is measured off. The controlled body's
         /// yaw (Movement::BodyState::Yaw) once the controller steps it; seeded from the bot at an episode's start.
         float Facing = 0.0f;
-        /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
-        /// refreshed in place, exactly as the hazard search is.
-        GroundProbe* Probe = nullptr;
-        /// Where it has been, the same way: sampled in place by the move block once a second.
+        /// Where it has been, borrowed rather than copied: Observe is const, but the move block samples it in
+        /// place once a second.
         MovementTrail* Trail = nullptr;
         /// **The keys and mouse it holds** (MoveControls::SeatControls, MoveBlock), and the body the player
         /// controller moves with them (Movement::BodyState). Borrowed like the probe; null for a view without them,

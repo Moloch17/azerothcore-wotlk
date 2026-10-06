@@ -38,6 +38,7 @@
 #include "MarkerReach.h"
 #include "UnitBody.h"
 #include "TravelBlock.h"
+#include "GroundSense.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -46,6 +47,32 @@
 #include <fstream>
 #include <limits>
 #include <set>
+
+namespace
+{
+    /// How much room the seat has, / MoveBlock::CLEARANCE_RANGE: yards to the nearest edge of walkable space from
+    /// where its body is (the controller's, as a client knows it; the server's before it starts), measured on the
+    /// navmesh. 1 where the mesh does not cover it.
+    float SeatClearance(Animus::Curriculum::SeatState const& seat, Player* bot)
+    {
+        Map* map = bot->GetMap();
+        if (!map)
+            return 1.0f;
+        namespace Ground = Animus::Curriculum::GroundSense;
+        Ground::Origin at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
+            bot->GetCollisionHeight() };
+        if (seat.Mover.Started())
+        {
+            at.X = seat.Mover.Body.X;
+            at.Y = seat.Mover.Body.Y;
+            at.Z = seat.Mover.Body.Z;
+        }
+        dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
+        if (!query)
+            return 1.0f;
+        return Ground::MeasureRoom(query, Ground::StartPoly(query, at), at).Clearance;
+    }
+}
 
 namespace
 {
@@ -1758,11 +1785,14 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // Room to move, charged by the second like a hazard and capped the same way. A seat scraping a wall is not
     // doing anything wrong in open country -- there is nothing out there to scrape -- but it is how a seat wedges
     // itself in a doorway, and the charge has to stay small enough that going through the doorway still plainly
-    // wins. Measured off the seat's own probe, so it costs nothing extra to ask.
-    if (!travel.Arrived && bot->IsAlive() && stepMs)
+    // wins. Measured here, for the charge alone (the move block no longer senses the ground): one
+    // findDistanceToWall from the seat's own polygon, out to CLEARANCE_RANGE, only while the charge is on. Off the
+    // ground -- swimming or flying -- there is nothing to scrape, as there never was.
+    if (!travel.Arrived && bot->IsAlive() && stepMs && tuning.ClearanceMargin > 0.0f
+        && !bot->IsInWater() && !bot->CanFly())
     {
-        float const clearance = seat.Probe.Clearance * MoveBlock::CLEARANCE_RANGE;
-        if (tuning.ClearanceMargin > 0.0f && clearance < tuning.ClearanceMargin)
+        float const clearance = SeatClearance(seat, bot) * MoveBlock::CLEARANCE_RANGE;
+        if (clearance < tuning.ClearanceMargin)
         {
             float const seconds = float(stepMs) / 1000.0f;
             float const crowding = (tuning.ClearanceMargin - clearance) / tuning.ClearanceMargin;

@@ -57,12 +57,6 @@ namespace
     /// The decision the turn rate is chosen for: the rate whose swing over one decision best fits the error.
     constexpr float DECISION_SECONDS = 0.25f;
     constexpr float CRUISE_HEIGHT_YARDS = 20.0f;
-    /// How much walkable ground is worth against pointing the right way, when choosing a heading among the rays. At
-    /// 1.0 a ray onto ground the seat can cross beats one aimed straight at the objective and into a cliff, and a
-    /// 45-degree detour onto good ground beats a blocked straight line -- which is the whole difference between
-    /// steering and holding forward.
-    constexpr float GROUND_OVER_AIM = 1.0f;
-
     /// A seat's row, read by block: features and actions by their block-relative index.
     class Row
     {
@@ -531,31 +525,16 @@ namespace
         return row.Allowed(BlockId::Move, MC::ACTION_TURN_FIRST + best);
     }
 
-    /// Steer toward `heading` over ground it can actually cross: the ray (sixteen round the seat, ray r at r * 22.5
-    /// degrees clockwise of ahead) that best weighs pointing the right way against walkable reach, turned to with
-    /// TurnToward, then held forward. Holding forward alone is what this did before the rays, and why the scripted
-    /// baseline arrived in 8% of its episodes against a trained policy's 99%: forward is right only until something
-    /// is in front of it.
+    /// Steer toward `heading`, turned to with TurnToward, then held forward. The move block has no ground rays since
+    /// its revision 4 (the camera sees for the seat), so this steers straight at the heading, as it did before them:
+    /// forward is right only until something is in front of it.
     std::optional<int32> Seek(Row const& row, float headingSin, float headingCos)
     {
         namespace MC = MoveControls;
         if (!row.Has(BlockId::Move))
             return std::nullopt;
 
-        float const heading = std::atan2(headingSin, headingCos);
-        float best = heading;
-        float bestScore = -1e9f;
-        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-        {
-            float const angle = -float(ray) * 2.0f * float(M_PI) / float(MoveBlock::RAY_COUNT);
-            float const score = std::cos(heading - angle)
-                + GROUND_OVER_AIM * row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + ray);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = angle;
-            }
-        }
+        float const best = std::atan2(headingSin, headingCos);
 
         if (std::optional<int32> turn = TurnToward(row, std::sin(best), std::cos(best)))
             return turn;
