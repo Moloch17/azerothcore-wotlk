@@ -351,7 +351,8 @@ namespace
             EXPECT_LT(under, frames.size()) << label;
         }
         Gv::DiffReport const diff = Gv::RunDiff(renderer, scene, world, DataWorld::PHASE, settings, frames,
-            Env("FORGE_VISION_EMULATE") != nullptr);
+            Env("FORGE_VISION_EMULATE") != nullptr, Env("FORGE_VISION_REPEATS")
+            ? uint32_t(std::max(1, std::atoi(Env("FORGE_VISION_REPEATS")))) : 1);
         for (std::string const& line : Gv::FormatDiff(diff))
             std::cout << "[" << label << "] " << line << "\n";
         EXPECT_EQ(diff.ScalarsExact, diff.Frames);

@@ -129,7 +129,8 @@ Animus::GpuVision::Renderer::~Renderer()
     for (auto& [key, terrain] : _terrain)
         Release(terrain.Device);
     for (auto& [key, tree] : _statics)
-        for (Buffer* buffer : { &tree->Top, &tree->Slots, &tree->Instances, &tree->Models })
+        for (Buffer* buffer : { &tree->Top, &tree->Slots, &tree->LiquidTop, &tree->LiquidSlots, &tree->Instances,
+            &tree->Models })
             Release(*buffer);
     for (auto& scene : _scenes)
         if (scene)
@@ -305,6 +306,8 @@ int32_t Animus::GpuVision::Renderer::Sync(SceneSource const& source, std::string
             {
                 if (!UploadWords(tree.Top, tree.Scene.Top, error)
                     || !UploadWords(tree.Slots, tree.Scene.Slots, error)
+                    || !UploadWords(tree.LiquidTop, tree.Scene.LiquidTop, error)
+                    || !UploadWords(tree.LiquidSlots, tree.Scene.LiquidSlots, error)
                     || !UploadWords(tree.Instances, tree.Scene.Instances, error))
                     return -1;
                 // The model pool only grows: the new tail, or all of it when the buffer had to move.
@@ -361,6 +364,8 @@ Animus::GpuVision::SceneView const& Animus::GpuVision::Renderer::HostView(int32_
     {
         view.Top = scene.Tree->Scene.Top.data();
         view.Slots = scene.Tree->Scene.Slots.data();
+        view.LiquidTop = scene.Tree->Scene.LiquidTop.data();
+        view.LiquidSlots = scene.Tree->Scene.LiquidSlots.data();
         view.Instances = scene.Tree->Scene.Instances.data();
         view.Models = scene.Tree->Scene.Models.Data().data();
     }
@@ -388,8 +393,12 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     std::size_t castBytes = 0;
     uint32_t maxCast = 0;
     uint32_t maxPixels = 0;
+    uint32_t maxCastWidth = 0;
+    uint32_t maxCastHeight = 0;
     for (FrameRequest const& request : requests)
     {
+        maxCastWidth = std::max(maxCastWidth, request.CastWidth);
+        maxCastHeight = std::max(maxCastHeight, request.CastHeight);
         imageBytes = std::max<std::size_t>(imageBytes, request.ImageOffset
             + std::size_t(request.Width) * request.Height * Vi::BYTES_PER_PIXEL);
         castBytes = std::max<std::size_t>(castBytes, request.ScratchOffset
@@ -412,6 +421,8 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
         {
             view.Top = static_cast<uint32_t const*>(scene.Tree->Top.Pointer);
             view.Slots = static_cast<uint32_t const*>(scene.Tree->Slots.Pointer);
+            view.LiquidTop = static_cast<uint32_t const*>(scene.Tree->LiquidTop.Pointer);
+            view.LiquidSlots = static_cast<uint32_t const*>(scene.Tree->LiquidSlots.Pointer);
             view.Instances = static_cast<uint32_t const*>(scene.Tree->Instances.Pointer);
             view.Models = static_cast<uint32_t const*>(scene.Tree->Models.Pointer);
         }
@@ -446,6 +457,8 @@ bool Animus::GpuVision::Renderer::Cast(std::vector<FrameRequest> const& requests
     launch.RequestCount = uint32_t(requests.size());
     launch.MaxCastPixels = maxCast;
     launch.MaxPixels = maxPixels;
+    launch.MaxCastWidth = maxCastWidth;
+    launch.MaxCastHeight = maxCastHeight;
     launch.Units = static_cast<DeviceUnit const*>(_units.Pointer);
     launch.Scenes = static_cast<SceneView const*>(_views.Pointer);
     launch.Scratch = static_cast<uint8_t*>(_scratch.Pointer);
@@ -515,16 +528,17 @@ Animus::GpuVision::SceneReport Animus::GpuVision::Renderer::Report(int32_t index
     if (Static const* tree = scene.Tree)
     {
         StaticScene const& packed = tree->Scene;
-        report.Slots = uint32_t(packed.Slots.size());
+        report.Slots = uint32_t(packed.SlotTable.size());
         report.CpuLoadedSlots = tree->CpuLoaded;
         report.LoadedSlots = packed.LoadedSlots;
         report.CpuTriangles = tree->CpuTriangles;
-        for (uint32_t slot = 0; slot < packed.Slots.size(); ++slot)
-            if (packed.Slots[slot] != NO_INSTANCE)
+        for (uint32_t slot = 0; slot < packed.SlotTable.size(); ++slot)
+            if (packed.SlotTable[slot] != NO_INSTANCE)
                 report.Triangles += packed.Models.CountsOf(packed.SlotModels[slot]).Triangles;
         report.Models = packed.Models.Models();
         report.Counts = packed.Models.Counts();
-        report.StaticBytes = (packed.Top.size() + packed.Slots.size() + packed.Instances.size()
+        report.StaticBytes = (packed.Top.size() + packed.Slots.size() + packed.LiquidTop.size()
+            + packed.LiquidSlots.size() + packed.Instances.size()
             + packed.Models.Data().size()) * sizeof(uint32_t);
     }
     report.Doors = scene.Doors.Count;
@@ -566,11 +580,11 @@ Animus::GpuVision::GridReport Animus::GpuVision::Renderer::ReportGrid(int32_t in
     float const highX = lowX + Vi::GRID_SIZE;
     float const highY = lowY + Vi::GRID_SIZE;
     std::vector<VMAP::WorldModel const*> seen;
-    for (uint32_t slot = 0; slot < packed.Slots.size(); ++slot)
+    for (uint32_t slot = 0; slot < packed.SlotTable.size(); ++slot)
     {
-        if (packed.Slots[slot] == NO_INSTANCE)
+        if (packed.SlotTable[slot] == NO_INSTANCE)
             continue;
-        uint32_t const* record = &packed.Instances[std::size_t(packed.Slots[slot]) * INSTANCE_WORDS];
+        uint32_t const* record = &packed.Instances[std::size_t(packed.SlotTable[slot]) * INSTANCE_WORDS];
         uint32_t const* bound = record + INSTANCE_BOUND;
         if (AsFloat(bound[3]) < lowX || AsFloat(bound[0]) > highX || AsFloat(bound[4]) < lowY
             || AsFloat(bound[1]) > highY)

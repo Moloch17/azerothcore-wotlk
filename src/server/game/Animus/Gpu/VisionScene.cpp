@@ -253,9 +253,7 @@ bool Animus::GpuVision::StaticScene::Sync(VMAP::StaticMapTree const& tree, Liqui
     uint32_t const count = tree.GetTreeValueCount();
     if (Top.empty() || SlotModels.size() != count)
     {
-        Top.assign(BIH_WORDS, 0);
-        PackBih(tree.GetTree(), Top, 0);
-        Slots.assign(count, NO_INSTANCE);
+        SlotTable.assign(count, NO_INSTANCE);
         SlotModels.assign(count, nullptr);
         SlotInstance.assign(count, NO_INSTANCE);
         Instances.clear();
@@ -275,7 +273,7 @@ bool Animus::GpuVision::StaticScene::Sync(VMAP::StaticMapTree const& tree, Liqui
         SlotModels[slot] = model;
         if (!model)
         {
-            Slots[slot] = NO_INSTANCE;
+            SlotTable[slot] = NO_INSTANCE;
             --LoadedSlots;
             continue;
         }
@@ -286,10 +284,44 @@ bool Animus::GpuVision::StaticScene::Sync(VMAP::StaticMapTree const& tree, Liqui
         }
         uint32_t const offset = Models.Acquire(model, deadly);
         PackInstance(values[slot], offset, &Instances[std::size_t(SlotInstance[slot]) * INSTANCE_WORDS]);
-        Slots[slot] = SlotInstance[slot];
+        SlotTable[slot] = SlotInstance[slot];
         ++LoadedSlots;
     }
+    if (changed)
+        BuildTrees();
     return changed;
+}
+
+void Animus::GpuVision::StaticScene::BuildTrees()
+{
+    // Each tree over the loaded spawns' own bounds (the CPU tree's primitives), its objects mapped to the instance
+    // records: every spawn the CPU's walk could reach and no other, so the nearest hit is the same.
+    auto const build = [&](bool liquidsOnly, Words& top, Words& slots)
+    {
+        std::vector<G3D::AABox> bounds;
+        slots.clear();
+        for (uint32_t slot = 0; slot < SlotTable.size(); ++slot)
+        {
+            uint32_t const instance = SlotTable[slot];
+            if (instance == NO_INSTANCE)
+                continue;
+            uint32_t const* record = &Instances[std::size_t(instance) * INSTANCE_WORDS];
+            // ModelInstance::intersectLiquid: an M2 has none, nor has a model without a liquid surface.
+            if (liquidsOnly && ((record[INSTANCE_FLAGS] & SPAWN_M2) || !Models.CountsOf(SlotModels[slot]).Liquids))
+                continue;
+            uint32_t const* b = record + INSTANCE_BOUND;
+            bounds.emplace_back(G3D::Vector3(AsFloat(b[0]), AsFloat(b[1]), AsFloat(b[2])),
+                G3D::Vector3(AsFloat(b[3]), AsFloat(b[4]), AsFloat(b[5])));
+            slots.push_back(instance);
+        }
+        BIH bih;
+        auto const boundsOf = [](G3D::AABox const& box, G3D::AABox& out) { out = box; };
+        bih.build(bounds, boundsOf);
+        top.assign(BIH_WORDS, 0);
+        PackBih(bih, top, 0);
+    };
+    build(false, Top, Slots);
+    build(true, LiquidTop, LiquidSlots);
 }
 
 bool Animus::GpuVision::DoorScene::Sync(DynamicMapTree const& tree, LiquidDeadly const& deadly)

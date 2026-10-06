@@ -62,8 +62,8 @@ namespace
     {
         lines.push_back(Acore::StringFormat("  {}: {} of {} pixels identical within the tolerances ({}), {} "
             "byte-exact; non-edge {} identical (gate 99.9%); edge mismatches {} of all (gate ~1%)", name,
-            tally.Identical, tally.Pixels, Percent(tally.Identical, tally.Pixels), Percent(tally.ExactBytes, tally.Pixels),
-            Percent(tally.Identical, tally.NonEdge()), Percent(tally.EdgeMismatches, tally.Pixels)));
+            tally.Identical, tally.Pixels, Percent(tally.Identical, tally.Pixels),
+            Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()), Percent(tally.EdgeMismatches, tally.Pixels)));
         lines.push_back(Acore::StringFormat("    mismatches by cause: kind {}, objective {}, distance {}, height {}, "
             "normal {}", tally.Kind, tally.Objective, tally.Distance, tally.Height, tally.Normal));
         if (!tally.KindPairs.empty())
@@ -212,7 +212,7 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
 
 Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int32_t scene,
     Vision::VisionWorld const& world, uint32_t phaseMask, Vision::Settings const& settings,
-    std::vector<DiffFrame> const& frames, bool emulate)
+    std::vector<DiffFrame> const& frames, bool emulate, uint32_t repeats)
 {
     DiffReport report;
     report.Frames = uint32_t(frames.size());
@@ -277,6 +277,13 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
         report.Device = renderer.Cast(requests, units, images, casts, report.Gpu, report.DeviceError);
         if (report.Device)
             compare(images, casts, report.GpuTally);
+        for (uint32_t i = 1; report.Device && i < repeats; ++i)
+        {
+            CastTiming again;
+            if (!renderer.Cast(requests, units, images, casts, again, report.DeviceError))
+                break;
+            report.Gpu.KernelMs = std::min(report.Gpu.KernelMs, again.KernelMs);
+        }
     }
     else
         report.DeviceError = "no device library loaded";

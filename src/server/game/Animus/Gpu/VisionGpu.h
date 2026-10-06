@@ -162,6 +162,8 @@ namespace Animus::GpuVision
             StaticScene Scene;
             Buffer Top;
             Buffer Slots;
+            Buffer LiquidTop;
+            Buffer LiquidSlots;
             Buffer Instances;
             Buffer Models;
             std::size_t UploadedModelWords = 0;

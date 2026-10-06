@@ -103,8 +103,12 @@ namespace Animus::GpuVision
         ModelCounts _counts;
     };
 
-    /// A static tree's packing: its BIH (Top), each slot's instance (Slots, NO_INSTANCE where the spawn has no
-    /// model), the instances and their models. Sync follows the tree: a spawn whose tile has loaded since is added.
+    /// A static tree's packing: each slot's instance (SlotTable, NO_INSTANCE where the spawn has no model), the
+    /// instances and their models, and two BIHs the kernel walks in place of the CPU tree's: Top over the loaded
+    /// spawns' bounds (Slots: its objects' instances) and LiquidTop over those of them with a WMO liquid
+    /// (LiquidSlots). The CPU tree is built over every spawn of the map, most of them in tiles never loaded, and a
+    /// ray walks all of their leaves; these hold only what a ray can hit, which is the same nearest hit. Sync
+    /// follows the tree: a spawn whose tile has loaded since is added, and both BIHs are rebuilt.
     class StaticScene
     {
     public:
@@ -113,12 +117,18 @@ namespace Animus::GpuVision
 
         Words Top;
         Words Slots;
+        Words LiquidTop;
+        Words LiquidSlots;
+        Words SlotTable;
         Words Instances;
         ModelPool Models;
         /// The model each slot was packed with (null: none), and its instance's index.
         std::vector<VMAP::WorldModel const*> SlotModels;
         std::vector<uint32_t> SlotInstance;
         uint32_t LoadedSlots = 0;
+
+    private:
+        void BuildTrees();
     };
 
     /// A map instance's doors (its dynamic tree's game object models): their records, the 64 x 64 cell table (an

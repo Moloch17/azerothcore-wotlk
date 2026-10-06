@@ -95,9 +95,12 @@ namespace Animus::GpuVision
     };
 
     /// Casts `frames` on the CPU (over `world`, as the seat's camera does) and on the renderer's scene `scene`
-    /// (already synced from the same map), and compares them. `emulate` adds the host-run kernel's column.
+    /// (already synced from the same map), and compares them. `emulate` adds the host-run kernel's column;
+    /// `repeats` casts the launch that many times on the device and keeps the fastest kernel time (a shared GPU
+    /// is noisy), comparing the first.
     [[nodiscard]] DiffReport RunDiff(Renderer& renderer, int32_t scene, Vision::VisionWorld const& world,
-        uint32_t phaseMask, Vision::Settings const& settings, std::vector<DiffFrame> const& frames, bool emulate);
+        uint32_t phaseMask, Vision::Settings const& settings, std::vector<DiffFrame> const& frames, bool emulate,
+        uint32_t repeats = 1);
 
     /// Compares one cast frame (w x h, row 0 on top) of the CPU's with another's, into `tally`.
     void CompareFrame(uint8_t const* cpu, uint8_t const* other, uint32_t w, uint32_t h, DiffTally& tally);

@@ -229,8 +229,9 @@ TEST(VisionGpuTest, PackedSpawnCastsAsModelInstance)
                 &cpuNormal);
             float gpuDistance = reach;
             Gv::V3 gpuNormal = Gv::Make(0.0f, 0.0f, 0.0f);
+            Gv::BihStackNode nodes[Gv::SHARED_STACK];
             bool const gpuHit = Gv::InstanceRay(record, pool.data(), ToV3(ray.origin()), ToV3(ray.direction()),
-                gpuDistance, gpuNormal);
+                gpuDistance, gpuNormal, Gv::BihStack{ nodes, Gv::SHARED_STACK });
             hits += cpuHit;
             if (cpuHit != gpuHit)
                 continue;
@@ -272,12 +273,14 @@ TEST(VisionGpuTest, PackedLiquidMatchesModelInstance)
         bool const cpuHit = spawn.intersectLiquid(ray, cpuDistance, cpuType);
         float gpuDistance = 100.0f;
         Gv::LiquidFound found = { 0, false };
+        Gv::BihStackNode nodes[Gv::SHARED_STACK];
+        Gv::BihStack const stack = { nodes, Gv::SHARED_STACK };
         bool const gpuHit = Gv::InstanceLiquid(record, pool.data(), ToV3(ray.origin()), ToV3(ray.direction()),
-            gpuDistance, found);
+            gpuDistance, found, stack);
         float m2Distance = 100.0f;
         Gv::LiquidFound m2Found = { 0, false };
         EXPECT_FALSE(Gv::InstanceLiquid(m2Record, pool.data(), ToV3(ray.origin()), ToV3(ray.direction()),
-            m2Distance, m2Found));
+            m2Distance, m2Found, stack));
         hits += cpuHit;
         if (cpuHit == gpuHit && (!cpuHit || (std::fabs(cpuDistance - gpuDistance) <= 1e-4f * cpuDistance
             && cpuType == found.Type && found.Deadly == (cpuType == 14))))

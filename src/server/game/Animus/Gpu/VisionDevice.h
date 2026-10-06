@@ -146,10 +146,13 @@ namespace Animus::GpuVision
     {
         /// GRIDS x GRIDS grids, [tileX * GRIDS + tileY]: null not created, NoTerrain(), or the terrain grid.
         uint32_t const* const* Grids = nullptr;
-        /// The static tree: its BIH (a record at word 0 of Top), the slot table (the instance index of each of the
-        /// BIH's objects, or NO_INSTANCE), the instances and the model pool. Null Top: the map has no static tree.
+        /// The static tree: a BIH over its loaded spawns (a record at word 0 of Top), the instance index of each
+        /// of its objects (Slots, or NO_INSTANCE), the same for those with a WMO liquid (LiquidTop, LiquidSlots),
+        /// the instances and the model pool. Null Top: the map has no static tree.
         uint32_t const* Top = nullptr;
         uint32_t const* Slots = nullptr;
+        uint32_t const* LiquidTop = nullptr;
+        uint32_t const* LiquidSlots = nullptr;
         uint32_t const* Instances = nullptr;
         uint32_t const* Models = nullptr;
         /// The doors: DoorCells holds DOOR_GRID_CELLS (offset, count) pairs into the door index list after them;
@@ -332,14 +335,27 @@ namespace Animus::GpuVision
         float Near;
         float Far;
     };
-    /// BIH's MAX_STACK_SIZE.
+    /// BIH's MAX_STACK_SIZE: each tree's own stack on the CPU.
     constexpr int BIH_STACK = 64;
+    /// A pixel's one stack, shared by the nested walks (the static tree's, a model's group tree's, a group's mesh
+    /// tree's: each starts where its caller's ends). It is a pixel's whole scratch; three of BIH_STACK each cost
+    /// the kernel two and a half times its occupancy. A walk that would push past it drops the node (the CPU's
+    /// stack has no guard at all); `forge camera diff` would show it.
+    constexpr int SHARED_STACK = 96;
 
-    /// BIH::intersectRay (never stopping at a first hit), over the record at `bih` in `words`: `visit(object,
-    /// maxDist)` for each object of each leaf the ray reaches within maxDist, which the visit may shorten.
+    /// The free part of the shared stack, handed down to a nested walk.
+    struct BihStack
+    {
+        BihStackNode* Nodes;
+        int Capacity;
+    };
+
+    /// BIH::intersectRay (never stopping at a first hit), over the record at `bih` in `words`, on `stack`:
+    /// `visit(object, maxDist, free)` for each object of each leaf the ray reaches within maxDist, which the visit
+    /// may shorten; `free` is the stack above this walk's, for the visit's own walk.
     template <typename Visit>
-    FORGE_HD inline void BihRay(uint32_t const* words, uint32_t bih, V3 origin, V3 direction, float& maxDist,
-        Visit&& visit)
+    FORGE_HD inline void BihRayOn(BihStack stack, uint32_t const* words, uint32_t bih, V3 origin, V3 direction,
+        float& maxDist, Visit&& visit)
     {
         uint32_t const* record = words + bih;
         uint32_t const* tree = words + record[BIH_NODES];
@@ -389,7 +405,6 @@ namespace Animus::GpuVision
             ++offsetBack[i];
         }
 
-        BihStackNode stack[BIH_STACK];
         int stackPos = 0;
         int node = 0;
         while (true)
@@ -422,11 +437,11 @@ namespace Animus::GpuVision
                             continue;
                         }
                         // The CPU's stack has no guard (an overflow there is undefined); here one is dropped.
-                        if (stackPos < BIH_STACK)
+                        if (stackPos < stack.Capacity)
                         {
-                            stack[stackPos].Node = uint32_t(back);
-                            stack[stackPos].Near = (tb >= intervalMin) ? tb : intervalMin;
-                            stack[stackPos].Far = intervalMax;
+                            stack.Nodes[stackPos].Node = uint32_t(back);
+                            stack.Nodes[stackPos].Near = (tb >= intervalMin) ? tb : intervalMin;
+                            stack.Nodes[stackPos].Far = intervalMax;
                             ++stackPos;
                         }
                         intervalMax = (tf <= intervalMax) ? tf : intervalMax;
@@ -435,7 +450,8 @@ namespace Animus::GpuVision
                     int n = int(tree[node + 1]);
                     while (n > 0)
                     {
-                        visit(objects[offset], maxDist);
+                        visit(objects[offset], maxDist, BihStack{ stack.Nodes + stackPos,
+                            stack.Capacity - stackPos });
                         --n;
                         ++offset;
                     }
@@ -456,14 +472,24 @@ namespace Animus::GpuVision
                 if (stackPos == 0)
                     return;
                 --stackPos;
-                intervalMin = stack[stackPos].Near;
+                intervalMin = stack.Nodes[stackPos].Near;
                 if (maxDist < intervalMin)
                     continue;
-                node = int(stack[stackPos].Node);
-                intervalMax = stack[stackPos].Far;
+                node = int(stack.Nodes[stackPos].Node);
+                intervalMax = stack.Nodes[stackPos].Far;
                 break;
             }
         }
+    }
+
+    /// BihRayOn on a stack of its own, BIH_STACK deep: `visit(object, maxDist)`.
+    template <typename Visit>
+    FORGE_HD inline void BihRay(uint32_t const* words, uint32_t bih, V3 origin, V3 direction, float& maxDist,
+        Visit&& visit)
+    {
+        BihStackNode nodes[BIH_STACK];
+        BihRayOn(BihStack{ nodes, BIH_STACK }, words, bih, origin, direction, maxDist,
+            [&](uint32_t entry, float& distance, BihStack) { visit(entry, distance); });
     }
 
     /// VMAP::IntersectTriangle: two-sided, a determinant under 1e-5 a miss, a hit only nearer than `distance`.
@@ -496,7 +522,7 @@ namespace Animus::GpuVision
     /// GroupModel::IntersectRay: the group's triangles through its mesh BIH; `normal` takes each nearer hit's
     /// (unnormalised, either side) in the model's space.
     FORGE_HD inline bool GroupRay(uint32_t const* pool, uint32_t group, V3 origin, V3 dir, float& distance,
-        V3& normal)
+        V3& normal, BihStack stack)
     {
         uint32_t const* g = pool + group;
         if (!g[GROUP_TRIANGLES])
@@ -504,7 +530,7 @@ namespace Animus::GpuVision
         uint32_t const* vertices = pool + g[GROUP_VERTEX_OFFSET];
         uint32_t const* triangles = pool + g[GROUP_TRIANGLE_OFFSET];
         bool hit = false;
-        BihRay(pool, group + GROUP_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist)
+        BihRayOn(stack, pool, group + GROUP_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist, BihStack)
         {
             uint32_t const* tri = triangles + entry * 3;
             V3 const v0 = ReadV3(vertices + tri[0] * 3);
@@ -526,15 +552,16 @@ namespace Animus::GpuVision
 
     /// WorldModel::IntersectRay: one group straight, more through the group BIH.
     FORGE_HD inline bool ModelRay(uint32_t const* pool, uint32_t model, V3 origin, V3 dir, float& distance,
-        V3& normal)
+        V3& normal, BihStack stack)
     {
         uint32_t const groups = pool[model + MODEL_GROUPS];
         if (groups == 1)
-            return GroupRay(pool, GroupOffset(model, 0), origin, dir, distance, normal);
+            return GroupRay(pool, GroupOffset(model, 0), origin, dir, distance, normal, stack);
         bool hit = false;
-        BihRay(pool, model + MODEL_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist)
+        BihRayOn(stack, pool, model + MODEL_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist,
+            BihStack free)
         {
-            if (GroupRay(pool, GroupOffset(model, entry), origin, dir, maxDist, normal))
+            if (GroupRay(pool, GroupOffset(model, entry), origin, dir, maxDist, normal, free))
                 hit = true;
         });
         return hit;
@@ -543,7 +570,7 @@ namespace Animus::GpuVision
     /// ModelInstance::intersectRay (and GameObjectModel's, past its phase and spawn test): the ray through the
     /// instance's bound, into its model's space, and the hit's normal back out of it.
     FORGE_HD inline bool InstanceRay(uint32_t const* instance, uint32_t const* pool, V3 origin, V3 dir,
-        float& maxDist, V3& normal)
+        float& maxDist, V3& normal, BihStack stack)
     {
         uint32_t const model = instance[INSTANCE_MODEL];
         if (!model)
@@ -556,7 +583,7 @@ namespace Animus::GpuVision
         V3 const modelDir = Rotate(invRot, dir);
         float distance = maxDist * invScale;
         V3 modelNormal = normal;
-        bool const hit = ModelRay(pool, model, p, modelDir, distance, modelNormal);
+        bool const hit = ModelRay(pool, model, p, modelDir, distance, modelNormal, stack);
         if (hit)
         {
             distance *= AsFloat(instance[INSTANCE_SCALE]);
@@ -719,14 +746,15 @@ namespace Animus::GpuVision
 
     /// WorldModel::IntersectLiquid.
     FORGE_HD inline bool ModelLiquid(uint32_t const* pool, uint32_t model, V3 origin, V3 dir, float& distance,
-        LiquidFound& found)
+        LiquidFound& found, BihStack stack)
     {
         uint32_t const groups = pool[model + MODEL_GROUPS];
         if (groups == 1)
             return GroupLiquid(pool, GroupOffset(model, 0), origin, dir, distance, found);
         bool hit = false;
         LiquidFound mine = found;
-        BihRay(pool, model + MODEL_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist)
+        BihRayOn(stack, pool, model + MODEL_TREE, origin, dir, distance, [&](uint32_t entry, float& maxDist,
+            BihStack)
         {
             if (GroupLiquid(pool, GroupOffset(model, entry), origin, dir, maxDist, mine))
                 hit = true;
@@ -738,7 +766,7 @@ namespace Animus::GpuVision
 
     /// ModelInstance::intersectLiquid: no model or an M2 has none.
     FORGE_HD inline bool InstanceLiquid(uint32_t const* instance, uint32_t const* pool, V3 origin, V3 dir,
-        float& maxDist, LiquidFound& found)
+        float& maxDist, LiquidFound& found, BihStack stack)
     {
         uint32_t const model = instance[INSTANCE_MODEL];
         if (!model || (instance[INSTANCE_FLAGS] & SPAWN_M2))
@@ -750,7 +778,7 @@ namespace Animus::GpuVision
         V3 const p = Rotate(invRot, origin - ReadV3(instance + INSTANCE_POS)) * invScale;
         V3 const modelDir = Rotate(invRot, dir);
         float distance = maxDist * invScale;
-        if (!ModelLiquid(pool, model, p, modelDir, distance, found))
+        if (!ModelLiquid(pool, model, p, modelDir, distance, found, stack))
             return false;
         maxDist = distance * AsFloat(instance[INSTANCE_SCALE]);
         return true;
@@ -780,7 +808,7 @@ namespace Animus::GpuVision
     }
 
     /// StaticVMapCollisionData::GetSurfaceHit through StaticMapTree::GetSurfaceIntersection.
-    FORGE_HD inline Surface StaticSurface(SceneView const& scene, V3 from, V3 to)
+    FORGE_HD inline Surface StaticSurface(SceneView const& scene, V3 from, V3 to, BihStack stack)
     {
         Surface result = { -1.0f, 0.0f };
         if (!scene.Top)
@@ -794,12 +822,13 @@ namespace Animus::GpuVision
         float distance = length;
         V3 normal = Make(0.0f, 0.0f, 0.0f);
         bool hit = false;
-        BihRay(scene.Top, 0, pos1, dir, distance, [&](uint32_t entry, float& maxDist)
+        BihRayOn(stack, scene.Top, 0, pos1, dir, distance, [&](uint32_t entry, float& maxDist, BihStack free)
         {
             uint32_t const slot = scene.Slots[entry];
             if (slot == NO_INSTANCE)
                 return;
-            if (InstanceRay(scene.Instances + slot * INSTANCE_WORDS, scene.Models, pos1, dir, maxDist, normal))
+            if (InstanceRay(scene.Instances + slot * INSTANCE_WORDS, scene.Models, pos1, dir, maxDist, normal,
+                free))
                 hit = true;
         });
         if (!hit)
@@ -811,7 +840,7 @@ namespace Animus::GpuVision
 
     /// StaticVMapCollisionData::GetLiquidHit through StaticMapTree::GetLiquidIntersection; Deadly as
     /// MapVisionWorld::ModelLiquid reads the type.
-    FORGE_HD inline Surface StaticLiquid(SceneView const& scene, V3 from, V3 to, bool& deadly)
+    FORGE_HD inline Surface StaticLiquid(SceneView const& scene, V3 from, V3 to, bool& deadly, BihStack stack)
     {
         Surface result = { -1.0f, 0.0f };
         if (!scene.Top)
@@ -825,11 +854,13 @@ namespace Animus::GpuVision
         float distance = length;
         LiquidFound found = { 0, false };
         bool hit = false;
-        BihRay(scene.Top, 0, pos1, dir, distance, [&](uint32_t entry, float& maxDist)
+        BihRayOn(stack, scene.LiquidTop, 0, pos1, dir, distance, [&](uint32_t entry, float& maxDist,
+            BihStack free)
         {
-            uint32_t const slot = scene.Slots[entry];
+            uint32_t const slot = scene.LiquidSlots[entry];
             if (slot != NO_INSTANCE
-                && InstanceLiquid(scene.Instances + slot * INSTANCE_WORDS, scene.Models, pos1, dir, maxDist, found))
+                && InstanceLiquid(scene.Instances + slot * INSTANCE_WORDS, scene.Models, pos1, dir, maxDist, found,
+                free))
                 hit = true;
         });
         if (!hit)
@@ -854,7 +885,8 @@ namespace Animus::GpuVision
     /// DynamicVMapCollisionData::GetSurfaceHit through DynamicMapTree::GetIntersectionTime: the dynamic tree's cell
     /// walk (RegularGrid2D::intersectRay, its border arithmetic as it is) and, in each cell it visits, the doors
     /// filed there (GameObjectModel::intersectRay: in the seat's phase, spawned).
-    FORGE_HD inline Surface DynamicSurface(SceneView const& scene, uint32_t phaseMask, V3 from, V3 to)
+    FORGE_HD inline Surface DynamicSurface(SceneView const& scene, uint32_t phaseMask, V3 from, V3 to,
+        BihStack stack)
     {
         Surface result = { -1.0f, 0.0f };
         V3 const delta = to - from;
@@ -877,7 +909,7 @@ namespace Animus::GpuVision
                 uint32_t const* door = scene.Doors + scene.DoorCells[offset + i] * INSTANCE_WORDS;
                 if (!(door[INSTANCE_PHASE] & phaseMask) || !door[INSTANCE_SPAWNED])
                     continue;
-                if (InstanceRay(door, scene.DoorModels, from, dir, maxDist, normal))
+                if (InstanceRay(door, scene.DoorModels, from, dir, maxDist, normal, stack))
                     hit = true;
             }
         };
@@ -1272,10 +1304,12 @@ namespace Animus::GpuVision
     {
         V3 const end = origin + dir * limit;
         Hit best = { limit, uint32_t(Vision::Kind::Sky), end.Z, 0.0f };
+        BihStackNode nodes[SHARED_STACK];
+        BihStack const stack = { nodes, SHARED_STACK };
 
         // 1. The collision trees, the static and the doors apart.
-        Surface const model = StaticSurface(scene, origin, end);
-        Surface const door = DynamicSurface(scene, phaseMask, origin, end);
+        Surface const model = StaticSurface(scene, origin, end, stack);
+        Surface const door = DynamicSurface(scene, phaseMask, origin, end, stack);
         bool const modelHit = model.Distance >= 0.0f && model.Distance <= limit;
         bool const doorHit = door.Distance >= 0.0f && door.Distance <= limit;
         if (modelHit || doorHit)
@@ -1292,7 +1326,7 @@ namespace Animus::GpuVision
         if (dir.Z < 0.0f)
         {
             bool deadly = false;
-            Surface const liquid = StaticLiquid(scene, origin, origin + dir * best.Distance, deadly);
+            Surface const liquid = StaticLiquid(scene, origin, origin + dir * best.Distance, deadly, stack);
             if (liquid.Distance >= 0.0f && liquid.Distance < best.Distance)
             {
                 best.Distance = liquid.Distance;
@@ -1406,7 +1440,9 @@ extern "C"
         /// The largest cast frame's pixel count and the largest canonical one's: the grids' widths.
         uint32_t MaxCastPixels;
         uint32_t MaxPixels;
-        uint32_t Pad;
+        /// The widest and the tallest cast frame (the cast grid's tiles cover both).
+        uint32_t MaxCastWidth;
+        uint32_t MaxCastHeight;
         Animus::GpuVision::DeviceUnit const* Units;
         Animus::GpuVision::SceneView const* Scenes;
         uint8_t* Scratch;
