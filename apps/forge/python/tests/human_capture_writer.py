@@ -26,6 +26,7 @@ FIXED = {
                                 "jump_zspeed jump_sin jump_cos jump_xyspeed map source"),
     11: ("<QQfffffffff", "ms player walk run run_back swim swim_back flight flight_back turn_rate pitch_rate"),
     12: ("<QQBIfffI", "ms player event arg x y z map"),
+    13: ("<QQBBBBIIIIBB32s", "ms player kind class_ race level map zone mount form in_combat move_revision model"),
     20: ("<QQIQBfffBBIB", "ms player spell target target_kind tx ty tz gcd_active casting power power_type"),
     21: ("<QQIB", "ms player spell result"),
     22: ("<QQIB", "ms player spell how"),

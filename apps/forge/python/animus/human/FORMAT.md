@@ -22,7 +22,7 @@ mod-animus keeps a copy at `doc/capture-format.md`; this file is the source. Cha
 ### index.json (per hour)
 
 ```json
-{"format": 1, "hour": "2026-10-05T14", "module_revision": "<git sha>", "realm_build": "<core revision>",
+{"format": 2, "hour": "2026-10-05T14", "module_revision": "<git sha>", "realm_build": "<core revision>",
  "files": {"move-0.bin.gz": {"records": 123456, "bytes": 987654}},
  "players": 42, "sessions": 57, "dropped": {"move": 0, "snapshot": 0}, "paused": {"snapshot": false}}
 ```
@@ -71,9 +71,21 @@ Common field names: `ms` = server unix time in milliseconds (u64); `player` = ps
 | 10 | Move | `u64 ms, u64 player, u32 client_ms, u16 opcode, u32 move_flags, u16 move_flags2, f32 x, f32 y, f32 z, f32 o, f32 pitch, u32 fall_ms, f32 jump_zspeed, f32 jump_sin, f32 jump_cos, f32 jump_xyspeed, u32 map, u8 source` |
 | 11 | Speeds | `u64 ms, u64 player, f32 walk, f32 run, f32 run_back, f32 swim, f32 swim_back, f32 flight, f32 flight_back, f32 turn_rate, f32 pitch_rate` (at session start and on every change) |
 | 12 | MotionEvent | `u64 ms, u64 player, u8 event, u32 arg, f32 x, f32 y, f32 z, u32 map` |
+| 13 | MoverState | `u64 ms, u64 player, u8 kind, u8 class, u8 race, u8 level, u32 map, u32 zone, u32 mount, u32 form, u8 in_combat, u8 move_revision, char[32] model` (format 2) |
 
-`opcode`: the client opcode (`MSG_MOVE_*`, 0 for a synthesised companion sample). `source`: 0 client packet,
-1 companion sample (written each decision from the companion's server position, `move_flags` from its unit flags).
+`opcode`: the client opcode (`MSG_MOVE_*` and the movement acks, as the server's movement handler received it).
+`source`: 0 a player's client packet; 2 an Animus companion's packet (format 2): its player controller reports through
+its session's own movement handlers exactly as a client does, so it is recorded at the same point (the handler's
+`OnPlayerMove`) with the same fields, and `client_ms` is the companion client's own clock; 1 was format 1's synthesised
+companion sample (its server position once a decision), no longer written -- a reader of format 1 files keeps it out
+of the kinematics.
+
+MoverState is written at a mover's first update and whenever a field changes, for players and companions alike:
+`kind` (0 human, 1 companion, as SessionStart), class, race, level, map and zone, `mount` (the mount aura's spell, 0
+on foot), `form` (ShapeshiftForm), `in_combat`, and for a companion the model it plays (`model`, NUL-padded) and its
+move block's revision (`move_revision`; 0 and an empty model for a player). Changes are seen at the mover's update
+(each map tick). It is what a mover's motion is compared under: §3's `mounted` and `in_combat` for both kinds, and
+the model and revision a companion's motion belongs to.
 
 MotionEvent `event`: 1 mount (arg spell), 2 dismount, 3 taxi start (arg path), 4 taxi end, 5 teleport (arg new map),
 6 death, 7 resurrect, 8 root, 9 unroot, 10 stun start, 11 stun end, 12 fear/confuse start, 13 fear/confuse end,
@@ -155,7 +167,9 @@ speed: the forward speed in force for the mode (yards/second): run/swim/flight, 
 ```
 
 Bots are sampled once a decision (`AnimusForge.DecisionMs`, 250 ms); humans are resampled to the same rate
-(`motion.resample`), so the two are compared like for like.
+(`motion.resample`), so the two are compared like for like. On the realm (format 2) a companion's samples come from
+its move records exactly as a human's do (source 2 packets, resampled), with `mounted` and `in_combat` from
+MoverState for both kinds.
 
 ## 4. Identity
 

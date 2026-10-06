@@ -327,9 +327,9 @@ def _fill_and_split(raw: np.ndarray, flags: np.ndarray, max_gap: float, hold_max
 def build_tracks(moves_batch: r.Batch, combat: CombatIndex | None = None, sessions: SessionTable | None = None,
                  hour: str = "", step: float = motion.DECISION_SECONDS, include_companions: bool = False,
                  max_gap: float = 1.5, hold_max: float = HOLD_MAX) -> list[Track]:
-    """Every player's tracks from one move shard. Companions -- a session of kind 1, or packets synthesised from
-    a companion's server position (source 1) -- are left out unless `include_companions`, and tagged when kept:
-    nothing named human_* may learn from the bots it judges."""
+    """Every player's tracks from one move shard. Companions -- a session of kind 1, a companion's controller
+    packets (source 2), or format 1's samples synthesised from its server position (source 1) -- are left out unless
+    `include_companions`, and tagged when kept: nothing named human_* may learn from the bots it judges."""
     moves = moves_batch.get(r.MOVE)
     events = moves_batch.get(r.MOTION_EVENT)
     speeds = moves_batch.get(r.SPEEDS)
@@ -341,7 +341,8 @@ def build_tracks(moves_batch: r.Batch, combat: CombatIndex | None = None, sessio
     bounds = np.flatnonzero(np.diff(moves["player"])) + 1
     for mine in np.split(moves, bounds):
         player = int(mine["player"][0])
-        companion = bool((mine["source"] == 1).any()) or (sessions is not None and sessions.is_companion(player))
+        companion = bool(np.isin(mine["source"], (r.SOURCE_COMPANION_SAMPLE, r.SOURCE_CONTROLLER)).any()) \
+            or (sessions is not None and sessions.is_companion(player))
         if companion and not include_companions:
             continue
         tracks = player_tracks(player, mine, events[events["player"] == player], speeds[speeds["player"] == player],

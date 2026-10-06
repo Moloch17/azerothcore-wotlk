@@ -43,6 +43,8 @@ SAMPLES = {
     45: {"ms": 45, "player": 11, "map": 36, "instance": 3, "boss_entry": 639, "event": 1},
     46: {"ms": 46, "player": 11, "other": 13, "event": 2},
     47: {"ms": 47, "player": 11, "map": 1, "zone": 14, "area": 362},
+    13: {"ms": 13, "player": 77, "kind": 1, "class_": 11, "race": 4, "level": 60, "map": 1, "zone": 141,
+         "mount": 0, "form": 3, "in_combat": 1, "move_revision": 2, "model": b"druid_travel"},
     51: {"ms": 51, "owner": 11, "companion": 77, "command": 2, "arg": 0},
     52: {"ms": 52, "owner": 11, "companion": 77, "rating": -1, "reason": 5},
 }
@@ -80,6 +82,8 @@ def test_every_record_type_round_trips(tmp_path):
                 assert tuple(int(v) for v in got) == value
             elif isinstance(value, float):
                 assert float(got) == pytest.approx(value), (rtype, name)
+            elif isinstance(value, bytes):
+                assert r.text(got) == value.decode(), (rtype, name)
             else:
                 assert int(got) == value, (rtype, name)
     group = batch.tails[r.GROUP_STATE][0]
@@ -153,7 +157,7 @@ def test_the_file_header_is_checked(tmp_path):
     with pytest.raises(r.CaptureError):
         r.read_all(headless)
     newer = tmp_path / "newer.bin"
-    newer.write_bytes(w.header("move", fmt=2) + w.record(21, SAMPLES[21]))
+    newer.write_bytes(w.header("move", fmt=r.FORMAT_VERSION + 1) + w.record(21, SAMPLES[21]))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         assert len(r.read_all(newer).get(r.CAST_RESULT)) == 1
@@ -237,3 +241,40 @@ def test_reads_the_cpp_serializers_sample_when_present():
 def test_struct_sizes_match_the_reader_prefixes():
     for rtype, (fmt, _) in w.FIXED.items():
         assert struct.calcsize(fmt) == r.PREFIX[rtype][1].itemsize, r.PREFIX[rtype][0]
+
+
+def test_format2_player_and_companion_moves_read_back(tmp_path):
+    """Format 2: a player's client packet (source 0) and a companion's controller packet (source 2) in one move file,
+    with a MoverState for each, read back field for field; the companion's track is told apart by its source."""
+    from animus.human import tracks as t
+    player, companion = 11, 77
+    human = dict(SAMPLES[10], player=player, source=r.SOURCE_CLIENT, ms=1000, move_flags=1)
+    bot = dict(SAMPLES[10], player=companion, source=r.SOURCE_CONTROLLER, ms=1000, client_ms=1001000, opcode=0x0EE,
+               move_flags=1)
+    movers = [dict(SAMPLES[13], ms=999, player=player, kind=0, move_revision=0, model=b"", mount=23229),
+              dict(SAMPLES[13], ms=999, player=companion)]
+    moves = []
+    for i in range(12):
+        moves.append(w.record(10, dict(human, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=99 + 100 * i)))
+        moves.append(w.record(10, dict(bot, ms=1000 + 100 * i, x=1.5 + 0.7 * i, client_ms=1001000 + 100 * i)))
+    path = tmp_path / "move-1.bin"
+    path.write_bytes(w.header("move", fmt=r.FORMAT_VERSION) + b"".join(w.record(13, m) for m in movers)
+                     + b"".join(moves))
+    stats = r.FileStats(path)
+    batch = r.read_all(path, stats)
+    assert stats.malformed == 0 and stats.header["format"] == 2
+    rows = batch.get(r.MOVE)
+    assert sorted(set(rows["source"].tolist())) == [r.SOURCE_CLIENT, r.SOURCE_CONTROLLER]
+    mine = rows[rows["player"] == companion]
+    assert int(mine["opcode"][0]) == 0x0EE and int(mine["client_ms"][0]) == 1001000
+    state = batch.get(r.MOVER_STATE)
+    assert len(state) == 2
+    them = {int(row["player"]): row for row in state}
+    assert int(them[player]["kind"]) == 0 and int(them[player]["mount"]) == 23229 and r.text(them[player]["model"]) == ""
+    assert int(them[companion]["kind"]) == 1 and int(them[companion]["move_revision"]) == 2
+    assert r.text(them[companion]["model"]) == "druid_travel" and int(them[companion]["in_combat"]) == 1
+    assert int(them[companion]["form"]) == 3 and int(them[companion]["class_"]) == 11
+    built = t.build_tracks(batch, include_companions=True)
+    kinds = {track.player: track.companion for track in built}
+    assert kinds.get(companion) is True and kinds.get(player) is False
+    assert companion not in {track.player for track in t.build_tracks(batch)}
