@@ -27,6 +27,7 @@
 #include "WorldModel.h"
 
 #include <G3D/Vector3.h>
+#include <cmath>
 
 MapCollisionData::MapCollisionData(Map const& map, Map const* parentMap) :
     _map(map), _staticVMapData(map.GetId())
@@ -111,6 +112,24 @@ bool StaticVMapCollisionData::GetObjectHitPos(float x1, float y1, float z1, floa
     rz = z2;
 
     return false;
+}
+
+bool StaticVMapCollisionData::GetLiquidHit(float x1, float y1, float z1, float x2, float y2, float z2,
+    float& distance, uint32& liquidType) const
+{
+    if (!_staticTree)
+        return false;
+    G3D::Vector3 const pos1 = VMAP::VMapMgr2::convertPositionToInternalRep(x1, y1, z1);
+    G3D::Vector3 const pos2 = VMAP::VMapMgr2::convertPositionToInternalRep(x2, y2, z2);
+    float const length = (pos2 - pos1).magnitude();
+    if (!(length > 1e-6f) || !std::isfinite(length))
+        return false;
+    G3D::Ray const ray = G3D::Ray::fromOriginAndDirection(pos1, (pos2 - pos1) / length);
+    float reach = length;
+    if (!_staticTree->GetLiquidIntersection(ray, reach, liquidType))
+        return false;
+    distance = reach;
+    return true;
 }
 
 float StaticVMapCollisionData::getHeight(float x, float y, float z, float maxSearchDist) const

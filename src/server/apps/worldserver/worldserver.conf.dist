@@ -5379,8 +5379,9 @@ AnimusForge.Probe.CacheGrids = 64
 # CAMERA VISION
 #
 #    The vision block's third-person camera (camera-vision): follow mode, behind the seat's facing,
-#    rendered every decision by the naive caster. A value outside its range is clamped into it and
-#    logged. `forge camera snapshot` renders one frame with these settings.
+#    rendered every decision by ray casts against the loaded terrain, collision trees and liquids.
+#    A value outside its range is clamped into it and logged. `forge camera snapshot` renders one
+#    frame with these settings.
 #
 #    AnimusForge.Vision.Width
 #        Description: Image columns of the vision block's camera (stages with a vision block,
@@ -5414,7 +5415,9 @@ AnimusForge.Vision.FovV = 60
 
 #
 #    AnimusForge.Vision.Range
-#        Description: Yards a ray reaches; anything further reads as sky.
+#        Description: Yards around the camera within which units are seen. Rays themselves have
+#                     no range: a ray ends at what it hits, or reads as sky once it leaves the
+#                     loaded grids; the distance channel is log-scaled to 1000 yd.
 #        Default:     100 - (10 to 500)
 
 AnimusForge.Vision.Range = 100

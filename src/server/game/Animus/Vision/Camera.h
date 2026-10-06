@@ -25,7 +25,8 @@
 /// client-side only -- never in Movement::ControlState or the Body, so it sends nothing -- held in follow mode (yaw
 /// offset 0, the conf's pitch and zoom) for this slice. Each frame is a W x H grid of rays from the camera, each pixel
 /// five channels: distance, height of the hit over the feet, the surface's normal z, what was hit, and whether the
-/// ray passed the objective. Pure: the settings, the kinds and the geometry, with no core types.
+/// ray passed the objective. A ray has no range: it ends at what it hits, or reads sky where nothing loaded is left
+/// for it to hit (camera-vision.RAYCAST.md). Pure: the settings, the kinds and the geometry, with no core types.
 namespace Animus::Vision
 {
     /// AnimusForge.Vision.* (worldserver.conf.dist). Angles in degrees, as the conf has them.
@@ -35,7 +36,7 @@ namespace Animus::Vision
         uint32_t Height = 32;
         float FovH = 120.0f;
         float FovV = 60.0f;
-        float Range = 100.0f;
+        float Range = 100.0f;       // yards: the units a frame can see (a ray itself has no range)
         float Zoom = 6.0f;
         float Pitch = -15.0f;       // degrees, + up: the default looks slightly down
     };
@@ -88,24 +89,30 @@ namespace Animus::Vision
     /// The boom pulls in to this short of what it meets, and never nearer the pivot than BOOM_MIN.
     constexpr float BOOM_BACKOFF = 0.2f;
     constexpr float BOOM_MIN = 0.3f;
-    /// The terrain and liquid march along a ray, and how finely a terrain crossing is bisected.
-    constexpr float MARCH_STEP = 1.0f;
-    constexpr float BISECT_TO = 0.05f;
-    /// The distance channel's floor: ln(max(d, NEAR) / NEAR) / ln(Range / NEAR).
+    /// The distance channel: ln(max(d, NEAR) / NEAR) / ln(DISTANCE_REFERENCE / NEAR), clamped to 1 (and 1 for sky).
     constexpr float NEAR = 0.25f;
+    constexpr float DISTANCE_REFERENCE = 1000.0f;
+    /// The longest a ray is cast when its path never leaves the loaded grids (a ray straight up or down): far past
+    /// the distance channel's reference, so it is no range a frame can see.
+    constexpr float REACH_MAX = 4000.0f;
     /// The height channel: (hit z - feet z) / HEIGHT_SCALE, clamped to [-1, 1].
     constexpr float HEIGHT_SCALE = 25.0f;
     /// A ray flags the objective when it passes within this many yards of it.
     constexpr float OBJECTIVE_RADIUS = 1.0f;
-    /// The terrain's normal from heights this far either side of the hit (samples 0.5 yd apart).
-    constexpr float TERRAIN_NORMAL_SPAN = 0.25f;
     /// A model or door hit is a floor when the floor found from FLOOR_LOOK above it is within FLOOR_MATCH of it.
     constexpr float FLOOR_LOOK = 0.5f;
     constexpr float FLOOR_MATCH = 0.25f;
     constexpr float ZOOM_SCALE = 12.0f;
     constexpr float PIVOT_HEIGHT_SCALE = 10.0f;
-    /// A map with no terrain answers heights at or below this.
-    constexpr float NO_TERRAIN = -90000.0f;
+    /// The terrain's grids as the core's GridTerrainData lays them out: 64 x 64 grids of SIZE_OF_GRIDS yards, each
+    /// 128 x 128 cells (MAP_RESOLUTION), indexed from the map's +x / +y edge: u = 128 * (32 - x / GRID_SIZE).
+    constexpr float GRID_SIZE = 533.3333f;
+    constexpr int32_t GRID_CELLS = 128;
+    constexpr int32_t GRIDS = 64;
+
+    /// A world x (y) as a cell coordinate u (v), and back: the cell is floor(u), its grid floor(u / 128).
+    [[nodiscard]] constexpr float GridU(float x) { return float(GRID_CELLS) * (float(GRIDS / 2) - x / GRID_SIZE); }
+    [[nodiscard]] constexpr float WorldOfU(float u) { return (float(GRIDS / 2) - u / float(GRID_CELLS)) * GRID_SIZE; }
 
     /// The vision block's width: the image, then the scalars.
     [[nodiscard]] constexpr uint32_t ImageCount(Settings const& settings)

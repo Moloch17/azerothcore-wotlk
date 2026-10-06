@@ -20,9 +20,37 @@
 #include "ModelIgnoreFlags.h"
 #include "ModelInstance.h"
 #include "VMapDefinitions.h"
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 
 using G3D::Vector3;
+
+namespace
+{
+    /// Moller-Trumbore, two-sided: the ray parameter at which it crosses the triangle, or -1.
+    float RayTriangle(Vector3 const& origin, Vector3 const& dir, Vector3 const& a, Vector3 const& b, Vector3 const& c)
+    {
+        Vector3 const e1 = b - a;
+        Vector3 const e2 = c - a;
+        Vector3 const p = dir.cross(e2);
+        float const det = e1.dot(p);
+        if (std::fabs(det) < 1e-12f)
+            return -1.0f;
+        float const inv = 1.0f / det;
+        Vector3 const s = origin - a;
+        float const u = s.dot(p) * inv;
+        if (u < 0.0f || u > 1.0f)
+            return -1.0f;
+        Vector3 const q = s.cross(e1);
+        float const v = dir.dot(q) * inv;
+        if (v < 0.0f || u + v > 1.0f)
+            return -1.0f;
+        float const t = e2.dot(q) * inv;
+        return t >= 0.0f ? t : -1.0f;
+    }
+}
 
 template<> struct BoundsTrait<VMAP::GroupModel>
 {
@@ -228,6 +256,103 @@ namespace VMAP
             liqHeight = iHeight[tx + ty * rowOffset] + dx * sx + dy * sy;
         }
         return true;
+    }
+
+    bool WmoLiquid::IntersectRay(G3D::Ray const& ray, float& distance) const
+    {
+        if (!iHeight)
+            return false;
+
+        Vector3 const& origin = ray.origin();
+        Vector3 const& dir = ray.direction();
+
+        // One level over the whole liquid: a plane (the caller bounds it by the group).
+        if (!iFlags)
+        {
+            if (std::fabs(dir.z) < 1e-9f)
+                return false;
+            float const t = (iHeight[0] - origin.z) / dir.z;
+            if (t < 0.0f || t >= distance)
+                return false;
+            distance = t;
+            return true;
+        }
+
+        // The tiles the ray's path crosses, in order (a grid traversal in tile units), each used tile's two
+        // triangles tested exactly; the first tile with a crossing holds the nearest.
+        float const ox = (origin.x - iCorner.x) / LIQUID_TILE_SIZE;
+        float const oy = (origin.y - iCorner.y) / LIQUID_TILE_SIZE;
+        float const dx = dir.x / LIQUID_TILE_SIZE;
+        float const dy = dir.y / LIQUID_TILE_SIZE;
+        float tMin = 0.0f;
+        float tMax = distance;
+        auto const clip = [&](float o, float d, float high)
+        {
+            if (std::fabs(d) < 1e-12f)
+                return o >= 0.0f && o <= high;
+            float t0 = -o / d;
+            float t1 = (high - o) / d;
+            if (t0 > t1)
+                std::swap(t0, t1);
+            tMin = std::max(tMin, t0);
+            tMax = std::min(tMax, t1);
+            return tMin <= tMax;
+        };
+        if (!clip(ox, dx, float(iTilesX)) || !clip(oy, dy, float(iTilesY)))
+            return false;
+
+        int32 ix = std::clamp(int32(std::floor(ox + dx * tMin)), 0, int32(iTilesX) - 1);
+        int32 iy = std::clamp(int32(std::floor(oy + dy * tMin)), 0, int32(iTilesY) - 1);
+        int32 const stepX = dx > 0.0f ? 1 : -1;
+        int32 const stepY = dy > 0.0f ? 1 : -1;
+        float const inf = std::numeric_limits<float>::infinity();
+        float nextX = std::fabs(dx) < 1e-12f ? inf : (float(ix + (dx > 0.0f ? 1 : 0)) - ox) / dx;
+        float nextY = std::fabs(dy) < 1e-12f ? inf : (float(iy + (dy > 0.0f ? 1 : 0)) - oy) / dy;
+        float const deltaX = std::fabs(dx) < 1e-12f ? inf : 1.0f / std::fabs(dx);
+        float const deltaY = std::fabs(dy) < 1e-12f ? inf : 1.0f / std::fabs(dy);
+        uint32 const rowOffset = iTilesX + 1;
+        Vector3 const local(ox, oy, origin.z);
+        Vector3 const localDir(dx, dy, dir.z);
+        while (ix >= 0 && iy >= 0 && ix < int32(iTilesX) && iy < int32(iTilesY))
+        {
+            // A disabled tile is 0x?F (GetLiquidHeight).
+            if ((iFlags[ix + iy * iTilesX] & 0x0F) != 0x0F)
+            {
+                auto const corner = [&](int32 cx, int32 cy)
+                {
+                    return Vector3(float(ix + cx), float(iy + cy), iHeight[(ix + cx) + (iy + cy) * rowOffset]);
+                };
+                Vector3 const h00 = corner(0, 0);
+                Vector3 const h10 = corner(1, 0);
+                Vector3 const h01 = corner(0, 1);
+                Vector3 const h11 = corner(1, 1);
+                float best = -1.0f;
+                float const crossings[2] = { RayTriangle(local, localDir, h00, h10, h11),
+                    RayTriangle(local, localDir, h00, h11, h01) };
+                for (float t : crossings)
+                    if (t >= 0.0f && t < distance && (best < 0.0f || t < best))
+                        best = t;
+                if (best >= 0.0f)
+                {
+                    distance = best;
+                    return true;
+                }
+            }
+            float const next = std::min(nextX, nextY);
+            if (next > tMax)
+                break;
+            if (nextX < nextY)
+            {
+                ix += stepX;
+                nextX += deltaX;
+            }
+            else
+            {
+                iy += stepY;
+                nextY += deltaY;
+            }
+        }
+        return false;
     }
 
     uint32 WmoLiquid::GetFileSize()
@@ -502,6 +627,22 @@ namespace VMAP
         return false;
     }
 
+    bool GroupModel::IntersectLiquid(G3D::Ray const& ray, float& distance, uint32& liquidType) const
+    {
+        if (!iLiquid)
+            return false;
+        float t = distance;
+        if (!iLiquid->IntersectRay(ray, t))
+            return false;
+        // Within the group, across: a liquid with a single level is a plane, bounded only here.
+        Vector3 const at = ray.origin() + ray.direction() * t;
+        if (at.x < iBound.low().x || at.x > iBound.high().x || at.y < iBound.low().y || at.y > iBound.high().y)
+            return false;
+        distance = t;
+        liquidType = iLiquid->GetType();
+        return true;
+    }
+
     uint32 GroupModel::GetLiquidType() const
     {
         if (iLiquid)
@@ -560,6 +701,32 @@ namespace VMAP
 
         WModelRayCallBack isc(groupModels);
         groupTree.intersectRay(ray, isc, distance, stopAtFirstHit);
+        return isc.hit;
+    }
+
+    struct WModelLiquidCallBack
+    {
+        WModelLiquidCallBack(std::vector<GroupModel> const& mod): models(mod.begin()) { }
+        bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool /*stopAtFirstHit*/)
+        {
+            if (models[entry].IntersectLiquid(ray, distance, liquidType))
+                hit = true;
+            return hit;
+        }
+        std::vector<GroupModel>::const_iterator models;
+        bool hit = false;
+        uint32 liquidType = 0;
+    };
+
+    bool WorldModel::IntersectLiquid(G3D::Ray const& ray, float& distance, uint32& liquidType) const
+    {
+        if (groupModels.size() == 1)
+            return groupModels[0].IntersectLiquid(ray, distance, liquidType);
+
+        WModelLiquidCallBack isc(groupModels);
+        groupTree.intersectRay(ray, isc, distance, false);
+        if (isc.hit)
+            liquidType = isc.liquidType;
         return isc.hit;
     }
 

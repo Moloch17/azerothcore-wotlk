@@ -26,9 +26,11 @@
 class Map;
 class Player;
 
-/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the terrain
-/// heightfield, liquids, floors and their slopes, all through an uncounted MapWorldQuery (the controller's cost line
-/// keeps only the controller's rays). Read from the map's own update, as the rest of a seat's observation is.
+/// The camera's VisionWorld over a live map: the static and dynamic collision trees cast apart, the static tree's WMO
+/// liquids, the loaded grids' terrain cells and liquids as GridTerrainData holds them (never creating a grid: a grid
+/// not created is where a ray leaves the world it can see), and floors and their slopes through an uncounted
+/// MapWorldQuery (the controller's cost line keeps only the controller's rays). Read from the map's own update, as
+/// the rest of a seat's observation is.
 namespace Animus::Vision
 {
     class MapVisionWorld final : public VisionWorld
@@ -38,7 +40,10 @@ namespace Animus::Vision
 
         [[nodiscard]] float StaticHit(Vec3 from, Vec3 to) const override;
         [[nodiscard]] float DynamicHit(Vec3 from, Vec3 to) const override;
-        [[nodiscard]] float TerrainHeight(float x, float y) const override;
+        [[nodiscard]] LiquidHit ModelLiquid(Vec3 from, Vec3 to) const override;
+        [[nodiscard]] TerrainTile Tile(int32_t tileX, int32_t tileY) const override;
+        [[nodiscard]] TerrainCell Cell(int32_t tileX, int32_t tileY, int32_t cellX, int32_t cellY,
+            bool liquid) const override;
         [[nodiscard]] Movement::Liquid LiquidAt(float x, float y, float z) const override;
         [[nodiscard]] float FloorBelow(float x, float y, float z, float search) const override;
         [[nodiscard]] float FloorNormalZ(float x, float y, float z) const override;

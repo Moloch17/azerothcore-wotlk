@@ -76,6 +76,9 @@ namespace VMAP
 
         [[nodiscard]] bool isInLineOfSight(G3D::Vector3 const& pos1, G3D::Vector3 const& pos2, ModelIgnoreFlags ignoreFlags) const;
         bool GetObjectHitPos(G3D::Vector3 const& pos1, G3D::Vector3 const& pos2, G3D::Vector3& pResultHitPos, float pModifyDist) const;
+        //! The nearest WMO liquid surface the ray crosses closer than pMaxDist: sets pMaxDist and the liquid's type
+        //! (LiquidType.dbc) and returns true. Read-only and opt-in (the bots' camera); no other query changes.
+        bool GetLiquidIntersection(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const;
         [[nodiscard]] float getHeight(G3D::Vector3 const& pPos, float maxSearchDist) const;
         bool GetLocationInfo(G3D::Vector3 const& pos, LocationInfo& info) const;
 

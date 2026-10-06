@@ -18,6 +18,7 @@
 #include "VisionCaster.h"
 #include <algorithm>
 #include <chrono>
+#include <limits>
 
 namespace
 {
@@ -27,6 +28,10 @@ namespace
     Settings CurrentSettings;
 
     using Clock = std::chrono::steady_clock;
+
+    constexpr float INF = std::numeric_limits<float>::infinity();
+    /// A cell's liquid plane is crossed within its footprint, give or take this much of the ray (rounding).
+    constexpr float FOOTPRINT_SLACK = 1e-3f;
 
     /// Adds the time since `mark` to `slot` and moves `mark` to now (only when a breakdown is wanted).
     void Charge(Breakdown* breakdown, uint64_t Breakdown::* slot, Clock::time_point& mark)
@@ -38,40 +43,125 @@ namespace
         mark = now;
     }
 
-    [[nodiscard]] bool HasTerrain(float height)
+    [[nodiscard]] Vec3 Cross(Vec3 a, Vec3 b)
     {
-        return height > NO_TERRAIN;
+        return { a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X };
     }
 
-    /// The terrain's normal z at (x, y), from its heights TERRAIN_NORMAL_SPAN either side.
-    [[nodiscard]] float TerrainNormalZ(VisionWorld const& world, float x, float y, float fallback)
+    /// Moller-Trumbore, one-sided: where the ray crosses the triangle going down through its upper face (the face
+    /// whose normal points up), or -1. A ray from under the terrain does not see its underside.
+    [[nodiscard]] float RayTriangleFromAbove(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, Vec3 c, float& normalZ)
     {
-        float h[4];
-        float const offsets[4][2] = { { TERRAIN_NORMAL_SPAN, 0.0f }, { -TERRAIN_NORMAL_SPAN, 0.0f },
-            { 0.0f, TERRAIN_NORMAL_SPAN }, { 0.0f, -TERRAIN_NORMAL_SPAN } };
-        for (int i = 0; i < 4; ++i)
+        Vec3 const e1 = b - a;
+        Vec3 const e2 = c - a;
+        Vec3 normal = Cross(e1, e2);
+        if (normal.Z < 0.0f)
+            normal = normal * -1.0f;
+        if (Dot(normal, dir) >= 0.0f)
+            return -1.0f;
+        Vec3 const p = Cross(dir, e2);
+        float const det = Dot(e1, p);
+        if (std::fabs(det) < 1e-12f)
+            return -1.0f;
+        float const inv = 1.0f / det;
+        Vec3 const s = origin - a;
+        float const u = Dot(s, p) * inv;
+        if (u < 0.0f || u > 1.0f)
+            return -1.0f;
+        Vec3 const q = Cross(s, e1);
+        float const v = Dot(dir, q) * inv;
+        if (v < 0.0f || u + v > 1.0f)
+            return -1.0f;
+        float const t = Dot(e2, q) * inv;
+        if (t < 0.0f)
+            return -1.0f;
+        float const length = Length(normal);
+        normalZ = length > 0.0f ? normal.Z / length : 1.0f;
+        return t;
+    }
+
+    /// The terrain's height at (fu, fv) within a cell (0..1 each), on the triangle holding it: getHeight's rule.
+    [[nodiscard]] float CellHeight(TerrainCell const& cell, float fu, float fv)
+    {
+        float const h1 = cell.Corner[0];
+        float const h2 = cell.Corner[1];
+        float const h3 = cell.Corner[2];
+        float const h4 = cell.Corner[3];
+        float const h5 = 2.0f * cell.Centre;
+        if (fu + fv < 1.0f)
         {
-            h[i] = world.TerrainHeight(x + offsets[i][0], y + offsets[i][1]);
-            if (!HasTerrain(h[i]))
-                h[i] = fallback;    // the heightfield's edge: taken as level there
+            if (fu > fv)
+                return h1 + (h2 - h1) * fu + (h5 - h1 - h2) * fv;
+            return h1 + (h5 - h1 - h3) * fu + (h3 - h1) * fv;
         }
-        float const gx = (h[0] - h[1]) / (2.0f * TERRAIN_NORMAL_SPAN);
-        float const gy = (h[2] - h[3]) / (2.0f * TERRAIN_NORMAL_SPAN);
-        return 1.0f / std::sqrt(1.0f + gx * gx + gy * gy);
+        if (fu > fv)
+            return (h2 + h4 - h5) * fu + (h4 - h2) * fv + (h5 - h4);
+        return (h4 - h3) * fu + (h3 + h4 - h5) * fv + (h5 - h4);
     }
 
-    /// The nearest hit along the ray: the trees, then the march to that hit (terrain, and liquids when `liquids`),
-    /// then the units. The boom casts with no liquids and no units.
-    Hit Nearest(Vec3 origin, Vec3 dir, float range, VisionWorld const& world, std::span<UnitShape const> units,
-        bool underwater, bool liquids, Breakdown* breakdown)
+    /// The squares of side `size` (in cell units) the ray's (u, v) path crosses between tStart and tEnd, in order
+    /// (a 2D grid traversal: one visit a square, no fixed step). `visit(iu, iv, tIn, tOut)` returns false to stop.
+    /// The first square is clamped into [low, high], as are the rest: leaving them ends the walk.
+    template <typename Visit>
+    void Walk(float u0, float v0, float du, float dv, float tStart, float tEnd, float size, int32_t const (&low)[2],
+        int32_t const (&high)[2], Visit&& visit)
+    {
+        if (!(tEnd > tStart))
+            return;
+        float const u = u0 + du * tStart;
+        float const v = v0 + dv * tStart;
+        int32_t iu = std::clamp(int32_t(std::floor(u / size)), low[0], high[0]);
+        int32_t iv = std::clamp(int32_t(std::floor(v / size)), low[1], high[1]);
+        int32_t const stepU = du > 0.0f ? 1 : -1;
+        int32_t const stepV = dv > 0.0f ? 1 : -1;
+        bool const flatU = std::fabs(du) < 1e-12f;
+        bool const flatV = std::fabs(dv) < 1e-12f;
+        float nextU = flatU ? INF : (float(iu + (du > 0.0f ? 1 : 0)) * size - u0) / du;
+        float nextV = flatV ? INF : (float(iv + (dv > 0.0f ? 1 : 0)) * size - v0) / dv;
+        float const deltaU = flatU ? INF : size / std::fabs(du);
+        float const deltaV = flatV ? INF : size / std::fabs(dv);
+        float t = tStart;
+        while (true)
+        {
+            float const next = std::max(t, std::min({ nextU, nextV, tEnd }));
+            if (!visit(iu, iv, t, next) || next >= tEnd)
+                return;
+            t = next;
+            if (nextU < nextV)
+            {
+                iu += stepU;
+                nextU += deltaU;
+            }
+            else
+            {
+                iv += stepV;
+                nextV += deltaV;
+            }
+            if (iu < low[0] || iu > high[0] || iv < low[1] || iv > high[1])
+                return;
+        }
+    }
+
+    constexpr int32_t NO_LIMIT_LOW[2] = { -(1 << 20), -(1 << 20) };
+    constexpr int32_t NO_LIMIT_HIGH[2] = { 1 << 20, 1 << 20 };
+
+    [[nodiscard]] bool OnMap(int32_t tileX, int32_t tileY)
+    {
+        return tileX >= 0 && tileY >= 0 && tileX < GRIDS && tileY < GRIDS;
+    }
+
+    /// The nearest hit along the ray within `limit`: the trees, the WMO liquids and the terrain (its liquids when
+    /// `liquids`), then the units. The boom casts with no liquids and no units.
+    Hit Nearest(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world, std::span<UnitShape const> units,
+        bool liquids, Breakdown* breakdown)
     {
         Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
         if (breakdown)
             ++breakdown->Rays;
 
-        Vec3 const end = origin + dir * range;
+        Vec3 const end = origin + dir * limit;
         Hit best;
-        best.Distance = range;
+        best.Distance = limit;
         best.Z = end.Z;
 
         // 1. The collision trees, cast apart so a door (the dynamic tree) is told from a model (R8).
@@ -79,8 +169,8 @@ namespace
         float const door = world.DynamicHit(origin, end);
         if (breakdown)
             breakdown->TreeCasts += 2;
-        bool const modelHit = model >= 0.0f && model <= range;
-        bool const doorHit = door >= 0.0f && door <= range;
+        bool const modelHit = model >= 0.0f && model <= limit;
+        bool const doorHit = door >= 0.0f && door <= limit;
         if (modelHit || doorHit)
         {
             bool const isDoor = doorHit && (!modelHit || door < model);
@@ -95,79 +185,29 @@ namespace
         }
         Charge(breakdown, &Breakdown::TreeNs, mark);
 
-        // 2. The march, 1 yd at a time up to the nearest collision hit (R9). Where there is no terrain only the
-        // terrain comparison is skipped: the liquids are still read (a WMO's water, map 34's gutters; R10).
-        float const limit = best.Distance;
-        uint32_t const steps = uint32_t(std::ceil(limit / MARCH_STEP));
-        float previous = 0.0f;
-        auto const below = [&](float t)
+        // 2. A WMO's liquid, entered from above (a rising ray only meets one from below, which it sees through).
+        if (liquids && dir.Z < 0.0f)
         {
-            Vec3 const p = origin + dir * t;
-            float const terrain = world.TerrainHeight(p.X, p.Y);
-            return HasTerrain(terrain) && p.Z < terrain;
-        };
-        bool wasBelow = below(0.0f);
-        bool above = !underwater;
-        for (uint32_t step = 1; step <= steps; ++step)
-        {
-            float const t = std::min(float(step) * MARCH_STEP, limit);
             if (breakdown)
-                ++breakdown->MarchSteps;
-            Vec3 const p = origin + dir * t;
-
-            // The liquid's surface, entered from above, at the plane's exact crossing.
-            float water = -1.0f;
-            bool deadly = false;
-            if (liquids)
+                ++breakdown->LiquidCasts;
+            LiquidHit const liquid = world.ModelLiquid(origin, origin + dir * best.Distance);
+            if (liquid.Distance >= 0.0f && liquid.Distance < best.Distance)
             {
-                Mv::Liquid const liquid = world.LiquidAt(p.X, p.Y, p.Z);
-                if (!liquid.Present || p.Z >= liquid.Level)
-                    above = true;
-                else if (above)
-                {
-                    water = dir.Z < -1e-6f ? std::clamp((liquid.Level - origin.Z) / dir.Z, previous, t) : t;
-                    deadly = liquid.Deadly;
-                }
-            }
-
-            // The terrain, from above it to under it, bisected to BISECT_TO.
-            float ground = -1.0f;
-            bool const isBelow = below(t);
-            if (isBelow && !wasBelow)
-            {
-                float lo = previous;
-                float hi = t;
-                while (hi - lo > BISECT_TO)
-                {
-                    float const mid = 0.5f * (lo + hi);
-                    (below(mid) ? hi : lo) = mid;
-                }
-                ground = hi;
-            }
-            wasBelow = isBelow;
-
-            if (water >= 0.0f && (ground < 0.0f || water <= ground))
-            {
-                best.Distance = water;
-                best.What = deadly ? Kind::Deadly : Kind::Water;
-                best.Z = origin.Z + dir.Z * water;
+                best.Distance = liquid.Distance;
+                best.What = liquid.Deadly ? Kind::Deadly : Kind::Water;
+                best.Z = origin.Z + dir.Z * liquid.Distance;
                 best.NormalZ = 1.0f;
-                break;
             }
-            if (ground >= 0.0f)
-            {
-                Vec3 const at = origin + dir * ground;
-                best.Distance = ground;
-                best.What = Kind::Terrain;
-                best.Z = at.Z;
-                best.NormalZ = TerrainNormalZ(world, at.X, at.Y, at.Z);
-                break;
-            }
-            previous = t;
         }
-        Charge(breakdown, &Breakdown::MarchNs, mark);
+        Charge(breakdown, &Breakdown::LiquidNs, mark);
 
-        // 3. Every unit's cylinder but the seat's own (naive: every ray against every unit).
+        // 3. The terrain and its liquids, up to the nearest hit so far.
+        Hit const terrain = CastTerrain(origin, dir, best.Distance, world, liquids, breakdown);
+        if (terrain.What != Kind::Sky && terrain.Distance < best.Distance)
+            best = terrain;
+        Charge(breakdown, &Breakdown::TerrainNs, mark);
+
+        // 4. Every unit's cylinder but the seat's own (every ray against every unit).
         for (UnitShape const& unit : units)
         {
             if (unit.Self)
@@ -199,6 +239,122 @@ void Animus::Vision::Configure(Settings const& settings)
     CurrentSettings = settings;
 }
 
+float Animus::Vision::Reach(Vec3 origin, Vec3 dir, VisionWorld const& world)
+{
+    // The grids the ray's path crosses, until one is not loaded.
+    float const du = -dir.X * float(GRID_CELLS) / GRID_SIZE;
+    float const dv = -dir.Y * float(GRID_CELLS) / GRID_SIZE;
+    float reach = REACH_MAX;
+    Walk(GridU(origin.X), GridU(origin.Y), du, dv, 0.0f, REACH_MAX, float(GRID_CELLS), NO_LIMIT_LOW, NO_LIMIT_HIGH,
+        [&](int32_t tileX, int32_t tileY, float tIn, float /*tOut*/)
+        {
+            if (OnMap(tileX, tileY) && world.Tile(tileX, tileY).Loaded)
+                return true;
+            reach = tIn;
+            return false;
+        });
+    return reach;
+}
+
+Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world,
+    bool liquids, Breakdown* breakdown)
+{
+    Hit best;
+    best.Distance = limit;
+    best.Z = origin.Z + dir.Z * limit;
+    bool found = false;
+    float const u0 = GridU(origin.X);
+    float const v0 = GridU(origin.Y);
+    float const du = -dir.X * float(GRID_CELLS) / GRID_SIZE;
+    float const dv = -dir.Y * float(GRID_CELLS) / GRID_SIZE;
+
+    Walk(u0, v0, du, dv, 0.0f, limit, float(GRID_CELLS), NO_LIMIT_LOW, NO_LIMIT_HIGH,
+        [&](int32_t tileX, int32_t tileY, float tileIn, float tileOut)
+        {
+            // Off the loaded grids, nothing more can be hit.
+            if (!OnMap(tileX, tileY))
+                return false;
+            TerrainTile const tile = world.Tile(tileX, tileY);
+            if (!tile.Loaded)
+                return false;
+            if (breakdown)
+                ++breakdown->TerrainTiles;
+            // Its ground only if the ray comes down to the grid's highest point over it (a ray above that and
+            // climbing never can); its liquid only going down.
+            float const lowest = std::min(origin.Z + dir.Z * tileIn, origin.Z + dir.Z * tileOut);
+            bool const ground = tile.Heights && lowest <= tile.MaxHeight;
+            bool const water = liquids && tile.Liquid && dir.Z < 0.0f;
+            if (!ground && !water)
+                return true;
+
+            int32_t const low[2] = { tileX * GRID_CELLS, tileY * GRID_CELLS };
+            int32_t const high[2] = { low[0] + GRID_CELLS - 1, low[1] + GRID_CELLS - 1 };
+            Walk(u0, v0, du, dv, tileIn, tileOut, 1.0f, low, high,
+                [&](int32_t u, int32_t v, float cellIn, float cellOut)
+                {
+                    if (breakdown)
+                        ++breakdown->TerrainCells;
+                    TerrainCell const cell = world.Cell(tileX, tileY, u - low[0], v - low[1], water);
+                    float nearest = -1.0f;
+                    if (ground && cell.Solid)
+                    {
+                        // The four triangles round the centre, in world space.
+                        auto const at = [&](float cu, float cv, float z)
+                        {
+                            return Vec3{ WorldOfU(float(u) + cu), WorldOfU(float(v) + cv), z };
+                        };
+                        Vec3 const h1 = at(0.0f, 0.0f, cell.Corner[0]);
+                        Vec3 const h2 = at(1.0f, 0.0f, cell.Corner[1]);
+                        Vec3 const h3 = at(0.0f, 1.0f, cell.Corner[2]);
+                        Vec3 const h4 = at(1.0f, 1.0f, cell.Corner[3]);
+                        Vec3 const h5 = at(0.5f, 0.5f, cell.Centre);
+                        Vec3 const triangles[4][3] = { { h1, h2, h5 }, { h1, h3, h5 }, { h2, h4, h5 }, { h3, h4, h5 } };
+                        for (auto const& triangle : triangles)
+                        {
+                            float normalZ = 1.0f;
+                            float const t = RayTriangleFromAbove(origin, dir, triangle[0], triangle[1], triangle[2],
+                                normalZ);
+                            if (t >= 0.0f && t <= limit && (nearest < 0.0f || t < nearest))
+                            {
+                                nearest = t;
+                                best.What = Kind::Terrain;
+                                best.NormalZ = normalZ;
+                            }
+                        }
+                    }
+                    if (water && cell.Liquid)
+                    {
+                        // The cell's liquid is a plane over its footprint, where the ground is below it.
+                        float const t = (cell.Level - origin.Z) / dir.Z;
+                        if (t >= 0.0f && t <= limit && t >= cellIn - FOOTPRINT_SLACK && t <= cellOut + FOOTPRINT_SLACK
+                            && (nearest < 0.0f || t < nearest))
+                        {
+                            Vec3 const p = origin + dir * t;
+                            float const fu = std::clamp(GridU(p.X) - float(u), 0.0f, 1.0f);
+                            float const fv = std::clamp(GridU(p.Y) - float(v), 0.0f, 1.0f);
+                            if (!cell.Solid || CellHeight(cell, fu, fv) <= cell.Level)
+                            {
+                                nearest = t;
+                                best.What = cell.Deadly ? Kind::Deadly : Kind::Water;
+                                best.NormalZ = 1.0f;
+                            }
+                        }
+                    }
+                    if (nearest < 0.0f)
+                        return true;
+                    best.Distance = nearest;
+                    best.Z = origin.Z + dir.Z * nearest;
+                    found = true;
+                    return false;
+                });
+            return !found;
+        });
+
+    if (!found)
+        best = Hit{ limit, Kind::Sky, origin.Z + dir.Z * limit, 0.0f };
+    return best;
+}
+
 Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState const& camera,
     VisionWorld const& world, Breakdown* breakdown)
 {
@@ -211,9 +367,9 @@ Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState co
     rig.Boom = zoom;
     if (zoom > 0.0f)
     {
-        // One cast from the pivot back along the view: the camera pulls in to BOOM_BACKOFF short of what it meets,
-        // never nearer than BOOM_MIN (or the zoom, when that is nearer still).
-        Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, {}, false, false, breakdown);
+        // One cast from the pivot back along the view, against the trees and the terrain: the camera pulls in to
+        // BOOM_BACKOFF short of what it meets, never nearer than BOOM_MIN (or the zoom, when that is nearer still).
+        Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, {}, false, breakdown);
         if (back.What != Kind::Sky)
             rig.Boom = std::min(zoom, std::max(std::min(BOOM_MIN, zoom), back.Distance - BOOM_BACKOFF));
     }
@@ -237,13 +393,17 @@ Animus::Vision::Vec3 Animus::Vision::PixelDirection(Rig const& rig, Settings con
     return Direction(rig.Azimuth - yawRight, rig.Elevation + pitchUp);
 }
 
-Animus::Vision::Hit Animus::Vision::CastRay(Vec3 origin, Vec3 dir, float range, VisionWorld const& world,
-    std::span<UnitShape const> units, bool underwater, Breakdown* breakdown)
+Animus::Vision::Hit Animus::Vision::CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world,
+    std::span<UnitShape const> units, Breakdown* breakdown)
 {
-    return Nearest(origin, dir, range, world, units, underwater, true, breakdown);
+    // No range: as far as the loaded grids go, which is where the terrain ends too.
+    Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+    float const reach = Reach(origin, dir, world);
+    Charge(breakdown, &Breakdown::TerrainNs, mark);
+    return Nearest(origin, dir, reach, world, units, true, breakdown);
 }
 
-float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float range, UnitShape const& unit, bool& top)
+float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape const& unit, bool& top)
 {
     top = false;
     float best = -1.0f;
@@ -264,7 +424,7 @@ float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float range, UnitShape 
         {
             float const t = (-b - std::sqrt(discriminant)) / (2.0f * a);
             float const z = origin.Z + dir.Z * t;
-            if (t >= 0.0f && t <= range && z >= bottom && z <= head)
+            if (t >= 0.0f && t <= limit && z >= bottom && z <= head)
                 best = t;
         }
     }
@@ -275,7 +435,7 @@ float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float range, UnitShape 
         if (std::fabs(dir.Z) < 1e-9f)
             return;
         float const t = (plane - origin.Z) / dir.Z;
-        if (t < 0.0f || t > range || (best >= 0.0f && t >= best))
+        if (t < 0.0f || t > limit || (best >= 0.0f && t >= best))
             return;
         float const x = ox + dir.X * t;
         float const y = oy + dir.Y * t;
@@ -300,11 +460,11 @@ float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 
     return Length(toward - dir * along) <= OBJECTIVE_RADIUS ? 1.0f : 0.0f;
 }
 
-void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, float range, float objective, float* out)
+void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, float objective, float* out)
 {
     bool const sky = hit.What == Kind::Sky;
     out[CHANNEL_DISTANCE] = sky ? 1.0f : std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
-        / std::log(std::max(range, NEAR * 2.0f) / NEAR), 0.0f, 1.0f);
+        / std::log(DISTANCE_REFERENCE / NEAR), 0.0f, 1.0f);
     out[CHANNEL_HEIGHT] = sky ? 0.0f : std::clamp((hit.Z - feetZ) / HEIGHT_SCALE, -1.0f, 1.0f);
     out[CHANNEL_NORMAL] = std::clamp(hit.NormalZ, 0.0f, 1.0f);
     out[CHANNEL_KIND] = float(uint32_t(hit.What));
@@ -323,10 +483,10 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
         for (uint32_t col = 0; col < settings.Width; ++col)
         {
             Vec3 const dir = PixelDirection(rig, settings, row, col);
-            Hit const hit = CastRay(rig.Camera, dir, settings.Range, world, units, underwater, breakdown);
-            // From the camera to the hit, or to the range on a miss (R12).
+            Hit const hit = CastRay(rig.Camera, dir, world, units, breakdown);
+            // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             float const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective);
-            EncodePixel(hit, pose.Z, settings.Range, flag, out + (std::size_t(row) * settings.Width + col) * CHANNELS);
+            EncodePixel(hit, pose.Z, flag, out + (std::size_t(row) * settings.Width + col) * CHANNELS);
         }
 
     float* scalars = out + ImageCount(settings);

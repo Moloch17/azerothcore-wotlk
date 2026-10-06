@@ -52,7 +52,10 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     camera["mode"] = "follow";
     camera["fov_h"] = double(settings.FovH);
     camera["fov_v"] = double(settings.FovV);
-    camera["range"] = double(settings.Range);
+    // A ray has no range: the distance channel is log-scaled to a fixed reference, and Range is the units' radius.
+    camera["distance_reference"] = double(Vi::DISTANCE_REFERENCE);
+    camera["unit_range"] = double(settings.Range);
+    camera["caster"] = "raycast";
     camera["zoom"] = double(settings.Zoom);
     camera["pitch"] = double(settings.Pitch);
     camera["yaw_offset"] = 0.0;

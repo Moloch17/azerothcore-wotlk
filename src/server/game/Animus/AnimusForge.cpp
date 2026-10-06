@@ -154,8 +154,9 @@ void AnimusForge::Forge::OnStartup()
     _config.Load();
     // The camera's settings before any layout is built: its width and height are the vision block's size.
     Animus::Vision::Configure(_config.Vision);
-    LOG_INFO("module.animus", "Camera vision: {} x {} pixels, {:.0f} x {:.0f} degrees, {:.0f} yd range, zoom {:.1f} "
-        "yd, pitch {:.0f} degrees: {} observation columns a vision block", _config.Vision.Width, _config.Vision.Height,
+    LOG_INFO("module.animus", "Camera vision: {} x {} pixels, {:.0f} x {:.0f} degrees, units within {:.0f} yd (rays "
+        "have no range), zoom {:.1f} yd, pitch {:.0f} degrees: {} observation columns a vision block",
+        _config.Vision.Width, _config.Vision.Height,
         _config.Vision.FovH, _config.Vision.FovV, _config.Vision.Range, _config.Vision.Zoom, _config.Vision.Pitch,
         Animus::Vision::ObsCount(_config.Vision));
     // The player controller's client constants, once: what training moves and reports seats with (player-controller).

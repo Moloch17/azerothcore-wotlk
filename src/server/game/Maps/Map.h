@@ -329,6 +329,9 @@ public:
         return IsGridLoaded(Acore::ComputeGridCoord(x, y));
     }
     bool IsGridCreated(GridCoord const& gridCoord) const;
+    /// The terrain of a grid already created, or null -- never creating one, as GetGridTerrainData does (a grid
+    /// created has no terrain where the map has no file for it). Read-only: the bots' camera casts over it.
+    [[nodiscard]] GridTerrainData const* GetCreatedGridTerrainData(GridCoord const& gridCoord) const;
     bool IsGridCreated(float x, float y) const
     {
         return IsGridCreated(Acore::ComputeGridCoord(x, y));

@@ -41,6 +41,10 @@ public:
     bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, VMAP::ModelIgnoreFlags ignoreFlags) const;
     bool GetObjectHitPos(float x1, float y1, float z1, float x2, float y2, float z2, float& rx, float& ry, float& rz, float modifyDist) const;
     float getHeight(float x, float y, float z, float maxSearchDist) const;
+    /// How far along the segment the first WMO liquid surface is, and its type (LiquidType.dbc), or false when the
+    /// segment crosses none (VMAP::StaticMapTree::GetLiquidIntersection; the bots' camera, nothing else).
+    bool GetLiquidHit(float x1, float y1, float z1, float x2, float y2, float z2, float& distance,
+        uint32& liquidType) const;
     bool GetAreaAndLiquidData(float x, float y, float z, Optional<uint8> reqLiquidType, VMAP::AreaAndLiquidData& data) const;
 protected:
     // _staticTree is a shared_ptr as it will point to a parent maps static tree (if exists) to save on memory

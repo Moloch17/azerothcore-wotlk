@@ -254,7 +254,8 @@ namespace
                 "the vision block's camera from feet at (x, y, z), facing yaw degrees, pitch degrees (+ up) and zoom "
                 "yd (default the AnimusForge.Vision.* ones), on the base map with no units and no objective: writes "
                 "<file>-depth.pgm, <file>-kind.ppm and <file>-height.pgm (default file camera-snapshot) and prints the "
-                "rays and the wall time, split into tree casts, the march and units (idle only)" });
+                "rays and the wall time, split into tree casts, WMO liquids, terrain cells and units; no range: a ray "
+                "leaving the grids created round the feet is sky (idle only)" });
             table.AddRow({ "forge fieldstage <scenario> [rebake]", "bake the layered fields AnimusForge.Probe.Source = "
                 "geometry reads for this scenario to AnimusForge.Probe.Dir: every grid of its maps' navmeshes and "
                 "their neighbours (kept if already baked, unless rebake)" });
@@ -562,8 +563,9 @@ namespace
         /// and `zoom` yards (the AnimusForge.Vision.* ones by default), with a default body, no units and no
         /// objective. Writes <file>-depth.pgm (the distance channel, near dark), <file>-kind.ppm (a colour a kind,
         /// the objective white) and <file>-height.pgm (the height channel, mid-grey at the feet), and prints the rays
-        /// cast and the wall time, split into the tree casts, the terrain and liquid march, and the units. On the
-        /// base map (terrain, collision and navmesh tiles only, no creatures: CreateGrids), only while idle.
+        /// cast and the wall time, split into the tree casts, the WMO liquids, the terrain cells and the units. On
+        /// the base map, with the grid holding the feet and its eight neighbours created (terrain, collision and
+        /// navmesh tiles only, no creatures: CreateGrids) -- a ray leaving them is sky -- only while idle.
         static bool HandleCameraSnapshot(ChatHandler* handler, uint32 mapId, float x, float y, float z, float yaw,
             Optional<float> pitch, Optional<float> zoom, Optional<std::string> file)
         {
@@ -584,8 +586,9 @@ namespace
             Vi::CameraState camera;
             camera.Pitch = std::clamp(pitch.value_or(settings.Pitch), -80.0f, 80.0f) * Vi::DEGREES;
             camera.Zoom = std::clamp(zoom.value_or(settings.Zoom), 0.0f, 50.0f);
-            float const reach = settings.Range + camera.Zoom + 2.0f;
-            CreateGrids(map, x - reach, y - reach, x + reach, y + reach);
+            // The grid of the feet and its neighbours, as a seat's map has them around it: a ray has no range, and
+            // reads sky where it leaves the grids created.
+            CreateGrids(map, x - Vi::GRID_SIZE, y - Vi::GRID_SIZE, x + Vi::GRID_SIZE, y + Vi::GRID_SIZE);
 
             Vi::Pose pose;
             pose.X = x;
@@ -646,14 +649,15 @@ namespace
 
             float const* scalars = frame.data() + Vi::ImageCount(settings);
             handler->PSendSysMessage("camera snapshot map {} feet ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f} pitch {:.1f} "
-                "zoom {:.1f}: {} x {} pixels, {:.0f} x {:.0f} degrees, {:.0f} yd", mapId, x, y, z, yaw,
-                camera.Pitch / Vi::DEGREES, camera.Zoom, width, height, settings.FovH, settings.FovV, settings.Range);
+                "zoom {:.1f}: {} x {} pixels, {:.0f} x {:.0f} degrees, no range", mapId, x, y, z, yaw,
+                camera.Pitch / Vi::DEGREES, camera.Zoom, width, height, settings.FovH, settings.FovV);
             handler->PSendSysMessage("  {} rays in {:.0f} us ({:.2f} us a ray)", rays, wallUs,
                 rays ? wallUs / double(rays) : 0.0);
-            handler->PSendSysMessage("  with the breakdown's clocks: trees {:.0f} us ({} casts), march {:.0f} us ({} "
-                "steps), units {:.0f} us ({} tests)", double(breakdown.TreeNs) / 1e3, breakdown.TreeCasts,
-                double(breakdown.MarchNs) / 1e3, breakdown.MarchSteps, double(breakdown.UnitNs) / 1e3,
-                breakdown.UnitTests);
+            handler->PSendSysMessage("  with the breakdown's clocks: trees {:.0f} us ({} casts), WMO liquids {:.0f} us "
+                "({} casts), terrain {:.0f} us ({} grids, {} cells), units {:.0f} us ({} tests)",
+                double(breakdown.TreeNs) / 1e3, breakdown.TreeCasts, double(breakdown.LiquidNs) / 1e3,
+                breakdown.LiquidCasts, double(breakdown.TerrainNs) / 1e3, breakdown.TerrainTiles,
+                breakdown.TerrainCells, double(breakdown.UnitNs) / 1e3, breakdown.UnitTests);
             handler->PSendSysMessage("  boom {:.2f} yd, pivot above floor {:.2f} (/10), underwater {}, airborne {}",
                 scalars[Vi::SCALAR_BOOM] * Vi::ZOOM_SCALE, scalars[Vi::SCALAR_PIVOT_HEIGHT],
                 scalars[Vi::SCALAR_UNDERWATER] > 0.5f ? "yes" : "no",

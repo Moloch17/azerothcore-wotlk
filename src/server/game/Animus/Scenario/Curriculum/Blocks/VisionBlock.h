@@ -25,7 +25,7 @@ namespace Animus::Curriculum
 {
     /// **What the seat sees through its camera** (camera-vision INTERFACE, naive slice): a third-person camera
     /// behind the seat's facing (follow mode: yaw offset 0, AnimusForge.Vision.Pitch and Zoom), rendered every
-    /// decision by the naive caster (Vision::Render) into an image of AnimusForge.Vision.Height rows by Width
+    /// decision by the ray caster (Vision::Render) into an image of AnimusForge.Vision.Height rows by Width
     /// columns, five channels a pixel -- distance, height over the feet, the surface's normal z, the kind, the
     /// objective -- then seven scalars (Vision::Scalar). No actions: the camera is fixed in this slice.
     ///

@@ -52,6 +52,21 @@ namespace VMAP
         bool hit;
     };
 
+    class MapLiquidCallback
+    {
+    public:
+        MapLiquidCallback(ModelInstance* val): prims(val) { }
+        bool operator()(G3D::Ray const& ray, uint32 entry, float& distance, bool /*StopAtFirstHit*/)
+        {
+            if (prims[entry].intersectLiquid(ray, distance, liquidType))
+                hit = true;
+            return hit;
+        }
+        ModelInstance* prims;
+        bool hit = false;
+        uint32 liquidType = 0;
+    };
+
     class LocationInfoCallback
     {
     public:
@@ -125,6 +140,18 @@ namespace VMAP
         return intersectionCallBack.didHit();
     }
     //=========================================================
+
+    bool StaticMapTree::GetLiquidIntersection(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const
+    {
+        float distance = pMaxDist;
+        MapLiquidCallback callback(iTreeValues);
+        iTree.intersectRay(pRay, callback, distance, false);
+        if (!callback.hit)
+            return false;
+        pMaxDist = distance;
+        liquidType = callback.liquidType;
+        return true;
+    }
 
     bool StaticMapTree::isInLineOfSight(Vector3 const& pos1, Vector3 const& pos2, ModelIgnoreFlags ignoreFlags) const
     {

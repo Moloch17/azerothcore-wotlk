@@ -63,6 +63,22 @@ namespace VMAP
         return hit;
     }
 
+    bool ModelInstance::intersectLiquid(G3D::Ray const& pRay, float& pMaxDist, uint32& liquidType) const
+    {
+        if (!iModel || (flags & MOD_M2))
+            return false;
+        if (pRay.intersectionTime(iBound) == G3D::inf())
+            return false;
+        // As intersectRay: into the model's own space.
+        Vector3 p = iInvRot * (pRay.origin() - iPos) * iInvScale;
+        Ray modRay(p, iInvRot * pRay.direction());
+        float distance = pMaxDist * iInvScale;
+        if (!iModel->IntersectLiquid(modRay, distance, liquidType))
+            return false;
+        pMaxDist = distance * iScale;
+        return true;
+    }
+
     bool ModelInstance::GetLocationInfo(G3D::Vector3 const& p, LocationInfo& info) const
     {
         if (!iModel)
