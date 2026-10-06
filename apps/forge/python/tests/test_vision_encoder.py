@@ -371,6 +371,7 @@ def test_both_losses_train_the_shared_camera_once_per_minibatch():
     hook.remove()
     assert len(calls) == 1                  # one minibatch, encoded once for the actor and the critic
     assert stats["vision_grad_norm"] > 0.0
+    assert stats["vision_grad_actor"] > 0.0 and stats["vision_grad_critic"] > 0.0
     assert all(int(trainer.vision_opt.state[p]["step"]) == 1 for p in encoder.parameters())
     assert any(not torch.equal(a, p.detach()) for a, p in zip(before, encoder.parameters()))
     # The rollout copies read the update's weights.

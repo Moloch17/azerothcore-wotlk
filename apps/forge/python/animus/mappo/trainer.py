@@ -1626,7 +1626,9 @@ class MappoTrainer:
         if self.goal_count:
             stats["goal_entropy"] = 0.0
         if self.vision_opt is not None:
-            stats["vision_grad_norm"] = 0.0
+            # The shared camera's gradient at its embedding, each loss's share: whether the value loss swamps the
+            # policy's in what the encoder learns.
+            stats.update(vision_grad_norm=0.0, vision_grad_actor=0.0, vision_grad_critic=0.0)
         foresight = self.foresight_outputs > 0 and buffer.foresight >= self.foresight_outputs
         if foresight:
             stats["foresight_loss"] = 0.0
@@ -1876,6 +1878,11 @@ class MappoTrainer:
                     # The shared camera's gradient is the actor's and the critic's together, stepped after both.
                     self.vision_opt.zero_grad()
                 actor_loss.backward()
+                actor_share = None
+                if seen_leaf is not None and seen_leaf.grad is not None:
+                    # The actor's share of the camera embedding's gradient, before the critic's adds to it.
+                    actor_share = seen_leaf.grad.detach().clone()
+                    totals["vision_grad_actor"] += actor_share.norm()
                 actor_parameters = self._actor_parameters()
                 if cfg.rank_sync == "gradients":
                     self.ranks.average_gradients(actor_parameters)
@@ -1921,6 +1928,8 @@ class MappoTrainer:
                 self.critic_opt.step()
                 if self.vision_opt is not None:
                     if seen_leaf.grad is not None:
+                        critic_share = seen_leaf.grad if actor_share is None else seen_leaf.grad - actor_share
+                        totals["vision_grad_critic"] += critic_share.detach().norm()
                         seen.backward(seen_leaf.grad)
                     vision_parameters = self.vision_parameters()
                     if cfg.rank_sync == "gradients":
