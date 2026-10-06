@@ -82,10 +82,10 @@ mappo:
   per_layout_advantages: true
   min_layout_rows: 32
   target_kl: 0.02
-  # The camera's update 1024 rows at a time (camera-vision.FREELOOK.md, R3): at 128 x 64 a minibatch of 6144 rows
-  # decoded whole peaked at ~5.6 GiB for the encoder alone; in chunks of 1024, 0.94 GiB, for ~1.7x its time (the
-  # forward is run twice). 2026-10-06, measured beside the live M1 run.
-  vision_chunk_rows: 1024
+  # The camera's update a minibatch at once (camera-vision.FREELOOK.md, R3): at 128 x 64 a minibatch of 6144 rows
+  # peaks at ~5.6 GiB for the encoder alone, which the card holds when M1 has it to itself (9.3 GB in use chunked).
+  # 1024 chunks it to 0.94 GiB for ~1.7x the encoder's time (the forward is run twice), for a shared card.
+  vision_chunk_rows: 0
 
 # Seeded evaluation of the task itself: one place and one objective, so there is no held-out ground and no ladder;
 # the evaluation spreads over every class and race. Every third evaluation also plays sampled actions on the same
