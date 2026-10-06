@@ -181,10 +181,11 @@ def cmd_realism(args) -> dict:
 
 def cmd_parity(args) -> dict:
     study = parity.study_capture(r.CaptureDir(args.capture_dir, args.start, args.end))
-    rep = parity.report(study, source=str(args.capture_dir))
+    rep = parity.report(study, source=str(args.capture_dir), resamples=args.bootstrap, seed=args.seed)
     js, md = parity.write(rep, args.out)
-    return {"json": str(js), "markdown": str(md), "summary": rep["summary"],
-            "attention": [f"{row['context']}: {row['metric']}" for row in rep["attention"]][:40],
+    return {"json": str(js), "markdown": str(md),
+            "attention": [f"{row['model']} {row['context']}: {row['metric']}" for row in rep["attention"]][:40],
+            "sections": rep["sections"], "proposals": rep["proposals"],
             "timing": {k: rep["timing"][k] for k in ("tick_ms", "decision_ms", "jitter_recommended")}}
 
 
@@ -253,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", default="human_parity.json", help="report path (.json or .md; both are written)")
     p.add_argument("--from", dest="start", default=None, help="first hour (yyyy-mm-dd[Thh])")
     p.add_argument("--to", dest="end", default=None, help="last hour")
+    p.add_argument("--bootstrap", type=int, default=parity.BOOTSTRAP, help="resamples by session (>= 1000)")
+    p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_parity)
 
     args = parser.parse_args(argv)

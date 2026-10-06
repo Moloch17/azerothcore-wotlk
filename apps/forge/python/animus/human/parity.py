@@ -1,36 +1,45 @@
-"""Parity of bots with players on a live realm (player-controller, 2026-10-05): how far the companions' movement --
-the player controller, reporting as a client does -- is from the players' own, in one capture where both were
-recorded alike (FORMAT.md: one move stream, the same Move fields and clock for both; a session's `kind` 0 is a
-player, 1 a companion). It replaces the Playtest procedure: the constants change from what this measures live.
+"""Parity of Animus companions with human players on a live realm (player-controller, 2026-10-05; the definitions are
+.agents/plans/player-controller/parity.METRICS.md, approved by the overseer with the statistics below). It replaces
+the Playtest: the controller's constants change from what this measures live -- proposed here, decided by the user.
 
-**Contexts.** Every measurement is kept per context -- class and race, map, mode (ground, swim, fly), mounted, in
-combat -- and in `all`. A context is compared only where both sides have it; the others are listed as unmatched.
+**Data.** One capture, capture format 3: players' client packets (Move `source` 0) and companions' controller packets
+(`source` 2) in one move stream, the same fields; format 1's synthesised companion samples (`source` 1) are no
+packets and are left out. Intervals and cadence are on the server's clock (`server_ms`, the movement handler's
+getMSTime): a player's trails the packet's arrival by its session-queue wait (up to one update), a companion's has
+none -- read the per-opcode interval rows with that in mind. A file without `server_ms` falls back to `client_ms`,
+and the report says which clock it read. Cutting spans (taxi, teleport, death, loading, vehicle, transport) and
+involuntary ones (root, stun, fear, knockback) are left out.
 
-**Sections and their metrics** (each row: players, bots, a divergence, the threshold that counts as a pass, and a
-flag -- `pass`, `attention`, or `n/a` where either side has fewer than MIN_SAMPLES):
+**Strata.** Every packet's state from MoverState (class, level band, on foot or mounted, form, zone; the mode from the
+packet's flags; in combat), carried forward; a file with none falls back to the session's class and zone, the mount
+events and the combat index. A companion's rows are split by its model and move revision. A stratum too small for a
+metric pools up -- zone, then level band, then form, then class -- and its row names the stratum it was read in;
+`all` is always reported.
 
-1. kinematics -- the speed over the speed in force while running, walking, backing, strafing, swimming and flying
-   (median; divergence the difference, threshold SPEED_TOLERANCE); the turn and pitch rates between packets, the
-   fall heights (quantile distance, DISTRIBUTION_TOLERANCE); jumps, stops and falls a minute (relative difference,
-   RATE_TOLERANCE); the highest rise walked onto and the steepest slope walked up (difference, STEP_TOLERANCE yd,
-   SLOPE_TOLERANCE degrees).
-2. cadence -- the client's time since the last packet before each opcode (median, relative, CADENCE_TOLERANCE),
-   the heartbeat's spacing while moving (HEARTBEAT_TOLERANCE ms), the facing turned at a SET_FACING (the 0.1 rad
-   rule, FACING_TOLERANCE rad), and changes a minute (RATE_TOLERANCE).
-3. realism -- realism.score's EMD of the bots' motion features against a reference made of the players' in the same
-   capture, overall and per motion context (REALISM_TOLERANCE).
-4. physics -- Replay's calibration measurements (Movement/Replay.cpp), on the players and on the bots, beside the
-   controller's constant: the jump and swim-jump launch, the apex, gravity, the air time's error, STEP_UP (highest
-   rise walked), the walkable slope, the terminal velocity, the heartbeat, the mouse-look facing threshold, the
-   keyboard turn while moving and the vertical share. Divergence |bots - players| / |constant|, PHYSICS_TOLERANCE.
-   The float depth needs the liquid's level, which no record holds: not measured.
-5. realm timing -- the realm's world tick (MapUpdate records' diffs, per map) and the companions' decision intervals
-   (CompanionDecision times, per companion), as quantiles. Training jitter of the tick and the decision interval is
-   recommended only past JITTER_TICK_P95_MS (a tick coarser than the forge's own 50 ms) or a decision interval's p5
-   or p95 more than JITTER_DECISION_SHARE off the nominal DECISION_MS.
+**Rows.** players, bots, the divergence with its 95% interval, the threshold, n (samples and sessions a side), and:
+`attention` when the interval lies wholly above the threshold, `pass` when wholly at or below it, `inconclusive`
+otherwise or below the minimum (30 samples and 3 sessions a side for distributions, 10 samples and 2 sessions for
+rates and medians -- a bootstrap by session needs two). The interval is a bootstrap of BOOTSTRAP resamples by
+session, each side resampled on its own. Per section the rows are tested together: each row's one-sided p (the
+share of resamples at or below the threshold) through Benjamini-Hochberg at FDR; `survives` marks the attentions left,
+and the section reports its attentions against the number expected by chance. The headline is the `all` stratum and
+the surviving attentions.
 
-Behaviour metrics (rates, turn and fall distributions, realism) are the policy's; physics and cadence are the
-controller's. Nothing here decides anything: a flag is for the user to read.
+**Kinds.** `controller` rows (speeds, cadence, physics, refusals) test the controller and the client's rules: an
+attention there is a controller or constant question. `behaviour` rows (turning, starts and stops, run lengths,
+jumps and falls a minute, acceleration, realism) are the policy's choices: they inform training -- style and the
+human-likeness reward -- and never gate a controller change.
+
+**Normalisation** (each row's `norm`): `abs` in the metric's own unit; `median` over the players' median, only for
+strictly positive quantities (fall heights, run lengths, |turn rate|, |pitch rate|): turn and pitch rates are compared
+as magnitudes, since their sign is symmetric, so no signed, zero-centred quantity is divided by its median (the signed
+acceleration is an EMD on fixed bins); `relative` for rates (over the players' rate); `constant` over the
+controller's constant.
+
+**Exposure.** The highest rise walked and the steepest slope walked depend on the terrain met, not on the physics:
+they are calibration only -- each side against the constant (an upper check: walking higher or steeper than the
+constant allows is the attention), never bots against players. Steep descents need the faces met, which no packet
+says: reported, not flagged.
 """
 
 from __future__ import annotations
@@ -43,7 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
-from animus.human import motion, realism
+from animus.human import motion, reference
 from animus.human import reader as r
 from animus.human import tracks as tr
 
@@ -66,6 +75,7 @@ OPCODES = {
 }
 OP = {name: code for code, name in OPCODES.items()}
 NOT_CHANGES = {OP["HEARTBEAT"], OP["SET_FACING"], OP["SET_PITCH"], OP["FALL_LAND"]}
+STARTS = {OP["START_FORWARD"], OP["START_BACKWARD"], OP["START_STRAFE_LEFT"], OP["START_STRAFE_RIGHT"]}
 STOPS = {OP["STOP"], OP["STOP_STRAFE"]}
 
 # The controller's constants (Movement/PlayerController.h, ReportCadence.h).
@@ -80,70 +90,164 @@ MOUSE_FACING_THRESHOLD = 0.1
 KEYBOARD_TURN_WHILE_MOVING = 0.75
 VERTICAL_SHARE = 0.7071068
 
-# Thresholds: what counts as a pass.
-MIN_SAMPLES = 5
-SPEED_TOLERANCE = 0.03              # the speed over the speed in force, absolute
-DISTRIBUTION_TOLERANCE = 0.25       # quantile distance over the players' median magnitude
-RATE_TOLERANCE = 0.5                # relative difference of a per-minute rate
-STEP_TOLERANCE = 0.15               # yards
-SLOPE_TOLERANCE = 3.0               # degrees
-CADENCE_TOLERANCE = 0.25            # relative difference of a median interval
-HEARTBEAT_TOLERANCE = 25.0          # ms
-FACING_TOLERANCE = 0.02             # rad
-REALISM_TOLERANCE = 0.15            # realism.score's EMD
-PHYSICS_TOLERANCE = 0.02            # of the constant
+# Statistics.
+BOOTSTRAP = 1000
+CONFIDENCE = 0.95
+FDR = 0.1
+MIN_DIST_SAMPLES, MIN_DIST_SESSIONS = 30, 3
+MIN_STAT_SAMPLES, MIN_STAT_SESSIONS = 10, 2
 QUANTILES = np.linspace(0.05, 0.95, 19)
-DECISION_MS = 250.0                 # AnimusForge.DecisionMs, the realm's Animus decision interval
-JITTER_TICK_P95_MS = 50.0           # a realm tick coarser than the forge's at p95: train with it
-JITTER_DECISION_SHARE = 0.2         # decision intervals this far off nominal at p5 or p95: train with it
+CONSTANT_CHANGE_N = 30              # players' samples before a constant change is proposed
 
+# Strata: the dimensions, and the order they pool up in.
+DIMS = ("class", "band", "mount", "form", "zone", "mode", "combat")
+POOL = ("zone", "band", "form", "class")
+ALL = tuple("*" for _ in DIMS)
 CLASSES = {1: "warrior", 2: "paladin", 3: "hunter", 4: "rogue", 5: "priest", 6: "deathknight", 7: "shaman",
            8: "mage", 9: "warlock", 11: "druid"}
-SIDES = ("players", "bots")
 
+# Realm timing (FORMAT.md MapUpdate, CompanionDecision).
+DECISION_MS = 250.0
+JITTER_TICK_P95_MS = 50.0
+JITTER_DECISION_SHARE = 0.2
+SECTIONS = ("refusals", "kinematics", "cadence", "realism", "physics")
+
+
+@dataclass(frozen=True)
+class Spec:
+    """One metric: its section, kind, how its divergence is read, the threshold that passes, and its normalisation."""
+
+    name: str
+    section: str
+    kind: str                       # controller / behaviour
+    stat: str                       # median_diff, qdist, rate, emd, refusals, parity, calibration
+    threshold: float
+    norm: str
+    unit: str = ""
+    source: str = ""                # the observations read (default: the name)
+    constant: float | None = None
+    how: str = "median"             # a side's value: median, mean, max, p1, apex (physics and calibration)
+    side: str = ""                  # calibration: the side measured against the constant
+    upper: bool = False             # calibration of an exposure-dependent maximum: only above the constant counts
+
+    @property
+    def distributional(self) -> bool:
+        return self.stat in ("qdist", "emd")
+
+    @property
+    def metric(self) -> str:
+        return self.source or self.name
+
+
+SPEED_MODES = ("run", "walk", "back", "strafe", "diagonal", "swim", "fly")
+SPECS: list[Spec] = [Spec("refused per 1000 packets", "refusals", "controller", "refusals", 1.0, "abs",
+                          "per 1000")]
+for _mode in SPEED_MODES:
+    SPECS.append(Spec(f"{_mode} speed / speed in force (median)", "kinematics", "controller", "median_diff", 0.03,
+                      "abs", source=f"{_mode} speed"))
+    SPECS.append(Spec(f"{_mode} speed / speed in force (distribution)", "kinematics", "controller", "qdist", 0.10,
+                      "abs", source=f"{_mode} speed"))
+SPECS += [
+    Spec("|turn rate| (rad/s)", "kinematics", "behaviour", "qdist", 0.25, "median"),
+    Spec("|pitch rate| (rad/s)", "kinematics", "behaviour", "qdist", 0.25, "median"),
+    Spec("starts and stops a minute", "kinematics", "behaviour", "rate", 0.5, "relative"),
+    Spec("run length (s)", "kinematics", "behaviour", "qdist", 0.25, "median"),
+    Spec("acceleration (motion accel EMD)", "kinematics", "behaviour", "emd", 0.15, "abs"),
+    Spec("jumps a minute", "kinematics", "behaviour", "rate", 0.5, "relative"),
+    Spec("falls a minute", "kinematics", "behaviour", "rate", 0.5, "relative"),
+    Spec("fall height (yd)", "kinematics", "behaviour", "qdist", 0.25, "median"),
+    Spec("HEARTBEAT spacing while moving", "cadence", "controller", "median_diff", 25.0, "abs", "ms",
+         source="HEARTBEAT_MS"),
+    Spec("facing turned at SET_FACING", "cadence", "controller", "median_diff", 0.02, "abs", "rad",
+         source="MOUSE_FACING_THRESHOLD"),
+    Spec("keyboard turn while moving / unit rate", "cadence", "controller", "median_diff", 0.05, "abs",
+         source="KEYBOARD_TURN_WHILE_MOVING"),
+    Spec("changes a minute", "cadence", "behaviour", "rate", 0.5, "relative"),
+    Spec("reports a minute", "cadence", "behaviour", "rate", 0.5, "relative"),
+    Spec("realism EMD", "realism", "behaviour", "emd", 0.15, "abs"),
+]
+# Physics: Replay's measurements (Movement/Replay.cpp), bots against players and each side against the constant.
+# (name, the observations read, constant, how a side's value is read, unit, threshold, norm, exposure-dependent)
+PHYSICS = (
+    ("JUMP_SPEED", "JUMP_SPEED", JUMP_SPEED, "mean", "yd/s", 0.02, "constant", False),
+    ("SWIM_JUMP_SPEED", "SWIM_JUMP_SPEED", SWIM_JUMP_SPEED, "mean", "yd/s", 0.02, "constant", False),
+    ("jump apex", "JUMP_SPEED", JUMP_SPEED ** 2 / (2 * GRAVITY), "apex", "yd", 0.02, "constant", False),
+    ("GRAVITY", "GRAVITY", GRAVITY, "mean", "yd/s^2", 0.02, "constant", False),
+    ("jump air time error", "jump air time error", 0.0, "mean", "ms", 20.0, "abs", False),
+    ("TERMINAL_VELOCITY", "TERMINAL_VELOCITY", TERMINAL_VELOCITY, "median", "yd/s", 0.02, "constant", False),
+    ("HEARTBEAT_MS", "HEARTBEAT_MS", HEARTBEAT_MS, "median", "ms", 0.02, "constant", False),
+    # Read at the steps' 1st percentile: every step is at or past the rule (a client is frame-limited, so it lands a
+    # little past it), so the rule is the distribution's lower edge -- the percentile, not the minimum, for a stray.
+    ("MOUSE_FACING_THRESHOLD", "MOUSE_FACING_THRESHOLD", MOUSE_FACING_THRESHOLD, "p1", "rad", 0.02, "constant",
+     False),
+    ("KEYBOARD_TURN_WHILE_MOVING", "KEYBOARD_TURN_WHILE_MOVING", KEYBOARD_TURN_WHILE_MOVING, "median", "", 0.02,
+     "constant", False),
+    ("VERTICAL_SHARE", "VERTICAL_SHARE", VERTICAL_SHARE, "median", "", 0.02, "constant", False),
+    ("STEP_UP (highest rise walked)", "rise walked", STEP_UP, "max", "yd", 0.02, "constant", True),
+    ("walkable slope (steepest walked up)", "slope walked", WALKABLE_DEG, "max", "deg", 0.02, "constant", True),
+)
+for _name, _source, _constant, _how, _unit, _threshold, _norm, _exposure in PHYSICS:
+    if not _exposure:
+        SPECS.append(Spec(_name, "physics", "controller", "parity", _threshold, _norm, _unit, _source, _constant,
+                          _how))
+    for _side in ("players", "bots"):
+        SPECS.append(Spec(f"{_name} ({_side} vs constant)", "physics", "controller", "calibration", _threshold,
+                          _norm, _unit, _source, _constant, _how, _side, _exposure))
+# Measured, never flagged: what no threshold can be set for from packets alone.
+REPORTED = ("steep descents walked (per 1000 descending runs)", "network share (server - client interval, ms)")
+
+
+# Observations.
 
 @dataclass
-class Side:
-    """One side's measurements in one context: named samples and counts."""
+class Observations:
+    """Every measurement: its metric, side, companion model, session, stratum and value. An event carries 1, and its
+    exposure (minutes moving) is the metric "minutes"."""
 
-    values: dict[str, list[float]] = field(default_factory=dict)
-    counts: dict[str, float] = field(default_factory=dict)
-    feats: list[np.ndarray] = field(default_factory=list)
-    contexts: list[np.ndarray] = field(default_factory=list)
+    metric: list[str] = field(default_factory=list)
+    bot: list[bool] = field(default_factory=list)
+    model: list[str] = field(default_factory=list)
+    session: list[int] = field(default_factory=list)
+    key: list[tuple] = field(default_factory=list)
+    value: list[float] = field(default_factory=list)
 
-    def add(self, name: str, value: float) -> None:
+    def add(self, metric: str, bot: bool, model: str, session: int, key: tuple, value: float) -> None:
         if math.isfinite(value):
-            self.values.setdefault(name, []).append(float(value))
-
-    def count(self, name: str, n: float = 1.0) -> None:
-        self.counts[name] = self.counts.get(name, 0.0) + n
-
-    def get(self, name: str) -> np.ndarray:
-        return np.asarray(self.values.get(name, []), dtype=np.float64)
+            self.metric.append(metric)
+            self.bot.append(bot)
+            self.model.append(model)
+            self.session.append(session)
+            self.key.append(key)
+            self.value.append(float(value))
 
 
 @dataclass
 class Study:
-    """Every context's two sides."""
-
-    sides: dict[str, dict[str, Side]] = field(default_factory=dict)
-    synthesised: int = 0            # companion samples (source 1): kept out of the cadence and physics
-    ticks: dict[int, list[np.ndarray]] = field(default_factory=dict)        # map -> MapUpdate diffs (ms)
-    decisions: list[np.ndarray] = field(default_factory=list)               # per companion, decision intervals (ms)
-
-    def side(self, context: str, bot: bool) -> Side:
-        return self.sides.setdefault(context, {"players": Side(), "bots": Side()})["bots" if bot else "players"]
+    obs: Observations = field(default_factory=Observations)
+    hists: dict = field(default_factory=dict)       # (bot, model, session, class or *) -> {context: {feature: counts}}
+    ticks: dict[int, list[np.ndarray]] = field(default_factory=dict)
+    decisions: list[np.ndarray] = field(default_factory=list)
+    clocks: dict[str, int] = field(default_factory=dict)
+    synthesised: int = 0
 
 
-# Measuring.
+@dataclass
+class MoverStates:
+    """A mover's MoverState records, sorted by time: the state in force at any time."""
 
-def context_key(info: dict, mapid: int, mode: str, mounted: bool, combat: bool) -> str:
-    who = f"{CLASSES.get(info.get('class_', 0), 'class' + str(info.get('class_', '?')))}/race{info.get('race', '?')}"
-    return f"{who}/map{mapid}/{mode}{'/mounted' if mounted else ''}{'/combat' if combat else ''}"
+    ms: np.ndarray
+    rows: np.ndarray
+
+    def at(self, ms: np.ndarray) -> np.ndarray:
+        return np.clip(np.searchsorted(self.ms, ms, side="right") - 1, 0, len(self.ms) - 1)
 
 
-def packet_mode(flags: int) -> str:
-    return "swim" if flags & SWIMMING else "fly" if flags & FLYING else "ground"
+def _band(level: int) -> str:
+    return reference.level_band(int(level)) if level else "?"
+
+
+def _mode(flags: int) -> str:
+    return "swim" if flags & SWIMMING else "fly" if flags & FLYING else "airborne" if flags & AIRBORNE else "ground"
 
 
 def _spans(events: np.ndarray, start: int, end: int) -> list[tuple[float, float]]:
@@ -159,6 +263,13 @@ def _spans(events: np.ndarray, start: int, end: int) -> list[tuple[float, float]
     return out
 
 
+def _in(spans: list[tuple[float, float]], t: np.ndarray) -> np.ndarray:
+    out = np.zeros(len(t), dtype=bool)
+    for a, b in spans:
+        out |= (t >= a) & (t < b)
+    return out
+
+
 def _speed_in_force(speeds: np.ndarray, ms: float, column: str) -> float:
     if len(speeds) == 0:
         return tr.BASE_SPEEDS.get(column, 0.0)
@@ -167,48 +278,105 @@ def _speed_in_force(speeds: np.ndarray, ms: float, column: str) -> float:
     return float(row[column])
 
 
-def measure_packets(study: Study, moves: np.ndarray, events: np.ndarray, speeds: np.ndarray, info: dict, bot: bool,
-                    combat: tr.CombatIndex | None = None, player: int = 0) -> None:
-    """One mover's packets into the study, Replay's measurements per context: a player's client packets (source 0)
-    and a companion's controller packets (source 2); format 1's synthesised companion samples (source 1) are no
-    packets and are left out."""
+def _clock(moves: np.ndarray) -> tuple[np.ndarray, str]:
+    """Each packet's time (ms) on the clock intervals are read on: the server's when the file has it, else the
+    client's, else the server's unix time. A 32-bit clock's wrap is unrolled."""
+    for column, name in (("server_ms", "server"), ("client_ms", "client")):
+        if column in (moves.dtype.names or ()) and np.all(moves[column] > 0):
+            raw = moves[column].astype(np.int64)
+            steps = np.diff(raw) % (1 << 32)
+            steps = np.where(steps > (1 << 31), steps - (1 << 32), steps)
+            return np.concatenate([[0], np.cumsum(steps)]).astype(np.float64) + float(raw[0]), name
+    return moves["ms"].astype(np.float64), "unix"
+
+
+def measure_mover(study: Study, moves: np.ndarray, events: np.ndarray, speeds: np.ndarray, states: MoverStates | None,
+                  info: dict, bot: bool, model: str, session: int, combat: tr.CombatIndex | None = None,
+                  player: int = 0) -> None:
+    """One mover's packets into the study."""
     moves = moves[moves["source"] != r.SOURCE_COMPANION_SAMPLE]
     if len(moves) < 2:
         return
     moves = moves[np.argsort(moves["ms"], kind="stable")]
     speeds = speeds[np.argsort(speeds["ms"], kind="stable")]
-    clock = np.where(moves["client_ms"] > 0, moves["client_ms"].astype(np.float64), moves["ms"].astype(np.float64))
-    mounted_spans = _spans(events, r.EV_MOUNT, r.EV_DISMOUNT)
-    in_combat = combat.in_combat(player, moves["ms"].astype(np.float64) / 1000.0) if combat is not None else None
+    clock, clock_name = _clock(moves)
+    study.clocks[clock_name] = study.clocks.get(clock_name, 0) + len(moves)
+    client = moves["client_ms"].astype(np.float64)
+    unix = moves["ms"].astype(np.float64)
+    flags_all = moves["move_flags"].astype(np.int64)
+    ops = moves["opcode"].astype(np.int64)
 
-    def where(k: int) -> list[Side]:
-        row = moves[k]
-        mounted = any(a <= float(row["ms"]) < b for a, b in mounted_spans)
-        fight = bool(in_combat[k]) if in_combat is not None else False
-        key = context_key(info, int(row["map"]), packet_mode(int(row["move_flags"])), mounted, fight)
-        return [study.side(key, bot), study.side("all", bot)]
+    # Left out: cutting and involuntary spans, transports.
+    cut = []
+    for a, b in ((r.EV_TAXI_START, r.EV_TAXI_END), (r.EV_DEATH, r.EV_RESURRECT),
+                 (r.EV_LOADING_START, r.EV_LOADING_END), (r.EV_VEHICLE_ENTER, r.EV_VEHICLE_EXIT),
+                 (r.EV_TRANSPORT_BOARD, r.EV_TRANSPORT_LEAVE), (r.EV_ROOT, r.EV_UNROOT),
+                 (r.EV_STUN_START, r.EV_STUN_END), (r.EV_FEAR_START, r.EV_FEAR_END)):
+        cut += _spans(events, a, b)
+    for tk in events["ms"][events["event"] == r.EV_KNOCKBACK].astype(np.float64):
+        cut.append((tk, tk + tr.KNOCKBACK_MAX * 1000.0))
+    for tk in events["ms"][events["event"] == r.EV_TELEPORT].astype(np.float64):
+        cut.append((tk - 1.0, tk + 1.0))
+    skip = _in(cut, unix) | ((flags_all & tr.MF_ONTRANSPORT) != 0)
 
-    for k in range(1, len(moves)):
-        prev, rec = moves[k - 1], moves[k]
-        dt_ms = clock[k] - clock[k - 1]
-        if dt_ms <= 0 or dt_ms > 1500 or int(prev["map"]) != int(rec["map"]):
+    # Each packet's stratum: MoverState, or the session and the events.
+    n = len(moves)
+    if states is not None and len(states.ms):
+        rows = states.rows[states.at(unix)]
+        cls = [CLASSES.get(int(c), f"class{int(c)}") for c in rows["class_"]]
+        band = [_band(int(v)) for v in rows["level"]]
+        mount = ["mounted" if int(m) else "foot" for m in rows["mount"]]
+        form = [str(int(f)) for f in rows["form"]]
+        zone = [str(int(z)) for z in rows["zone"]]
+        fighting = rows["in_combat"].astype(bool)
+    else:
+        cls = [CLASSES.get(info.get("class_", 0), f"class{info.get('class_', '?')}")] * n
+        band = [_band(info.get("level", 0))] * n
+        mount = ["mounted" if m else "foot" for m in _in(_spans(events, r.EV_MOUNT, r.EV_DISMOUNT), unix)]
+        form = ["0"] * n
+        zone = [str(info.get("zone", 0))] * n
+        fighting = combat.in_combat(player, unix / 1000.0) if combat is not None else np.zeros(n, dtype=bool)
+
+    def key(k: int) -> tuple:
+        return (cls[k], band[k], mount[k], form[k], zone[k], _mode(int(flags_all[k])), str(int(fighting[k])))
+
+    def add(metric: str, k: int, value: float) -> None:
+        study.obs.add(metric, bot, model, session, key(k), value)
+
+    run_started: float | None = None
+    descents = steep = 0
+    for k in range(1, n):
+        if skip[k] or skip[k - 1] or int(moves[k]["map"]) != int(moves[k - 1]["map"]):
+            run_started = None
             continue
-        sides = where(k)
-        pf, rf, op = int(prev["move_flags"]), int(rec["move_flags"]), int(rec["opcode"])
+        dt_ms = clock[k] - clock[k - 1]
+        if dt_ms <= 0 or dt_ms > 1500:
+            run_started = None
+            continue
+        prev, rec = moves[k - 1], moves[k]
+        pf, rf, op = int(prev["move_flags"]), int(rec["move_flags"]), int(ops[k])
         seconds = dt_ms / 1000.0
         dx, dy = float(rec["x"]) - float(prev["x"]), float(rec["y"]) - float(prev["y"])
         rise = float(rec["z"]) - float(prev["z"])
         run = math.hypot(dx, dy)
-        name = OPCODES.get(op, f"0x{op:03X}")
-        for s in sides:
-            s.count("minutes", seconds / 60.0)
-            s.add(f"interval {name}", dt_ms)
-            if op not in NOT_CHANGES:
-                s.count("changes")
-            if op in STOPS:
-                s.count("stops")
+        moving = bool(pf & (TRANSLATING | AIRBORNE | ASCENDING | DESCENDING))
 
-        # Speeds: the keys held over the interval, alone, at the speed in force for them.
+        if clock_name != "client" and client[k] > 0 and client[k - 1] > 0:
+            add("network share (server - client interval, ms)", k, dt_ms - (client[k] - client[k - 1]))
+        if moving:
+            add("minutes", k, seconds / 60.0)
+            add("reports a minute", k, 1.0)
+            if op not in NOT_CHANGES:
+                add("changes a minute", k, 1.0)
+        if op in STARTS or op in STOPS:
+            add("starts and stops a minute", k, 1.0)
+        if op in STARTS and run_started is None:
+            run_started = clock[k]
+        elif op in STOPS and run_started is not None:
+            add("run length (s)", k, (clock[k] - run_started) / 1000.0)
+            run_started = None
+
+        # Speeds: the keys held over the interval, at the speed in force for them.
         keys = pf & TRANSLATING
         if not (pf & AIRBORNE) and not (rf & AIRBORNE) and dt_ms >= 100:
             mode, column, dist = None, None, run
@@ -217,143 +385,169 @@ def measure_packets(study: Study, moves: np.ndarray, events: np.ndarray, speeds:
             elif pf & FLYING and keys == FORWARD:
                 mode, column, dist = "fly", "flight", math.hypot(run, rise)
             elif not (pf & (SWIMMING | FLYING)):
+                walking = bool(pf & WALKING)
                 if keys == FORWARD:
-                    mode, column = ("walk", "walk") if pf & WALKING else ("run", "run")
-                elif keys == BACKWARD and not pf & WALKING:
+                    mode, column = ("walk", "walk") if walking else ("run", "run")
+                elif keys == BACKWARD and not walking:
                     mode, column = "back", "run_back"
-                elif keys in (STRAFE_LEFT, STRAFE_RIGHT) and not pf & WALKING:
+                elif keys in (STRAFE_LEFT, STRAFE_RIGHT) and not walking:
                     mode, column = "strafe", "run"
+                elif keys in (FORWARD | STRAFE_LEFT, FORWARD | STRAFE_RIGHT) and not walking:
+                    mode, column = "diagonal", "run"
             if mode:
                 force = _speed_in_force(speeds, float(rec["ms"]), column)
                 if force > 0:
-                    for s in sides:
-                        s.add(f"speed {mode}", dist / seconds / force)
+                    add(f"{mode} speed", k, dist / seconds / force)
 
-        # Turning and pitching between packets.
+        # Turning and pitching, as magnitudes.
         turned = abs(motion.wrap(float(rec["o"]) - float(prev["o"])))
         if dt_ms >= 50 and turned > 1e-4:
-            for s in sides:
-                s.add("turn rate (rad/s)", turned / seconds)
+            add("|turn rate| (rad/s)", k, turned / seconds)
         pitched = abs(float(rec["pitch"]) - float(prev["pitch"]))
         if dt_ms >= 50 and pitched > 1e-4 and pf & (SWIMMING | FLYING):
-            for s in sides:
-                s.add("pitch rate (rad/s)", pitched / seconds)
+            add("|pitch rate| (rad/s)", k, pitched / seconds)
 
-        # Cadence: the heartbeat while moving, the facing at a mouse-look report.
+        # Cadence (and its physics constants).
         if op == OP["HEARTBEAT"] and pf & HEARTBEAT_FLAGS:
-            for s in sides:
-                s.add("HEARTBEAT_MS", dt_ms)
+            add("HEARTBEAT_MS", k, dt_ms)
         if op == OP["SET_FACING"]:
-            for s in sides:
-                s.add("MOUSE_FACING_THRESHOLD", turned)
-
-        # Keyboard turning while moving, over the unit's turn rate.
+            add("MOUSE_FACING_THRESHOLD", k, turned)
         turn_keys = pf & (LEFT | RIGHT)
         if turn_keys and turn_keys == rf & (LEFT | RIGHT) and dt_ms >= 100 and pf & TRANSLATING:
             unit = _speed_in_force(speeds, float(rec["ms"]), "turn_rate")
             if unit > 0:
-                for s in sides:
-                    s.add("KEYBOARD_TURN_WHILE_MOVING", turned / seconds / unit)
+                add("KEYBOARD_TURN_WHILE_MOVING", k, turned / seconds / unit)
 
-        # On foot, no jump: the rises walked onto, the slopes walked up.
+        # On foot, no jump: rises walked onto, slopes walked up and down.
         ground = (not (pf & AIRBORNE) and not (rf & AIRBORNE) and op != OP["JUMP"]
-                  and int(prev["opcode"]) != OP["FALL_LAND"])
-        if ground and not (pf & (SWIMMING | FLYING)):
+                  and int(prev["opcode"]) != OP["FALL_LAND"] and not (pf & (SWIMMING | FLYING)))
+        if ground:
             if 0.05 < run < 4.0 and rise > 0.3:
-                for s in sides:
-                    s.add("STEP_UP", rise)
+                add("rise walked", k, rise)
             if run > 1.5 and rise > 0:
-                for s in sides:
-                    s.add("walkable slope (deg)", math.degrees(math.atan2(rise, run)))
+                add("slope walked", k, math.degrees(math.atan2(rise, run)))
+            if run > 1.5 and rise < 0:
+                descents += 1
+                steep += -rise / run > math.tan(math.radians(WALKABLE_DEG))
 
-        # Vertical alone, swimming or flying: the vertical speed over the speed in force.
         if pf & (ASCENDING | DESCENDING) and not pf & TRANSLATING and pf & (SWIMMING | FLYING) and dt_ms >= 100:
             force = _speed_in_force(speeds, float(rec["ms"]), "swim" if pf & SWIMMING else "flight")
             if force > 0:
-                for s in sides:
-                    s.add("VERTICAL_SHARE", abs(rise) / seconds / force)
-
-        # Falling at terminal velocity: past the time gravity takes to reach it.
+                add("VERTICAL_SHARE", k, abs(rise) / seconds / force)
         if pf & AIRBORNE and rf & AIRBORNE and int(prev["fall_ms"]) > 3300 and dt_ms >= 100:
-            for s in sides:
-                s.add("TERMINAL_VELOCITY", -rise / seconds)
+            add("TERMINAL_VELOCITY", k, -rise / seconds)
+    if descents:
+        add("steep descents walked (per 1000 descending runs)", n - 1, 1000.0 * steep / descents)
 
-    # Jumps and falls: a JUMP's launch, and with its landing gravity, the air time and the apex.
-    ops = moves["opcode"].astype(np.int64)
+    # Jumps (in the stratum they were pressed in: the packet before) and their landings; falls with no jump.
     for k in np.flatnonzero(ops == OP["JUMP"]):
-        if k == 0:
+        if k == 0 or skip[k]:
             continue
-        sides = where(int(k))
+        k = int(k)
         swim = int(moves[k - 1]["move_flags"]) & SWIMMING
         v = -float(moves[k]["jump_zspeed"])
-        for s in sides:
-            s.count("jumps")
-            s.add("SWIM_JUMP_SPEED" if swim else "JUMP_SPEED", v)
+        study.obs.add("jumps a minute", bot, model, session, key(k - 1), 1.0)
+        study.obs.add("SWIM_JUMP_SPEED" if swim else "JUMP_SPEED", bot, model, session, key(k - 1), v)
         if swim:
             continue
-        for l in range(k + 1, len(moves)):
-            if clock[l] - clock[k] >= 4000:
+        for land in range(k + 1, n):
+            if clock[land] - clock[k] >= 4000:
                 break
-            if ops[l] != OP["FALL_LAND"]:
+            if ops[land] != OP["FALL_LAND"]:
                 continue
-            t = float(moves[l]["fall_ms"]) / 1000.0
-            dz = float(moves[l]["z"]) - float(moves[k]["z"])
+            t = float(moves[land]["fall_ms"]) / 1000.0
+            dz = float(moves[land]["z"]) - float(moves[k]["z"])
             if t > 0.1:
-                for s in sides:
-                    s.add("GRAVITY", 2.0 * (v * t - dz) / (t * t))
-                    disc = v * v - 2.0 * GRAVITY * dz
-                    if disc >= 0:
-                        s.add("jump air time error (ms)", t * 1000.0 - 1000.0 * (v + math.sqrt(disc)) / GRAVITY)
+                study.obs.add("GRAVITY", bot, model, session, key(k - 1), 2.0 * (v * t - dz) / (t * t))
+                disc = v * v - 2.0 * GRAVITY * dz
+                if disc >= 0:
+                    study.obs.add("jump air time error", bot, model, session, key(k - 1),
+                                  t * 1000.0 - 1000.0 * (v + math.sqrt(disc)) / GRAVITY)
             break
     jumps_at = clock[ops == OP["JUMP"]]
-    for l in np.flatnonzero(ops == OP["FALL_LAND"]):
-        if np.any((jumps_at <= clock[l]) & (clock[l] - jumps_at < 4000)):
+    grounded = np.flatnonzero((flags_all & AIRBORNE) == 0)
+    for land in np.flatnonzero(ops == OP["FALL_LAND"]):
+        if skip[land] or np.any((jumps_at <= clock[land]) & (clock[land] - jumps_at < 4000)):
             continue
-        before = np.flatnonzero((np.arange(len(moves)) < l) & ((moves["move_flags"].astype(np.int64) & AIRBORNE) == 0))
+        before = grounded[grounded < land]
         if len(before) == 0:
             continue
-        height = float(moves[before[-1]]["z"]) - float(moves[l]["z"])
+        height = float(moves[before[-1]]["z"]) - float(moves[land]["z"])
         if height > 0.5:
-            for s in where(int(l)):
-                s.count("falls")
-                s.add("fall height (yd)", height)
+            add("falls a minute", int(land), 1.0)
+            add("fall height (yd)", int(land), height)
 
 
-def measure_tracks(study: Study, tracks: list[tr.Track]) -> None:
-    """The tracks' motion features (motion.features, per motion context) into their sides, for kinematics and
-    realism."""
+def measure_tracks(study: Study, tracks: list[tr.Track], who: dict[int, tuple[bool, str, int, str]]) -> None:
+    """The tracks' motion histograms (motion.features on the decision grid) per session, by class and in all, for the
+    realism and acceleration rows."""
     for track in tracks:
-        if len(track.samples) < 2:
+        if len(track.samples) < 2 or track.player not in who:
             continue
+        bot, model, session, cls = who[track.player]
         feats = motion.features(track.samples)
         contexts = motion.step_contexts(track.samples)
-        info = track.info or {}
-        who = context_key(info, track.map, "", False, False).rsplit("/", 1)[0]
-        for key in ("all", who):
-            side = study.side(key, track.companion)
-            side.feats.append(feats)
-            side.contexts.append(contexts)
+        for context, hists in motion.histograms(feats, contexts).items():
+            for slot_class in (cls, "*"):
+                slot = study.hists.setdefault((bot, model, session, slot_class), {}).setdefault(context, {})
+                for feature, counts in hists.items():
+                    slot[feature] = slot.get(feature, 0) + np.asarray(counts, dtype=np.float64)
+
+
+def _states(batch: r.Batch) -> dict[int, MoverStates]:
+    rows = batch.get(r.MOVER_STATE)
+    out = {}
+    for player in np.unique(rows["player"]) if len(rows) else []:
+        mine = rows[rows["player"] == player]
+        mine = mine[np.argsort(mine["ms"], kind="stable")]
+        out[int(player)] = MoverStates(mine["ms"].astype(np.float64), mine)
+    return out
 
 
 def study_capture(cap: r.CaptureDir) -> Study:
     study = Study()
+    tallies: list[np.void] = []
+    who: dict[int, tuple[bool, str, int, str]] = {}
     for sessions, shard in tr.iter_shards(cap):
         moves = shard.moves.get(r.MOVE)
         events = shard.moves.get(r.MOTION_EVENT)
         speeds = shard.moves.get(r.SPEEDS)
+        states = _states(shard.moves)
         study.synthesised += int(np.sum(moves["source"] == r.SOURCE_COMPANION_SAMPLE)) if len(moves) else 0
         for player in np.unique(moves["player"]) if len(moves) else []:
+            player = int(player)
             mine = moves[moves["player"] == player]
-            bot = sessions.is_companion(int(player)) or bool(np.isin(
-                mine["source"], (r.SOURCE_COMPANION_SAMPLE, r.SOURCE_CONTROLLER)).any())
-            measure_packets(study, mine, events[events["player"] == player], speeds[speeds["player"] == player],
-                            sessions.info(int(player)), bot, shard.combat, int(player))
+            info = sessions.info(player)
+            state = states.get(player)
+            last = state.rows[-1] if state is not None else None
+            bot = sessions.is_companion(player) or (last is not None and int(last["kind"]) == 1) or bool(
+                np.isin(mine["source"], (r.SOURCE_COMPANION_SAMPLE, r.SOURCE_CONTROLLER)).any())
+            model = ""
+            if bot:
+                name = bytes(last["model"]).rstrip(b"\0").decode(errors="replace") if last is not None else ""
+                model = f"{name or 'companion'} r{int(last['move_revision'])}" if last is not None else "companion"
+            session = int(info.get("session", 0)) or player
+            cls = CLASSES.get(int(last["class_"]) if last is not None else int(info.get("class_", 0)), "?")
+            who[player] = (bot, model, session, cls)
+            measure_mover(study, mine, events[events["player"] == player], speeds[speeds["player"] == player], state,
+                          info, bot, model, session, shard.combat, player)
+        tallies += list(shard.moves.get(r.MOVE_TALLY))
         measure_tracks(study, tr.build_tracks(shard.moves, shard.combat, sessions, hour=shard.hour.label,
-                                              include_companions=True))
+                                              include_companions=True), who)
         updates = shard.moves.get(r.MAP_UPDATE)
         for mapid in np.unique(updates["map"]) if len(updates) else []:
-            diffs = updates["diff_ms"][updates["map"] == mapid].astype(np.float64)
-            study.ticks.setdefault(int(mapid), []).append(diffs)
+            study.ticks.setdefault(int(mapid), []).append(
+                updates["diff_ms"][updates["map"] == mapid].astype(np.float64))
+    # Refusals: each mover's last (cumulative) tally.
+    latest: dict[int, np.void] = {}
+    for row in sorted(tallies, key=lambda row: int(row["ms"])):
+        latest[int(row["player"])] = row
+    for player, row in latest.items():
+        bot, model, session, _ = who.get(player, (int(row["kind"]) == 1, "companion", player, "?"))
+        sent, kept = int(row["sent"]), int(row["kept"])
+        if sent > 0:
+            study.obs.add("tally sent", bot, model, session, ALL, float(sent))
+            study.obs.add("tally refused", bot, model, session, ALL, float(max(0, sent - kept)))
     decisions = [batch.get(r.COMPANION_DECISION) for _, _, batch in cap.iter_stream("companion")]
     decisions = [d for d in decisions if len(d)]
     if decisions:
@@ -373,6 +567,311 @@ def decision_intervals(decisions: np.ndarray) -> list[np.ndarray]:
     return out
 
 
+# Statistics.
+
+def quantile_distance(a: np.ndarray, b: np.ndarray, norm: str) -> float:
+    """The mean |Q_b(q) - Q_a(q)| over q = 5%..95%; over the players' (`a`) median when `norm` is "median" (strictly
+    positive quantities only)."""
+    gap = float(np.mean(np.abs(np.quantile(b, QUANTILES) - np.quantile(a, QUANTILES))))
+    if norm == "median":
+        gap /= max(abs(float(np.median(a))), 1e-9)
+    return gap
+
+
+def _side_value(values: np.ndarray, how: str) -> float:
+    if how == "max":
+        return float(np.max(values))
+    if how == "mean":
+        return float(np.mean(values))
+    if how == "p1":
+        return float(np.quantile(values, 0.01))
+    if how == "apex":
+        launch = float(np.mean(values))
+        return launch * launch / (2 * GRAVITY)
+    return float(np.median(values))
+
+
+def emd(players: dict, bots: dict, features: tuple[str, ...]) -> float:
+    """realism.score's distance from summed histograms: per motion context both have, the mean over `features` of
+    motion.histogram_distance, weighted by the bots' steps there."""
+    total = weighted = 0.0
+    for context, bh in bots.items():
+        ph = players.get(context)
+        if not ph:
+            continue
+        distances = [motion.histogram_distance(bh[f], ph[f], motion.HIST_BINS[f]) for f in features
+                     if f in bh and f in ph]
+        distances = [d for d in distances if math.isfinite(d)]
+        if not distances:
+            continue
+        steps = float(np.sum(next(iter(bh.values()))))
+        total += steps
+        weighted += steps * float(np.mean(distances))
+    return weighted / total if total > 0 else float("nan")
+
+
+def _sum_hists(parts: list[dict]) -> dict:
+    out: dict = {}
+    for part in parts:
+        for context, hists in part.items():
+            slot = out.setdefault(context, {})
+            for feature, counts in hists.items():
+                slot[feature] = slot.get(feature, 0) + counts
+    return out
+
+
+@dataclass
+class Sample:
+    """One side's data for one row, per session: values, or (events, exposure) for a rate, or histograms for an EMD;
+    and its n (samples, events, packets or steps)."""
+
+    sessions: list
+    n: int
+
+    @property
+    def count(self) -> int:
+        return len(self.sessions)
+
+
+def _pool(spec: Spec, parts: list):
+    if spec.stat in ("rate", "refusals"):
+        return (sum(e for e, _ in parts), sum(m for _, m in parts))
+    if spec.stat == "emd":
+        return _sum_hists(parts)
+    return np.concatenate(parts) if parts else np.zeros(0)
+
+
+def divergence(spec: Spec, players, bots) -> float:
+    """The row's divergence from the two sides' pooled data."""
+    scale = abs(spec.constant) if spec.constant and spec.norm == "constant" else 1.0
+    if spec.stat == "median_diff":
+        return abs(float(np.median(bots)) - float(np.median(players)))
+    if spec.stat == "qdist":
+        return quantile_distance(players, bots, spec.norm)
+    if spec.stat == "rate":
+        pr, br = players[0] / players[1], bots[0] / bots[1]
+        return abs(br - pr) / max(pr, 1e-9)
+    if spec.stat == "refusals":
+        return 1000.0 * (bots[0] / bots[1] - players[0] / players[1])
+    if spec.stat == "emd":
+        return emd(players, bots, ("accel",) if spec.name.startswith("acceleration") else motion.HIST_FEATURES)
+    if spec.stat == "parity":
+        return abs(_side_value(bots, spec.how) - _side_value(players, spec.how)) / scale
+    if spec.stat == "calibration":
+        gap = (_side_value(players if spec.side == "players" else bots, spec.how) - (spec.constant or 0.0)) / scale
+        return gap if spec.upper else abs(gap)
+    raise ValueError(spec.stat)
+
+
+def _shown(spec: Spec, data) -> float | None:
+    """A side's value in the row."""
+    if spec.stat in ("rate", "refusals"):
+        return data[0] / data[1] * (1000.0 if spec.stat == "refusals" else 1.0) if data[1] else None
+    if spec.stat == "emd" or not len(data):
+        return None
+    return _side_value(data, spec.how if spec.stat in ("parity", "calibration") else "median")
+
+
+def bootstrap(spec: Spec, players: Sample, bots: Sample, resamples: int, rng: np.random.Generator
+              ) -> tuple[float, float, float, float]:
+    """The divergence, its CONFIDENCE interval, and the one-sided p of "at or below the threshold", from `resamples`
+    resamples of each side's sessions with replacement (a side with no sessions -- the unread side of a calibration --
+    stays empty)."""
+    def draw(sample: Sample) -> list:
+        return [sample.sessions[j] for j in rng.integers(0, sample.count, sample.count)] if sample.count else []
+
+    point = divergence(spec, _pool(spec, players.sessions), _pool(spec, bots.sessions))
+    draws = np.array([divergence(spec, _pool(spec, draw(players)), _pool(spec, draw(bots)))
+                      for _ in range(resamples)])
+    draws = draws[np.isfinite(draws)]
+    if not len(draws):
+        return point, float("nan"), float("nan"), 1.0
+    alpha = (1.0 - CONFIDENCE) / 2.0
+    low, high = float(np.quantile(draws, alpha)), float(np.quantile(draws, 1.0 - alpha))
+    p = (float(np.sum(draws <= spec.threshold)) + 1.0) / (len(draws) + 1.0)
+    return point, low, high, p
+
+
+def enough(spec: Spec, sample: Sample) -> bool:
+    samples, sessions = (MIN_DIST_SAMPLES, MIN_DIST_SESSIONS) if spec.distributional \
+        else (MIN_STAT_SAMPLES, MIN_STAT_SESSIONS)
+    return sample.n >= samples and sample.count >= sessions
+
+
+def benjamini_hochberg(pvalues: list[float], fdr: float = FDR) -> list[bool]:
+    """Which of `pvalues` are significant at false discovery rate `fdr`."""
+    m = len(pvalues)
+    order = np.argsort(pvalues)
+    passed = 0
+    for rank, index in enumerate(order, start=1):
+        if pvalues[index] <= fdr * rank / m:
+            passed = rank
+    keep = {int(i) for i in order[:passed]}
+    return [i in keep for i in range(m)]
+
+
+# Strata.
+
+def pooled(key: tuple, level: int) -> tuple:
+    """`key` with the first `level` dimensions of POOL pooled ("*"); past them, `all`."""
+    if level > len(POOL):
+        return ALL
+    dropped = set(POOL[:level])
+    return tuple("*" if dim in dropped else value for dim, value in zip(DIMS, key))
+
+
+def stratum_name(key: tuple) -> str:
+    if key == ALL:
+        return "all"
+    return " ".join(f"{dim}={value}" for dim, value in zip(DIMS, key) if value != "*")
+
+
+class Table:
+    """The observations as arrays, and each side's per-session data in a stratum."""
+
+    def __init__(self, study: Study):
+        o = study.obs
+        self.bot = np.asarray(o.bot, dtype=bool)
+        self.model = np.asarray(o.model, dtype=object)
+        self.session = np.asarray(o.session, dtype=np.int64)
+        self.keys = np.asarray(o.key, dtype=object).reshape(len(o.key), len(DIMS)) if o.key \
+            else np.zeros((0, len(DIMS)), dtype=object)
+        self.value = np.asarray(o.value, dtype=np.float64)
+        self.hists = study.hists
+        metric = np.asarray(o.metric, dtype=object)
+        self.by_metric = {m: np.flatnonzero(metric == m) for m in set(o.metric)}
+
+    def select(self, metric: str, bot: bool, model: str, stratum: tuple) -> np.ndarray:
+        rows = self.by_metric.get(metric, np.zeros(0, dtype=np.int64))
+        rows = rows[self.bot[rows] == bot]
+        if bot:
+            rows = rows[self.model[rows] == model]
+        for d, value in enumerate(stratum):
+            if value != "*" and len(rows):
+                rows = rows[self.keys[rows, d] == value]
+        return rows
+
+    def bot_keys(self, metric: str, model: str) -> list[tuple]:
+        rows = self.select(metric, True, model, ALL)
+        return sorted({tuple(self.keys[i]) for i in rows})
+
+    def sample(self, spec: Spec, bot: bool, model: str, stratum: tuple) -> Sample:
+        if spec.stat == "emd":
+            cls = stratum[0]
+            parts = [h for (b, m, _, c), h in self.hists.items() if b == bot and (m == model or not bot) and c == cls]
+            return Sample(parts, int(sum(np.sum(next(iter(ctx.values()))) for part in parts for ctx in part.values())))
+        if spec.stat == "refusals":
+            per: dict[int, list[float]] = {}
+            for i in self.select("tally refused", bot, model, ALL):
+                per.setdefault(int(self.session[i]), [0.0, 0.0])[0] += self.value[i]
+            for i in self.select("tally sent", bot, model, ALL):
+                per.setdefault(int(self.session[i]), [0.0, 0.0])[1] += self.value[i]
+            per = {s: v for s, v in per.items() if v[1] > 0}
+            return Sample([tuple(v) for v in per.values()], int(sum(v[1] for v in per.values())))
+        rows = self.select(spec.metric, bot, model, stratum)
+        if spec.stat == "rate":
+            per = {}
+            for i in self.select("minutes", bot, model, stratum):
+                per.setdefault(int(self.session[i]), [0.0, 0.0])[1] += self.value[i]
+            for i in rows:
+                per.setdefault(int(self.session[i]), [0.0, 0.0])[0] += 1.0
+            per = {s: v for s, v in per.items() if v[1] > 0}
+            return Sample([tuple(v) for v in per.values()], int(sum(v[0] for v in per.values())))
+        groups: dict[int, list[float]] = {}
+        for i in rows:
+            groups.setdefault(int(self.session[i]), []).append(self.value[i])
+        return Sample([np.asarray(v) for v in groups.values()], len(rows))
+
+
+def _strata(spec: Spec, table: Table, model: str) -> list[tuple]:
+    """`all`, and each bot stratum at the finest pooling where the row's sides meet the minimum."""
+    out = [ALL]
+    if spec.stat == "refusals":
+        return out
+    if spec.stat == "emd":
+        return out + [(c,) + ALL[1:] for c in sorted({c for (b, m, _, c) in table.hists if b and m == model and
+                                                      c != "*"})]
+    for key in table.bot_keys(spec.metric, model):
+        for level in range(len(POOL) + 2):
+            stratum = pooled(key, level)
+            if stratum == ALL:
+                break
+            players, bots = table.sample(spec, False, model, stratum), table.sample(spec, True, model, stratum)
+            measured_ok = enough(spec, players if spec.side == "players" else bots) if spec.stat == "calibration" \
+                else enough(spec, players) and enough(spec, bots)
+            if measured_ok:
+                if stratum not in out:
+                    out.append(stratum)
+                break
+    return out
+
+
+def _row(spec: Spec, table: Table, model: str, stratum: tuple, resamples: int, rng: np.random.Generator) -> dict:
+    players = table.sample(spec, False, model, stratum)
+    bots = table.sample(spec, True, model, stratum)
+    out = {"section": spec.section, "kind": spec.kind, "model": model, "context": stratum_name(stratum),
+           "metric": spec.name, "threshold": spec.threshold, "norm": spec.norm,
+           "n": {"players": [players.n, players.count], "bots": [bots.n, bots.count]},
+           "players": _shown(spec, _pool(spec, players.sessions)) if players.count else None,
+           "bots": _shown(spec, _pool(spec, bots.sessions)) if bots.count else None,
+           "divergence": None, "interval": None, "p": None}
+    if spec.unit:
+        out["unit"] = spec.unit
+    if spec.stat in ("parity", "calibration"):
+        out["constant"] = spec.constant
+    if spec.stat == "calibration":
+        measured = players if spec.side == "players" else bots
+        if not enough(spec, measured):
+            out["flag"] = f"inconclusive (n {measured.n} in {measured.count} sessions)"
+            return out
+        empty = Sample([], 0)
+        result = bootstrap(spec, players if spec.side == "players" else empty,
+                           bots if spec.side == "bots" else empty, resamples, rng)
+    else:
+        if not (enough(spec, players) and enough(spec, bots)):
+            out["flag"] = (f"inconclusive (n players {players.n} in {players.count} sessions, bots {bots.n} in "
+                           f"{bots.count})")
+            return out
+        result = bootstrap(spec, players, bots, resamples, rng)
+    point, low, high, p = result
+    out.update(divergence=point, interval=[low, high], p=p)
+    if not (math.isfinite(low) and math.isfinite(high)):
+        out["flag"] = "inconclusive (no interval)"
+    elif low > spec.threshold:
+        out["flag"] = "attention"
+    elif high <= spec.threshold:
+        out["flag"] = "pass"
+    else:
+        out["flag"] = "inconclusive"
+    return out
+
+
+def compare(study: Study, resamples: int = BOOTSTRAP, seed: int = 0) -> list[dict]:
+    table = Table(study)
+    rng = np.random.default_rng(seed)
+    models = sorted({m for m, b in zip(study.obs.model, study.obs.bot) if b}
+                    | {m for (b, m, _, _) in study.hists if b})
+    rows: list[dict] = []
+    for model in models:
+        for spec in SPECS:
+            for stratum in _strata(spec, table, model):
+                rows.append(_row(spec, table, model, stratum, resamples, rng))
+        for name in REPORTED:
+            for bot in (False, True):
+                values = table.value[table.select(name, bot, model, ALL)]
+                rows.append({"section": "reported", "kind": "controller", "model": model, "context": "all",
+                             "metric": name, "side": "bots" if bot else "players",
+                             "median": float(np.median(values)) if len(values) else None, "count": int(len(values)),
+                             "flag": "reported"})
+    for section in SECTIONS:
+        tested = [row for row in rows if row["section"] == section and row.get("p") is not None]
+        for row, significant in zip(tested, benjamini_hochberg([row["p"] for row in tested]) if tested else []):
+            row["survives"] = bool(significant and row["flag"] == "attention")
+    return rows
+
+
+# Realm timing.
+
 def _quantiles(values: np.ndarray) -> dict:
     if not len(values):
         return {"n": 0}
@@ -381,7 +880,7 @@ def _quantiles(values: np.ndarray) -> dict:
 
 
 def timing(study: Study) -> dict:
-    """The realm's tick and decision intervals, and whether they call for training jitter (the thresholds above)."""
+    """The realm's tick and decision intervals, and whether they call for training jitter."""
     per_map = {str(m): _quantiles(np.concatenate(parts)) for m, parts in sorted(study.ticks.items())}
     ticks = np.concatenate([np.concatenate(p) for p in study.ticks.values()]) if study.ticks else np.zeros(0)
     decisions = np.concatenate(study.decisions) if study.decisions else np.zeros(0)
@@ -400,166 +899,48 @@ def timing(study: Study) -> dict:
                     f"more than {JITTER_DECISION_SHARE:.0%} off {DECISION_MS:.0f} ms"}
 
 
-# Comparing.
+# The report.
 
-def quantile_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """The mean gap between the two samples' quantiles (5%..95%), over the first's median magnitude."""
-    qa, qb = np.quantile(a, QUANTILES), np.quantile(b, QUANTILES)
-    scale = max(abs(float(np.median(a))), 1e-6)
-    return float(np.mean(np.abs(qa - qb)) / scale)
-
-
-def _row(section: str, context: str, metric: str, players, bots, divergence, threshold: float, unit: str = "",
-         constant: float | None = None, n: tuple[int, int] = (0, 0), kind: str = "behaviour") -> dict:
-    flag = "n/a" if divergence is None or not math.isfinite(divergence) else \
-        "pass" if divergence <= threshold else "attention"
-    out = {"section": section, "context": context, "metric": metric, "players": players, "bots": bots,
-           "divergence": divergence, "threshold": threshold, "flag": flag, "n": list(n), "kind": kind}
-    if unit:
-        out["unit"] = unit
-    if constant is not None:
-        out["constant"] = constant
-    return out
+def proposals(rows: list[dict]) -> list[dict]:
+    """Constant changes the players' own measurements propose (for the user): a players-vs-constant row in `all` with
+    its interval wholly past the threshold, surviving correction, on CONSTANT_CHANGE_N samples or more."""
+    return [{"constant": row["metric"].split(" (players")[0], "value": row.get("constant"),
+             "players_measured": row["players"], "divergence": row["divergence"], "interval": row["interval"],
+             "n": row["n"]["players"]}
+            for row in rows
+            if row["section"] == "physics" and row["metric"].endswith("(players vs constant)")
+            and row["context"] == "all" and row.get("survives") and row["n"]["players"][0] >= CONSTANT_CHANGE_N]
 
 
-def _stat(values: np.ndarray, how: str) -> float | None:
-    if len(values) < MIN_SAMPLES:
-        return None
-    return float(np.max(values) if how == "max" else np.median(values) if how == "median" else np.mean(values))
-
-
-def compare(study: Study) -> list[dict]:
-    rows: list[dict] = []
-    for context in sorted(study.sides, key=lambda c: (c != "all", c)):
-        pl, bt = study.sides[context]["players"], study.sides[context]["bots"]
-        if not (pl.counts or pl.feats) or not (bt.counts or bt.feats):
-            continue
-        n = lambda name: (len(pl.get(name)), len(bt.get(name)))     # noqa: E731
-
-        # Kinematics.
-        for mode in ("run", "walk", "back", "strafe", "swim", "fly"):
-            name = f"speed {mode}"
-            a, b = _stat(pl.get(name), "median"), _stat(bt.get(name), "median")
-            if a is None and b is None:
-                continue
-            rows.append(_row("kinematics", context, f"{mode} speed / speed in force", a, b,
-                             abs(b - a) if a is not None and b is not None else None, SPEED_TOLERANCE, n=n(name),
-                             kind="controller"))
-        for name in ("turn rate (rad/s)", "pitch rate (rad/s)", "fall height (yd)"):
-            a, b = pl.get(name), bt.get(name)
-            if not len(a) and not len(b):
-                continue
-            ok = len(a) >= MIN_SAMPLES and len(b) >= MIN_SAMPLES
-            rows.append(_row("kinematics", context, f"{name} distribution", _stat(a, "median"), _stat(b, "median"),
-                             quantile_distance(a, b) if ok else None, DISTRIBUTION_TOLERANCE, n=n(name)))
-        for name in ("jumps", "stops", "falls"):
-            ma, mb = pl.counts.get("minutes", 0.0), bt.counts.get("minutes", 0.0)
-            if ma <= 0 or mb <= 0:
-                continue
-            a, b = pl.counts.get(name, 0.0) / ma, bt.counts.get(name, 0.0) / mb
-            enough = pl.counts.get(name, 0) + bt.counts.get(name, 0) >= MIN_SAMPLES
-            rows.append(_row("kinematics", context, f"{name} a minute", a, b,
-                             abs(b - a) / max(a, 1e-6) if enough else None, RATE_TOLERANCE))
-        for name, threshold, unit in (("STEP_UP", STEP_TOLERANCE, "yd"),
-                                      ("walkable slope (deg)", SLOPE_TOLERANCE, "deg")):
-            a, b = _stat(pl.get(name), "max"), _stat(bt.get(name), "max")
-            if a is None and b is None:
-                continue
-            rows.append(_row("kinematics", context, f"highest {name.split(' (')[0].lower()} walked", a, b,
-                             abs(b - a) if a is not None and b is not None else None, threshold, unit, n=n(name),
-                             kind="controller"))
-
-        # Cadence.
-        for name in sorted(k for k in set(pl.values) | set(bt.values) if k.startswith("interval ")):
-            a, b = _stat(pl.get(name), "median"), _stat(bt.get(name), "median")
-            if a is None or b is None:
-                continue
-            rows.append(_row("cadence", context, f"ms before {name[9:]}", a, b, abs(b - a) / max(a, 1e-6),
-                             CADENCE_TOLERANCE, "ms", n=n(name), kind="controller"))
-        for name, threshold, unit in (("HEARTBEAT_MS", HEARTBEAT_TOLERANCE, "ms"),
-                                      ("MOUSE_FACING_THRESHOLD", FACING_TOLERANCE, "rad")):
-            a, b = _stat(pl.get(name), "median"), _stat(bt.get(name), "median")
-            if a is None and b is None:
-                continue
-            rows.append(_row("cadence", context, f"{name} (median)", a, b,
-                             abs(b - a) if a is not None and b is not None else None, threshold, unit, n=n(name),
-                             kind="controller"))
-        ma, mb = pl.counts.get("minutes", 0.0), bt.counts.get("minutes", 0.0)
-        if ma > 0 and mb > 0:
-            a, b = pl.counts.get("changes", 0.0) / ma, bt.counts.get("changes", 0.0) / mb
-            rows.append(_row("cadence", context, "changes a minute", a, b, abs(b - a) / max(a, 1e-6), RATE_TOLERANCE))
-
-        # Realism: the bots' motion against the players' in the same context.
-        if pl.feats and bt.feats:
-            pf, pc = np.concatenate(pl.feats), np.concatenate(pl.contexts)
-            bf, bc = np.concatenate(bt.feats), np.concatenate(bt.contexts)
-            reference = {"motion": {c: {"hist": h} for c, h in motion.histograms(pf, pc).items()}}
-            scored = realism.score(bf, bc, reference)
-            rows.append(_row("realism", context, "realism EMD (all motion)", None, scored["realism_emd"],
-                             scored["realism_emd"], REALISM_TOLERANCE, n=(len(pc), len(bc))))
-            for name in sorted(scored["features"]):
-                value = scored.get(f"realism_emd_{name}", float("nan"))
-                rows.append(_row("realism", context, f"realism EMD ({name})", None, value, value, REALISM_TOLERANCE,
-                                 n=(int(np.sum(pc == _context_index(name))), scored["steps"].get(name, 0))))
-
-        # Physics constants.
-        for name, constant, how, note in PHYSICS:
-            a, b = _physics(pl, name, how), _physics(bt, name, how)
-            if a is None and b is None:
-                continue
-            scale = abs(constant) if constant else 1.0
-            rows.append(_row("physics", context, name, a, b,
-                             abs(b - a) / scale if a is not None and b is not None else None, PHYSICS_TOLERANCE,
-                             constant=constant, n=n(name if name != "jump apex (yd)" else "JUMP_SPEED"),
-                             kind="controller"))
-    return rows
-
-
-def _context_index(name: str) -> int:
-    return next((c for c in range(motion.CONTEXTS) if motion.context_name(c) == name), -1)
-
-
-# (name, the controller's constant, how a side's value is read, what it is)
-PHYSICS = (
-    ("JUMP_SPEED", JUMP_SPEED, "mean", "the JUMP packets' launch"),
-    ("SWIM_JUMP_SPEED", SWIM_JUMP_SPEED, "mean", "jumps from swimming"),
-    ("jump apex (yd)", JUMP_SPEED ** 2 / (2 * GRAVITY), "apex", "v^2 / 2g of the launch measured"),
-    ("GRAVITY", GRAVITY, "mean", "each jump's launch, fall time and drop"),
-    ("jump air time error (ms)", 0.0, "mean", "landed minus predicted"),
-    ("STEP_UP", STEP_UP, "max", "the highest rise walked onto without a jump (a lower bound)"),
-    ("walkable slope (deg)", WALKABLE_DEG, "max", "the steepest slope walked up over 1.5 yd or more"),
-    ("TERMINAL_VELOCITY", TERMINAL_VELOCITY, "median", "falling past 3.3 s"),
-    ("HEARTBEAT_MS", HEARTBEAT_MS, "median", "a heartbeat after the last packet, while moving"),
-    ("MOUSE_FACING_THRESHOLD", MOUSE_FACING_THRESHOLD, "median", "the facing turned at a SET_FACING"),
-    ("KEYBOARD_TURN_WHILE_MOVING", KEYBOARD_TURN_WHILE_MOVING, "median", "keyboard turn moving, over the unit's"),
-    ("VERTICAL_SHARE", VERTICAL_SHARE, "median", "ascending or descending alone, over the speed"),
-)
-
-
-def _physics(side: Side, name: str, how: str) -> float | None:
-    if how == "apex":
-        launch = _stat(side.get("JUMP_SPEED"), "mean")
-        return None if launch is None else launch * launch / (2 * GRAVITY)
-    return _stat(side.get(name), how)
-
-
-def report(study: Study, source: str = "") -> dict:
-    rows = compare(study)
-    unmatched = {context: {s: bool(sides[s].counts or sides[s].feats) for s in SIDES}
-                 for context, sides in study.sides.items()
-                 if not all(sides[s].counts or sides[s].feats for s in SIDES)}
-    flags = {flag: sum(1 for row in rows if row["flag"] == flag) for flag in ("pass", "attention", "n/a")}
-    return {"format": 1, "built": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "source": source,
-            "thresholds": {"min_samples": MIN_SAMPLES, "speed": SPEED_TOLERANCE,
-                           "distribution": DISTRIBUTION_TOLERANCE, "rate": RATE_TOLERANCE, "step_yd": STEP_TOLERANCE,
-                           "slope_deg": SLOPE_TOLERANCE, "cadence": CADENCE_TOLERANCE,
-                           "heartbeat_ms": HEARTBEAT_TOLERANCE, "facing_rad": FACING_TOLERANCE,
-                           "realism_emd": REALISM_TOLERANCE, "physics": PHYSICS_TOLERANCE},
+def report(study: Study, source: str = "", resamples: int = BOOTSTRAP, seed: int = 0) -> dict:
+    rows = compare(study, resamples, seed)
+    sections = {}
+    for section in SECTIONS:
+        mine = [row for row in rows if row["section"] == section]
+        tested = [row for row in mine if row.get("p") is not None]
+        sections[section] = {
+            "rows": len(mine), "tested": len(tested),
+            "attention": sum(1 for row in mine if row["flag"] == "attention"),
+            "expected_by_chance": round((1.0 - CONFIDENCE) / 2.0 * len(tested), 2),
+            "survive_correction": sum(1 for row in mine if row.get("survives")),
+            "pass": sum(1 for row in mine if row["flag"] == "pass"),
+            "inconclusive": sum(1 for row in mine if str(row["flag"]).startswith("inconclusive")),
+        }
+    headline = [row for row in rows if row["section"] != "reported"
+                and (row["context"] == "all" or row.get("survives"))]
+    return {"format": 2, "built": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "source": source,
+            "clock": study.clocks,
+            "bootstrap": {"resamples": resamples, "confidence": CONFIDENCE, "by": "session", "fdr": FDR},
+            "minimums": {"distribution": [MIN_DIST_SAMPLES, MIN_DIST_SESSIONS],
+                         "rate_or_median": [MIN_STAT_SAMPLES, MIN_STAT_SESSIONS]},
+            "kinds": {"controller": "tests the controller and the client's rules",
+                      "behaviour": "the policy's choices: informs training (style, the human-likeness reward); "
+                                   "never gates a controller change"},
             "not_measured": {"FLOAT_DEPTH": "needs the liquid's level, which no capture record holds"},
             "synthesised_companion_samples": study.synthesised,
-            "summary": flags, "timing": timing(study),
-            "attention": [row for row in rows if row["flag"] == "attention"],
-            "rows": rows, "unmatched_contexts": unmatched}
+            "sections": sections, "proposals": proposals(rows), "timing": timing(study),
+            "attention": [row for row in rows if row.get("survives")],
+            "headline": headline, "rows": rows}
 
 
 def _fmt(value) -> str:
@@ -567,32 +948,56 @@ def _fmt(value) -> str:
         return "-"
     if isinstance(value, float):
         return "nan" if not math.isfinite(value) else f"{value:.4g}"
+    if isinstance(value, list) and len(value) == 2:
+        return f"[{_fmt(value[0])}, {_fmt(value[1])}]"
     return str(value)
 
 
 def markdown(rep: dict) -> str:
     lines = [f"# Bot / player parity ({rep['source']})", "",
-             f"{rep['summary']['pass']} pass, {rep['summary']['attention']} attention, {rep['summary']['n/a']} n/a "
-             f"(fewer than {rep['thresholds']['min_samples']} samples a side). Behaviour rows are the policy's; "
-             "controller rows (speeds, steps, cadence, physics) are the controller's. A flag is for reading, not a "
-             "decision.", ""]
-    for section in ("kinematics", "cadence", "realism", "physics"):
-        rows = [row for row in rep["rows"] if row["section"] == section]
-        if not rows:
-            continue
-        lines += [f"## {section}", "", "| flag | context | metric | players | bots | constant | divergence | "
-                  "threshold | n (players, bots) |", "|---|---|---|---|---|---|---|---|---|"]
-        for row in rows:
-            lines.append(f"| {row['flag']} | {row['context']} | {row['metric']} | {_fmt(row['players'])} | "
-                         f"{_fmt(row['bots'])} | {_fmt(row.get('constant'))} | {_fmt(row['divergence'])} | "
-                         f"{_fmt(row['threshold'])} | {row['n'][0]}, {row['n'][1]} |")
+             f"Clock: {rep['clock']}. Bootstrap {rep['bootstrap']['resamples']} resamples by session, 95% intervals; "
+             f"Benjamini-Hochberg at q {FDR} per section. `attention`: the interval wholly above the threshold; "
+             "`pass`: wholly at or below. Controller rows test the controller; behaviour rows inform training and "
+             "never gate a controller change. Nothing here decides: the user does.", "",
+             "| section | rows | tested | attention | expected by chance | survive correction | pass | inconclusive |",
+             "|---|---|---|---|---|---|---|---|"]
+    for name, s in rep["sections"].items():
+        lines.append(f"| {name} | {s['rows']} | {s['tested']} | {s['attention']} | {s['expected_by_chance']} | "
+                     f"{s['survive_correction']} | {s['pass']} | {s['inconclusive']} |")
+    lines.append("")
+    if rep["proposals"]:
+        lines += ["## Constant changes the players' measurements propose (for the user)", ""]
+        lines += [f"- {p['constant']}: constant {_fmt(p['value'])}, players {_fmt(p['players_measured'])} "
+                  f"(divergence {_fmt(p['divergence'])}, interval {_fmt(p['interval'])}, n {p['n']})"
+                  for p in rep["proposals"]]
         lines.append("")
-    if rep["unmatched_contexts"]:
-        lines += ["## Unmatched contexts", ""]
-        lines += [f"- {context}: " + ", ".join(s for s, has in sides.items() if has) + " only"
-                  for context, sides in sorted(rep["unmatched_contexts"].items())]
+
+    def table(rows: list[dict]) -> list[str]:
+        out = ["| flag | survives | kind | model | context | metric | players | bots | constant | divergence | "
+               "95% interval | threshold | norm | n players (sessions) | n bots (sessions) |",
+               "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for row in rows:
+            n = row["n"]
+            out.append(f"| {row['flag']} | {'yes' if row.get('survives') else ''} | {row['kind']} | {row['model']} | "
+                       f"{row['context']} | {row['metric']} | {_fmt(row['players'])} | {_fmt(row['bots'])} | "
+                       f"{_fmt(row.get('constant'))} | {_fmt(row['divergence'])} | {_fmt(row['interval'])} | "
+                       f"{_fmt(row['threshold'])} | {row['norm']} | {n['players'][0]} ({n['players'][1]}) | "
+                       f"{n['bots'][0]} ({n['bots'][1]}) |")
+        return out
+
+    lines += ["## Headline (`all`, and the attentions surviving correction)", ""] + table(rep["headline"]) + [""]
+    for section in SECTIONS:
+        rows = [row for row in rep["rows"] if row["section"] == section and row["context"] != "all"]
+        if rows:
+            lines += [f"## {section} by stratum", ""] + table(rows) + [""]
+    reported = [row for row in rep["rows"] if row["section"] == "reported"]
+    if reported:
+        lines += ["## Reported (no threshold)", ""]
+        lines += [f"- {row['metric']}, {row['side']} ({row['model']}): median {_fmt(row['median'])}, "
+                  f"n {row['count']}" for row in reported]
         lines.append("")
     t = rep["timing"]
+
     def q(d: dict) -> str:
         if not d.get("n"):
             return "not in the capture"
@@ -600,7 +1005,7 @@ def markdown(rep: dict) -> str:
 
     verdict = {None: "not measured", True: "recommended (" + "; ".join(t["reasons"]) + ")",
                False: "not needed"}[t["jitter_recommended"]]
-    lines += ["## realm timing", "", f"- world tick (MapUpdate): {q(t['tick_ms'])}",
+    lines += ["## Realm timing", "", f"- world tick (MapUpdate): {q(t['tick_ms'])}",
               f"- decision interval (CompanionDecision): {q(t['decision_ms'])}",
               f"- training jitter: {verdict}; rule: {t['rule']}", ""]
     lines += ["Not measured: " + "; ".join(f"{k} ({v})" for k, v in rep["not_measured"].items()), ""]
