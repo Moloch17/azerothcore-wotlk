@@ -28,6 +28,9 @@ mappo:
   chunk_length: 128
   # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
   look_entropy_coef: 0.001
+  # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
+  # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
+  vision_chunk_rows: 2048
 
 # A deterministic sweep over every (room, object) pair (SeekDraw::EvaluationPick): 39 rooms x 5 objects = 195 episodes,
 # each pair once, the object placed by the seed so every checkpoint meets the same spots. The per-room and per-object
