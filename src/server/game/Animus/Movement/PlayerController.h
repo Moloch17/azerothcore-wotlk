@@ -103,6 +103,11 @@ namespace Animus::Movement
         /// Turning by the keyboard (the turn keys), which the client slows while moving; the policy's turn rates are
         /// the mouse's and are not slowed. Set by replays of a human's TURN_LEFT/RIGHT flags (C6).
         bool KeyboardTurn = false;
+        /// One-shot, like `jump`: turn the facing by this much (radians, + left) at the next step's start -- the
+        /// camera's "turn to camera" snap (Vision::FreeLook's face choice, a right-click in the client) -- reported
+        /// as one SET_FACING there (Client::Tick). Cleared by the tick that takes it, or drops it while the server
+        /// imposes. 0 is none.
+        float FaceTurn = 0.0f;
     };
 
     /// The unit's own speeds in force (mount, form, snare and buffs included), yd/s and rad/s.

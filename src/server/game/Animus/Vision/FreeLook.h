@@ -29,7 +29,9 @@
 /// the move block's controls are, and the camera integrates them at the next observation by the decision's length.
 ///
 /// The camera is the client's alone: its state lives beside the seat's controls (SeatState::Look), never in the body
-/// or the server's facing, and sends no packet. Looking is free (FREELOOK R1): a look choice never reaches
+/// or the server's facing, and sends no packet. The one exception is "face" (turn to camera), which turns the body:
+/// it goes through the player controller as a client's SET_FACING (ControlState::FaceTurn), never a server-side
+/// SetFacing. Looking is free (FREELOOK R1): a look choice never reaches
 /// ApplySeatAction, so nothing that prices, tallies or judges an action ever sees it. Every choice is always allowed;
 /// there is no look mask. Pure -- no core types -- so it is tested on its own (VisionTest).
 namespace Animus::Vision::FreeLook
@@ -53,13 +55,15 @@ namespace Animus::Vision::FreeLook
     constexpr std::array<float, PITCH_RATE_COUNT> PITCH_RATES_DEG = { -60.0f, -20.0f, 0.0f, 20.0f, 60.0f };
     constexpr uint32_t PITCH_STOP_INDEX = 2;
     /// The zoom head: hold; in or out one level (clamped); recentre (yaw offset 0, the conf's pitch, both rates let
-    /// go; the zoom is kept).
+    /// go; the zoom is kept); face, "turn to camera" (WoW's right-click snap): the body turns to the camera's yaw
+    /// (facing + yaw offset) and the yaw offset becomes 0, the held rates and the pitch kept.
     enum Zoom : uint32_t
     {
         ZOOM_HOLD = 0,
         ZOOM_IN,
         ZOOM_OUT,
         ZOOM_RECENTRE,
+        ZOOM_FACE,
         ZOOM_CHOICES
     };
 
@@ -78,6 +82,8 @@ namespace Animus::Vision::FreeLook
     /// Follow mode: the yaw offset eases back toward 0 at this rate while the forward key is held and the yaw rate
     /// is let go.
     constexpr float FOLLOW_RATE = 180.0f * DEGREES;
+    /// A face choice with the yaw offset nearer 0 than this turns nothing and sends nothing.
+    constexpr float FACE_MIN = 1e-3f;
 
     /// A seat's camera (SeatState::Look), reset at every episode.
     struct State
@@ -134,10 +140,14 @@ namespace Animus::Vision::FreeLook
     /// The look head's choice, taken with the movement actions (ApplyActions): the rates are held from now, the zoom
     /// steps now; so it shows in the next frame. A row out of range is left alone (ACT refuses one before it gets
     /// here). Recentre lets go of both rates, whatever this choice held.
-    inline void Apply(State& state, int32_t const* choice, Settings const& settings)
+    ///
+    /// Returns the turn the body is to make (radians, + left): the yaw offset a face choice took, which the caller
+    /// hands the player controller (Movement::ControlState::FaceTurn) so it reaches the server as a client's
+    /// SET_FACING; 0 for every other choice, and for a face with the offset already within FACE_MIN of 0.
+    inline float Apply(State& state, int32_t const* choice, Settings const& settings)
     {
         if (!Valid(choice))
-            return;
+            return 0.0f;
         state.YawRate = YAW_RATES_DEG[choice[HEAD_YAW_RATE]] * DEGREES;
         state.PitchRate = PITCH_RATES_DEG[choice[HEAD_PITCH_RATE]] * DEGREES;
         switch (uint32_t(choice[HEAD_ZOOM]))
@@ -154,9 +164,18 @@ namespace Animus::Vision::FreeLook
                 state.YawRate = 0.0f;
                 state.PitchRate = 0.0f;
                 break;
+            case ZOOM_FACE:
+            {
+                float const turn = state.YawOffset;
+                if (std::fabs(turn) < FACE_MIN)
+                    return 0.0f;
+                state.YawOffset = 0.0f;
+                return turn;
+            }
             default:
                 break;
         }
+        return 0.0f;
     }
 
     /// The held rates over `dt` seconds: the yaw offset turns (wrapped), the pitch turns (clamped); then follow mode,

@@ -201,6 +201,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
     {
         TakeFromServer(state);
         control.Jump = false;
+        control.FaceTurn = 0.0f;        // a stunned or moved client cannot turn itself either
         _lastFlags = _granted | (_rooted ? Flag::ROOT : 0u);
         _lastSendMs = nowMs;
         ++Counts.YieldTicks;
@@ -234,6 +235,17 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
                 if (!Send(Snapshot(opcode, startMs, before), link))
                     return;
             }
+        // Turn to camera (ControlState::FaceTurn): the facing snaps at the step's start and the client says so with
+        // one MSG_MOVE_SET_FACING there, through the server's handler as a mouse-look facing is -- never a server-side
+        // SetFacing. The held turn rate then runs on from the new facing, its crossings counted from this report.
+        if (control.FaceTurn != 0.0f)
+        {
+            Body.Yaw = WrapYaw(Body.Yaw + control.FaceTurn);
+            control.FaceTurn = 0.0f;
+            ++Counts.Facings;
+            if (!Send(Snapshot(Cd::Op::SET_FACING, startMs, before), link))
+                return;
+        }
         // A jump: MSG_MOVE_JUMP at the press, the fall's clock at 0 and its launch in the jump info.
         if (control.Jump && CanJump(Body, shape, world))
         {

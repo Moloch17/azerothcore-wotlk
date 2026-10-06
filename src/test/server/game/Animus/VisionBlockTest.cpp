@@ -71,7 +71,7 @@ TEST(VisionBlockTest, ScalarsAloneAndTheImageAsBytes)
     ASSERT_EQ(names.size(), 3u);
     EXPECT_EQ(heads[0].to_number<uint32>(), 7u);
     EXPECT_EQ(heads[1].to_number<uint32>(), 5u);
-    EXPECT_EQ(heads[2].to_number<uint32>(), 4u);
+    EXPECT_EQ(heads[2].to_number<uint32>(), 5u);
     EXPECT_EQ(names[0].as_string(), "yaw_rate");
     EXPECT_EQ(names[1].as_string(), "pitch_rate");
     EXPECT_EQ(names[2].as_string(), "zoom");

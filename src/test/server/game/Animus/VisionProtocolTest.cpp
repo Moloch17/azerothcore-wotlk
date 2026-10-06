@@ -68,7 +68,7 @@ TEST(VisionProtocolTest, SpecCarriesLookHeads)
     EXPECT_EQ(offsetof(SpecMsg, ImageBytes), 84u);
     EXPECT_EQ(offsetof(SpecMsg, LookHeads), 88u);
     EXPECT_EQ(FL::HEADS, 3u);
-    EXPECT_EQ(FL::HEAD_SIZES, (std::array<uint32_t, 3>{ 7, 5, 4 }));
+    EXPECT_EQ(FL::HEAD_SIZES, (std::array<uint32_t, 3>{ 7, 5, 5 }));
 }
 
 // ACT with look values: the look section follows the actions, or the actions and goals, agent-major; the values come
@@ -121,7 +121,7 @@ TEST(VisionProtocolTest, ActRefusesLookOutOfRange)
     std::vector<int32> look = { 0, 0, 0, 6, 4, 3, 3, 2, 0 };
     EXPECT_EQ(BadLookRow(look.data(), rows, FL::HEADS, FL::HEAD_SIZES.data()), -1);
     for (auto const& [row, head, value] : { std::array<int32, 3>{ 1, 0, 7 }, std::array<int32, 3>{ 2, 1, 5 },
-             std::array<int32, 3>{ 0, 2, 4 }, std::array<int32, 3>{ 1, 2, -1 }, std::array<int32, 3>{ 2, 0, -3 } })
+             std::array<int32, 3>{ 0, 2, 5 }, std::array<int32, 3>{ 1, 2, -1 }, std::array<int32, 3>{ 2, 0, -3 } })
     {
         std::vector<int32> bad = look;
         bad[std::size_t(row) * FL::HEADS + std::size_t(head)] = value;

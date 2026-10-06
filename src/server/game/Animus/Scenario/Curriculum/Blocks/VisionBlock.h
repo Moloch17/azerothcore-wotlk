@@ -52,7 +52,7 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 Revision() const override { return 4; }
         /// "image": { height, width, channels (5, decoded), kinds, kind_channel, scalars, transport "bytes",
         /// bytes_per_pixel 4, patch (the learner's patch at this size), render_sizes [[w, h], ...] } -- the block's
-        /// columns are the scalars; the image is the STEP's byte section -- "look": { heads [7, 5, 4], names }, the
+        /// columns are the scalars; the image is the STEP's byte section -- "look": { heads [7, 5, 5], names }, the
         /// look head's categoricals, and "camera": the settings it was rendered with.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

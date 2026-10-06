@@ -283,7 +283,7 @@ TEST(VisionFreeLookTest, ChoicesInRange)
                 EXPECT_TRUE(FL::Valid(choice));
             }
     for (auto const& bad : { std::array<int32_t, 3>{ 7, 0, 0 }, std::array<int32_t, 3>{ -1, 0, 0 },
-             std::array<int32_t, 3>{ 0, 5, 0 }, std::array<int32_t, 3>{ 0, 0, 4 }, std::array<int32_t, 3>{ 0, 0, -1 } })
+             std::array<int32_t, 3>{ 0, 5, 0 }, std::array<int32_t, 3>{ 0, 0, 5 }, std::array<int32_t, 3>{ 0, 0, -1 } })
     {
         EXPECT_FALSE(FL::Valid(bad.data()));
         FL::State state = Fresh(settings);
@@ -384,4 +384,42 @@ TEST(VisionFreeLookTest, ParseRenderSizes)
     sizes = Vi::ParseRenderSizes("", settings, errors);
     EXPECT_EQ(sizes, (std::vector<Vi::Resolution>{ { 128, 64 } }));
     EXPECT_EQ(errors.size(), 1u);
+}
+
+// Face (turn to camera): the body is to turn by the yaw offset -- 90 degrees here -- and the offset becomes 0, the
+// held rates and the pitch kept; with the offset already ~0 it turns nothing (no packet follows).
+TEST(VisionFreeLookTest, FaceTurnsTheBodyToTheCamera)
+{
+    Vi::Settings settings;
+    FL::State state = Fresh(settings);
+    auto const turn = Choice(90.0f, 20.0f, FL::ZOOM_HOLD);
+    FL::Apply(state, turn.data(), settings);
+    FL::Integrate(state, 1.0f, false);
+    ASSERT_NEAR(state.YawOffset, 90.0f * DEG, 1e-5f);
+    float const pitch = state.Pitch;
+
+    std::array<int32_t, FL::HEADS> const face = { int32_t(FL::YAW_STOP_INDEX) + 2, int32_t(FL::PITCH_STOP_INDEX) + 1,
+        int32_t(FL::ZOOM_FACE) };
+    float const body = FL::Apply(state, face.data(), settings);
+    EXPECT_NEAR(body, 90.0f * DEG, 1e-5f);
+    EXPECT_FLOAT_EQ(state.YawOffset, 0.0f);
+    EXPECT_FLOAT_EQ(state.Pitch, pitch);
+    // The rates this choice asked for are held as with any other zoom choice.
+    EXPECT_FLOAT_EQ(state.YawRate, 90.0f * DEG);
+    EXPECT_FLOAT_EQ(state.PitchRate, 20.0f * DEG);
+    // The camera's yaw in the world is unchanged: the body turned by what the offset gave up.
+    EXPECT_NEAR(0.0f + body + state.YawOffset, 90.0f * DEG, 1e-5f);
+
+    // Already facing the camera: nothing.
+    EXPECT_FLOAT_EQ(FL::Apply(state, face.data(), settings), 0.0f);
+    state.YawOffset = 0.5f * FL::FACE_MIN;
+    EXPECT_FLOAT_EQ(FL::Apply(state, face.data(), settings), 0.0f);
+    // Every other choice turns no body.
+    state.YawOffset = 1.0f;
+    for (uint32_t zoom = 0; zoom < FL::ZOOM_FACE; ++zoom)
+    {
+        auto const other = Choice(0.0f, 0.0f, zoom);
+        EXPECT_FLOAT_EQ(FL::Apply(state, other.data(), settings), 0.0f);
+    }
+    EXPECT_EQ(FL::ZOOM_CHOICES, 5u);
 }

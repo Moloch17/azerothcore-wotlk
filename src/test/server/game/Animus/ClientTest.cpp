@@ -705,3 +705,36 @@ TEST(ClientTest, TheServerStripsTheSameFlagsFromEveryReport)
     gm.Privileged = true;
     EXPECT_EQ(Mv::SanitizeFlags(Mv::FlagBit::FLYING, gm), Mv::FlagBit::FLYING);
 }
+
+// Turn to camera (ControlState::FaceTurn, the look head's face choice): the facing snaps by the turn at the next
+// tick's start and the client reports it as exactly one SET_FACING there, carrying the new facing -- the server's
+// handler takes it as any mouse-look facing. One-shot: nothing more is sent after it, and no turn sends nothing.
+TEST(ClientTest, TurnToCameraIsOneSetFacing)
+{
+    Rig rig;
+    rig.Start(0.0f, 0.0f, 1.0f);
+    rig.Run(200);
+    size_t const before = rig.Link.Reports.size();
+    ASSERT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 0u);
+
+    float const quarter = 1.5707963f;
+    rig.Control.FaceTurn = quarter;
+    rig.Run(50);
+    EXPECT_FLOAT_EQ(rig.Control.FaceTurn, 0.0f);
+    EXPECT_NEAR(Turned(rig.Client.Body.Yaw, 1.0f + quarter), 0.0f, 1e-5f);
+    ASSERT_EQ(rig.Link.Reports.size(), before + 1);
+    EXPECT_EQ(rig.Link.Reports.back().Opcode, Cd::Op::SET_FACING);
+    EXPECT_EQ(rig.Link.Reports.back().TimeMs, rig.Now - 50);        // at the step's start
+    EXPECT_NEAR(Turned(rig.Link.Yaw, 1.0f + quarter), 0.0f, 1e-5f);
+
+    rig.Run(500);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 1u);
+    EXPECT_EQ(rig.Link.Reports.size(), before + 1);
+
+    // While the server imposes (a stun), the snap is dropped: no turn, no packet.
+    rig.Link.Imposed = true;
+    rig.Control.FaceTurn = -quarter;
+    rig.Run(50);
+    EXPECT_FLOAT_EQ(rig.Control.FaceTurn, 0.0f);
+    EXPECT_EQ(rig.Link.Count(Cd::Op::SET_FACING), 1u);
+}

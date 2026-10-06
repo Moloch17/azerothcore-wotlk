@@ -75,7 +75,7 @@
  *                            scenario and shown to a party's teammates; they never mask an action.
  *                            With LookHeads L > 0 (a stage with a vision block; protocol 22) either is followed by
  *                              i32 look[E*A*L]        each agent's look head choice, agent-major in the actions'
- *                                                     order: yaw rate (0..6), pitch rate (0..4), zoom (0..3)
+ *                                                     order: yaw rate (0..6), pitch rate (0..4), zoom (0..4)
  *                                                     (Vision::FreeLook). Rows without a camera (a director, an
  *                                                     absent agent) send 0s, placeholders the sim never applies.
  *                                                     Required, and every value in range: anything else is a

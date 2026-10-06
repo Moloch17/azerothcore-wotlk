@@ -3039,8 +3039,15 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
     auto const take = [&](uint32 agent)
     {
         SeatState& seat = data.Seats[agent];
-        if (seat.L)
-            Vision::FreeLook::Apply(seat.Look, look + std::size_t(agent) * Vision::FreeLook::HEADS, settings);
+        if (!seat.L)
+            return;
+        // Turn to camera: the body's turn goes to the player controller as a one-shot control, which snaps the facing
+        // at the next tick's start and reports it with one SET_FACING, as a client does. Still free (R1): it is not a
+        // press, so nothing prices, repeats or tallies it.
+        float const turn = Vision::FreeLook::Apply(seat.Look, look + std::size_t(agent) * Vision::FreeLook::HEADS,
+            settings);
+        if (turn != 0.0f)
+            seat.Controls.Held.FaceTurn = turn;
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         take(seat);
