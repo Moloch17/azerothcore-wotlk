@@ -61,7 +61,11 @@ class ProgressWriter:
             "patience": config.convergence.patience if config.eval.every_env_steps > 0 else 0,
             "window": config.convergence.window,
             "baseline": config.eval.baseline,
+            # The stage's own measures for forge status (config.status): their order, and "metric>=x;metric<=y".
+            "status_headline": ",".join(config.status.headline),
+            "status_targets": config.status.target_text(),
         }
+        self.headline = tuple(config.status.headline)
         self.metrics: dict = {}
         self.evaluation: dict = {}
 
@@ -69,7 +73,8 @@ class ProgressWriter:
         """An update's metrics row (train.py's metrics.csv row)."""
         self.metrics = dict(row)
 
-    def evaluated(self, env_steps: int, score: float, baseline_score: float | None, tracker, controller=None) -> None:
+    def evaluated(self, env_steps: int, score: float, baseline_score: float | None, tracker, controller=None,
+                  summary: dict | None = None) -> None:
         weakest = controller.weakest() if controller else None
         self.evaluation = {
             "evals": len(tracker.history),
@@ -86,6 +91,8 @@ class ProgressWriter:
             "weakest_layout": weakest[0] if weakest else "",
             "weakest_missing": ",".join(weakest[1]) if weakest else "",
             "reentries": sum(state.reentries for state in controller.layouts.values()) if controller else 0,
+            # The headline measures' evaluation means (eval_<metric>), beside the training means (episode_<metric>).
+            **{f"eval_{metric}": (summary or {}).get(metric) for metric in self.headline},
         }
 
     def restore_evaluation(self, tracker, baseline_score: float | None, controller=None) -> None:

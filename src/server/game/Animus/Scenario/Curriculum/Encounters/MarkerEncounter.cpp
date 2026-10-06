@@ -173,6 +173,13 @@ void Animus::Curriculum::MarkerEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         EnvMarkers const& markers = _envs[env.Index];
         return markers.Reached ? markers.TimeRatioSum / float(markers.Reached) : 0.0f;
     });
+    // The same legs in plain seconds, from the leg's start to the stop on its marker: M1's one fixed objective makes
+    // this the time the whole run took. Mean over the legs reached; 0 when none was.
+    table.Add("arrive_seconds", [this](Env const& env, uint32)
+    {
+        EnvMarkers const& markers = _envs[env.Index];
+        return markers.Reached ? markers.ArriveSecondsSum / float(markers.Reached) : 0.0f;
+    });
     // How far past the radius the seat ran after first reaching it, yards, mean over the legs that reached it.
     table.Add("overshoot", [this](Env const& env, uint32)
     {
@@ -258,6 +265,9 @@ void Animus::Curriculum::MarkerEncounter::ResetEpisode(Env& env)
 
 uint32 Animus::Curriculum::MarkerEncounter::TopRung(Env const& env) const
 {
+    // A fixed objective has one task, so one rung: every episode of it is the top rung.
+    if (_scenario.Arena(env).Objective)
+        return 0;
     MarkerCourse const course = _scenario.Arena(env).Course;
     uint32 const rungs = std::max<uint32>(1, course == MarkerCourse::Ground ? _scenario.Tuning().MarkerGround.Rungs
         : course == MarkerCourse::Vertical ? _scenario.Tuning().MarkerVertical.Rungs
@@ -393,7 +403,14 @@ bool Animus::Curriculum::MarkerEncounter::PlaceMarker(Env const& env, EnvMarkers
     float walk = 0.0f;
     float dry = 0.0f;
     bool placed = false;
-    if (upstairs)
+    // A fixed objective (ArenaDefinition::Objective): the same place every episode, chosen by hand and stood on, so
+    // nothing is searched for.
+    if (arena.Objective)
+    {
+        place.Relocate(*arena.Objective);
+        placed = true;
+    }
+    if (!placed && upstairs)
     {
         // Up the stairs: the lowest floor with headroom a storey or two over the seat's, and the stairs walkable.
         // A building with no such floor in reach (a single-storey inn) takes a down-or-level marker instead.
@@ -553,6 +570,13 @@ bool Animus::Curriculum::MarkerEncounter::Build(Env& env, Map* map, uint8 /*leve
             tuning.MarkersMax));
     }
     markers.Wanted = std::max<uint32>(1, markers.Wanted);
+
+    // A fixed objective is one marker, stopped on inside the arena's own radius: no ladder widens or tightens it.
+    if (ArenaDefinition const& arena = _scenario.Arena(env); arena.Objective)
+    {
+        markers.Task.Radius = std::max(0.1f, arena.ObjectiveRadius);
+        markers.Wanted = 1;
+    }
 
     // The scenario seeds the seat's facing from the bot after the encounters are built, so the bot's own is the one
     // the first marker's bearing is measured from.
@@ -779,6 +803,7 @@ void Animus::Curriculum::MarkerEncounter::Reward(Env& env, uint32 seatIndex, Pla
     markers.NarrowArrived += markers.LegNarrow ? 1 : 0;
     ledger.Add(RewardTerm::Arrive, tuning.Arrive);
     float const seconds = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, markers.LegStartMs)) / 1000.0f;
+    markers.ArriveSecondsSum += seconds;
     float const run = std::max(1.0f, bot->GetSpeed(MOVE_RUN));
     // The optimum: the walking way (the straight line on open ground) at run speed, and the first turn. Across water,
     // the better of swimming straight and running round; to a lakebed, the swim (FindPlace's run-equivalent).

@@ -1,25 +1,23 @@
 # 4. The curriculum
 
 > **The movement curriculum (2026-10-05).** The curriculum is being rebuilt from scratch around the player
-> controller (`.agents/plans/movement-curriculum/`): seven movement stages, M1-M7, landing one at a time. Defined so
-> far: `move1_controls` (markers on open ground, stopped on exactly; MarkerEncounter, `Opposition::Markers`) and
-> `move2_ground` (markers on broken ground with something in the way; `MarkerCourse::Ground`) and `move3_vertical`
-> (above, below a ledge, another storey; `MarkerCourse::Vertical`) and `move4_water` (across water, lakebeds,
-> chains longer than a breath; `MarkerCourse::Water`) and `move5_routes` (one long trip, the way not visible from the
-> start; `MarkerCourse::Routes`) and `move6_mounted` (rides and flights worth mounting for, air-only markers;
-> `MarkerCourse::Mounted`, the travel block joining the layout) and `move7_follow` (keep within 3-10 yd of a leader
-> on the controller; `Opposition::Follow`, FollowEncounter). Every
-> movement stage runs 50 ms world ticks (`AnimusForge.Stage.<name>.TicksPerDecision`; `test_stage_ticks.py`).
+> controller, stage by stage. Defined so far: `move1_controls` -- an empty Stockades (map 34, its creatures cleared),
+> the seat at the entrance and one fixed objective at the end of the entrance hallway (`ArenaDefinition::Objective`,
+> MarkerEncounter, `Opposition::Markers`): reach it as fast as possible and stop within a yard (`ObjectiveRadius`),
+> the time paid as `Markers.StepCost` and the stop as Arrive. Every class and race at level 1, death knights at 55
+> (`StageDefinition::Level`). Every movement stage runs 50 ms world ticks (`AnimusForge.Stage.<name>.TicksPerDecision`;
+> `test_stage_ticks.py`), and names the measures `forge status` shows for it (its config's `status.headline` and
+> `status.targets`).
 >
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
-> | `move1_controls` | 150M | 5M | 2048 |
-> | `move2_ground` | 250M | 5M | 2048 |
-> | `move3_vertical` | 300M | 5M | 2048 |
-> | `move4_water` | 250M | 5M | 2048 |
-> | `move5_routes` | 500M | 5M | 1024 |
-> | `move6_mounted` | 300M | 5M | 2048 |
-> | `move7_follow` | 300M | 5M | 2048 |
+> | `move1_controls` | 150M | 5M | 512 |
+>
+> **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
+> water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,
+> learner configs in `apps/forge/python/configs/archive/movement-v1/`, its dry-check runs in
+> `var/animus-forge/shared/archive/movement-v1-2026-10-05/`. Its encounter code (the marker courses, FollowEncounter,
+> MarkerReach) is still in the source.
 >
 > **Archived.** The rest of this chapter describes the first curriculum -- `stage1_move` ... `stage21_ship` --
 > archived when the curriculum was rebuilt. Its stage definitions are on the git tag `curriculum-v1`, its learner

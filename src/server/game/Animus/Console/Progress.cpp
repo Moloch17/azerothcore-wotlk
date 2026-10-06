@@ -558,6 +558,48 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         table.AddRow({ "eval score", "-", Acore::StringFormat("first evaluation at {}",
             Format::Compact(std::ceil((*steps + 1) / *every) * *every)) });
 
+    // The stage's own measures (its config's status.headline, in that order, with status.targets): what this stage is
+    // judged on, read first. Each shows the last evaluation's mean, the last update's training mean beside it, and
+    // whether the evaluation meets its target. A stage without a headline shows the general episode columns below.
+    std::string const headline = progress->Text("status_headline");
+    if (!headline.empty())
+    {
+        std::string const targets = progress->Text("status_targets");
+        auto split = [](std::string const& text, char separator)
+        {
+            std::vector<std::string> parts;
+            for (std::size_t start = 0; start <= text.size();)
+            {
+                std::size_t const end = std::min(text.find(separator, start), text.size());
+                if (end > start)
+                    parts.push_back(text.substr(start, end - start));
+                start = end + 1;
+            }
+            return parts;
+        };
+        table.AddRow({ progress->Text("scenario"), "eval", "the stage's own measures" });
+        for (std::string const& metric : split(headline, ','))
+        {
+            std::optional<double> const evaluated = progress->Number("eval_" + metric);
+            std::optional<double> const trained = progress->Number("episode_" + metric);
+            std::string note = trained ? "train " + Format::Metric(*trained) : "train -";
+            // "arrived>=0.95;arrive_seconds<=18": the first entry naming this metric.
+            for (std::string const& target : split(targets, ';'))
+            {
+                bool const atLeast = target.find(">=") != std::string::npos;
+                std::size_t const op = target.find(atLeast ? ">=" : "<=");
+                if (op == std::string::npos || target.substr(0, op) != metric)
+                    continue;
+                double const bound = std::strtod(target.c_str() + op + 2, nullptr);
+                note += Acore::StringFormat(", target {} {}", atLeast ? ">=" : "<=", Format::Metric(bound));
+                if (evaluated)
+                    note += (atLeast ? *evaluated >= bound : *evaluated <= bound) ? " (met)" : " (not yet)";
+                break;
+            }
+            table.AddRow({ "  " + metric, Format::OrDash(evaluated, Format::Metric), note });
+        }
+    }
+
     std::optional<double> const reward = progress->Number("reward_per_decision");
     if (reward)
         table.AddRow({ "reward/decision", Format::Metric(*reward), Change(reward, _previous.Reward) });
@@ -596,9 +638,11 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
     if (std::optional<double> const episodes = progress->Number("episodes"))
         table.AddRow({ "episodes/update", Format::Count(uint64(*episodes)), "" });
 
-    for (char const* column : EPISODE_COLUMNS)
-        if (std::optional<double> const value = progress->Number(std::string("episode_") + column))
-            table.AddRow({ std::string("  ") + column, Format::Metric(*value), "mean of the last update's episodes" });
+    if (headline.empty())
+        for (char const* column : EPISODE_COLUMNS)
+            if (std::optional<double> const value = progress->Number(std::string("episode_") + column))
+                table.AddRow({ std::string("  ") + column, Format::Metric(*value),
+                    "mean of the last update's episodes" });
 
     std::string const nonfinite = progress->Text("nonfinite");
     if (!nonfinite.empty())

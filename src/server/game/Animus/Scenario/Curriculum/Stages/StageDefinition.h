@@ -23,6 +23,7 @@
 #include "Aptitude.h"
 #include "ClassProfile.h"
 #include "Position.h"
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -328,6 +329,12 @@ namespace Animus::Curriculum
         /// decision with a price on both sides. A leg no place can be found for leaves the seat with nothing more
         /// to reach for the rest of the clock (chain_broken).
         bool Checkpoints = false;
+        /// Opposition::Markers: one place, the same every episode, instead of a marker drawn by the course's ladder
+        /// (the user's M1, 2026-10-05: the end of the Stockades' entrance hallway). One marker an episode, stopped on
+        /// inside ObjectiveRadius; the arena has a single rung, so every episode is its top rung.
+        std::optional<Position> Objective{};
+        /// The radius a fixed Objective is stopped on inside, yards.
+        float ObjectiveRadius = 1.0f;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
@@ -383,6 +390,10 @@ namespace Animus::Curriculum
         uint8 FocusLevelFirst = 0;
         uint8 FocusLevelLast = 0;
         uint8 FocusChance = 0;
+        /// Every character of the stage at this level, training and evaluation alike, raised to its class's own
+        /// minimum (a death knight's 55). 0 = drawn as usual. The user's M1 (2026-10-05): level 1, so a class's kit is
+        /// one or two spells and the lesson is the movement alone.
+        uint8 Level = 0;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

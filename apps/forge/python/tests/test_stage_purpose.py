@@ -18,35 +18,19 @@ CURRICULUM = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curricu
 STAGES_CPP = CURRICULUM / "Stages" / "Stages.cpp"
 LEDGER = CURRICULUM / "Rewards" / "RewardLedger.h"
 
-# Stage -> the terms its purpose is paid as. M2-M7 add their rows as they land.
+# Stage -> the terms its purpose is paid as. The movement curriculum's M2-M7 are archived (git tag
+# curriculum-movement-v1); a stage added after M1 adds its row here.
 PURPOSE = {
-    # M1: stopping on the marker -- Arrive is paid only when the seat is stopped inside the radius.
-    "move1_controls": ("Arrive",),
-    # M2: the markers again, now with something in the way; getting stuck and pressing into walls are its costs.
-    "move2_ground": ("Arrive", "Stuck", "Wall"),
-    # M3: up and down; what a fall takes is its own cost.
-    "move3_vertical": ("Arrive", "FallDamage"),
-    # M4: water; what the water takes is its own cost.
-    "move4_water": ("Arrive", "Drowning"),
-    # M5: arriving at the end of a long way; getting stuck and walled on it are what it costs.
-    "move5_routes": ("Arrive", "Stuck", "Wall"),
-    # M6: arriving -- mounting and flying are means, reported and never paid for themselves.
-    "move6_mounted": ("Arrive",),
-    # M7: keeping within the band of the leader; arriving is not the point.
-    "move7_follow": ("FollowKept",),
+    # M1 (the user's design, 2026-10-05): reach the end of the Stockades hallway and stop within a yard, as fast as
+    # possible -- Arrive is paid only when the seat is stopped inside the radius, and StepCost is the time it took.
+    "move1_controls": ("Arrive", "StepCost"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
 # file exists for, the other way round. M1's Facing is half the change in cos(bearing to the marker), and Progress the
-# straight-line distance closed over the leg, both started over at each marker.
+# straight-line distance closed over the leg.
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
-    "move2_ground": ("Progress",),
-    "move3_vertical": ("Progress",),
-    "move4_water": ("Progress",),
-    "move5_routes": ("Progress",),
-    "move6_mounted": ("Progress",),
-    "move7_follow": ("Progress",),
 }
 
 # Opposition -> the encounter source that pays it.

@@ -7,6 +7,7 @@ for ``forge fast``) are merged over the whole result the same way, so one file c
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from types import UnionType
@@ -403,6 +404,35 @@ class CastConfig:
         return {name: str(path).format(runs_dir=runs_dir, run_name=run_name) for name, path in self.agents.items()}
 
 
+STATUS_TARGET = re.compile(r"^(>=|<=)\s*(-?\d+(\.\d+)?)$")
+
+
+@dataclass
+class StatusConfig:
+    """What `forge status` shows for this stage (the user, 2026-10-05: each stage's own most important measures).
+
+    `headline` is the stage's measures in the order they are read -- episode info columns or summary fields such as
+    arrived_narrow -- shown with the last evaluation's mean and the last update's training mean, in place of the
+    general episode columns. Each is summarised whether or not eval.report lists it. `targets` gives a metric the
+    bound it is judged against, ">= 0.95" or "<= 18", and the status line says whether the evaluation meets it.
+    Targets are a readout, never a gate: convergence alone ends a stage.
+    """
+
+    headline: tuple[str, ...] = ()
+    targets: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for metric, target in self.targets.items():
+            if metric not in self.headline:
+                raise ValueError(f"status.targets: {metric!r} is not in status.headline")
+            if not isinstance(target, str) or not STATUS_TARGET.match(target.strip()):
+                raise ValueError(f"status.targets.{metric}: {target!r} is not '>= x' or '<= x'")
+
+    def target_text(self) -> str:
+        """"arrived>=0.95;arrive_seconds<=18": the flat form progress.json carries to the sim."""
+        return ";".join(f"{metric}{''.join(target.split())}" for metric, target in self.targets.items())
+
+
 @dataclass
 class LayoutSamplingConfig:
     """Training episodes draw a class/build uniformly, so each layout gets its share of the data whatever it is
@@ -535,6 +565,7 @@ class TrainConfig:
     fade: FadeConfig = field(default_factory=FadeConfig)
     costs: CostLadderConfig = field(default_factory=CostLadderConfig)
     style: StyleConfig = field(default_factory=StyleConfig)
+    status: StatusConfig = field(default_factory=StatusConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     exploit: ExploitConfig = field(default_factory=ExploitConfig)
 
