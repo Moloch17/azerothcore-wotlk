@@ -1640,6 +1640,15 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 block["revision"] = revision;
             if (id == BlockId::Core)
                 block["action_features"] = CoreBlock::ACTION_FEATURES;
+            // The camera's image, as the layout's manifest describes it: the learner gives a layout whose vision block
+            // has one its image encoder (camera-vision).
+            if (id == BlockId::Vision)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["image"] = manifest["image"];
+                block["camera"] = manifest["camera"];
+            }
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
             if (!rescaled.empty())
