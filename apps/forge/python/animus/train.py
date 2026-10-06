@@ -255,7 +255,8 @@ class EvalLog:
         groups = [*summary.get("bands", {}).items(),
                   *((f"arena_{arena}", values) for arena, values in summary.get("arenas", {}).items()),
                   *((f"build_{build}", values) for build, values in summary.get("builds", {}).items()),
-                  *((f"tier_{tier}", values) for tier, values in summary.get("difficulties", {}).items())]
+                  *((f"tier_{tier}", values) for tier, values in summary.get("difficulties", {}).items()),
+                  *((key.replace("=", "_"), values) for key, values in summary.get("categories", {}).items())]
         for group, values in groups:
             for name, value in values.items():
                 if isinstance(value, float):
@@ -589,6 +590,10 @@ class TrainingRun:
         # And its class's build names, in the order the "spec" episode info column indexes them.
         self.spec_names = {name: layout.get("spec_names", [])
                            for name, layout in (self.stage or {}).get("layouts", {}).items()}
+        # Episode info columns that name what was drawn (the seek stage's room and object), for the evaluation's
+        # tables by each (EvalResult.categories).
+        self.episode_categories = {column: list(names) for column, names in
+                                   ((self.stage or {}).get("episode_categories") or {}).items()}
         # Each build's role by its casting name ("paladin_holy": "healer"), for layout_sampling.role_metrics.
         self.casting_roles = {f"{name}_{spec}": role
                               for name, layout in (self.stage or {}).get("layouts", {}).items()
@@ -1256,6 +1261,7 @@ class TrainingRun:
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None,
                                            spec_names=self.spec_names,
+                                           categories=self.episode_categories,
                                            score_column=self.config.eval.score_column(), **options)
         parts = self.ranks.gather(result)
         return EvalResult.merged(parts) if self.ranks.leader else None

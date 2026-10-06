@@ -169,6 +169,9 @@ namespace Animus::Curriculum
         /// The encounters the env's current episode uses, in build order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveEncounters(Env const& env) const;
         [[nodiscard]] CurriculumTuning const& Tuning() const { return _tuning; }
+        /// The shaping scale the learner's fade has reached (1 at the start, 0 when faded): the seek stage's room ladder
+        /// is read off it (SeekEncounter).
+        [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
         /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
         /// seat a side, which is what a Mirror is.
         [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;

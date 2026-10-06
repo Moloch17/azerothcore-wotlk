@@ -226,6 +226,16 @@ namespace Animus::Vision
         }
     }
 
+    /// The pixels of an image row that carry the objective flag (OBJECTIVE_BIT): how much of the frame shows the
+    /// objective, 0 when it is out of sight (the seek stage's sight measures).
+    [[nodiscard]] inline uint32_t CountObjectivePixels(uint8_t const* image, uint32_t bytes)
+    {
+        uint32_t count = 0;
+        for (uint32_t at = 3; at < bytes; at += BYTES_PER_PIXEL)
+            count += (image[at] & OBJECTIVE_BIT) ? 1u : 0u;
+        return count;
+    }
+
     /// **Nearest-pixel upscaling** (FREELOOK A): a frame cast at w x h into the canonical W x H, canonical pixel
     /// (r, c) taking cast pixel (floor(r h / H), floor(c w / W)). Every byte, the objective flag with them, is copied
     /// as it is; nothing is interpolated. w <= W and h <= H.

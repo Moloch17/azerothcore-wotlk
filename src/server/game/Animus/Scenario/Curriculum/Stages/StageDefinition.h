@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Animus::Curriculum
@@ -62,6 +63,9 @@ namespace Animus::Curriculum
         /// agent in the owner's slot, moved by the player controller: a script's keys (Movement::Seek) or a frozen
         /// checkpoint's (stage.json cast "leader").
         Follow,
+        /// Nothing to fight: one real object in one of a dungeon's rooms, found by sight and stopped beside
+        /// (SeekEncounter, ArenaDefinition::Rooms and Objects) -- M2 seek.
+        Seek,
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -73,6 +77,31 @@ namespace Animus::Curriculum
         Water,          // M4: across water, on a lakebed, a chain of lakebeds; breath (MarkerWater.*)
         Routes,         // M5: one long trip, the way not visible from the start (MarkerRoutes.*)
         Mounted,        // M6: a ride (or a flight, Flying/AirOnly) worth mounting for (MarkerMounted.*)
+    };
+
+    /// **A room of the seek stage** (ArenaDefinition::Rooms): a floor area the object may be put on, written once in
+    /// the stage definition from the map. Floor is a convex polygon (x, y corners in order), kept a yard and a half in
+    /// from the walls; FloorZ the floor's height, Opening the middle of its doorway onto the room or hallway it is
+    /// entered from, Centre a point inside on the floor, and Walk the walking distance from the stage's spawn to it
+    /// (yards): its depth, which the room ladder orders the rooms by.
+    struct SeekRoom
+    {
+        std::string Name;
+        float FloorZ = 0.0f;
+        std::pair<float, float> Opening{};
+        std::pair<float, float> Centre{};
+        float Walk = 0.0f;
+        std::vector<std::pair<float, float>> Floor{};
+    };
+
+    /// **An object the seek stage hides** (ArenaDefinition::Objects): a gameobject_template entry whose display has a
+    /// collision model (vmaps' GameObjectModels.dtree), so the camera's rays meet it; Kind names it in the episode
+    /// info, and Height is the model's height times the template's size, yards: the objective point is its centre.
+    struct SeekObject
+    {
+        uint32 Entry = 0;
+        std::string Kind;
+        float Height = 1.0f;
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
@@ -335,6 +364,12 @@ namespace Animus::Curriculum
         std::optional<Position> Objective{};
         /// The radius a fixed Objective is stopped on inside, yards.
         float ObjectiveRadius = 1.0f;
+        /// Opposition::Seek: the rooms an object may be hidden in (one drawn an episode, by the room ladder), the
+        /// objects (one drawn an episode, uniformly), and how near the object a stop finds it, yards (interaction
+        /// range).
+        std::vector<SeekRoom> Rooms{};
+        std::vector<SeekObject> Objects{};
+        float SeekRadius = 3.0f;
 
         [[nodiscard]] uint32 SeatCount() const;
     };

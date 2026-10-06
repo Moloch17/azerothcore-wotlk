@@ -24,6 +24,9 @@ PURPOSE = {
     # M1 (the user's design, 2026-10-05): reach the end of the Stockades hallway and stop within a yard, as fast as
     # possible -- Arrive is paid only when the seat is stopped inside the radius, and StepCost is the time it took.
     "move1_controls": ("Arrive", "StepCost"),
+    # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
+    # paid only on that stop, and StepCost is the time the search took.
+    "move2_seek": ("Arrive", "StepCost"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -31,12 +34,15 @@ PURPOSE = {
 # straight-line distance closed over the leg.
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
+    # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground").
+    "move2_seek": ("Sighting", "NewGround"),
 }
 
 # Opposition -> the encounter source that pays it.
 ENCOUNTER = {
     "Markers": "Encounters/MarkerEncounter.cpp",
     "Follow": "Encounters/FollowEncounter.cpp",
+    "Seek": "Encounters/SeekEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

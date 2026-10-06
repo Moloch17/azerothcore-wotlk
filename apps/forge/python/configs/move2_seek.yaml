@@ -1,0 +1,86 @@
+# M2 -- seek (perception-goals plan §4, "M2 in detail"; the user, 2026-10-06: "M2 seek also happens inside the same
+# Stockades instance. It has to find an object in a room, and that object and room is randomized."). The same empty
+# Stockades and entrance spawn as M1; each episode one real object (a chest, crate, barrel, sack or strongbox) at a
+# random spot of one of the Stockades' 39 rooms. No compass: the camera's objective flag shows the object only in line
+# of sight. Found is stopping within 3 yd of it. Its memory is the GRU's (P1; the mental map is P1b, only if M2 stalls
+# on the deepest rooms).
+#
+# Seeds from move1_controls (stage.json's seed chain): the move block's columns carry over by name across the compass
+# split (bootstrap), the compass's weights stay behind. M1's hyperparameters otherwise; what differs is below.
+extends: move1_controls.yaml
+run_name: move2_seek
+
+# The latest M1 checkpoint (the default, said here because M1 is still training as this is written).
+seed_from: latest
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 250000000
+
+mappo:
+  # A 300 s episode whose one Outcome may come minutes in: 0.997 a 100 ms (M1's) discounts an arrival 60 s away to
+  # 0.16 and 150 s to 0.01, below the step cost's sum over the same time. 0.998 (a horizon of about 50 s; 150 s away
+  # keeps 0.05) is the step the plan's horizons allow before M4's 0.999, with the critic told where the object is
+  # (SeekEncounter::WriteState) to carry the rest.
+  gamma: 0.998
+  # The GRU is M2's only memory, so its gradient runs over the whole 128-decision rollout (32 s; the plan's amendment
+  # 5: the ~30 s horizon holds while BPTT is 128 decisions), not M1's 32-decision chunks (8 s). The replay costs about
+  # four times the sequential steps of M1's; measure it in the first updates.
+  chunk_length: 128
+  # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
+  look_entropy_coef: 0.001
+
+# Every room in turn (SeekDraw::EvaluationPick: 512 seeds meet each of the 39 rooms 13 times, every object in every
+# tier), the object placed by the seed so every checkpoint meets the same spots.
+eval:
+  episodes: 512
+  report: [found, find_seconds, sighted, sight_seconds, sight_to_arrival, rooms_entered, rooms_reentered,
+           revisit_rate, rooms_before_found, objective_visible, room_depth, difficulty, deep_room, object_fallback,
+           distance_travelled, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, died,
+           timed_out, reward_arrive, reward_step_cost, reward_sighting, reward_new_ground, reward_stuck, reward_wall,
+           reward_jitter, reward_effort, reward_repeat]
+
+# forge status for this stage: did it find the object (overall and in the deepest rooms), how soon it saw it, how soon
+# after seeing it it got there, and how it searched -- rooms walked into before finding it, and how often it went back
+# into one. Found by room and by object are the evaluation's tables (categories seek_room, seek_object). Targets are
+# a readout, never a gate; found_deepest's 0.9 is the plan's development criterion for P1.
+status:
+  headline: [found, found_deepest, find_seconds, sight_seconds, sight_to_arrival, rooms_before_found, revisit_rate,
+             rooms_entered, objective_visible, wall_seconds, timed_out, died]
+  targets:
+    # M1's targets are not M2's measures (null drops an inherited key).
+    arrived: null
+    arrive_seconds: null
+    time_ratio: null
+    stop_distance: null
+    overshoot: null
+    stops_near: null
+    course_kinks: null
+    found: ">= 0.95"
+    found_deepest: ">= 0.9"
+    find_seconds: "<= 90"
+    sight_seconds: "<= 60"
+    sight_to_arrival: "<= 15"
+    rooms_before_found: "<= 12"
+    revisit_rate: "<= 0.2"
+    wall_seconds: "<= 2"
+    timed_out: "<= 0.05"
+    died: "<= 0.01"
+
+convergence:
+  # Converged on the stage's own measure, the share of objects found; at the top of its ladder, which is the fade's
+  # end (at_top_rung: the shaping faded, so the deepest rooms are the most drawn).
+  measure: found
+
+# The aids (Sighting, NewGround) and the room ladder step together: the shaping fades, and the rooms move from those
+# seen from the hallway to the deepest, once 80% of objects are found at the rung.
+fade:
+  gate_metric: found
+  gate_value: 0.8
+
+# Stuck and Wall are priced from the start of M2's cost ladder, as M1's noise prices were: free until 80% are found.
+costs:
+  gate_metric: found
+  gate_value: 0.8
+
+layout_sampling:
+  metric: found

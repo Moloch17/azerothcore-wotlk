@@ -27,8 +27,7 @@
  * learner configs in apps/forge/python/configs/archive/, its runs in
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
- *   movement   move1_controls ─ move2_ground ─ move3_vertical ─ move4_water ─ move5_routes ─ move6_mounted
- *              ─ move7_follow
+ *   movement   move1_controls ─ move2_seek (perception-goals P1: the compass split, a hidden object found by sight)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -73,6 +72,203 @@ namespace
         return { 170.0f, 1.0f, -25.61f, 0.0f };
     }
 
+    /// **The Stockades' rooms** (M2 seek): every room off the hallways, 39 of them -- the eight cells along the
+    /// entrance hallway (four front cells, each with a back room behind it), the hallway's end past the crossing, and
+    /// in each wing four cells (front and back) along its corridor, its round hub, and three end rooms (front and back)
+    /// off the hub. The entrance hallway runs along +x (north); the "west" wing is the +y one, the "east" the -y.
+    ///
+    /// **How they were authored** (offline, 2026-10-06; the live sim was training): the map's navmesh (mmaps 034, read
+    /// only to author, never a bot input) scanned on a half-yard grid over x 40-210, y -160-160, with each
+    /// walkable cell's floor height read from the vmaps (StockadeRoomsDataTest's scan); the walkable cells eroded by a
+    /// yard and a half so the doorways part, the parts flooded and grown back, the entrance hallway with its crossing
+    /// and ramps being the one left over. Each room's Floor is the convex hull of its eroded cells cut to at most eight corners
+    /// (a corner's removal only ever shrinks the hull), so it stays a yard and a half or more off the walls; FloorZ is
+    /// the median of its cells' vmap floor; Opening the middle of the cells it shares with the region it is entered
+    /// from; Centre its walkable cell nearest its middle; Walk the walking distance from the spawn to the Centre, an
+    /// eight-way Dijkstra over the scan's cells. Every 1-yd sample of every Floor was on the room's own walkable cells.
+    ///
+    /// **Validated** by StockadeRoomsDataTest against the map's floors (the vmaps, with FORGE_VISION_DATA): every 1-yd
+    /// sample of every room has a floor within Seek.FloorTolerance of FloorZ (2,951 of them on 2026-10-06; the worst
+    /// 0.8 yd off, in the two hubs, whose floors are not flat), and every sample but 18 in the hubs has a knee-height
+    /// yard of room along each axis. An object stands on the floor the vmaps give at its spot, not at FloorZ.
+    std::vector<SeekRoom> StockadeRooms()
+    {
+        // In order of walking distance from the spawn (the room ladder ranks them by Walk, not by this order).
+        return {
+            // hall_east_1: 260 sq yd, 43 yd from the spawn, opening onto the hallway
+            { "hall_east_1", -26.52f, { 84.5f, -5.5f }, { 84.5f, -14.5f }, 43.0f,
+                { { 79.0f, -22.0f }, { 79.5f, -22.0f }, { 84.5f, -21.5f }, { 90.5f, -20.5f },
+                  { 90.5f, -8.0f }, { 80.0f, -7.5f }, { 79.0f, -7.5f } } },
+            // hall_west_1: 260 sq yd, 43 yd from the spawn, opening onto the hallway
+            { "hall_west_1", -26.52f, { 84.5f, 6.6f }, { 85.0f, 16.0f }, 43.0f,
+                { { 79.0f, 9.5f }, { 90.5f, 9.5f }, { 90.5f, 23.5f }, { 90.0f, 23.5f },
+                  { 84.0f, 23.0f }, { 79.0f, 21.5f } } },
+            // hall_west_1_back: 124 sq yd, 57 yd from the spawn, opening onto hall_west_1
+            { "hall_west_1_back", -26.52f, { 82.5f, 25.6f }, { 84.5f, 30.0f }, 57.0f,
+                { { 79.0f, 28.0f }, { 90.5f, 28.0f }, { 90.5f, 32.5f }, { 79.0f, 32.5f } } },
+            // hall_east_1_back: 125 sq yd, 58 yd from the spawn, opening onto hall_east_1
+            { "hall_east_1_back", -26.52f, { 86.8f, -23.8f }, { 85.0f, -29.0f }, 58.0f,
+                { { 79.0f, -31.0f }, { 90.5f, -31.0f }, { 90.5f, -26.5f }, { 82.0f, -26.5f },
+                  { 79.0f, -27.0f } } },
+            // hall_east_2: 263 sq yd, 65 yd from the spawn, opening onto the hallway
+            { "hall_east_2", -26.52f, { 107.1f, -5.6f }, { 106.5f, -14.5f }, 65.0f,
+                { { 101.0f, -22.0f }, { 102.0f, -22.0f }, { 107.5f, -21.5f }, { 112.5f, -20.0f },
+                  { 112.5f, -7.5f }, { 101.0f, -7.5f } } },
+            // hall_west_2: 261 sq yd, 66 yd from the spawn, opening onto the hallway
+            { "hall_west_2", -26.52f, { 106.9f, 6.6f }, { 107.0f, 16.0f }, 66.0f,
+                { { 101.0f, 9.5f }, { 112.5f, 9.5f }, { 112.5f, 23.5f }, { 111.5f, 23.5f },
+                  { 107.0f, 23.0f }, { 101.0f, 21.5f } } },
+            // hall_west_2_back: 123 sq yd, 79 yd from the spawn, opening onto hall_west_2
+            { "hall_west_2_back", -26.52f, { 106.9f, 25.6f }, { 106.5f, 30.0f }, 79.0f,
+                { { 101.0f, 28.0f }, { 112.5f, 28.0f }, { 112.5f, 32.5f }, { 101.0f, 32.5f } } },
+            // hall_east_2_back: 122 sq yd, 80 yd from the spawn, opening onto hall_east_2
+            { "hall_east_2_back", -26.52f, { 108.8f, -24.0f }, { 107.0f, -29.0f }, 80.0f,
+                { { 101.0f, -31.0f }, { 112.5f, -31.0f }, { 112.5f, -26.5f }, { 107.5f, -26.5f },
+                  { 101.0f, -27.0f } } },
+            // hall_end: 406 sq yd, 106 yd from the spawn, opening onto the hallway
+            { "hall_end", -25.61f, { 146.0f, 0.5f }, { 160.0f, 0.5f }, 106.0f,
+                { { 148.5f, -5.0f }, { 172.0f, -5.0f }, { 172.0f, 6.5f }, { 148.5f, 6.5f } } },
+            // east_south_1: 232 sq yd, 124 yd from the spawn, opening onto the hallway
+            { "east_south_1", -34.86f, { 122.0f, -43.0f }, { 113.0f, -41.5f }, 124.0f,
+                { { 106.0f, -40.5f }, { 107.5f, -45.5f }, { 108.5f, -46.0f }, { 117.0f, -47.5f },
+                  { 119.0f, -47.5f }, { 120.0f, -37.5f }, { 110.5f, -36.5f }, { 106.0f, -36.5f } } },
+            // west_south_1: 300 sq yd, 126 yd from the spawn, opening onto the hallway
+            { "west_south_1", -34.86f, { 124.0f, 45.8f }, { 115.0f, 47.0f }, 126.0f,
+                { { 108.0f, 40.5f }, { 114.0f, 40.0f }, { 121.0f, 40.0f }, { 121.5f, 42.0f },
+                  { 122.5f, 52.5f }, { 111.0f, 54.5f }, { 108.5f, 54.0f }, { 108.0f, 50.5f } } },
+            // west_north_1: 234 sq yd, 127 yd from the spawn, opening onto the hallway
+            { "west_north_1", -34.86f, { 136.1f, 44.5f }, { 145.0f, 43.0f }, 127.0f,
+                { { 138.0f, 38.5f }, { 146.5f, 38.0f }, { 152.0f, 38.0f }, { 152.0f, 43.0f },
+                  { 151.0f, 47.0f }, { 149.5f, 47.5f }, { 141.5f, 49.0f }, { 139.0f, 49.0f } } },
+            // east_north_1: 303 sq yd, 128 yd from the spawn, opening onto the hallway
+            { "east_north_1", -34.86f, { 134.2f, -44.6f }, { 143.5f, -45.5f }, 128.0f,
+                { { 135.5f, -51.0f }, { 140.5f, -52.0f }, { 149.5f, -53.5f }, { 150.0f, -50.0f },
+                  { 151.0f, -39.0f }, { 142.5f, -38.5f }, { 137.0f, -38.5f }, { 135.5f, -50.0f } } },
+            // east_south_1_back: 96 sq yd, 139 yd from the spawn, opening onto east_south_1
+            { "east_south_1_back", -34.86f, { 103.5f, -40.5f }, { 99.0f, -40.0f }, 139.0f,
+                { { 96.0f, -43.5f }, { 97.5f, -44.0f }, { 100.5f, -44.5f }, { 101.5f, -39.5f },
+                  { 101.5f, -36.5f }, { 99.5f, -36.0f }, { 97.0f, -36.0f }, { 96.5f, -37.5f } } },
+            // west_south_1_back: 158 sq yd, 140 yd from the spawn, opening onto west_south_1
+            { "west_south_1_back", -34.86f, { 105.9f, 49.5f }, { 101.0f, 48.5f }, 140.0f,
+                { { 98.0f, 41.0f }, { 102.5f, 41.0f }, { 103.5f, 49.0f }, { 104.0f, 55.5f },
+                  { 103.0f, 56.0f }, { 100.0f, 56.5f }, { 99.5f, 56.0f }, { 98.0f, 43.5f } } },
+            // west_north_1_back: 96 sq yd, 142 yd from the spawn, opening onto west_north_1
+            { "west_north_1_back", -34.86f, { 155.0f, 42.2f }, { 159.5f, 41.5f }, 142.0f,
+                { { 157.0f, 37.5f }, { 161.5f, 37.5f }, { 162.0f, 44.0f }, { 162.0f, 45.0f },
+                  { 161.0f, 45.5f }, { 158.0f, 46.0f }, { 157.5f, 45.0f }, { 157.0f, 41.5f } } },
+            // east_north_1_back: 155 sq yd, 143 yd from the spawn, opening onto east_north_1
+            { "east_north_1_back", -34.86f, { 153.2f, -45.5f }, { 157.5f, -47.0f }, 143.0f,
+                { { 154.5f, -54.5f }, { 157.0f, -55.0f }, { 158.5f, -55.0f }, { 159.0f, -52.0f },
+                  { 160.5f, -40.5f }, { 160.5f, -39.5f }, { 156.0f, -39.5f }, { 155.0f, -47.0f } } },
+            // east_south_2: 227 sq yd, 148 yd from the spawn, opening onto the hallway
+            { "east_south_2", -34.86f, { 118.0f, -63.8f }, { 109.0f, -61.0f }, 148.0f,
+                { { 103.0f, -64.0f }, { 113.5f, -67.5f }, { 114.0f, -67.0f }, { 115.5f, -62.5f },
+                  { 116.5f, -58.0f }, { 115.0f, -57.5f }, { 103.5f, -55.0f }, { 102.5f, -59.5f } } },
+            // east_north_2: 304 sq yd, 149 yd from the spawn, opening onto the hallway
+            { "east_north_2", -34.86f, { 129.1f, -67.0f }, { 138.5f, -70.0f }, 149.0f,
+                { { 131.0f, -74.0f }, { 143.0f, -78.5f }, { 143.5f, -78.0f }, { 145.0f, -72.0f },
+                  { 146.5f, -64.5f }, { 135.0f, -62.0f }, { 133.5f, -62.0f }, { 130.5f, -72.0f } } },
+            // west_south_2: 300 sq yd, 151 yd from the spawn, opening onto the hallway
+            { "west_south_2", -34.86f, { 128.9f, 68.8f }, { 119.5f, 71.5f }, 151.0f,
+                { { 112.0f, 66.5f }, { 112.5f, 66.0f }, { 123.0f, 63.5f }, { 125.0f, 64.0f },
+                  { 128.0f, 75.0f }, { 116.5f, 79.5f }, { 114.0f, 79.0f }, { 112.5f, 73.5f } } },
+            // west_north_2: 234 sq yd, 151 yd from the spawn, opening onto the hallway
+            { "west_north_2", -34.86f, { 140.2f, 65.2f }, { 149.0f, 62.5f }, 151.0f,
+                { { 141.5f, 59.5f }, { 154.0f, 56.5f }, { 155.5f, 57.0f }, { 155.5f, 65.0f },
+                  { 155.0f, 65.5f }, { 145.0f, 69.0f }, { 144.0f, 68.5f }, { 141.5f, 60.5f } } },
+            // east_south_2_back: 93 sq yd, 163 yd from the spawn, opening onto east_south_2
+            { "east_south_2_back", -34.86f, { 99.8f, -58.4f }, { 95.0f, -57.0f }, 163.0f,
+                { { 92.5f, -60.0f }, { 96.0f, -61.0f }, { 97.5f, -57.5f }, { 98.0f, -54.0f },
+                  { 97.5f, -53.5f }, { 94.5f, -53.0f }, { 93.5f, -55.0f }, { 92.5f, -59.0f } } },
+            // east_north_2_back: 154 sq yd, 164 yd from the spawn, opening onto east_north_2
+            { "east_north_2_back", -34.86f, { 147.5f, -72.6f }, { 152.0f, -73.5f }, 164.0f,
+                { { 147.5f, -80.0f }, { 150.5f, -81.0f }, { 151.5f, -81.0f }, { 153.0f, -77.0f },
+                  { 156.0f, -67.0f }, { 155.0f, -66.5f }, { 151.5f, -66.0f }, { 147.5f, -79.5f } } },
+            // west_south_2_back: 154 sq yd, 165 yd from the spawn, opening onto west_south_2
+            { "west_south_2_back", -34.86f, { 110.4f, 72.2f }, { 106.5f, 75.0f }, 165.0f,
+                { { 103.5f, 68.0f }, { 107.0f, 67.5f }, { 109.0f, 74.5f }, { 110.5f, 81.5f },
+                  { 108.0f, 82.5f }, { 106.5f, 82.5f }, { 106.0f, 81.0f }, { 102.5f, 69.0f } } },
+            // west_north_2_back: 92 sq yd, 167 yd from the spawn, opening onto west_north_2
+            { "west_north_2_back", -34.86f, { 158.8f, 59.5f }, { 163.0f, 58.5f }, 167.0f,
+                { { 160.0f, 55.5f }, { 161.0f, 55.0f }, { 164.0f, 54.5f }, { 165.5f, 59.5f },
+                  { 165.5f, 61.5f }, { 162.5f, 62.5f }, { 162.0f, 62.5f }, { 160.5f, 58.5f } } },
+            // east_hub: 772 sq yd, 184 yd from the spawn, opening onto the hallway
+            { "east_hub", -35.19f, { 113.0f, -91.5f }, { 105.0f, -106.0f }, 184.0f,
+                { { 95.5f, -116.5f }, { 101.5f, -119.5f }, { 110.0f, -118.5f }, { 117.5f, -112.5f },
+                  { 117.5f, -101.0f }, { 109.0f, -93.0f }, { 99.5f, -93.0f }, { 92.0f, -102.5f } } },
+            // west_hub: 763 sq yd, 187 yd from the spawn, opening onto the hallway
+            { "west_hub", -35.19f, { 145.2f, 92.8f }, { 153.0f, 107.5f }, 187.0f,
+                { { 140.5f, 104.0f }, { 143.5f, 97.0f }, { 153.0f, 94.5f }, { 164.0f, 98.5f },
+                  { 166.5f, 104.0f }, { 163.0f, 118.0f }, { 148.0f, 120.5f }, { 142.0f, 116.5f } } },
+            // east_end_1: 264 sq yd, 202 yd from the spawn, opening onto east_hub
+            { "east_end_1", -33.94f, { 120.2f, -114.2f }, { 128.5f, -118.5f }, 202.0f,
+                { { 120.5f, -120.5f }, { 132.0f, -126.5f }, { 132.5f, -126.5f }, { 135.0f, -122.0f },
+                  { 135.5f, -116.0f }, { 125.5f, -111.0f }, { 124.0f, -113.0f }, { 120.5f, -120.0f } } },
+            // east_end_2: 267 sq yd, 203 yd from the spawn, opening onto east_hub
+            { "east_end_2", -33.94f, { 89.8f, -98.2f }, { 81.5f, -93.5f }, 203.0f,
+                { { 74.0f, -96.0f }, { 85.0f, -101.5f }, { 89.5f, -93.0f }, { 90.0f, -92.0f },
+                  { 89.5f, -91.5f }, { 77.5f, -85.5f }, { 75.0f, -90.0f } } },
+            // west_end_1: 264 sq yd, 205 yd from the spawn, opening onto west_hub
+            { "west_end_1", -33.94f, { 138.0f, 115.5f }, { 129.5f, 120.5f }, 205.0f,
+                { { 122.0f, 118.0f }, { 127.5f, 115.0f }, { 132.5f, 112.5f }, { 133.0f, 112.5f },
+                  { 135.5f, 117.0f }, { 138.0f, 122.0f }, { 126.0f, 128.0f }, { 123.0f, 123.5f } } },
+            // west_end_3: 265 sq yd, 206 yd from the spawn, opening onto west_hub
+            { "west_end_3", -33.94f, { 168.5f, 99.5f }, { 177.0f, 95.0f }, 206.0f,
+                { { 169.0f, 93.0f }, { 180.5f, 87.0f }, { 183.5f, 91.5f }, { 184.0f, 97.5f },
+                  { 180.5f, 99.5f }, { 174.5f, 102.5f }, { 173.5f, 102.5f }, { 168.5f, 94.0f } } },
+            // east_end_3: 262 sq yd, 213 yd from the spawn, opening onto east_hub
+            { "east_end_3", -33.94f, { 97.0f, -121.5f }, { 92.5f, -129.5f }, 213.0f,
+                { { 85.0f, -133.5f }, { 89.0f, -136.5f }, { 95.0f, -137.0f }, { 100.0f, -127.0f },
+                  { 99.0f, -125.5f }, { 91.5f, -121.5f }, { 90.5f, -122.0f }, { 85.0f, -132.5f } } },
+            // west_end_2: 267 sq yd, 216 yd from the spawn, opening onto west_hub
+            { "west_end_2", -33.94f, { 161.2f, 122.8f }, { 166.0f, 131.0f }, 216.0f,
+                { { 158.5f, 127.5f }, { 162.5f, 125.0f }, { 167.5f, 123.0f }, { 173.5f, 134.0f },
+                  { 173.0f, 135.5f }, { 169.0f, 137.5f }, { 163.5f, 139.0f }, { 158.0f, 128.5f } } },
+            // east_end_1_back: 124 sq yd, 217 yd from the spawn, opening onto east_end_1
+            { "east_end_1_back", -33.94f, { 136.5f, -124.6f }, { 141.0f, -125.5f }, 217.0f,
+                { { 137.5f, -129.5f }, { 140.0f, -131.0f }, { 140.5f, -131.0f }, { 145.5f, -121.5f },
+                  { 142.5f, -120.0f }, { 141.5f, -120.0f }, { 138.5f, -124.5f }, { 137.5f, -128.0f } } },
+            // east_end_2_back: 121 sq yd, 218 yd from the spawn, opening onto east_end_2
+            { "east_end_2_back", -33.94f, { 73.1f, -88.9f }, { 69.0f, -87.0f }, 218.0f,
+                { { 65.0f, -91.0f }, { 68.0f, -92.5f }, { 68.5f, -92.5f }, { 70.0f, -90.5f },
+                  { 71.5f, -88.0f }, { 73.0f, -83.0f }, { 70.5f, -81.5f }, { 69.5f, -82.0f } } },
+            // west_end_1_back: 121 sq yd, 221 yd from the spawn, opening onto west_end_1
+            { "west_end_1_back", -33.94f, { 121.1f, 124.6f }, { 117.0f, 127.0f }, 221.0f,
+                { { 113.0f, 123.0f }, { 115.5f, 121.5f }, { 116.5f, 121.5f }, { 119.5f, 125.5f },
+                  { 121.0f, 130.5f }, { 121.0f, 131.0f }, { 118.0f, 132.5f }, { 114.0f, 125.0f } } },
+            // west_end_3_back: 122 sq yd, 221 yd from the spawn, opening onto west_end_3
+            { "west_end_3_back", -33.94f, { 185.4f, 90.4f }, { 189.0f, 88.5f }, 221.0f,
+                { { 185.5f, 84.0f }, { 187.5f, 83.0f }, { 188.5f, 83.5f }, { 193.0f, 91.5f },
+                  { 193.0f, 92.5f }, { 190.5f, 94.0f }, { 189.5f, 94.0f }, { 186.5f, 89.5f } } },
+            // east_end_3_back: 124 sq yd, 229 yd from the spawn, opening onto east_end_3
+            { "east_end_3_back", -33.94f, { 90.5f, -139.2f }, { 86.0f, -142.5f }, 229.0f,
+                { { 80.5f, -141.5f }, { 88.0f, -145.5f }, { 90.0f, -146.0f }, { 90.5f, -145.5f },
+                  { 92.0f, -142.5f }, { 87.0f, -140.0f }, { 82.5f, -138.5f }, { 81.5f, -139.0f } } },
+            // west_end_2_back: 123 sq yd, 231 yd from the spawn, opening onto west_end_2
+            { "west_end_2_back", -33.94f, { 168.6f, 140.5f }, { 172.5f, 143.5f }, 231.0f,
+                { { 166.5f, 144.5f }, { 171.0f, 141.5f }, { 176.0f, 140.0f }, { 176.5f, 140.0f },
+                  { 177.5f, 142.0f }, { 177.0f, 143.5f }, { 169.0f, 147.5f }, { 168.0f, 147.0f } } }
+        };
+    }
+
+    /// **The seek stage's objects**: real gameobject_template entries whose displays have collision models in the
+    /// vmaps' GameObjectModels.dtree (so the camera's rays and the player controller meet them), each a thing a player
+    /// would look for in a cell, and none of them part of the Stockades' own spawns. Type 5 (generic) where the world
+    /// has one, so nothing about them can be used, looted or opened; the strongbox is a type 3 chest with no quest and
+    /// no flags. Height is the model's bounding box height (dtree) times the template's size (all 1): the objective
+    /// point is the object's centre, so the flag's yard-wide halo sits on it. Looked up in acore_world on 2026-10-06
+    /// (MySQL is sealed after startup, so nothing is queried at runtime).
+    std::vector<SeekObject> SeekObjects()
+    {
+        return {
+            { 144111, "chest", 1.32f },     // Smite's Chest, display 259 Treasurechest01.m2, 1.2 x 1.5 yd
+            { 179972, "crate", 1.24f },     // Stormwind Crate 01, display 31 Stormwindcrate01.m2, 1.2 x 1.3 yd
+            { 179967, "barrel", 0.99f },    // Barrel 01, display 32 Barrel01.m2, 0.9 x 1.0 yd
+            { 180660, "sack", 0.94f },      // Sack of Gold, display 6484 Sack01_01.m2, 1.1 x 1.1 yd
+            { 2039, "strongbox", 0.61f },   // Hidden Strongbox (type 3), display 10 Chest01.m2, 0.8 x 1.2 yd
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -91,8 +287,9 @@ namespace
         //
         // Core and the goal block stay as the layout's frame (the character and its kit, the goal head the learner
         // sizes from the goal block); Move is the whole lesson, and the compass (perception-goals P1: the objective's
-        // bearing and distance, split from the move block) says where the mark is. Nothing to fight, so no duel block. One place and one
-        // objective: there is no held-out ground, and the evaluation is the training task itself.
+        // bearing and distance, split from the move block) says where the mark is. Nothing to fight, so no duel
+        // block. One place and one objective: there is no held-out ground, and the evaluation is the training task
+        // itself.
         stages.push_back({
             .Name = "move1_controls",
             .Suffix = "_controls",
@@ -104,6 +301,38 @@ namespace
                 { .Name = "hallway", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 60,
                     .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
                     .Objective = StockadeHallwayEnd(), .ObjectiveRadius = 1.0f },
+            },
+            .MapId = MAP_STORMWIND_STOCKADE,
+            .SpawnPoints = { StockadeEntrance() },
+            .Level = 1,
+        });
+
+        // M2 -- seek (the user, 2026-10-06: "M2 seek also happens inside the same Stockades instance. It has to find
+        // an object in a room, and that object and room is randomized."; perception-goals plan §4). The same empty
+        // Stockades and the same entrance spawn; each episode one real object -- a chest, crate, barrel, sack or
+        // strongbox -- at a random spot of one of the 39 rooms, with a random orientation. No compass: the camera's
+        // objective flag shows it only in line of sight, standing in for a quest object's glow. Found is stopping
+        // within three yards of it (interaction range). Its memory is the GRU's (P1; the mental map is P1b).
+        //
+        // The room ladder is the shaping fade's: the draw moves from the rooms seen from the hallway to the deepest as
+        // the fade steps (SeekDraw::Weights), every room always possible. Evaluations take every room in turn.
+        //
+        // **The clock, 300 s**: a greedy sweep from the spawn through every room's centre walks 1,595 yd, 228 s at run
+        // speed (the scan's Dijkstra distances, nearest unvisited room next); a seat that sees into a room from its
+        // door needs less, one that backtracks more. 300 s is 1.3 times the sweep, and is the episode clock's own scale
+        // (EPISODE_TIME_SCALE_MS), so the clock feature never saturates. The deepest room is 231 yd from the spawn,
+        // 33 s straight there.
+        stages.push_back({
+            .Name = "move2_seek",
+            .Suffix = "_seek",
+            .Extends = "move1_controls",
+            .Summary = "the same empty Stockades: one object hidden in one of its 39 rooms, found by sight with no "
+                "compass, and stopped beside",
+            .Blocks = { Core, Move, Vision, Goal },
+            .Arenas = {
+                { .Name = "rooms", .Weight = 1, .Against = Opposition::Seek, .EpisodeSeconds = 300,
+                    .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
+                    .Rooms = StockadeRooms(), .Objects = SeekObjects(), .SeekRadius = 3.0f },
             },
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { StockadeEntrance() },
@@ -319,6 +548,25 @@ namespace
         if (follow && !stage.Has(BlockId::Move))
             return "a leader is followed with the move block";
 
+        // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
+        // the object by sight, so it carries the camera and not the compass.
+        bool const seek = arena.Against == Opposition::Seek;
+        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
+            || arena.Underwater || arena.Checkpoints || arena.Objective))
+            return "a seek arena is one seat on its own, on foot and dry, with no marker of its own";
+        if (seek && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)))
+            return "a seek arena is walked with the move block and searched with the camera (the vision block)";
+        if (seek && stage.Has(BlockId::Compass))
+            return "a seek arena's object is found by sight: the compass would point at it";
+        if (seek && (arena.Rooms.empty() || arena.Objects.empty() || arena.SeekRadius <= 0.0f))
+            return "a seek arena needs rooms to hide its object in, objects to hide and a radius to find one within";
+        if (!seek && (!arena.Rooms.empty() || !arena.Objects.empty()))
+            return "only a seek arena has rooms and objects";
+        for (SeekRoom const& room : arena.Rooms)
+            if (room.Floor.size() < 3 || room.Name.empty())
+                return "a seek room is named and its floor is a polygon";
+
         bool const dummy = arena.Against == Opposition::Dummy;
         if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
             || arena.Schedule != PullSchedule::None))
@@ -374,7 +622,8 @@ namespace
         // A stage with nothing to fight carries no duel block (the movement stages); one that fights needs it.
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
-            return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow;
+            return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow
+                && arena.Against != Opposition::Seek;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";
