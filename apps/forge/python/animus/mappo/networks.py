@@ -980,21 +980,28 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
 
 
 class VisionEncoder(nn.Module):
-    """**The camera** (camera-vision, naive slice): a seat's H x W image of what its camera's rays hit, encoded by one
-    small convolutional network shared by every layout, as EntitySets shares its encoders.
+    """**The camera** (camera-vision): a seat's H x W image of what its camera's rays hit, encoded by one small
+    network shared by every layout, as EntitySets shares its encoders.
 
     The image is gathered raw from each row's own layout's columns (a table by layout id: the vision block starts at
-    a different column in every class) -- [row][col][channel] floats -- and laid out [N, C, H, W]; the kind channel
-    becomes a one-hot over the kinds, so C - 1 + kinds input planes (12). Three 3 x 3 convolutions with SiLU (stride
-    2, 2, 1; padding 1: 32 x 64 -> 16 x 32 -> 8 x 16 -> 8 x 16), a spatial softmax per channel to its expected (x, y)
-    in [-1, 1] (128 keypoints), the block's scalars after them, Linear -> 256 with SiLU, and `join`, a Linear onto the
-    adapters' output width, initialised as the adapters are: a network trained from scratch sees with the camera from
-    its first update (M1, the user, 2026-10-06). Seeding from a checkpoint without the camera zeroes the join instead
-    (bootstrap._seed_vision), so the seeded policy starts as it was. A layout without the camera adds zero. No
-    normalisation: the channels are 0-1 or -1-1 already.
-    Every shape is fixed and nothing is read back, so a rollout graph captures it."""
+    a different column in every class) -- [row][col][channel] floats, kept in that order, channels last -- and the
+    kind channel becomes a one-hot over the kinds, so C - 1 + kinds planes a pixel (12). **Patches**, not
+    convolutions: the image is cut into PATCH x PATCH squares (32 x 64 -> an 8 x 16 grid), each square's pixels and
+    planes (16 x 12 = 192 features, ordered row in the patch, column in the patch, plane) go through one shared
+    Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, a spatial softmax per channel over the patch grid gives its
+    expected (x, y) in [-1, 1] (128 keypoints), the block's scalars join them, Linear -> 256 with SiLU, and `join`, a
+    Linear onto the adapters' output width. MIOpen computed the 3 x 3 convolutions' weight gradients one image at a
+    time (89.7% of an update in ConvolutionBackward, M1 2026-10-06); the patches are three batched matrix products,
+    about ten times faster at a minibatch.
 
-    CONVS = ((32, 2), (64, 2), (64, 1))
+    The join is initialised as the adapters are: a network trained from scratch sees with the camera from its first
+    update (M1, the user, 2026-10-06). Seeding from a checkpoint without the camera zeroes the join instead
+    (bootstrap._seed_vision), so the seeded policy starts as it was. A layout without the camera adds zero. No
+    normalisation: the channels are 0-1 or -1-1 already. Every shape is fixed and nothing is read back, so a rollout
+    graph captures it."""
+
+    PATCH = 4
+    WIDTHS = (64, 64)
     EMBED = 256
 
     def __init__(self, descriptors: Sequence[dict | None], width: int):
@@ -1003,28 +1010,28 @@ class VisionEncoder(nn.Module):
         self.height, self.width = image["height"], image["width"]
         self.channels, self.kinds = image["channels"], image["kinds"]
         self.kind_channel, self.scalars = image["kind_channel"], image["scalars"]
+        if self.height % self.PATCH or self.width % self.PATCH:
+            raise ValueError(f"the camera's image is {self.width} x {self.height}; the vision encoder cuts it into "
+                             f"{self.PATCH} x {self.PATCH} patches, so both must be multiples of {self.PATCH} "
+                             f"(AnimusForge.Vision.Width, Height)")
         self.pixels = self.height * self.width * self.channels
         self.span = self.pixels + self.scalars
-        layers: list[nn.Module] = []
-        planes = self.channels - 1 + self.kinds
-        for out, stride in self.CONVS:
-            layers += [nn.Conv2d(planes, out, 3, stride=stride, padding=1), nn.SiLU()]
-            planes = out
-        self.convs = nn.Sequential(*layers)
-        self.embed = nn.Linear(2 * planes + self.scalars, self.EMBED)
+        self.planes_per_pixel = self.channels - 1 + self.kinds
+        self.grid = (self.height // self.PATCH, self.width // self.PATCH)
+        features = self.PATCH * self.PATCH * self.planes_per_pixel
+        self.patch = nn.Linear(features, self.WIDTHS[0])
+        self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
+        self.embed = nn.Linear(2 * self.WIDTHS[1] + self.scalars, self.EMBED)
         self.join = _linear(self.EMBED, width, math.sqrt(2))
+        self.feature_shape = (self.WIDTHS[1], *self.grid)
         # Derived from stage.json, not learned: kept out of the state dict.
         self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
                                                     for entry in descriptors], dtype=torch.long), persistent=False)
         self.register_buffer("has_vision", self.start >= 0, persistent=False)
         self.register_buffer("offsets", torch.arange(self.span, dtype=torch.long), persistent=False)
-        self.register_buffer("kind_values", torch.arange(self.kinds, dtype=torch.float32).view(1, -1, 1, 1),
-                             persistent=False)
-        with torch.no_grad():
-            rows, cols = self.convs(torch.zeros(1, self.channels - 1 + self.kinds, self.height, self.width)).shape[2:]
-        self.feature_shape = (planes, rows, cols)
-        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, rows), torch.linspace(-1.0, 1.0, cols),
-                                        indexing="ij")
+        self.register_buffer("kind_values", torch.arange(self.kinds, dtype=torch.float32), persistent=False)
+        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, self.grid[0]),
+                                        torch.linspace(-1.0, 1.0, self.grid[1]), indexing="ij")
         self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
         self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
         #: Per layout with the camera, the columns its adapter and normaliser do not read: the image and the scalars.
@@ -1032,25 +1039,38 @@ class VisionEncoder(nn.Module):
                       for index, entry in enumerate(descriptors) if entry is not None}
 
     def gather(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Each row's own camera columns: (image [N, C, H, W], scalars [N, S]), raw. Rows of a layout without the
+        """Each row's own camera columns: (image [N, H, W, C], scalars [N, S]), raw. Rows of a layout without the
         camera read whatever is at column 0 on (their output is zeroed after)."""
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
         raw = obs.gather(1, columns).to(self.embed.weight.dtype)
-        image = raw[:, : self.pixels].reshape(-1, self.height, self.width, self.channels).permute(0, 3, 1, 2)
+        image = raw[:, : self.pixels].reshape(-1, self.height, self.width, self.channels)
         return image, raw[:, self.pixels:]
 
     def planes(self, image: torch.Tensor) -> torch.Tensor:
-        """[N, C, H, W] -> the convolutions' input [N, C - 1 + kinds, H, W]: every channel but the kind as it is,
-        then the kind (rounded, clamped to the kinds) one-hot."""
-        kind = image[:, self.kind_channel : self.kind_channel + 1].round().clamp(0, self.kinds - 1)
+        """[N, H, W, C] -> [N, H, W, C - 1 + kinds]: every channel but the kind as it is, then the kind (rounded,
+        clamped to the kinds) one-hot."""
+        kind = image[..., self.kind_channel : self.kind_channel + 1].round().clamp(0, self.kinds - 1)
         one_hot = (kind == self.kind_values.to(kind.dtype)).to(image.dtype)
-        rest = torch.cat([image[:, : self.kind_channel], image[:, self.kind_channel + 1 :]], dim=1)
-        return torch.cat([rest, one_hot], dim=1)
+        rest = torch.cat([image[..., : self.kind_channel], image[..., self.kind_channel + 1 :]], dim=-1)
+        return torch.cat([rest, one_hot], dim=-1)
+
+    def patches(self, planes: torch.Tensor) -> torch.Tensor:
+        """[N, H, W, P] -> [N, patches, PATCH x PATCH x P]: the grid's patches row by row, each its pixels row by
+        row and every pixel's planes."""
+        rows, cols = self.grid
+        n = planes.shape[0]
+        cut = planes.reshape(n, rows, self.PATCH, cols, self.PATCH, self.planes_per_pixel).permute(0, 1, 3, 2, 4, 5)
+        return cut.reshape(n, rows * cols, -1)
+
+    def features(self, patches: torch.Tensor) -> torch.Tensor:
+        """Each patch's features, [N, patches, 64]."""
+        silu = nn.functional.silu
+        return silu(self.mix(silu(self.patch(patches))))
 
     def keypoints(self, features: torch.Tensor) -> torch.Tensor:
-        """Spatial softmax: per channel the expected (x, y) of its softmax over the positions, [N, 2 x channels]."""
-        weights = torch.softmax(features.flatten(2), dim=-1)
+        """Spatial softmax: per channel the expected (x, y) of its softmax over the patch grid, [N, 2 x channels]."""
+        weights = torch.softmax(features.transpose(1, 2), dim=-1)
         x = (weights * self.grid_x.to(weights.dtype)).sum(-1)
         y = (weights * self.grid_y.to(weights.dtype)).sum(-1)
         return torch.cat([x, y], dim=-1)
@@ -1058,7 +1078,7 @@ class VisionEncoder(nn.Module):
     def encode(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
         """The camera's embedding before the join, [N, 256]."""
         image, scalars = self.gather(obs, layout)
-        points = self.keypoints(self.convs(self.planes(image)))
+        points = self.keypoints(self.features(self.patches(self.planes(image))))
         return nn.functional.silu(self.embed(torch.cat([points, scalars], dim=-1)))
 
     def forward(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:

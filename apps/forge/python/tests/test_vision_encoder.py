@@ -17,7 +17,7 @@ from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, upd
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
 
-H, W, C, KINDS, KIND_CHANNEL, SCALARS = 6, 8, 5, 8, 3, 7
+H, W, C, KINDS, KIND_CHANNEL, SCALARS = 8, 12, 5, 8, 3, 7
 SPAN = H * W * C + SCALARS
 IMAGE = {"height": H, "width": W, "channels": C, "kinds": KINDS, "kind_channel": KIND_CHANNEL, "scalars": SCALARS}
 # Two layouts with a camera at different columns (their core blocks differ in width, as the classes' do) and one
@@ -145,36 +145,53 @@ def test_the_image_is_read_row_col_channel_from_each_layouts_own_columns():
     encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
     obs = torch.zeros(2, 12 + SPAN + 2)
     layout = torch.tensor([0, 1])
-    row, col, channel = 4, 6, 2
+    row, col, channel = 5, 6, 2
     for index, name in enumerate(("warrior", "priest")):
         first = FIRST[name]
         obs[index, first + (row * W + col) * C + channel] = 0.25 + index
         obs[index, first + H * W * C + 5] = 0.5 + index         # the sixth scalar (underwater)
     image, scalars = encoder.gather(obs, layout)
-    assert image.shape == (2, C, H, W) and scalars.shape == (2, SCALARS)
+    assert image.shape == (2, H, W, C) and scalars.shape == (2, SCALARS)
     for index in range(2):
-        assert float(image[index, channel, row, col]) == 0.25 + index
+        assert float(image[index, row, col, channel]) == 0.25 + index
         assert float(image[index].abs().sum()) == 0.25 + index      # nothing else: the layout's own offset
         assert float(scalars[index, 5]) == 0.5 + index
 
 
 def test_the_kind_channel_becomes_a_one_hot_of_the_kinds():
     encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
-    image = torch.zeros(1, C, H, W)
-    image[0, 0] = 0.7                                   # distance
-    image[0, 4] = 1.0                                   # objective
+    image = torch.zeros(1, H, W, C)
+    image[0, ..., 0] = 0.7                              # distance
+    image[0, ..., 4] = 1.0                              # objective
     kinds = torch.tensor([0.0, 1.0, 2.6, 3.4, -1.0, 9.0, 6.0, 7.0])   # rounded, clamped to 0..7
-    image[0, KIND_CHANNEL, 0, :] = kinds
+    image[0, 0, : len(kinds), KIND_CHANNEL] = kinds
     planes = encoder.planes(image)
-    assert planes.shape == (1, C - 1 + KINDS, H, W) == (1, 12, H, W)
+    assert planes.shape == (1, H, W, C - 1 + KINDS) == (1, H, W, 12)
     # The other channels in order (distance, height, normal, objective), then the one-hot.
-    torch.testing.assert_close(planes[0, 0], image[0, 0])
-    torch.testing.assert_close(planes[0, 3], image[0, 4])
+    torch.testing.assert_close(planes[0, ..., 0], image[0, ..., 0])
+    torch.testing.assert_close(planes[0, ..., 3], image[0, ..., 4])
     expected = [0, 1, 3, 3, 0, 7, 6, 7]
     for col, kind in enumerate(expected):
-        hot = planes[0, 4:, 0, col]
+        hot = planes[0, 0, col, 4:]
         assert float(hot.sum()) == 1.0 and int(hot.argmax()) == kind
-    assert bool((planes[0, 4, 1:] == 1.0).all())        # the rest of the image is kind 0 (sky)
+    assert bool((planes[0, 1:, :, 4] == 1.0).all())     # the rest of the image is kind 0 (sky)
+
+
+def test_a_patch_is_its_square_of_pixels_row_by_row():
+    encoder = VisionEncoder(vision_of(stage(), NAMES), 16)
+    planes = torch.zeros(1, H, W, 12)
+    # Pixel (row 5, col 6) is in patch (1, 1) of the 2 x 3 grid -- the fifth patch -- at (1, 2) inside it.
+    planes[0, 5, 6, 9] = 3.0
+    patches = encoder.patches(planes)
+    assert patches.shape == (1, (H // 4) * (W // 4), 4 * 4 * 12) == (1, 6, 192)
+    assert float(patches[0, 1 * 3 + 1, (1 * 4 + 2) * 12 + 9]) == 3.0
+    assert float(patches.abs().sum()) == 3.0
+
+
+def test_an_image_the_patches_do_not_tile_is_refused():
+    image = {**IMAGE, "height": 30}
+    with pytest.raises(ValueError, match="multiples of 4"):
+        VisionEncoder([{"first": 0, **image}], 16)
 
 
 def test_shapes_at_the_default_camera():
@@ -183,15 +200,10 @@ def test_shapes_at_the_default_camera():
     assert span == 10_247
     descriptors = [{"first": 3, **image}, None]
     encoder = VisionEncoder(descriptors, 24)
-    # Padding 1: 32 x 64 -> 16 x 32 -> 8 x 16 -> 8 x 16, 64 channels.
+    # 4 x 4 patches: 32 x 64 -> an 8 x 16 grid of 192 features each, 64 channels after the two layers.
     assert encoder.feature_shape == (64, 8, 16)
-    sizes = []
-    x = torch.zeros(1, 12, 32, 64)
-    for layer in encoder.convs:
-        x = layer(x)
-        if isinstance(layer, torch.nn.Conv2d):
-            sizes.append(tuple(x.shape[1:]))
-    assert sizes == [(32, 16, 32), (64, 8, 16), (64, 8, 16)]
+    assert (encoder.patch.in_features, encoder.patch.out_features) == (192, 64)
+    assert (encoder.mix.in_features, encoder.mix.out_features) == (64, 64)
     assert encoder.embed.in_features == 128 + 7 and encoder.embed.out_features == 256
     assert encoder.join.in_features == 256 and encoder.join.out_features == 24
     obs = torch.rand(5, 3 + span)
@@ -199,12 +211,14 @@ def test_shapes_at_the_default_camera():
     with torch.no_grad():
         encoder.join.weight.normal_()
         encoder.join.bias.normal_()
-    out = encoder(obs, layout)
+        out = encoder(obs, layout)
+        image = encoder.gather(obs, layout)[0]
+        features = encoder.features(encoder.patches(encoder.planes(image)))
+        points = encoder.keypoints(features)
     assert out.shape == (5, 24)
     assert bool((out[1] == 0).all()) and bool((out[3] == 0).all())     # no camera, nothing added
     assert bool((out[0] != 0).any())
-    with torch.no_grad():
-        points = encoder.keypoints(encoder.convs(encoder.planes(encoder.gather(obs, layout)[0])))
+    assert features.shape == (5, 128, 64)
     assert points.shape == (5, 128) and float(points.abs().max()) <= 1.0
 
 
@@ -230,7 +244,7 @@ def test_the_camera_columns_are_blind_to_the_adapters():
         others = torch.ones(weight.shape[1], dtype=torch.bool)
         others[columns] = False
         assert bool((weight.grad[:, others] != 0).any())
-    assert net.vision.convs[0].weight.grad is not None and bool((net.vision.convs[0].weight.grad != 0).any())
+    assert net.vision.patch.weight.grad is not None and bool((net.vision.patch.weight.grad != 0).any())
 
 
 def test_the_camera_columns_keep_an_identity_normaliser():
@@ -264,7 +278,7 @@ def test_a_fresh_camera_takes_part_from_the_first_update():
     assert not torch.allclose(dark, lit)
     net(with_image(obs, layout, 0.5), layout, mask).logits.sum().backward()
     assert bool((net.vision.join.weight.grad != 0).any())
-    assert bool((net.vision.convs[0].weight.grad != 0).any())
+    assert bool((net.vision.patch.weight.grad != 0).any())
     assert bool((net.vision.embed.weight.grad != 0).any())
 
 
@@ -295,7 +309,7 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
 def test_the_critic_has_its_own_camera():
     trainer = MappoTrainer(shapes(stage()), 4, MappoConfig(hidden=(16, 16)), vision=vision_of(stage(), NAMES))
     assert trainer.actor.vision is not None and trainer.critic.vision is not None
-    assert trainer.actor.vision.convs[0].weight is not trainer.critic.vision.convs[0].weight
+    assert trainer.actor.vision.patch.weight is not trainer.critic.vision.patch.weight
     obs, layout = observations(6)
     state = torch.randn(6, 4)
     with torch.no_grad():
