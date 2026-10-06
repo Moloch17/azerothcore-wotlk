@@ -1012,7 +1012,7 @@ class VisionEncoder(nn.Module):
             planes = out
         self.convs = nn.Sequential(*layers)
         self.embed = nn.Linear(2 * planes + self.scalars, self.EMBED)
-        self.join = nn.Linear(self.EMBED, width)
+        self.join = _linear(self.EMBED, width, math.sqrt(2))
         # Derived from stage.json, not learned: kept out of the state dict.
         self.register_buffer("start", torch.tensor([entry["first"] if entry is not None else -1
                                                     for entry in descriptors], dtype=torch.long), persistent=False)
