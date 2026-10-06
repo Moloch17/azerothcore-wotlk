@@ -956,7 +956,7 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
     The image itself travels as bytes beside the observation (protocol 21, Spec.image_bytes): the block's columns are
     its scalars alone. Revision 4 (camera-vision.FREELOOK.md) adds the encoder's "patch" (4 when absent), the
     "render_sizes" the sim draws from (scaled up to the canonical height x width it sends) and the free look's heads,
-    `"look": {"heads": [7, 5, 4], "names": [...]}` (() when absent: no look head). Refused: a vision block without
+    `"look": {"heads": [7, 5, 5], "names": [...]}` (() when absent: no look head). Refused: a vision block without
     its image, or from before the bytes (revision 2's floats), layouts whose images differ (one encoder reads them
     all), and a block whose width is not its scalars."""
     if stage is None:
@@ -1025,7 +1025,7 @@ def vision_image_bytes(vision: list[dict | None] | None) -> int:
 
 
 def vision_look_heads(vision: list[dict | None] | None) -> tuple[int, ...]:
-    """The free look's heads stage.json's camera has (revision 4: (7, 5, 4)), () without a camera or a look."""
+    """The free look's heads stage.json's camera has (revision 4: (7, 5, 5)), () without a camera or a look."""
     return next((tuple(entry.get("look", ())) for entry in vision or () if entry is not None), ())
 
 
@@ -1207,9 +1207,11 @@ LOOK_HOLD_BIAS = 2.0
 
 
 def look_hold_indices(heads: Sequence[int]) -> tuple[int, ...]:
-    """Per look head, its choice that changes nothing: the middle of an odd rate head (rate 0), 0 for the zoom head
-    ("hold"). Revision 4's (7, 5, 4) gives (3, 2, 0), protocol.LOOK_HOLD."""
-    return tuple(head // 2 if head % 2 else 0 for head in heads)
+    """Per look head, its choice that changes nothing, by position: every head but the last is a rate, whose middle
+    choice is rate 0; the last is the camera's command head (zoom, recentre, face), whose choice 0 is "hold". Not by
+    size: the command head's 5 choices (with "face") are odd too. Revision 4's (7, 5, 5) gives (3, 2, 0),
+    protocol.LOOK_HOLD."""
+    return tuple(head // 2 for head in heads[:-1]) + ((0,) if heads else ())
 
 
 class LookHead(nn.Module):
