@@ -556,7 +556,11 @@ namespace
     void SubStep(Mv::BodyState& body, Mv::ControlState& control, Mv::Speeds const& speeds, Mv::Body const& shape,
         Mv::WorldQuery const& world, float dt)
     {
-        Turn(body, control, dt);
+        // Half the turn, the move, the other half: the body moves along the sub-step's middle heading, the chord of
+        // the arc a steady turn walks. Turned whole before the move it ran on the sub-step's end heading, a sub-step's
+        // turn ahead of the arc (18 degrees at 360 deg/s in 50 ms), so where a turning body went depended on the tick
+        // (ClientTest.TheCadenceAndTheBodyDoNotDependOnTheTick; the realm's tick is variable).
+        Turn(body, control, 0.5f * dt);
         switch (body.Kind)
         {
             case Mv::Mode::Ground:
@@ -572,6 +576,7 @@ namespace
                 FlyStep(body, control, speeds, shape, world, dt);
                 break;
         }
+        Turn(body, control, 0.5f * dt);
     }
 }
 

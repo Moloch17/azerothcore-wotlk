@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <thread>
 
 namespace Mv = Animus::Movement;
@@ -217,6 +218,63 @@ TEST(ClientTest, ASpawnBuriedInTheGroundStandsOnTheTerrain)
     rig.Run(15000);
     EXPECT_FLOAT_EQ(rig.Client.Body.Z, 0.0f);
     EXPECT_EQ(rig.Link.Count(Cd::Op::FALL_LAND), 0u);
+}
+
+// The stock realm's world tick is variable (a continent updates every ~10 ms to a few tens, longer under load): the body
+// and the client's reports do not depend on the tick. The same 3 s -- running straight (a heartbeat every 500 ms) and
+// running with the mouse turning (a SET_FACING every 0.1 rad) -- in ticks of 7, 33, 120 and 400 ms and a jittered 7-400
+// ms, against 50 ms ticks: the same reports at the same moments (within a ms of rounding) from the same places.
+TEST(ClientTest, TheCadenceAndTheBodyDoNotDependOnTheTick)
+{
+    struct Run
+    {
+        std::vector<Mv::Report> Reports;
+        Mv::BodyState Body;
+    };
+    auto drive = [](float turnRate, std::vector<uint32_t> const& ticks)
+    {
+        Rig rig;
+        rig.Start();
+        rig.Control.Forward = 1;
+        rig.Control.TurnRate = turnRate;
+        uint32_t done = 0;
+        for (std::size_t i = 0; done < 3000; ++i)
+        {
+            uint32_t const tick = std::min(ticks[i % ticks.size()], 3000u - done);
+            rig.Now += tick;
+            done += tick;
+            rig.Client.Tick(rig.Control, rig.Speeds, rig.Shape, rig.World, tick, rig.Now, rig.Link);
+        }
+        return Run{ rig.Link.Reports, rig.Client.Body };
+    };
+    std::mt19937 rng(7);
+    std::vector<uint32_t> jittered;
+    for (int i = 0; i < 64; ++i)
+        jittered.push_back(std::uniform_int_distribution<uint32_t>(7, 400)(rng));
+    std::vector<std::vector<uint32_t>> const ticks = { { 7 }, { 33 }, { 120 }, { 400 }, jittered };
+
+    for (float turnRate : { 0.0f, 1.5f })
+    {
+        Run const reference = drive(turnRate, { 50 });
+        ASSERT_GE(reference.Reports.size(), turnRate ? 40u : 6u);
+        for (std::vector<uint32_t> const& each : ticks)
+        {
+            Run const run = drive(turnRate, each);
+            ASSERT_EQ(run.Reports.size(), reference.Reports.size()) << "tick " << each.front() << " turn " << turnRate;
+            for (std::size_t k = 0; k < run.Reports.size(); ++k)
+            {
+                Mv::Report const& a = run.Reports[k];
+                Mv::Report const& b = reference.Reports[k];
+                EXPECT_EQ(a.Opcode, b.Opcode) << k;
+                EXPECT_NEAR(double(a.TimeMs), double(b.TimeMs), 1.0) << "report " << k << " tick " << each.front();
+                EXPECT_NEAR(a.X, b.X, 0.02f) << k;
+                EXPECT_NEAR(a.Y, b.Y, 0.02f) << k;
+                EXPECT_NEAR(Turned(a.Yaw, b.Yaw), 0.0f, 0.002f) << k;
+            }
+            EXPECT_NEAR(run.Body.X, reference.Body.X, 0.02f);
+            EXPECT_NEAR(run.Body.Y, reference.Body.Y, 0.02f);
+        }
+    }
 }
 
 // A new episode stops the client: until it is started again it reports nothing and keeps no claim on the last
