@@ -35,6 +35,9 @@ namespace
     constexpr float SNAP = 0.1f;
     /// How far under a buried body a floor is looked for before it is taken to have none (a cave's floor is closer).
     constexpr float BURIED_SEARCH = 1000.0f;
+    /// A drop under the centre this deep in one move is an edge the footprint is read for (a gutter, a crack's lip):
+    /// shallower is a slope walked down, read from the centre alone (the footprint is eight height queries).
+    constexpr float FOOTPRINT_DROP = 0.5f;
 
     float WrapYaw(float yaw)
     {
@@ -245,6 +248,9 @@ namespace
                 outX = rx * std::max(0.0f, k);
                 outY = ry * std::max(0.0f, k);
                 outZ = dz * std::max(0.0f, f);
+                // The smallest turn free all the way goes furthest along the wanted way: no larger one is tried
+                // (six rays a turn; a corridor's walls are met every step).
+                break;
             }
         }
     }
@@ -311,11 +317,11 @@ namespace
         float const ny = body.Y + dy;
 
         // The floor under the new place, from a step above the feet down to a step below; where the centre has none,
-        // or only one below the feet (a step down), the footprint's edge on a floor at the feet holds the body there
-        // (FootprintFloor): it does not drop through, or into, a gap narrower than itself. Only a supporting floor (at
-        // or below the feet) is taken from the edge: stepping up stays the centre's, as the sweep's.
+        // or only one FOOTPRINT_DROP or more below the feet, the footprint's edge on a floor at the feet holds the body
+        // there (FootprintFloor): it does not drop through, or into, a gap narrower than itself. Only a supporting
+        // floor (at or below the feet) is taken from the edge: stepping up stays the centre's, as the sweep's.
         float floor = world.FloorBelow(nx, ny, body.Z + Mv::STEP_UP, 2.0f * Mv::STEP_UP);
-        if (!HasFloor(floor) || floor < body.Z - SNAP)
+        if (!HasFloor(floor) || floor < body.Z - FOOTPRINT_DROP)
             floor = std::max(floor, FootprintFloor(nx, ny, body.Z + SNAP, body.Z - Mv::STEP_UP, shape, world));
         Mv::Liquid const liquid = world.LiquidAt(nx, ny, body.Z);
         if (speeds.WaterWalk && liquid.Present && !liquid.Deadly && liquid.Level <= body.Z + Mv::STEP_UP
@@ -420,11 +426,27 @@ namespace
             body.Vx = body.Vy = 0.0f;
             body.AgainstWall = true;
         }
+        float const above = std::max(body.Z, nz) + Mv::STEP_UP;
+        if ((dx != 0.0f || dy != 0.0f) && OverVoid(body.X + dx, body.Y + dy, above, world)
+            && (!OverVoid(body.X, body.Y, above, world)
+                || HasFloor(FootprintFloor(body.X, body.Y, above, above - BURIED_SEARCH, shape, world))))
+        {
+            // Sideways over nothing at all in the air (a jump across a strip the world query has no floor in): an edge,
+            // as on the ground -- the run stops, the fall goes on down where there is a floor. Where the body was is
+            // over a floor if its footprint is (a body at the edge stands with its centre over the strip).
+            dx = dy = 0.0f;
+            body.Vx = body.Vy = 0.0f;
+            body.AgainstWall = true;
+            body.OverVoid = true;
+        }
         float const nx = body.X + dx;
         float const ny = body.Y + dy;
 
-        // Landing: a floor between where the feet were and where they are going.
-        float const top = std::max(body.Z, nz) + SNAP;
+        // Landing: a floor between where the feet were and where they are going -- or one risen above the feet where
+        // the body has moved to, within a step (running up a ramp in the air: the ramp comes up under the feet faster
+        // than they come down, and searched only between the two heights it was never crossed, so the body fell on
+        // through it -- the M1 Stockades entrance ramp, 2026-10-05).
+        float const top = std::max(body.Z, nz) + Mv::STEP_UP;
         float floor = world.FloorBelow(nx, ny, top, top - nz + SNAP);
         // The footprint's edge lands too, on a floor the feet go down past in this step (a jump onto a crack's lip) --
         // never on the one the body is leaving, which its trailing edge still overlaps as it steps off.
@@ -464,6 +486,12 @@ namespace
             body.FallHeight = std::max(0.0f, body.FallApexZ - liquid.Level);
             body.Kind = Mv::Mode::Swimming;
             body.Vx = body.Vy = body.Vz = 0.0f;
+            return;
+        }
+        if (HasFloor(floor) && floor > nz && body.Vz > 0.0f)
+        {
+            // Rising, a floor has come up under the feet: they are carried up onto it, still rising.
+            body.Z = floor;
             return;
         }
         if (HasFloor(floor) && nz <= floor && body.Vz <= 0.0f)

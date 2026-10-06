@@ -48,6 +48,8 @@ namespace
     {
     public:
         std::function<float(float, float)> Ground = [](float, float) { return 0.0f; };
+        /// A model's floor (a WMO's ramp: not terrain), or INVALID_FLOOR where there is none.
+        std::function<float(float, float)> Model = [](float, float) { return Mv::INVALID_FLOOR; };
         std::vector<Box> Boxes;
         std::vector<Water> Waters;
 
@@ -60,11 +62,22 @@ namespace
             for (Box const& b : Boxes)
                 if (x >= b.X0 && x <= b.X1 && y >= b.Y0 && y <= b.Y1 && b.Z1 <= z + 1e-4f && b.Z1 >= z - search)
                     best = std::max(best, b.Z1);
+            float const m = Model(x, y);
+            if (m > Mv::INVALID_FLOOR + 1.0f && m <= z + 1e-4f && m >= z - search)
+                best = std::max(best, m);
             return best;
         }
 
         float FloorNormalZ(float x, float y, float z) const override
         {
+            float const m = Model(x, y);
+            if (m > Mv::INVALID_FLOOR + 1.0f && std::fabs(m - z) < 0.05f)
+            {
+                float const e = 0.05f;
+                float const gx = (Model(x + e, y) - Model(x - e, y)) / (2.0f * e);
+                float const gy = (Model(x, y + e) - Model(x, y - e)) / (2.0f * e);
+                return 1.0f / std::sqrt(1.0f + gx * gx + gy * gy);
+            }
             for (Box const& b : Boxes)
                 if (x >= b.X0 && x <= b.X1 && y >= b.Y0 && y <= b.Y1 && std::fabs(b.Z1 - z) < 0.05f)
                     return 1.0f;
@@ -802,6 +815,74 @@ TEST(PlayerControllerTest, AHoleInTheWorldIsAnEdgeNotAFallIntoTheVoid)
     EXPECT_FALSE(refusedGutter);
     EXPECT_GT(crossed.X, 5.0f);
     EXPECT_FLOAT_EQ(crossed.Z, 0.0f);
+}
+
+// A model's ramp (the M1 Stockades entrance, a WMO floor: no terrain on the map), run up and down at speed pressing
+// jump twice a second, and jumped at its foot: in the air the body moves on while the ramp rises under it, and it must
+// land on the ramp rather than fall on through it (as it did, to the map's floor). Never a tick below the ramp.
+TEST(PlayerControllerTest, AJumpUpOrDownARampLandsOnIt)
+{
+    float const rise = std::tan(30.0f * PI / 180.0f);
+    FakeWorld world;
+    world.Ground = [](float, float) { return Mv::INVALID_FLOOR; };
+    world.Model = [rise](float x, float y)
+    {
+        if (y < -20.0f || y > 20.0f || x < -20.0f || x > 60.0f)
+            return Mv::INVALID_FLOOR;
+        return x < 10.0f ? 0.0f : x < 40.0f ? (x - 10.0f) * rise : 30.0f * rise;
+    };
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    auto run = [&](float x, float yaw, int jumpEvery)
+    {
+        Mv::BodyState body = At(x, 0.0f, world.Model(x, 0.0f), yaw);
+        Mv::ControlState control;
+        control.Forward = 1;
+        for (int tick = 0; tick < 120; ++tick)
+        {
+            control.Jump = tick % jumpEvery == 0;
+            Mv::Step(body, control, speeds, shape, world, 0.05f);
+            float const surface = world.Model(body.X, body.Y);
+            ASSERT_GT(surface, Mv::INVALID_FLOOR + 1.0f) << "off the world at x " << body.X;
+            ASSERT_GE(body.Z, surface - 0.05f) << "under the ramp at x " << body.X << " (tick " << tick << ")";
+        }
+        control.Forward = 0;
+        Drive(body, control, speeds, world, 2.0f);
+        EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+        EXPECT_NEAR(body.Z, world.Model(body.X, body.Y), 1e-3f);
+    };
+    run(0.0f, 0.0f, 10);            // up the ramp from its foot, jumping
+    run(5.0f, 0.0f, 7);
+    run(55.0f, PI, 10);             // down it from the top, jumping
+    run(12.0f, 0.0f, 3);            // jumping as often as the landings allow
+}
+
+// A jump towards a strip with nothing below it (the M1 corridor's side gutters, where the vmaps hold no floor): the
+// run stops at the edge in the air as on the ground, and the body comes down on the floor -- never into the void.
+TEST(PlayerControllerTest, AJumpOverAVoidStripComesDownOnTheFloor)
+{
+    FakeWorld world;
+    world.Ground = [](float, float) { return Mv::INVALID_FLOOR; };
+    world.Boxes.push_back({ -20.0f, 40.0f, -3.0f, 3.0f, -1.0f, 0.0f });     // the corridor
+    world.Boxes.push_back({ -20.0f, 40.0f, 5.0f, 10.0f, -1.0f, 0.0f });     // beyond a 2 yd void strip
+    Mv::Speeds const speeds;
+    Mv::Body const shape;
+    for (float yaw : { PI / 2.0f, PI / 3.0f, PI / 4.0f })
+    {
+        Mv::BodyState body = At(0.0f, 1.0f, 0.0f, yaw);
+        Mv::ControlState control;
+        control.Forward = 1;
+        for (int tick = 0; tick < 80; ++tick)
+        {
+            control.Jump = tick % 9 == 0;
+            Mv::Step(body, control, speeds, shape, world, 0.05f);
+            ASSERT_GE(body.Z, -0.05f) << "into the void at y " << body.Y << " (yaw " << yaw << ")";
+        }
+        control.Forward = 0;
+        Drive(body, control, speeds, world, 1.5f);
+        EXPECT_EQ(body.Kind, Mv::Mode::Ground);
+        EXPECT_FLOAT_EQ(body.Z, 0.0f);
+    }
 }
 
 // What the action mask asks: jump on the ground (and at the surface), not in the air; height steered in water and

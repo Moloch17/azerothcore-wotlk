@@ -40,7 +40,9 @@ namespace Animus::Curriculum::FloorScan
         Unwalkable,     // neither
     };
 
-    constexpr float MISMATCH_YARDS = 0.5f;
+    /// The navmesh's own imprecision at rims and slopes' feet reads 0.5-0.6 yd (the first M1 hallway scan, 1429 of
+    /// its cells): past this the two disagree.
+    constexpr float MISMATCH_YARDS = 0.75f;
     constexpr float WALKABLE_NORMAL_Z = 0.6427876f;     // cos 50 degrees (PlayerController.h)
     constexpr float GRID_YARDS = 533.3333f;             // SIZE_OF_GRIDS
     constexpr float NAV_REACH_Z = 10.0f;                // how far above and below z the navmesh's surface is looked for

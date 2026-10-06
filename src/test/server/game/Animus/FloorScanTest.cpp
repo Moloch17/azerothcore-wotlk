@@ -27,7 +27,8 @@ TEST(FloorScanTest, CellsAreClassifiedAsTheScanDefinesThem)
     EXPECT_EQ(Scan::Classify(true, -25.61f, true, -25.61f, 1.0f), Scan::Cell::Ok);
     EXPECT_EQ(Scan::Classify(true, -25.61f, false, 0.0f, 0.0f), Scan::Cell::Hole);
     EXPECT_EQ(Scan::Classify(true, -25.61f, true, -26.52f, 1.0f), Scan::Cell::Mismatch);
-    EXPECT_EQ(Scan::Classify(true, -25.61f, true, -25.20f, 1.0f), Scan::Cell::Ok);          // within half a yard
+    EXPECT_EQ(Scan::Classify(true, -25.61f, true, -25.20f, 1.0f), Scan::Cell::Ok);          // within 0.75 yd
+    EXPECT_EQ(Scan::Classify(true, -24.22f, true, -24.85f, 0.94f), Scan::Cell::Ok);         // the navmesh at a foot
     EXPECT_EQ(Scan::Classify(true, -25.61f, true, -25.61f, 0.60f), Scan::Cell::Steep);
     EXPECT_EQ(Scan::Classify(true, -25.61f, true, -25.61f, 0.71f), Scan::Cell::Ok);         // 45 degrees: walkable
     EXPECT_EQ(Scan::Classify(false, 0.0f, true, -25.61f, 1.0f), Scan::Cell::NoNav);
