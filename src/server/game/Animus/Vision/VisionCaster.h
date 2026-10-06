@@ -96,7 +96,8 @@ namespace Animus::Vision
         float Z = 0.0f;
         float Radius = 0.0f;
         float Height = 0.0f;
-        bool Hostile = false;
+        /// What it is to the seat (Classify): its pixels' class.
+        Class What = Class::NeutralCreature;
         bool Self = false;
     };
 
@@ -139,7 +140,7 @@ namespace Animus::Vision
     struct Hit
     {
         float Distance = 0.0f;      // from the ray's origin
-        Kind What = Kind::Sky;
+        Class What = Class::Sky;
         float Z = 0.0f;             // the hit's height
         float NormalZ = 0.0f;
     };
@@ -195,10 +196,11 @@ namespace Animus::Vision
     /// OBJECTIVE_RADIUS of the objective, else 0 (and 0 with none).
     [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective);
 
-    /// A pixel's four bytes (Camera.h, BYTES_PER_PIXEL).
-    void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out);
-    /// The learner's decode of them: the five channels (distance, height, normal, kind, objective) as revision 2
-    /// carried them, but quantised. For `forge camera snapshot` and the tests; the network decodes its own.
+    /// A pixel's five bytes (Camera.h, BYTES_PER_PIXEL): `slot` is byte 4 as it is.
+    void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out);
+    /// The learner's decode of them: the five image channels (distance, height, normal, class, objective), quantised,
+    /// then the entity slot (CHANNEL_SLOT), DECODED_VALUES in all. For `forge camera snapshot` and the tests; the
+    /// network decodes its own.
     void DecodePixel(uint8_t const* in, float* out);
 
     /// A whole frame: the image into `image` (ImageBytes, [row][col][byte] with row 0 at the top; null to cast no

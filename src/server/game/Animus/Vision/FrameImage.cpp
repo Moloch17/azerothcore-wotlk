@@ -25,19 +25,31 @@
 
 namespace Animus::Vision
 {
-    uint8_t const KIND_COLOURS[KINDS][3] = {
+    uint8_t const CLASS_COLOURS[CLASSES][3] = {
         { 30, 30, 80 },     // sky
         { 60, 160, 60 },    // terrain
         { 160, 160, 160 },  // model
-        { 170, 100, 40 },   // door or game object
+        { 170, 100, 40 },   // door
         { 40, 90, 220 },    // water
         { 240, 80, 0 },     // deadly liquid
-        { 220, 0, 0 },      // hostile unit
-        { 230, 230, 0 },    // other unit
+        { 220, 0, 0 },      // hostile creature
+        { 230, 230, 0 },    // neutral creature
+        { 0, 230, 160 },    // friendly creature
+        { 255, 0, 170 },    // hostile player
+        { 0, 160, 255 },    // friendly player
+        { 255, 170, 0 },    // quest giver
+        { 170, 90, 230 },   // vendor
+        { 110, 60, 180 },   // trainer
+        { 255, 120, 120 },  // lootable corpse
+        { 110, 40, 40 },    // corpse
+        { 200, 150, 60 },   // chest
+        { 120, 255, 80 },   // herb
+        { 120, 180, 200 },  // ore
+        { 40, 40, 200 },    // mailbox
+        { 255, 255, 140 },  // quest object
+        { 0, 255, 255 },    // usable object
+        { 120, 90, 60 },    // other object
     };
-
-    char const* const KIND_NAMES[KINDS] = { "sky", "terrain", "model", "door", "water", "deadly", "hostile",
-        "other" };
 }
 
 namespace
@@ -93,12 +105,13 @@ namespace
     }
 }
 
-std::array<uint32_t, Vi::KINDS> Vi::KindCounts(Settings const& settings, uint8_t const* image)
+std::array<uint32_t, Vi::CLASSES> Vi::ClassCounts(Settings const& settings, uint8_t const* image)
 {
-    std::array<uint32_t, KINDS> counts{};
+    std::array<uint32_t, CLASSES> counts{};
     uint32_t const pixels = settings.Width * settings.Height;
     for (uint32_t pixel = 0; pixel < pixels; ++pixel)
-        ++counts[std::min<uint32_t>(image[std::size_t(pixel) * BYTES_PER_PIXEL + 3] & 15u, KINDS - 1)];
+        ++counts[std::min<uint32_t>(image[std::size_t(pixel) * BYTES_PER_PIXEL + CLASS_BYTE] & CLASS_MASK,
+            CLASSES - 1)];
     return counts;
 }
 
@@ -115,18 +128,18 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
     std::vector<std::array<uint8_t, 3 * PANELS>> colours(std::size_t(width) * height);
     for (uint32_t pixel = 0; pixel < width * height; ++pixel)
     {
-        float decoded[CHANNELS];
+        float decoded[DECODED_VALUES];
         DecodePixel(&image[std::size_t(pixel) * BYTES_PER_PIXEL], decoded);
         std::array<uint8_t, 3 * PANELS>& out = colours[pixel];
         uint8_t const depth = Grey(decoded[CHANNEL_DISTANCE]);
         uint8_t const rise = Grey((decoded[CHANNEL_HEIGHT] + 1.0f) / 2.0f);
         uint8_t const slope = Grey(decoded[CHANNEL_NORMAL]);
-        uint32_t const kind = std::min<uint32_t>(uint32_t(decoded[CHANNEL_KIND]), KINDS - 1);
+        uint32_t const what = std::min<uint32_t>(uint32_t(decoded[CHANNEL_CLASS]), CLASSES - 1);
         bool const objective = decoded[CHANNEL_OBJECTIVE] > 0.5f;
         for (uint32_t c = 0; c < 3; ++c)
         {
             out[c] = depth;
-            out[3 + c] = objective ? 255 : KIND_COLOURS[kind][c];
+            out[3 + c] = objective ? 255 : CLASS_COLOURS[what][c];
             out[6 + c] = rise;
             out[9 + c] = slope;
         }
@@ -162,7 +175,7 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
     uint32_t const height = settings.Height;
 
     // Every pixel decoded once, as the learner decodes the bytes.
-    std::vector<std::array<float, CHANNELS>> decoded(std::size_t(width) * height);
+    std::vector<std::array<float, DECODED_VALUES>> decoded(std::size_t(width) * height);
     for (uint32_t pixel = 0; pixel < width * height; ++pixel)
         DecodePixel(&image[std::size_t(pixel) * BYTES_PER_PIXEL], decoded[pixel].data());
     auto const rise = [&](uint32_t pixel) { return decoded[pixel][CHANNEL_HEIGHT] * HEIGHT_SCALE; };
@@ -173,7 +186,7 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
         for (uint32_t col = 0; col < width; ++col)
         {
             uint32_t const pixel = row * width + col;
-            std::array<float, CHANNELS> const& in = decoded[pixel];
+            std::array<float, DECODED_VALUES> const& in = decoded[pixel];
             std::array<uint8_t, 3>& out = colours[pixel];
             if (in[CHANNEL_OBJECTIVE] > 0.5f)
             {
@@ -190,10 +203,11 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
             float const yards = NEAR * std::pow(DISTANCE_REFERENCE / NEAR, in[CHANNEL_DISTANCE]);
             float const shade = 0.45f + 0.55f * std::clamp(in[CHANNEL_NORMAL], 0.0f, 1.0f);
             float const fog = std::pow(std::min(1.0f, yards / COMPOSITE_FOG_YARDS), 0.7f);
-            uint32_t const kind = std::min<uint32_t>(uint32_t(in[CHANNEL_KIND]), KINDS - 1);
+            uint32_t const what = std::min<uint32_t>(uint32_t(in[CHANNEL_CLASS]), CLASSES - 1);
             float colour[3];
             for (uint32_t c = 0; c < 3; ++c)
-                colour[c] = float(KIND_COLOURS[kind][c]) * shade * (1.0f - fog) + float(COMPOSITE_HAZE[c]) * fog * 0.6f;
+                colour[c] = float(CLASS_COLOURS[what][c]) * shade * (1.0f - fog)
+                    + float(COMPOSITE_HAZE[c]) * fog * 0.6f;
 
             // A contour where this pixel and its right or lower neighbour lie across a level, inside the height
             // channel's range (its clamped ends are no level at all).

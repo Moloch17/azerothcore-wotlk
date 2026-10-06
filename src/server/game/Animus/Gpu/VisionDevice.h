@@ -164,7 +164,7 @@ namespace Animus::GpuVision
         uint32_t Pad = 0;
     };
 
-    /// A unit's cylinder (Vision::UnitShape without the seat's own: the host drops it).
+    /// A unit's cylinder (Vision::UnitShape without the seat's own: the host drops it), and its pixels' class.
     struct DeviceUnit
     {
         float X;
@@ -172,7 +172,7 @@ namespace Animus::GpuVision
         float Z;
         float Radius;
         float Height;
-        uint32_t Hostile;
+        uint32_t Class;
     };
 
     /// One frame to cast: the rig the CPU placed (PlaceCamera: the boom is one CPU ray), the size it is cast at and
@@ -1157,7 +1157,7 @@ namespace Animus::GpuVision
     /// Vision::CastTerrain, over the scene's terrain grids.
     FORGE_HD inline Hit CastTerrain(V3 origin, V3 dir, float limit, SceneView const& scene, bool liquids)
     {
-        Hit best = { limit, uint32_t(Vision::Kind::Sky), origin.Z + dir.Z * limit, 0.0f };
+        Hit best = { limit, uint32_t(Vision::Class::Sky), origin.Z + dir.Z * limit, 0.0f };
         bool found = false;
         float const u0 = GridU(origin.X);
         float const v0 = GridU(origin.Y);
@@ -1225,7 +1225,7 @@ namespace Animus::GpuVision
                                 if (t >= 0.0f && t <= limit && (nearest < 0.0f || t < nearest))
                                 {
                                     nearest = t;
-                                    best.What = uint32_t(Vision::Kind::Terrain);
+                                    best.What = uint32_t(Vision::Class::Terrain);
                                     best.NormalZ = normalZ;
                                 }
                             }
@@ -1243,8 +1243,8 @@ namespace Animus::GpuVision
                                 if (!solid || CellHeight(corner, centre, fu, fv) <= level)
                                 {
                                     nearest = t;
-                                    best.What = uint32_t((flags & CELL_DEADLY) ? Vision::Kind::Deadly
-                                        : Vision::Kind::Water);
+                                    best.What = uint32_t((flags & CELL_DEADLY) ? Vision::Class::Deadly
+                                        : Vision::Class::Water);
                                     best.NormalZ = 1.0f;
                                 }
                             }
@@ -1262,7 +1262,7 @@ namespace Animus::GpuVision
         if (!found)
         {
             best.Distance = limit;
-            best.What = uint32_t(Vision::Kind::Sky);
+            best.What = uint32_t(Vision::Class::Sky);
             best.Z = origin.Z + dir.Z * limit;
             best.NormalZ = 0.0f;
         }
@@ -1323,7 +1323,7 @@ namespace Animus::GpuVision
         DeviceUnit const* units, uint32_t unitCount, bool& overflow)
     {
         V3 const end = origin + dir * limit;
-        Hit best = { limit, uint32_t(Vision::Kind::Sky), end.Z, 0.0f };
+        Hit best = { limit, uint32_t(Vision::Class::Sky), end.Z, 0.0f };
         BihStackNode nodes[Stack];
         BihStack const stack = { nodes, Stack, &overflow };
 
@@ -1337,7 +1337,7 @@ namespace Animus::GpuVision
             bool const isDoor = doorHit && (!modelHit || door.Distance < model.Distance);
             Surface const& hit = isDoor ? door : model;
             best.Distance = hit.Distance;
-            best.What = uint32_t(isDoor ? Vision::Kind::Door : Vision::Kind::Model);
+            best.What = uint32_t(isDoor ? Vision::Class::Door : Vision::Class::Model);
             best.Z = (origin + dir * best.Distance).Z;
             best.NormalZ = hit.NormalZ;
         }
@@ -1350,7 +1350,7 @@ namespace Animus::GpuVision
             if (liquid.Distance >= 0.0f && liquid.Distance < best.Distance)
             {
                 best.Distance = liquid.Distance;
-                best.What = uint32_t(deadly ? Vision::Kind::Deadly : Vision::Kind::Water);
+                best.What = uint32_t(deadly ? Vision::Class::Deadly : Vision::Class::Water);
                 best.Z = origin.Z + dir.Z * liquid.Distance;
                 best.NormalZ = 1.0f;
             }
@@ -1358,7 +1358,7 @@ namespace Animus::GpuVision
 
         // 3. The terrain and its liquids, up to the nearest hit so far.
         Hit const terrain = CastTerrain(origin, dir, best.Distance, scene, true);
-        if (terrain.What != uint32_t(Vision::Kind::Sky) && terrain.Distance < best.Distance)
+        if (terrain.What != uint32_t(Vision::Class::Sky) && terrain.Distance < best.Distance)
             best = terrain;
 
         // 4. The units (the seat's own already left out).
@@ -1369,7 +1369,7 @@ namespace Animus::GpuVision
             if (distance >= 0.0f && distance < best.Distance)
             {
                 best.Distance = distance;
-                best.What = uint32_t(units[i].Hostile ? Vision::Kind::Hostile : Vision::Kind::Other);
+                best.What = units[i].Class;
                 best.Z = origin.Z + dir.Z * distance;
                 best.NormalZ = top ? 1.0f : 0.0f;
             }
@@ -1388,9 +1388,9 @@ namespace Animus::GpuVision
     }
 
     /// Vision::EncodePixel.
-    FORGE_HD inline void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
+    FORGE_HD inline void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out)
     {
-        bool const sky = hit.What == uint32_t(Vision::Kind::Sky);
+        bool const sky = hit.What == uint32_t(Vision::Class::Sky);
         float const distance = Clamp(logf(Max(hit.Distance, Vision::NEAR) / Vision::NEAR)
             / logf(Vision::DISTANCE_REFERENCE / Vision::NEAR), 0.0f, 1.0f);
         out[0] = sky ? Vision::SKY_BYTE : uint8_t(lroundf(Vision::DISTANCE_LEVELS * distance));
@@ -1399,7 +1399,9 @@ namespace Animus::GpuVision
             : (rounded > Vision::HEIGHT_LIMIT ? Vision::HEIGHT_LIMIT : int32_t(rounded));
         out[1] = sky ? Vision::HEIGHT_ZERO : uint8_t(int32_t(Vision::HEIGHT_ZERO) + steps);
         out[2] = uint8_t(lroundf(255.0f * Clamp(hit.NormalZ, 0.0f, 1.0f)));
-        out[3] = uint8_t((uint8_t(hit.What) & Vision::KIND_MASK) | (objective ? Vision::OBJECTIVE_BIT : 0));
+        out[Vision::CLASS_BYTE] = uint8_t((uint8_t(hit.What) & Vision::CLASS_MASK)
+            | (objective ? Vision::OBJECTIVE_BIT : 0));
+        out[Vision::SLOT_BYTE] = slot;
     }
 
     /// Vision::PixelDirection: Camera.h's Direction at the pixel's angles. cos and sin go through double, so the
@@ -1417,8 +1419,8 @@ namespace Animus::GpuVision
             float(sin(double(elevation))));
     }
 
-    /// One cast pixel, written to `out` (4 bytes): Vision::Render's loop body (CastRay, ObjectiveFlag, EncodePixel),
-    /// on a stack of `Stack` entries. True when a walk overflowed it (the pixel may then differ from the CPU's).
+    /// One cast pixel, written to `out` (BYTES_PER_PIXEL): Vision::Render's loop body (CastRay, ObjectiveFlag,
+    /// EncodePixel), on a stack of `Stack` entries. True when a walk overflowed it (the pixel may then differ from the CPU's).
     template <int Stack>
     FORGE_HD inline bool CastPixel(FrameRequest const& request, SceneView const& scene, DeviceUnit const* units,
         uint32_t row, uint32_t col, uint8_t* out)
@@ -1430,7 +1432,7 @@ namespace Animus::GpuVision
         Hit const hit = Nearest<Stack>(camera, dir, reach, scene, request.PhaseMask, units + request.UnitOffset,
             request.UnitCount, overflow);
         bool const flag = ObjectiveFlag(camera, dir, hit.Distance, request);
-        EncodePixel(hit, request.FeetZ, flag, out);
+        EncodePixel(hit, request.FeetZ, flag, 0, out);
         return overflow;
     }
 

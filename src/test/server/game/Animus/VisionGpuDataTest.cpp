@@ -486,7 +486,7 @@ TEST_F(VisionGpuDataTest, DoorOpenAndShut)
             EXPECT_GE(diff.GpuTally.NonEdgeShare(), 0.999) << label;
             EXPECT_EQ(diff.GpuTally.UpscaleExact, diff.Frames);
             // The door is seen while shut and gone once open.
-            uint64_t const doorPixels = diff.GpuTally.CpuKinds[uint32_t(Vi::Kind::Door)];
+            uint64_t const doorPixels = diff.GpuTally.CpuClasses[uint32_t(Vi::Class::Door)];
             if (shut)
                 EXPECT_GT(doorPixels, diff.GpuTally.Pixels / 200) << label;
             else

@@ -27,8 +27,9 @@ namespace Animus::Curriculum
     /// third-person camera the seat turns itself (Vision::FreeLook, SeatState::Look), rendered every decision by the
     /// ray caster (Vision::Render) at the size the seat drew this episode (AnimusForge.Vision.RenderSizes) and scaled
     /// up by nearest pixel into the canonical image of AnimusForge.Vision.Height rows by Width columns, five channels
-    /// a pixel -- distance, height over the feet, the surface's normal z, the kind, the objective -- packed in four
-    /// bytes (Vision::BYTES_PER_PIXEL, camera-vision.BYTES.md), and eleven scalars (Vision::Scalar). The block's
+    /// a pixel -- distance, height over the feet, the surface's normal z, the semantic class, the objective -- and
+    /// the entity slot, packed in five bytes (Vision::BYTES_PER_PIXEL, camera-vision.BYTES.md, perception-goals
+    /// 1a), and eleven scalars (Vision::Scalar). The block's
     /// float columns are the scalars alone; the image goes to the seat's byte row (SeatView::Image), which travels
     /// beside the observations (EnvPool::Image, the STEP's image section).
     ///
@@ -48,10 +49,12 @@ namespace Animus::Curriculum
         /// columns read differently, so an encoder trained on revision 1 starts fresh. 3: the image left the float
         /// columns for bytes (camera-vision.BYTES.md); the block's columns are the seven scalars. 4: free look and
         /// mixed render resolutions (camera-vision.FREELOOK.md): eleven scalars, the canonical image 128 x 64 cast
-        /// at a drawn size, and a look head beside the block.
-        [[nodiscard]] uint32 Revision() const override { return 4; }
-        /// "image": { height, width, channels (5, decoded), kinds, kind_channel, scalars, transport "bytes",
-        /// bytes_per_pixel 4, patch (the learner's patch at this size), render_sizes [[w, h], ...] } -- the block's
+        /// at a drawn size, and a look head beside the block. 5: identity (perception-goals P2): five bytes a pixel,
+        /// the semantic class in place of the kind and the entity slot, beside the entity list (EntitiesBlock).
+        [[nodiscard]] uint32 Revision() const override { return 5; }
+        /// "image": { height, width, channels (5, decoded), scalars, transport "bytes", bytes_per_pixel 5,
+        /// class_channel, class_byte, slot_byte, classes, class_limit, class_names, class_kinds, entity_slots, patch
+        /// (the learner's patch at this size), render_sizes [[w, h], ...] } -- the block's
         /// columns are the scalars; the image is the STEP's byte section -- "look": { heads [7, 5, 5], names }, the
         /// look head's categoricals, and "camera": the settings it was rendered with.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;

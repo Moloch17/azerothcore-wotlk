@@ -28,12 +28,11 @@
 /// (AnimusForge.Vision.AuditInterval).
 namespace Animus::Vision
 {
-    /// A kind's colour in the kind panel (the objective's pixels are white whatever they hit).
-    extern uint8_t const KIND_COLOURS[KINDS][3];
-    extern char const* const KIND_NAMES[KINDS];
+    /// A class's colour in the class panel and the composite (the objective's pixels are white whatever they hit).
+    extern uint8_t const CLASS_COLOURS[CLASSES][3];
 
-    /// Pixels of each kind in a frame.
-    [[nodiscard]] std::array<uint32_t, KINDS> KindCounts(Settings const& settings, uint8_t const* image);
+    /// Pixels of each class in a frame.
+    [[nodiscard]] std::array<uint32_t, CLASSES> ClassCounts(Settings const& settings, uint8_t const* image);
 
     /// Output pixels between FramePng's panels.
     constexpr uint32_t PANEL_GAP = 4;
@@ -41,7 +40,7 @@ namespace Animus::Vision
     /// The frame as an RGB PNG of four panels side by side, each the image scaled up `scale` times (nearest
     /// pixel), PANEL_GAP grey pixels apart:
     /// - depth: the distance channel, near dark and sky white;
-    /// - kind: KIND_COLOURS, the objective white;
+    /// - class: CLASS_COLOURS, the objective white;
     /// - height over the feet: mid-grey at the feet, lighter above, darker below;
     /// - slope: the surface's normal z, white for level ground, black for a wall (and sky).
     [[nodiscard]] std::string FramePng(Settings const& settings, uint8_t const* image, uint32_t scale);
@@ -55,7 +54,7 @@ namespace Animus::Vision
 
     /// **Every layer in one picture** (var/camera/composite.py, from the bytes rather than the panels): one RGB
     /// panel, the image scaled up `scale` times (nearest pixel). Per pixel: the objective white; sky
-    /// COMPOSITE_SKY; else the kind's colour (KIND_COLOURS), shaded by the slope (0.45 a wall to 1 a floor) and
+    /// COMPOSITE_SKY; else the class's colour (CLASS_COLOURS), shaded by the slope (0.45 a wall to 1 a floor) and
     /// fogged by the distance (min(1, yards / 80)^0.7 towards COMPOSITE_HAZE x 0.6), and darkened to 0.35 where the
     /// pixel and its right or lower neighbour lie across a whole yard of height over the feet (a contour line;
     /// within the height channel's range only).

@@ -45,12 +45,27 @@ void Animus::Curriculum::VisionBlock::DescribeManifest(Layout const& /*layout*/,
     image["height"] = settings.Height;
     image["width"] = settings.Width;
     image["channels"] = Vi::CHANNELS;
-    image["kinds"] = Vi::KINDS;
-    image["kind_channel"] = Vi::KIND_CHANNEL;
     image["scalars"] = Vi::SCALARS;
-    // Revision 3: the image is not in the float columns but its own byte section of the STEP, four bytes a pixel.
+    // Revision 3: the image is not in the float columns but its own byte section of the STEP. Revision 5: five
+    // bytes a pixel -- the class (and the objective bit) in byte 3, the entity slot in byte 4 (Camera.h).
     image["transport"] = "bytes";
     image["bytes_per_pixel"] = Vi::BYTES_PER_PIXEL;
+    image["class_channel"] = Vi::CLASS_CHANNEL;
+    image["class_byte"] = Vi::CLASS_BYTE;
+    image["slot_byte"] = Vi::SLOT_BYTE;
+    image["classes"] = Vi::CLASSES;
+    image["class_limit"] = Vi::CLASS_LIMIT;
+    image["entity_slots"] = Vi::ENTITY_SLOTS;
+    // The class table, by value, and each class's revision-4 kind (Vi::KindOf), which follows from it.
+    boost::json::array classNames;
+    boost::json::array coarse;
+    for (uint32 value = 0; value < Vi::CLASSES; ++value)
+    {
+        classNames.push_back(boost::json::string(Vi::CLASS_NAMES[value]));
+        coarse.push_back(uint32(Vi::KindOf(Vi::Class(value))));
+    }
+    image["class_names"] = std::move(classNames);
+    image["class_kinds"] = std::move(coarse);
     // Revision 4: the learner's patch at this canonical size (a 16-wide grid), and the sizes frames are actually
     // cast at before they are scaled up to it, [width, height] each.
     image["patch"] = Vi::Patch(settings);

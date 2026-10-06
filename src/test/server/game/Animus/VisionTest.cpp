@@ -279,7 +279,7 @@ namespace
         {
             bool const isDoor = doorHit && (!modelHit || door < model);
             best.Distance = isDoor ? door : model;
-            best.What = isDoor ? Vi::Kind::Door : Vi::Kind::Model;
+            best.What = isDoor ? Vi::Class::Door : Vi::Class::Model;
             best.Z = (origin + dir * best.Distance).Z;
         }
         float const limit = best.Distance;
@@ -322,9 +322,9 @@ namespace
             }
             wasBelow = isBelow;
             if (water >= 0.0f && (ground < 0.0f || water <= ground))
-                return Vi::Hit{ water, deadly ? Vi::Kind::Deadly : Vi::Kind::Water, origin.Z + dir.Z * water, 1.0f };
+                return Vi::Hit{ water, deadly ? Vi::Class::Deadly : Vi::Class::Water, origin.Z + dir.Z * water, 1.0f };
             if (ground >= 0.0f)
-                return Vi::Hit{ ground, Vi::Kind::Terrain, origin.Z + dir.Z * ground, 1.0f };
+                return Vi::Hit{ ground, Vi::Class::Terrain, origin.Z + dir.Z * ground, 1.0f };
             previous = t;
         }
         return best;
@@ -350,17 +350,18 @@ namespace
 
         [[nodiscard]] float At(uint32_t pixel, uint32_t channel) const
         {
-            float decoded[Vi::CHANNELS];
+            float decoded[Vi::DECODED_VALUES];
             Vi::DecodePixel(&Image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL], decoded);
             return decoded[channel];
         }
     };
 
     /// A pixel encoded, then decoded.
-    std::array<float, Vi::CHANNELS> RoundTrip(Vi::Hit const& hit, float feetZ, bool objective, uint8_t* bytes)
+    std::array<float, Vi::DECODED_VALUES> RoundTrip(Vi::Hit const& hit, float feetZ, bool objective, uint8_t* bytes,
+        uint8_t slot = 0)
     {
-        Vi::EncodePixel(hit, feetZ, objective, bytes);
-        std::array<float, Vi::CHANNELS> out{};
+        Vi::EncodePixel(hit, feetZ, objective, slot, bytes);
+        std::array<float, Vi::DECODED_VALUES> out{};
         Vi::DecodePixel(bytes, out.data());
         return out;
     }
@@ -465,7 +466,7 @@ TEST(VisionTest, TerrainRaysHitTheTrianglesExactly)
     Vi::Vec3 const origin{ X0, Y0, 10.0f };
     Vi::Vec3 const down45 = Vi::Direction(0.0f, -45.0f * DEG);
     Vi::Hit hit = Vi::CastRay(origin, down45, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Terrain);
+    EXPECT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_NEAR(hit.Distance, 10.0f * std::sqrt(2.0f), 2e-3f);
     EXPECT_NEAR(hit.NormalZ, 1.0f, 1e-5f);
     EXPECT_NEAR(hit.Z, 0.0f, 1e-3f);
@@ -473,19 +474,19 @@ TEST(VisionTest, TerrainRaysHitTheTrianglesExactly)
     // Rising along +x at 45 degrees: the normal z is cos 45.
     world.Surface = [](float x, float) { return x - X0; };
     hit = Vi::CastRay(origin, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Terrain);
+    EXPECT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_NEAR(hit.Distance, 10.0f, 2e-3f);
     EXPECT_NEAR(hit.NormalZ, std::sqrt(0.5f), 1e-4f);
 
     // From under the terrain, its underside is not seen.
     world.Surface = [](float, float) { return 0.0f; };
     hit = Vi::CastRay(Vi::Vec3{ X0, Y0, -5.0f }, Vi::Vec3{ 0.0f, 0.0f, 1.0f }, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Sky);
+    EXPECT_EQ(hit.What, Vi::Class::Sky);
 
     // The cast stops at the nearest collision hit: terrain behind a wall is not seen.
     world.Models = { { X0 + 3.0f, X0 + 4.0f, Y0 - 5.0f, Y0 + 5.0f, -20.0f, 20.0f } };
     hit = Vi::CastRay(origin, down45, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Model);
+    EXPECT_EQ(hit.What, Vi::Class::Model);
     EXPECT_NEAR(hit.Distance, 3.0f * std::sqrt(2.0f), 1e-3f);
 }
 
@@ -503,11 +504,11 @@ TEST(VisionTest, ThinRidgeTheMarchSteppedOver)
     Vi::Vec3 const origin{ Vi::WorldOfU(float(u) + 3.0f), yCentre, 9.5f };
     Vi::Vec3 const ahead{ 1.0f, 0.0f, 0.0f };
     Vi::Hit const hit = Vi::CastRay(origin, ahead, world, {});
-    ASSERT_EQ(hit.What, Vi::Kind::Terrain);
+    ASSERT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_NEAR(origin.X + hit.Distance, Vi::WorldOfU(float(u) + 0.525f), 2e-3f);
     EXPECT_NEAR(world.Height(origin.X + hit.Distance, yCentre), 9.5f, 2e-3f);
     // The old march: no step lands on the peak's top tenth of a yard.
-    EXPECT_EQ(OldMarch(origin, ahead, 100.0f, world, false).What, Vi::Kind::Sky);
+    EXPECT_EQ(OldMarch(origin, ahead, 100.0f, world, false).What, Vi::Class::Sky);
 }
 
 // A cell's liquid is a plane over the cell, entered from above where the ground is below it; magma and slime are
@@ -519,27 +520,27 @@ TEST(VisionTest, LiquidPlanesFromAboveAndBelow)
     world.Pools = { { X0 - 50.0f, X0 + 50.0f, Y0 - 50.0f, Y0 + 50.0f, 0.0f } };
     Vi::Vec3 const down{ 0.0f, 0.0f, -1.0f };
     Vi::Hit hit = Vi::CastRay(Vi::Vec3{ X0, Y0, 10.3f }, down, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Water);
+    EXPECT_EQ(hit.What, Vi::Class::Water);
     EXPECT_NEAR(hit.Distance, 10.3f, 1e-4f);
     EXPECT_FLOAT_EQ(hit.NormalZ, 1.0f);
     hit = Vi::CastRay(Vi::Vec3{ X0, Y0, 10.0f }, Vi::Direction(0.3f, -30.0f * DEG), world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Water);
+    EXPECT_EQ(hit.What, Vi::Class::Water);
     EXPECT_NEAR(hit.Distance, 20.0f, 1e-3f);
 
     world.Pools[0].Deadly = true;
-    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, 10.3f }, down, world, {}).What, Vi::Kind::Deadly);
+    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, 10.3f }, down, world, {}).What, Vi::Class::Deadly);
     world.Pools[0].Deadly = false;
 
     // From under the surface: looking up, through it to the sky; looking down, the bed.
-    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, -2.0f }, Vi::Vec3{ 0.0f, 0.0f, 1.0f }, world, {}).What, Vi::Kind::Sky);
+    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, -2.0f }, Vi::Vec3{ 0.0f, 0.0f, 1.0f }, world, {}).What, Vi::Class::Sky);
     hit = Vi::CastRay(Vi::Vec3{ X0, Y0, -2.0f }, down, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Terrain);
+    EXPECT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_NEAR(hit.Distance, 8.0f, 2e-3f);
 
     // A liquid level below the ground (a cell's level under a hill) is not a surface.
     world.Surface = [](float, float) { return 1.0f; };
     hit = Vi::CastRay(Vi::Vec3{ X0, Y0, 10.0f }, down, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Terrain);
+    EXPECT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_NEAR(hit.Distance, 9.0f, 2e-3f);
 }
 
@@ -550,16 +551,16 @@ TEST(VisionTest, ModelLiquidTiles)
     world.ModelPools = { { X0 - 2.0f, X0 + 2.0f, Y0 - 1.0f, Y0 + 1.0f, -1.2f } };
     world.Models = { { X0 - 20.0f, X0 + 20.0f, Y0 - 5.0f, Y0 + 5.0f, -3.0f, -2.0f } };    // its bed
     Vi::Hit hit = Vi::CastRay(Vi::Vec3{ X0, Y0, 3.0f }, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Water);
+    EXPECT_EQ(hit.What, Vi::Class::Water);
     EXPECT_NEAR(hit.Distance, 4.2f, 1e-4f);
     EXPECT_FLOAT_EQ(hit.NormalZ, 1.0f);
     // Beside it, the bed.
     hit = Vi::CastRay(Vi::Vec3{ X0 + 5.0f, Y0, 3.0f }, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Model);
+    EXPECT_EQ(hit.What, Vi::Class::Model);
     EXPECT_NEAR(hit.Distance, 5.0f, 1e-4f);
     world.ModelPools[0].Deadly = true;
     EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, 3.0f }, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, {}).What,
-        Vi::Kind::Deadly);
+        Vi::Class::Deadly);
 }
 
 // A ray climbing above a grid's highest point cannot hit it, and is sky -- unless a higher grid lies ahead.
@@ -571,12 +572,12 @@ TEST(VisionTest, ClimbingAboveTheMaxHeightIsSky)
     Vi::Vec3 const origin{ -100.0f, Y0, 5.0f };
     Vi::Breakdown breakdown;
     Vi::Hit hit = Vi::CastRay(origin, Vi::Direction(Vi::PI, 1.0f * DEG), world, {}, &breakdown);   // away, up
-    EXPECT_EQ(hit.What, Vi::Kind::Sky);
+    EXPECT_EQ(hit.What, Vi::Class::Sky);
     EXPECT_EQ(breakdown.TerrainCells, 0u);          // no cell of a grid it is above was tested
 
     // Towards the plateau, climbing slowly: it meets the plateau's edge on grid 31.
     hit = Vi::CastRay(origin, Vi::Direction(0.0f, 1.0f * DEG), world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Terrain);
+    EXPECT_EQ(hit.What, Vi::Class::Terrain);
     EXPECT_GT(origin.X + hit.Distance * std::cos(1.0f * DEG), -0.1f);
 }
 
@@ -590,7 +591,7 @@ TEST(VisionTest, LeavingTheLoadedGridsIsSky)
     Vi::Vec3 const ahead{ 1.0f, 0.0f, 0.0f };      // towards x = 0, grid 31's edge
     EXPECT_NEAR(Vi::Reach(origin, ahead, world), 100.0f, 0.01f);
     Vi::Hit const hit = Vi::CastRay(origin, ahead, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Sky);
+    EXPECT_EQ(hit.What, Vi::Class::Sky);
     EXPECT_NEAR(hit.Distance, 100.0f, 0.01f);
     // Straight up never leaves them: REACH_MAX.
     EXPECT_FLOAT_EQ(Vi::Reach(origin, Vi::Vec3{ 0.0f, 0.0f, 1.0f }, world), Vi::REACH_MAX);
@@ -598,7 +599,7 @@ TEST(VisionTest, LeavingTheLoadedGridsIsSky)
     world.Loaded = { { 32, 32 } };
     world.Surface = [](float x, float) { return x > -150.0f ? 50.0f : 0.0f; };
     Vi::Hit const far = Vi::CastRay(Vi::Vec3{ -450.0f, Y0, 5.0f }, ahead, world, {});
-    EXPECT_EQ(far.What, Vi::Kind::Terrain);
+    EXPECT_EQ(far.What, Vi::Class::Terrain);
     EXPECT_NEAR(far.Distance, 300.0f, CELL);
 }
 
@@ -611,26 +612,27 @@ TEST(VisionTest, DoorsAndModelsAreToldApart)
     Vi::Vec3 const ahead{ 1.0f, 0.0f, 0.0f };
     world.Doors = { { X0 + 5.0f, X0 + 5.5f, Y0 - 2.0f, Y0 + 2.0f, 0.0f, 4.0f } };
     Vi::Hit hit = Vi::CastRay(origin, ahead, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Door);
+    EXPECT_EQ(hit.What, Vi::Class::Door);
     EXPECT_NEAR(hit.Distance, 5.0f, 1e-3f);
     EXPECT_FLOAT_EQ(hit.NormalZ, 0.0f);
 
     world.Models = { { X0 + 8.0f, X0 + 9.0f, Y0 - 2.0f, Y0 + 2.0f, 0.0f, 4.0f } };
-    EXPECT_EQ(Vi::CastRay(origin, ahead, world, {}).What, Vi::Kind::Door);
+    EXPECT_EQ(Vi::CastRay(origin, ahead, world, {}).What, Vi::Class::Door);
     world.Models = { { X0 + 3.0f, X0 + 4.0f, Y0 - 2.0f, Y0 + 2.0f, 0.0f, 4.0f } };
     hit = Vi::CastRay(origin, ahead, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Model);
+    EXPECT_EQ(hit.What, Vi::Class::Model);
     EXPECT_NEAR(hit.Distance, 3.0f, 1e-3f);
 
     // A model's top seen from above is a floor: its slope.
     hit = Vi::CastRay(Vi::Vec3{ X0 + 3.5f, Y0, 10.0f }, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, {});
-    EXPECT_EQ(hit.What, Vi::Kind::Model);
+    EXPECT_EQ(hit.What, Vi::Class::Model);
     EXPECT_FLOAT_EQ(hit.NormalZ, 1.0f);
 
     uint8_t bytes[Vi::BYTES_PER_PIXEL];
     world.Models.clear();
-    EXPECT_FLOAT_EQ(RoundTrip(Vi::CastRay(origin, ahead, world, {}), 0.0f, false, bytes)[Vi::CHANNEL_KIND], 3.0f);
+    EXPECT_FLOAT_EQ(RoundTrip(Vi::CastRay(origin, ahead, world, {}), 0.0f, false, bytes)[Vi::CHANNEL_CLASS], 3.0f);
     EXPECT_EQ(bytes[3], 3);
+    EXPECT_EQ(bytes[4], 0);
 }
 
 // The objective flag: the closed segment from the camera to the hit (or the reach) within a yard of it (R12).
@@ -675,52 +677,54 @@ TEST(VisionTest, ObjectiveFlagIsTheSegmentWithinAYard)
 TEST(VisionTest, RaysMeetUnitCylindersButNotTheSeat)
 {
     FakeVision const world;
-    Vi::UnitShape other{ X0 + 5.0f, Y0, 0.0f, 0.5f, 2.0f, false, false };
-    Vi::UnitShape self{ X0 + 2.0f, Y0, 0.0f, 0.5f, 2.0f, false, true };
+    Vi::UnitShape other{ X0 + 5.0f, Y0, 0.0f, 0.5f, 2.0f, Vi::Class::NeutralCreature, false };
+    Vi::UnitShape self{ X0 + 2.0f, Y0, 0.0f, 0.5f, 2.0f, Vi::Class::NeutralCreature, true };
     Vi::Vec3 const origin{ X0, Y0, 1.0f };
     Vi::Vec3 const ahead{ 1.0f, 0.0f, 0.0f };
     std::vector<Vi::UnitShape> units{ self, other };
 
     Vi::Hit hit = Vi::CastRay(origin, ahead, world, units);
-    EXPECT_EQ(hit.What, Vi::Kind::Other);
+    EXPECT_EQ(hit.What, Vi::Class::NeutralCreature);
     EXPECT_NEAR(hit.Distance, 4.5f, 1e-3f);
     EXPECT_FLOAT_EQ(hit.NormalZ, 0.0f);
     EXPECT_NEAR(hit.Z, 1.0f, 1e-5f);
 
-    units[1].Hostile = true;
-    EXPECT_EQ(Vi::CastRay(origin, ahead, world, units).What, Vi::Kind::Hostile);
+    units[1].What = Vi::Class::HostileCreature;
+    EXPECT_EQ(Vi::CastRay(origin, ahead, world, units).What, Vi::Class::HostileCreature);
 
     hit = Vi::CastRay(Vi::Vec3{ X0 + 5.0f, Y0, 10.0f }, Vi::Vec3{ 0.0f, 0.0f, -1.0f }, world, units);
-    EXPECT_EQ(hit.What, Vi::Kind::Hostile);
+    EXPECT_EQ(hit.What, Vi::Class::HostileCreature);
     EXPECT_NEAR(hit.Distance, 8.0f, 1e-4f);
     EXPECT_FLOAT_EQ(hit.NormalZ, 1.0f);
 
-    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, 3.0f }, ahead, world, units).What, Vi::Kind::Sky);
+    EXPECT_EQ(Vi::CastRay(Vi::Vec3{ X0, Y0, 3.0f }, ahead, world, units).What, Vi::Class::Sky);
     bool top = true;
     EXPECT_NEAR(Vi::RayCylinder(origin, ahead, 100.0f, self, top), 1.5f, 1e-3f);
     EXPECT_FALSE(top);
     EXPECT_LT(Vi::RayCylinder(origin, ahead, 1.0f, self, top), 0.0f);
     std::vector<Vi::UnitShape> const alone{ self };
-    EXPECT_EQ(Vi::CastRay(origin, ahead, world, alone).What, Vi::Kind::Sky);
+    EXPECT_EQ(Vi::CastRay(origin, ahead, world, alone).What, Vi::Class::Sky);
 }
 
-// A pixel's four bytes (camera-vision.BYTES.md), and their decode back to the five channels: distance at 0.25, 1,
-// 100 and 1000 yd and sky; height +-25 yd and clamped; normal 0, 0.5, 1; every kind with and without the objective.
-// The block's float columns are the eleven scalars (revision 4); the canonical image is 128 x 64.
-TEST(VisionTest, PixelsTravelAsFourBytes)
+// A pixel's five bytes (camera-vision.BYTES.md, perception-goals 1a), and their decode back to the five channels
+// and the slot: distance at 0.25, 1, 100 and 1000 yd and sky; height +-25 yd and clamped; normal 0, 0.5, 1; every
+// class with and without the objective, and every slot. The block's float columns are the eleven scalars; the
+// canonical image is 128 x 64.
+TEST(VisionTest, PixelsTravelAsFiveBytes)
 {
     EXPECT_EQ(Vi::ObsCount(Vi::Settings()), 11u);
-    EXPECT_EQ(Vi::ImageBytes(Vi::Settings()), 128u * 64u * 4u);
+    EXPECT_EQ(Vi::BYTES_PER_PIXEL, 5u);
+    EXPECT_EQ(Vi::ImageBytes(Vi::Settings()), 128u * 64u * 5u);
 
     uint8_t bytes[Vi::BYTES_PER_PIXEL];
     Vi::Hit hit;
-    hit.What = Vi::Kind::Terrain;
+    hit.What = Vi::Class::Terrain;
     hit.NormalZ = 1.0f;
     float const logRange = std::log(4000.0f);
     for (float distance : { 0.1f, 0.25f, 1.0f, 100.0f, 1000.0f, 2500.0f })
     {
         hit.Distance = distance;
-        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, false, bytes);
+        std::array<float, Vi::DECODED_VALUES> const out = RoundTrip(hit, 0.0f, false, bytes);
         float const exact = std::clamp(std::log(std::max(distance, 0.25f) / 0.25f) / logRange, 0.0f, 1.0f);
         EXPECT_EQ(bytes[0], uint8_t(std::lround(254.0f * exact))) << distance;
         EXPECT_NEAR(out[Vi::CHANNEL_DISTANCE], exact, 0.5f / 254.0f + 1e-6f) << distance;
@@ -741,7 +745,7 @@ TEST(VisionTest, PixelsTravelAsFourBytes)
              Rise{ -0.29f, 127, -1.0f / 125.0f } })
     {
         hit.Z = 7.0f + rise.Dz;
-        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 7.0f, false, bytes);
+        std::array<float, Vi::DECODED_VALUES> const out = RoundTrip(hit, 7.0f, false, bytes);
         EXPECT_EQ(bytes[1], rise.Byte) << rise.Dz;
         EXPECT_NEAR(out[Vi::CHANNEL_HEIGHT], rise.Decoded, 1e-6f) << rise.Dz;
     }
@@ -751,47 +755,69 @@ TEST(VisionTest, PixelsTravelAsFourBytes)
     for (float normal : { 0.0f, 0.5f, 1.0f, 1.3f, -0.2f })
     {
         hit.NormalZ = normal;
-        std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, false, bytes);
+        std::array<float, Vi::DECODED_VALUES> const out = RoundTrip(hit, 0.0f, false, bytes);
         EXPECT_EQ(bytes[2], uint8_t(std::lround(255.0f * std::clamp(normal, 0.0f, 1.0f)))) << normal;
         EXPECT_NEAR(out[Vi::CHANNEL_NORMAL], std::clamp(normal, 0.0f, 1.0f), 0.5f / 255.0f + 1e-6f) << normal;
     }
 
-    // Every kind in the low four bits, the objective in bit 4, bits 5-7 clear.
-    for (uint32_t kind = 0; kind < Vi::KINDS; ++kind)
+    // Every class in the low five bits, the objective in bit 5, bits 6-7 clear; every slot in byte 4, whatever
+    // the class (a listed entity's, or one past the list's cap: slot 0 with its class kept).
+    for (uint32_t value = 0; value < Vi::CLASSES; ++value)
         for (bool objective : { false, true })
-        {
-            hit.What = Vi::Kind(kind);
-            hit.Distance = 10.0f;
-            std::array<float, Vi::CHANNELS> const out = RoundTrip(hit, 0.0f, objective, bytes);
-            EXPECT_EQ(bytes[3], uint8_t(kind | (objective ? 0x10u : 0u)));
-            EXPECT_EQ(bytes[3] & 0xE0, 0);
-            EXPECT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(kind));
-            EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], objective ? 1.0f : 0.0f);
-        }
+            for (uint32_t slot = 0; slot <= Vi::ENTITY_SLOTS; ++slot)
+            {
+                hit.What = Vi::Class(value);
+                hit.Distance = 10.0f;
+                std::array<float, Vi::DECODED_VALUES> const out = RoundTrip(hit, 0.0f, objective, bytes,
+                    uint8_t(slot));
+                EXPECT_EQ(bytes[3], uint8_t(value | (objective ? 0x20u : 0u)));
+                EXPECT_EQ(bytes[3] & Vi::RESERVED_BITS, 0);
+                EXPECT_EQ(Vi::ClassOfByte(bytes[3]), Vi::Class(value));
+                EXPECT_EQ(bytes[4], slot);
+                EXPECT_FLOAT_EQ(out[Vi::CHANNEL_CLASS], float(value));
+                EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], objective ? 1.0f : 0.0f);
+                EXPECT_FLOAT_EQ(out[Vi::CHANNEL_SLOT], float(slot));
+            }
+
+    // The coarse kinds of revision 4 follow from the class: its first six unchanged, units hostile or other, the
+    // rest game objects (the old "door").
+    for (uint32_t value = 0; value <= uint32_t(Vi::Class::Deadly); ++value)
+        EXPECT_EQ(uint32_t(Vi::KindOf(Vi::Class(value))), value);
+    EXPECT_EQ(Vi::KindOf(Vi::Class::HostileCreature), Vi::Kind::Hostile);
+    EXPECT_EQ(Vi::KindOf(Vi::Class::HostilePlayer), Vi::Kind::Hostile);
+    for (Vi::Class value : { Vi::Class::NeutralCreature, Vi::Class::FriendlyCreature, Vi::Class::FriendlyPlayer,
+             Vi::Class::QuestGiver, Vi::Class::Vendor, Vi::Class::Trainer, Vi::Class::LootableCorpse,
+             Vi::Class::Corpse })
+        EXPECT_EQ(Vi::KindOf(value), Vi::Kind::Other) << Vi::CLASS_NAMES[uint32_t(value)];
+    for (Vi::Class value : { Vi::Class::Chest, Vi::Class::Herb, Vi::Class::Ore, Vi::Class::Mailbox,
+             Vi::Class::QuestObject, Vi::Class::UsableObject, Vi::Class::OtherObject })
+        EXPECT_EQ(Vi::KindOf(value), Vi::Kind::Door) << Vi::CLASS_NAMES[uint32_t(value)];
 
     // Sky: distance 255 (1.0), height 128 (0), whatever the ray's end.
     hit = Vi::Hit();
     hit.Distance = 300.0f;
     hit.Z = 80.0f;
-    std::array<float, Vi::CHANNELS> const sky = RoundTrip(hit, 0.0f, false, bytes);
+    std::array<float, Vi::DECODED_VALUES> const sky = RoundTrip(hit, 0.0f, false, bytes);
     EXPECT_EQ(bytes[0], 255);
     EXPECT_EQ(bytes[1], 128);
     EXPECT_EQ(bytes[2], 0);
     EXPECT_EQ(bytes[3], 0);
+    EXPECT_EQ(bytes[4], 0);
     EXPECT_FLOAT_EQ(sky[Vi::CHANNEL_DISTANCE], 1.0f);
     EXPECT_FLOAT_EQ(sky[Vi::CHANNEL_HEIGHT], 0.0f);
 
     // Every byte value decodes in range, as the learner's table does.
     for (uint32_t value = 0; value < 256; ++value)
     {
-        uint8_t const in[4] = { uint8_t(value), uint8_t(value), uint8_t(value), uint8_t(value) };
-        float out[Vi::CHANNELS];
+        uint8_t const in[5] = { uint8_t(value), uint8_t(value), uint8_t(value), uint8_t(value), uint8_t(value) };
+        float out[Vi::DECODED_VALUES];
         Vi::DecodePixel(in, out);
         EXPECT_FLOAT_EQ(out[Vi::CHANNEL_DISTANCE], value == 255 ? 1.0f : float(value) / 254.0f);
         EXPECT_FLOAT_EQ(out[Vi::CHANNEL_HEIGHT], (float(value) - 128.0f) / 125.0f);
         EXPECT_FLOAT_EQ(out[Vi::CHANNEL_NORMAL], float(value) / 255.0f);
-        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(value & 15));
-        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], float((value >> 4) & 1));
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_CLASS], float(value & 31));
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], float((value >> 5) & 1));
+        EXPECT_FLOAT_EQ(out[Vi::CHANNEL_SLOT], float(value));
     }
 }
 
@@ -807,12 +833,13 @@ TEST(VisionTest, NoFrameRowIsSky)
         ASSERT_EQ(row[at + 1], 128);
         ASSERT_EQ(row[at + 2], 0);
         ASSERT_EQ(row[at + 3], 0);
-        float out[Vi::CHANNELS];
+        ASSERT_EQ(row[at + 4], 0);
+        float out[Vi::DECODED_VALUES];
         Vi::DecodePixel(&row[at], out);
         ASSERT_FLOAT_EQ(out[Vi::CHANNEL_DISTANCE], 1.0f);
         ASSERT_FLOAT_EQ(out[Vi::CHANNEL_HEIGHT], 0.0f);
         ASSERT_FLOAT_EQ(out[Vi::CHANNEL_NORMAL], 0.0f);
-        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_KIND], float(Vi::Kind::Sky));
+        ASSERT_FLOAT_EQ(out[Vi::CHANNEL_CLASS], float(Vi::Class::Sky));
         ASSERT_FLOAT_EQ(out[Vi::CHANNEL_OBJECTIVE], 0.0f);
     }
 }
@@ -842,8 +869,8 @@ TEST(VisionTest, FrameLayoutAndScalars)
     {
         return frame.At(row * settings.Width + col, channel);
     };
-    EXPECT_FLOAT_EQ(at(0, 32, Vi::CHANNEL_KIND), float(Vi::Kind::Sky));
-    EXPECT_FLOAT_EQ(at(31, 32, Vi::CHANNEL_KIND), float(Vi::Kind::Terrain));
+    EXPECT_FLOAT_EQ(at(0, 32, Vi::CHANNEL_CLASS), float(Vi::Class::Sky));
+    EXPECT_FLOAT_EQ(at(31, 32, Vi::CHANNEL_CLASS), float(Vi::Class::Terrain));
     EXPECT_LT(at(31, 32, Vi::CHANNEL_DISTANCE), at(20, 32, Vi::CHANNEL_DISTANCE));
     EXPECT_NEAR(at(31, 32, Vi::CHANNEL_HEIGHT), 0.0f, 1e-3f);
 
@@ -914,16 +941,16 @@ TEST(VisionTest, RaycastsAgainstTheOldMarch)
                     Vi::Vec3 const dir = Vi::PixelDirection(rig, settings, row, col);
                     Vi::Hit const now = Vi::CastRay(camera, dir, world, {});
                     Vi::Hit const old = OldMarch(camera, dir, 100.0f, world, false);
-                    bool const nowSky = now.What == Vi::Kind::Sky;
+                    bool const nowSky = now.What == Vi::Class::Sky;
                     if (now.What == old.What && (nowSky || std::fabs(now.Distance - old.Distance) <= 0.1f))
                     {
                         ++agree;
                         if (!nowSky)
                             worst = std::max(worst, std::fabs(now.Distance - old.Distance));
                     }
-                    else if (old.What == Vi::Kind::Sky && now.Distance > 100.0f)
+                    else if (old.What == Vi::Class::Sky && now.Distance > 100.0f)
                         ++pastRange;
-                    else if ((old.What == Vi::Kind::Water || old.What == Vi::Kind::Deadly) && [&]
+                    else if ((old.What == Vi::Class::Water || old.What == Vi::Class::Deadly) && [&]
                         {
                             // Where the march put the surface, the cell has no liquid: its step after landed under
                             // the level in a cell that has.
@@ -931,8 +958,8 @@ TEST(VisionTest, RaycastsAgainstTheOldMarch)
                             return !world.LiquidAt(at.X, at.Y, at.Z).Present;
                         }())
                         ++sideEntry;
-                    else if ((now.What == Vi::Kind::Water || now.What == Vi::Kind::Deadly)
-                        && old.What == Vi::Kind::Terrain && now.Distance <= old.Distance)
+                    else if ((now.What == Vi::Class::Water || now.What == Vi::Class::Deadly)
+                        && old.What == Vi::Class::Terrain && now.Distance <= old.Distance)
                         ++shore;    // the surface just before the shore: the march's step landed past it, on land
                     else if (now.Distance < old.Distance - 0.1f)
                         ++steppedOver;      // the cast found a crossing nearer than any the march's steps sampled
@@ -1041,7 +1068,7 @@ TEST(VisionTest, TimingHarness)
     std::vector<Vi::UnitShape> crowd;
     for (int i = 0; i < 20; ++i)
         crowd.push_back(Vi::UnitShape{ X0 + 10.0f + 4.0f * float(i), Y0 + float(i % 5) - 2.0f, -1.0f, 0.4f, 2.0f,
-            i % 2 == 0, false });
+            i % 2 == 0 ? Vi::Class::HostileCreature : Vi::Class::NeutralCreature, false });
 
     struct Scene { char const* Name; FakeVision const* World; float FeetZ; };
     for (Scene const& scene : { Scene{ "hallway", &hallway, -1.0f }, Scene{ "field", &field, 4.0f } })

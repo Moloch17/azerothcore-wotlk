@@ -59,7 +59,8 @@ namespace
         return state;
     }
 
-    /// A frame of distinct pixels: pixel (r, c) is { r, c, r + c, kind (r + c) % 8 | objective when c is odd }.
+    /// A frame of distinct pixels: pixel (r, c) is { r, c, r + c, class (r + c) % 23 | objective when c is odd,
+    /// slot (r * c) % 33 }.
     std::vector<uint8_t> Pattern(uint32_t w, uint32_t h)
     {
         std::vector<uint8_t> frame(std::size_t(w) * h * Vi::BYTES_PER_PIXEL);
@@ -70,7 +71,8 @@ namespace
                 p[0] = uint8_t(r);
                 p[1] = uint8_t(c);
                 p[2] = uint8_t(r + c);
-                p[3] = uint8_t(((r + c) % 8) | (c % 2 ? Vi::OBJECTIVE_BIT : 0));
+                p[3] = uint8_t(((r + c) % Vi::CLASSES) | (c % 2 ? Vi::OBJECTIVE_BIT : 0));
+                p[4] = uint8_t((r * c) % (Vi::ENTITY_SLOTS + 1));
             }
         return frame;
     }

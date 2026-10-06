@@ -32,9 +32,14 @@ namespace
     namespace Vi = Animus::Vision;
     using Clock = std::chrono::steady_clock;
 
-    uint32_t KindOf(uint8_t const* pixel)
+    uint32_t ClassOf(uint8_t const* pixel)
     {
-        return pixel[3] & Vi::KIND_MASK;
+        return pixel[Vi::CLASS_BYTE] & Vi::CLASS_MASK;
+    }
+
+    char const* ClassName(uint32_t value)
+    {
+        return value < Vi::CLASSES ? Vi::CLASS_NAMES[value] : "?";
     }
 
     /// The cast frame (w x h) a canonical image was scaled up from: cast pixel (sr, sc) is at the first canonical
@@ -65,20 +70,19 @@ namespace
             tally.Identical, tally.Pixels, Percent(tally.Identical, tally.Pixels),
             Percent(tally.ExactBytes, tally.Pixels), Percent(tally.Identical, tally.NonEdge()),
             Percent(tally.EdgeMismatches, tally.Pixels)));
-        lines.push_back(Acore::StringFormat("    mismatches by cause: kind {}, objective {}, distance {}, height {}, "
-            "normal {}", tally.Kind, tally.Objective, tally.Distance, tally.Height, tally.Normal));
-        if (!tally.KindPairs.empty())
+        lines.push_back(Acore::StringFormat("    mismatches by cause: class {}, objective {}, distance {}, height {}, "
+            "normal {}", tally.Class, tally.Objective, tally.Distance, tally.Height, tally.Normal));
+        if (!tally.ClassPairs.empty())
         {
             std::vector<std::pair<uint64_t, std::pair<uint32_t, uint32_t>>> pairs;
-            for (auto const& [pair, count] : tally.KindPairs)
+            for (auto const& [pair, count] : tally.ClassPairs)
                 pairs.push_back({ count, pair });
             std::sort(pairs.rbegin(), pairs.rend());
             std::string text;
             for (std::size_t i = 0; i < pairs.size() && i < 8; ++i)
-                text += Acore::StringFormat("{}{}->{} {}", text.empty() ? "" : ", ",
-                    Vi::KIND_NAMES[std::min<uint32_t>(pairs[i].second.first, Vi::KINDS - 1)],
-                    Vi::KIND_NAMES[std::min<uint32_t>(pairs[i].second.second, Vi::KINDS - 1)], pairs[i].first);
-            lines.push_back("    kind mismatches (CPU->other): " + text);
+                text += Acore::StringFormat("{}{}->{} {}", text.empty() ? "" : ", ", ClassName(pairs[i].second.first),
+                    ClassName(pairs[i].second.second), pairs[i].first);
+            lines.push_back("    class mismatches (CPU->other): " + text);
         }
         std::string sizes;
         for (auto const& [size, counts] : tally.BySize)
@@ -86,12 +90,12 @@ namespace
                 Percent(counts.second, counts.first));
         lines.push_back(Acore::StringFormat("    by render size: {}; upscale bit-exact in {} of {} frames", sizes,
             tally.UpscaleExact, tally.Frames));
-        std::string kinds;
-        for (uint32_t kind = 0; kind < Vi::KINDS; ++kind)
-            if (tally.CpuKinds[kind])
-                kinds += Acore::StringFormat("{}{} {}", kinds.empty() ? "" : ", ", Vi::KIND_NAMES[kind],
-                    Percent(tally.CpuKinds[kind], tally.Pixels));
-        lines.push_back("    the CPU's pixels by kind: " + kinds);
+        std::string classes;
+        for (uint32_t value = 0; value < Vi::CLASSES; ++value)
+            if (tally.CpuClasses[value])
+                classes += Acore::StringFormat("{}{} {}", classes.empty() ? "" : ", ", Vi::CLASS_NAMES[value],
+                    Percent(tally.CpuClasses[value], tally.Pixels));
+        lines.push_back("    the CPU's pixels by class: " + classes);
         for (std::string const& sample : tally.Samples)
             lines.push_back("    mismatch: " + sample);
     }
@@ -145,7 +149,7 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
             unit.Z = frame.Pose.Z + frand(-1.0f, 1.0f);
             unit.Radius = frand(0.3f, 1.5f);
             unit.Height = frand(1.0f, 3.0f);
-            unit.Hostile = urand(0, 1) == 1;
+            unit.What = urand(0, 1) == 1 ? Vi::Class::HostileCreature : Vi::Class::NeutralCreature;
             frame.Units.push_back(unit);
         }
         frame.HasObjective = urand(0, 9) < 7;
@@ -174,11 +178,11 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
             ++bySize.first;
             if (!std::memcmp(a, b, Vi::BYTES_PER_PIXEL))
                 ++tally.ExactBytes;
-            uint32_t const kindA = KindOf(a);
-            uint32_t const kindB = KindOf(b);
-            ++tally.CpuKinds[std::min<uint32_t>(kindA, Vi::KINDS - 1)];
+            uint32_t const kindA = ClassOf(a);
+            uint32_t const kindB = ClassOf(b);
+            ++tally.CpuClasses[std::min<uint32_t>(kindA, Vi::CLASSES - 1)];
             bool const kind = kindA != kindB;
-            bool const objective = (a[3] & Vi::OBJECTIVE_BIT) != (b[3] & Vi::OBJECTIVE_BIT);
+            bool const objective = (a[Vi::CLASS_BYTE] & Vi::OBJECTIVE_BIT) != (b[Vi::CLASS_BYTE] & Vi::OBJECTIVE_BIT);
             bool const distance = std::abs(int32_t(a[0]) - int32_t(b[0])) > 1;
             bool const height = std::abs(int32_t(a[1]) - int32_t(b[1])) > 1;
             bool const normal = std::abs(int32_t(a[2]) - int32_t(b[2])) > 2;
@@ -189,15 +193,16 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
                 continue;
             }
             if (tally.Samples.size() < 6)
-                tally.Samples.push_back(Acore::StringFormat("frame {} ({}, {}) {}x{}: CPU {} {} {} {:#x}, other {} {} "
-                    "{} {:#x}", tally.Frame, row, col, w, h, a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]));
-            tally.Kind += kind;
+                tally.Samples.push_back(Acore::StringFormat("frame {} ({}, {}) {}x{}: CPU {} {} {} {:#x} {}, other {} "
+                    "{} {} {:#x} {}", tally.Frame, row, col, w, h, a[0], a[1], a[2], a[3], a[4], b[0], b[1], b[2], b[3],
+                    b[4]));
+            tally.Class += kind;
             tally.Objective += objective;
             tally.Distance += distance;
             tally.Height += height;
             tally.Normal += normal;
             if (kind)
-                ++tally.KindPairs[{ kindA, kindB }];
+                ++tally.ClassPairs[{ kindA, kindB }];
 
             bool edge = false;
             for (int32_t dr = -1; dr <= 1 && !edge; ++dr)
@@ -208,8 +213,8 @@ void Animus::GpuVision::CompareFrame(uint8_t const* cpu, uint8_t const* other, u
                     if ((!dr && !dc) || r < 0 || c < 0 || r >= int32_t(h) || c >= int32_t(w))
                         continue;
                     std::size_t const near = (std::size_t(r) * w + std::size_t(c)) * Vi::BYTES_PER_PIXEL;
-                    uint32_t const nearA = KindOf(cpu + near);
-                    uint32_t const nearB = KindOf(other + near);
+                    uint32_t const nearA = ClassOf(cpu + near);
+                    uint32_t const nearB = ClassOf(other + near);
                     edge = kind ? (nearA == kindB || nearB == kindA) : nearA != kindA;
                 }
             tally.EdgeMismatches += edge;

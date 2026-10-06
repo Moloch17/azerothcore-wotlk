@@ -48,6 +48,7 @@
 #include "StringFormat.h"
 #include "World.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <boost/json/object.hpp>
 #include <boost/json/array.hpp>
@@ -1441,9 +1442,10 @@ void AnimusForge::Forge::MaybeAuditCamera()
     {
         csv << "time,scenario_seconds,decision,env,agent,layout,class,race,level,map,instance,x,y,z,orientation,"
                "episode_seconds,render";
-        for (char const* name : Vi::KIND_NAMES)
+        // Pixels of each class (perception-goals 1a), and the entities the frame lists (its distinct slots).
+        for (char const* name : Vi::CLASS_NAMES)
             csv << ',' << name;
-        csv << ",file\n";
+        csv << ",entities,file\n";
     }
 
     std::time_t const wall = std::time(nullptr);
@@ -1497,8 +1499,12 @@ void AnimusForge::Forge::MaybeAuditCamera()
         csv << ',';
         if (renderWidth && renderHeight)
             csv << renderWidth << 'x' << renderHeight;
-        for (uint32 kind : Vi::KindCounts(settings, image))
-            csv << ',' << kind;
+        for (uint32 count : Vi::ClassCounts(settings, image))
+            csv << ',' << count;
+        std::array<bool, 256> listed{};
+        for (uint32 pixel = 0; pixel < settings.Width * settings.Height; ++pixel)
+            listed[image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL + Vi::SLOT_BYTE]] = true;
+        csv << ',' << std::count(listed.begin() + 1, listed.end(), true);
         csv << ',' << file << '\n';
         _vision.LastAudit = file;
     }

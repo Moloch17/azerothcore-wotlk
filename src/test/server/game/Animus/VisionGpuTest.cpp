@@ -450,7 +450,7 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     std::vector<Vi::UnitShape> units(3);
     units[0].Self = true;
     units[1].X = 5.0f;
-    units[1].Hostile = true;
+    units[1].What = Vi::Class::HostileCreature;
     units[2].Radius = 0.7f;
     Vi::Vec3 const objective{ 1.0f, 2.0f, 3.0f };
 
@@ -478,7 +478,7 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     EXPECT_EQ(drawn.UnitCount, 2u);
     ASSERT_EQ(packed.size(), 4u);
     EXPECT_EQ(packed[2].X, 5.0f);
-    EXPECT_EQ(packed[2].Hostile, 1u);
+    EXPECT_EQ(packed[2].Class, uint32_t(Vi::Class::HostileCreature));
     EXPECT_EQ(packed[3].Radius, 0.7f);
 
     // No size, or one past the canonical, casts at (or clamped to) the canonical size, as Render does.
@@ -499,12 +499,12 @@ TEST(VisionGpuTest, RequestsCarryTheSeatsFrame)
     std::size_t castBytes = 0;
     Gv::LayOut(requests, imageBytes, castBytes);
     EXPECT_EQ(requests[0].ImageOffset, 0u);
-    EXPECT_EQ(requests[1].ImageOffset, 128u * 64 * 4);
-    EXPECT_EQ(requests[2].ImageOffset, 2u * 128 * 64 * 4);
-    EXPECT_EQ(requests[1].ScratchOffset, 48u * 24 * 4);
-    EXPECT_EQ(requests[2].ScratchOffset, 48u * 24 * 4 + 128 * 64 * 4);
-    EXPECT_EQ(imageBytes, 3u * 128 * 64 * 4);
-    EXPECT_EQ(castBytes, std::size_t(48 * 24 + 128 * 64 + 128 * 32) * 4);
+    EXPECT_EQ(requests[1].ImageOffset, 128u * 64 * Vi::BYTES_PER_PIXEL);
+    EXPECT_EQ(requests[2].ImageOffset, 2u * 128 * 64 * Vi::BYTES_PER_PIXEL);
+    EXPECT_EQ(requests[1].ScratchOffset, 48u * 24 * Vi::BYTES_PER_PIXEL);
+    EXPECT_EQ(requests[2].ScratchOffset, 48u * 24 * Vi::BYTES_PER_PIXEL + 128 * 64 * Vi::BYTES_PER_PIXEL);
+    EXPECT_EQ(imageBytes, 3u * 128 * 64 * Vi::BYTES_PER_PIXEL);
+    EXPECT_EQ(castBytes, std::size_t(48 * 24 + 128 * 64 + 128 * 32) * Vi::BYTES_PER_PIXEL);
 }
 
 TEST(VisionGpuTest, EmulatedFramesMatchRender)

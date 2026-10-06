@@ -180,7 +180,7 @@ namespace
             bool const isDoor = doorHit && (!modelHit || door.Distance < model.Distance);
             SurfaceHit const& hit = isDoor ? door : model;
             best.Distance = hit.Distance;
-            best.What = isDoor ? Kind::Door : Kind::Model;
+            best.What = isDoor ? Class::Door : Class::Model;
             best.Z = (origin + dir * best.Distance).Z;
             // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
             // (the encoding clamps it to 0, a wall's).
@@ -197,7 +197,7 @@ namespace
             if (liquid.Distance >= 0.0f && liquid.Distance < best.Distance)
             {
                 best.Distance = liquid.Distance;
-                best.What = liquid.Deadly ? Kind::Deadly : Kind::Water;
+                best.What = liquid.Deadly ? Class::Deadly : Class::Water;
                 best.Z = origin.Z + dir.Z * liquid.Distance;
                 best.NormalZ = 1.0f;
             }
@@ -206,7 +206,7 @@ namespace
 
         // 3. The terrain and its liquids, up to the nearest hit so far.
         Hit const terrain = CastTerrain(origin, dir, best.Distance, world, liquids, breakdown);
-        if (terrain.What != Kind::Sky && terrain.Distance < best.Distance)
+        if (terrain.What != Class::Sky && terrain.Distance < best.Distance)
             best = terrain;
         Charge(breakdown, &Breakdown::TerrainNs, mark);
 
@@ -222,7 +222,7 @@ namespace
             if (distance >= 0.0f && distance < best.Distance)
             {
                 best.Distance = distance;
-                best.What = unit.Hostile ? Kind::Hostile : Kind::Other;
+                best.What = unit.What;
                 best.Z = origin.Z + dir.Z * distance;
                 best.NormalZ = top ? 1.0f : 0.0f;
             }
@@ -387,7 +387,7 @@ Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float lim
                             if (t >= 0.0f && t <= limit && (nearest < 0.0f || t < nearest))
                             {
                                 nearest = t;
-                                best.What = Kind::Terrain;
+                                best.What = Class::Terrain;
                                 best.NormalZ = normalZ;
                             }
                         }
@@ -405,7 +405,7 @@ Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float lim
                             if (!cell.Solid || CellHeight(cell, fu, fv) <= cell.Level)
                             {
                                 nearest = t;
-                                best.What = cell.Deadly ? Kind::Deadly : Kind::Water;
+                                best.What = cell.Deadly ? Class::Deadly : Class::Water;
                                 best.NormalZ = 1.0f;
                             }
                         }
@@ -421,7 +421,7 @@ Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float lim
         });
 
     if (!found)
-        best = Hit{ limit, Kind::Sky, origin.Z + dir.Z * limit, 0.0f };
+        best = Hit{ limit, Class::Sky, origin.Z + dir.Z * limit, 0.0f };
     return best;
 }
 
@@ -440,7 +440,7 @@ Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState co
         // One cast from the pivot back along the view, against the trees and the terrain: the camera pulls in to
         // BOOM_BACKOFF short of what it meets, never nearer than BOOM_MIN (or the zoom, when that is nearer still).
         Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, {}, false, breakdown);
-        if (back.What != Kind::Sky)
+        if (back.What != Class::Sky)
             rig.Boom = std::min(zoom, std::max(std::min(BOOM_MIN, zoom), back.Distance - BOOM_BACKOFF));
     }
     rig.Camera = rig.Pivot - forward * rig.Boom;
@@ -530,16 +530,17 @@ float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 
     return Length(toward - dir * along) <= OBJECTIVE_RADIUS ? 1.0f : 0.0f;
 }
 
-void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
+void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out)
 {
-    bool const sky = hit.What == Kind::Sky;
+    bool const sky = hit.What == Class::Sky;
     float const distance = std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
         / std::log(DISTANCE_REFERENCE / NEAR), 0.0f, 1.0f);
     out[0] = sky ? SKY_BYTE : uint8_t(std::lround(DISTANCE_LEVELS * distance));
     int32_t const steps = std::clamp(int32_t(std::lround((hit.Z - feetZ) / HEIGHT_STEP)), -HEIGHT_LIMIT, HEIGHT_LIMIT);
     out[1] = sky ? HEIGHT_ZERO : uint8_t(int32_t(HEIGHT_ZERO) + steps);
     out[2] = uint8_t(std::lround(255.0f * std::clamp(hit.NormalZ, 0.0f, 1.0f)));
-    out[3] = uint8_t((uint8_t(hit.What) & KIND_MASK) | (objective ? OBJECTIVE_BIT : 0));
+    out[CLASS_BYTE] = uint8_t((uint8_t(hit.What) & CLASS_MASK) | (objective ? OBJECTIVE_BIT : 0));
+    out[SLOT_BYTE] = slot;
 }
 
 void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
@@ -547,8 +548,9 @@ void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
     out[CHANNEL_DISTANCE] = in[0] == SKY_BYTE ? 1.0f : float(in[0]) / DISTANCE_LEVELS;
     out[CHANNEL_HEIGHT] = float(int32_t(in[1]) - int32_t(HEIGHT_ZERO)) / float(HEIGHT_LIMIT);
     out[CHANNEL_NORMAL] = float(in[2]) / 255.0f;
-    out[CHANNEL_KIND] = float(in[3] & KIND_MASK);
-    out[CHANNEL_OBJECTIVE] = float((in[3] >> 4) & 1);
+    out[CHANNEL_CLASS] = float(in[CLASS_BYTE] & CLASS_MASK);
+    out[CHANNEL_OBJECTIVE] = (in[CLASS_BYTE] & OBJECTIVE_BIT) ? 1.0f : 0.0f;
+    out[CHANNEL_SLOT] = float(in[SLOT_BYTE]);
 }
 
 uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
@@ -588,7 +590,7 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
             Hit const hit = CastRay(rig.Camera, dir, world, units, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective) > 0.5f;
-            EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
+            EncodePixel(hit, pose.Z, flag, 0, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
         }
     if (image && scaled)
         Upscale(target, cast.Width, cast.Height, image, settings.Width, settings.Height);

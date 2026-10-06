@@ -139,7 +139,7 @@ void Animus::Vision::GatherUnits(Player* seat, Vec3 camera, float range, std::ve
         entry.Z = unit->GetPositionZ();
         entry.Radius = shape.Radius;
         entry.Height = shape.Height;
-        entry.Hostile = !self && seat->IsHostileTo(unit);
+        entry.What = !self && seat->IsHostileTo(unit) ? Class::HostileCreature : Class::NeutralCreature;
         entry.Self = self;
         out.push_back(entry);
     };

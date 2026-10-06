@@ -29,7 +29,8 @@
  *                            (no terminator). ObsDim and NumActions are the largest layout's. SpecMsg ends with
  *                            u32 KinematicsDim, the floats per agent of each STEP's kinematics (protocol 20), and
  *                            u32 ImageBytes, the bytes per agent of each STEP's camera images, I below: the vision
- *                            block's height x width x 4, 0 for a stage without one (protocol 21); then u32
+ *                            block's height x width x 5 (protocol 23; x 4 at 21 and 22), 0 for a stage without one
+ *                            (protocol 21); then u32
  *                            LookHeads, the look head's categoricals per agent in ACT (Vision::FreeLook::HEADS, 3)
  *                            with a vision block, 0 without one (protocol 22).
  *   server -> client  STEP   { u64 decision } then, in order, with E envs, A agents per env,
@@ -156,7 +157,10 @@ namespace AnimusForge
     // 22: free look (camera-vision.FREELOOK.md): SPEC ends with LookHeads, and a stage with a vision block (revision 4)
     // ends each ACT with every agent's look head choice. A stage without one has protocol 21's ACT; every SPEC is
     // four bytes longer.
-    constexpr uint32 PROTOCOL_VERSION = 22;
+    // 23: identity (perception-goals P2): a camera pixel is five bytes, the class and the entity slot (vision block
+    // revision 5), so ImageBytes is height x width x 5; the entity list is a block of float columns. The messages'
+    // layout is protocol 22's; a stage without a vision block is byte-identical to it but for the version.
+    constexpr uint32 PROTOCOL_VERSION = 23;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;

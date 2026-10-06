@@ -75,21 +75,21 @@ TEST(VisionFrameImageTest, FourPanelsAsTheLearnerDecodesThem)
     // a wall.
     Vi::Hit ground;
     ground.Distance = 10.0f;
-    ground.What = Vi::Kind::Terrain;
+    ground.What = Vi::Class::Terrain;
     ground.Z = -2.0f;
     ground.NormalZ = 1.0f;
-    Vi::EncodePixel(ground, 0.0f, false, &image[(1 * 8 + 2) * Vi::BYTES_PER_PIXEL]);
+    Vi::EncodePixel(ground, 0.0f, false, 0, &image[(1 * 8 + 2) * Vi::BYTES_PER_PIXEL]);
     Vi::Hit wall;
     wall.Distance = 5.0f;
-    wall.What = Vi::Kind::Model;
+    wall.What = Vi::Class::Model;
     wall.Z = 1.0f;
     wall.NormalZ = 0.0f;
-    Vi::EncodePixel(wall, 0.0f, true, &image[(2 * 8 + 5) * Vi::BYTES_PER_PIXEL]);
+    Vi::EncodePixel(wall, 0.0f, true, 0, &image[(2 * 8 + 5) * Vi::BYTES_PER_PIXEL]);
 
-    std::array<uint32_t, Vi::KINDS> const kinds = Vi::KindCounts(settings, image.data());
-    EXPECT_EQ(kinds[uint32_t(Vi::Kind::Sky)], 30u);
-    EXPECT_EQ(kinds[uint32_t(Vi::Kind::Terrain)], 1u);
-    EXPECT_EQ(kinds[uint32_t(Vi::Kind::Model)], 1u);
+    std::array<uint32_t, Vi::CLASSES> const kinds = Vi::ClassCounts(settings, image.data());
+    EXPECT_EQ(kinds[uint32_t(Vi::Class::Sky)], 30u);
+    EXPECT_EQ(kinds[uint32_t(Vi::Class::Terrain)], 1u);
+    EXPECT_EQ(kinds[uint32_t(Vi::Class::Model)], 1u);
 
     uint32_t const scale = 3;
     std::string const png = Vi::FramePng(settings, image.data(), scale);
@@ -112,14 +112,14 @@ TEST(VisionFrameImageTest, FourPanelsAsTheLearnerDecodesThem)
 
     // Sky: white depth, the sky colour, mid-grey height, black slope.
     EXPECT_EQ(at(0, 0, 0)[0], 255);
-    EXPECT_EQ(at(1, 0, 0)[0], Vi::KIND_COLOURS[0][0]);
-    EXPECT_EQ(at(1, 0, 0)[2], Vi::KIND_COLOURS[0][2]);
+    EXPECT_EQ(at(1, 0, 0)[0], Vi::CLASS_COLOURS[0][0]);
+    EXPECT_EQ(at(1, 0, 0)[2], Vi::CLASS_COLOURS[0][2]);
     EXPECT_NEAR(at(2, 0, 0)[0], 128, 1);
     EXPECT_EQ(at(3, 0, 0)[0], 0);
 
     // The ground: nearer than sky, terrain green, darker than the feet, level.
     EXPECT_LT(at(0, 1, 2)[0], 255);
-    EXPECT_EQ(at(1, 1, 2)[1], Vi::KIND_COLOURS[uint32_t(Vi::Kind::Terrain)][1]);
+    EXPECT_EQ(at(1, 1, 2)[1], Vi::CLASS_COLOURS[uint32_t(Vi::Class::Terrain)][1]);
     EXPECT_LT(at(2, 1, 2)[0], 128);
     EXPECT_EQ(at(3, 1, 2)[0], 255);
 
@@ -144,7 +144,7 @@ TEST(VisionFrameImageTest, CompositeIsEveryLayerInOnePicture)
     settings.Height = 6;
     std::vector<uint8_t> image(Vi::ImageBytes(settings));
     Vi::FillNoFrame(image.data(), uint32_t(image.size()));
-    auto const put = [&](uint32_t row, uint32_t col, Vi::Kind kind, float distance, float z, float normal,
+    auto const put = [&](uint32_t row, uint32_t col, Vi::Class kind, float distance, float z, float normal,
         bool objective)
     {
         Vi::Hit hit;
@@ -152,23 +152,23 @@ TEST(VisionFrameImageTest, CompositeIsEveryLayerInOnePicture)
         hit.What = kind;
         hit.Z = z;
         hit.NormalZ = normal;
-        Vi::EncodePixel(hit, 0.0f, objective, &image[(std::size_t(row) * 8 + col) * Vi::BYTES_PER_PIXEL]);
+        Vi::EncodePixel(hit, 0.0f, objective, 0, &image[(std::size_t(row) * 8 + col) * Vi::BYTES_PER_PIXEL]);
     };
     // A floor block and a wall block, both models 5 yd off, at a height on the sky's level (no contour round them).
     for (uint32_t row : { 1u, 2u })
         for (uint32_t col : { 1u, 2u })
         {
-            put(row, col, Vi::Kind::Model, 5.0f, 0.3f, 1.0f, false);
-            put(row, col + 3, Vi::Kind::Model, 5.0f, 0.3f, 0.0f, false);
+            put(row, col, Vi::Class::Model, 5.0f, 0.3f, 1.0f, false);
+            put(row, col + 3, Vi::Class::Model, 5.0f, 0.3f, 0.0f, false);
         }
     // Terrain: column 1 at 0.6 yd, columns 2 to 7 at 1.2 -- a level (1 yd) between columns 1 and 2.
     for (uint32_t row : { 4u, 5u })
     {
-        put(row, 1, Vi::Kind::Terrain, 8.0f, 0.6f, 1.0f, false);
+        put(row, 1, Vi::Class::Terrain, 8.0f, 0.6f, 1.0f, false);
         for (uint32_t col = 2; col < 8; ++col)
-            put(row, col, Vi::Kind::Terrain, 8.0f, 1.2f, 1.0f, false);
+            put(row, col, Vi::Class::Terrain, 8.0f, 1.2f, 1.0f, false);
     }
-    put(0, 6, Vi::Kind::Model, 5.0f, 0.3f, 1.0f, true);
+    put(0, 6, Vi::Class::Model, 5.0f, 0.3f, 1.0f, true);
 
     uint32_t const scale = 2;
     std::string const png = Vi::CompositePng(settings, image.data(), scale);

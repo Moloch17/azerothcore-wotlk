@@ -104,7 +104,7 @@ Animus::GpuVision::FrameRequest Animus::GpuVision::MakeRequest(Vision::Settings 
     request.UnitOffset = uint32_t(unitsOut.size());
     for (Vision::UnitShape const& unit : units)
         if (!unit.Self)
-            unitsOut.push_back({ unit.X, unit.Y, unit.Z, unit.Radius, unit.Height, unit.Hostile ? 1u : 0u });
+            unitsOut.push_back({ unit.X, unit.Y, unit.Z, unit.Radius, unit.Height, uint32_t(unit.What) });
     request.UnitCount = uint32_t(unitsOut.size()) - request.UnitOffset;
     return request;
 }

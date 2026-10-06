@@ -459,7 +459,7 @@ namespace
         /// `forge camera snapshot <map> <x> <y> <z> <yaw> [pitch] [zoom] [file]`: one frame of the vision block's
         /// camera (camera-vision), from feet at (x, y, z) facing `yaw` degrees, the camera at `pitch` degrees (+ up)
         /// and `zoom` yards (the AnimusForge.Vision.* ones by default), with a default body, no units and no
-        /// objective. Writes <file>-depth.pgm (the distance channel, near dark), <file>-kind.ppm (a colour a kind,
+        /// objective. Writes <file>-depth.pgm (the distance channel, near dark), <file>-kind.ppm (a colour a class,
         /// the objective white) and <file>-height.pgm (the height channel, mid-grey at the feet), and prints the rays
         /// cast and the wall time, split into the tree casts, the WMO liquids, the terrain cells and the units. On
         /// the base map, with the grid holding the feet and its eight neighbours created (terrain, collision and
@@ -512,24 +512,24 @@ namespace
             uint32 const height = settings.Height;
             uint32 const pixels = width * height;
             // Decoded as the learner decodes the bytes.
-            std::vector<float> decoded(std::size_t(pixels) * Vi::CHANNELS);
+            std::vector<float> decoded(std::size_t(pixels) * Vi::DECODED_VALUES);
             for (uint32 pixel = 0; pixel < pixels; ++pixel)
                 Vi::DecodePixel(&image[std::size_t(pixel) * Vi::BYTES_PER_PIXEL], &decoded[std::size_t(pixel)
-                    * Vi::CHANNELS]);
-            auto const channel = [&](uint32 pixel, uint32 index) { return decoded[std::size_t(pixel) * Vi::CHANNELS
-                + index]; };
+                    * Vi::DECODED_VALUES]);
+            auto const channel = [&](uint32 pixel, uint32 index) { return decoded[std::size_t(pixel)
+                * Vi::DECODED_VALUES + index]; };
             auto const byte = [](float value) { return char(uint8(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)); };
-            std::array<uint32, Vi::KINDS> kinds{};
+            std::array<uint32, Vi::CLASSES> classes{};
             std::string depth, kind, rise;
             for (uint32 pixel = 0; pixel < pixels; ++pixel)
             {
                 depth += byte(channel(pixel, Vi::CHANNEL_DISTANCE));
                 rise += byte((channel(pixel, Vi::CHANNEL_HEIGHT) + 1.0f) / 2.0f);
-                uint32 const what = std::min<uint32>(uint32(channel(pixel, Vi::CHANNEL_KIND)), Vi::KINDS - 1);
-                ++kinds[what];
+                uint32 const what = std::min<uint32>(uint32(channel(pixel, Vi::CHANNEL_CLASS)), Vi::CLASSES - 1);
+                ++classes[what];
                 bool const objective = channel(pixel, Vi::CHANNEL_OBJECTIVE) > 0.5f;
                 for (uint32 c = 0; c < 3; ++c)
-                    kind += char(objective ? 255 : Vi::KIND_COLOURS[what][c]);
+                    kind += char(objective ? 255 : Vi::CLASS_COLOURS[what][c]);
             }
             auto const write = [&](std::string const& path, char const* magic, std::string const& data)
             {
@@ -572,11 +572,11 @@ namespace
                 scalars[Vi::SCALAR_UNDERWATER] > 0.5f ? "yes" : "no",
                 scalars[Vi::SCALAR_AIRBORNE] > 0.5f ? "yes" : "no");
             std::string histogram;
-            for (uint32 what = 0; what < Vi::KINDS; ++what)
-                if (kinds[what])
-                    histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", Vi::KIND_NAMES[what],
-                        kinds[what]);
-            handler->PSendSysMessage("  pixels by kind: {}", histogram);
+            for (uint32 what = 0; what < Vi::CLASSES; ++what)
+                if (classes[what])
+                    histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", Vi::CLASS_NAMES[what],
+                        classes[what]);
+            handler->PSendSysMessage("  pixels by class: {}", histogram);
             handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm, {0}.png and "
                 "{0}-composite.png", base);
             return true;

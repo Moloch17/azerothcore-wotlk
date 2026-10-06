@@ -31,11 +31,11 @@
 /// same kernel code on the host -- "emulated" -- which tells the device's arithmetic from the port's), compared ray
 /// by ray at the size each was cast at.
 ///
-/// A pixel is identical within the tolerances when its kind and objective bit are the same, its distance and height
-/// codes within 1 and its normal within 2. A mismatched pixel is an edge pixel when it lies on a kind boundary: for
-/// a kind mismatch, a neighbour (of the 8) has the other caster's kind; for any other, a neighbour has another kind
-/// in the CPU's frame. The gate (amendment 6): >= 99.9% of the non-edge pixels identical, edge mismatches < ~1% of
-/// all, the upscale bit-exact and the scalars exact.
+/// A pixel is identical within the tolerances when its class and objective bit are the same, its distance and height
+/// codes within 1 and its normal within 2. A mismatched pixel is an edge pixel when it lies on a class boundary: for
+/// a class mismatch, a neighbour (of the 8) has the other caster's class; for any other, a neighbour has another
+/// class in the CPU's frame. The gate (amendment 6): >= 99.9% of the non-edge pixels identical, edge mismatches
+/// < ~1% of all, the upscale bit-exact and the scalars exact.
 namespace Animus::GpuVision
 {
     /// One frame to compare: the seat, its camera (RenderWidth x RenderHeight drawn), its units and objective.
@@ -59,18 +59,18 @@ namespace Animus::GpuVision
     {
         uint64_t Pixels = 0;
         uint64_t Identical = 0;
-        uint64_t EdgeMismatches = 0;    // mismatches on a kind boundary
-        uint64_t Kind = 0;              // mismatches by cause (a pixel counts under each it has)
+        uint64_t EdgeMismatches = 0;    // mismatches on a class boundary
+        uint64_t Class = 0;             // mismatches by cause (a pixel counts under each it has)
         uint64_t Objective = 0;
         uint64_t Distance = 0;
         uint64_t Height = 0;
         uint64_t Normal = 0;
-        uint64_t ExactBytes = 0;        // pixels whose four bytes are the same
-        std::array<uint64_t, Vision::KINDS> CpuKinds{};  // the CPU's pixels by kind
-        std::map<std::pair<uint32_t, uint32_t>, uint64_t> KindPairs;  // (CPU kind, other kind) of kind mismatches
+        uint64_t ExactBytes = 0;        // pixels whose five bytes are the same
+        std::array<uint64_t, Vision::CLASSES> CpuClasses{};  // the CPU's pixels by class
+        std::map<std::pair<uint32_t, uint32_t>, uint64_t> ClassPairs;  // (CPU class, other class) of class mismatches
         std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> BySize;  // (w, h): pixels, identical
         uint32_t UpscaleExact = 0;      // frames whose canonical image is exactly Upscale of their cast frame
-        /// The first few mismatches, for a look: "frame f (row, col) w x h: CPU b0 b1 b2 b3, other b0 b1 b2 b3".
+        /// The first few mismatches, for a look: "frame f (row, col) w x h: CPU b0 .. b4, other b0 .. b4".
         std::vector<std::string> Samples;
         uint32_t Frame = 0;             // the frame CompareFrame is given (RunDiff sets it)
         uint32_t Frames = 0;
