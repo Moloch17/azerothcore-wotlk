@@ -45,3 +45,19 @@ def test_progress_carries_the_headline_and_its_evaluation_means(tmp_path):
     assert written["status_targets"] == "arrived>=0.95"
     assert written["eval_arrived"] == 0.5 and written["eval_arrive_seconds"] == 21.0
     assert "eval_died" not in written and written["episode_arrived"] == 0.4
+
+
+def test_per_arrival_measures_are_averaged_over_the_arrivals_only():
+    """M1's first run read arrive_seconds 5.8 for a 16.6 s optimum: the 81% of runs that never arrived counted as
+    zero-second arrivals. A per-event column is weighted by its episode's events (episode_means.PER_EVENT)."""
+    import numpy as np
+    from animus import episode_means
+    names = ("markers", "arrive_seconds", "time_ratio", "stops_near", "stop_distance", "died")
+    # Two arrivals (30 s and 20 s) and three runs that never arrived; one stop measured, one not.
+    rows = np.array([[1, 30.0, 1.8, 1, 0.4, 0], [1, 20.0, 1.2, 0, 0.0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1],
+                     [0, 0, 0, 0, 0, 0]])
+    means = dict(zip(names, episode_means.means(rows, names)))
+    assert means["arrive_seconds"] == pytest.approx(25.0) and means["time_ratio"] == pytest.approx(1.5)
+    assert means["stop_distance"] == pytest.approx(0.4) and means["died"] == pytest.approx(0.2)
+    none = dict(zip(names, episode_means.means(rows[2:], names)))
+    assert np.isnan(none["arrive_seconds"])

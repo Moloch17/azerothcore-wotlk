@@ -49,7 +49,7 @@ from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
 from .mappo.networks import seat_sets_of
 from .progress import ProgressWriter
-from . import blas, protocol
+from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
 from .parallel import Ranks, Silent, weighted_share
 from .protocol import MAX_SPECS
@@ -2018,7 +2018,7 @@ class TrainingRun:
             **getattr(self, "style_stats", {}),
         }
         if self.finished_episodes:
-            means = np.mean(self.finished_episodes, axis=0)
+            means = episode_means.means(self.finished_episodes, spec.episode_info_names)
             for name, value in zip(spec.episode_info_names, means):
                 row[f"episode_{name}"] = float(value)
             self.log_layout_rows(spec)
@@ -2139,7 +2139,7 @@ class TrainingRun:
                 if not len(group):
                     continue
 
-                means = np.mean(group, axis=0)
+                means = episode_means.means(group, info)
                 row = {"update": self.update, "env_steps": self.env_steps, "layout": name, "spec": spec,
                        "episodes": len(group)}
                 # The class's own convergence signals (animus.stage): what its policy is doing, not only what its
