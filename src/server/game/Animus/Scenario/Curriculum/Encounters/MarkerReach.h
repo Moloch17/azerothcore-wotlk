@@ -100,6 +100,30 @@ namespace Animus::Curriculum::MarkerReach
         return count;
     }
 
+    /// How near deadly liquid (magma, slime, fel) a marker may be, yards.
+    constexpr float DEADLY_CLEARANCE = 3.0f;
+
+    /// Whether deadly liquid lies at (x, y) over the floor at `z`, or within `clearance` of it on eight bearings: a
+    /// marker is never placed in, over or beside it (a flight's landing least of all).
+    inline bool NearDeadly(Movement::WorldQuery const& world, float x, float y, float z,
+        float clearance = DEADLY_CLEARANCE)
+    {
+        auto const deadly = [&](float px, float py)
+        {
+            Movement::Liquid const liquid = world.LiquidAt(px, py, z);
+            return liquid.Present && liquid.Deadly && liquid.Level >= z - Movement::STEP_UP;
+        };
+        if (deadly(x, y))
+            return true;
+        for (int k = 0; k < 8; ++k)
+        {
+            float const angle = float(k) * 0.7853982f;
+            if (deadly(x + clearance * std::cos(angle), y + clearance * std::sin(angle)))
+                return true;
+        }
+        return false;
+    }
+
     /// Walk the route (xs, ys, zs; `count` corners, the first where the seat stands) with a body of `shape`.
     inline Result Walk(Movement::WorldQuery const& world, Movement::Body const& shape, float const* xs, float const* ys,
         float const* zs, uint32_t count)

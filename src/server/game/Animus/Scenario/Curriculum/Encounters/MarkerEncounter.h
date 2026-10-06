@@ -24,6 +24,10 @@
 #include "Position.h"
 #include "RoutePlanner.h"
 #include "StageDefinition.h"
+#include <map>
+#include <mutex>
+#include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -191,6 +195,10 @@ namespace Animus::Curriculum
             uint32 Revisits = 0;
             // The mounted course.
             bool LegAirOnly = false;        // the leg's marker only the air reaches
+            uint32 FallbackLegs = 0;        // narrow legs that fell back to an ordinary marker
+            uint32 NarrowLegs = 0;          // narrow legs placed as asked (fallbacks excluded) ...
+            uint32 NarrowArrived = 0;       // ... and stopped on
+            bool LegNarrow = false;         // the current leg is one
             uint32 GroundMountAirMs = 0;    // ... and time on a mount that cannot fly, on such a leg
             uint32 AirOnlyLegs = 0;
             uint32 LastMountMs = 0;
@@ -214,8 +222,24 @@ namespace Animus::Curriculum
         /// The ladder's top rung index: the arena's pinned rung when it has one, else Markers.Rungs - 1.
         [[nodiscard]] uint32 TopRung(Env const& env) const;
 
+        /// A narrow leg was asked for from the env's spawn point: count it, and whether it fell back; name a point
+        /// over Markers.FallbackCeiling across Markers.FallbackMinLegs legs, once.
+        void NoteNarrow(Env const& env, bool fellBack) const;
+
         std::vector<EnvMarkers> _envs;
         DifficultyLadder _ladder;
+        struct PointFallbacks
+        {
+            uint32 Legs = 0;
+            uint32 Fallbacks = 0;
+            bool Named = false;
+        };
+        mutable std::mutex _pointLock;      // resets run on the map threads
+        mutable std::map<std::tuple<uint32, uint32, bool>, PointFallbacks> _points;  // (arena, spawn, held out)
+
+    public:
+        /// The spawn points named so far ("<stage> <arena> (x y z): f of n narrow legs fell back"), for `forge status`.
+        [[nodiscard]] static std::vector<std::string> NamedFallbackPoints();
     };
 }
 
