@@ -28,7 +28,7 @@ from animus.protocol import Layout
 
 H, W, PATCH, SCALARS, KINDS = 16, 32, 8, 11, 8
 BYTES = H * W * 4
-HEADS = (7, 5, 4)
+HEADS = (7, 5, 5)          # yaw rate, pitch rate, {hold, in, out, recentre, face}
 LOOK_NAMES = ("yaw_rate", "pitch_rate", "zoom")
 IMAGE = {"height": H, "width": W, "channels": 5, "kinds": KINDS, "kind_channel": 3, "scalars": SCALARS,
          "transport": "bytes", "bytes_per_pixel": 4, "patch": PATCH, "render_sizes": [[8, 4], [16, 8], [32, 16]]}
@@ -167,8 +167,15 @@ def test_a_row_without_the_camera_sends_no_gradient_through_the_look():
     assert head.linear.weight.grad is None or bool((head.linear.weight.grad == 0).all())
 
 
+def head_of(heads):
+    return LookHead(16, heads, torch.tensor([True]))
+
+
 def test_a_fresh_look_head_leans_toward_holding_still_but_allows_everything():
     assert look_hold_indices(HEADS) == p.LOOK_HOLD == (3, 2, 0)
+    # By position, not size: the command head is held at 0 whether it has 4 choices or 5 ("face" gets no lean).
+    assert look_hold_indices((7, 5, 4)) == (3, 2, 0) and look_hold_indices((7, 5, 6)) == (3, 2, 0)
+    assert head_of(HEADS).linear.out_features == 17
     head = LookHead(16, HEADS, torch.tensor([True]))
     with torch.no_grad():
         logits = head.logits(torch.zeros(1, 16))
@@ -176,6 +183,9 @@ def test_a_fresh_look_head_leans_toward_holding_still_but_allows_everything():
         probs = torch.softmax(part[0], -1)
         assert int(probs.argmax()) == hold and float(part[0, hold]) == pytest.approx(LOOK_HOLD_BIAS)
         assert float(probs.min()) > 0.01        # nothing masked
+        # Only the hold choice leans; every other choice (the command head's "face", 4, included) starts even.
+        others = [float(part[0, i]) for i in range(part.shape[-1]) if i != hold]
+        assert max(abs(v) for v in others) < 0.5
     assert float(torch.softmax(logits[0][0], -1)[3]) == pytest.approx(np.exp(2) / (np.exp(2) + 6), rel=1e-4)
 
 
@@ -261,7 +271,7 @@ def test_the_rollout_buffer_holds_the_look():
     buffer = fill(trainer)
     assert buffer.look.dtype == np.int8 and buffer.look.shape == (4, 3, 2, 3)
     assert "look" in buffer.sequences() and "look_log_probs" in buffer.sequences()
-    assert int(buffer.look[..., 0].max()) < 7 and int(buffer.look[..., 2].max()) < 4
+    assert int(buffer.look[..., 0].max()) < 7 and int(buffer.look[..., 2].max()) < HEADS[2]
     # A buffer without look heads keeps none, and its sequences do not carry one.
     plain = RolloutBuffer(2, 1, 1, 3, 2, 2)
     assert plain.look.shape == (2, 1, 1, 0) and "look" not in plain.sequences()
@@ -278,7 +288,7 @@ def test_the_update_trains_the_look_head_with_its_entropy_and_says_whether_it_tu
     assert not torch.equal(before, trainer.actor.look_head.linear.weight)
     assert stats["look_entropy"] > 0.0
     # At most ln 7 + ln 5 + ln 4 nats a camera row.
-    assert stats["look_entropy"] <= np.log(7 * 5 * 4) + 1e-4
+    assert stats["look_entropy"] <= np.log(np.prod(HEADS)) + 1e-4
     seeing = buffer.layout != 2
     turning = float((buffer.look[..., 0][seeing] != 3).mean())
     assert stats["look_turning"] == pytest.approx(turning, abs=1e-6)

@@ -75,7 +75,7 @@ DEVICE_FIELDS = ("obs", "state", "mask", "image")
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0.
 IMAGE_FIELDS = ("image", "final_image")
 NO_FRAME_PIXEL = (255, 128, 0, 0)
-# The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 4]): yaw rate 0, pitch rate 0, hold.
+# The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
 LOOK_HOLD = (3, 2, 0)
 
