@@ -47,7 +47,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, seat_sets_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -406,14 +406,15 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory", "chosen",
-              "goal_slots")
+              "goal_slots", "image")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
 
     #: The large host fields set() writes straight into the rollout buffer at this decision's step (the field's name
     #: there): copied once, where a decision of their own copied them twice -- into here, then into the buffer.
-    DIRECT = {"obs": "obs", "state": "state", "mask": "mask", "memory": "memory", "critic_memory": "critic_memory"}
+    DIRECT = {"obs": "obs", "state": "state", "mask": "mask", "memory": "memory", "critic_memory": "critic_memory",
+              "image": "image"}
 
     def __init__(self, envs: int, agents: int, buffer=None, t: int = 0):
         """`buffer` and `t`: the rollout buffer and the step this decision is recorded at (store_inputs)."""
@@ -449,10 +450,12 @@ class DecisionRows:
                                              else np.empty((self.envs, *value.shape[1:]), dtype=value.dtype))
             array[rows] = value
 
-    def store_inputs(self, rows: slice, obs, state, mask, stream) -> None:
+    def store_inputs(self, rows: slice, obs, state, mask, stream, image=None) -> None:
         """The sim's device inputs of envs `rows`, straight into the rollout buffer at this decision's step, queued on
-        `stream`: recorded() then leaves them out."""
-        for name, value in (("obs", obs), ("state", state), ("mask", mask)):
+        `stream`: recorded() then leaves them out. `image`: the camera's bytes, with a camera (protocol 21)."""
+        for name, value in (("obs", obs), ("state", state), ("mask", mask), ("image", image)):
+            if value is None:
+                continue
             self.buffer.store_rows(name, self.t, rows, value, stream)
             self.arrays[name] = DecisionRows.IN_BUFFER
 
@@ -470,7 +473,7 @@ class DecisionRows:
         goals = ((a["goal"], a["goal_log_prob"], a["goal_chosen"], a.get("slow_before"), a.get("slow_value"),
                   a.get("goal_slots")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
-                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"))
+                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"), a.get("image"))
 
 
 class RolloutOutcome:
@@ -614,6 +617,11 @@ class TrainingRun:
                   flush=True)
         # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch.
         vision = vision_of(self.stage, names)
+        # The sim's SPEC and stage.json must agree about the camera's bytes (protocol 21).
+        try:
+            check_image_bytes(vision, spec.image_bytes)
+        except ValueError as error:
+            raise SystemExit(f"vision: {error}") from None
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
             print(f"Vision: a {image['width']} x {image['height']} camera in {sum(e is not None for e in vision)} of "
@@ -766,7 +774,7 @@ class TrainingRun:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
-                                 self.trainer.slow_goal_size, self.trainer.goal_slots)
+                                 self.trainer.slow_goal_size, self.trainer.goal_slots, spec.image_bytes)
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -1218,7 +1226,8 @@ class TrainingRun:
             acting.clear(step.done)
             # The sim's mask less the actions the evaluation may not take (eval.mask_actions), per layout.
             mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
-            actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting)[0]
+            image = getattr(step, "image", None)
+            actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting, image)[0]
             return (actions, self.trainer.wire_goals(acting.goal)) if acting.goal is not None else actions
 
         return choose
@@ -1677,9 +1686,10 @@ class TrainingRun:
         rollout_seconds = time.perf_counter() - started
         self.add_style(buffer)
         buffer.finish(trainer.value(self.step.state, self.step.obs, self.step.layout, self.acting.goal,
-                                    self.acting.critic_memory),
+                                    self.acting.critic_memory, getattr(self.step, "image", None)),
                       *self.discounts,
-                      last_foresight=trainer.foresight_of(self.step.obs, self.step.layout, self.acting.memory),
+                      last_foresight=trainer.foresight_of(self.step.obs, self.step.layout, self.acting.memory,
+                                                          getattr(self.step, "image", None)),
                       foresight_gammas=self.foresight_discounts,
                       time_scale_decisions=self.foresight_time_decisions,
                       slow_layout=self.slow_layout,
@@ -1694,10 +1704,11 @@ class TrainingRun:
         if exploit is not None:
             def finish(view, exploiter) -> None:
                 view.finish(exploiter.value(self.step.state, self.step.obs, self.step.layout, exploit.acting.goal,
-                                            exploit.acting.critic_memory),
+                                            exploit.acting.critic_memory, getattr(self.step, "image", None)),
                             *self.discounts,
                             last_foresight=exploiter.foresight_of(self.step.obs, self.step.layout,
-                                                                  exploit.acting.memory),
+                                                                  exploit.acting.memory,
+                                                                  getattr(self.step, "image", None)),
                             foresight_gammas=self.foresight_discounts,
                             time_scale_decisions=self.foresight_time_decisions,
                             slow_layout=self.slow_layout,
@@ -1828,7 +1839,7 @@ class TrainingRun:
                 + ("" if len(bad) <= 8 else f" (and {len(bad) - 8} more)"))
 
         actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
-            part.obs, part.mask, part.layout, part.state, state=acting)
+            part.obs, part.mask, part.layout, part.state, state=acting, image=getattr(part, "image", None))
         self.acting.put(rows, acting)
         # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
         # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
@@ -1863,12 +1874,16 @@ class TrainingRun:
                 and part.obs.is_cuda:
             inputs = trainer.device_inputs
             if inputs is not None:
-                decision.store_inputs(rows, inputs["obs"], inputs["state"], inputs["mask"], stream)
+                decision.store_inputs(rows, inputs["obs"], inputs["state"], inputs["mask"], stream,
+                                      inputs.get("image"))
             else:
-                decision.store_inputs(rows, part.obs, part.state, part.mask, stream)
+                decision.store_inputs(rows, part.obs, part.state, part.mask, stream,
+                                      getattr(part, "image", None))
                 stream.synchronize()
         else:
             decision.set(rows, obs=part.obs, state=part.state, mask=part.mask)
+            if part.image is not None:
+                decision.set(rows, image=getattr(part, "image", None))
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
@@ -1908,6 +1923,7 @@ class TrainingRun:
         ended_memory = memory[done] if memory is not None else None
         ended_layout = layout[done]
         final_state, final_obs = part.final_state[done], part.final_obs[done]
+        final_image = part.final_image[done] if getattr(part, "final_image", None) is not None else None
 
         # Self-imitation keeps the best of them by outcome: each ended env's mean over its seats present.
         if self.sil_score_column is not None:
@@ -1944,9 +1960,11 @@ class TrainingRun:
 
         def value_ended() -> None:
             ended_rows = np.flatnonzero(done) + rows.start
-            outcome.final_values[ended_rows] = trainer.value(final_state, final_obs, ended_layout, goal, critic_end)
+            outcome.final_values[ended_rows] = trainer.value(final_state, final_obs, ended_layout, goal, critic_end,
+                                                             final_image)
             if outcome.final_foresight is not None:
-                outcome.final_foresight[ended_rows] = trainer.foresight_of(final_obs, ended_layout, ended_memory)
+                outcome.final_foresight[ended_rows] = trainer.foresight_of(final_obs, ended_layout, ended_memory,
+                                                                           final_image)
 
         return value_ended
 

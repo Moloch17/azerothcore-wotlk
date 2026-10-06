@@ -187,8 +187,16 @@ class ForgeEnv:
         """Open the sim's device buffers if this learner can use them, and say whether it did."""
         from .device import open_buffers
 
-        gpu, envs, obs, state, mask = p.DEVICE.unpack(payload)
-        buffers, why = open_buffers(self.spec, gpu, envs, (obs, state, mask), self.rollout_device)
+        gpu, envs, obs, state, mask = p.DEVICE.unpack_from(payload)
+        handles = [obs, state, mask]
+        # A stage with a camera (protocol 21) offers the images' buffer after the three.
+        expected = p.DEVICE.size + (p.DEVICE_IMAGE.size if self.spec.image_bytes else 0)
+        if len(payload) != expected:
+            raise ConnectionError(f"DEVICE of {len(payload)} bytes, expected {expected} (image bytes "
+                                  f"{self.spec.image_bytes})")
+        if self.spec.image_bytes:
+            handles.append(p.DEVICE_IMAGE.unpack_from(payload, p.DEVICE.size)[0])
+        buffers, why = open_buffers(self.spec, gpu, envs, tuple(handles), self.rollout_device)
         if self.device_buffers is not None:
             self.device_buffers.close()
         self.device_buffers = buffers
@@ -304,7 +312,9 @@ class ClusterEnv:
             final_state=np.zeros((count, spec.state_dim), np.float32),
             episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
             episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32),
-            kinematics=np.zeros((count, agents, spec.kinematics_dim), np.float32))
+            kinematics=np.zeros((count, agents, spec.kinematics_dim), np.float32),
+            image=p.no_frame((count, agents, spec.image_bytes)) if spec.image_bytes else None,
+            final_image=p.no_frame((count, agents, spec.image_bytes)) if spec.image_bytes else None)
 
     def _seen(self, index: int, part: p.Step) -> p.Step:
         self._layouts[index][part.env_begin:part.env_begin + part.done.shape[0]] = part.layout

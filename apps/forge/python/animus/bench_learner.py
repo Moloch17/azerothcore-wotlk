@@ -35,7 +35,8 @@ def load_spec(path: Path) -> p.Spec:
                                            "decision_ticks", "episode_seconds", "scenario")}
     # The run's shapes, in the protocol this learner speaks: a spec.json from before a protocol bump still serves.
     fields["version"] = p.PROTOCOL_VERSION
-    return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())))
+    return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())),
+                  image_bytes=int(raw.get("image_bytes", 0)))
 
 
 def _read_exact(conn: socket.socket, size: int) -> bytes:
@@ -68,6 +69,8 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
         for index, item in enumerate(spec.layouts):
             frame[layout == index, item.obs_dim:] = 0.0
     state = rng.standard_normal((envs, spec.state_dim), dtype=np.float32)
+    # A camera's frames (protocol 21): random bytes, the kind byte's low bits a kind and its bit 4 the objective.
+    images = [rng.integers(0, 256, (envs, agents, spec.image_bytes), dtype=np.uint8) for _ in range(len(frames))]
     episode = max(1, int(spec.episode_seconds * 1000 / (spec.tick_ms * spec.decision_ticks)))
     clock = rng.integers(0, episode, size=envs)
 
@@ -85,7 +88,9 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
             reward=rng.standard_normal((count, agents)).astype(np.float32), done=done, terminated=done,
             final_obs=obs[rows], final_state=np.zeros_like(state[rows]),
             episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
-            episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32))
+            episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32),
+            image=images[decision % len(images)][rows] if spec.image_bytes else None,
+            final_image=images[0][rows] if spec.image_bytes else None)
         payload = p.encode_step(spec, step)
         return p.encode_header(p.MsgType.STEP, len(payload)) + payload
 

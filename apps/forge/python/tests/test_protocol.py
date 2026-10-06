@@ -72,9 +72,9 @@ def test_spec_round_trip():
 
 
 def test_spec_matches_cpp_layout():
-    # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them), a 32-byte name and the
-    # kinematics width (protocol 20), packed.
-    assert p.SPEC.size == 12 * 4 + 32 + 4
+    # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them), a 32-byte name, the
+    # kinematics width (protocol 20) and the image bytes per agent (protocol 21), packed: "<12I32s2I", 88 bytes.
+    assert p.SPEC.format == "<12I32s2I" and p.SPEC.size == 12 * 4 + 32 + 4 + 4 == 88
     assert p.HEADER.size == 8
     # StepHeader: uint64 decision, uint32 first env, uint32 env count. ActHeader: uint32 first env, uint32 count.
     assert p.STEP_HEADER.size == 16
@@ -311,7 +311,7 @@ def test_kinematics_travel_with_every_step():
     SPEC says how wide. The bytes are the last E * A * 10 floats of the payload, env-major then agent."""
     from animus.human import motion
 
-    assert p.PROTOCOL_VERSION == 20 and SPEC.kinematics_dim == motion.SAMPLE_DIM
+    assert p.PROTOCOL_VERSION >= 20 and SPEC.kinematics_dim == motion.SAMPLE_DIM
     assert p.decode_spec(p.encode_spec(SPEC)).kinematics_dim == motion.SAMPLE_DIM
     step = make_step(2, np.random.default_rng(4))
     payload = p.encode_step(SPEC, step)
