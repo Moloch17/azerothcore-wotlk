@@ -103,6 +103,11 @@ namespace Animus::Curriculum
         /// What Plan would say, as a table, for a console to print. The bench for all of the above.
         std::string Report(Map* map, Position const& from, Position const& to);
 
+        /// The navmesh's walkable surface at (x, y), within `reachZ` of z -- the polygon the route planner would stand
+        /// a point there on, and its height -- or false where the mesh walks nothing within a third of a yard of
+        /// (x, y) (FloorScan). Needs the map's mmap tiles in (Map::EnsureGridCreated loads them; no instance needed).
+        bool SurfaceAt(Map* map, float x, float y, float z, float reachZ, float& height);
+
     private:
         RoutePlanner() = default;
         ~RoutePlanner();

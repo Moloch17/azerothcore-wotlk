@@ -42,8 +42,10 @@
 #include "World.h"
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include "FieldRoute.h"
+#include "FloorScan.h"
 #include "RoutePlanner.h"
 #include "Optional.h"
 #include "StringConvert.h"
@@ -183,6 +185,7 @@ namespace
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
                 { "rays",      HandleRays,      SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
+                { "floorscan", HandleFloorScan, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
                 { "probebake", HandleProbeBake, SEC_ADMINISTRATOR, Console::Yes },
                 { "probestage", HandleProbeStage, SEC_ADMINISTRATOR, Console::Yes },
@@ -316,6 +319,113 @@ namespace
         static bool HandleRun(ChatHandler* handler, std::string scenario, std::string policy, Optional<uint32> episodes)
         {
             return sAnimusForge->CommandRun(scenario, policy, episodes.value_or(0), Reply(handler));
+        }
+
+        /// `forge floorscan <map> <x1> <y1> <x2> <y2> <z> [step] [file]`: the player controller's floor against the
+        /// navmesh's walkable surface over a box, every `step` yards (FloorScan): where the route planner walks and
+        /// the controller has no floor (HOLE), they disagree on the height (MISMATCH), the controller's floor is too
+        /// steep (STEEP), or the controller has a floor the mesh does not walk (NONAV). Each cell's height comes
+        /// from the navmesh within FloorScan::NAV_REACH_Z of `z` (ramps and stairs included), else `z`; the
+        /// controller's floor is read from a step above it. A summary, the HOLE and MISMATCH cells, an ASCII map
+        /// (a yard a character, the worst cell shown), and with `file` a CSV of every cell. On the base map (no
+        /// instance needed), only while the forge is idle.
+        static bool HandleFloorScan(ChatHandler* handler, uint32 mapId, float x1, float y1, float x2, float y2, float z,
+            Optional<float> step, Optional<std::string> file)
+        {
+            namespace Mv = Animus::Movement;
+            namespace Scan = Animus::Curriculum::FloorScan;
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("forge floorscan runs only while the forge is idle (it creates grids)");
+                return true;
+            }
+            Map* map = sMapMgr->CreateBaseMap(mapId);
+            if (!map)
+            {
+                handler->PSendSysMessage("No such map: {}", mapId);
+                return true;
+            }
+            float const cell = std::clamp(step.value_or(0.5f), 0.1f, 10.0f);
+            float const left = std::min(x1, x2), right = std::max(x1, x2);
+            float const bottom = std::min(y1, y2), top = std::max(y1, y2);
+            uint32 const columns = uint32(std::floor((right - left) / cell)) + 1;
+            uint32 const rows = uint32(std::floor((top - bottom) / cell)) + 1;
+            if (uint64(columns) * rows > 1000000)
+            {
+                handler->PSendSysMessage("{} x {} cells is too many: a larger step, or a smaller box", columns, rows);
+                return true;
+            }
+            CreateGrids(map, left, bottom, right, top);
+
+            Mv::MapWorldQuery const world(map, PHASEMASK_NORMAL);
+            Animus::Curriculum::RoutePlanner& planner = Animus::Curriculum::RoutePlanner::Instance();
+            std::ofstream csv;
+            if (file)
+            {
+                csv.open(*file);
+                if (!csv)
+                {
+                    handler->PSendSysMessage("Could not write {}", *file);
+                    return true;
+                }
+                csv << "x,y,navmesh_z,floor_z,normal_z,class\n";
+            }
+            std::array<uint32, 6> counts{};
+            std::vector<std::string> listed;
+            uint32 const mapColumns = uint32(std::ceil(right - left)) + 1;
+            uint32 const mapRows = uint32(std::ceil(top - bottom)) + 1;
+            std::vector<Scan::Cell> worst(std::size_t(mapColumns) * mapRows, Scan::Cell::Unwalkable);
+            for (uint32 row = 0; row < rows; ++row)
+                for (uint32 column = 0; column < columns; ++column)
+                {
+                    float const x = left + float(column) * cell;
+                    float const y = bottom + float(row) * cell;
+                    float navZ = 0.0f;
+                    bool const nav = planner.SurfaceAt(map, x, y, z, Scan::NAV_REACH_Z, navZ);
+                    float const reference = nav ? navZ : z;
+                    float const floor = world.FloorBelow(x, y, reference + Mv::STEP_UP, 2.0f * Mv::STEP_UP);
+                    bool const hasFloor = floor > Mv::INVALID_FLOOR + 1.0f;
+                    float const normal = hasFloor ? world.FloorNormalZ(x, y, floor) : 0.0f;
+                    Scan::Cell const verdict = Scan::Classify(nav, navZ, hasFloor, floor, normal);
+                    ++counts[std::size_t(verdict)];
+                    if ((verdict == Scan::Cell::Hole || verdict == Scan::Cell::Mismatch) && listed.size() < 40)
+                        listed.push_back(Acore::StringFormat("  {} at ({:.1f}, {:.1f}): navmesh {:.2f}, floor {}",
+                            Scan::Name(verdict), x, y, navZ, hasFloor ? Acore::StringFormat("{:.2f}", floor) : "none"));
+                    std::size_t const at = std::size_t(std::min<uint32>(uint32(y - bottom), mapRows - 1)) * mapColumns
+                        + std::min<uint32>(uint32(x - left), mapColumns - 1);
+                    if (Scan::Severity(verdict) > Scan::Severity(worst[at]))
+                        worst[at] = verdict;
+                    if (csv)
+                        csv << Acore::StringFormat("{:.2f},{:.2f},{},{},{},{}\n", x, y,
+                            nav ? Acore::StringFormat("{:.2f}", navZ) : "", hasFloor ? Acore::StringFormat("{:.2f}",
+                            floor) : "", hasFloor ? Acore::StringFormat("{:.3f}", normal) : "", Scan::Name(verdict));
+                }
+
+            handler->PSendSysMessage("floorscan map {} x {:.1f}..{:.1f} y {:.1f}..{:.1f} at z {:.1f} (navmesh within "
+                "{:.0f} yd), {} cells of {:.2f} yd:", mapId, left, right, bottom, top, z, Scan::NAV_REACH_Z,
+                columns * rows, cell);
+            for (Scan::Cell verdict : { Scan::Cell::Ok, Scan::Cell::Hole, Scan::Cell::Mismatch, Scan::Cell::Steep,
+                     Scan::Cell::NoNav, Scan::Cell::Unwalkable })
+                handler->PSendSysMessage("  {:<10} {}", Scan::Name(verdict), counts[std::size_t(verdict)]);
+            if (!listed.empty())
+            {
+                handler->SendSysMessage("HOLE and MISMATCH cells (the first 40):");
+                for (std::string const& line : listed)
+                    handler->SendSysMessage(line);
+            }
+            handler->PSendSysMessage("A yard a character, the worst cell shown ('.' OK, 'H' HOLE, 'M' MISMATCH, 'S' "
+                "STEEP, 'n' NONAV, ' ' UNWALKABLE); x from {:.0f} rightwards, y from {:.0f} at the top down:", left,
+                top);
+            for (uint32 row = mapRows; row-- > 0;)
+            {
+                std::string line = Acore::StringFormat("{:>7.1f} |", bottom + float(row));
+                for (uint32 column = 0; column < mapColumns; ++column)
+                    line += Scan::Glyph(worst[std::size_t(row) * mapColumns + column]);
+                handler->SendSysMessage(line + "|");
+            }
+            if (file)
+                handler->PSendSysMessage("Every cell in {}", *file);
+            return true;
         }
 
         /// `forge probebake <map> <x> <y> [cell] [bearings] [wedge] [pitch] [samples] [radius]`: bake the ground
@@ -928,9 +1038,27 @@ namespace
             return true;
         }
 
+        /// Every grid of `map` over the box, with a grid's margin: terrain, collision and navmesh tiles only
+        /// (EnsureGridCreated). Not LoadGrid: that loads the grid's creatures too, which an instanced map's base map --
+        /// one with no instance, as the console reads it -- cannot hold (`forge route 34 ...` crashed the sim).
+        static void CreateGrids(Map* map, float x1, float y1, float x2, float y2)
+        {
+            namespace Scan = Animus::Curriculum::FloorScan;
+            auto const [gx1, gx2] = Scan::GridSpan(x1, x2, 1.0f);
+            auto const [gy1, gy2] = Scan::GridSpan(y1, y2, 1.0f);
+            for (int32 gx = gx1; gx <= gx2; ++gx)
+                for (int32 gy = gy1; gy <= gy2; ++gy)
+                    map->EnsureGridCreated(CoreGrid(gx, gy));
+        }
+
         static bool HandleRoute(ChatHandler* handler, uint32 mapId, float fromX, float fromY, float fromZ,
             float toX, float toY, float toZ)
         {
+            if (!sAnimusForge->IsIdle())
+            {
+                handler->SendSysMessage("forge route runs only while the forge is idle (it creates grids)");
+                return true;
+            }
             Map* map = sMapMgr->CreateBaseMap(mapId);
             if (!map)
             {
@@ -938,9 +1066,8 @@ namespace
                 return true;
             }
 
-            // Both ends want their tiles in, and they are rarely the same tile.
-            map->LoadGrid(fromX, fromY);
-            map->LoadGrid(toX, toY);
+            // Every grid between the ends: their navmesh tiles, and the way's.
+            CreateGrids(map, fromX, fromY, toX, toY);
 
             handler->PSendSysMessage("Route on map {} from ({:.2f}, {:.2f}, {:.2f}) to ({:.2f}, {:.2f}, {:.2f}):",
                 mapId, fromX, fromY, fromZ, toX, toY, toZ);

@@ -260,6 +260,30 @@ bool Animus::Curriculum::RoutePlanner::Plan(Map* map, Position const& from, Posi
     return true;
 }
 
+bool Animus::Curriculum::RoutePlanner::SurfaceAt(Map* map, float x, float y, float z, float reachZ, float& height)
+{
+    constexpr float REACH_XY = 0.33f;
+    dtNavMeshQuery* query = QueryFor(map);
+    if (!query)
+        return false;
+    dtQueryFilterExt filter;
+    Configure(filter);
+    // Detour's axes are {y, z, x}.
+    float const center[3] = { y, z, x };
+    float const extents[3] = { REACH_XY, reachZ, REACH_XY };
+    dtPolyRef ref = 0;
+    float nearest[3] = {};
+    if (dtStatusFailed(query->findNearestPoly(center, extents, &filter, &ref, nearest)) || !ref)
+        return false;
+    if (std::hypot(nearest[0] - y, nearest[2] - x) > REACH_XY)
+        return false;
+    float h = nearest[1];
+    if (dtStatusSucceed(query->getPolyHeight(ref, nearest, &h)))
+        nearest[1] = h;
+    height = nearest[1];
+    return true;
+}
+
 std::string Animus::Curriculum::RoutePlanner::Report(Map* map, Position const& from, Position const& to)
 {
     std::ostringstream text;
