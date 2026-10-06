@@ -1167,6 +1167,38 @@ namespace Animus::Curriculum
             float CatchUpSeconds = 2.0f;
         } Follow;
 
+        /// The seek stage (Opposition::Seek, M2: SeekEncounter): one real object in one of the Stockades' rooms, found
+        /// by sight. Arrive (Outcome) is paid once, on stopping within the arena's SeekRadius of the object (on its
+        /// floor: within ArriveRise yards of its height). StepCost (Cost, per 50 ms of tuning) prices the time: a
+        /// whole 300 s episode costs StepCost x 6000 = 3, as much as finding the object pays, and Death (6) is dearer
+        /// than any clock, so dying is never a way out of the search. Stuck, Wall and WallSlide are the ground course's
+        /// noise prices, on the cost ladder.
+        ///
+        /// The training-only aids (Shaping, faded away with the rest): Sighting once, on the first frame the camera
+        /// shows the object's flag; NewGround for each NewGroundCell-yard cell of floor first walked onto before it is
+        /// found. Nothing is shaped on the object's distance: it is hidden, and a distance potential would be a compass
+        /// in the reward that vanished at the fade.
+        ///
+        /// Placement: up to Attempts points drawn uniformly over the room's floor polygon, each kept when the floor
+        /// below it (vmaps) is within FloorTolerance yards of the room's and nothing solid stands within Clearance
+        /// yards of it, at knee height, along the four axes (the room's centre otherwise).
+        struct SeekTuning
+        {
+            float Arrive = 3.0f;
+            float StepCost = 0.0005f;
+            float Death = 6.0f;
+            float ArriveRise = 2.0f;
+            float Sighting = 0.5f;
+            float NewGround = 0.004f;
+            float NewGroundCell = 4.0f;
+            float Stuck = 0.05f;
+            float Wall = 0.03f;
+            float WallSlide = 0.5f;
+            uint32 Attempts = 24;
+            float FloorTolerance = 2.0f;
+            float Clearance = 0.8f;
+        } Seek;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1783,6 +1815,19 @@ namespace Animus::Curriculum
             f("Follow.CastShare", tuning.Follow.CastShare);
             f("Follow.WinShare", tuning.Follow.WinShare);
             f("Follow.CatchUpSeconds", tuning.Follow.CatchUpSeconds);
+            f("Seek.Arrive", tuning.Seek.Arrive);
+            f("Seek.StepCost", tuning.Seek.StepCost);
+            f("Seek.Death", tuning.Seek.Death);
+            f("Seek.ArriveRise", tuning.Seek.ArriveRise);
+            f("Seek.Sighting", tuning.Seek.Sighting);
+            f("Seek.NewGround", tuning.Seek.NewGround);
+            f("Seek.NewGroundCell", tuning.Seek.NewGroundCell);
+            f("Seek.Stuck", tuning.Seek.Stuck);
+            f("Seek.Wall", tuning.Seek.Wall);
+            f("Seek.WallSlide", tuning.Seek.WallSlide);
+            f("Seek.Attempts", tuning.Seek.Attempts);
+            f("Seek.FloorTolerance", tuning.Seek.FloorTolerance);
+            f("Seek.Clearance", tuning.Seek.Clearance);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

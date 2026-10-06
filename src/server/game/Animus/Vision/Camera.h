@@ -315,8 +315,16 @@ namespace Animus::Vision
     /// The height channel, decoded: (hit z - feet z) / HEIGHT_SCALE, clamped to [-1, 1] (HEIGHT_LIMIT steps of
     /// HEIGHT_STEP on the wire).
     constexpr float HEIGHT_SCALE = 25.0f;
-    /// A ray flags the objective when it passes within this many yards of it.
+    /// A ray flags the objective when it passes within this many yards of it: the default, and the most an object's
+    /// own radius may be (ObjectiveRadiusFor).
     constexpr float OBJECTIVE_RADIUS = 1.0f;
+    /// An object's flag radius past its own bounding radius (the seek stage's objects): the flag sits on the object,
+    /// not a yard round its centre, so a small one behind a crate or bars flags nothing through them.
+    constexpr float OBJECTIVE_MARGIN = 0.25f;
+    [[nodiscard]] constexpr float ObjectiveRadiusFor(float bound)
+    {
+        return bound + OBJECTIVE_MARGIN < OBJECTIVE_RADIUS ? bound + OBJECTIVE_MARGIN : OBJECTIVE_RADIUS;
+    }
     constexpr float ZOOM_SCALE = 12.0f;
     /// The held rates' scales: the fastest of each the look head offers (FreeLook.h).
     constexpr float YAW_RATE_SCALE = 180.0f * DEGREES;
@@ -353,6 +361,16 @@ namespace Animus::Vision
             image[at + 3] = 0;
             image[at + 4] = 0;
         }
+    }
+
+    /// The pixels of an image row that carry the objective flag (OBJECTIVE_BIT): how much of the frame shows the
+    /// objective, 0 when it is out of sight (the seek stage's sight measures).
+    [[nodiscard]] inline uint32_t CountObjectivePixels(uint8_t const* image, uint32_t bytes)
+    {
+        uint32_t count = 0;
+        for (uint32_t at = 3; at < bytes; at += BYTES_PER_PIXEL)
+            count += (image[at] & OBJECTIVE_BIT) ? 1u : 0u;
+        return count;
     }
 
     /// **Nearest-pixel upscaling** (FREELOOK A): a frame cast at w x h into the canonical W x H, canonical pixel

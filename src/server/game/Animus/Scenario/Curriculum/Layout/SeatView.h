@@ -414,6 +414,9 @@ namespace Animus::Curriculum
 
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
+        /// How near a camera ray has to pass the Objective to flag it (Vision::ObjectiveFlag): Vision::OBJECTIVE_RADIUS,
+        /// or a seek object's own (Vision::ObjectiveRadiusFor its SeekObject::Radius), so the flag sits on the object.
+        float ObjectiveRadius = 1.0f;
         Position Objective;
         /// How much longer the walking way round to the objective is than the straight line to it, as a ratio;
         /// 0 without an objective and 1 when the straight line is the route. Measured on foot at the episode's

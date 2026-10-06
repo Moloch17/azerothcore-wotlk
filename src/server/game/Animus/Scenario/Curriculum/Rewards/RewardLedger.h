@@ -165,6 +165,12 @@ namespace Animus::Curriculum
         FollowKept,
         Lost,
         Aggro,
+        /// The seek stage (M2, SeekEncounter): the first frame the camera shows the hidden object (Seek.Sighting), and
+        /// each new cell of floor walked onto before it is found (Seek.NewGround). Training-only aids (the plan's
+        /// "fading bonuses for the first sighting and for new ground"): Shaping, so the fade takes both away and the
+        /// stage's objective -- Arrive, stopped beside the object -- is never paid as either.
+        Sighting,
+        NewGround,
         Count
     };
 
@@ -297,6 +303,8 @@ namespace Animus::Curriculum
             case RewardTerm::PetTank:
             case RewardTerm::OrderChurn:
             case RewardTerm::Facing:
+            case RewardTerm::Sighting:
+            case RewardTerm::NewGround:
                 return RewardCategory::Shaping;
             case RewardTerm::Count:
                 break;

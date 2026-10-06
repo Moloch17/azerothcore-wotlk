@@ -61,6 +61,7 @@ namespace Animus::GpuVision
             sight.Doors = Doors;
             return sight;
         }
+        float ObjectiveRadius = Vision::OBJECTIVE_RADIUS;   // the flag's (an object's ObjectiveRadiusFor, or 1 yd)
     };
 
     /// N frames round (x, y, z): positions jittered within `radius` (each set on the floor there, when there is

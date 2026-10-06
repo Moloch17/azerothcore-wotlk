@@ -247,6 +247,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
     {
         case BlockId::Core:      return "core";
         case BlockId::Move:      return "move";
+        case BlockId::Compass:   return "compass";
         case BlockId::Duel:      return "duel";
         case BlockId::Pack:      return "pack";
         case BlockId::Gauntlet:  return "gauntlet";

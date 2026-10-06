@@ -1392,7 +1392,7 @@ TEST(VisionTest, FramesNameTheirEntities)
         Frame frame(settings);
         Vi::FrameSlots slots;
         Vi::Render(settings, pose, camera, world, sight, nullptr, frame.Image.data(), frame.Scalars.data(), nullptr,
-            &slots);
+            Vi::OBJECTIVE_RADIUS, &slots);
         EXPECT_EQ(slots.CastWidth, width);
         EXPECT_EQ(slots.CastHeight, width / 2);
 

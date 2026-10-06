@@ -16,6 +16,14 @@ PER_EVENT = {
     "time_ratio": "markers",
     "overshoot": "markers",
     "stop_distance": "stops_near",
+    # The seek stage (SeekEncounter): the arrival's clock and the rooms walked before it over the episodes that found
+    # the object, the first sighting's clock over those that saw it, from sighting to arrival over those that did both,
+    # and the revisit rate over every room entry.
+    "find_seconds": "found",
+    "rooms_before_found": "found",
+    "sight_seconds": "sighted",
+    "sight_to_arrival": "found_sighted",
+    "revisit_rate": "room_entries",
 }
 
 

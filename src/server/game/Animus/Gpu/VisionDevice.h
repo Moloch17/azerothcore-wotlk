@@ -214,6 +214,7 @@ namespace Animus::GpuVision
         float ObjectiveY;
         float ObjectiveZ;
         uint32_t HasObjective;
+        float ObjectiveRadius;          // the flag's radius (Vision::ObjectiveFlag's `radius`)
         float FovH;
         float FovV;
         uint32_t CastWidth;
@@ -1506,7 +1507,7 @@ namespace Animus::GpuVision
             return false;
         V3 const toward = Make(request.ObjectiveX, request.ObjectiveY, request.ObjectiveZ) - origin;
         float const along = Clamp(Dot(toward, dir), 0.0f, Max(0.0f, distance));
-        return Length(toward - dir * along) <= Vision::OBJECTIVE_RADIUS;
+        return Length(toward - dir * along) <= request.ObjectiveRadius;
     }
 
     /// Vision::EncodePixel.

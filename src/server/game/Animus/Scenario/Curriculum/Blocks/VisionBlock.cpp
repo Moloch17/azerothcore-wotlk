@@ -193,7 +193,7 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
     // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
     thread_local Vi::FrameSlots slots;
     uint32 const rays = Vi::Render(settings, pose, camera, world, sight.View(),
-        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, &slots);
+        view.HasObjective ? &objective : nullptr, view.Image, obs, nullptr, view.ObjectiveRadius, &slots);
 
     // The frame's entity list for the entities block: slot s's entity, as the gather saw it.
     if (Vi::SeenList* seen = view.Seen)

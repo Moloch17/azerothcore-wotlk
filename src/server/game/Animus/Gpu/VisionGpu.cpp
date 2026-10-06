@@ -73,7 +73,7 @@ Animus::GpuVision::SceneSource Animus::GpuVision::SourceOf(Map* map, Vision::Vis
 Animus::GpuVision::FrameRequest Animus::GpuVision::MakeRequest(Vision::Settings const& settings,
     Vision::Pose const& pose, Vision::CameraState const& camera, Vision::Rig const& rig,
     Vision::Sight const& sight, Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask,
-    std::span<void const* const> doorOwners, FrameLists& lists)
+    std::span<void const* const> doorOwners, FrameLists& lists, float objectiveRadius)
 {
     FrameRequest request{};
     request.CameraX = rig.Camera.X;
@@ -88,6 +88,7 @@ Animus::GpuVision::FrameRequest Animus::GpuVision::MakeRequest(Vision::Settings 
         request.ObjectiveX = objective->X;
         request.ObjectiveY = objective->Y;
         request.ObjectiveZ = objective->Z;
+        request.ObjectiveRadius = objectiveRadius;
     }
     request.FovH = settings.FovH;
     request.FovV = settings.FovV;

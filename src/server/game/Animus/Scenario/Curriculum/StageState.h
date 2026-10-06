@@ -293,6 +293,12 @@ namespace Animus::Curriculum
         float MotionMarkRange = -1.0f;
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
+        /// What its camera showed of the objective (StageScenario::ObserveSeat, counted off the frame's bytes): the
+        /// pixels carrying the objective flag in the last frame, and the episode clock of the first frame with any
+        /// (ObjectiveSighted). The seek encounter's sight measures and its first-sight shaping read them.
+        uint32 ObjectivePixels = 0;
+        bool ObjectiveSighted = false;
+        uint32 ObjectiveSightMs = 0;
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
         /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
         uint32 SubmergedSinceMs = 0;
@@ -584,6 +590,9 @@ namespace Animus::Curriculum
             MotionMarkRange = -1.0f;
             MoveRate = 0.0f;
             CloseRate = 0.0f;
+            ObjectivePixels = 0;
+            ObjectiveSighted = false;
+            ObjectiveSightMs = 0;
             OptionPresses = 0;
             OptionMs = 0;
             ItemUses = 0;

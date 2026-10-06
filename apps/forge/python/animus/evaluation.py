@@ -88,6 +88,9 @@ class EvalResult:
     action_names: dict[str, list[str]] = field(default_factory=dict)
     # Per layout, its class's build names in the order the "spec" episode info column indexes them.
     spec_names: dict[str, list[str]] = field(default_factory=dict)
+    # Episode info columns that index a list of names (stage.json episode_categories: the seek stage's seek_room and
+    # seek_object), each column's names in index order: the summary splits by each ("categories").
+    categories: dict[str, list[str]] = field(default_factory=dict)
     # Decision by decision, for the first `eval.trace_episodes` seeded episodes: what the policy did and what it said
     # it was doing. A summary cannot show a plan -- the order of the decisions is the plan -- so this is what to read
     # when asking whether a bot saved a cooldown, rested before a pull or held an add.
@@ -192,7 +195,7 @@ class EvalResult:
             seeds=tuple(seed for part in parts for seed in part.seeds), arenas=first.arenas,
             seconds=max(part.seconds for part in parts), decisions=sum(part.decisions for part in parts),
             action_counts=stacked("action_counts"), allowed_counts=stacked("allowed_counts"),
-            action_names=first.action_names, spec_names=first.spec_names,
+            action_names=first.action_names, spec_names=first.spec_names, categories=first.categories,
             trace=[row for part in parts for row in part.trace], score_column=first.score_column,
             motion_tracks=[track for part in parts for track in part.motion_tracks])
 
@@ -282,7 +285,18 @@ class EvalResult:
 
         everything = np.ones(self.episodes, dtype=bool)
         result = {"policy": self.policy, **means(everything), "bands": {}, "layouts": {}, "specs": {},
-                  "castings": {}, "arenas": {}, "phases": {}, "builds": {}, "difficulties": {}, "up_to": {}}
+                  "castings": {}, "arenas": {}, "phases": {}, "builds": {}, "difficulties": {}, "up_to": {},
+                  "categories": {}}
+        # By each named category (the seek stage's room and object: found by room, found by object type), under
+        # "<column>=<name>"; a name no episode drew is left out.
+        for column, labels in self.categories.items():
+            values = self.column(column)
+            if values is None:
+                continue
+            for index, label in enumerate(labels):
+                rows = values == index
+                if rows.any():
+                    result["categories"][f"{column}={label}"] = means(rows)
         levels = self.column("level")
         if levels is not None:
             for low, high in LEVEL_BANDS:
@@ -367,6 +381,12 @@ class EvalResult:
             group["layouts"] = {} if names is None else {
                 layout: means(top_rows & (names == layout)) for layout in sorted(set(self.layouts))}
             result["top_rung"] = group
+        # The seek stage's gate reading (perception-goals P1: found in >= 90% of the evaluations in the deepest rooms,
+        # episode info deep_room: the deepest third by walking distance).
+        deep, found = self.column("deep_room"), self.column("found")
+        if deep is not None and found is not None:
+            rows = deep > 0.5
+            result["found_deepest"] = float(found[rows].mean()) if rows.any() else None
         plans = self.column("talent_plan")
         if plans is not None and len(set(plans.tolist())) > 1:
             for index, plan in enumerate(TALENT_PLANS):
@@ -489,6 +509,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    arenas: tuple[str, ...] = (),
                    action_names: dict[str, list[str]] | None = None,
                    spec_names: dict[str, list[str]] | None = None,
+                   categories: dict[str, list[str]] | None = None,
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
@@ -642,6 +663,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         # The builds' names: without them the summary had no class x build breakdown at all ("castings" and "specs"
         # empty), and the layout weights that read it had nothing to weight.
         spec_names=dict(spec_names or {}),
+        categories=dict(categories or {}),
         score_column=score_column,
         motion_tracks=motion_tracks,
     )
@@ -781,7 +803,7 @@ def format_summary(summary: dict, baseline: dict | None, columns: tuple[str, ...
 
     names = ["score", *[c for c in columns if c in summary], *[d for d in DERIVED_METRICS if d in summary]]
     rows = [("all", summary, baseline)]
-    for group in ("bands", "layouts", "arenas", "phases", "builds", "difficulties"):
+    for group in ("bands", "layouts", "arenas", "phases", "builds", "difficulties", "categories"):
         for key, row in summary.get(group, {}).items():
             label = f"tier {key}" if group == "difficulties" else key
             rows.append((label, row, (baseline or {}).get(group, {}).get(key)))

@@ -9,9 +9,17 @@
 > `test_stage_ticks.py`), and names the measures `forge status` shows for it (its config's `status.headline` and
 > `status.targets`).
 >
+> `move2_seek` (perception-goals P1, 2026-10-06) extends it: the same Stockades, one real object (a chest, crate,
+> barrel, sack or strongbox) hidden at a random spot of one of its 39 rooms (`ArenaDefinition::Rooms` and `Objects`,
+> SeekEncounter, `Opposition::Seek`), found by sight and stopped beside (3 yd) inside 300 s. It has no compass: the
+> objective's bearing and distance left the move block for the compass block (`BlockId::Compass`, which M1 carries),
+> and the camera's objective flag shows the object only in line of sight. The room draw moves from the rooms seen
+> from the hallway to the deepest as the shaping fade steps.
+>
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
+> | `move2_seek` | 250M | 5M | 195 |
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

@@ -41,17 +41,10 @@ namespace
     namespace Mv = Animus::Movement;
 
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
-    constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
 
     /// `to`'s direction in the seat's own frame: 0 straight ahead, wrapped to (-pi, pi].
     float RelativeBearing(Position const& from, float facing, WorldObject const& to)
-    {
-        float const relative = from.GetAngle(to.GetPositionX(), to.GetPositionY()) - facing;
-        return std::atan2(std::sin(relative), std::cos(relative));
-    }
-
-    float RelativeBearing(Position const& from, float facing, Position const& to)
     {
         float const relative = from.GetAngle(to.GetPositionX(), to.GetPositionY()) - facing;
         return std::atan2(std::sin(relative), std::cos(relative));
@@ -136,6 +129,66 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["fall_height_scale"] = double(FALL_HEIGHT_SCALE);
     // No ground rays, flight rays or clearance since revision 4: the camera (the vision block) is how a seat sees.
     block["ground_probe"] = "none";
+}
+
+std::string Animus::Curriculum::MoveBlock::ColumnName(uint32 column)
+{
+    static char const* const MODES[OBS_MODE_COUNT] = { "mode_ground", "mode_falling", "mode_swimming", "mode_flying" };
+    switch (column)
+    {
+        case OBS_MOVING:                return "moving";
+        case OBS_SPEED:                 return "speed";
+        case OBS_FACING_SIN:            return "facing_sin";
+        case OBS_FACING_COS:            return "facing_cos";
+        case OBS_PITCH_SIN:             return "pitch_sin";
+        case OBS_PITCH_COS:             return "pitch_cos";
+        case OBS_HELD_FORWARD:          return "held_forward";
+        case OBS_HELD_STRAFE:           return "held_strafe";
+        case OBS_HELD_VERTICAL:         return "held_vertical";
+        case OBS_HELD_TURN:             return "held_turn";
+        case OBS_HELD_PITCH:            return "held_pitch";
+        case OBS_HELD_WALK:             return "held_walk";
+        case OBS_VELOCITY_AHEAD:        return "velocity_ahead";
+        case OBS_VELOCITY_LEFT:         return "velocity_left";
+        case OBS_VELOCITY_UP:           return "velocity_up";
+        case OBS_PROGRESS:              return "progress";
+        case OBS_FALL_TIME:             return "fall_time";
+        case OBS_FALL_HEIGHT:           return "fall_height";
+        case OBS_AGAINST_WALL:          return "against_wall";
+        case OBS_STEEP_SLOPE:           return "steep_slope";
+        case OBS_DEPTH:                 return "depth";
+        case OBS_CAN_JUMP:              return "can_jump";
+        case OBS_TARGET_BEARING_SIN:    return "target_bearing_sin";
+        case OBS_TARGET_BEARING_COS:    return "target_bearing_cos";
+        case OBS_TARGET_DISTANCE:       return "target_distance";
+        case OBS_HAZARD_BEARING_SIN:    return "hazard_bearing_sin";
+        case OBS_HAZARD_BEARING_COS:    return "hazard_bearing_cos";
+        case OBS_HAZARD_DISTANCE:       return "hazard_distance";
+        case OBS_HAZARD_RADIUS:         return "hazard_radius";
+        case OBS_IN_WATER:              return "in_water";
+        case OBS_SUBMERGED:             return "submerged";
+        case OBS_SUBMERGED_TIME:        return "submerged_time";
+        case OBS_SWIM_SPEED:            return "swim_speed";
+        case OBS_AIRBORNE:              return "airborne";
+        case OBS_MOVE_RATE:             return "move_rate";
+        case OBS_CLOSE_RATE:            return "close_rate";
+        case OBS_TRAIL_DWELL:           return "trail_dwell";
+        default:                        break;
+    }
+    if (column >= OBS_MODE_FIRST && column < OBS_MODE_FIRST + OBS_MODE_COUNT)
+        return MODES[column - OBS_MODE_FIRST];
+    if (column >= OBS_TRAIL_FIRST && column < OBS_TRAIL_DWELL)
+    {
+        uint32 const sample = (column - OBS_TRAIL_FIRST) / 2;
+        return "trail_" + std::to_string(sample) + ((column - OBS_TRAIL_FIRST) % 2 ? "_left" : "_ahead");
+    }
+    return {};
+}
+
+void Animus::Curriculum::MoveBlock::DescribeColumns(Layout const& /*layout*/, boost::json::array& names) const
+{
+    for (uint32 column = 0; column < OBS_COUNT; ++column)
+        names.emplace_back(ColumnName(column));
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
@@ -232,20 +285,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             out[OBS_HAZARD_RADIUS] = std::min(1.0f, view.NearestHazard.Radius / YARD_SCALE);
         }
 
-        if (view.HasObjective)
-        {
-            float const relative = RelativeBearing(self, facing, view.Objective);
-            out[OBS_OBJECTIVE] = 1.0f;
-            out[OBS_OBJECTIVE_BEARING_SIN] = std::sin(relative);
-            out[OBS_OBJECTIVE_BEARING_COS] = std::cos(relative);
-            float const range = self.GetExactDist2d(&view.Objective);
-            out[OBS_OBJECTIVE_DISTANCE] = std::min(1.0f, range / OBJECTIVE_SCALE);
-            // The same distance again, over forty yards rather than five hundred. Every episode this stage loses
-            // ends twenty to forty-five yards short, which is a twelfth of the coarse feature's range and half
-            // of this one's.
-            out[OBS_OBJECTIVE_NEAR] = std::min(1.0f, range / YARD_SCALE);
-        }
-
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.BreathSpent);
@@ -253,10 +292,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         out[OBS_AIRBORNE] = airborne ? 1.0f : 0.0f;
     }
 
-    // The way round against the way through, and whether the legs are getting anywhere. All three are the
-    // scenario's to measure -- one at the episode's build, two over the last second -- because none of them can
-    // be seen from where the seat stands.
-    out[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
+    // Whether the legs are getting anywhere, over the last second: the scenario's to measure, since neither can be
+    // seen from where the seat stands. (The way round against the way through is the compass block's.)
     out[OBS_MOVE_RATE] = std::clamp(view.MoveRate, 0.0f, 1.0f);
     out[OBS_CLOSE_RATE] = std::clamp(view.CloseRate, -1.0f, 1.0f);
 

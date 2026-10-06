@@ -45,6 +45,7 @@
 #include "HintBlock.h"
 #include "Encounters.h"
 #include "MarkerEncounter.h"
+#include "SeekEncounter.h"
 #include "FollowEncounter.h"
 #include "BuildRetry.h"
 #include "SpellMgr.h"
@@ -476,6 +477,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
     auto const hasFollow = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Follow; };
+    auto const hasSeek = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Seek; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -523,6 +525,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The follow stage's leader: built in the owner's slot, nothing else to order against.
     if (_stage.AnyArena(hasFollow))
         _follow = add(std::make_unique<FollowEncounter>(*this, envs));
+    // The seek stage's hidden object: nothing to fight, nothing else to order against.
+    Encounter* seek = nullptr;
+    if (_stage.AnyArena(hasSeek))
+        seek = add(std::make_unique<SeekEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -539,7 +545,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, flag, director })
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, seek, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -558,6 +564,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
                 || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
+                || (encounter == seek && hasSeek(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -1670,6 +1677,11 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["entities"] = manifest["entities"];
             }
+            // Its columns by name, where the block names them: a seed follows a column that moved (bootstrap).
+            boost::json::array names;
+            GetBlock(id).DescribeColumns(layout, names);
+            if (!names.empty())
+                block["obs_names"] = std::move(names);
             boost::json::array rescaled;
             GetBlock(id).DescribeRescaled(layout, rescaled);
             if (!rescaled.empty())
@@ -1680,6 +1692,22 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     boost::json::array& episodeInfo = stageFile["episode_info"].emplace_array();
     for (std::string const& name : _info.Names())
         episodeInfo.push_back(boost::json::string(name));
+
+    // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
+    // tables split by them (animus.evaluation, EvalResult.categories).
+    boost::json::object& categories = stageFile["episode_categories"].emplace_object();
+    for (ArenaDefinition const& arena : _stage.Arenas)
+        if (arena.Against == Opposition::Seek)
+        {
+            boost::json::array rooms;
+            for (std::string const& name : SeekEncounter::RoomNames(arena))
+                rooms.emplace_back(name);
+            boost::json::array objects;
+            for (std::string const& name : SeekEncounter::ObjectNames(arena))
+                objects.emplace_back(name);
+            categories["seek_room"] = std::move(rooms);
+            categories["seek_object"] = std::move(objects);
+        }
 
     // Every term's category (RewardTermCategory), so the learner's reward audit reads what the sim pays rather than
     // a list of names kept by hand beside it.
@@ -2581,7 +2609,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
     if (firstBuild && map->Instanceable())
     {
-        if (Arena(env).Against == Opposition::Markers)
+        if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek)
             SpawnArea::ClearMap(lead, INSTANCE_CLEAR_RADIUS);
         else
             SpawnArea::Clear(lead);
@@ -4080,6 +4108,18 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
     view.Image = image;
     SeatEncoder::Observe(view, obs, mask);
+    // What the frame showed of the objective: its flagged pixels, and the first frame with any (seek's measures).
+    if (image && view.HasObjective)
+    {
+        seat.ObjectivePixels = Vision::CountObjectivePixels(image, _spec.ImageBytes);
+        if (seat.ObjectivePixels && !seat.ObjectiveSighted)
+        {
+            seat.ObjectiveSighted = true;
+            seat.ObjectiveSightMs = env.EpisodeElapsedMs;
+        }
+    }
+    else
+        seat.ObjectivePixels = 0;
 
     if (mask)
         for (uint32 action = 1; action < seat.L->NumActions; ++action)

@@ -246,7 +246,8 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
         old_revision, new_revision = old_revisions.get(block, 0), new_revisions.get(block, 0)
         if old_revision != new_revision:
             print(f"seeding {source or name}: {name} block {block} revision {old_revision} -> {new_revision} (width "
-                  f"{old_obs[1]} -> {new_obs[1]}): its columns start fresh", flush=True)
+                  f"{old_obs[1]} -> {new_obs[1]}): its columns start fresh, but for those it names (by name below)",
+                  flush=True)
             continue
         if old_obs[1] != new_obs[1] or old_actions[1] != new_actions[1]:
             segments = None
@@ -279,6 +280,86 @@ def _common_blocks(old: dict[str, tuple[Span, Span]], new: dict[str, tuple[Span,
             continue
         common.append(((old_obs, old_actions), (new_obs, new_actions)))
     return common
+
+
+#: The move block's columns at its revision 4 (MoveBlock.h before the compass split, 63 of them), whose stage.json
+#: carries no obs_names: the names revision 5's move block and the compass block (CompassBlock.h) give the same
+#: columns, so a revision 4 checkpoint -- every M1 trained before 2026-10-06 -- seeds them where they now are.
+MOVE_REVISION_4_COLUMNS = (
+    "moving", "speed", "facing_sin", "facing_cos", "pitch_sin", "pitch_cos",
+    "held_forward", "held_strafe", "held_vertical", "held_turn", "held_pitch", "held_walk",
+    "velocity_ahead", "velocity_left", "velocity_up", "progress",
+    "mode_ground", "mode_falling", "mode_swimming", "mode_flying",
+    "fall_time", "fall_height", "against_wall", "steep_slope", "depth", "can_jump",
+    "target_bearing_sin", "target_bearing_cos", "target_distance",
+    "hazard_bearing_sin", "hazard_bearing_cos", "hazard_distance", "hazard_radius",
+    "objective", "objective_bearing_sin", "objective_bearing_cos", "objective_distance",
+    "in_water", "submerged", "submerged_time", "swim_speed", "airborne",
+    "detour", "move_rate", "close_rate", "objective_near",
+    *(f"trail_{sample}_{axis}" for sample in range(8) for axis in ("ahead", "left")),
+    "trail_dwell",
+)
+
+
+def _column_names(stage: dict | None, layout: str) -> dict[str, list[str]]:
+    """Block name -> its columns' names (Block::DescribeColumns, stage.json obs_names), for the blocks that name them;
+    a revision 4 move block of 63 columns, from before names were written, by MOVE_REVISION_4_COLUMNS."""
+    entry = (stage or {}).get("layouts", {}).get(layout) or {}
+    names = {}
+    for block in entry.get("blocks", ()):
+        if block.get("obs_names"):
+            names[block["name"]] = list(block["obs_names"])
+        elif (block["name"] == "move" and int(block.get("revision", 0)) == 4
+              and int(block["obs"][1]) == len(MOVE_REVISION_4_COLUMNS)):
+            names[block["name"]] = list(MOVE_REVISION_4_COLUMNS)
+    return names
+
+
+def _by_name(common, old_stage: dict | None, stage: dict | None, layout: str, old_names: list[str] | None,
+             new_names: list[str] | None):
+    """Segments for what `common` (whole blocks) left behind, matched by name: each named column of a new block that
+    no segment fills, from the old layout's column of the same name in any block (the compass split: revision 4's
+    move block's objective columns now the compass block's, the rest the revision 5 move block's), and each action of
+    such a block from the old block of the same name's action of the same name. Returns (segments, {block: (columns,
+    actions)} carried this way)."""
+    old_spans, new_spans = block_spans(old_stage, layout) or {}, block_spans(stage, layout) or {}
+    old_columns, new_columns = _column_names(old_stage, layout), _column_names(stage, layout)
+    filled_obs = set()
+    filled_actions = set()
+    used_obs = set()
+    for ((old_first, count), (old_action, actions)), ((new_first, _), (new_action, _)) in common:
+        filled_obs.update(range(new_first, new_first + count))
+        used_obs.update(range(old_first, old_first + count))
+        filled_actions.update(range(new_action, new_action + actions))
+
+    where = {}
+    for block, names in old_columns.items():
+        first = old_spans[block][0][0]
+        for offset, name in enumerate(names):
+            if first + offset not in used_obs:
+                where.setdefault(name, first + offset)
+
+    segments, carried = [], {}
+    for block, names in new_columns.items():
+        (first, count), (action_first, action_count) = new_spans[block]
+        columns = actions = 0
+        for offset, name in enumerate(names[:count]):
+            if first + offset in filled_obs or name not in where:
+                continue
+            segments.append((((where[name], 1), (0, 0)), ((first + offset, 1), (0, 0))))
+            columns += 1
+        if block in old_spans and old_names and new_names and not any(
+                action in filled_actions for action in range(action_first, action_first + action_count)):
+            old_first, old_count = old_spans[block][1]
+            old_block = {name: old_first + index
+                         for index, name in enumerate(old_names[old_first : old_first + old_count])}
+            for index, name in enumerate(new_names[action_first : action_first + action_count]):
+                if name in old_block:
+                    segments.append((((0, 0), (old_block[name], 1)), ((0, 0), (action_first + index, 1))))
+                    actions += 1
+        if columns or actions:
+            carried[block] = (columns, actions)
+    return segments, carried
 
 
 # Rows of observation a seeded normaliser is treated as having seen, for a block that gained features. About one
@@ -574,6 +655,16 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
                                     source, sets,
                                     (core_action_features(old_stage, layout.name),
                                      core_action_features(stage, layout.name)))
+            # A block that started fresh (a changed revision) or is new keeps whatever columns and actions it shares by
+            # name with the checkpoint: the compass split's move and compass blocks. The named segments join `common`,
+            # so each column's normaliser mean and variance (actor's and critic's, _seed_norm_blocks) move with its
+            # weights: the copied weights read the column at the scale they were trained on.
+            named, carried = _by_name(common, old_stage, stage, layout.name, _action_names(old_stage, layout.name),
+                                      _action_names(stage, layout.name))
+            for block, (columns, actions) in carried.items():
+                print(f"  {layout.name}: block {block}: {columns} columns and {actions} actions carried by name",
+                      flush=True)
+            common = common + named
             for network, remapped in adapters:
                 _seed_adapter_blocks(network, remapped, f"adapters.{index}", common)
             for network, remapped in norms:

@@ -128,7 +128,7 @@ namespace Animus::GpuVision
     [[nodiscard]] FrameRequest MakeRequest(Vision::Settings const& settings, Vision::Pose const& pose,
         Vision::CameraState const& camera, Vision::Rig const& rig, Vision::Sight const& sight,
         Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask, std::span<void const* const> doorOwners,
-        FrameLists& lists);
+        FrameLists& lists, float objectiveRadius = Vision::OBJECTIVE_RADIUS);
 
     /// Lays the frames out: each request's canonical image at ImageOffset of `imageBytes`, its cast frame at
     /// ScratchOffset of `castBytes` (an unscaled frame is cast straight into the image; its copy there is filled

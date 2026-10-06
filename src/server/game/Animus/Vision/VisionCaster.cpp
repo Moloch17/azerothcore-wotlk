@@ -633,13 +633,13 @@ void Animus::Vision::AssignSlots(std::array<SlotStat, MAX_SEEN + 1> const& count
     }
 }
 
-float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective)
+float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective, float radius)
 {
     if (!objective)
         return 0.0f;
     Vec3 const toward = *objective - origin;
     float const along = std::clamp(Dot(toward, dir), 0.0f, std::max(0.0f, distance));
-    return Length(toward - dir * along) <= OBJECTIVE_RADIUS ? 1.0f : 0.0f;
+    return Length(toward - dir * along) <= radius ? 1.0f : 0.0f;
 }
 
 void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t slot, uint8_t* out)
@@ -667,7 +667,7 @@ void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
 
 uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
     VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars,
-    Breakdown* breakdown, FrameSlots* slots)
+    Breakdown* breakdown, float objectiveRadius, FrameSlots* slots)
 {
     Rig const rig = PlaceCamera(pose, camera, world, breakdown);
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
@@ -701,7 +701,7 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
             Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit const hit = CastRay(rig.Camera, dir, world, sight, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
-            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective) > 0.5f;
+            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             // Byte 4 holds the entity's number until the frame's slots are known.
             EncodePixel(hit, pose.Z, flag, hit.Entity, target + (std::size_t(row) * cast.Width + col)
                 * BYTES_PER_PIXEL);

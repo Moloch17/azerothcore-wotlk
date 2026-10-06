@@ -559,3 +559,20 @@ def test_export_says_plainly_that_the_look_head_is_not_exported(tmp_path):
     with pytest.raises(ValueError, match="the camera and its look head are not exported"):
         export_layouts(state, spec, out, stage_dir)
     assert not list(out.iterdir())
+
+
+def test_the_update_breaks_the_command_head_down_by_choice():
+    """look_zooming is "anything but hold" on the command head (M1 read 0.93); the breakdown says which: the share of
+    the camera rows on each of hold, in, out, recentre and face, summing to 1."""
+    from animus.mappo.trainer import LOOK_COMMANDS
+
+    trainer = trainer_of(MappoConfig(hidden=(16, 16), recurrent_size=4, epochs=1, minibatches=1))
+    buffer = fill(trainer)
+    stats = trainer.update(buffer)
+    seeing = buffer.layout != 2
+    command = buffer.look[..., 2][seeing]
+    assert set(LOOK_COMMANDS) <= set(stats)
+    for choice, name in enumerate(LOOK_COMMANDS):
+        assert stats[name] == pytest.approx(float((command == choice).mean()), abs=1e-6)
+    assert sum(stats[name] for name in LOOK_COMMANDS) == pytest.approx(1.0, abs=1e-5)
+    assert stats["look_zooming"] == pytest.approx(1.0 - stats["look_zoom_hold"], abs=1e-6)

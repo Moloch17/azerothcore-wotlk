@@ -5037,6 +5037,8 @@ AnimusForge.OutputDir = ""
 #                       movement  "move1_controls" (an empty Stockades: from the entrance to the end of the
 #                                 hallway as fast as possible, stopped within a yard; every class and race at
 #                                 level 1, death knights at 55)
+#                                 "move2_seek" (the same Stockades: one real object in one of its 39
+#                                 rooms, found by sight with no compass, and stopped beside)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
 #                     on the git tag curriculum-movement-v1, learner configs in
 #                     apps/forge/python/configs/archive/movement-v1/.
@@ -5175,6 +5177,7 @@ AnimusForge.TicksPerDecision = 1
 #        Default:     (none: every stage uses AnimusForge.TicksPerDecision)
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
+AnimusForge.Stage.move2_seek.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6913,6 +6916,32 @@ AnimusForge.Curriculum.Follow.CastFromRung = 4
 AnimusForge.Curriculum.Follow.CastShare = 50
 AnimusForge.Curriculum.Follow.WinShare = 0.8
 AnimusForge.Curriculum.Follow.CatchUpSeconds = 2.0
+
+#
+#    AnimusForge.Curriculum.Seek.*
+#        The seek stage (move2_seek, SeekEncounter): one real object (a chest, crate, barrel, sack or strongbox) in one
+#        of the Stockades' rooms, found by sight -- the camera's objective flag marks it only in line of sight; there is
+#        no compass. Arrive (Outcome) is paid on stopping within the arena's radius (3 yd) of the object, on its floor
+#        (within ArriveRise yards of its height). StepCost is per 50 ms (a whole 300 s episode costs 3, what Arrive
+#        pays); Death (6) costs more than any clock. Stuck and Wall are the ground course's noise prices (WallSlide as
+#        MarkerGround's), on the cost ladder. Sighting (the first frame showing the object) and NewGround (each
+#        NewGroundCell-yard cell of floor first walked onto before the object is found) are training-only shaping and
+#        fade with the stage's shaping. The object is placed at one of Attempts uniform points of the room's floor
+#        whose vmap floor is within FloorTolerance yards of the room's and that has Clearance yards of room along each
+#        axis at knee height, else at the room's centre.
+AnimusForge.Curriculum.Seek.Arrive = 3.0
+AnimusForge.Curriculum.Seek.StepCost = 0.0005
+AnimusForge.Curriculum.Seek.Death = 6.0
+AnimusForge.Curriculum.Seek.ArriveRise = 2.0
+AnimusForge.Curriculum.Seek.Sighting = 0.5
+AnimusForge.Curriculum.Seek.NewGround = 0.004
+AnimusForge.Curriculum.Seek.NewGroundCell = 4.0
+AnimusForge.Curriculum.Seek.Stuck = 0.05
+AnimusForge.Curriculum.Seek.Wall = 0.03
+AnimusForge.Curriculum.Seek.WallSlide = 0.5
+AnimusForge.Curriculum.Seek.Attempts = 24
+AnimusForge.Curriculum.Seek.FloorTolerance = 2.0
+AnimusForge.Curriculum.Seek.Clearance = 0.8
 
 #
 #    AnimusForge.Curriculum.Owner.*
