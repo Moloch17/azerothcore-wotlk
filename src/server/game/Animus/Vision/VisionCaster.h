@@ -192,8 +192,9 @@ namespace Animus::Vision
     [[nodiscard]] float RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape const& unit, bool& top);
 
     /// 1 when the closed segment from `origin` to `distance` along `dir` (the hit, or the reach on sky) comes within
-    /// OBJECTIVE_RADIUS of the objective, else 0 (and 0 with none).
-    [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective);
+    /// `radius` (OBJECTIVE_RADIUS, or an object's ObjectiveRadiusFor) of the objective, else 0 (and 0 with none).
+    [[nodiscard]] float ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective,
+        float radius = OBJECTIVE_RADIUS);
 
     /// A pixel's four bytes (Camera.h, BYTES_PER_PIXEL).
     void EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out);
@@ -207,7 +208,7 @@ namespace Animus::Vision
     /// image by nearest pixel (Upscale). Returns the rays actually cast (every cast pixel's and the boom's).
     uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
         std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image, float* scalars,
-        Breakdown* breakdown = nullptr);
+        Breakdown* breakdown = nullptr, float objectiveRadius = OBJECTIVE_RADIUS);
 }
 
 #endif

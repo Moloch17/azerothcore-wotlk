@@ -173,7 +173,7 @@ void Animus::Curriculum::VisionBlock::Observe(SeatView const& view, float* obs, 
         view.Objective.GetPositionZ() };
     // The image into the seat's byte row (none: the scalars alone, and no pixel cast), the scalars into the columns.
     uint32 const rays = Vi::Render(settings, pose, camera, world, units, view.HasObjective ? &objective : nullptr,
-        view.Image, obs);
+        view.Image, obs, nullptr, view.ObjectiveRadius);
     Vi::Cost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
         - start).count()), rays);
 }

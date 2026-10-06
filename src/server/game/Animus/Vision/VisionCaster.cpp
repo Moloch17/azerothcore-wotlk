@@ -521,13 +521,13 @@ float Animus::Vision::RayCylinder(Vec3 origin, Vec3 dir, float limit, UnitShape 
     return best;
 }
 
-float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective)
+float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective, float radius)
 {
     if (!objective)
         return 0.0f;
     Vec3 const toward = *objective - origin;
     float const along = std::clamp(Dot(toward, dir), 0.0f, std::max(0.0f, distance));
-    return Length(toward - dir * along) <= OBJECTIVE_RADIUS ? 1.0f : 0.0f;
+    return Length(toward - dir * along) <= radius ? 1.0f : 0.0f;
 }
 
 void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
@@ -553,7 +553,7 @@ void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
 
 uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
     VisionWorld const& world, std::span<UnitShape const> units, Vec3 const* objective, uint8_t* image,
-    float* scalars, Breakdown* breakdown)
+    float* scalars, Breakdown* breakdown, float objectiveRadius)
 {
     Rig const rig = PlaceCamera(pose, camera, world, breakdown);
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
@@ -587,7 +587,7 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
             Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit const hit = CastRay(rig.Camera, dir, world, units, breakdown);
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
-            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective) > 0.5f;
+            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
         }
     if (image && scaled)

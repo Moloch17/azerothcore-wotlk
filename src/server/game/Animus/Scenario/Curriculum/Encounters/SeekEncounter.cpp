@@ -23,6 +23,7 @@
 #include "EpisodeInfoTable.h"
 #include "GameObject.h"
 #include "Log.h"
+#include "Camera.h"
 #include "Map.h"
 #include "MarkerEncounter.h"
 #include "ModelIgnoreFlags.h"
@@ -318,6 +319,10 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 /*seat*/, Se
     EnvSeek const& seek = _envs[env.Index];
     view.HasObjective = seek.Placed && !seek.Found;
     view.Objective = seek.Centre;
+    // The flag on the object itself: its own radius and a quarter yard, not a yard round its centre.
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    if (seek.ObjectIndex < arena.Objects.size())
+        view.ObjectiveRadius = Vision::ObjectiveRadiusFor(arena.Objects[seek.ObjectIndex].Radius);
     view.MountsAllowed = false;
     view.GroundMountAllowed = false;
     view.ArriveWithin = _scenario.Arena(env).SeekRadius;

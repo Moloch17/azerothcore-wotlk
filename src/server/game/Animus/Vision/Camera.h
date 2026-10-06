@@ -188,8 +188,16 @@ namespace Animus::Vision
     /// The height channel, decoded: (hit z - feet z) / HEIGHT_SCALE, clamped to [-1, 1] (HEIGHT_LIMIT steps of
     /// HEIGHT_STEP on the wire).
     constexpr float HEIGHT_SCALE = 25.0f;
-    /// A ray flags the objective when it passes within this many yards of it.
+    /// A ray flags the objective when it passes within this many yards of it: the default, and the most an object's
+    /// own radius may be (ObjectiveRadiusFor).
     constexpr float OBJECTIVE_RADIUS = 1.0f;
+    /// An object's flag radius past its own bounding radius (the seek stage's objects): the flag sits on the object,
+    /// not a yard round its centre, so a small one behind a crate or bars flags nothing through them.
+    constexpr float OBJECTIVE_MARGIN = 0.25f;
+    [[nodiscard]] constexpr float ObjectiveRadiusFor(float bound)
+    {
+        return bound + OBJECTIVE_MARGIN < OBJECTIVE_RADIUS ? bound + OBJECTIVE_MARGIN : OBJECTIVE_RADIUS;
+    }
     constexpr float ZOOM_SCALE = 12.0f;
     /// The held rates' scales: the fastest of each the look head offers (FreeLook.h).
     constexpr float YAW_RATE_SCALE = 180.0f * DEGREES;

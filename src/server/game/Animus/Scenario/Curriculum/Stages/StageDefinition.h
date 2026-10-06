@@ -97,11 +97,14 @@ namespace Animus::Curriculum
     /// **An object the seek stage hides** (ArenaDefinition::Objects): a gameobject_template entry whose display has a
     /// collision model (vmaps' GameObjectModels.dtree), so the camera's rays meet it; Kind names it in the episode
     /// info, and Height is the model's height times the template's size, yards: the objective point is its centre.
+    /// Radius is its bounding radius (the model box's largest half-extent times the size): the camera flags it within
+    /// Vision::ObjectiveRadiusFor(Radius) of its centre, not the default yard.
     struct SeekObject
     {
         uint32 Entry = 0;
         std::string Kind;
         float Height = 1.0f;
+        float Radius = 0.5f;
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).

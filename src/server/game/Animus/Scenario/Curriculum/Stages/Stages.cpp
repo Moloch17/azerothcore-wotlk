@@ -257,16 +257,17 @@ namespace
     /// would look for in a cell, and none of them part of the Stockades' own spawns. Type 5 (generic) where the world
     /// has one, so nothing about them can be used, looted or opened; the strongbox is a type 3 chest with no quest and
     /// no flags. Height is the model's bounding box height (dtree) times the template's size (all 1): the objective
-    /// point is the object's centre, so the flag's yard-wide halo sits on it. Looked up in acore_world on 2026-10-06
+    /// point is the object's centre. Radius is the box's largest half-extent: the camera's flag reaches its radius and
+    /// a quarter yard more (at most a yard; Vision::ObjectiveRadiusFor), so it sits on the object. Looked up in acore_world on 2026-10-06
     /// (MySQL is sealed after startup, so nothing is queried at runtime).
     std::vector<SeekObject> SeekObjects()
     {
         return {
-            { 144111, "chest", 1.32f },     // Smite's Chest, display 259 Treasurechest01.m2, 1.2 x 1.5 yd
-            { 179972, "crate", 1.24f },     // Stormwind Crate 01, display 31 Stormwindcrate01.m2, 1.2 x 1.3 yd
-            { 179967, "barrel", 0.99f },    // Barrel 01, display 32 Barrel01.m2, 0.9 x 1.0 yd
-            { 180660, "sack", 0.94f },      // Sack of Gold, display 6484 Sack01_01.m2, 1.1 x 1.1 yd
-            { 2039, "strongbox", 0.61f },   // Hidden Strongbox (type 3), display 10 Chest01.m2, 0.8 x 1.2 yd
+            { 144111, "chest", 1.32f, 0.78f },      // Smite's Chest, display 259 Treasurechest01.m2, 1.2 x 1.5 yd
+            { 179972, "crate", 1.24f, 0.66f },      // Stormwind Crate 01, display 31 Stormwindcrate01.m2, 1.2 x 1.3 yd
+            { 179967, "barrel", 0.99f, 0.50f },     // Barrel 01, display 32 Barrel01.m2, 0.9 x 1.0 yd
+            { 180660, "sack", 0.94f, 0.55f },       // Sack of Gold, display 6484 Sack01_01.m2, 1.1 x 1.1 yd
+            { 2039, "strongbox", 0.61f, 0.58f },    // Hidden Strongbox (type 3), display 10 Chest01.m2, 0.8 x 1.2 yd
         };
     }
 

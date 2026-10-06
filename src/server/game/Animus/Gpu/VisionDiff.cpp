@@ -155,6 +155,9 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
             float const away = frand(2.0f, 25.0f);
             frame.Objective = { frame.Pose.X + away * std::cos(at), frame.Pose.Y + away * std::sin(at),
                 frame.Pose.Z + frand(-2.0f, 4.0f) };
+            // Half the frames an object's own radius (the seek stage's: 0.75 to 1 yd), half the default yard.
+            if (urand(0, 1))
+                frame.ObjectiveRadius = Vi::ObjectiveRadiusFor(frand(0.3f, 0.9f));
         }
     }
     return frames;
@@ -236,7 +239,7 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
         std::array<float, Vision::SCALARS> cpuScalars{};
         Clock::time_point const start = Clock::now();
         Vision::Render(settings, frame.Pose, frame.Camera, world, frame.Units, objective,
-            cpuImages.data() + std::size_t(bytes) * i, cpuScalars.data());
+            cpuImages.data() + std::size_t(bytes) * i, cpuScalars.data(), nullptr, frame.ObjectiveRadius);
         report.CpuMs += std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 
         std::array<float, Vision::SCALARS> gpuScalars{};
@@ -246,7 +249,7 @@ Animus::GpuVision::DiffReport Animus::GpuVision::RunDiff(Renderer& renderer, int
 
         Vision::Rig const rig = Vision::PlaceCamera(frame.Pose, frame.Camera, world);
         FrameRequest const request = MakeRequest(settings, frame.Pose, frame.Camera, rig, frame.Units, objective,
-            uint32_t(scene), phaseMask, units);
+            uint32_t(scene), phaseMask, units, frame.ObjectiveRadius);
         report.Rays += uint64_t(request.CastWidth) * request.CastHeight;
         requests.push_back(request);
     }

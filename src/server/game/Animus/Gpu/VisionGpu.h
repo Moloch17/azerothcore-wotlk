@@ -113,7 +113,8 @@ namespace Animus::GpuVision
     /// clamped to the canonical one as Render clamps it, and its units appended to `unitsOut` without its own.
     [[nodiscard]] FrameRequest MakeRequest(Vision::Settings const& settings, Vision::Pose const& pose,
         Vision::CameraState const& camera, Vision::Rig const& rig, std::span<Vision::UnitShape const> units,
-        Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask, std::vector<DeviceUnit>& unitsOut);
+        Vision::Vec3 const* objective, uint32_t scene, uint32_t phaseMask, std::vector<DeviceUnit>& unitsOut,
+        float objectiveRadius = Vision::OBJECTIVE_RADIUS);
 
     /// Lays the frames out: each request's canonical image at ImageOffset of `imageBytes`, its cast frame at
     /// ScratchOffset of `castBytes` (an unscaled frame is cast straight into the image; its copy there is filled
