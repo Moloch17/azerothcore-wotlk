@@ -1068,6 +1068,9 @@ namespace Animus::Curriculum
         float SkyOpen = 0.0f;
         /// The walking way may take no jump (ControllerReach): a scripted leader's keys never jump.
         bool NoJump = false;
+        /// Tries at most (0: FindPlace's own count): a narrow search with a fallback behind it (the marker courses'
+        /// vertical and crossing legs) gives up sooner, so a spawn with no such place costs little.
+        uint32 Attempts = 0;
     };
 
     class TravelEncounter final : public Encounter

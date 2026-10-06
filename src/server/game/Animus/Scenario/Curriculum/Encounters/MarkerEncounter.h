@@ -191,6 +191,7 @@ namespace Animus::Curriculum
             uint32 Revisits = 0;
             // The mounted course.
             bool LegAirOnly = false;        // the leg's marker only the air reaches
+            uint32 FallbackLegs = 0;        // narrow legs that fell back to an ordinary marker
             uint32 GroundMountAirMs = 0;    // ... and time on a mount that cannot fly, on such a leg
             uint32 AirOnlyLegs = 0;
             uint32 LastMountMs = 0;

@@ -277,10 +277,14 @@ namespace
         };
     }
 
+    /// Terokkar's held-out ground. curriculum-v1's two points, (-1750, 5154, -37) and (-1730, 5282, -32), are in
+    /// Shattrath City (the map tiles' area), where the dry check's evaluations fell through with no terrain under them
+    /// (2026-10-05). These are from the tiles: Terokkar Forest's own area, dry and within 4.3 / 6.2 yd of level over a
+    /// 40 yd ring, 600 yd or more from Shattrath, z the terrain's. To be probed before M6's first run.
     std::vector<Position> OutlandControl()
     {
         return {
-            { -1750.0f, 5154.0f, -37.0f, 0.0f },  { -1730.0f, 5282.0f, -32.0f, 0.0f },   // Terokkar Forest
+            { -1960.0f, 4520.0f, 13.9f, 0.0f },   { -2600.0f, 5280.0f, 8.3f, 0.0f },
         };
     }
 

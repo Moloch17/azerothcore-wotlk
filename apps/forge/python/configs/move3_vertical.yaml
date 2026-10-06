@@ -18,10 +18,10 @@ costs:
 
 eval:
   report: [arrived, markers, markers_wanted, markers_broken, difficulty, at_top_rung, marker_rise, storey_legs,
-           storey_up_legs, storey_down_legs, detour, time_ratio, overshoot, stop_distance, jumps, drops, falls,
-           fall_damage, fall_deaths, deaths, stuck_seconds,
-           wall_seconds, course_kinks, moves_refused, movement_casts, speed_casts, died, timed_out, reward_arrive,
-           reward_progress, reward_fall_damage, reward_stuck, reward_wall, reward_jitter, reward_effort]
+           storey_up_legs, storey_down_legs, fallback_legs, detour, time_ratio, overshoot, stop_distance, jumps, drops,
+           falls, fall_damage, fall_deaths, deaths, stuck_seconds, wall_seconds, course_kinks, moves_refused,
+           movement_casts, speed_casts, died, timed_out, reward_arrive, reward_progress, reward_fall_damage,
+           reward_stuck, reward_wall, reward_jitter, reward_effort]
 
 # Converged on the top rung and on the stage's own measure: the share of markers stopped on, above, below and upstairs.
 convergence:

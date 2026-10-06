@@ -346,3 +346,46 @@ TEST(MarkerEncounterTest, CourseKinksReadTheWayBetweenTicks)
     EXPECT_FALSE(StageScenario::CourseKink(seat, x, 0.70f, 50));    // stopped: no course
     EXPECT_FALSE(StageScenario::CourseKink(seat, x + 0.35f, 0.70f, 50)); // moving again: a new course, not a kink
 }
+
+namespace
+{
+    /// Flat ground at 0 with a pool of `deadly` liquid (or water) at 0.5 over it for x >= 10.
+    class Pool final : public Mv::WorldQuery
+    {
+    public:
+        explicit Pool(bool deadly) : _deadly(deadly) { }
+        [[nodiscard]] float FloorBelow(float, float, float z, float search) const override
+        {
+            return z >= 0.0f && z <= search ? 0.0f : Mv::INVALID_FLOOR;
+        }
+        [[nodiscard]] float FloorNormalZ(float, float, float) const override { return 1.0f; }
+        [[nodiscard]] Mv::Liquid LiquidAt(float x, float, float) const override
+        {
+            Mv::Liquid liquid;
+            liquid.Present = x >= 10.0f;
+            liquid.Level = 0.5f;
+            liquid.Deadly = _deadly;
+            return liquid;
+        }
+        [[nodiscard]] float Sweep(float, float, float, float, float, float, Mv::Body const&) const override
+        {
+            return 1.0f;
+        }
+        [[nodiscard]] float Ceiling(float, float, float, float up) const override { return up; }
+        [[nodiscard]] bool InTerrain(float, float, float) const override { return false; }
+
+    private:
+        bool _deadly;
+    };
+}
+
+// A marker is never in, over or within 3 yd of magma, slime or fel; water is no reason to refuse one.
+TEST(MarkerEncounterTest, NoMarkerInOrBesideDeadlyLiquid)
+{
+    Pool const lava(true);
+    EXPECT_TRUE(Reach::NearDeadly(lava, 12.0f, 0.0f, 0.0f));          // in it
+    EXPECT_TRUE(Reach::NearDeadly(lava, 8.0f, 0.0f, 0.0f));           // 2 yd from its edge
+    EXPECT_FALSE(Reach::NearDeadly(lava, 5.0f, 0.0f, 0.0f));          // 5 yd off
+    Pool const water(false);
+    EXPECT_FALSE(Reach::NearDeadly(water, 12.0f, 0.0f, 0.0f));
+}

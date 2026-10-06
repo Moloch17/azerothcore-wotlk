@@ -725,7 +725,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // back to an ordinary trip. At 32 it found one in 0.65 of its episodes; the ones it missed were not bad ground
     // but too few throws at it. An air-only place is as narrow: a plateau or an island, not any dry ground.
     // A fixed place (a human trip's end) is one try, at it.
-    uint32 const attempts = rules.Fixed ? 1
+    uint32 const attempts = rules.Fixed ? 1 : rules.Attempts ? rules.Attempts
         : across || rules.AirOnly || rules.Ledge || rules.Underwater ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
 
     // One try: a place `distance` away at `angle`, validated. Everything it asks of the world is read-only, so tries
@@ -780,6 +780,13 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             return false;
         if (rules.HasRise && (z - bot->GetPositionZ() < rules.RiseMin || z - bot->GetPositionZ() > rules.RiseMax))
             return false;
+        // Never in, over or beside magma, slime or fel (a marker's own spot; MarkerReach refuses them on the way).
+        if (rules.ControllerReach)
+        {
+            Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
+            if (MarkerReach::NearDeadly(world, x, y, z))
+                return false;
+        }
         if (rules.SkyOpen > 0.0f)
         {
             Movement::MapWorldQuery const world(map, bot->GetPhaseMask());
