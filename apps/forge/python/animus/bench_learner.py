@@ -36,7 +36,7 @@ def load_spec(path: Path) -> p.Spec:
     # The run's shapes, in the protocol this learner speaks: a spec.json from before a protocol bump still serves.
     fields["version"] = p.PROTOCOL_VERSION
     return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())),
-                  image_bytes=int(raw.get("image_bytes", 0)))
+                  image_bytes=int(raw.get("image_bytes", 0)), look_heads=int(raw.get("look_heads", 0)))
 
 
 def _read_exact(conn: socket.socket, size: int) -> bytes:
@@ -195,6 +195,11 @@ def main() -> int:
           f"after the first, rollouts at {rollout:,.0f} env steps/s, {update:.3f} s waiting on each update "
           f"({compute:.3f} s of update work) -> {steps_per_update / per_rollout:,.0f} env steps/s overall",
           flush=True)
+    import torch
+    if torch.cuda.is_available():
+        # This process's own peak on the device (the learner's; a sim or another run on the card is not counted).
+        print(f"peak device memory: {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB allocated, "
+              f"{torch.cuda.max_memory_reserved() / 2**30:.2f} GiB reserved", flush=True)
     return 0
 
 

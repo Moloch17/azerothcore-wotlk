@@ -83,9 +83,10 @@ class ForgeEnv:
             self._pending = self._receive_decision()
         return self._pending
 
-    def step(self, actions: np.ndarray, goals: np.ndarray | None = None) -> p.Step:
+    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None) -> p.Step:
         """Send [E, A] actions, with the goals each agent is pursuing when the policy has a goal head, and return the
-        next STEP. Goals are what the sim scores, reports and shows a party's teammates; they mask nothing."""
+        next STEP. Goals are what the sim scores, reports and shows a party's teammates; they mask nothing. `look`
+        [E, A, LookHeads]: the camera's choices in a stage with look heads (protocol 22); None sends LOOK_HOLD."""
         expected = (self.spec.num_envs, self.spec.agents_per_env)
         if np.shape(actions) != expected:
             raise ValueError(f"actions must have shape {expected}, got {np.shape(actions)}")
@@ -97,13 +98,26 @@ class ForgeEnv:
         # ticks, so this works exactly as a whole-pool step, only without the overlap the pipelined rollout gets.
         for begin, count in self.groups:
             rows = slice(begin, begin + count)
-            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None)
+            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None,
+                          look[rows] if look is not None else None)
         self._pending = self._receive_decision()
         return self._pending
 
-    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> None:
-        """Answer one group's STEP: [count, A] actions (and goals) for envs [env_begin, env_begin + count)."""
-        payload = p.encode_act(env_begin, actions, goals)
+    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
+                 look: np.ndarray | None = None) -> None:
+        """Answer one group's STEP: [count, A] actions (and goals, and in a stage with look heads the look [count, A,
+        LookHeads]) for envs [env_begin, env_begin + count). A stage with look heads always sends a look: LOOK_HOLD
+        where the caller has none; a stage without them never does (protocol 21's ACT, byte for byte)."""
+        heads = self.spec.look_heads
+        if heads:
+            count, agents = np.shape(actions)
+            if look is None:
+                look = p.look_hold(count, agents, heads)
+            elif np.shape(look) != (count, agents, heads):
+                raise ValueError(f"look must have shape {(count, agents, heads)}, got {np.shape(look)}")
+        else:
+            look = None
+        payload = p.encode_act(env_begin, actions, goals, look)
         self.sock.sendall(p.encode_header(p.MsgType.ACT, len(payload)) + payload)
 
     def receive_step(self) -> p.Step:
@@ -389,22 +403,24 @@ class ClusterEnv:
         self._next_group = 0
         return self._joined([self._whole(index, lambda sim: sim.reset()) for index in range(len(self.sims))])
 
-    def step(self, actions: np.ndarray, goals: np.ndarray | None = None) -> p.Step:
+    def step(self, actions: np.ndarray, goals: np.ndarray | None = None, look: np.ndarray | None = None) -> p.Step:
         # Every sim's answers go out before any STEP is read, so the sims tick together.
         for begin, count in self.groups:
             rows = slice(begin, begin + count)
-            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None)
+            self.send_act(begin, actions[rows], goals[rows] if goals is not None else None,
+                          look[rows] if look is not None else None)
         self._next_group = 0
         return self._joined([self._whole(index, lambda sim: sim._receive_decision())
                              for index in range(len(self.sims))])
 
-    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None) -> None:
+    def send_act(self, env_begin: int, actions: np.ndarray, goals: np.ndarray | None = None,
+                 look: np.ndarray | None = None) -> None:
         index, local = self._owner(env_begin)
         sim = self.sims[index]
         if sim is None:
             return
         try:
-            sim.send_act(local, actions, goals)
+            sim.send_act(local, actions, goals, look)
         except OSError as error:
             self._drop(index, error)
 

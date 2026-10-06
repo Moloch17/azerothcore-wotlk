@@ -47,7 +47,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import check_image_bytes, seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -406,7 +406,7 @@ class DecisionRows:
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
               "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory", "chosen",
-              "goal_slots", "image")
+              "goal_slots", "image", "look")
 
     #: A field store_inputs wrote into the rollout buffer itself.
     IN_BUFFER = object()
@@ -473,7 +473,8 @@ class DecisionRows:
         goals = ((a["goal"], a["goal_log_prob"], a["goal_chosen"], a.get("slow_before"), a.get("slow_value"),
                   a.get("goal_slots")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
-                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"), a.get("image"))
+                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"), a.get("image"),
+                a.get("look"))
 
 
 class RolloutOutcome:
@@ -618,14 +619,20 @@ class TrainingRun:
         # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch.
         vision = vision_of(self.stage, names)
         # The sim's SPEC and stage.json must agree about the camera's bytes (protocol 21).
+        # And about the free look's heads (protocol 22).
         try:
             check_image_bytes(vision, spec.image_bytes)
+            check_look_heads(vision, spec.look_heads)
         except ValueError as error:
             raise SystemExit(f"vision: {error}") from None
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
-            print(f"Vision: a {image['width']} x {image['height']} camera in {sum(e is not None for e in vision)} of "
-                  f"{len(names)} layouts, one encoder per network", flush=True)
+            sizes = ", ".join(f"{w}x{h}" for w, h in image["render_sizes"]) or "the canonical size"
+            look = (f"free look {list(image['look'])} ({', '.join(image['look_names'])})" if image["look"]
+                    else "no free look")
+            print(f"Vision: a {image['width']} x {image['height']} camera (rendered at {sizes}; patch "
+                  f"{image['patch']}) in {sum(e is not None for e in vision)} of {len(names)} layouts, one encoder "
+                  f"per network; {look}", flush=True)
         def make_trainer() -> MappoTrainer:
             # The exploiter's (animus.exploit) is built by this too: the same layouts, director and seat sets, the
             # same ranks -- its update is data-parallel like the main's.
@@ -774,7 +781,8 @@ class TrainingRun:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
-                                 self.trainer.slow_goal_size, self.trainer.goal_slots, spec.image_bytes)
+                                 self.trainer.slow_goal_size, self.trainer.goal_slots, spec.image_bytes,
+                                 len(self.trainer.look_heads))
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.
         self.acting = self.trainer.acting_state(spec.num_envs, spec.agents_per_env)
@@ -845,6 +853,9 @@ class TrainingRun:
             columns += ["goal_entropy", "goal_kept_share",
                         *(f"goal_{index}_share" for index in range(self.trainer.goal_kinds)),
                         *(("goal_targeted_share",) if self.trainer.goal_targets > 1 else ())]
+        if self.trainer.look_heads:
+            # The free look (camera-vision.FREELOOK.md): its entropy, and whether it turns, pitches or zooms at all.
+            columns += ["look_entropy", "look_turning", "look_pitching", "look_zooming"]
         if self.trainer.slow_goal_size:
             # The slow goal loop (Component D) and its goal-level predictions (Component P layer 3): its own
             # losses, and how well it foresees a goal being reached -- the Brier score against always predicting the
@@ -1228,7 +1239,12 @@ class TrainingRun:
             mask = host(step.mask) if forbidden is None else np.logical_and(host(step.mask), ~forbidden[step.layout])
             image = getattr(step, "image", None)
             actions = self.trainer.act(step.obs, mask, step.layout, deterministic, acting, image)[0]
-            return (actions, self.trainer.wire_goals(acting.goal)) if acting.goal is not None else actions
+            goals = self.trainer.wire_goals(acting.goal) if acting.goal is not None else None
+            # The free look (protocol 22), deterministic with the actions when the evaluation is.
+            look = self.trainer.wire_look(acting.look)
+            if look is not None:
+                return actions, goals, look
+            return (actions, goals) if goals is not None else actions
 
         return choose
 
@@ -1630,11 +1646,12 @@ class TrainingRun:
         groups = self.env.groups if pipelined else [(0, envs)]
         sent: dict[str, np.ndarray | None] = {}
 
-        def send(begin: int, count: int, actions: np.ndarray, goals: np.ndarray | None) -> None:
+        def send(begin: int, count: int, actions: np.ndarray, goals: np.ndarray | None,
+                 look: np.ndarray | None = None) -> None:
             if pipelined:
-                self.env.send_act(begin, actions, goals)
+                self.env.send_act(begin, actions, goals, look)
             else:
-                sent["actions"], sent["goals"] = actions, goals
+                sent["actions"], sent["goals"], sent["look"] = actions, goals, look
 
         def receive(begin: int, count: int) -> protocol.Step:
             if pipelined:
@@ -1643,7 +1660,7 @@ class TrainingRun:
                     raise ConnectionError(f"expected the STEP of envs {begin}+{count}, got {part.env_begin}+"
                                           f"{part.done.shape[0]}")
                 return part
-            return self.env.step(sent["actions"], sent["goals"])
+            return self.env.step(sent["actions"], sent["goals"], sent.get("look"))
 
         if self.style is not None:
             self.style.begin(self.step)
@@ -1841,6 +1858,8 @@ class TrainingRun:
         actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
             part.obs, part.mask, part.layout, part.state, state=acting, image=getattr(part, "image", None))
         self.acting.put(rows, acting)
+        # The free look the decision chose (protocol 22), sent with the actions and kept with them.
+        look = trainer.wire_look(acting.look)
         # A converged class still plays (its rows are needed to act and to carry the recurrence) but is not a
         # sample: its adapter and head are frozen, and the trunk is trained on the classes still learning.
         present = part.present
@@ -1858,6 +1877,9 @@ class TrainingRun:
                     mine = self.cast.exploiter_rows(cast_rows)
                     if mine.any():
                         actions = self.exploit.act(part, rows, actions, mine)
+                        if look is not None and self.exploit.look is not None:
+                            look = look.copy()
+                            look[mine] = self.exploit.look[mine]
         goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
             goals if goals is not None else (None, None, None, None, None, None))
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
@@ -1887,8 +1909,9 @@ class TrainingRun:
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
-                     critic_memory=critic_memory, chosen=chosen, goal_slots=goal_slots)
-        send(rows.start, rows.stop - rows.start, actions, trainer.wire_goals(goals[0]) if goals is not None else None)
+                     critic_memory=critic_memory, chosen=chosen, goal_slots=goal_slots, look=look)
+        send(rows.start, rows.stop - rows.start, actions, trainer.wire_goals(goals[0]) if goals is not None else None,
+             look)
 
     def _take_outcome_of(self, part: protocol.Step, rows: slice, decision: DecisionRows,
                          outcome: RolloutOutcome):
