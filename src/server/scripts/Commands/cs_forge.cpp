@@ -26,6 +26,7 @@
 #include "LayeredField.h"
 #include "MapWorldQuery.h"
 #include "MapVisionWorld.h"
+#include "FrameImage.h"
 #include "VisionCaster.h"
 #include "Capture.h"
 #include "GameTime.h"
@@ -621,16 +622,6 @@ namespace
             auto const channel = [&](uint32 pixel, uint32 index) { return decoded[std::size_t(pixel) * Vi::CHANNELS
                 + index]; };
             auto const byte = [](float value) { return char(uint8(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)); };
-            static constexpr uint8 COLOURS[Vi::KINDS][3] = {
-                { 30, 30, 80 },     // sky
-                { 60, 160, 60 },    // terrain
-                { 160, 160, 160 },  // model
-                { 170, 100, 40 },   // door or game object
-                { 40, 90, 220 },    // water
-                { 240, 80, 0 },     // deadly liquid
-                { 220, 0, 0 },      // hostile unit
-                { 230, 230, 0 },    // other unit
-            };
             std::array<uint32, Vi::KINDS> kinds{};
             std::string depth, kind, rise;
             for (uint32 pixel = 0; pixel < pixels; ++pixel)
@@ -641,7 +632,7 @@ namespace
                 ++kinds[what];
                 bool const objective = channel(pixel, Vi::CHANNEL_OBJECTIVE) > 0.5f;
                 for (uint32 c = 0; c < 3; ++c)
-                    kind += char(objective ? 255 : COLOURS[what][c]);
+                    kind += char(objective ? 255 : Vi::KIND_COLOURS[what][c]);
             }
             auto const write = [&](std::string const& path, char const* magic, std::string const& data)
             {
@@ -653,6 +644,13 @@ namespace
             write(base + "-depth.pgm", "P5", depth);
             write(base + "-kind.ppm", "P6", kind);
             write(base + "-height.pgm", "P5", rise);
+            // The four panels in one image, as the training audit saves them (AnimusForge.Vision.AuditInterval).
+            {
+                std::ofstream png(base + ".png", std::ios::binary);
+                png << Vi::FramePng(settings, image.data(), 4);
+                if (!png)
+                    handler->PSendSysMessage("Could not write {}", base + ".png");
+            }
 
             handler->PSendSysMessage("camera snapshot map {} feet ({:.2f}, {:.2f}, {:.2f}) yaw {:.1f} pitch {:.1f} "
                 "zoom {:.1f}: {} x {} pixels, {:.0f} x {:.0f} degrees, no range", mapId, x, y, z, yaw,
@@ -668,15 +666,13 @@ namespace
                 scalars[Vi::SCALAR_BOOM] * Vi::ZOOM_SCALE, scalars[Vi::SCALAR_PIVOT_HEIGHT],
                 scalars[Vi::SCALAR_UNDERWATER] > 0.5f ? "yes" : "no",
                 scalars[Vi::SCALAR_AIRBORNE] > 0.5f ? "yes" : "no");
-            static constexpr char const* KIND_NAMES[Vi::KINDS] = { "sky", "terrain", "model", "door", "water",
-                "deadly", "hostile", "other" };
             std::string histogram;
             for (uint32 what = 0; what < Vi::KINDS; ++what)
                 if (kinds[what])
-                    histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", KIND_NAMES[what],
+                    histogram += Acore::StringFormat("{}{} {}", histogram.empty() ? "" : ", ", Vi::KIND_NAMES[what],
                         kinds[what]);
             handler->PSendSysMessage("  pixels by kind: {}", histogram);
-            handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm", base);
+            handler->PSendSysMessage("  wrote {0}-depth.pgm, {0}-kind.ppm, {0}-height.pgm and {0}.png", base);
             return true;
         }
 

@@ -66,6 +66,10 @@ namespace
             table.AddRow({ "vision", Acore::StringFormat("{:.0f} us/frame", vision.UsPerFrame),
                 Acore::StringFormat("per frame (thread time), {:.0f} rays/frame, {:.1f} frames/decision, {:.2f} ms per "
                     "decision (every seat)", vision.RaysPerFrame, vision.FramesPerDecision, vision.MsPerDecision) });
+        if (vision.FramesPerDecision > 0.0 && vision.AuditInterval)
+            table.AddRow({ "camera audit", Acore::StringFormat("{} frames", vision.AuditFrames),
+                Acore::StringFormat("every {} s to {}{}", vision.AuditInterval, vision.AuditDir,
+                    vision.LastAudit.empty() ? "" : ", last " + vision.LastAudit) });
         Animus::ResetSamples::Summary const& resets = sim.Resets;
         if (resets.Count)
             table.AddRow({ "placement", Acore::StringFormat("{:.1f} ms p95", resets.Placement.P95Ms),

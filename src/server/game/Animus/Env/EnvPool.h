@@ -163,6 +163,8 @@ namespace Animus
 
         [[nodiscard]] ScenarioSpec const& Spec() const { return _spec; }
         [[nodiscard]] uint32 NumEnvs() const { return static_cast<uint32>(_envs.size()); }
+        /// Env `e` (< NumEnvs()), for the world thread between map updates (the camera audit's seat lookup).
+        [[nodiscard]] Env const& EnvAt(uint32 e) const { return _envs[e]; }
 
         /// Episodes finished by every env since Setup.
         [[nodiscard]] uint64 CompletedEpisodes() const;

@@ -115,6 +115,11 @@ namespace AnimusForge
         /// AnimusForge.Vision.*: the vision block's camera (camera-vision), validated at load. Width and Height set
         /// the block's size, so they are the process's (Animus::Vision::Configure, before any layout is built).
         Animus::Vision::Settings Vision;
+        /// AnimusForge.Vision.AuditInterval / AuditSeats: every AuditInterval seconds of real time (0 = never) while a
+        /// stage with a camera trains or runs, AuditSeats seats' frames as the learner gets them are saved under
+        /// runs/<scenario>/camera/ (AnimusForge::Forge::MaybeAuditCamera).
+        uint32 VisionAuditInterval = 300;
+        uint32 VisionAuditSeats = 4;
 
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;

@@ -5438,6 +5438,25 @@ AnimusForge.Vision.Zoom = 6
 
 AnimusForge.Vision.Pitch = -15
 
+#
+#    AnimusForge.Vision.AuditInterval
+#        Description: Every this many seconds of real time while a stage with a camera trains or
+#                     runs, save AuditSeats seats' frames, exactly as the learner gets them, to
+#                     runs/<scenario>/camera/: one PNG a frame (depth, kind, height over the feet
+#                     and slope, side by side; the objective white) and a row in audit.csv (who,
+#                     where, when, pixels of each kind). The seats are drawn at random, one a
+#                     layout first. 0 saves none.
+#        Default:     300 - (0 to 86400)
+
+AnimusForge.Vision.AuditInterval = 300
+
+#
+#    AnimusForge.Vision.AuditSeats
+#        Description: Frames saved at each audit.
+#        Default:     4 - (1 to 64)
+
+AnimusForge.Vision.AuditSeats = 4
+
 ###################################################################################################
 # LEARNER
 #

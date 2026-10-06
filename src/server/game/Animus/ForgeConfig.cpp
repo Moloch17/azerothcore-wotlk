@@ -299,6 +299,8 @@ void AnimusForge::ForgeConfig::Load()
         Vision.Range = ranged("AnimusForge.Vision.Range", defaults.Range, 10.0f, 500.0f);
         Vision.Zoom = ranged("AnimusForge.Vision.Zoom", defaults.Zoom, 0.0f, 50.0f);
         Vision.Pitch = ranged("AnimusForge.Vision.Pitch", defaults.Pitch, -80.0f, 80.0f);
+        VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));
+        VisionAuditSeats = uint32(ranged("AnimusForge.Vision.AuditSeats", 4.0f, 1.0f, 64.0f));
     }
 
     // Human play (human-play-data plan 2.6): off unless a file is named and its share is above 0.

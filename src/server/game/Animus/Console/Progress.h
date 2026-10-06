@@ -171,6 +171,12 @@ namespace AnimusForge
             double RaysPerFrame = 0.0;
             double FramesPerDecision = 0.0;
             double MsPerDecision = 0.0;     // thread time, every seat on every map
+            /// The audit (AnimusForge.Vision.AuditInterval): its interval (0 = off), frames saved since the
+            /// scenario started, where they go and the last one written.
+            uint32 AuditInterval = 0;
+            uint32 AuditFrames = 0;
+            std::string AuditDir;
+            std::string LastAudit;
         };
 
         VisionStats Vision;

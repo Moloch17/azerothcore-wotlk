@@ -276,6 +276,10 @@ namespace AnimusForge
         void Pump();
         void PollExport();
         void MaybeReport();
+        /// Every AnimusForge.Vision.AuditInterval seconds of real time while a stage with a camera trains or runs:
+        /// AuditSeats seats' frames, the bytes the learner is about to get for this decision, saved as PNGs with a
+        /// row each in audit.csv under runs/<scenario>/camera/, for a person to check what the bots see.
+        void MaybeAuditCamera();
         /// Every STALL_CHECK_SECONDS while a stage runs: whether the resets stall the sim (Animus::Stall), logged as
         /// "Reset stall: ..." at once and again every STALL_RELOG_SECONDS while it lasts -- not only in `forge status`
         /// or at the stage's end, where the M3 dry check's halved throughput was first named.
@@ -454,6 +458,7 @@ namespace AnimusForge
 
         std::chrono::steady_clock::time_point _scenarioStarted;
         std::chrono::steady_clock::time_point _lastReport;
+        std::chrono::steady_clock::time_point _lastAudit;   // the camera audit's last frames, or the scenario's start
         std::optional<std::chrono::steady_clock::time_point> _lastAct;
 
         /// Where a tick's wall time goes, since the scenario started (ns). Reported per tick, and what the benchmark
