@@ -656,7 +656,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
                                     (core_action_features(old_stage, layout.name),
                                      core_action_features(stage, layout.name)))
             # A block that started fresh (a changed revision) or is new keeps whatever columns and actions it shares by
-            # name with the checkpoint: the compass split's move and compass blocks.
+            # name with the checkpoint: the compass split's move and compass blocks. The named segments join `common`,
+            # so each column's normaliser mean and variance (actor's and critic's, _seed_norm_blocks) move with its
+            # weights: the copied weights read the column at the scale they were trained on.
             named, carried = _by_name(common, old_stage, stage, layout.name, _action_names(old_stage, layout.name),
                                       _action_names(stage, layout.name))
             for block, (columns, actions) in carried.items():

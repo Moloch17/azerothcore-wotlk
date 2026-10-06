@@ -65,8 +65,12 @@ def trainer(stage_json: dict) -> MappoTrainer:
 def seed(old_stage: dict, new_stage: dict, old: MappoTrainer | None = None) -> tuple[MappoTrainer, MappoTrainer]:
     torch.manual_seed(0)
     old = old or trainer(old_stage)
-    # Statistics a trained parent would have, distinct per column so a misplaced one shows.
-    old.actor.norms[0].mean.copy_(torch.arange(dims(old_stage)[0], dtype=torch.float32))
+    # Statistics a trained parent would have, distinct per column (and per network) so a misplaced one shows.
+    width = dims(old_stage)[0]
+    for offset, network in ((0.0, old.actor), (1000.0, old.critic)):
+        network.norms[0].mean.copy_(torch.arange(width, dtype=torch.float32) + offset)
+        network.norms[0].var.copy_(torch.arange(width, dtype=torch.float32) * 0.5 + 2.0 + offset)
+        network.norms[0].count.fill_(30_000_000.0)
     new = trainer(new_stage)
     layout = Layout(LAYOUT, *dims(new_stage))
     checkpoint = {"trainer": old.state_dict(), "stage": old_stage,
@@ -89,6 +93,18 @@ def weights(network, key: str = "adapters.0.weight") -> torch.Tensor:
     return network.state_dict()[key]
 
 
+def assert_norms_follow(old, new, old_stage, moved, new_stage):
+    """Each (block, name, old name) column's normaliser mean and variance, in both networks, are the old column's."""
+    for network, old_network in ((new.actor, old.actor), (new.critic, old.critic)):
+        for block, name, old_name in moved:
+            to, at = column(new_stage, block, name), column(old_stage, "move", old_name)
+            for stat in ("mean", "var"):
+                assert float(getattr(network.norms[0], stat)[to]) == float(getattr(old_network.norms[0], stat)[at]), (
+                    block, name, stat)
+        # Every column carried, so the parent's confidence is kept rather than capped.
+        assert float(network.norms[0].count) == float(old_network.norms[0].count)
+
+
 def test_m1_at_revision_4_seeds_the_new_m1_column_by_column():
     old, new = seed(M1_OLD, M1_NEW)
     for network, old_network in ((new.actor, old.actor), (new.critic, old.critic)):
@@ -103,12 +119,10 @@ def test_m1_at_revision_4_seeds_the_new_m1_column_by_column():
         # Core and goal carried as blocks.
         torch.testing.assert_close(new_w[:, :CORE], old_w[:, :CORE])
         torch.testing.assert_close(new_w[:, -GOAL:], old_w[:, -GOAL:])
-    # The normaliser's statistics moved with them.
-    mean = new.actor.norms[0].mean
-    for name in MOVE_5:
-        assert float(mean[column(M1_NEW, "move", name)]) == float(column(M1_OLD, "move", name))
-    for name in COMPASS:
-        assert float(mean[column(M1_NEW, "compass", name)]) == float(column(M1_OLD, "move", name))
+    # The normalisers' statistics -- mean and variance, actor's and critic's -- moved with them, so the copied
+    # weights read the columns at the scale they were trained on.
+    assert_norms_follow(old, new, M1_OLD, [("move", name, name) for name in MOVE_5]
+                        + [("compass", name, name) for name in COMPASS], M1_NEW)
     # The move block's actions are its own as they were.
     torch.testing.assert_close(weights(new.actor, "heads.0.weight"), weights(old.actor, "heads.0.weight"))
     torch.testing.assert_close(weights(new.actor, "heads.0.bias"), weights(old.actor, "heads.0.bias"))
@@ -119,6 +133,7 @@ def test_m2_seeds_its_movement_from_m1_at_revision_4_and_leaves_the_compass_behi
     new_w, old_w = weights(new.actor), weights(old.actor)
     for name in MOVE_5:
         torch.testing.assert_close(new_w[:, column(M2, "move", name)], old_w[:, column(M1_OLD, "move", name)])
+    assert_norms_follow(old, new, M1_OLD, [("move", name, name) for name in MOVE_5], M2)
     # Every column of M2 is a carried one: nothing of the objective's has anywhere to go, and nothing was zeroed.
     assert new_w.shape[1] == CORE + len(MOVE_5) + GOAL
     assert all(torch.count_nonzero(new_w[:, index]) > 0 for index in range(new_w.shape[1]))
