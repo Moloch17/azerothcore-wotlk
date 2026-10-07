@@ -55,7 +55,6 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MapDefines.h"
-#include "Opponents.h"
 #include "PartyFramesBlock.h"
 #include "PetBlock.h"
 #include "Player.h"
@@ -117,27 +116,6 @@ namespace
     /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
     /// range, near enough, and beyond it the press was never available anyway.
     constexpr float INTERRUPTIBLE_CAST_RANGE = 30.0f;
-
-    /// Whether the class itself can make itself stealthed, asked of its trainers' spell list.
-    ///
-    /// Not of the action catalog, which is the union over every race the class may be: that union holds
-    /// Shadowmeld (58984), the night elf racial, and answering from it returns eleven of the eighteen
-    /// class/roles. Shadowmeld is a way to hide -- stage 17 is about exactly that and offers it to everyone --
-    /// but it is not stealth: it breaks on movement, so it cannot be used to close on anything, which is the
-    /// whole of what the stealth stage asks for. The kit is per class, so what it holds is true of every
-    /// member of the class rather than of one race of it.
-    bool CanStealth(Animus::Curriculum::ClassAssets const& assets)
-    {
-        if (!assets.Kit)
-            return false;
-
-        for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
-            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
-                spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
-                return true;
-
-        return false;
-    }
 
     /// The core's breath, in game milliseconds: WaterBreath.Timer, 180 s by default (World::LoadConfigSettings).
     uint32 BreathMs()
@@ -360,12 +338,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                         }
             };
             addAround(stage.SpawnPoints);
-            addAround(stage.HeldOutSpawnPoints);
             for (ArenaDefinition const& arena : stage.Arenas)
-            {
                 addAround(arena.SpawnPoints);
-                addAround(arena.HeldOutSpawnPoints);
-            }
             for (auto const& [x, y] : grids)
                 base->EnsureGridCreated(GridCoord(x, y));
             LOG_INFO("module.animus", "{}: resets on the map threads; {} spawn-area grids of map {} loaded", Name(),
@@ -389,10 +363,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
         ClassAssets const& assets = ClassAssets::For(profile);
         if (assets.Races.empty())
-            continue;
-
-        // A stage about closing on someone unseen is played only by the classes that can actually do it.
-        if (_stage.NeedsStealth && !CanStealth(assets))
             continue;
 
         Layout layout = Layout::Build(profile, _stage);
@@ -624,25 +594,13 @@ std::vector<Position> const& Animus::Curriculum::StageScenario::SpawnGroundFor(E
     if (!_stage.MapId && !arenaMap)
         return none;
 
-    // An arena that needs its own ground stands where it says, not where the env does; and a scored episode
-    // stands on the control ground, which training never touches, so what the gates measure is whether the seat
-    // can read terrain at all rather than whether it has seen this terrain before. An arena or a stage with no
-    // control of its own falls back to the ground it trains on, and says so by being unable to tell the two apart.
+    // An arena that needs its own ground stands where it says, not where the env does.
     if (arena < _stage.Arenas.size() && !_stage.Arenas[arena].SpawnPoints.empty())
-    {
-        ArenaDefinition const& definition = _stage.Arenas[arena];
-        if (env.Evaluating && !definition.HeldOutSpawnPoints.empty())
-            return definition.HeldOutSpawnPoints;
-
-        return definition.SpawnPoints;
-    }
+        return _stage.Arenas[arena].SpawnPoints;
 
     // An arena on a map of its own has no use for the stage's ground (the check refuses one without its own).
     if (!_stage.MapId || (arenaMap && arenaMap != _stage.MapId))
         return none;
-
-    if (env.Evaluating && !_stage.HeldOutSpawnPoints.empty())
-        return _stage.HeldOutSpawnPoints;
 
     return _stage.SpawnPoints;
 }
@@ -878,8 +836,7 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return arena == NO_ARENA ? 0.0f : float(arena);
     });
     // Which spawn point the episode was built from, and which one it drew first. An index into the stage's (or
-    // the arena's) SpawnPoints, or HeldOutSpawnPoints while evaluating -- the two lists are never mixed, so the
-    // column means whichever list the episode drew from.
+    // the arena's) SpawnPoints.
     //
     // Read them together. Equal, the first choice worked. Different, that point could not build an episode and
     // the reset moved on, and a point that is drawn often and never built from is one no episode can start at:
@@ -890,20 +847,13 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // An episode that could not be built ends at once and is rebuilt: 1 on that episode's row. How often a stage's
     // resets fail -- a quest the bot refuses, a spot with no objective -- is what it trains on less than it seems.
     _info.Add("build_failed", [this](Env const& env, uint32) { return Data(env).BuildFailed ? 1.0f : 0.0f; });
-    // Fights against something that fights back.
+    // What the seats did against the episode's enemies.
     auto const tally = [this](Env const& env, uint32 index) -> CombatTally const&
     {
         return Data(env).Seats[index].Combat;
     };
 
-    _info.Add("killed", [tally](Env const& env, uint32 index) { return tally(env, index).Killed ? 1.0f : 0.0f; });
     _info.Add("died", [tally](Env const& env, uint32 index) { return tally(env, index).Died ? 1.0f : 0.0f; });
-    _info.Add("time_to_kill", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return float(combat.Killed ? combat.KillTimeMs : env.EpisodeElapsedMs) / 1000.0f;
-    });
-    _info.Add("damage_taken", [tally](Env const& env, uint32 index) { return float(tally(env, index).DamageTaken); });
     _info.Add("health_left", [](Env const& env, uint32 index)
     {
         Player* bot = env.FindBot(index);
@@ -912,11 +862,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("stealth_openers", [tally](Env const& env, uint32 index)
     {
         return float(tally(env, index).StealthOpeners);
-    });
-    // The share of the opponent's health stealth openers took in their first seconds (Stealth.OpenerDamage).
-    _info.Add("opener_damage", [tally](Env const& env, uint32 index)
-    {
-        return tally(env, index).OpenerDamage;
     });
     _info.Add("stealth_utility_casts", [tally](Env const& env, uint32 index)
     {
@@ -991,33 +936,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return seat(env, index).PetAtStart ? 1.0f : 0.0f;
     });
-    _info.Add("pet_summoned", [tally](Env const& env, uint32 index)
-    {
-        return tally(env, index).PetSummoned ? 1.0f : 0.0f;
-    });
-    _info.Add("opponent", [this](Env const& env, uint32) { return float(Data(env).OpponentEntry); });
-    _info.Add("casts_completed", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsCompleted);
-    });
-    _info.Add("casts_cancelled", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsCancelled);
-    });
-    _info.Add("cast_seconds_wasted", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastMsWasted) / 1000.0f;
-    });
-    _info.Add("cancelled_stopped", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsStopped);
-    });
-    _info.Add("cancelled_moved", [tally](Env const& env, uint32 index) { return float(tally(env, index).CastsMoved); });
-    _info.Add("cancelled_target", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).CastsTargetLost);
-    });
-    _info.Add("cancelled_other", [tally](Env const& env, uint32 index) { return float(tally(env, index).CastsOther); });
     _info.Add("consumables_used", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).ConsumablesUsed);
@@ -1027,16 +945,9 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(seat(env, index).SelfResurrections);
     });
 
-    // Why a fight was not won, read off how it ended: which of the two ways it was lost, whether it ever started,
-    // how far the opponent was from dead and the bot from it, the form and power it ended in, and time the
-    // opponent was out of reach (evading) or out of sight.
+    // How an episode ended: whether it timed out, how far the target was from dead and the bot from it, and the form
+    // and power it ended in.
     _info.Add("timed_out", [tally](Env const& env, uint32 index) { return tally(env, index).TimedOut ? 1.0f : 0.0f; });
-    _info.Add("engaged", [tally](Env const& env, uint32 index) { return tally(env, index).Engaged ? 1.0f : 0.0f; });
-    _info.Add("engage_time", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return float(combat.Engaged ? combat.EngageMs : env.EpisodeElapsedMs) / 1000.0f;
-    });
     _info.Add("target_health_left", [this](Env const& env, uint32 index)
     {
         Unit* target = SeatTarget(env, index);
@@ -1064,58 +975,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         uint32 const maxPower = bot->GetMaxPower(power);
         return maxPower ? float(bot->GetPower(power)) / float(maxPower) : 0.0f;
     });
-    _info.Add("target_evade_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).TargetEvadeMs) / 1000.0f;
-    });
-    _info.Add("out_of_sight_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).OutOfSightMs) / 1000.0f;
-    });
     // Time the opponent had no path to its victim, and how often it was put back beside it for that.
-    _info.Add("target_unreachable_seconds", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).UnreachableMs) / 1000.0f;
-    });
-    _info.Add("target_teleports", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).OpponentTeleports);
-    });
     // Style over the fight (one-on-one arenas, the bot alive): the share of it spent within melee reach of the
     // opponent, and the share the opponent spent attacking the seat's pet or guardian instead of the seat.
-    _info.Add("in_melee_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.InMeleeMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("target_on_pet_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.OnPetMs) / float(combat.FightMs) : 0.0f;
-    });
     // Roots and snares from the bot, its pet or its totems: the share of the fight the opponent spent under them, and
     // how often one went on where there was none.
-    _info.Add("target_rooted_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.RootedMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("target_snared_share", [tally](Env const& env, uint32 index)
-    {
-        CombatTally const& combat = tally(env, index);
-        return combat.FightMs ? float(combat.SnaredMs) / float(combat.FightMs) : 0.0f;
-    });
-    _info.Add("roots_applied", [tally](Env const& env, uint32 index) { return float(tally(env, index).RootsApplied); });
     // Feign deaths, and those after which the opponent went home to evade at full health.
-    _info.Add("feign_deaths", [tally](Env const& env, uint32 index) { return float(tally(env, index).FeignDeaths); });
-    _info.Add("feign_death_resets", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).FeignDeathResets);
-    });
-    _info.Add("snares_applied", [tally](Env const& env, uint32 index)
-    {
-        return float(tally(env, index).SnaresApplied);
-    });
     _info.Add("actions_per_minute", [seat](Env const& env, uint32 index)
     {
         float const minutes = std::max(0.001f, float(env.EpisodeElapsedMs) / 60000.0f);
@@ -1983,8 +1848,7 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
     {
-        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{})", Name(),
-            _stage.NeedsStealth ? ", and this stage is played only by class/roles whose kit has stealth" : "");
+        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list)", Name());
         return false;
     }
 
@@ -2364,8 +2228,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The new bots go on idle sessions and into the map before the old ones leave, so the instance always has a
     // bound player.
     Player* firstNew = nullptr;
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->BeforeSeats(env, level);
     CurrentReset.PrepareNs += ResetSinceNs(prepareMark);
 
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
@@ -2781,15 +2643,6 @@ bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatI
     return !canResurrect || env.EpisodeElapsedMs >= tally.DeathMs + _tuning.Resurrection.GraceMs;
 }
 
-void Animus::Curriculum::StageScenario::NotifyRecovered(Env& env, int32 who)
-{
-    if (who >= 0)
-        Data(env).Seats[who].Combat.DeathCounted = false;
-
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->OnRecovered(env, who);
-}
-
 void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
 {
     EnvState& data = Data(env);
@@ -2799,15 +2652,10 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         SeatState& state = data.Seats[seat];
         // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). The secondary is the seat's own, and none when it
         // would repeat the primary.
-        // A commanded arena's goal is given the same way (ArenaDefinition::CommandedGoals).
-        int32 ordered = NO_GOAL;
-        if (Arena(env).CommandedGoals)
-            ordered = state.Commanded;
-        int32 const primary = ordered != NO_GOAL ? ordered : valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
+        int32 const primary = valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
         int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
         if (secondary == primary)
             secondary = NO_GOAL;
-        state.Holds[0].FromOrder = ordered != NO_GOAL;
 
         std::array<int32, GOAL_SLOTS> const next = { primary, secondary };
         for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
@@ -2816,12 +2664,11 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             int32 const goal = next[slot];
             // Any change of a goal still in progress -- its kind or its target -- is a plan abandoned, charged
             // (Goals.Switch); a goal that ended (reached, or no longer possible: the next enemy after this one died)
-            // is replaced free, and so is one a commanded goal set or replaced, which is not the seat's doing.
+            // is replaced free.
             if (goal != hold.Goal && hold.Goal != NO_GOAL && goal != NO_GOAL)
             {
                 ++state.GoalChanges;
-                bool const ordered = slot == 0 && (hold.FromOrder || state.Holds[0].FromOrder);
-                if (!hold.Ended && !ordered)
+                if (!hold.Ended)
                     ++state.StepGoalSwitches;   // charged at the next reward (Goals.Switch)
             }
 
@@ -2829,11 +2676,9 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             // its first observation, which knows where its place is (PotentialReady).
             if (goal != hold.Goal)
             {
-                bool const fromOrder = hold.FromOrder;
                 hold = GoalHold();
                 hold.Goal = goal;
                 hold.Fresh = true;
-                hold.FromOrder = fromOrder;
                 if (goal != NO_GOAL)
                     ++state.GoalsChosenBy[GoalKindOf(goal)];
             }
@@ -3300,8 +3145,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // replaces the closing rate with the one toward the objective where there is one.
     view.MoveRate = seat.MoveRate;
     view.CloseRate = seat.CloseRate;
-    view.SubmergedTime = seat.SubmergedSinceMs && env.EpisodeElapsedMs > seat.SubmergedSinceMs
-        ? float(env.EpisodeElapsedMs - seat.SubmergedSinceMs) / 1000.0f : 0.0f;
     view.BreathSpent = float(seat.BreathSpentMs) / float(std::max<uint32>(1, BreathMs()));
     view.Build = &seat.Build;
     view.KnownRanks = &seat.KnownRanks;
@@ -3551,17 +3394,13 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     CombatTally& tally = seat.Combat;
     tally.PreparationMs += result.PreparationMs;
     if (result.StealthOpener)
-    {
-        tally.StepStealthOpener = true;
         ++tally.StealthOpeners;
-    }
 
     if (!result.StealthUtilityTarget.IsEmpty()
         && std::find(tally.StealthUtilityTargets.begin(), tally.StealthUtilityTargets.end(),
             result.StealthUtilityTarget) == tally.StealthUtilityTargets.end())
     {
         tally.StealthUtilityTargets.push_back(result.StealthUtilityTarget);
-        ++tally.StepStealthUtility;
         ++tally.StealthUtilityCasts;
     }
 
@@ -3853,29 +3692,6 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     view.GoalEvent = seat.Event;
     view.Achieved = seat.Achieved;
     view.Goal2 = seat.Holds[1].Goal;
-    // A commanded arena gives the seat a new goal on its clock or when the one given ended, shown as an order is.
-    if (Arena(env).CommandedGoals && bot && bot->IsAlive())
-    {
-        constexpr uint32 COMMAND_EVERY_MS = 4000;
-        if (seat.Commanded == NO_GOAL || seat.Holds[0].Ended
-            || env.EpisodeElapsedMs >= seat.CommandedAtMs + COMMAND_EVERY_MS)
-        {
-            std::array<bool, GOAL_COUNT> kinds;
-            std::array<bool, GOAL_TARGETS> targets;
-            GoalBlock::Available(view, kinds, targets);
-            std::vector<int32> offered;
-            for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
-                for (uint32 target = 0; kinds[kind] && target < GOAL_TARGETS; ++target)
-                    if (targets[target] && GoalAccepts(SeatGoal(kind), target))
-                        offered.push_back(MakeGoal(SeatGoal(kind), target));
-            seat.Commanded = offered.empty() ? MakeGoal(SeatGoal::Fight, GOAL_TARGET_NONE)
-                : offered[urand(0, uint32(offered.size()) - 1)];
-            seat.CommandedAtMs = env.EpisodeElapsedMs;
-        }
-        view.OrderGoal = seat.Commanded;
-    }
-    else
-        view.OrderGoal = seat.Holds[0].FromOrder ? seat.Holds[0].Goal : NO_GOAL;
     SeatEncoder::AddObserve(SeatEncoder::OBSERVE_VIEW, uint64(std::chrono::duration_cast<
         std::chrono::nanoseconds>(std::chrono::steady_clock::now() - viewMark).count()));
     view.Image = image;
@@ -4881,9 +4697,6 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         if (CastOwnerActive(env))
             TrackSeatStep(env, OwnerAgent(), env.FindBot(OwnerAgent()));
     }
-
-    for (Encounter* encounter : ActiveRewardOrder(env))
-        encounter->AfterRewards(env);
 }
 
 Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex, Player* bot)
@@ -5217,7 +5030,6 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     }
     if (seat.Holds[1].Goal != NO_GOAL)
     {
-        ++seat.SecondaryDecisions;
         seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Secondary);
     }
 

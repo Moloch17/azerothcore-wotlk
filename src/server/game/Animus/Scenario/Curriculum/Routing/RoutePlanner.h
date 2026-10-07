@@ -60,9 +60,6 @@ namespace Animus::Curriculum
 
         void Clear() { *this = Route(); }
 
-        /// Yards left to the objective from (x, y, z), walking towards corner Next.
-        [[nodiscard]] float RemainingFrom(float x, float y, float z) const;
-
         /// Step Next past every corner already reached. No query: distances against what is cached.
         void Advance(float x, float y, float z, float reachedWithin);
     };

@@ -98,8 +98,6 @@ namespace Animus::Movement
         {
             uint64_t Reports = 0;           // packets sent, accepted or not
             uint64_t Refused = 0;           // ... refused by the server
-            uint64_t Heartbeats = 0;
-            uint64_t Facings = 0;           // SET_FACING and SET_PITCH
             uint64_t Changes = 0;           // change opcodes (start, stop, jump, land, swim, ...)
             uint64_t Acks = 0;              // answers to the server's orders
             uint64_t YieldTicks = 0;        // ticks the server imposed and the client yielded
@@ -152,7 +150,6 @@ namespace Animus::Movement
         [[nodiscard]] bool Started() const { return _started; }
         [[nodiscard]] bool Rooted() const { return _rooted; }
         [[nodiscard]] uint32_t Granted() const { return _granted; }
-        [[nodiscard]] uint32_t LastReportMs() const { return _lastSendMs; }
         /// The flags the client reports for the body under `control` now.
         [[nodiscard]] uint32_t FlagsOf(ControlState const& control, Speeds const& speeds) const;
 

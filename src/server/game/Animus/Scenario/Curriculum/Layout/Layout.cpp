@@ -49,69 +49,6 @@ namespace
     /// block's follow-the-tank, the companion block's follow and its clock, the death block's corpse run (each block at
     /// revision 1). Layouts with any of those blocks changed shape.
     constexpr uint32 MANIFEST_FORMAT = 9;
-
-    /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
-    /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
-    /// armor, an elemental shield: SpellInfo::GetSpellSpecific), each group listing every rank.
-    std::vector<std::vector<uint32>> BuffGroupsOf(Animus::Curriculum::ActionCatalog const& catalog)
-    {
-        struct Chain
-        {
-            std::vector<uint32> Ranks;
-            std::set<uint32> Groups;
-            SpellSpecificType Specific = SPELL_SPECIFIC_NORMAL;
-        };
-
-        std::vector<Chain> chains;
-        for (Animus::Curriculum::ActionCatalog::Action const& action : catalog.Actions())
-        {
-            if (action.Type != Animus::Curriculum::ActionCatalog::Kind::Spell || !action.LongBuff)
-                continue;
-
-            Chain chain;
-            if (SpellInfo const* first = sSpellMgr->GetSpellInfo(action.FirstRank))
-                chain.Specific = first->GetSpellSpecific();
-            for (SpellInfo const* rank = sSpellMgr->GetSpellInfo(action.FirstRank); rank;
-                rank = rank->GetNextRankSpell())
-            {
-                chain.Ranks.push_back(rank->Id);
-                auto const bounds = sSpellMgr->GetSpellSpellGroupMapBounds(rank->Id);
-                for (auto itr = bounds.first; itr != bounds.second; ++itr)
-                    chain.Groups.insert(uint32(itr->second));
-            }
-            chains.push_back(std::move(chain));
-        }
-
-        // Union chains that share a group, until nothing joins.
-        std::vector<uint32> parent(chains.size());
-        for (uint32 i = 0; i < parent.size(); ++i)
-            parent[i] = i;
-        auto const root = [&parent](uint32 i)
-        {
-            while (parent[i] != i)
-                i = parent[i] = parent[parent[i]];
-            return i;
-        };
-
-        for (uint32 i = 0; i < chains.size(); ++i)
-            for (uint32 j = i + 1; j < chains.size(); ++j)
-                if ((chains[i].Specific != SPELL_SPECIFIC_NORMAL && chains[i].Specific == chains[j].Specific)
-                    || std::any_of(chains[i].Groups.begin(), chains[i].Groups.end(),
-                        [&](uint32 group) { return chains[j].Groups.contains(group); }))
-                    parent[root(j)] = root(i);
-
-        std::map<uint32, std::vector<uint32>> groups;
-        for (uint32 i = 0; i < chains.size(); ++i)
-        {
-            std::vector<uint32>& ranks = groups[root(i)];
-            ranks.insert(ranks.end(), chains[i].Ranks.begin(), chains[i].Ranks.end());
-        }
-
-        std::vector<std::vector<uint32>> result;
-        for (auto& [id, ranks] : groups)
-            result.push_back(std::move(ranks));
-        return result;
-    }
 }
 
 std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
@@ -196,8 +133,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
     layout.Assets = &ClassAssets::For(profile);
     layout.Blocks = stage.Blocks;
 
-    layout.BuffGroups = BuffGroupsOf(layout.Catalog());
-
     // Each block starts where the previous one ended.
     for (BlockId id : layout.Blocks)
     {
@@ -226,16 +161,6 @@ std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAc
             return id;
 
     return std::nullopt;
-}
-
-boost::json::array Animus::Curriculum::SpellList(std::vector<ActionCatalog::Action> const& actions)
-{
-    boost::json::array list;
-    list.reserve(actions.size());
-    for (ActionCatalog::Action const& action : actions)
-        list.push_back(action.FirstRank);
-
-    return list;
 }
 
 boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)

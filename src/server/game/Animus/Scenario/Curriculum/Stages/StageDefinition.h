@@ -144,12 +144,10 @@ namespace Animus::Curriculum
         std::vector<Position> Far{};
     };
 
-    /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
-    /// whole dungeon wings.
+    /// Which real-instance ladder an arena runs (InstanceBosses.cpp): whole dungeon wings.
     enum class InstanceLadder : uint8
     {
         None,
-        Dungeon,
         /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
         Wing,
     };
@@ -172,11 +170,11 @@ namespace Animus::Curriculum
         SeatPlan Seats = SeatPlan::Solo;
         Opposition Against = Opposition::Instance;
         bool PartyGroup = false;        // the seats form a core group (PartyEncounter)
-        /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
+        /// Opposition::Instance: the ladder whose row this arena runs. The row fixes the map, the seats' level and
         /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
         InstanceLadder Instance = InstanceLadder::None;
-        /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); -1 = the class's own
-        /// rung on the ladder.
+        /// The ladder's row this arena always runs (Ragefire Chasm, the Deadmines: a stage each); set for every
+        /// instance arena.
         int8 InstanceRow = -1;
         /// InstanceLadder::Wing: one pull a run instead of the whole dungeon -- the party a little way back along the
         /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
@@ -202,11 +200,6 @@ namespace Animus::Curriculum
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.
         bool Hazards = false;
-        /// **Commanded goals** (next-run plan, 3.4): the sim gives the seat its primary goal -- a random one of those
-        /// the goal block offers, every COMMAND_EVERY decisions or when it ends -- as a director's order is given, so
-        /// the learner holds it without its goal head being trained on it. Paid only by the goal's own terms beside
-        /// the stage's: the fast loop learns to follow a goal before the slow loop learns to choose one.
-        bool CommandedGoals = false;
         /// Where this arena's envs start, when its ground is not the stage's: used in place of the stage's when the
         /// episode is this arena's; empty means the stage's.
         std::vector<Position> SpawnPoints{};
@@ -216,10 +209,6 @@ namespace Animus::Curriculum
         uint32 MapId = 0;
         /// The lowest level this arena's characters may be, over the stage's MinLevel.
         uint8 MinLevel = 0;
-        /// Ground kept back for evaluation: training never stands here. Empty means the arena has no control of
-        /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether
-        /// the policy learned to read terrain or merely learned these particular banks.
-        std::vector<Position> HeldOutSpawnPoints{};
         /// Opposition::Seek: the rooms an object may be hidden in (one drawn an episode, by the room ladder), the
         /// objects (one drawn an episode, uniformly), and how near the object a stop finds it, yards (interaction
         /// range).
@@ -287,17 +276,6 @@ namespace Animus::Curriculum
         std::string Extends;            // the stage it builds on and seeds from (the trunk); empty for the first
         std::vector<std::string> Merges{}; // further stages it seeds the blocks only they have from
         std::string Summary;
-        /// Played only by the classes whose own kit can make them stealthed (StageScenario's CanStealth, asked of
-        /// ClassKit so the answer is true of every member of the class rather than of one race of it).
-        ///
-        /// A restricted stage's checkpoint holds only the layouts it played, so seeding from it can leave the rest
-        /// of a run starting from random weights. That used to be prevented here, by refusing to let anything
-        /// extend or merge a restricted stage at all -- which also made the rule wrong in the case it matters
-        /// most: in a run of one class that can stealth, every layout plays the stage and there is nothing
-        /// partial about the checkpoint. The rule now lives where the actual layouts are known
-        /// (animus.bootstrap), which refuses loudly rather than fresh-initialising in silence, so a stage like
-        /// this can sit in the middle of a chain when the run it is in allows it.
-        bool NeedsStealth = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)
@@ -306,13 +284,6 @@ namespace Animus::Curriculum
         /// each episode, so a seat sees all of this ground rather than the one patch its env index picked out.
         uint32 MapId = 0;
         std::vector<Position> SpawnPoints{};
-        /// The control ground: where evaluation episodes stand, and where training never does.
-        ///
-        /// A seeded evaluation on the ground training uses cannot tell a policy that reads terrain from one that
-        /// has learned these particular places -- it randomises the episode, not the world. Scoring the gates
-        /// here instead, on ground no weight has ever been updated against, is what makes `arrived` and `saved`
-        /// claims about the policy rather than about the map.
-        std::vector<Position> HeldOutSpawnPoints{};
         /// The lowest level its characters may be (flying needs 60), raising a host's fixed level too.
         uint8 MinLevel = 0;
         /// A band most of a stage's training characters are drawn in (FocusChance percent of them; the rest at any

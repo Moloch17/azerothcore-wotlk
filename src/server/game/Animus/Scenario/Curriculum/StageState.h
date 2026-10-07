@@ -50,89 +50,19 @@ namespace Animus::Curriculum
 {
     struct Layout;
 
-    /// A seat's fight against whatever fights back (duel, pulls, PvP): what the rewards and episode info share.
+    /// What a seat's episode did against its enemies and its own life: the deaths the encounters pay and the episode
+    /// info reports.
     struct CombatTally
     {
-        uint64 DamageTaken = 0;
-        float PetTankPaid = 0.0f;               // Duel.PetTank paid this episode, up to Duel.PetTankMax
-        float LastDistance = -1.0f;             // approach shaping: excess distance at the last reward; < 0 = none yet
-        bool Killed = false;                    // its opponent died (pack: the pull was cleared)
-        uint32 KillTimeMs = 0;
         bool Died = false;                      // died at least once
         uint32 Deaths = 0;
         bool DeathCounted = false;              // the current death has been paid for (again after standing up)
         uint32 DeathMs = 0;                     // episode time of the current death
         uint32 StealthOpeners = 0;              // harmful spells from stealth that broke it
-        bool StepStealthOpener = false;         // one started since the last reward
-        uint32 OpenerMs = 0;                    // when the opener being scored landed (Stealth.OpenerDamage); 0 = none
-        float OpenerHealth = 0.0f;              // ... and the opponent's health share then
-        float OpenerDamage = 0.0f;              // the share of its health openers took, over the episode
-        uint32 StealthUtilityCasts = 0;         // harmful spells from stealth that kept it, paid ones
-        uint32 StepStealthUtility = 0;          // paid ones since the last reward
-        std::vector<ObjectGuid> StealthUtilityTargets;  // targets already paid for during the current stealth
-        bool Engaged = false;                   // the fight has started: the bot or its opponent entered combat
-        uint32 EngageMs = 0;                    // episode time it started; the fast kill bonus counts from here
-        bool PetSummoned = false;
-        uint32 PreparationMs = 0;               // out of combat: buffs, forms, stealth and summons started (StallGrace)
-        uint32 CastsCompleted = 0;
-        uint32 CastsCancelled = 0;
-        uint64 CastMsWasted = 0;
-        uint32 CastsStopped = 0;
-        uint32 CastsMoved = 0;
-        uint32 CastsTargetLost = 0;
-        uint32 CastsOther = 0;
-        bool TimedOut = false;                  // creature duel: the clock ran out with neither side dead
-        uint32 TargetEvadeMs = 0;               // creature duel: time the opponent spent evading (leashed, unreachable)
-        uint32 OutOfSightMs = 0;                // creature duel: time engaged without line of sight to the opponent
-        /// Hiding, for the stages that are about it. Unseen time is measured and never paid: the optimal
-        /// policy for "seconds unseen" is to run to the far corner at the start and stand there, which is
-        /// exactly the farmable shape animus.rewards exists to catch, and it would catch it only after a run
-        /// had been spent on it. What is paid is the transition -- breaking contact -- with a cooldown.
-        uint32 UnseenMs = 0;
-        uint32 UnseenStreakMs = 0;      // ... without being spotted again
-        uint32 LongestUnseenMs = 0;
-        uint32 ContactBreaks = 0;       // seen -> unseen, however it was done
-        uint32 LineOfSightBreaks = 0;   // ... by break_line_of_sight, and it worked
-        uint32 ReStealths = 0;          // got back into stealth after losing it in a fight
-        bool WasSeen = false;
-        bool WasStealthed = false;
-        bool PendingLosBreak = false;   // pressed break_line_of_sight; next decision says whether it worked
-        uint32 BreakPaidMs = 0;         // cooldown on the transition nudge
-        /// Stalking, for the stealth stage: closing on someone while stealthed and unseen, and staying there.
-        /// Paid per decision inside StalkYards, which the evade reward deliberately is not -- the difference
-        /// is that this one is bounded (StalkMax) and that holding the position it pays for is the hard part,
-        /// not the trivial one. Standing stealthed inside melee range of something that is actively looking
-        /// is a skill; standing unseen in the far corner of the map is not.
-        uint32 StalkMs = 0;             // decisions spent stealthed, unseen and inside StalkYards
-        uint32 StalkStreakMs = 0;       // ... unbroken
-        uint32 LongestStalkMs = 0;
-        uint32 StalkApproaches = 0;     // times it came from outside StalkYards to inside, stealthed
-        float ClosestStealthedYards = 0.0f;     // nearest it got while stealthed and unseen; 0 = never stealthed
-        float StalkPaid = 0.0f;         // what the stalk nudge has paid this episode, against StalkMax
-        bool WasStalking = false;
-        uint32 UnreachableMs = 0;               // creature duel: time the opponent had no path to its victim
-        uint32 UnreachableStreakMs = 0;         // ... without a break, up to now
-        uint32 OpponentTeleports = 0;           // ... times it was put back beside its victim for it
-        // Style, over the time the fight was on with the bot alive (one-on-one arenas): how much of it the bot spent
-        // within melee reach of its opponent, and how much the opponent spent attacking the bot's pet or guardian.
-        uint32 FightMs = 0;
-        uint32 InMeleeMs = 0;
-        uint32 OnPetMs = 0;
-        // ... and how much the opponent spent rooted or snared by the bot, its pet or its totems, and how often the
-        // bot put a root or snare on it (a new one where there was none).
-        uint32 RootedMs = 0;
-        uint32 SnaredMs = 0;
-        uint32 RootsApplied = 0;
-        uint32 SnaresApplied = 0;
-        bool WasRooted = false;
-        bool WasSnared = false;
-        // Feign death (one-on-one arenas): how often the bot feigned, and how often its opponent then went home to
-        // evade (and heal to full) because nothing else held it, rather than turning on the pet.
-        uint32 FeignDeaths = 0;
-        uint32 FeignDeathResets = 0;
-        bool WasFeigning = false;
-        uint32 FeignEndMs = 0;                  // episode time the last feign ended (or now, while feigning)
-        bool FeignResetCounted = false;         // the last feign's evade has been counted
+        uint32 StealthUtilityCasts = 0;         // harmful spells from stealth that kept it, new targets only
+        std::vector<ObjectGuid> StealthUtilityTargets;  // targets already counted during the current stealth
+        uint32 PreparationMs = 0;               // out of combat: buffs, forms, stealth and summons started
+        bool TimedOut = false;                  // the clock ran out
     };
 
     /// One learned agent: its character, as built for the episode, and its episode totals.
@@ -159,7 +89,6 @@ namespace Animus::Curriculum
         Position Place;
         ObjectGuid Friend;                  // the goal names a friend (Protect): who
         uint32 ProtectSafeMs = 0;           // ... and how long it has been kept above half health while attacked
-        bool FromOrder = false;             // set by the director's order, not chosen by the seat (primary only)
     };
 
     /// Why a press was aimless (StageScenario::JudgePress, SettleIntent): each is counted and priced on its own
@@ -382,26 +311,20 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalsChosenBy{};
         std::array<uint32, GOAL_COUNT> GoalsReachedBy{};
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
-        uint32 SecondaryDecisions = 0;          // decisions a secondary goal was held (Goals.Secondary)
         /// The goal block's event (GoalBlock::OBS_EVENT): what was true at the last observation, so only a change
         /// raises it -- health under the escape line, the enemies in the fight, the owner under attack.
         bool EventLow = false;
         uint32 EventEnemies = 0;
-        bool EventOwnerAttacked = false;
         bool Event = false;
         /// What the seat achieved this decision, whatever it was pursuing (GoalBlock's hindsight columns), and what
         /// it is measured against: which enemy slots were alive, and whether the seat was below Recover's line.
         int32 Achieved = NO_GOAL;
-        /// A commanded arena's goal for this seat (ArenaDefinition::CommandedGoals), and when it was given.
-        int32 Commanded = NO_GOAL;
-        uint32 CommandedAtMs = 0;
         /// A whole dungeon's party makeup (StageScenario::FitsDungeonRole): this seat's place in it.
         uint8 DungeonRole = 0;
         int32 Pressed = -1;                     // what the seat pressed this decision (the "Wing stuck" log line)
         std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
-        uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
 
         /// An absorb the bot keeps on a friend, as it was at the last reward: what it soaked since is read from how
@@ -613,18 +536,13 @@ namespace Animus::Curriculum
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;
-            SecondaryDecisions = 0;
             EventLow = false;
             EventEnemies = 0;
-            EventOwnerAttacked = false;
             Event = false;
             Achieved = NO_GOAL;
-            Commanded = NO_GOAL;
-            CommandedAtMs = 0;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;
-            FriendSlot = FRIEND_SELF;
             RankTier = 0;
             Absorbs.clear();
             HealsOnFull = 0;
@@ -730,7 +648,6 @@ namespace Animus::Curriculum
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry
-        uint32 OpponentEntry = 0;               // creature entry: the duel's opponent, the first pull's first member
 
         /// What an encounter fixed for this episode before its seats were built (Encounter::BeforeLevel): the map
         /// the seats are placed on (0 = the stage's), their level (0 = drawn), the instance difficulty they open it

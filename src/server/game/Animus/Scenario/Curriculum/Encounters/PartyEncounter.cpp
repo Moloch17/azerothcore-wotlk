@@ -535,15 +535,6 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     }
 }
 
-void Animus::Curriculum::PartyEncounter::OnRecovered(Env& env, int32 who)
-{
-    if (who < 0)
-        return;
-
-    for (SeatParty& seat : _envs[env.Index].Seats)
-        seat.TeammateDeathSeen[who] = false;
-}
-
 void Animus::Curriculum::PartyEncounter::Teardown(Env& env)
 {
     Disband(env);

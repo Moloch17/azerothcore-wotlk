@@ -169,8 +169,6 @@ namespace Animus::Curriculum::EntityActions
     [[nodiscard]] WorldPacket PetAction(ObjectGuid pet, uint32 data, ObjectGuid target);
     /// A hunter's Call Pet (883): its current pet -- the beast it tamed, in its pet stable -- called back.
     constexpr uint32 CALL_PET_SPELL = 883;
-    /// Call Pet as the client casts it: CMSG_CAST_SPELL with no target (a self-cast).
-    [[nodiscard]] WorldPacket CallPet(uint8 castCount);
     /// Call Pet through the seat's session's handler (CastThroughClient): the server's own checks and its own summon
     /// from the pet stable (in memory: the sealed pool's pet load, Pet::LoadPetFromDB). Its refusal read back.
     CastOutcome CallPetThroughClient(Player* bot, ClientPort& port = SessionPort());

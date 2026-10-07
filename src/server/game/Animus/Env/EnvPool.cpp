@@ -572,11 +572,6 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     if (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT)
         return;
 
-    // Damage an agent's pet or guardian takes: what it held off its owner.
-    if (ObjectGuid const owner = victim->GetCharmerOrOwnerGUID(); !owner.IsEmpty() && !victim->IsPlayer())
-        if (auto const master = _agents.find(owner); master != _agents.end())
-            _envs[master->second.Env].StepStats[master->second.Agent].PetDamageTaken += damage;
-
     // Damage an agent takes. The victim is the agent itself (pets absorb their own damage).
     if (hit != _agents.end())
     {
@@ -589,29 +584,9 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
         // damage aura) is the same problem from the seat's point of view -- stand somewhere else.
         if (spell && (spell->HasEffect(SPELL_EFFECT_PERSISTENT_AREA_AURA) || spell->HasAreaAuraEffect()))
             stats.HazardDamage += damage;
-
-        // ... and which enemy slot dealt it, so crowd control can be paid what holding that enemy saves. A pet, totem
-        // or guardian counts for its owner's slot; an attacker in no slot lands in DamageTaken alone.
-        ObjectGuid const source = attacker->GetCharmerOrOwnerOrOwnGUID();
-        for (std::size_t slot = 0; slot < env.Targets.size() && slot < MAX_TARGETS; ++slot)
-            if (env.Targets[slot] == source)
-            {
-                stats.DamageTakenBy[slot] += damage;
-                break;
-            }
     }
 
-    // Damage an ally takes counts against every agent of its env.
     auto const ally = _allies.find(victim->GetGUID());
-    if (ally != _allies.end())
-    {
-        for (AgentStats& stats : _envs[ally->second.Env].StepStats)
-        {
-            stats.AllyDamageTaken += damage;
-            stats.AllyDamageTakenBy[ally->second.Agent] += damage;
-        }
-    }
-
     if (hit != _agents.end() || ally != _allies.end())
         RecordPrevented(hit != _agents.end() ? hit->second : ally->second, hit != _agents.end(), victim, damage);
 
@@ -642,15 +617,9 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
         stats.SpellDamage += damage;
 
     if (type == DIRECT_DAMAGE)
-    {
         stats.WhiteDamage += damage;
-        ++stats.WhiteHits;
-    }
     else
-    {
         stats.SpecialDamage += damage;
-        ++stats.SpecialHits;
-    }
 }
 
 void Animus::EnvPool::RecordPrevented(AgentSlot const& victimSlot, bool victimIsAgent, Unit const* victim,
@@ -852,7 +821,6 @@ void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint3
 
     AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
     stats.AllyHealing += gain;
-    stats.AllyHealingBy[ally->second.Agent] += gain;
     if (periodic)
         stats.PeriodicHealing += gain;
 }
@@ -896,11 +864,6 @@ void Animus::EnvPool::RecordCastCompleted(Unit const* caster, Spell* spell)
         || info->HasAura(SPELL_AURA_MOD_SPEED_NOT_STACK))
         ++stats.SpeedCasts;
 
-    if (spell->GetCastTime() <= 0 || info->IsChanneled())
-        return;
-
-    ++stats.CastsCompleted;
-    stats.CastMsCompleted += uint32(spell->GetCastTime());
 }
 
 void Animus::EnvPool::RecordCastCancelled(Unit const* caster, Spell* spell, bool bySelf)
@@ -908,43 +871,8 @@ void Animus::EnvPool::RecordCastCancelled(Unit const* caster, Spell* spell, bool
     if (!caster || !spell || spell->IsTriggered())
         return;
 
-    auto const agent = _agents.find(caster->GetGUID());
-    if (agent == _agents.end())
-    {
-        RecordTargetInterrupted(caster, spell, bySelf);
-        return;
-    }
-
-    // A seat's own cast stopped is also an interrupt landed by whoever stopped it. Against a creature or the scripted
-    // enemy player that is the branch above, because neither is an agent; in self-play the enemy is another seat, so
-    // without this an interrupt in a mirror match was filed only as the victim's cancelled cast and never recorded,
-    // paid or counted.
+    // A seat's own cast stopped is also an interrupt landed by whoever stopped it, which in self-play is another seat.
     RecordTargetInterrupted(caster, spell, bySelf);
-
-    // Only a cast still in its cast time: a cancelled channel has already paid out its ticks.
-    if (spell->getState() != SPELL_STATE_PREPARING || spell->GetCastTime() <= 0)
-        return;
-
-    // Pushback adds to the time left, so clamp what was spent to [0, cast time].
-    int32 const spent = std::clamp(spell->GetCastTime() - spell->GetCastTimeRemaining(), 0, spell->GetCastTime());
-
-    AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
-    ++stats.CastsCancelled;
-    stats.CastMsWasted += uint32(spent);
-
-    Unit const* target = spell->m_targets.GetUnitTarget();
-    // Moving is checked before bySelf: a cast the bot walked out of is cancelled by the caster too, so testing
-    // bySelf first sent every move-cancel to CastsStopped and left CastsMoved dead (0 over a whole stage1_duel
-    // run). Movement is the more specific cause, and telling the two apart is what says whether the policy is
-    // stopping casts on purpose or running out of them.
-    if (caster->IsAlive() && !caster->movespline->Finalized())
-        ++stats.CastsMoved;
-    else if (bySelf)
-        ++stats.CastsStopped;
-    else if (spell->m_targets.GetObjectTargetGUID() && (!target || !target->IsAlive() || !target->IsInWorld()))
-        ++stats.CastsTargetLost;
-    else
-        ++stats.CastsOther;
 }
 
 void Animus::EnvPool::RecordTargetInterrupted(Unit const* caster, Spell* spell, bool bySelf)

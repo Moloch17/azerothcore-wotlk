@@ -102,7 +102,7 @@ void Animus::Curriculum::PartyFollowEncounter::AddEpisodeInfo(EpisodeInfoTable& 
     };
 
     // The stage's measure: the share of the episode each follower spent within the band of the leader.
-    table.Add("follow_kept_share", [this, seatOf](Env const& env, uint32 seat)
+    table.Add("follow_kept_share", [seatOf](Env const& env, uint32 seat)
     {
         SeatFollow const* follow = seatOf(env, seat);
         return follow && env.EpisodeElapsedMs ? float(follow->InBandMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -218,7 +218,7 @@ void Animus::Curriculum::PartyFollowEncounter::BeforeLevel(Env& env)
     // that walked in stands, and where a seat that died stands up again.
     EnvState& data = _scenario.Data(env);
     uint32 const mapId = _scenario.Arena(env).MapId;
-    for (BossRow const& row : InstanceLadderRows(InstanceLadder::Dungeon))
+    for (BossRow const& row : FollowBosses())
         if (row.MapId == mapId)
         {
             auto const [low, high] = InstanceEncounter::DungeonLevels(row);
@@ -294,7 +294,7 @@ std::vector<Position> Animus::Curriculum::PartyFollowEncounter::RouteStops(uint3
     if (known != _routes.end())
         return known->second;
     std::vector<Position>& stops = _routes[mapId];
-    for (BossRow const& row : InstanceLadderRows(InstanceLadder::Dungeon))
+    for (BossRow const& row : FollowBosses())
         if (row.MapId == mapId)
             if (CreatureData const* spawn = InstanceEncounter::FindSpawn(row))
                 stops.emplace_back(spawn->posX, spawn->posY, spawn->posZ, spawn->orientation);
@@ -562,7 +562,6 @@ void Animus::Curriculum::PartyFollowEncounter::View(Env const& env, uint32 seat,
         view.HasObjective = party.NextStop < party.Stops.size();
         if (view.HasObjective)
             view.Objective = party.Stops[party.NextStop];
-        view.ArriveWithin = LEADER_ARRIVE;
         return;
     }
 

@@ -19,7 +19,6 @@
 #include "CompassBlock.h"
 #include "Player.h"
 #include "SeatView.h"
-#include "UnitBody.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <algorithm>

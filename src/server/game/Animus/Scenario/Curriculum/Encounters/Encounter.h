@@ -40,9 +40,6 @@ namespace Animus::Curriculum
     struct SeatActionResult;
     struct SeatView;
 
-    /// Who stood up again after a pull (see Encounter::OnRecovered).
-    constexpr int32 RECOVERED_OWNER = -1;
-
     /// One part of what a stage's envs contain besides the seats: a creature, pulls, the owner, the party group, the
     /// enemy player. The scenario creates the encounters any of its arenas asks for; each episode it calls the hooks
     /// of the encounters the episode's arena uses, in a fixed order. An encounter keeps its own per-env state and adds
@@ -71,8 +68,6 @@ namespace Animus::Curriculum
         /// After the episode's arena and its seats' classes are drawn and before its level: an encounter that fixes
         /// the level, the map or the spawn (an instance's boss rung) writes them into the EnvState here.
         virtual void BeforeLevel(Env& /*env*/) { }
-        /// After the episode's level is drawn and before its seats are built.
-        virtual void BeforeSeats(Env& /*env*/, uint8 /*level*/) { }
         /// After the seats' new bots are placed, in encounter order: build what the episode fights and prepare the
         /// seats for it. `level` is the seats' level. False when the env cannot be built.
         virtual bool Build(Env& /*env*/, Map* /*map*/, uint8 /*level*/) { return true; }
@@ -93,15 +88,11 @@ namespace Animus::Curriculum
         /// Each decision: before the seats are rewarded, each seat's reward terms, after every seat was rewarded.
         virtual void BeforeRewards(Env& /*env*/) { }
         virtual void Reward(Env& /*env*/, uint32 /*seat*/, Player* /*bot*/, RewardLedger& /*ledger*/) { }
-        virtual void AfterRewards(Env& /*env*/) { }
 
         /// Write the encounter's part of the critic state (the whole buffer, already zeroed).
         virtual void WriteState(Env const& /*env*/, float* /*state*/) const { }
 
         [[nodiscard]] virtual bool IsTerminal(Env const& /*env*/) const { return false; }
-
-        /// Seat `seat` (or RECOVERED_OWNER) stood up again after a pull: its death can be paid for again.
-        virtual void OnRecovered(Env& /*env*/, int32 /*who*/) { }
 
         /// The env's next episode is an arena without this encounter: remove what it keeps in the world (a bot, a
         /// group), before the seats are rebuilt. It may be built again for a later episode.

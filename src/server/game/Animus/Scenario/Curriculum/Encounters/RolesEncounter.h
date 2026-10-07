@@ -130,7 +130,6 @@ namespace Animus::Curriculum
             float KeptUp = 0.0f;                // the drilled healer's member-decisions above half ...
             float KeptMembers = 0.0f;           // ... of all its member-decisions in a fight
             float LowManaSeconds = 0.0f;        // ... and its seconds in a fight under a tenth of its mana
-            float PartyDeadSeconds = 0.0f;
         };
 
         /// The pack in front's members alive and fighting, or the pack's spot; where a seat's fight is.

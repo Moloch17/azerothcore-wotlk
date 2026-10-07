@@ -25,7 +25,7 @@ This chapter covers the machinery: scenarios, env pools, bots, core seams, layou
 | `.../Blocks/` | One class per block: `CoreBlock`, `MoveBlock`, `DuelBlock`, `PetBlock`, `PackBlock`, `GauntletBlock`, `CompanionBlock`, `PartyBlock`, `PvpBlock`, `ContextBlock`, `HostilesBlock`, `TravelBlock`, `FlagBlock`; `Blocks.cpp` (`GetBlock`) |
 | `.../Encounters/` | `Encounter` (interface), creature, pulls, owner, party, opponent, ambush, travel and flag encounters, `Opponents` (creature pools and spawn points), `EpisodeInfoTable` |
 | `.../Character/` | `ClassProfile` (the 10 classes and their 31 specs), `ClassAssets`, `ClassKit`, `TalentBuilder`, `SpecBuilds` (generated), `ActionCatalog`, `GearBuilder`, `GearStats`, `GearEnhancements`, `PetTalents`, `Supplies`, `WorldCreatures`, `SeatCharacter` |
-| `.../Rewards/` | `RewardLedger`, `CombatReward` (the shared one-on-one and pull reward terms) |
+| `.../Rewards/` | `RewardLedger`, `CombatReward` (`RewardTermName`, the approach range, the tier scale) |
 | `src/Env/` | `Env`, `EnvPool`, `PoolRegistry` |
 | `src/Bot/` | `BotFactory`, `BotSlot`, `BotAccounts` |
 | `src/Core/` | `CoreHooks` |

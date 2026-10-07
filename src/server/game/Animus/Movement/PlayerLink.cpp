@@ -156,7 +156,6 @@ bool Animus::Movement::PlayerLink::Apply(Report const& report)
     // A landing's cost (Player::HandleFall, inside Apply), for the fall columns.
     if (opcode == MSG_MOVE_FALL_LAND)
     {
-        ++_memory.Landings;
         if (bot->GetMaxHealth() && bot->GetHealth() < health)
             _memory.FallDamage += float(health - bot->GetHealth()) / float(bot->GetMaxHealth());
     }

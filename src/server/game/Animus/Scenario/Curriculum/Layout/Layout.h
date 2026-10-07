@@ -46,10 +46,6 @@ namespace Animus::Curriculum
         uint32 NumActions = 0;
         std::vector<BlockId> Blocks;                // the stage's blocks, in layout order
         std::array<BlockSlice, BLOCK_COUNT> Slices{};
-        /// The layout's long buffs (ActionCatalog::IsLongBuff) as buffs a unit can have at once: chains that share a
-        /// spell group (Blessings of Might and Kings, Fortitude and Prayer of Fortitude) are one group. Each group
-        /// lists every rank's spell id. Buff coverage (a friend's share of groups up) reads them.
-        std::vector<std::vector<uint32>> BuffGroups;
         /// Per action: Block::ModeGroupOf (as uint8), resolved once for SeatMemory.
         std::vector<uint8> ModeGroups;
 
@@ -76,9 +72,6 @@ namespace Animus::Curriculum
     private:
         uint32 _blockMask = 0;
     };
-
-    /// A manifest spell list: the first rank of every action.
-    [[nodiscard]] boost::json::array SpellList(std::vector<ActionCatalog::Action> const& actions);
 
     /// A manifest span of a row: [first, count].
     [[nodiscard]] boost::json::array Span(uint32 first, uint32 count);

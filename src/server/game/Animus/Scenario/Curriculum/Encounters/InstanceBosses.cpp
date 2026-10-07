@@ -22,37 +22,21 @@ namespace
 {
     using Animus::Curriculum::BossRow;
 
-    // Map ids: Ragefire Chasm 389, the Deadmines 36, Scarlet Monastery 189, Stratholme 329, Utgarde Keep 574.
+    // Map ids: Ragefire Chasm 389, the Deadmines 36.
     constexpr uint8 DUNGEON_NORMAL = 0;
-    constexpr uint8 DUNGEON_HEROIC = 1;
 
-    /// Five-man dungeons at five level bands: four bosses each so a class climbs a band at a time.
-    std::vector<BossRow> const DUNGEON = {
+    /// The bosses of the two dungeons the party follow stage walks (PartyFollowEncounter): four each, in route order.
+    /// A row's map, level and difficulty give the dungeon's level band; its boss's spawn is a stop on the leader's
+    /// route.
+    std::vector<BossRow> const FOLLOW = {
         { .MapId = 389, .Entry = 11517, .Level = 15, .Difficulty = DUNGEON_NORMAL, .Name = "Oggleflint" },
         { .MapId = 389, .Entry = 11520, .Level = 15, .Difficulty = DUNGEON_NORMAL, .Name = "Taragaman the Hungerer" },
         { .MapId = 389, .Entry = 11518, .Level = 15, .Difficulty = DUNGEON_NORMAL, .Name = "Jergosh the Invoker" },
         { .MapId = 389, .Entry = 11519, .Level = 15, .Difficulty = DUNGEON_NORMAL, .Name = "Bazzalan" },
-        { .MapId = 36, .Entry = 644, .DataId = 0, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Rhahk'Zor" },
+        { .MapId = 36, .Entry = 644, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Rhahk'Zor" },
         { .MapId = 36, .Entry = 643, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Sneed" },
         { .MapId = 36, .Entry = 1763, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Gilnid" },
         { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = DUNGEON_NORMAL, .Name = "Edwin VanCleef" },
-        { .MapId = 189, .Entry = 3983, .Level = 35, .Difficulty = DUNGEON_NORMAL, .Entrance = 45,
-            .Name = "Interrogator Vishas" },
-        { .MapId = 189, .Entry = 4543, .Level = 35, .Difficulty = DUNGEON_NORMAL, .Entrance = 45,
-            .Name = "Bloodmage Thalnos" },
-        { .MapId = 189, .Entry = 6487, .Level = 38, .Difficulty = DUNGEON_NORMAL, .Entrance = 614,
-            .Name = "Arcanist Doan" },
-        { .MapId = 189, .Entry = 3975, .Level = 40, .Difficulty = DUNGEON_NORMAL, .Entrance = 612, .Name = "Herod" },
-        { .MapId = 329, .Entry = 10436, .Level = 60, .Difficulty = DUNGEON_NORMAL, .Name = "Baroness Anastari" },
-        { .MapId = 329, .Entry = 10437, .Level = 60, .Difficulty = DUNGEON_NORMAL, .Name = "Nerub'enkan" },
-        { .MapId = 329, .Entry = 10438, .Level = 60, .Difficulty = DUNGEON_NORMAL, .Name = "Maleki the Pallid" },
-        { .MapId = 329, .Entry = 10439, .Level = 60, .Difficulty = DUNGEON_NORMAL, .Name = "Ramstein the Gorger" },
-        { .MapId = 574, .Entry = 23953, .DataId = 0, .Level = 80, .Difficulty = DUNGEON_HEROIC,
-            .Name = "Prince Keleseth" },
-        { .MapId = 574, .Entry = 24200, .DataId = 1, .Level = 80, .Difficulty = DUNGEON_HEROIC, .Keep = { 24201 },
-            .Name = "Skarvald and Dalronn" },
-        { .MapId = 574, .Entry = 23954, .DataId = 2, .Level = 80, .Difficulty = DUNGEON_HEROIC,
-            .Name = "Ingvar the Plunderer" },
     };
 
     std::vector<BossRow> const NONE;
@@ -72,14 +56,14 @@ namespace
     /// row 0, the door to Bazzalan, past Oggleflint, Taragaman and Jergosh. Each stage pins its row
     /// (ArenaDefinition::InstanceRow).
     std::vector<Animus::Curriculum::BossRow> const WING = {
-        { .MapId = 389, .Entry = 11519, .Level = 16, .Difficulty = 0, .Trash = true,
+        { .MapId = 389, .Entry = 11519, .Level = 16, .Difficulty = 0,
             .Name = "Ragefire Chasm to Bazzalan" },
-        { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = 0, .Trash = true,
+        { .MapId = 36, .Entry = 639, .Level = 20, .Difficulty = 0,
             .Name = "the Deadmines to Edwin VanCleef" },
         // Held out (peak-play W2, ArenaDefinition::EvalOnly): Wailing Caverns (map 43, levels 15-25) to Lord Serpentis,
         // a fixed level-20 spawn on its main way, past Anacondra, Pythas and Cobrahn. Its last boss proper, Mutanus,
         // only comes with the Naralex escort, which no route can walk to.
-        { .MapId = 43, .Entry = 3673, .Level = 20, .Difficulty = 0, .Trash = true,
+        { .MapId = 43, .Entry = 3673, .Level = 20, .Difficulty = 0,
             .Name = "Wailing Caverns to Lord Serpentis" },
     };
 }
@@ -119,10 +103,14 @@ std::vector<Animus::Curriculum::BossRow> const& Animus::Curriculum::InstanceLadd
 {
     switch (ladder)
     {
-        case InstanceLadder::Dungeon: return DUNGEON;
         case InstanceLadder::Wing:    return WING;
         case InstanceLadder::None:    break;
     }
 
     return NONE;
+}
+
+std::vector<Animus::Curriculum::BossRow> const& Animus::Curriculum::FollowBosses()
+{
+    return FOLLOW;
 }

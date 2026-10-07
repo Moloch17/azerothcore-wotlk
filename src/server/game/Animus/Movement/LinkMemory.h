@@ -34,7 +34,6 @@ namespace Animus::Movement
         uint32_t InvalidStreak = 0;
         /// Landings the server took (MSG_MOVE_FALL_LAND), what they cost (share of maximum health, Player::HandleFall)
         /// and how many killed; for the fall columns, counted since the link began.
-        uint32_t Landings = 0;
         float FallDamage = 0.0f;
         uint32_t FallDeaths = 0;
         uint32_t VoidDeaths = 0;        // ... of which the core's kill under the map's floor (DAMAGE_FALL_TO_VOID)

@@ -156,10 +156,6 @@ namespace Animus::Client
         float Sin = 0.0f;
         float SpeedXY = 0.0f;
         float SpeedZ = 0.0f;
-        /// When it arrived: the client's own clock then (what a time-sync answer reports) and the steady time
-        /// (the server's receive time of an answer sent at once).
-        uint32_t ClientMs = 0;
-        std::chrono::steady_clock::time_point ArrivedAt{};
     };
 
     /// Whether the server's opcode is one the client answers. Cheap: every packet to every session is asked.
@@ -349,25 +345,6 @@ namespace Animus::Client
                 return 0;
         }
         return 0;
-    }
-
-    /// The flag acks (HandleMoveFlagChangeOpcode) end with a uint32 "is applied", except the gravity ones.
-    [[nodiscard]] constexpr bool AckCarriesApplied(OrderKind kind)
-    {
-        switch (kind)
-        {
-            case OrderKind::CanFly:
-            case OrderKind::UnsetCanFly:
-            case OrderKind::WaterWalk:
-            case OrderKind::LandWalk:
-            case OrderKind::FeatherFall:
-            case OrderKind::NormalFall:
-            case OrderKind::Hover:
-            case OrderKind::UnsetHover:
-                return true;
-            default:
-                return false;
-        }
     }
 
     [[nodiscard]] constexpr bool Applies(OrderKind kind)

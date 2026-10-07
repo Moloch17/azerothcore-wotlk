@@ -6123,62 +6123,8 @@ AnimusForge.Curriculum.Raid.IdleReach = 40.0
 
 #
 #    AnimusForge.Curriculum.Duel.*
-#        One-on-one fights against a creature (the duel) or a player (PvP).
+#        The range the approach shaping aims for.
 
-#   fraction of the opponent's health: a kill is worth this in damage
-AnimusForge.Curriculum.Duel.DamageDealt = 2.0
-#   fraction of the bot's health
-AnimusForge.Curriculum.Duel.DamageTaken = 1.0
-#   shaping toward the spec's range, per 40 yd closed
-AnimusForge.Curriculum.Duel.Approach = 0.5
-#   a harmful spell from stealth that breaks it (Ambush, Cheap Shot)
-AnimusForge.Curriculum.Duel.StealthOpener = 0.5
-#   one that keeps it (Sap, Distract), once per target per stealth
-AnimusForge.Curriculum.Duel.StealthUtility = 0.05
-#   per decision
-AnimusForge.Curriculum.Duel.StepCost = 0.0002
-#   winning outweighs winning fast: at Kill 10, FastKill 1 and a loss (Death, Timeout) at 10, a risky fast opener
-#   only pays more than a sure slow win above ~97% odds
-AnimusForge.Curriculum.Duel.Kill = 10.0
-#   times the fraction of the episode length left, from the engagement
-AnimusForge.Curriculum.Duel.FastKill = 1.0
-#   times the fraction of the bot's health not lost; damage taken is already charged as it happens, so a large
-#   value pays twice for the same thing and reads as "survive" rather than "win"
-AnimusForge.Curriculum.Duel.HealthKept = 0.5
-AnimusForge.Curriculum.Duel.Death = 10.0
-#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one, charged times the share
-#   of the opponent still standing -- a clock that runs out with the creature nearly dead is a near miss, one that
-#   runs out with it untouched is a refusal to fight. At the full charge it matches Death, so a seat that cannot be
-#   sure of the kill has nothing to gain by keeping its distance
-AnimusForge.Curriculum.Duel.Timeout = 10.0
-#   the share of Timeout charged whatever the fight's progress; the rest goes with the opponent still standing, so a
-#   near miss costs about half a refusal and breaking off at half health is not cheaper than dying
-AnimusForge.Curriculum.Duel.TimeoutFloor = 0.5
-#   creature duel: per second the fight has not started once StallGraceMs are gone; Timeout alone charges standing
-#   where it spawned only when the clock runs out, too far off for the policy to see, and keeping out of a fight has
-#   to cost more than holding a goal at range pays
-AnimusForge.Curriculum.Duel.Stall = 0.08
-#   ... the time a seat has to summon, buff and sneak up before it (ms)
-AnimusForge.Curriculum.Duel.StallGraceMs = 15000
-#   duel: stopping the opponent's cast, priced by what was stopped as the pack's is (a heal undoes damage already
-#   dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output). The duel
-#   meets casters now (Difficulty.CasterChance), and one enemy casting one spell is the cheapest place in the
-#   curriculum to learn what an interrupt is for
-AnimusForge.Curriculum.Duel.Interrupt = 0.3
-#   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
-AnimusForge.Curriculum.Duel.Spacing = 0.1
-#   duel and pack, a spec fighting with a ranged weapon (the hunter's): its shots landed while nothing hits it in
-#   melee reach, as a share of the fight's enemy health, on top of DamageDealt
-AnimusForge.Curriculum.Duel.ShotAtRange = 1.0
-#   duel and pack: per second that spec moves with Auto Shot running while its target is alive and within 35 yd,
-#   nothing hits it in melee reach and nothing on the ground hurts it (moving stops the shots)
-AnimusForge.Curriculum.Duel.ShotPaused = 0.05
-#   duel and pack, any class with a pet: the damage the pet takes, as a share of the seat's own health (a pet holding
-#   enemies off its owner)
-AnimusForge.Curriculum.Duel.PetTank = 0.5
-#   ... at most this an episode (healing the pet while it soaks would farm it); never in a party's or raid's arena,
-#   where a pet holding enemies takes them off the tank
-AnimusForge.Curriculum.Duel.PetTankMax = 1.5
 #   the range the approach shaping aims for, melee specs
 AnimusForge.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs
@@ -6186,15 +6132,9 @@ AnimusForge.Curriculum.Duel.RangedRange = 25.0
 
 #
 #    AnimusForge.Curriculum.Difficulty.*
-#        How hard the creature duel's opponents are, per class and role. Tier t below EliteTier is a normal
-#        creature t x LevelsPerTier levels above the seat; from EliteTier on an elite, (t - EliteTier) x
-#        LevelsPerTier levels above. Evaluations spread their seeds over every tier.
+#        How hard the combat and role drills' opponents are, per class and role. Evaluations spread their seeds over
+#        every tier.
 
-#   the hardest tier
-AnimusForge.Curriculum.Difficulty.MaxTier = 6
-#   the first elite tier (above MaxTier: no elites)
-AnimusForge.Curriculum.Difficulty.EliteTier = 4
-AnimusForge.Curriculum.Difficulty.LevelsPerTier = 1
 #   a class in a role moves up a tier when it wins (kills without dying) this share of Window fights at its tier ...
 AnimusForge.Curriculum.Difficulty.RaiseAbove = 0.9
 #   ... and down below this share
@@ -6210,7 +6150,6 @@ AnimusForge.Curriculum.Difficulty.StretchChance = 10
 #   teaches nothing about interrupting, dispelling or stepping out of anything -- all of it waits for the pack
 #   stage, where it competes with learning to fight several enemies at once
 AnimusForge.Curriculum.Difficulty.CasterChance = 40
-AnimusForge.Curriculum.Difficulty.HazardChance = 30
 #   the outcome terms scale with the tier: a win (kill, clear, health kept) is multiplied by 1 + TierScale x tier and
 #   a loss (death, timeout, overtime) divided by it, in the duel, the packs, the raids and the endurance run's pulls.
 #   A tier-0 fight is unchanged; at tier 6 a kill pays 2.5x and a death costs 0.4x, so a hard fight is worth
@@ -6219,24 +6158,12 @@ AnimusForge.Curriculum.Difficulty.TierScale = 0.25
 
 #
 #    AnimusForge.Curriculum.Instance.*
-#        Real dungeons and raids (the dungeon and raid stages): the seats spawn at the instance's front door and are
-#        taken to the boss along the server's own path; the boss fights with the core's script.
+#        Whole dungeon wings (the party stages): the seats spawn at the instance's front door and run the wing's route
+#        to its last boss.
 
-#   how far back up the path from the boss the seats start
-AnimusForge.Curriculum.Instance.EngageYards = 35
-#   creatures this close to the boss that are not its adds (InstanceBosses.cpp, Keep) are cleared for the episode
-AnimusForge.Curriculum.Instance.TrashRadius = 60
 #   the rung's tier scale (Difficulty.TierScale) is capped at this tier: a ladder of twenty bosses would otherwise pay
 #   a top kill 5.75x where the pool ladders stop at 2.5x
 AnimusForge.Curriculum.Instance.MaxTierScale = 6
-#   paid on a wipe or an evade for the share of the boss's health the fight took off it, times the tier scale, so a
-#   forty-seat fight has a gradient before its first kill
-AnimusForge.Curriculum.Instance.BossProgress = 5.0
-#   the clock running out with the boss alive, scaled by what is left of it (Duel.TimeoutFloor), divided by the tier
-AnimusForge.Curriculum.Instance.Timeout = 10.0
-#   per second the boss is not engaged once StallGraceMs (ms) are gone
-AnimusForge.Curriculum.Instance.Stall = 0.08
-AnimusForge.Curriculum.Instance.StallGraceMs = 15000
 #   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
 #   (x the rung), each seat's death and each wipe (/ the rung); the WingWipes-th wipe ends the episode (2: the first is
 #   scored and the party rises at the entrance, the second ends the run -- no stage ends at the first death, and the
@@ -6323,17 +6250,6 @@ AnimusForge.Curriculum.Instance.PullRungStart = 0
 AnimusForge.Curriculum.Instance.PullRungRuns = 100
 AnimusForge.Curriculum.Instance.PullRungTarget = 0.7
 
-#
-#    AnimusForge.Curriculum.Casting.*
-#        Cast-time spells, from the duel stage on.
-
-#   per second spent on a cast that did not finish
-AnimusForge.Curriculum.Casting.TimeWasted = 0.03
-#   per second of cast time of a cast that finished, in combat
-AnimusForge.Curriculum.Casting.TimeCompleted = 0.03
-#   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
-#   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
-AnimusForge.Curriculum.Casting.Cancel = 0.05
 #   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
 #   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
 #   paid once when the goal the seat holds is reached (a goal is a kind and a target: fight, control, recover,
@@ -6396,9 +6312,6 @@ AnimusForge.Curriculum.Support.SelfHealing = 0.5
 #   bought nothing and a heal over time could be stacked on a full bar for free. With it the objective is healing per
 #   mana. Kept well below SelfHealing -- the failure to avoid is a seat that heals too little and dies
 AnimusForge.Curriculum.Support.HealingMana = 0.1
-#   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
-#   engagement: part of being ready, which the kill alone did not teach
-AnimusForge.Curriculum.Support.PetReady = 0.3
 
 #
 #    AnimusForge.Curriculum.Actions.*
@@ -6527,7 +6440,6 @@ AnimusForge.Curriculum.Markers.Death = 3.0
 AnimusForge.Curriculum.Markers.Progress = 1.0
 AnimusForge.Curriculum.Markers.Facing = 0.25
 AnimusForge.Curriculum.Markers.StopMoved = 0.05
-AnimusForge.Curriculum.Markers.Rungs = 8
 AnimusForge.Curriculum.Markers.StopNear = 10.0
 #   arriving is on the marker's own floor too: the unit within ArriveRise yards of its height
 AnimusForge.Curriculum.Markers.ArriveRise = 2.0
@@ -6812,33 +6724,6 @@ AnimusForge.Curriculum.Resurrection.ReviveAlly = 1.5
 #        (dead ones too), in every arena but a raid's.
 
 AnimusForge.Curriculum.Output.Clock = 0.03
-
-#
-#    AnimusForge.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage13_escape's evade and hide arenas). Time spent unseen is
-#        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
-#        paid is the transition out of contact, once a break, with a cooldown.
-
-#   paid once when a seat that was visible to a living enemy stops being visible
-AnimusForge.Curriculum.Evade.BrokeContact = 0.3
-
-#
-#    AnimusForge.Curriculum.Stealth.*
-#        Stalking (stage14_stealth): closing on someone while stealthed and unseen, and holding there. The one
-#        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
-#        is still never paid -- the distance condition is what makes this a skill, since detection is a check
-#        the seat is losing the whole time it stands inside the band.
-
-#   paid each decision the seat is stealthed, unseen and within StalkYards of a living opponent
-AnimusForge.Curriculum.Stealth.Stalk = 0.02
-#   how close counts as stalking, in yards
-AnimusForge.Curriculum.Stealth.StalkYards = 10.0
-#   the most the stalk nudge may pay in one episode, so the opener it sets up stays the larger prize
-AnimusForge.Curriculum.Stealth.StalkMax = 1.0
-#   paid Stealth.OpenerWindowMs after a stealth opener lands, per share of the opponent's health gone by then (all of
-#   it if the opener's burst killed it): an opener is worth what it does, not only that it landed
-AnimusForge.Curriculum.Stealth.OpenerDamage = 2.0
-AnimusForge.Curriculum.Stealth.OpenerWindowMs = 6000
 
 #
 #    AnimusForge.Curriculum.StandIn.*

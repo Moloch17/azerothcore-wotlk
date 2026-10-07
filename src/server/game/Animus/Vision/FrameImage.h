@@ -101,7 +101,6 @@ namespace Animus::Vision
         bool Add(RgbImage const& frame);
 
         [[nodiscard]] uint32_t Frames() const { return uint32_t(_packed.size()); }
-        [[nodiscard]] std::size_t PackedBytes() const { return _packedBytes; }
 
         /// The file: signature, IHDR, acTL, then per frame fcTL and its data (IDAT for the first, which is also the
         /// still image a viewer without APNG shows, fdAT after), IEND. Empty without frames.
@@ -113,7 +112,6 @@ namespace Animus::Vision
         uint16_t _delayNumerator;
         uint16_t _delayDenominator;
         std::vector<std::string> _packed;
-        std::size_t _packedBytes = 0;
     };
 }
 

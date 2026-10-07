@@ -30,15 +30,10 @@ namespace Animus::Curriculum
     enum class RewardTerm : uint8
     {
         DamageDealt,
-        DamageTaken,
         StepCost,
-        Casting,
         Approach,
-        StealthOpener,
-        StealthUtility,
         Kill,
         Clear,
-        HealthKept,
         Death,
         Threat,
         TeammateDamageTaken,
@@ -50,12 +45,10 @@ namespace Animus::Curriculum
         Arrive,
         Timeout,
         Stall,
-        Readiness,
         SelfHealing,
         GoalReached,        // the goal held was reached (Goals.Reached)
         GoalSwitch,         // the goal head changed a seat's goal (Goals.Switch)
         GoalProgress,       // closing on the goal held (Goals.Progress, potential-based)
-        OpenerDamage,       // what a stealth opener's first seconds took off the opponent (Stealth.OpenerDamage)
         Repeat,
         /// Steering that does not commit (Actions.Jitter): a turn undone moments after it was chosen, feet swung
         /// round from a bearing just pressed.
@@ -67,14 +60,8 @@ namespace Animus::Curriculum
         Fidget,
         Hazard,
         HealingMana,
-        /// An instance boss fight lost with the boss part dead: the share of its health the fight took off it.
-        BossProgress,
         /// Every second an engaged enemy lives (Output.Clock): what makes killing faster pay.
         CombatClock,
-        /// A ranged spec shooting from range, and its shooting stopped by moving for nothing (Duel.Shot*).
-        Ranged,
-        /// A pet taking the enemies' blows instead of its owner (Duel.PetTank).
-        PetTank,
         /// A pull drill's pack killed alone (Instance.PullClean): paid as Kill until 2026-10-03, which put a drill's
         /// lesson in the same column as the dungeon's kills.
         PullClean,
@@ -232,12 +219,7 @@ namespace Animus::Curriculum
             case RewardTerm::Idle:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
-            case RewardTerm::DamageTaken:
-            case RewardTerm::Casting:
             case RewardTerm::Approach:
-            case RewardTerm::StealthOpener:
-            case RewardTerm::StealthUtility:
-            case RewardTerm::HealthKept:
             case RewardTerm::Threat:
             case RewardTerm::TeammateDamageTaken:
             case RewardTerm::TeammateHealing:
@@ -245,18 +227,13 @@ namespace Animus::Curriculum
             case RewardTerm::Revive:
             case RewardTerm::Progress:
             case RewardTerm::Stall:
-            case RewardTerm::Readiness:
             case RewardTerm::SelfHealing:
             case RewardTerm::GoalReached:
             case RewardTerm::GoalSwitch:
             case RewardTerm::GoalProgress:
-            case RewardTerm::OpenerDamage:
             case RewardTerm::Hazard:
             case RewardTerm::HealingMana:
-            case RewardTerm::BossProgress:
             case RewardTerm::CombatClock:
-            case RewardTerm::Ranged:
-            case RewardTerm::PetTank:
             case RewardTerm::Facing:
             case RewardTerm::Sighting:
             case RewardTerm::NewGround:

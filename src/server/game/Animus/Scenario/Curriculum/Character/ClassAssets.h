@@ -57,21 +57,9 @@ namespace Animus::Curriculum
         /// The assets of a profile of ClassProfiles(), built on first use (world thread only).
         static ClassAssets const& For(ClassProfile const& profile);
 
-        /// The profile of `playerClass`, if it is a class that is played.
-        static ClassProfile const* FindProfile(uint8 playerClass);
-
         /// The indices of Profile->Specs whose standard build meets `demand`, in order; empty if none do.
         [[nodiscard]] std::vector<uint8> SpecsMeeting(AptitudeDemand demand) const;
-        /// Whether any of them does.
-        [[nodiscard]] bool CanMeet(AptitudeDemand demand) const;
-
-        /// Classes a player of `level` can be with a spec that meets `demand`.
-        static std::vector<uint8> ClassesFor(uint8 level, AptitudeDemand demand);
     };
-
-    /// A random spec of `assets` whose standard build meets `demand`, as an index into Profile->Specs. A class that
-    /// has none falls back to any of its specs.
-    [[nodiscard]] uint8 DrawSpec(ClassAssets const& assets, AptitudeDemand demand);
 }
 
 #endif

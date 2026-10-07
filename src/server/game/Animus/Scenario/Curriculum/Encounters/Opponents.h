@@ -36,11 +36,6 @@ class Unit;
  */
 namespace Animus::Curriculum::Opponents
 {
-    /// Distance band the opponent spawns at: beyond the aggro radius of a same-level creature (about
-    /// 20 yd), so the bot always has to close in.
-    constexpr float SPAWN_DISTANCE_MIN = 40.0f;
-    constexpr float SPAWN_DISTANCE_MAX = 50.0f;
-
     /// Real creatures fit to be a fair same-level opponent: normal rank, attackable, no script, no
     /// NPC services, not civilian/guard/trigger/vehicle, walking on the ground in plain sight, and spawned
     /// somewhere in the world. Loaded once and bucketed by the levels each creature naturally has.
@@ -70,13 +65,6 @@ namespace Animus::Curriculum::Opponents
         /// "step out of it" stays unlearnable until a dungeon.
         [[nodiscard]] uint32 RandomHazardCaster(uint8 level) const;
 
-        /// A spell that puts something on the ground, from the same set the hazard casters use: a persistent area
-        /// aura, so it leaves a DynamicObject behind. That is what the sensing and the charge both read
-        /// (Encoding::StandingInHazards counts DYNOBJ_AURA_TYPE auras and nothing else), which is why a stage that
-        /// wants hazards without a fight casts one of these rather than dropping a trap gameobject: a trap burns
-        /// but is invisible to both. 0 when the world has none.
-        [[nodiscard]] uint32 RandomHazardSpell(uint8 level) const;
-
     private:
         OpponentPool();
 
@@ -87,19 +75,11 @@ namespace Animus::Curriculum::Opponents
         std::array<std::vector<uint32>, 81> _elitesByLevel;
         std::array<std::vector<uint32>, 81> _castersByLevel;
         std::array<std::vector<uint32>, 81> _hazardCastersByLevel;
-        std::array<std::vector<uint32>, 81> _hazardSpellsByLevel;   // what those casters put on the ground
     };
 
-    /// A random spot out of aggro range of the bot (SPAWN_DISTANCE_MIN-MAX), in line of sight on roughly level ground the bot can walk to (so a
-    /// creature there has a path to it), with a random facing.
-    [[nodiscard]] Position FindSpawnPoint(Player* bot, Map* map);
-    /// The same search, `minDistance` to `maxDistance` yards from the bot (the rotation drill's dummies stand close:
-    /// the drill is the kit, not the approach).
+    /// A random spot `minDistance` to `maxDistance` yards from the bot, in line of sight on roughly level ground the
+    /// bot can walk to (so a creature there has a path to it), with a random facing.
     [[nodiscard]] Position FindSpawnPoint(Player* bot, Map* map, float minDistance, float maxDistance);
-    /// The same, in the water: a spot at the surface of a lake at least BODY_HEIGHT deep, in line of sight, so the
-    /// fight is a swimming one for whoever goes in after the other (a creature arena with ArenaDefinition::Water).
-    /// The dry spot FindSpawnPoint would give when no water is in reach.
-    [[nodiscard]] Position FindSpawnPointInWater(Player* bot, Map* map);
     /// A spot `minDistance` to `maxDistance` yards on from `from`, on a bearing within `spread` radians of
     /// `bearing`, on ground near `from`'s height that the bot can walk to: the next pack of a camp
     /// (PullSchedule::Camp). None when no try finds one.
@@ -110,9 +90,7 @@ namespace Animus::Curriculum::Opponents
     /// it cannot reach. Returns nullptr on failure.
     Creature* SummonOpponent(Player* bot, Map* map, uint32 entry, Position const& pos, uint8 level);
 
-    /// Summon a pack of `entries` at `level`, clustered around one spawn point, each facing its own way.
-    std::vector<Creature*> SpawnPack(Player* bot, Map* map, std::vector<uint32> const& entries, uint8 level);
-    /// ... around `center`.
+    /// Summon a pack of `entries` at `level`, clustered around `center`, each facing its own way.
     std::vector<Creature*> SpawnPack(Player* bot, Map* map, std::vector<uint32> const& entries, uint8 level,
         Position const& center);
 }

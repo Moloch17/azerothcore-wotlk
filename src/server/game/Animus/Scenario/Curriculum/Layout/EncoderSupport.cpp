@@ -184,11 +184,6 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
-    bool CastHoldsFeet(Player const* bot)
-    {
-        return bot && bot->IsNonMeleeSpellCast(false, false, true);
-    }
-
     /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
     /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
     /// pressed four to seven heals for each that started, and stage5's casters five to seven spells (2026-10-04);
@@ -207,13 +202,6 @@ namespace Animus::Curriculum::Encoding
             unit ? bot->HasInArc(float(M_PI), unit) : false, bot->isMoving(), !bot->movespline->Finalized(),
             bot->IsNonMeleeSpellCast(false, true, true),
             info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
-    }
-
-    bool MountCastInProgress(Player const* bot)
-    {
-        Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-        SpellInfo const* info = spell ? spell->GetSpellInfo() : nullptr;
-        return info && info->HasAura(SPELL_AURA_MOUNTED);
     }
 
     bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem, Unit* friendUnit)
@@ -242,21 +230,6 @@ namespace Animus::Curriculum::Encoding
             default:
                 return Situational::None;
         }
-    }
-
-    bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally)
-    {
-        SpellInfo const* info = ActionCatalog::KnownRank(bot, heal.FirstRank);
-        if (!info || !bot->HasActiveSpell(info->Id) || bot->HasSpellCooldown(info->Id)
-            || bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) || CastInProgress(bot))
-            return false;
-
-        if (!bot->movespline->Finalized() && (info->CalcCastTime(bot) || info->IsChanneled()))
-            return false;
-
-        SpellCastTargets targets;
-        targets.SetUnitTarget(ally);
-        return CheckCast(bot, info, targets, nullptr);
     }
 
     SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def)
@@ -434,7 +407,6 @@ namespace Animus::Curriculum::Encoding
         uint32 const chain = info->GetFirstRankSpell() ? info->GetFirstRankSpell()->Id : info->Id;
         result.CastTankMode = chain == 71 || chain == 25780 || chain == 5487 || chain == 9634 || chain == 48263;
         result.CastTrap = IsTrapSpell(info);
-        result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
         // inside its radius, measured from where it lands (the target's spot for a ground spell, else the caster).
         if (info->IsPositive())
@@ -542,45 +514,6 @@ namespace Animus::Curriculum::Encoding
     {
         SpellInfo const* info = entry ? UseSpell(entry) : nullptr;
         return info ? CooldownFraction(bot, info) : 0.0f;
-    }
-
-    bool CanRevive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally)
-    {
-        Player* bot = view.Bot;
-        if (!ally || !bot->IsAlive() || !ally->IsInMap(bot))
-            return false;
-
-        if (revive.Type == ActionCatalog::Kind::Soulstone)
-        {
-            SpellInfo const* info = view.Supplies.Soulstone ? UseSpell(view.Supplies.Soulstone) : nullptr;
-            return info && ally->IsAlive() && !ally->HasAura(info->Id)
-                && CanUseItemOn(bot, view.Supplies.Soulstone, ally);
-        }
-
-        return !ally->IsAlive() && !ally->isResurrectRequested() && CanHeal(bot, revive, ally);
-    }
-
-    void Revive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally, SeatActionResult& result)
-    {
-        if (!CanRevive(view, revive, ally))
-            return;
-
-        if (revive.Type == ActionCatalog::Kind::Soulstone)
-        {
-            if (UseItemOn(view.Bot, view.Supplies.Soulstone, ally))
-                ++result.ConsumablesUsed;
-            return;
-        }
-
-        SpellInfo const* info = ActionCatalog::KnownRank(view.Bot, revive.FirstRank);
-        SpellCastTargets targets;
-        targets.SetUnitTarget(ally);
-        Spell* spell = new Spell(view.Bot, info, TRIGGERED_NONE);
-        if (spell->prepare(&targets) == SPELL_CAST_OK)
-        {
-            ++result.SpellCasts;
-            ++result.Revives;
-        }
     }
 
     Unit* FirstPet(Player* bot)
@@ -837,28 +770,6 @@ namespace Animus::Curriculum::Encoding
         return immune.count(mechanic) > 0 || (mechanic == MECHANIC_FEAR && immune.count(MECHANIC_HORROR) > 0);
     }
 
-    int32 SlotOf(SeatView const& view, Unit const* unit)
-    {
-        if (!unit)
-            return -1;
-
-        for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
-            if (view.Enemies[slot] == unit)
-                return int32(slot);
-
-        return -1;
-    }
-
-    int32 SlotAttacking(SeatView const& view, Unit const* victim, uint32 except)
-    {
-        for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
-            if (Unit* enemy = view.Enemies[slot]; enemy && enemy->IsAlive() && enemy->GetVictim() == victim
-                && slot != except)
-                return int32(slot);
-
-        return -1;
-    }
-
     void SelectEnemy(SeatView& view, uint32 slot)
     {
         Unit* enemy = view.Enemies[slot];
@@ -867,25 +778,6 @@ namespace Animus::Curriculum::Encoding
 
         if (view.Bot->GetVictim())
             view.Bot->Attack(enemy, view.Bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING));
-    }
-
-    bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ, float maxStep)
-    {
-        if (!map)
-            return false;
-
-        float const z = map->GetHeight(phaseMask, at.GetPositionX(), at.GetPositionY(), fromZ + maxStep, true,
-            maxStep * 2.0f);
-        if (z <= INVALID_HEIGHT || std::fabs(z - fromZ) > maxStep)
-            return false;
-
-        at.Relocate(at.GetPositionX(), at.GetPositionY(), z);
-        return true;
-    }
-
-    bool CanSee(WorldObject const* watcher, WorldObject const* target)
-    {
-        return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
     }
 
     bool PetAttack(Player* bot, Unit* target)
@@ -932,10 +824,4 @@ Unit* Animus::Curriculum::Encoding::UnitThrough(WorldObject const& from, ObjectG
 Creature* Animus::Curriculum::Encoding::CreatureThrough(WorldObject const& from, ObjectGuid guid)
 {
     return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetCreature(from, guid) : nullptr;
-}
-
-GameObject* Animus::Curriculum::Encoding::GameObjectThrough(WorldObject const& from, ObjectGuid guid)
-{
-    return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetGameObject(from, guid)
-        : nullptr;
 }

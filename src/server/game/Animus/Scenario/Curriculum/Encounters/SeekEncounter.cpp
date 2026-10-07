@@ -433,7 +433,6 @@ void Animus::Curriculum::SeekEncounter::View(Env const& env, uint32 /*seat*/, Se
     ArenaDefinition const& arena = _scenario.Arena(env);
     if (seek.ObjectIndex < arena.Objects.size())
         view.ObjectiveRadius = Vision::ObjectiveRadiusFor(arena.Objects[seek.ObjectIndex].Radius);
-    view.ArriveWithin = _scenario.Arena(env).SeekRadius;
 }
 
 void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)

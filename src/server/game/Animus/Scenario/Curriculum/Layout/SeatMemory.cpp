@@ -118,20 +118,6 @@ void Animus::Curriculum::SeatMemory::Observe(Player* bot, Unit* target, uint64 n
     _targetTrend = std::clamp(other - _targetAverage, -1.0f, 1.0f);
 }
 
-float Animus::Curriculum::SeatMemory::TargetSecondsLeft() const
-{
-    if (_lastTarget < 0.0f || _targetDropRate <= 1e-4f)
-        return 1.0f;
-    return std::min(1.0f, _target / _targetDropRate / 60.0f);
-}
-
-float Animus::Curriculum::SeatMemory::ManaSecondsLeft() const
-{
-    if (_mana < 0.0f || _manaSpendRate <= 1e-4f)
-        return 1.0f;
-    return std::min(1.0f, _mana / _manaSpendRate / 60.0f);
-}
-
 bool Animus::Curriculum::SeatMemory::Paced(Layout const& layout, uint32 action, uint64 nowMs,
     CurriculumTuning::ActionTuning const& tuning) const
 {

@@ -243,7 +243,6 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
             Body.Yaw = WrapYaw(Body.Yaw + control.FaceTurn);
             control.FaceTurnApplied += control.FaceTurn;
             control.FaceTurn = 0.0f;
-            ++Counts.Facings;
             if (!Send(Snapshot(Cd::Op::SET_FACING, startMs, before), link))
                 return;
         }
@@ -374,10 +373,6 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
                 report.Yaw = facing.Value;
             if (opcode == Cd::Op::SET_PITCH)
                 report.Pitch = pitch.Value;
-            if (opcode == Cd::Op::HEARTBEAT)
-                ++Counts.Heartbeats;
-            else
-                ++Counts.Facings;
             if (!Send(report, link))
                 return;
             done = t + 1e-5f;

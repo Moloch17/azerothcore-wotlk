@@ -38,7 +38,6 @@ class SpellInfo;
  */
 namespace Animus::Curriculum::Encoding
 {
-    constexpr uint32 IMMOBILE_STATES = UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING;
     constexpr uint32 STUN_STATES = UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING;
     constexpr uint32 CROWD_CONTROL_STATES = STUN_STATES | UNIT_STATE_ROOT;
 
@@ -47,7 +46,6 @@ namespace Animus::Curriculum::Encoding
     /// `from.GetMap()`, which asserts on it -- two map-thread crashes of the first fast pass came through there.
     [[nodiscard]] Unit* UnitThrough(WorldObject const& from, ObjectGuid guid);
     [[nodiscard]] Creature* CreatureThrough(WorldObject const& from, ObjectGuid guid);
-    [[nodiscard]] GameObject* GameObjectThrough(WorldObject const& from, ObjectGuid guid);
 
     /// A position relative to `origin` (the spawn point) for the critic state: / 40 yd, clamped to [-2, 2].
     [[nodiscard]] float RelativePosition(float coordinate, float origin);
@@ -86,23 +84,9 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
-    /// A cast or a channel under way that moving would cancel.
-    [[nodiscard]] bool CastHoldsFeet(Player const* bot);
-
-    /// Whether the cast in flight is a mount.
-    ///
-    /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
-    /// stand still through and that any movement destroys, so it is the one worth protecting -- and protecting
-    /// casts in general would stop a seat walking out of fire mid-spell, which is a thing it must always be
-    /// able to do.
-    [[nodiscard]] bool MountCastInProgress(Player const* bot);
-
     /// The core's own cast validation (Spell::CheckCast), without casting. `target` may be null (self-cast spells).
     [[nodiscard]] bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem = nullptr,
         Unit* friendUnit = nullptr);
-
-    /// Whether a spell (a revive) can be cast on `ally` now.
-    [[nodiscard]] bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally);
 
     /// Whether a spell action of the catalog could be cast at `target` now.
     /// The rank of `def` the seat casts: the highest the bot knows (from the view's per-episode table when it has one,
@@ -147,11 +131,6 @@ namespace Animus::Curriculum::Encoding
 
     /// The remaining cooldown of an item's on-use spell as a fraction; 0 without the item.
     [[nodiscard]] float ItemCooldownFraction(Player const* bot, uint32 entry);
-
-    /// A revive (a resurrection spell on a dead ally, or a warlock's soulstone on a living one) usable on `ally` now,
-    /// and using it.
-    [[nodiscard]] bool CanRevive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally);
-    void Revive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally, SeatActionResult& result);
 
     /// Revive features, two per revive: known (a spell the bot knows, or a soulstone in its bags) and cooldown.
 
@@ -244,33 +223,8 @@ namespace Animus::Curriculum::Encoding
     [[nodiscard]] bool IsImmuneToSchool(Unit const* unit, SpellSchools school);
     [[nodiscard]] bool IsImmuneToMechanic(Unit const* unit, Mechanics mechanic);
 
-    /// The enemy slot of `unit`, or -1.
-    [[nodiscard]] int32 SlotOf(SeatView const& view, Unit const* unit);
-
-    /// An enemy slot, other than `except`, whose living enemy attacks `victim`; -1 if none.
-    [[nodiscard]] int32 SlotAttacking(SeatView const& view, Unit const* victim, uint32 except);
-
     /// Select enemy `slot` and keep swinging, at the new target.
     void SelectEnemy(SeatView& view, uint32 slot);
-
-    /// Run to a point, replacing whatever movement the bot had.
-    /// Put `at` on the ground beneath it, or say there is no ground there to stand on.
-    ///
-    /// `fromZ` is the height the probe drops from and `maxStep` how far the result may differ from it, which
-    /// is what keeps a point from landing on a roof above or in a pit below. Shared by anything that picks a
-    /// spot to walk to out of thin air -- a step along a held bearing (MoveBlock), a place a director names --
-    /// because a point that is not snapped sends a bot into a wall or off a ledge.
-    [[nodiscard]] bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ,
-        float maxStep = 6.0f);
-
-    /// Whether `watcher` actually has eyes on `target`: it can detect it *and* nothing is in the way.
-    ///
-    /// `CanSeeOrDetect` alone is grid visibility plus stealth and invisibility -- it does not raycast, so it
-    /// stays true through a wall. Anything whose meaning is "is being watched right now" has to add the line
-    /// of sight, or breaking it changes nothing: a hunter keeps tracking its quarry around a pillar, and an
-    /// evade drill reads zero for every class that has no stealth. The cheap test runs first, so the raycast
-    /// only happens for something already detectable.
-    [[nodiscard]] bool CanSee(WorldObject const* watcher, WorldObject const* target);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.
     bool PetAttack(Player* bot, Unit* target);
