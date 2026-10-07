@@ -149,6 +149,13 @@ namespace Animus::Curriculum::EntityActions
     /// CMSG_CAST_SPELL for `info` at `targets` through the seat's session's handler, its refusal read back.
     CastOutcome CastThroughClient(Player* bot, SpellInfo const* info, SpellCastTargets& targets,
         ClientPort& port = SessionPort());
+    /// CMSG_USE_ITEM for `item` (its use spell `spell`) at `targets` through the seat's session's handler, its refusal
+    /// read back: eating, drinking, a key on a lock -- an item used as the client uses it.
+    CastOutcome UseItemThroughClient(Player* bot, Item* item, SpellInfo const* spell, SpellCastTargets& targets,
+        ClientPort& port = SessionPort());
+    /// CMSG_ATTACKSWING at `target` through the seat's session's handler: the auto attack, started as the client
+    /// starts it. False when there was nothing to send it through.
+    bool StartAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port = SessionPort());
 
     /// **A press** on the entity `guid` (raw): judged as above, then sent. `focus` is the seat's client focus (Focus
     /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal.

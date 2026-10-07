@@ -265,6 +265,34 @@ Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions
     return outcome;
 }
 
+Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions::UseItemThroughClient(Player* bot,
+    Item* item, SpellInfo const* spell, SpellCastTargets& targets, ClientPort& port)
+{
+    CastOutcome outcome;
+    if (!bot || !item || !spell || !bot->GetSession())
+        return outcome;
+    WorldPacket packet = UseItem(item->GetBagSlot(), item->GetSlot(), item->GetGUID(), spell->Id, NextCastCount(),
+        targets);
+    Movement::ScopedCastWatch watch(bot->GetSession());
+    port.Send(bot, packet);
+    if (watch.Watch().Failures)
+    {
+        outcome.Failed = uint32(watch.Watch().Result) + 1;
+        return outcome;
+    }
+    outcome.Sent = true;
+    return outcome;
+}
+
+bool Animus::Curriculum::EntityActions::StartAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)
+{
+    if (!bot || target.IsEmpty() || !bot->GetSession())
+        return false;
+    WorldPacket packet = AttackSwing(target);
+    port.Send(bot, packet);
+    return true;
+}
+
 Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Apply(Press press, Player* bot,
     uint64 guid, ObjectGuid& focus, SeatActionResult& result, ClientPort& port, Resolver const& resolve)
 {

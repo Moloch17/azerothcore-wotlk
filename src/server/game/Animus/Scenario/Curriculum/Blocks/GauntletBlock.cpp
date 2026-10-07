@@ -17,6 +17,8 @@
  */
 
 #include "GauntletBlock.h"
+#include "Spell.h"
+#include "EntityActions.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include <algorithm>
@@ -115,7 +117,21 @@ void Animus::Curriculum::GauntletBlock::Apply(SeatView& view, uint32 local, Seat
 
     Player* bot = view.Bot;
     bool const eat = local == ACTION_EAT;
-    if (Encoding::UseItemOn(bot, eat ? view.FoodItem : view.DrinkItem, bot))
+    uint32 const entry = eat ? view.FoodItem : view.DrinkItem;
+    bool used = false;
+    if (view.L && view.L->Has(BlockId::Sight))
+    {
+        // A sight stage uses the item as the client does (dungeon-curriculum I1): CMSG_USE_ITEM through the session's
+        // handler, at the seat itself.
+        Item* item = bot->GetItemByEntry(entry);
+        SpellCastTargets targets;
+        targets.SetUnitTarget(bot);
+        used = item && EntityActions::UseItemThroughClient(bot, item, Encoding::UseSpell(entry), targets,
+            view.Port ? *view.Port : EntityActions::SessionPort()).Sent;
+    }
+    else
+        used = Encoding::UseItemOn(bot, entry, bot);
+    if (used)
         ++(eat ? result.FoodUsed : result.DrinkUsed);
     else
         ++(eat ? result.FoodFailed : result.DrinkFailed);

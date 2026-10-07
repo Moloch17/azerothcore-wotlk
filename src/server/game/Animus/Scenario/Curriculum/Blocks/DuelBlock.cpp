@@ -17,6 +17,7 @@
  */
 
 #include "DuelBlock.h"
+#include "EntityActions.h"
 #include "DBCStores.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
@@ -399,7 +400,13 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
     switch (local)
     {
         case ACTION_START_ATTACK:
-            bot->Attack(target, true);
+            // A sight stage starts its swing as the client does (dungeon-curriculum I1): CMSG_ATTACKSWING through the
+            // session's handler, at the seat's selection.
+            if (view.L && view.L->Has(BlockId::Sight))
+                EntityActions::StartAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort());
+            else
+                bot->Attack(target, true);
             return;
         case ACTION_PET_ATTACK:
             if (Encoding::PetAttack(bot, target))
