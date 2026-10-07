@@ -26,6 +26,7 @@ from .ui import strip_ansi
 PROMPT = "AC> "
 DETACH_KEYS = b"\x10\x11"  # Ctrl-P Ctrl-Q
 # A log line starts with a colour escape (the logger colours by level); a command's reply is plain text.
+PRIVATE_MODE = re.compile(r"\x1b\[\?[0-9;]*[hl]")  # bracketed paste on/off, which readline writes around a line
 LOG_LINE = re.compile(r"^(?:\x1b\[[0-9;]*m)+")
 
 
@@ -82,7 +83,7 @@ def parse_reply(raw: str, line: str) -> ConsoleResult:
     """The reply to `line` out of everything the console printed after it was typed."""
     cleaned_lines = []
     for raw_line in raw.replace("\r", "").split("\n"):
-        if LOG_LINE.match(raw_line):
+        if LOG_LINE.match(PRIVATE_MODE.sub("", raw_line)):
             continue
         cleaned_lines.append(strip_ansi(raw_line))
     # the echo of the typed line (the console shows it first); the reply is what follows, up to a line that is the

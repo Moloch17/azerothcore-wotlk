@@ -67,5 +67,5 @@ if [ "$GPU" = 1 ]; then unset HIP_VISIBLE_DEVICES; else export HIP_VISIBLE_DEVIC
 cd "$SRC/apps/forge/python" && "$PY" -m pytest -q tests/ -p no:cacheprovider > "$B.pytest.log" 2>&1
 echo "PYTEST_EXIT $?"
 tail -1 "$B.pytest.log" | sed 's/^/PYTEST_LINE /'
-grep -aE "^(FAILED|ERROR) " "$B.pytest.log" | head -50 | sed 's/ - .*//; s/^/PYTEST_FAILED /'
+grep -aE "^(FAILED|ERROR) " "$B.pytest.log" | head -50 | sed 's/ - .*//; s/^[A-Z]* //; s/^/PYTEST_FAILED /'
 echo "STEP done; logs: $B.build.log $B.unit.log $B.pytest.log"
