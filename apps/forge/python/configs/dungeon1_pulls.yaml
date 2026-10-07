@@ -6,8 +6,10 @@
 #
 # The ladder by gate: the drill's own (Instance.PullRung*), which opens packs by how far the nearest other pack stands
 # -- 30, 22, 14 yd, then any -- once 100 drills on the newest rung have pulled clean 70% of the time; its rung is
-# pull_rung. Its evaluations drill too (a stage of drills alone: EvaluatesDrills), each seed its pack
-# (WingRun::SeededPick) at the training rung, so successive checkpoints pull the same packs.
+# pull_rung. Its evaluations drill too (a stage of drills alone: EvaluatesDrills): a fixed sweep of the route's packs at
+# the evaluation's conditions, whatever the training rung -- seed i drills pack i mod packs (WingRun::SweepPick) at the
+# dungeon's own levels with any gap -- so successive checkpoints pull the same packs, and the evaluation's tables split
+# by pack (drill_pack: pack_1 the route's first; stage.json episode_categories).
 #
 # Outcome (x the drill rung's tier scale): the pack pulled and killed on its own (PullClean; the tank in full, the
 # others
@@ -30,11 +32,10 @@ mappo:
 eval:
   every_env_steps: 10000000
   episodes: 192
-  report: [cleared, drill_clean, drill_extra, drill_pulled, drill_gap, pull_rung, at_top_rung, ready_pulls, wing_wipes,
-  wing_rises,
-           wing_rejoins, wing_level, with_stand_in, without_stand_in, clear_standin, clear_allbot, role_tank,
-           role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths, died,
-           reward_pull_clean, reward_pull_extra, reward_ready_pull, reward_kill, reward_idle, reward_lost,
+  report: [cleared, drill_clean, drill_extra, drill_pulled, drill_gap, drill_pack, pull_rung, at_top_rung, ready_pulls,
+           wing_wipes, wing_rises, wing_rejoins, wing_level, with_stand_in, without_stand_in, clear_standin,
+           clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths,
+           died, reward_pull_clean, reward_pull_extra, reward_ready_pull, reward_kill, reward_idle, reward_lost,
            reward_death, reward_step_cost, reward_timeout, reward_damage_dealt, reward_repeat, reward_aimless,
            reward_effort, reward_jitter]
 

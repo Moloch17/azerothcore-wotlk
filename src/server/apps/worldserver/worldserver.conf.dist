@@ -6397,6 +6397,10 @@ AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 AnimusForge.Curriculum.Instance.WingFullClear = 1
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
+#   per second a seat is dead or walking back from the entrance after a rise (Away, a Cost, as C3's Combat.Away); a seat
+#   walking back is never also charged WingStray, and the leader it keeps with is the stand-in when it leads, else the
+#   tank
+AnimusForge.Curriculum.Instance.WingAway = 0.02
 #   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it
 #   cleared; a clean pull pays PullClean, a second pack joining ends the run at PullExtra, the clock running out with
 #   the pack alive costs PullTimeout (the tank in full, the others PullOthers of each); standing about costs WingStall

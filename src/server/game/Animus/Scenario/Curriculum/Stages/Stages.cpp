@@ -929,6 +929,11 @@ namespace
         // members' state, in place of the party block's server list) and a whole dungeon's (pack, crowd), the hint
         // block the teacher writes, and the goal block. No support block: a heal goes as the client sends it -- the
         // focus, else a friendly selection, else the seat itself -- never to a server list's friend.
+        //
+        // **They never train a policy** (TrainsAPolicy false: every arena is the teacher's): the crowd block's columns
+        // are radius reads off the server's lists, through walls, which no learned seat may see -- only a script may
+        // (Problem refuses a crowd block in any stage with a learned seat). A learner pointed at one by mistake reads a
+        // row the teacher plays.
         stages.push_back({
             .Name = "teacher_ragefire",
             .Suffix = "_teacher",
@@ -1464,6 +1469,11 @@ namespace
         // A party member's state has one source, the party frames block (revision 2, G1: the combat block's member
         // frames moved into it): never beside the party or the support block, whose teammate and friend slots would
         // show the same members' health and power a second time -- and from the server's list at that.
+        // The crowd block's columns (the pack ahead, the overflow, the nearest object) are radius reads off the server's
+        // lists, through walls: a script's knowledge, never a learned seat's (bots perceive what a player perceives).
+        if (stage.Has(BlockId::Crowd) && TrainsAPolicy(stage))
+            return "the crowd block reads the server's lists through walls: only a stage no policy trains in (the "
+                "teacher's check) may carry it";
         if (stage.Has(BlockId::PartyFrames) && (stage.Has(BlockId::Party) || stage.Has(BlockId::Support)))
             return "a party member's frame is the party frames block's alone: not beside the party or support block";
         // ... and a combat stage with a party reads its members there: the combat block keeps only the player frame and
@@ -1556,6 +1566,14 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
     }
 
     return 1;
+}
+
+bool Animus::Curriculum::TrainsAPolicy(StageDefinition const& stage)
+{
+    return std::any_of(stage.Arenas.begin(), stage.Arenas.end(), [](ArenaDefinition const& arena)
+    {
+        return !arena.Teacher;
+    });
 }
 
 bool Animus::Curriculum::EvaluatesDrills(std::vector<ArenaDefinition> const& arenas)

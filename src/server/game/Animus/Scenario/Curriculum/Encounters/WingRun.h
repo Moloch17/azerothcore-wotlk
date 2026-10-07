@@ -40,6 +40,29 @@ namespace Animus::Curriculum::WingRun
         return rung / RUNGS_PER_TIER;
     }
 
+    /// **The leader a party keeps with** ("stay with the leader"): the "human" stand-in's seat when it leads (I7: it
+    /// sits in seat 0, the group's leader), else the tank's; -1 for none.
+    [[nodiscard]] constexpr int32_t LeaderSeat(int32_t standInSeat, bool standInLeads, int32_t tankSeat)
+    {
+        return standInLeads && standInSeat >= 0 ? standInSeat : tankSeat;
+    }
+
+    /// **Whether a seat pays Lost this decision** (Instance.WingStray): alive, not the leader, the leader alive, and
+    /// further than `strayYards` from it -- and not walking back from the entrance after a rise, which Away prices
+    /// (the same seconds are never charged twice, and coming back is never a stray).
+    [[nodiscard]] constexpr bool Strays(bool alive, bool isLeader, bool walkingBack, bool leaderAlive, float yards,
+        float strayYards)
+    {
+        return alive && !isLeader && !walkingBack && leaderAlive && yards > strayYards;
+    }
+
+    /// **Whether a seat pays Away this decision** (Instance.WingAway): dead, or risen at the entrance and not yet back
+    /// with the party (as C3's Combat.Away; never a reward for coming back, which would pay dying).
+    [[nodiscard]] constexpr bool Away(bool alive, bool walkingBack)
+    {
+        return !alive || walkingBack;
+    }
+
     /// One of `count` choices taken from an evaluation's seed index: the same seed takes the same one in every
     /// evaluation, and successive seeds spread over all of them (a multiplicative hash, so a run of seeds that plays
     /// one
@@ -50,6 +73,13 @@ namespace Animus::Curriculum::WingRun
             return 0;
         uint64_t const mixed = (uint64_t(seed) + 1) * 2654435761ull;
         return uint32_t((mixed ^ (mixed >> 16)) % count);
+    }
+
+    /// **A sweep's pick**: seed i takes choice i mod `count`, so an evaluation of `count` or more seeds plays every one
+    /// (D1's evaluation: every pack of the route in turn, at the evaluation's conditions). 0 for no choice to make.
+    [[nodiscard]] constexpr uint32_t SweepPick(uint32_t count, uint32_t seed)
+    {
+        return count <= 1 ? 0 : seed % count;
     }
 
     /// **A corridor's first pack** (ArenaDefinition::CorridorPacks): a corridor of `length` packs over a route of

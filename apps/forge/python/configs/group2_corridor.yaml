@@ -52,9 +52,8 @@ eval:
   report: [cleared, corridor_share, corridor_in_order, corridor_cleared, corridor_packs, corridor_first, chain_pulls,
            ready_pulls, wing_wipes, wing_rises, wing_rejoins, wing_rejoin_seconds, wing_trash_kills, wing_boss_kills,
            wing_rung, at_top_rung, wing_level, wing_probe, wing_scripted, with_stand_in, without_stand_in,
-           clear_standin,
-           clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths,
-           died, reward_clear, reward_ready_pull, reward_kill, reward_pull_extra, reward_idle, reward_lost,
+           clear_standin, clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage,
+           seat_deaths, died, reward_clear, reward_ready_pull, reward_kill, reward_pull_extra, reward_idle, reward_lost,
            reward_death, reward_step_cost, reward_timeout, reward_approach, reward_threat, reward_damage_dealt,
            reward_repeat, reward_aimless, reward_effort, reward_jitter]
   # H: the party with the "human" stand-in in a seat, on the same seeds, beside the all-bot party.

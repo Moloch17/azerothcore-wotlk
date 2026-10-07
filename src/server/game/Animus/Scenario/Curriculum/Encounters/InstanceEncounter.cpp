@@ -169,7 +169,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::BossProgress, RewardTerm::Timeout, RewardTerm::Stall,
         RewardTerm::Readiness, RewardTerm::Threat, RewardTerm::PullClean, RewardTerm::PullExtra, RewardTerm::Clear,
-        RewardTerm::ReadyPull, RewardTerm::Idle, RewardTerm::Lost };
+        RewardTerm::ReadyPull, RewardTerm::Idle, RewardTerm::Lost, RewardTerm::Away };
 }
 
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -314,6 +314,9 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
                 return _envs[env.Index].Drill && _envs[env.Index].DrillEngaged ? 1.0f : 0.0f;
             });
             table.Add("drill_gap", [this](Env const& env, uint32) { return _envs[env.Index].DrillGap; });
+            // Which of the route's packs the drill pulled (stage.json episode_categories: the evaluation's per-pack
+            // tables, pack_1 the route's first).
+            table.Add("drill_pack", [this](Env const& env, uint32) { return float(_envs[env.Index].DrillPackIndex); });
         }
         // **H, the stand-in split**: the run's success beside the "human" stand-in, and without it -- each a per-event
         // column over the episodes that had (with_stand_in) or had not (without_stand_in) the stand-in in a seat, so
@@ -2479,7 +2482,10 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
 
     // A pack of the rung: its nearest other creature at least the rung's gap away; any pack the route reaches when
     // none is.
-    uint32 rung = 0;
+    // An evaluation's drill (dungeon1_pulls) is a fixed sweep at the evaluation's conditions, whatever the training
+    // rung: every pack of the route, seed after seed (WingRun::SweepPick), the last rung's gap (any pack).
+    uint32 rung = uint32(PULL_GAPS.size()) - 1;
+    if (!env.Evaluating)
     {
         std::lock_guard<std::mutex> guard(_drillLock);
         rung = _drillRung;
@@ -2494,9 +2500,9 @@ bool Animus::Curriculum::InstanceEncounter::StartDrill(Env& env, Map* map, WingP
                 open.push_back(i);
     if (open.empty())
         return false;
-    // An evaluation's drill (dungeon1_pulls) drills the pack its seed names, the same one every evaluation.
-    std::size_t const chosen = open[env.Evaluating ? WingRun::SeededPick(uint32(open.size()), env.EpisodeSeedIndex)
+    std::size_t const chosen = open[env.Evaluating ? WingRun::SweepPick(uint32(open.size()), env.EpisodeSeedIndex)
         : urand(0, uint32(open.size()) - 1)];
+    fight.DrillPackIndex = uint32(chosen);
     WingPack const& pack = plan.Packs[chosen];
     fight.DrillRung = rung;
     fight.DrillGap = std::min(pack.Gap, 999.0f);
@@ -3014,12 +3020,27 @@ void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatInde
     if (fight.OnParty > tuning.WingCrowdFree)
         ledger.Add(RewardTerm::Threat, -tuning.WingCrowd * float(fight.OnParty - tuning.WingCrowdFree)
             * float(_scenario.DecisionMs()) / 1000.0f);
-    // Away from the leader (Instance.WingStray): a seat other than the tank further than WingStrayYards from it. Lost,
-    // a Cost (2026-10-07: "they have to stay with the leader"; as Approach it was Shaping and faded).
-    if (bot && bot->IsAlive() && !fight.Tank.IsEmpty() && bot->GetGUID() != fight.Tank)
-        if (Unit* tank = ObjectAccessor::GetUnit(*bot, fight.Tank); tank && tank->IsAlive() && tank->IsInMap(bot)
-            && bot->GetExactDist(tank) > tuning.WingStrayYards)
+    // Away from the leader (Instance.WingStray): the party's leader -- the stand-in when it leads, else the tank -- and
+    // a seat further than WingStrayYards from it. Lost, a Cost (2026-10-07: "they have to stay with the leader"; as
+    // Approach it was Shaping and faded). Never while a risen seat walks back from the entrance: Away prices that.
+    bool const walkingBack = paid.Clock.Rejoining;
+    if (bot)
+    {
+        int32 tankSeat = -1;
+        for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats && tankSeat < 0; ++index)
+            if (Player* member = _scenario.SeatBot(env, index); member && !fight.Tank.IsEmpty()
+                && member->GetGUID() == fight.Tank)
+                tankSeat = int32(index);
+        int32 const leaderSeat = WingRun::LeaderSeat(_scenario.StandInSeat(env), _scenario.StandInLeads(env), tankSeat);
+        Player* leader = leaderSeat >= 0 ? _scenario.SeatBot(env, uint32(leaderSeat)) : nullptr;
+        bool const leaderHere = leader && leader->IsAlive() && leader->IsInWorld() && leader->IsInMap(bot);
+        if (WingRun::Strays(bot->IsAlive(), leaderSeat == int32(seatIndex), walkingBack, leaderHere,
+            leaderHere ? bot->GetExactDist(leader) : 0.0f, tuning.WingStrayYards))
             ledger.Add(RewardTerm::Lost, -tuning.WingStray * seconds);
+        // Dead, or walking back from the entrance: every second of it a Cost (Instance.WingAway, as C3's Away).
+        if (WingRun::Away(bot->IsAlive(), walkingBack))
+            ledger.Add(RewardTerm::Away, -tuning.WingAway * seconds);
+    }
     if (bot && bot->IsAlive())
     {
         ledger.Add(RewardTerm::Kill, tuning.WingTrashKill * float(fight.TrashKills - paid.KillsPaid), tierScale);

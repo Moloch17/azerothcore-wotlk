@@ -1790,6 +1790,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
     // tables split by them (animus.evaluation, EvalResult.categories).
     boost::json::object& categories = stageFile["episode_categories"].emplace_object();
+    // A pull drill's pack (drill_pack): the route's packs, pack_1 first, as many as a route's cells can name.
+    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.PullDrill; }))
+    {
+        boost::json::array packs;
+        for (uint32 pack = 1; pack <= InstanceEncounter::EXPLORE_PACKS; ++pack)
+            packs.emplace_back(Acore::StringFormat("pack_{}", pack));
+        categories["drill_pack"] = std::move(packs);
+    }
     for (ArenaDefinition const& arena : _stage.Arenas)
         if (arena.Against == Opposition::Seek)
         {

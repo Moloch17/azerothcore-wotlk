@@ -778,6 +778,7 @@ namespace Animus::Curriculum
             /// dead with nothing else in the fight, or a second pack joining (the first such creature's entry).
             bool Drill = false;
             uint32 DrillRung = 0;
+            uint32 DrillPackIndex = 0;          // the route pack drilled (WingPlan::Packs' index)
             float DrillGap = 0.0f;
             uint32 DrillPoint = 0;
             std::vector<ObjectGuid> DrillPack;

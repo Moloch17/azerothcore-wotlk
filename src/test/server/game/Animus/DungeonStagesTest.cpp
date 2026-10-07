@@ -17,6 +17,7 @@
 
 #include "AreaDefines.h"
 #include "EntityActions.h"
+#include "EntranceRespawn.h"
 #include "InstanceBosses.h"
 #include "MoveControls.h"
 #include "Opcodes.h"
@@ -512,4 +513,80 @@ TEST(DungeonStagesTest, TheMovementStagesAreUnchanged)
         }
     EXPECT_EQ(Stage("move1_controls").Arenas.front().Against, Cu::Opposition::Sight);
     EXPECT_EQ(Stage("move2_seek").Arenas.front().Against, Cu::Opposition::Seek);
+}
+
+// **Lost is priced from the party's actual leader**: the "human" stand-in when it leads (it sits in seat 0), else the
+// tank -- never the tank while a leading stand-in has the party; the leader itself never strays.
+TEST(DungeonStagesTest, LostIsPricedFromTheActualLeader)
+{
+    constexpr int32 TANK = 2;
+    EXPECT_EQ(Wr::LeaderSeat(-1, false, TANK), TANK) << "an all-bot party follows its tank";
+    EXPECT_EQ(Wr::LeaderSeat(3, false, TANK), TANK) << "a following stand-in leads nobody";
+    EXPECT_EQ(Wr::LeaderSeat(0, true, TANK), 0) << "a leading stand-in is the leader";
+    EXPECT_EQ(Wr::LeaderSeat(-1, true, -1), -1);
+
+    float const stray = 25.0f;
+    // Seat 1, 30 yd from the leading stand-in: strays. The tank 30 yd off is not its measure when the stand-in leads.
+    EXPECT_TRUE(Wr::Strays(true, false, false, true, 30.0f, stray));
+    EXPECT_FALSE(Wr::Strays(true, false, false, true, 10.0f, stray));
+    EXPECT_FALSE(Wr::Strays(true, true, false, true, 90.0f, stray)) << "the leader does not stray from itself";
+    EXPECT_FALSE(Wr::Strays(true, false, false, false, 90.0f, stray)) << "a dead leader is no one to keep with";
+    EXPECT_FALSE(Wr::Strays(false, false, false, true, 90.0f, stray)) << "the dead are Away's";
+}
+
+// **A risen seat walking back pays Away, never Lost**: the same seconds are not charged twice. Driven through the
+// RespawnClock as the wing's RiseDead drives it: dead (Away), risen and walking back from the entrance (Away, not Lost
+// however far), rejoined (neither, until it strays again: Lost).
+TEST(DungeonStagesTest, ARisenSeatWalkingBackIsAwayNotLost)
+{
+    Cu::RespawnClock clock;
+    float const stray = 25.0f;
+    EXPECT_EQ(clock.Note(1000, false, -1.0f, 10000, 15.0f), Cu::RespawnClock::Step::Died);
+    EXPECT_TRUE(Wr::Away(false, clock.Rejoining));
+    EXPECT_EQ(clock.Note(11000, false, -1.0f, 10000, 15.0f), Cu::RespawnClock::Step::Rise);
+    clock.Risen(11000);
+    ASSERT_TRUE(clock.Rejoining);
+    // At the entrance, 200 yd from the leader, walking back.
+    EXPECT_EQ(clock.Note(12000, true, 200.0f, 10000, 15.0f), Cu::RespawnClock::Step::None);
+    EXPECT_TRUE(Wr::Away(true, clock.Rejoining));
+    EXPECT_FALSE(Wr::Strays(true, false, clock.Rejoining, true, 200.0f, stray));
+    // Back with the party.
+    EXPECT_EQ(clock.Note(60000, true, 10.0f, 10000, 15.0f), Cu::RespawnClock::Step::Rejoined);
+    EXPECT_FALSE(Wr::Away(true, clock.Rejoining));
+    EXPECT_FALSE(Wr::Strays(true, false, clock.Rejoining, true, 10.0f, stray));
+    // Wandering off again afterwards is a stray.
+    EXPECT_TRUE(Wr::Strays(true, false, clock.Rejoining, true, 40.0f, stray));
+    EXPECT_EQ(Cu::RewardTermCategory(Cu::RewardTerm::Away), Cu::RewardCategory::Cost);
+}
+
+// **No learned seat reads the crowd block** (bots perceive only what a player perceives): its pack ahead, overflow and
+// nearest object are radius reads off the server's lists. Only the teacher's check stages carry it, and they never train
+// a policy (every arena is the teacher's); the startup check refuses it anywhere else.
+TEST(DungeonStagesTest, NoStageWithALearnedSeatDeclaresTheCrowdBlock)
+{
+    EXPECT_TRUE(Cu::CurriculumProblems().empty());
+    uint32 teachers = 0;
+    for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
+    {
+        if (Cu::TrainsAPolicy(stage))
+            EXPECT_FALSE(stage.Has(Cu::BlockId::Crowd)) << stage.Name << " trains a policy on the crowd block";
+        else
+        {
+            ++teachers;
+            EXPECT_FALSE(stage.InDefaultQueue) << stage.Name;
+        }
+    }
+    EXPECT_EQ(teachers, 2u) << "teacher_ragefire and teacher_deadmines";
+    EXPECT_FALSE(Cu::TrainsAPolicy(Stage("teacher_ragefire")));
+    EXPECT_FALSE(Cu::TrainsAPolicy(Stage("teacher_deadmines")));
+    for (char const* name : PARTY_STAGES)
+        EXPECT_TRUE(Cu::TrainsAPolicy(Stage(name))) << name;
+
+    // A stage with one learned arena beside a teacher's trains a policy.
+    Cu::StageDefinition mixed;
+    mixed.Arenas.resize(2);
+    mixed.Arenas[0].Teacher = true;
+    EXPECT_TRUE(Cu::TrainsAPolicy(mixed));
+    mixed.Arenas[1].Teacher = true;
+    EXPECT_FALSE(Cu::TrainsAPolicy(mixed));
 }

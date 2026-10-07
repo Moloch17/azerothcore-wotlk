@@ -361,6 +361,9 @@ namespace Animus::Curriculum
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
             /// leader. Paid as Lost (a Cost) since 2026-10-07: as Approach it was Shaping, and the fade took it away.
             float WingStray = 0.02f;
+            /// Per second a seat is dead or walking back from the entrance after a rise (Away, a Cost, as C3's
+            /// Combat.Away): the time a death costs the party. Lost is never charged on the same seconds.
+            float WingAway = 0.02f;
             float WingStrayYards = 25.0f;
             /// The pull drill (ArenaDefinition::PullDrill): one pack of the dungeon a run, the party started
             /// PullStartYards back along the route from it with the packs before it cleared. A clean pull -- the pack
@@ -1824,6 +1827,7 @@ namespace Animus::Curriculum
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
             f("Instance.WingFullClear", tuning.Instance.WingFullClear);
             f("Instance.WingStray", tuning.Instance.WingStray);
+            f("Instance.WingAway", tuning.Instance.WingAway);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Instance.PullClean", tuning.Instance.PullClean);
             f("Instance.PullExtra", tuning.Instance.PullExtra);

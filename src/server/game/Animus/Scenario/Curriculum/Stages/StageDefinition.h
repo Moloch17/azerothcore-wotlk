@@ -575,6 +575,10 @@ namespace Animus::Curriculum
     /// base, a repeated block, parts that need a missing block) are logged and left out.
     [[nodiscard]] std::vector<StageDefinition> const& CurriculumStages();
 
+    /// Whether a learned seat ever plays the stage: some arena is not the teacher's own runs (ArenaDefinition::Teacher).
+    /// A stage that trains a policy perceives only what a player does -- never the crowd block's server-list reads.
+    [[nodiscard]] bool TrainsAPolicy(StageDefinition const& stage);
+
     [[nodiscard]] StageDefinition const* FindStage(std::string_view name);
 
     /// Why each stage CurriculumStages left out was left out ("<name>: <problem>"); empty when every definition is
