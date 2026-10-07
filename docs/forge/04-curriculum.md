@@ -28,11 +28,26 @@
 > entrance after `Respawn.DelayMs` and walks back (EntranceRespawn); no episode ends on a death. Its ladder (the fade's
 > rungs: walking, running, sudden stops, steps back) steps on the kept share alone; no cost ladder.
 >
+> `teacher_ragefire` and `teacher_deadmines` (dungeon-curriculum I6, 2026-10-06) are not training stages: in no
+> queue, their one arena a whole dungeon (`InstanceLadder::Wing`, Ragefire door to Bazzalan, the Deadmines door to
+> VanCleef) whose every seat the dungeon teacher plays (`ArenaDefinition::Teacher`; WingTeacher). The teacher drives
+> each seat on the player controller's keys and acts through the sight block's presses -- select, interact, use an
+> item, assist, focus -- and spells through the client's handler: the tank leads and pulls one pack at a time after a
+> ready check on every member, the healer heals within its mana, damage assists the tank's target, everyone eats and
+> drinks between pulls, doors and levers are opened with an interact and the Deadmines' cannon with its gunpowder
+> (carried from the door; nothing is looted). A death rises at the entrance after `Respawn.DelayMs` and the teacher
+> walks it back. `forge run teacher_ragefire dungeon 96` is the teacher's gate (every pull and side boss cleared,
+> before any taper): read its "Wing run" lines. In a training stage the same teacher hints every seat and plays the
+> rung's share of them (`Instance.WingSupport`), and hint imitation ends for good once the probes beat the script
+> (`Instance.WingHintOffRung`; the learner's `animus.hint_cutoff`).
+>
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
 > | `move2_seek` | 250M | 10M | 78 |
 > | `move4_follow` | 250M | 10M | 64 |
+> | `teacher_ragefire` | 100M | 1M | 8 |
+> | `teacher_deadmines` | 100M | 1M | 8 |
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

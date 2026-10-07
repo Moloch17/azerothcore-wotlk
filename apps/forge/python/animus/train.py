@@ -42,6 +42,7 @@ from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
 from .explore import ExploreArchive, cells_of, mark_columns
+from .hint_cutoff import HintCutoff
 from .exploit import JOIN, Exploit, exploiter_name
 from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
                          format_summary,
@@ -752,6 +753,8 @@ class TrainingRun:
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
         # The hint block's columns (a dungeon's suggested action) are kept out of both networks, seeded or resumed.
         self.trainer.set_hint_space(self.stage, [layout.name for layout in self.spec.layouts])
+        # Hint imitation ends once the probes beat the script (the sim's wing_hint_off; animus.hint_cutoff).
+        self.hint_cutoff = HintCutoff(self.spec.episode_info_names, self.trainer.config)
         # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
@@ -2130,6 +2133,7 @@ class TrainingRun:
         keep &= ~partnered.reshape(-1)
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
+        self.hint_cutoff.observe(ended[keep])
         if self.link is not None:
             self.link.observe(ended[keep], ended_layouts[keep])
 

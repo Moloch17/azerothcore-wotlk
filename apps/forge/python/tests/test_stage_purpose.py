@@ -32,6 +32,10 @@ PURPOSE = {
     # in the band, Regroup on coming back to it after each of the leader's stops -- and Death, each one a price the
     # episode goes on past (I4).
     "move4_follow": ("FollowKept", "Regroup", "Death"),
+    # The dungeon teacher's checks (I6; not training stages, but a learner pointed at one is paid for the dungeon):
+    # every pack and boss killed (Kill, the last boss's WingBoss among them) and each death priced.
+    "teacher_ragefire": ("Kill", "Death"),
+    "teacher_deadmines": ("Kill", "Death"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -51,6 +55,7 @@ ENCOUNTER = {
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
     "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
+    "Instance": "Encounters/InstanceEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

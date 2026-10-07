@@ -21,8 +21,8 @@ REPO = Path(__file__).resolve().parents[4]
 STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
 COMPILE_DB = Path(os.environ.get("ANIMUS_COMPILE_DB", "/azerothcore/var/build/obj/compile_commands.json"))
 # The movement curriculum as rebuilt (2026-10-05): M1, and M2 seek (perception-goals P1, 2026-10-06); later stages
-# add themselves here as they land.
-MOVEMENT = ["move1_controls", "move2_seek", "move4_follow"]
+# add themselves here as they land. The dungeon teacher's check stages (I6) are defined beside them, in no queue.
+MOVEMENT = ["move1_controls", "move2_seek", "move4_follow", "teacher_ragefire", "teacher_deadmines"]
 
 LOG_STUB = """#pragma once
 #define LOG_ERROR(category, ...) ((void)0)
