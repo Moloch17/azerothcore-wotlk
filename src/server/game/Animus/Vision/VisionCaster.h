@@ -19,6 +19,7 @@
 #define ANIMUS_VISION_VISION_CASTER_H
 
 #include "Camera.h"
+#include "MentalMap.h"
 #include "PlayerController.h"
 #include <array>
 #include <span>
@@ -290,9 +291,13 @@ namespace Animus::Vision
     /// (CountEntities), the entities with a pixel take the slots in number order -- the nearest first -- up to
     /// ENTITY_SLOTS (AssignSlots), and byte 4 becomes each pixel's slot (0 past the cap, its class kept) before the
     /// frame is scaled up. `slots`, when given, takes the list.
+    ///
+    /// **The frame's rays for the mental map** (perception-goals REDESIGN §3, amendment 2): `hits`, when given, takes
+    /// every cast pixel's ray -- its direction, its hit's distance, height and normal z, and its class -- at the size
+    /// the frame was cast at, not the canonical image's upscaled copies.
     uint32_t Render(Settings const& settings, Pose const& pose, CameraState const& camera, VisionWorld const& world,
         Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars, Breakdown* breakdown = nullptr,
-        float objectiveRadius = OBJECTIVE_RADIUS, FrameSlots* slots = nullptr);
+        float objectiveRadius = OBJECTIVE_RADIUS, FrameSlots* slots = nullptr, FrameHits* hits = nullptr);
 
     /// A cast frame's pixels per entity number (byte 4): counts[n] -- its pixels and the sums of their rows and
     /// columns -- for n from 1 to MAX_SEEN (counts[0] holds the pixels of no entity).

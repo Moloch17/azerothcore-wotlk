@@ -667,7 +667,7 @@ void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
 
 uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, CameraState const& camera,
     VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image, float* scalars,
-    Breakdown* breakdown, float objectiveRadius, FrameSlots* slots)
+    Breakdown* breakdown, float objectiveRadius, FrameSlots* slots, FrameHits* hits)
 {
     Rig const rig = PlaceCamera(pose, camera, world, breakdown);
     Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
@@ -695,11 +695,20 @@ uint32_t Animus::Vision::Render(Settings const& settings, Pose const& pose, Came
         target = scratch.data();
     }
 
+    if (hits)
+    {
+        hits->Camera = rig.Camera;
+        hits->Width = target ? cast.Width : 0;
+        hits->Height = target ? cast.Height : 0;
+        hits->Rays.clear();
+    }
     for (uint32_t row = 0; target && row < cast.Height; ++row)
         for (uint32_t col = 0; col < cast.Width; ++col)
         {
             Vec3 const dir = PixelDirection(rig, cast, row, col);
             Hit const hit = CastRay(rig.Camera, dir, world, sight, breakdown);
+            if (hits)
+                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What });
             // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
             bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
             // Byte 4 holds the entity's number until the frame's slots are known.

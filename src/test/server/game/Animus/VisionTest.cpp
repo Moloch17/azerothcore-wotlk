@@ -1441,3 +1441,107 @@ TEST(VisionTest, FramesNameTheirEntities)
         EXPECT_GT(past, 0u) << "entities past the cap keep their class, with slot 0";
     }
 }
+
+// The mental map is written from the frame as cast (perception-goals REDESIGN §3, amendment 2): Render's rays are the
+// cast size's -- 32 x 16 rays for a frame drawn at 32 x 16, not the canonical image's 128 x 64 copies -- each ray's
+// hit the caster's own. Written into a map from a hallway's camera, the floor ahead is floor, the side walls are
+// walls, and nothing past them is known. Then the cost of a write and a crop at the default render sizes (the vision
+// row's map figure is this, live).
+TEST(VisionTest, TheMentalMapReadsTheCastFrame)
+{
+    FakeVision hallway;
+    hallway.Models = {
+        { X0 - 10.0f, X0 + 120.0f, Y0 - 5.0f, Y0 - 4.0f, -2.0f, 8.0f },     // the left wall
+        { X0 - 10.0f, X0 + 120.0f, Y0 + 4.0f, Y0 + 5.0f, -2.0f, 8.0f },     // the right wall
+        { X0 - 10.0f, X0 + 120.0f, Y0 - 5.0f, Y0 + 5.0f, -2.0f, -1.0f },    // the floor (its top at -1)
+        { X0 - 10.0f, X0 + 120.0f, Y0 - 5.0f, Y0 + 5.0f, 6.0f, 7.0f },      // the ceiling
+        { X0 + 110.0f, X0 + 111.0f, Y0 - 5.0f, Y0 + 5.0f, -2.0f, 8.0f },    // the end
+    };
+    Vi::Settings const settings;    // 128 x 64
+    Vi::Pose pose;
+    pose.X = X0;
+    pose.Y = Y0;
+    pose.Z = -1.0f;
+    Vi::CameraState camera;
+    camera.Pitch = -15.0f * DEG;
+    camera.Zoom = 6.0f;
+    camera.RenderWidth = 32;
+    camera.RenderHeight = 16;
+    Frame frame(settings);
+    Vi::FrameHits hits;
+    Vi::Render(settings, pose, camera, hallway, {}, nullptr, frame.Image.data(), frame.Scalars.data(), nullptr,
+        Vi::OBJECTIVE_RADIUS, nullptr, &hits);
+    ASSERT_EQ(hits.Width, 32u);
+    ASSERT_EQ(hits.Height, 16u);
+    ASSERT_EQ(hits.Rays.size(), 32u * 16u);
+    // Each ray is the cast pixel's: its direction, and its hit the caster's own.
+    Vi::Rig const rig = Vi::PlaceCamera(pose, camera, hallway);
+    Vi::Settings cast = settings;
+    cast.Width = 32;
+    cast.Height = 16;
+    for (uint32_t pixel : { 0u, 100u, 300u, 511u })
+    {
+        Vi::Vec3 const dir = Vi::PixelDirection(rig, cast, pixel / 32u, pixel % 32u);
+        EXPECT_NEAR(hits.Rays[pixel].Dir.X, dir.X, 1e-5f);
+        EXPECT_NEAR(hits.Rays[pixel].Dir.Y, dir.Y, 1e-5f);
+        Vi::Hit const hit = Vi::CastRay(rig.Camera, dir, hallway, {});
+        EXPECT_FLOAT_EQ(hits.Rays[pixel].Distance, hit.Distance);
+        EXPECT_EQ(hits.Rays[pixel].What, hit.What);
+    }
+
+    Vi::MentalMap map;
+    Vi::MapWriteStats stats;
+    map.WriteFrame(hits, pose.Z, 2.0f, &stats);
+    EXPECT_GT(stats.Floors, 0u);
+    EXPECT_GT(stats.Walls, 0u);
+    // The floor ahead, in the hallway, is floor where 512 rays reached it; the walls beside it, walls.
+    uint32_t floors = 0;
+    uint32_t walls = 0;
+    for (float x = X0 + 2.0f; x < X0 + 40.0f; x += 1.0f)
+        for (float y = Y0 - 6.0f; y < Y0 + 6.0f; y += 1.0f)
+            if (Vi::MapCell const* cell = map.Find(x + 0.5f, y + 0.5f))
+            {
+                Vi::MapCode const code = Vi::CodeOf(*cell, pose.Z);
+                floors += code == Vi::MapCode::Floor && std::fabs(y + 0.5f - Y0) < 4.0f ? 1 : 0;
+                walls += code == Vi::MapCode::Wall && std::fabs(y + 0.5f - Y0) >= 3.0f ? 1 : 0;
+            }
+    EXPECT_GT(floors, 20u);
+    EXPECT_GT(walls, 5u);
+    // Past the walls, unseen: never written.
+    for (float x = X0; x < X0 + 60.0f; x += 1.0f)
+        for (float y : { Y0 - 8.5f, Y0 + 8.5f })
+        {
+            Vi::MapCell const* cell = map.Find(x + 0.5f, y);
+            EXPECT_TRUE(!cell || !Vi::Known(*cell)) << x << " " << y;
+        }
+
+    // The cost: a write and a crop for frames cast at each default render size, the hallway's camera.
+    Vi::Settings const defaults;
+    std::vector<uint8_t> crop(Vi::CROP_BYTES);
+    for (Vi::Resolution const size : defaults.RenderSizes)
+    {
+        camera.RenderWidth = size.Width;
+        camera.RenderHeight = size.Height;
+        Vi::Render(settings, pose, camera, hallway, {}, nullptr, frame.Image.data(), frame.Scalars.data(), nullptr,
+            Vi::OBJECTIVE_RADIUS, nullptr, &hits);
+        constexpr int ROUNDS = 20;
+        Vi::MentalMap timed;
+        Vi::MapWriteStats steps;
+        auto const start = std::chrono::steady_clock::now();
+        for (int i = 0; i < ROUNDS; ++i)
+        {
+            timed.Advance(0.1f);
+            timed.WriteFrame(hits, pose.Z, 2.0f, i == 0 ? &steps : nullptr);
+            timed.WriteBody(pose.X, pose.Y, pose.Z, true);
+        }
+        auto const written = std::chrono::steady_clock::now();
+        for (int i = 0; i < ROUNDS; ++i)
+            timed.Crop(pose.X, pose.Y, pose.Z, 0.0f, crop.data());
+        auto const cropped = std::chrono::steady_clock::now();
+        double const writeUs = std::chrono::duration<double, std::micro>(written - start).count() / ROUNDS;
+        double const cropUs = std::chrono::duration<double, std::micro>(cropped - written).count() / ROUNDS;
+        std::cout << "[ map ] " << size.Width << "x" << size.Height << ": write " << writeUs << " us ("
+            << hits.Rays.size() << " rays, " << steps.Steps << " grid steps, " << steps.Free << " free), crop "
+            << cropUs << " us\n";
+    }
+}
