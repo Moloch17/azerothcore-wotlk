@@ -795,6 +795,54 @@ bool AnimusForge::Forge::CommandRun(std::string const& scenario, std::string con
     return true;
 }
 
+bool AnimusForge::Forge::CommandStageFiles(std::string const& scenario, LineSink const& out)
+{
+    if (!Enabled(out))
+        return false;
+
+    if (_state != State::Idle || _request == Request::Start)
+    {
+        out(Acore::StringFormat("{} is {}: `forge cancel` it first.", _current, StateName()));
+        return false;
+    }
+
+    std::vector<std::string> names = Animus::ScenarioNames();
+    if (scenario != "all")
+    {
+        if (!ValidScenario(scenario, out))
+            return false;
+
+        names = { scenario };
+    }
+
+    // What StartCurrent builds, from the same settings (the configured ones, as an idle forge runs them): the
+    // scenario's constructor writes the layout manifests and stage.json when LayoutsDir is set. It is dropped as
+    // soon as it is built, so nothing plays and nothing is left running.
+    uint32 written = 0;
+    for (std::string const& name : names)
+    {
+        Animus::StageSettings const settings = _config.Stage(name);
+        std::unique_ptr<Animus::Scenario> built = Animus::CreateScenario(name, settings);
+        built.reset();
+
+        fs::path const file = fs::path(settings.LayoutsDir) / name / "stage.json";
+        std::error_code error;
+        std::uintmax_t const bytes = fs::file_size(file, error);
+        if (error)
+        {
+            out(Acore::StringFormat("{}: no stage.json at {} ({})", name, file.string(), error.message()));
+            continue;
+        }
+
+        ++written;
+        out(Acore::StringFormat("{}: {} ({} bytes)", name, file.string(), bytes));
+    }
+
+    out(Acore::StringFormat("{} of {} stage.json file{} in {}", written, names.size(), names.size() == 1 ? "" : "s",
+        _config.LayoutsDir().string()));
+    return written == names.size();
+}
+
 bool AnimusForge::Forge::CommandTalents(std::string const& playerClass, std::string const& spec, uint32 points,
     std::string const& plan, LineSink const& out)
 {

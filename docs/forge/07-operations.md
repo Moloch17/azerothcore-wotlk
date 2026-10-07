@@ -87,6 +87,10 @@ episode means. This checks that characters build, the arena spawns and the sim s
 says nothing about whether the stage can be learned: there are no scripted baselines (principle 14), so a smoke test of
 the behaviour is a short run with the learner (`forge fast <stage>`).
 
+To get only a stage's `stage.json` and layout manifests (what the deploy gate compares, `deploy-gate.md` step 4), `forge
+stagefiles <stage>` (or `all`) builds each scenario exactly as starting it does, writes the files to
+`<OutputDir>/layouts/<stage>/` and drops the scenario: no episode is played and no learner starts. Idle only.
+
 To run every queued scenario at random, set `AnimusForge.Policy = "random"` and `AnimusForge.Queue.LocalEpisodes =
 1024`, then `forge start`.
 

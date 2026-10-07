@@ -203,6 +203,7 @@ namespace
                 { "cancel",    HandleCancel,    SEC_ADMINISTRATOR, Console::Yes },
                 { "skip",      HandleSkip,      SEC_ADMINISTRATOR, Console::Yes },
                 { "run",       HandleRun,       SEC_ADMINISTRATOR, Console::Yes },
+                { "stagefiles", HandleStageFiles, SEC_ADMINISTRATOR, Console::Yes },
                 { "route",     HandleRoute,     SEC_ADMINISTRATOR, Console::Yes },
                 { "floorscan", HandleFloorScan, SEC_ADMINISTRATOR, Console::Yes },
                 { "fieldroute", HandleFieldRoute, SEC_ADMINISTRATOR, Console::Yes },
@@ -243,6 +244,9 @@ namespace
             table.AddRow({ "forge cancel", "stop the plan; the learner saves latest.pt first" });
             table.AddRow({ "forge skip", "end the current scenario and start the next one" });
             table.AddRow({ "forge run <scenario> <policy> [episodes]", "run the random policy, no learner" });
+            table.AddRow({ "forge stagefiles <scenario|all>", "build the scenario as starting it does and write its "
+                "stage.json and layout manifests to <OutputDir>/layouts/<stage>/, then drop it: no episode, no "
+                "learner, nothing trained (idle only)" });
             table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });
@@ -339,6 +343,12 @@ namespace
         static bool HandleRun(ChatHandler* handler, std::string scenario, std::string policy, Optional<uint32> episodes)
         {
             return sAnimusForge->CommandRun(scenario, policy, episodes.value_or(0), Reply(handler));
+        }
+
+        /// `forge stagefiles <scenario|all>`: the stage's stage.json and layout manifests, without playing it.
+        static bool HandleStageFiles(ChatHandler* handler, std::string scenario)
+        {
+            return sAnimusForge->CommandStageFiles(scenario, Reply(handler));
         }
 
         /// `forge floorscan <map> <x1> <y1> <x2> <y2> <z> [step] [file]`: the player controller's floor against the

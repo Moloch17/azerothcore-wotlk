@@ -73,6 +73,7 @@ Then, on the worldserver console:
 | Command | What it does |
 |---|---|
 | `forge run <stage> random 256` | Play the random policy with no learner, to check that the stage builds and steps |
+| `forge stagefiles <stage>\|all` | Build the stage's scenario and write its `stage.json` and layout manifests to `<OutputDir>/layouts/<stage>/`, without playing an episode or starting a learner (idle only) |
 | `forge fast` | The whole pipeline on an easy profile, minutes per stage, into `<OutputDir>/fast/` |
 | `forge start` | Train the curriculum stage by stage; each ends when every class has converged or at its budget, and the queue moves on |
 | `forge status` | Rates, ETAs, evaluation scores against the baseline, warnings |

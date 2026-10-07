@@ -89,6 +89,10 @@ namespace AnimusForge
         bool CommandCancel(LineSink const& out);
         bool CommandSkip(LineSink const& out);
         bool CommandRun(std::string const& scenario, std::string const& policy, uint32 episodes, LineSink const& out);
+        /// `forge stagefiles <scenario>|all`: build the stage's scenario as starting it would, which writes its
+        /// stage.json and layout manifests to <OutputDir>/layouts/<stage>/, then drop it: no episode, no learner, no
+        /// state change. Idle only.
+        bool CommandStageFiles(std::string const& scenario, LineSink const& out);
         /// `forge bench [scenario]`: time the sim at every AnimusForge.Bench.Threads x Envs pair, then the best few
         /// with the learner, and report what runs fastest. `forge bench apply` writes the winner into the configs.
         /// `apply` (`forge bench auto`): write the winner into the configs when it is done and use it at once.
