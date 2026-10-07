@@ -100,13 +100,11 @@ void Animus::Curriculum::SightEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         EnvSight const& sight = _envs[env.Index];
         return !sight.Withheld && sight.Reached ? 1.0f : 0.0f;
     });
-    // The withholding ladder's rung (the shaping fade's: 0 at x1, 3 at x0), and whether it is the top one; an
-    // evaluation is the whole task, so its episodes are all at the top.
-    table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
-    table.Add("at_top_rung", [this](Env const& env, uint32)
-    {
-        return env.Evaluating || _envs[env.Index].Rung + 1 >= SightDraw::RUNGS ? 1.0f : 0.0f;
-    });
+    // The withholding ladder's rung (the shaping fade's: 0 at x1, 3 at x0). Not `difficulty` or `at_top_rung`: those
+    // are a class's own difficulty ladder (DifficultyLadder), which the learner waits on per class before the fade
+    // steps and before a class converges; this ladder is the fade itself, one for every class, whose settling is
+    // already a convergence signal.
+    table.Add("compass_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
     table.Add("marker_radius", [this](Env const& env, uint32) { return _envs[env.Index].Radius; });
     // M1's measures, per arrival (PER_EVENT on markers): seconds from the spawn to the stop, that over the optimum
     // (the straight line at run speed and the first turn at the fastest rate), and how far past the radius the seat

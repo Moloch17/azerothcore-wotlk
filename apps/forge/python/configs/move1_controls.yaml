@@ -16,8 +16,8 @@
 # around a shared trunk), so every class learns the movement from the start, with a kit too small to matter.
 #
 # Seeded from the current M1 (its latest.pt, through finetune_from below): the move and compass blocks carry by name
-# (the compass split's remap), the camera trains on M1's dense reward. The first movement curriculum (move1_controls ... move7_follow) is
-# archived: configs/archive/movement-v1/, the definitions on the git tag curriculum-movement-v1.
+# (the compass split's remap), the camera trains on M1's dense reward. The first movement curriculum (move1_controls
+# ... move7_follow) is archived: configs/archive/movement-v1/, the definitions on the git tag curriculum-movement-v1.
 
 run_name: move1_controls
 socket: /tmp/animus-forge.sock
@@ -114,7 +114,7 @@ eval:
   deterministic: true
   sampled_every: 3
   trace_episodes: 64
-  report: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, compass_withhold_chance,
+  report: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, compass_withhold_chance, compass_rung,
            arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, distance_travelled, objective_distance,
            objective_corner, objective_visible, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds,
            movement_casts, died, timed_out, reward_arrive, reward_step_cost, reward_progress, reward_facing,
