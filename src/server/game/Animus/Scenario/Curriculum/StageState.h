@@ -23,6 +23,8 @@
 #include "Block.h"
 #include "BotSlot.h"
 #include "Client.h"
+#include "EntityActions.h"
+#include "EntityMemory.h"
 #include "Identity.h"
 #include "MentalMap.h"
 #include "PlayerLink.h"
@@ -185,6 +187,9 @@ namespace Animus::Curriculum
         CastSight,          // no line of sight
         CastMoving,         // a cast with a cast time pressed on the move
         CastPower,          // not enough mana, rage, energy or runic power
+        /// A sight block press the world refused (EntityActions::Refusal): a remembered entity gone or out of reach,
+        /// a thing the press does not take, no key item, a cast refused. Offered, never masked.
+        ActRefused,
         Count
     };
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);
@@ -275,6 +280,18 @@ namespace Animus::Curriculum
         uint32 MapMapId = 0;
         uint32 MapInstanceId = 0;
         bool MapKept = false;
+        /// **Its entity memory** (dungeon-curriculum I2), in a stage with a sight block: written by the entities block
+        /// from each frame's list, read by the sight block. Kept across resets with the map, by the same roll and
+        /// offset (MapKeep, MapAgeOffset), on the same instance; RecallKept says this episode's was. Mutable like the
+        /// map.
+        mutable Vision::EntityMemory Recall;
+        bool RecallKept = false;
+        /// What each sight block slot named at its last observation (a raw GUID, 0 empty): the slots a press acts on.
+        mutable std::array<uint64, SIGHT_SLOTS> SightGuids{};
+        /// The seat's client focus (EntityActions: Press::Focus): the friend its beneficial spells go to.
+        mutable ObjectGuid Focus;
+        /// The sight block's presses refused this episode, by EntityActions::Refusal.
+        std::array<uint32, EntityActions::REFUSALS> ActRefusedBy{};
         mutable Movement::Client Mover;
         mutable Movement::LinkMemory Link;
         /// The controller's columns: reports refused, ticks pressing into a wall or stuck with a key held, course
@@ -695,6 +712,9 @@ namespace Animus::Curriculum
             StepFidgetMs = 0;
             StepAimlessBy.fill(0);
             AimlessBy.fill(0);
+            ActRefusedBy.fill(0);
+            SightGuids.fill(0);
+            Focus.Clear();
             StepModeSwitches = 0;
             ModeSwitches = 0;
             StepSuppliesSpent = 0;

@@ -60,53 +60,65 @@ void Animus::Curriculum::EntitiesBlock::DescribeManifest(Layout const& layout, b
 
 void Animus::Curriculum::EntitiesBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
-    if (view.Seen)
-        Write(*view.Seen, obs);
-    else
+    if (!view.Seen)
+    {
         std::fill(obs, obs + Vi::ENTITY_SLOTS * ENTITY_FEATURES, 0.0f);
+        return;
+    }
+    // Entity memory's one write (dungeon-curriculum I2): its clock is the seat's decisions, then this frame's list.
+    if (Vi::EntityMemory* memory = view.Recall)
+    {
+        memory->Advance(float(view.DecisionMs) / 1000.0f);
+        memory->Write(*view.Seen);
+    }
+    Write(*view.Seen, obs, view.Recall);
 }
 
-void Animus::Curriculum::EntitiesBlock::Write(Vision::SeenList const& seen, float* obs)
+void Animus::Curriculum::EntitiesBlock::Write(Vision::SeenList const& seen, float* obs,
+    Vision::EntityMemory const* memory)
 {
     std::fill(obs, obs + Vi::ENTITY_SLOTS * ENTITY_FEATURES, 0.0f);
-    float const logRange = std::log(Vi::DISTANCE_REFERENCE / Vi::NEAR);
     for (uint32 slot = 0; slot < seen.Count && slot < Vi::ENTITY_SLOTS; ++slot)
-    {
-        Vi::EntityInfo const& info = seen.Info[slot];
-        float* out = obs + slot * ENTITY_FEATURES;
-        out[ENTITY_PRESENT] = 1.0f;
-        out[ENTITY_CLASS] = float(uint32(info.Id.What));
-        out[ENTITY_TYPE] = float(info.Entry);
-        out[ENTITY_OBJECT] = info.GameObject ? 1.0f : 0.0f;
-        out[ENTITY_LEVEL] = info.Level / LEVEL_SCALE;
-        out[ENTITY_LEVEL_DELTA] = info.GameObject ? 0.0f
-            : std::clamp((info.Level - seen.SeatLevel) / LEVEL_DELTA_SCALE, -1.0f, 1.0f);
-        out[ENTITY_HEALTH] = std::clamp(info.Health, 0.0f, 1.0f);
-        out[ENTITY_REACTION] = float(info.Reaction);
-        out[ENTITY_QUEST] = info.Id.Quest ? 1.0f : 0.0f;
-        out[ENTITY_LOOTABLE] = info.Id.Lootable ? 1.0f : 0.0f;
-        out[ENTITY_USABLE] = info.Id.Usable ? 1.0f : 0.0f;
+        WriteSlot(seen, slot, memory ? memory->IdOf(seen.Info[slot].Guid) : 0, obs + slot * ENTITY_FEATURES);
+}
 
-        // Where it is from the camera, in the view's own frame: the yaw off the view's azimuth (+ left, WoW's) and
-        // the pitch off its elevation.
-        Vi::Vec3 const offset = info.Centre - seen.Camera;
-        float const flat = std::sqrt(offset.X * offset.X + offset.Y * offset.Y);
-        float const distance = Vi::Length(offset);
-        out[ENTITY_DISTANCE] = std::clamp(std::log(std::max(distance, Vi::NEAR) / Vi::NEAR) / logRange, 0.0f, 1.0f);
-        float const yaw = std::atan2(offset.Y, offset.X) - seen.Azimuth;
-        float const pitch = std::atan2(offset.Z, flat) - seen.Elevation;
-        out[ENTITY_YAW_SIN] = std::sin(yaw);
-        out[ENTITY_YAW_COS] = std::cos(yaw);
-        out[ENTITY_PITCH_SIN] = std::sin(pitch);
-        out[ENTITY_PITCH_COS] = std::cos(pitch);
+void Animus::Curriculum::EntitiesBlock::WriteSlot(Vision::SeenList const& seen, uint32 slot, uint16 memoryId,
+    float* out)
+{
+    float const logRange = std::log(Vi::DISTANCE_REFERENCE / Vi::NEAR);
+    Vi::EntityInfo const& info = seen.Info[slot];
+    out[ENTITY_PRESENT] = 1.0f;
+    out[ENTITY_CLASS] = float(uint32(info.Id.What));
+    out[ENTITY_TYPE] = float(info.Entry);
+    out[ENTITY_OBJECT] = info.GameObject ? 1.0f : 0.0f;
+    out[ENTITY_LEVEL] = info.Level / LEVEL_SCALE;
+    out[ENTITY_LEVEL_DELTA] = info.GameObject ? 0.0f
+        : std::clamp((info.Level - seen.SeatLevel) / LEVEL_DELTA_SCALE, -1.0f, 1.0f);
+    out[ENTITY_HEALTH] = std::clamp(info.Health, 0.0f, 1.0f);
+    out[ENTITY_REACTION] = float(info.Reaction);
+    out[ENTITY_QUEST] = info.Id.Quest ? 1.0f : 0.0f;
+    out[ENTITY_LOOTABLE] = info.Id.Lootable ? 1.0f : 0.0f;
+    out[ENTITY_USABLE] = info.Id.Usable ? 1.0f : 0.0f;
 
-        float x = 0.0f;
-        float y = 0.0f;
-        float share = 0.0f;
-        Vi::SlotCentroid(seen.Stats[slot], seen.CastWidth, seen.CastHeight, x, y, share);
-        out[ENTITY_CENTROID_X] = x;
-        out[ENTITY_CENTROID_Y] = y;
-        out[ENTITY_SHARE] = share;
-        out[ENTITY_MEMORY] = 0.0f;
-    }
+    // Where it is from the camera, in the view's own frame: the yaw off the view's azimuth (+ left, WoW's) and
+    // the pitch off its elevation.
+    Vi::Vec3 const offset = info.Centre - seen.Camera;
+    float const flat = std::sqrt(offset.X * offset.X + offset.Y * offset.Y);
+    float const distance = Vi::Length(offset);
+    out[ENTITY_DISTANCE] = std::clamp(std::log(std::max(distance, Vi::NEAR) / Vi::NEAR) / logRange, 0.0f, 1.0f);
+    float const yaw = std::atan2(offset.Y, offset.X) - seen.Azimuth;
+    float const pitch = std::atan2(offset.Z, flat) - seen.Elevation;
+    out[ENTITY_YAW_SIN] = std::sin(yaw);
+    out[ENTITY_YAW_COS] = std::cos(yaw);
+    out[ENTITY_PITCH_SIN] = std::sin(pitch);
+    out[ENTITY_PITCH_COS] = std::cos(pitch);
+
+    float x = 0.0f;
+    float y = 0.0f;
+    float share = 0.0f;
+    Vi::SlotCentroid(seen.Stats[slot], seen.CastWidth, seen.CastHeight, x, y, share);
+    out[ENTITY_CENTROID_X] = x;
+    out[ENTITY_CENTROID_Y] = y;
+    out[ENTITY_SHARE] = share;
+    out[ENTITY_MEMORY] = float(memoryId);
 }

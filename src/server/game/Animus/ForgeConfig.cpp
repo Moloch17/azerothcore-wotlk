@@ -319,6 +319,10 @@ void AnimusForge::ForgeConfig::Load()
             65536.0f));
         Map.KeepShare = ranged("AnimusForge.Map.KeepShare", maps.KeepShare, 0.0f, 1.0f);
         Map.AgeOffsetSeconds = ranged("AnimusForge.Map.AgeOffsetSeconds", maps.AgeOffsetSeconds, 0.0f, 36000.0f);
+
+        // Entity memory (dungeon-curriculum I2): its cap; it is kept across resets with the map.
+        Memory.MaxEntities = uint32(ranged("AnimusForge.Memory.MaxEntities", float(Animus::Vision::MEMORY_TRAINING_CAP),
+            1.0f, float(Animus::Vision::MEMORY_CAP_LIMIT)));
     }
 
     // Human play (human-play-data plan 2.6): off unless a file is named and its share is above 0.

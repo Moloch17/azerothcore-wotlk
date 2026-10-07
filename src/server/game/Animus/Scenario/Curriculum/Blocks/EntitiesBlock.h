@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_ENTITIES_BLOCK_H
 
 #include "Block.h"
+#include "EntityMemory.h"
 #include "Identity.h"
 
 namespace Animus::Curriculum
@@ -34,6 +35,10 @@ namespace Animus::Curriculum
     /// template (a creature's or game object's entry, raw: the learner hashes it into an embedding), the level, the
     /// health, how its nameplate reads, quest relevance, lootable, usable; and where it is: its distance and
     /// direction from the camera, and its pixels' centroid and share of the frame.
+    ///
+    /// **Entity memory** (dungeon-curriculum I2): in a stage with a sight block the seat has one (SeatView::Recall),
+    /// and this block writes it -- the memory's clock moved on by the decision, then the frame's list recorded, the
+    /// only write it ever gets -- before it reads the ids back into ENTITY_MEMORY. The sight block after it reads it.
     ///
     /// The learner reads the slots as a set (stage.json's vision block "entities", in seat-set form), joined with
     /// the camera's patch features under each slot's pixels (perception-goals 1c); the block's columns are raw, kept
@@ -62,7 +67,7 @@ namespace Animus::Curriculum
             ENTITY_CENTROID_X   = 16,   // its pixels' mean, -1 left to 1 right
             ENTITY_CENTROID_Y   = 17,   // ... -1 bottom to 1 top
             ENTITY_SHARE        = 18,   // its pixels' share of the frame
-            ENTITY_MEMORY       = 19,   // its entity memory id (perception-goals 3): 0 until entity memory exists
+            ENTITY_MEMORY       = 19,   // its entity memory id (perception-goals 3, raw): 0 in a stage without memory
             ENTITY_FEATURES     = 20
         };
 
@@ -78,8 +83,11 @@ namespace Animus::Curriculum
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
 
-        /// The block's columns from a seat's list: slot s's features at s * ENTITY_FEATURES, the slots past Count 0.
-        static void Write(Vision::SeenList const& seen, float* obs);
+        /// The block's columns from a seat's list: slot s's features at s * ENTITY_FEATURES, the slots past Count 0;
+        /// each entity's memory id from `memory` (dungeon-curriculum I2), 0 without one.
+        static void Write(Vision::SeenList const& seen, float* obs, Vision::EntityMemory const* memory = nullptr);
+        /// One listed entity's ENTITY_FEATURES columns into `out` (the sight block writes its visible slots so too).
+        static void WriteSlot(Vision::SeenList const& seen, uint32 slot, uint16 memoryId, float* out);
     };
 }
 

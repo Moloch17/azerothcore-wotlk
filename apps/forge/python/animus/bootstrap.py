@@ -520,6 +520,12 @@ VISION_JOIN = "vision_join."
 #: zeroed.
 MAP = "vision.map."
 MAP_ZEROED = ("vision.map.join.", "vision.map.vin.out.")
+#: The sight list's encoder inside the camera's (SightEntities, dungeon-curriculum I1 and I2) and the actor's pointer
+#: queries over it (SightPointers): seeded on their own, so a camera carries from a checkpoint without a sight block,
+#: and the list starts fresh with its pool zeroed -- the seeded policy acts as it did.
+SIGHT = "vision.sight."
+SIGHT_ZEROED = ("vision.sight.pool.",)
+SIGHT_POINTERS = "sight_pointers."
 
 
 def _vision_revision(stage: dict | None) -> int | None:
@@ -536,11 +542,11 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
     (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
     None when this network has no camera. Left fresh, its join is zeroed: the seeded policy starts as it was, and the
     camera comes in as the join learns (a network trained from scratch keeps its join's ordinary initialisation)."""
-    keys = [key for key in new if key.startswith(VISION) and not key.startswith(MAP)]
+    keys = [key for key in new if key.startswith(VISION) and not key.startswith((MAP, SIGHT))]
     if not keys:
         return None
     fresh = None
-    if not any(key.startswith(VISION) and not key.startswith(MAP) for key in old):
+    if not any(key.startswith(VISION) and not key.startswith((MAP, SIGHT)) for key in old):
         fresh = "fresh (the checkpoint has none)"
     elif _vision_revision(new_stage) != _vision_revision(old_stage):
         fresh = f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
@@ -575,6 +581,27 @@ def _seed_map(new: dict, old: dict) -> str | None:
         return "fresh (the checkpoint has none), its join at zero"
     if fresh:
         return f"carried, but for {len(fresh)} new tensors ({', '.join(sorted({k.split('.')[2] for k in fresh}))})"
+    return "carried"
+
+
+def _seed_sight(new: dict, old: dict) -> str | None:
+    """Carry the sight list's encoder and pointer queries from a checkpoint that has them, key by key where the shapes
+    agree; else they start fresh, the list's pool zeroed so the seeded policy acts as it did (the presses are new
+    actions, whose logits the pointers give). None when this network has no sight list."""
+    keys = [key for key in new if key.startswith((SIGHT, SIGHT_POINTERS))]
+    if not keys:
+        return None
+    carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
+    for key in carried:
+        new[key].copy_(old[key])
+    fresh = [key for key in keys if key not in carried]
+    for key in fresh:
+        if key.startswith(SIGHT_ZEROED):
+            new[key].zero_()
+    if not carried:
+        return "fresh (the checkpoint has none), its pool at zero"
+    if fresh:
+        return f"carried, but for {len(fresh)} new tensors"
     return "carried"
 
 
@@ -630,6 +657,9 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         _seed_map(critic, old["critic"])
         if crop is not None:
             print(f"  map encoder: {crop}", flush=True)
+        sight = _seed_sight(actor, old["actor"])
+        if sight is not None:
+            print(f"  sight list: {sight}", flush=True)
         look = _seed_look(actor, old["actor"], stage, old_stage)
         if look is not None:
             print(f"  look head: {look}", flush=True)
