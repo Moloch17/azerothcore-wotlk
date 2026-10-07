@@ -11,7 +11,7 @@ import pytest
 from animus import protocol as p
 from animus.config import TrainConfig
 from animus.env import ForgeEnv
-from animus.evaluation import (LIVELOCK_CANCELS, ConvergenceTracker, EvalResult, action_mask_table,
+from animus.evaluation import (ConvergenceTracker, EvalResult, action_mask_table,
                                casting_weights, run_evaluation, standard_error)
 
 SPEC = p.Spec(
@@ -408,7 +408,7 @@ def test_episodes_log_has_one_row_per_episode():
 
 def test_episodes_log_writes_every_column_and_the_derived_fields_by_default():
     """Why a class/build loses is in columns no summary reports (level, opponent, form at the end), so the log keeps
-    them all, next to whether each episode was a clean kill."""
+    them all."""
     result = EvalResult(
         policy="learner",
         returns=np.array([7.0, -3.0, -3.0]),
@@ -420,19 +420,7 @@ def test_episodes_log_writes_every_column_and_the_derived_fields_by_default():
     rows = result.episodes_log()
     assert [row["level"] for row in rows] == [12.0, 40.0, 70.0]
     assert rows[2]["form_at_end"] == 31.0
-    assert [row["clean_kill"] for row in rows] == [1.0, 0.0, 0.0]  # killed but died is not a clean kill
-
-
-def test_clean_kill_needs_the_kill_and_no_death():
-    infos = np.array([[1, 0], [1, 1], [0, 0], [0, 1]], dtype=np.float32)
-    result = EvalResult("learner", np.zeros(4), infos, ("killed", "died"), layouts=("a", "a", "b", "b"))
-    summary = result.summary(("killed", "died"))
-    assert summary["clean_kill"] == pytest.approx(0.25)
-    assert summary["layouts"]["a"]["clean_kill"] == pytest.approx(0.5)
-    assert summary["layouts"]["b"]["clean_kill"] == pytest.approx(0.0)
-    # Neither mean says it: half killed and half died either way.
-    assert summary["killed"] == pytest.approx(0.5) and summary["died"] == pytest.approx(0.5)
-    assert "clean_kill" not in EvalResult("learner", np.zeros(1), np.zeros((1, 1), np.float32), ("killed",)).summary(())
+    assert "arrived" not in rows[0] and "livelocked" not in rows[0]
 
 
 def test_summary_groups_by_talent_build():
@@ -490,19 +478,19 @@ def test_casting_weights_follow_the_metric_short_of_the_gate_too():
     """A mage that scores well while killing 68% of the time is the build the gate fails: the score alone gave it less
     data than a class and build already killing every time."""
     summary = {"castings": {
-        "mage_dps": {"score": 7.0, "clean_kill": 0.68},
-        "rogue_dps": {"score": 7.8, "clean_kill": 0.95},
-        "warrior_dps": {"score": 7.4, "clean_kill": 0.93},
+        "mage_dps": {"score": 7.0, "arrived": 0.68},
+        "rogue_dps": {"score": 7.8, "arrived": 0.95},
+        "warrior_dps": {"score": 7.4, "arrived": 0.93},
     }}
 
     by_score = casting_weights(summary, 1.0, 4.0)
     assert by_score["mage_dps"] > by_score["rogue_dps"]     # the lowest score draws most
-    weights = casting_weights(summary, 1.0, 4.0, metric="clean_kill")
+    weights = casting_weights(summary, 1.0, 4.0, metric="arrived")
     assert weights["mage_dps"] == max(weights.values())
     assert np.mean(list(weights.values())) == pytest.approx(1.0)
     # A metric some layout does not report leaves the score to decide.
-    del summary["castings"]["rogue_dps"]["clean_kill"]
-    assert casting_weights(summary, 1.0, 4.0, metric="clean_kill") == pytest.approx(by_score)
+    del summary["castings"]["rogue_dps"]["arrived"]
+    assert casting_weights(summary, 1.0, 4.0, metric="arrived") == pytest.approx(by_score)
 
 
 def test_casting_weights_are_even_without_a_spread():
@@ -512,35 +500,9 @@ def test_casting_weights_are_even_without_a_spread():
     assert casting_weights({"castings": {}}, 1.0, 3.0) == {}
 
 
-def test_livelocked_counts_episodes_not_cancels():
-    """A start-cast / stop-cast loop is a tail, not a shift: stage4_duel's warlock had a median of 4 cancels an
-    episode and a maximum of 299, so a mean of casts_cancelled hides it. Counted per episode, per layout."""
-    cancels = np.array([0.0, 2.0, float(LIVELOCK_CANCELS), 299.0], dtype=np.float32)
-    result = EvalResult(
-        policy="learner",
-        returns=np.array([7.5, 7.5, 3.3, 0.1]),
-        infos=cancels.reshape(4, 1),
-        info_names=("casts_cancelled",),
-        layouts=("mage_dps", "mage_dps", "warlock_dps", "warlock_dps"),
-        seeds=(0, 1, 2, 3),
-    )
-    summary = result.summary(("casts_cancelled",))
-    assert summary["livelocked"] == pytest.approx(0.5)
-    assert summary["layouts"]["mage_dps"]["livelocked"] == pytest.approx(0.0)
-    assert summary["layouts"]["warlock_dps"]["livelocked"] == pytest.approx(1.0)
-    # The mean is unchanged by how the cancels are spread; the share of stuck episodes is the signal.
-    assert summary["casts_cancelled"] == pytest.approx(80.25)
-
-
-def test_livelocked_is_absent_without_cast_counts():
-    result = EvalResult("learner", np.array([1.0, 2.0]), np.zeros((2, 0), np.float32), ())
-    assert "livelocked" not in result.summary(())
-
-
 def test_failed_seeds_are_the_episodes_short_on_the_metric():
     infos = np.array([[1, 0], [1, 1], [0, 0], [1, 0], [1, 0]], dtype=np.float32)
     result = EvalResult("learner", np.zeros(5), infos, ("killed", "died"), layouts=("a",) * 5, seeds=(0, 1, 2, 3, 3))
-    assert result.failed_seeds("clean_kill") == [1, 2]
     assert result.failed_seeds("killed") == [2]
     assert result.failed_seeds("unknown") == []
 

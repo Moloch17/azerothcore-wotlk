@@ -206,8 +206,8 @@ def test_training_run_trains_evaluates_and_finishes(tmp_path):
     assert [int(row["env_steps"]) for row in evals] == [0, steps_per_update, 2 * steps_per_update, 2 * steps_per_update]
     assert [row["policy"] for row in evals] == ["learner", "learner", "learner", "learner_sampled"]
     assert modes.count((True, 2, "")) == 4
-    # After each training evaluation the lost seeds go to the sim (the test stage replays clean_kill losses). The fake
-    # episodes have no killed or died columns, so none can be told lost: an empty replay each time.
+    # After each training evaluation the lost seeds go to the sim (the test stage replays arrived losses). The fake
+    # episodes have no arrived column, so none can be told lost: an empty replay each time.
     assert len(replays) == 3 and all(len(seeds) == 0 for _, _, seeds in replays)
 
     assert (run_dir / "latest.pt").exists() and (run_dir / "best.pt").exists()

@@ -101,5 +101,5 @@ layout_sampling:
   enabled: true
   strength: 1.0
   max_ratio: 4.0
-  metric: clean_kill
+  metric: arrived
   replay_fraction: 0.2

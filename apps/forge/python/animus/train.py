@@ -1388,7 +1388,7 @@ class TrainingRun:
             return
         result.policy = "learner_sampled"
         summary = result.summary(self.report)
-        fields = [name for name in ("score", "clean_kill", "killed", "died", "timed_out", "arrived")
+        fields = [name for name in ("score", "died", "timed_out", "arrived")
                   if name in summary]
         # The gap, sampled minus argmax, kept with the sampled row of eval.jsonl: a wide one says the gated policy is
         # not the one that trained, which is what mappo.entropy_final_fraction is there to close.

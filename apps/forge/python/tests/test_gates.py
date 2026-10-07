@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from animus.config import TrainConfig
-from animus.evaluation import DERIVED_METRICS
+from animus.evaluation import RATIO_METRICS
 
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 
@@ -54,7 +54,7 @@ def sim_stage_columns() -> dict[str, set[str]]:
         per_encounter[life] |= columns("Encounters/LifeEncounter.cpp")
     # Everything registered outside the encounters -- the scenario, the blocks, the rewards -- is emitted by every
     # stage; only an encounter's columns depend on the arenas.
-    always = set(DERIVED_METRICS)
+    always = set(RATIO_METRICS)
     for root in _curriculum_roots():
         for source in root.rglob("*.cpp"):
             if "Encounters" not in source.parts:
@@ -107,7 +107,7 @@ def test_layout_sampling_metric_must_exist():
     assert _live_stage_configs() <= set(columns), "a config with no stage"
     for name, emitted in columns.items():
         config = TrainConfig.load(CONFIGS / f"{name}.yaml")
-        assert config.layout_sampling.metric in (*DERIVED_METRICS, *emitted), name
+        assert config.layout_sampling.metric in (*RATIO_METRICS, *emitted), name
 
 
 def test_the_test_stage_samples_by_a_column_some_stage_could_emit():
@@ -115,7 +115,7 @@ def test_the_test_stage_samples_by_a_column_some_stage_could_emit():
     config = TrainConfig.load(Path(__file__).parent / "fixtures" / "test_stage.yaml")
     emitted = {c for source in _curriculum_roots()[0].rglob("*.cpp")
                for c in re.findall(r'Add\("([a-z0-9_]+)"', source.read_text())}
-    assert config.layout_sampling.metric in (*DERIVED_METRICS, *emitted)
+    assert config.layout_sampling.metric in (*RATIO_METRICS, *emitted)
 
 
 def stage_definitions() -> dict[str, dict]:

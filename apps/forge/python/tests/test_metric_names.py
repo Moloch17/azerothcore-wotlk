@@ -17,8 +17,11 @@ sys.path.insert(0, str(ROOT / "apps" / "forge" / "tools"))
 
 import sim_metrics  # noqa: E402
 
+import numpy as np  # noqa: E402
+
 from animus import episode_means  # noqa: E402
 from animus.config import TrainConfig  # noqa: E402
+from animus.evaluation import RATIO_METRICS, EvalResult  # noqa: E402
 
 CONFIGS = ROOT / "apps" / "forge" / "python" / "configs"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -46,6 +49,30 @@ def metric_fields(config: TrainConfig) -> dict[str, list[str]]:
     for role, names in config.layout_sampling.role_metrics.items():
         fields[f"layout_sampling.role_metrics.{role}"] = [name.lstrip("-") for name in names]
     return {field: [name for name in names if name] for field, names in fields.items()}
+
+
+#: The episode columns each ratio metric (animus.evaluation.RATIO_METRICS) is computed from. A metric derived from a
+#: column the sim no longer writes would read as nothing and never gate; the test below catches it.
+RATIO_INPUTS = {
+    "arrived_at_rung": ("compass_withheld", "compass_present", "arrived_no_compass", "arrived_with_compass",
+                        "compass_withhold_chance"),
+}
+
+
+def derived_value(name: str, columns: sim_metrics.Names) -> float | None:
+    """The derived metric `name` on a real-shaped row: every input column the stage reports, one episode where
+    the compass was withheld and arrived, one where it was shown and arrived. None if it came out as nothing."""
+    inputs = RATIO_INPUTS[name]
+    assert set(inputs) <= set(columns.exact), f"{name} is derived from columns the stage does not report: {inputs}"
+    row = {"compass_withheld": (1.0, 0.0), "compass_present": (0.0, 1.0), "arrived_no_compass": (1.0, 0.0),
+           "arrived_with_compass": (0.0, 1.0), "compass_withhold_chance": (0.5, 0.5)}
+    infos = np.array([[row[column][episode] for column in inputs] for episode in (0, 1)], dtype=np.float32)
+    summary = EvalResult("learner", np.zeros(2), infos, inputs, seeds=(0, 1)).summary(())
+    return summary.get(name)
+
+
+def test_every_derived_metric_has_its_inputs_listed():
+    assert set(RATIO_INPUTS) == set(RATIO_METRICS)
 
 
 def is_produced(name: str, columns: sim_metrics.Names) -> bool:
@@ -76,6 +103,11 @@ def test_every_metric_a_live_config_names_exists(path):
     config = TrainConfig.load(path)
     missing = [f"{field}: {name}" for field, names in metric_fields(config).items() for name in names
                if not is_produced(name, columns)]
+    for names in metric_fields(config).values():
+        for name in names:
+            if name in RATIO_METRICS:   # every derived function, on a real-shaped row, yields a number
+                value = derived_value(name, columns)
+                assert isinstance(value, float), f"{path.name}: {name} is not computed from stage {path.stem}'s row"
     assert not missing, (f"{path.name} names metrics that stage {path.stem} does not report (an episode info column, "
                          f"a reward_<term> column or a measure the learner derives):\n  " + "\n  ".join(missing))
 

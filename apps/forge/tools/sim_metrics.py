@@ -499,7 +499,7 @@ class Extractor:
 
 
 def evaluation_names() -> set[str]:
-    """The summary fields the learner derives from the columns (animus.evaluation): derived and ratio metrics, the
+    """The summary fields the learner derives from the columns (animus.evaluation): ratio metrics, the
     score, and any other key EvalResult.summary assigns by name (found_deepest ...)."""
     path = PYTHON_DIR / "animus" / "evaluation.py"
     tree = ast.parse(path.read_text())
@@ -510,8 +510,8 @@ def evaluation_names() -> set[str]:
                 if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) \
                         and isinstance(target.slice.value, str):
                     names.add(target.slice.value)
-        # DERIVED_METRICS = ("livelocked", ...), RATIO_METRICS = (...), SCORE_COLUMN = "score_outcome"
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ("DERIVED_METRICS", "RATIO_METRICS")
+        # RATIO_METRICS = (...)
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RATIO_METRICS"
                                                 for t in node.targets):
             names |= {element.value for element in node.value.elts}
     return names

@@ -562,8 +562,8 @@ Combat rolls stay random, so every score carries a standard error.
 `opponents` is set.
 
 **Sampled actions** (`eval.sampled_every`): every that many evaluations, the learner also plays sampled actions on the
-same seeds and logs them as policy `learner_sampled` beside the argmax evaluation, printing score, `clean_kill`,
-`killed`, `died`, `timed_out` and `arrived` for both, and writing the differences into that row of `eval.jsonl` as
+same seeds and logs them as policy `learner_sampled` beside the argmax evaluation, printing score,
+`died`, `timed_out` and `arrived` for both, and writing the differences into that row of `eval.jsonl` as
 `argmax_gap` (sampled minus argmax, per field). Training samples; evaluation and exported models take the argmax, so
 a wide gap means the gated policy is not the one that trained (lower `mappo.entropy_final_fraction` then -- the
 movement stages run it at 0.3 for exactly this reason: stage1_move's sampled policy arrived 0.996 against the
@@ -748,12 +748,12 @@ are spent. Evaluation episodes stay evenly spread over the class and build pairs
 
 The score gap alone misses a class and build that beats its baseline yet fails an absolute gate (stage4_duel's mage beat
 the scripted mage while killing only 68% of the time). `metric` names a summary field where higher is better, usually
-the one the stage is gated on (`clean_kill`): a class and build's need is then the larger of its score gap and its
+the one the stage is gated on (`arrived`): a class and build's need is then the larger of its score gap and its
 shortfall on the metric, each in its own standard deviations, so a wide lead over a weak baseline cannot cancel a
 gate it is failing.
 
 `replay_fraction` replays lost fights. After every training evaluation the learner sends the sim the seed indexes of
-the episodes that fell short on `metric` (a per-episode 0/1 field such as `clean_kill`; protocol `REPLAY`), and that
+the episodes that fell short on `metric` (a per-episode 0/1 episode info column such as `arrived`; protocol `REPLAY`), and that
 share of training resets rebuilds one of them from the same random numbers the evaluation used: the same character
 meets the same opponent, and the fight rolls afresh. A replay reports as an ordinary training episode. Confirmation
 seeds are never sent, so the gate that moves a stage on stays held out, and a new learner session starts with no

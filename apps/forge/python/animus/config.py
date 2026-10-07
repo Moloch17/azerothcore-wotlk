@@ -23,26 +23,22 @@ EXTENDS_KEY = "extends"
 AUTO = "auto"
 
 REPORT_COLUMNS = (
-    "dps", "killed", "died", "timed_out", "deaths", "time_to_kill", "damage_taken", "kills", "pulls_cleared", "wipes",
-    "owner_deaths", "owner_healing", "casts_completed", "casts_cancelled", "cancelled_stopped", "cancelled_moved",
-    "cancelled_target", "cancelled_other", "cast_seconds_wasted", "consumables_used", "self_resurrections", "revives",
+    "dps", "died", "timed_out", "deaths", "kills", "pulls_cleared", "wipes",
+    "owner_deaths", "owner_healing", "consumables_used", "self_resurrections", "revives",
     # Beside an owner: whether and how often it died, what it took, and the role checks -- the share of the owner's
     # damage taken the seat healed (healers) and the share of the enemies' attention on the seat rather than the owner
     # (high for tanks, low for damage dealers and healers).
     "owner_died", "owner_damage_taken", "owner_heal_share", "threat_share",
     # Pets: logged per episode in eval_episodes.jsonl with the episode's class/build, so a pet class's use of its pet
     # can be read on its own.
-    "pet_summoned", "pet_at_start", "pet_damage_share", "pet_died", "pet_abilities", "pet_orders",
-    # Fights no play could win (a creature with no path to the seat), and one action pressed over and over.
-    "target_unreachable_seconds", "target_teleports", "repeated_presses",
-    # Style: where the seat's own damage came from (with pet_damage_share they add up to 1), how much of the fight it
-    # spent within melee reach, and how much its pet held the opponent. Read by spec: a hunter's shots cannot be used
-    # in melee reach, so in_melee_share is the share of the fight it played melee.
-    "melee_damage_share", "shot_damage_share", "spell_damage_share", "in_melee_share", "target_on_pet_share",
-    # Whether it roots or slows its opponent, and what it has its pet do.
-    "target_rooted_share", "target_snared_share", "roots_applied", "snares_applied",
+    "pet_at_start", "pet_damage_share", "pet_died", "pet_abilities", "pet_orders",
+    # One action pressed over and over.
+    "repeated_presses",
+    # Style: where the seat's own damage came from (with pet_damage_share they add up to 1).
+    "melee_damage_share", "shot_damage_share", "spell_damage_share",
+    # What it has its pet do.
     "pet_attack_orders", "pet_passive_orders", "pet_follow_orders", "pet_stay_orders", "pet_attacking_share",
-    "pet_passive_share", "pet_staying_share", "feign_deaths", "feign_death_resets", "item_uses",
+    "pet_passive_share", "pet_staying_share", "item_uses",
     # Gauntlet recovery: health and mana each pull was engaged with, pulls started low or that came to the seat
     # unengaged, time resting, and eating or drinking that failed or ended with something left to restore.
     "engage_health", "engage_mana", "pulls_started_low", "pulls_arrived", "rest_seconds", "food_used", "drink_used",
@@ -534,15 +530,16 @@ class LayoutSamplingConfig:
     enabled: bool = False
     strength: float = 1.0  # e^(strength x gap in standard deviations of the gaps): 0 = uniform
     max_ratio: float = 3.0  # the heaviest layout draws at most this many times the lightest
-    # A summary field where higher is better (an episode info column or a derived one such as clean_kill): a layout's
-    # need is the larger of its score shortfall and its shortfall on this, each in standard deviations over the layouts.
+    # A summary field where higher is better (an episode info column or a ratio metric such as arrived_at_rung): a
+    # layout's need is the larger of its score shortfall and its shortfall on this, each in standard deviations over
+    # the layouts.
     # A layout can score well and still fail an absolute gate; this sends the data there too.
     # "" = the score alone.
     metric: str = ""
     # Replaying lost fights: after every training evaluation the sim is sent the seeds of the episodes that fell
-    # short on `metric` (a per-episode 0/1 field such as clean_kill), and this share of training resets rebuilds one
-    # of them -- the same character and opponent, with fresh combat rolls -- instead of a new draw. Confirmation seeds
-    # are never sent, so the gate that moves the stage on stays held out. 0 = off.
+    # short on `metric` (a per-episode 0/1 episode info column such as arrived), and this share of training resets
+    # rebuilds one of them -- the same character and opponent, with fresh combat rolls -- instead of a new draw.
+    # Confirmation seeds are never sent, so the gate that moves the stage on stays held out. 0 = off.
     replay_fraction: float = 0.0
     # A build graded against the others of its role (stage.json spec_roles: tank, healer, damage) on what the role is
     # for: role -> summary fields, higher is better, a leading "-" for lower is better ("-teammates_died"). A build's
@@ -764,8 +761,8 @@ def merge(base: dict, override: dict) -> dict:
     Dropping one key matters because gate maps accumulate down the chain, and a stage that drops a capability
     keeps its parent's gate on it: the raid stages inherited `owner_deaths` from the party line, have no owner,
     and so could never produce the column the gate asks for. Clearing the whole map was the only way to be rid
-    of one entry, which would have taken the gates worth keeping (`livelocked` reaches every stage this way)
-    with it. `null` removes the key, so the field falls back to its default."""
+    of one entry, which would have taken the gates worth keeping with it. `null` removes the key, so the field falls
+    back to its default."""
     merged = dict(base)
     for key, value in override.items():
         if value is None:

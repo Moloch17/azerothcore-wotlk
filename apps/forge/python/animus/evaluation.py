@@ -36,18 +36,6 @@ TALENT_PLANS = ("standard", "noisy", "random")
 # stage.json's spec_names), which is finer where it matters: a feral cat and a balance druid were one role and are
 # not equally hard to win with.
 
-# An episode that cancelled at least this many of its own casts did not merely waste a few: with a decision every
-# 100 ms it spent the episode in a start-cast / stop-cast loop. Deterministic actions cannot break out of one --
-# the state that chose to stop recurs unchanged -- so a policy can carry it into evaluation and into the exported
-# model while its sampled training rollouts look healthy. stage4_duel: a quarter of warlock episodes, up to 299
-# cancels in a 60 s episode, scoring 3.30 where the rest scored 7.52.
-LIVELOCK_CANCELS = 20
-
-# Summary fields derived from the episode info rather than averaged straight from them. Gateable like any metric
-# (target.metrics, target.layout_metrics); they are not episode info names, so validation allows them by name.
-# clean_kill: the fight was won outright -- the opponent killed and the seat never dead. killed and died are gated
-# apart, and their means cannot say whether the episodes that killed are the ones that did not die.
-DERIVED_METRICS = ("livelocked", "clean_kill")
 # Ratios of sums over an evaluation's episodes (EvalResult.summary), on the movement stages that report the columns.
 RATIO_METRICS = ("arrived_at_rung",)
 
@@ -115,8 +103,7 @@ class EvalResult:
         return np.asarray(self.seeds) if len(self.seeds) == len(self.returns) else None
 
     def episodes_log(self, columns: tuple[str, ...] | None = None) -> list[dict]:
-        """One row per scored episode: its seed, layout, return, `columns` of its episode info (None: every column)
-        and the derived fields.
+        """One row per scored episode: its seed, layout, return, `columns` of its episode info (None: every column).
 
         The summaries average these away, and an average cannot say whether a class is a little worse
         everywhere or fine except for a handful of episodes it never finishes -- which is what a per-layout gate
@@ -126,7 +113,6 @@ class EvalResult:
         """
         names = self.info_names if columns is None else tuple(c for c in columns if c in self.info_names)
         indices = [self.info_names.index(name) for name in names]
-        derived = self.derived()
         rows = []
         for index in range(self.episodes):
             row = {
@@ -137,8 +123,6 @@ class EvalResult:
             }
             for name, column in zip(names, indices):
                 row[name] = round(float(self.infos[index, column]), 4)
-            for name, values in derived.items():
-                row[name] = float(values[index])
             if self.action_counts is not None and index < len(self.action_counts):
                 row["actions"] = self.actions_taken(index)
             if self.allowed_counts is not None and index < len(self.allowed_counts):
@@ -189,33 +173,17 @@ class EvalResult:
             motion_tracks=[track for part in parts for track in part.motion_tracks])
 
     def failed_seeds(self, metric: str) -> list[int]:
-        """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 field per episode: a
-        derived one such as clean_kill, or an episode info column), for replaying them in training."""
-        values = self.derived().get(metric)
-        if values is None:
-            values = self.column(metric)
+        """Seed indexes of the episodes where some scored row fell short on `metric` (a 0/1 episode info column), for
+        replaying them in training."""
+        values = self.column(metric)
         if values is None or not len(self.seeds):
             return []
         return sorted({int(seed) for seed, value in zip(self.seeds, values) if value < 1.0})
-
-    def derived(self) -> dict[str, np.ndarray]:
-        """Per episode, the DERIVED_METRICS the episode info can give: 1.0 where it holds, else 0.0."""
-        out = {}
-        # The share of episodes stuck in a cast/stop loop. A mean of casts_cancelled hides it: the loop is a tail,
-        # not a shift (stage4_duel warlock: median 4 cancels, maximum 299), so it is counted per episode.
-        cancels = self.column("casts_cancelled")
-        if cancels is not None:
-            out["livelocked"] = (cancels >= LIVELOCK_CANCELS).astype(np.float64)
-        killed, died = self.column("killed"), self.column("died")
-        if killed is not None and died is not None:
-            out["clean_kill"] = ((killed > 0.0) & (died <= 0.0)).astype(np.float64)
-        return out
 
     def summary(self, columns: tuple[str, ...]) -> dict:
         """Score and means of `columns`: overall, per level band, per layout, per arena, per talent build and per
         difficulty tier, and for each tier but the top one everything up to it, per layout too ("up_to")."""
         present = [c for c in columns if c in self.info_names]
-        derived = self.derived()
         episodes = self._episode_of_row()
         scores = self.scores
 
@@ -238,9 +206,6 @@ class EvalResult:
                     out[name] = float((values * weights).sum() / total) if total > 0 else None
                 else:
                     out[name] = float(values.mean()) if len(values) else None
-            for name, values in derived.items():
-                picked = values[rows]
-                out[name] = float(picked.mean()) if len(picked) else None
             out.update(ratios(rows))
             return out
 
@@ -769,7 +734,7 @@ def format_summary(summary: dict, baseline: dict | None, columns: tuple[str, ...
         value = None if row is None else row.get(name)
         return f"{value:10.2f}" if isinstance(value, (int, float)) else f"{'-':>10}"
 
-    names = ["score", *[c for c in columns if c in summary], *[d for d in DERIVED_METRICS if d in summary]]
+    names = ["score", *[c for c in columns if c in summary]]
     rows = [("all", summary, baseline)]
     for group in ("bands", "layouts", "arenas", "builds", "difficulties", "categories"):
         for key, row in summary.get(group, {}).items():
