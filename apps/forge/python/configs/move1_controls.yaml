@@ -171,7 +171,9 @@ fade:
   # stops) and the fade waited on a score plateau to leave it (the user, 2026-10-06: start the fade now).
   # Then x0.25 (withheld 60%, corners on), at the user's word (2026-10-06) with no-compass arrivals at 75% (eval) / 91%
   # (train) on x0.5 and the score still rising.
-  rungs: [0.25, 0.0]
+  # Then x0 (withheld 90%, corners on, no shaping), at the user's word (2026-10-06) with no-compass arrivals at 85%
+  # (eval) / 89% (train) on x0.25.
+  rungs: [0.0]
   window: 3
   regress_z: 2.0
   give_up: 2
