@@ -28,7 +28,7 @@ from .bootstrap import DIRECTOR_LAYOUT
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
-from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of, with_map_vin
 from .mappo.trainer import MappoConfig, MappoTrainer
 from .runs import resume_mismatch
 from .stages import STAGE_FILE, layout_changes, load_stage
@@ -79,10 +79,11 @@ def main() -> None:
     seat_sets = seat_sets_of(stage, names) if mappo.seat_sets else None
     vision = vision_of(stage, names)
     try:
-        check_image_bytes(vision, spec.image_bytes)
+        check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
+    vision = with_map_vin(vision, mappo.map_vin)
     trainer = MappoTrainer(layouts, spec.state_dim, mappo, director=director, seat_sets=seat_sets, vision=vision)
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 

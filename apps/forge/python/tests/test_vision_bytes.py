@@ -68,8 +68,9 @@ def cpp_spec_bytes(spec: p.Spec) -> bytes:
     body = struct.pack("<12I", spec.version, spec.num_envs, spec.agents_per_env, spec.obs_dim, spec.state_dim,
                        spec.num_actions, spec.episode_info_dim, spec.goal_count, spec.tick_ms, spec.decision_ticks,
                        spec.episode_seconds, spec.env_groups)
-    body += spec.scenario.encode("ascii").ljust(32, b"\0") + struct.pack("<III", spec.kinematics_dim, spec.image_bytes,
-                                                                          spec.look_heads)
+    body += spec.scenario.encode("ascii").ljust(32, b"\0") + struct.pack("<IIII", spec.kinematics_dim,
+                                                                          spec.image_bytes, spec.look_heads,
+                                                                          spec.map_bytes)
     body += struct.pack("<I", len(spec.layouts))
     for layout in spec.layouts:
         body += struct.pack("<II", layout.obs_dim, layout.num_actions) + layout.name.encode("ascii").ljust(48, b"\0")
@@ -114,7 +115,7 @@ def fields(spec: p.Spec, rng: np.random.Generator) -> dict:
 
 
 def test_spec_carries_the_image_bytes_as_the_sim_packs_them():
-    assert p.SPEC.format == "<12I32s3I" and p.SPEC.size == 92
+    assert p.SPEC.format == "<12I32s4I" and p.SPEC.size == 96
     for spec in (SPEC, PLAIN):
         payload = cpp_spec_bytes(spec)
         assert p.encode_spec(spec) == payload
@@ -168,8 +169,8 @@ def test_a_stage_without_a_camera_is_protocol_20_on_the_wire():
     step = p.decode_step(PLAIN, payload)
     assert step.image is None and step.final_image is None
     # Protocol 20's SPEC ended at the kinematics width (84 bytes of SpecMsg); 21 adds ImageBytes = 0, 22 LookHeads = 0,
-    # and nothing else.
-    assert cpp_spec_bytes(PLAIN)[84:92] == struct.pack("<II", 0, 0)
+    # 24 MapBytes = 0, and nothing else.
+    assert cpp_spec_bytes(PLAIN)[84:96] == struct.pack("<III", 0, 0, 0)
     assert len(payload) == PLAIN.step_payload_size(ended=1)
 
 
@@ -277,7 +278,7 @@ def test_a_sim_with_a_camera_over_the_socket(tmp_path):
         conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
-            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 23
+            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 24
             spec = cpp_spec_bytes(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
             device = struct.pack("<II", 0, SPEC.num_envs) + bytes(range(64)) * 3 + bytes(range(64, 128))

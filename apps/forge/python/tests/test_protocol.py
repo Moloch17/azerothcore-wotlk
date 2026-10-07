@@ -73,9 +73,9 @@ def test_spec_round_trip():
 
 def test_spec_matches_cpp_layout():
     # SpecMsg in Protocol.h: twelve uint32 fields (goal count and env groups among them), a 32-byte name, the
-    # kinematics width (protocol 20), the image bytes per agent (protocol 21) and the look heads (protocol 22),
-    # packed: "<12I32s3I", 92 bytes.
-    assert p.SPEC.format == "<12I32s3I" and p.SPEC.size == 12 * 4 + 32 + 4 + 4 + 4 == 92
+    # kinematics width (protocol 20), the image bytes per agent (protocol 21), the look heads (protocol 22) and the
+    # map bytes per agent (protocol 24), packed: "<12I32s4I", 96 bytes.
+    assert p.SPEC.format == "<12I32s4I" and p.SPEC.size == 12 * 4 + 32 + 4 + 4 + 4 + 4 == 96
     assert p.HEADER.size == 8
     # StepHeader: uint64 decision, uint32 first env, uint32 env count. ActHeader: uint32 first env, uint32 count.
     assert p.STEP_HEADER.size == 16

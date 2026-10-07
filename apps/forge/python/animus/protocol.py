@@ -11,7 +11,10 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 23
+PROTOCOL_VERSION = 24
+# 24: the mental map (perception-goals REDESIGN §3): SPEC ends with the map bytes per agent (0 without a map block),
+# and a stage with one ends each STEP with every agent's map crop and the ended envs' final crops, after the images.
+# The crops are always on the socket, even with device buffers. A stage without one sends protocol 23's STEP.
 # 23: identity (perception-goals P2): a camera pixel is five bytes -- the class byte (class and objective) and the
 # entity slot -- so Spec.image_bytes is height x width x 5; the messages' layout is protocol 22's.
 # 20: SPEC announces a kinematics width after the scenario name, and every STEP ends with one kinematic sample per
@@ -49,8 +52,8 @@ class MsgType(IntEnum):
 
 HEADER = struct.Struct("<II")  # type, payload length
 HELLO = struct.Struct("<III")  # version, this learner's rank, data-parallel learners (0 and 1 alone)
-# ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22)
-SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s3I")
+# ..., scenario name, kinematics width (20), image bytes per agent (21), look heads (22), map bytes per agent (24)
+SPEC = struct.Struct(f"<12I{SCENARIO_NAME_SIZE}s4I")
 LAYOUT_COUNT = struct.Struct("<I")
 LAYOUT = struct.Struct(f"<II{LAYOUT_NAME_SIZE}s")  # obs dim, actions, name
 STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
@@ -77,6 +80,9 @@ DEVICE_FIELDS = ("obs", "state", "mask", "image")
 # (no character, a director, no map) is every pixel NO_FRAME_PIXEL (Vision::FillNoFrame): sky, height 0, class sky
 # with no objective, no entity.
 IMAGE_FIELDS = ("image", "final_image")
+# The mental map's crop as bytes (protocol 24, Vision::MentalMap::Crop): 48 x 48 cells of 6 bytes, [row][col][channel].
+# A row without a map (no character, a director) is all zeros: every cell unknown, never seen.
+MAP_FIELDS = ("map", "final_map")
 NO_FRAME_PIXEL = (255, 128, 0, 0, 0)
 # The look choice that changes nothing (protocol 22, revision 4's heads [7, 5, 5]): yaw rate 0, pitch rate 0, hold.
 # What an ACT carries for agents nobody chose a look for (a scripted baseline's evaluation): in range, and still.
@@ -121,6 +127,14 @@ class Spec:
     image_bytes: int = 0
     # The look heads each agent's ACT entry carries (protocol 22): 3 in a stage whose vision block has them, else 0.
     look_heads: int = 0
+    # Bytes per agent of each STEP's mental map crop (protocol 24): the map block's 48 x 48 x 6, 0 without one.
+    map_bytes: int = 0
+
+    @property
+    def camera_bytes(self) -> int:
+        """The bytes of an agent's camera row as the learner keeps it (Step.image after decode_step): its image, then
+        its map crop where the stage has a map block."""
+        return self.image_bytes + self.map_bytes
 
     @property
     def decision_ms(self) -> int:
@@ -163,6 +177,9 @@ class Spec:
         if self.image_bytes:
             # The camera's images (protocol 21): every agent's after any auto-reset, then the ended envs' last ones.
             layout += [("image", u8, (e, a, self.image_bytes)), ("final_image", u8, (d, a, self.image_bytes))]
+        if self.map_bytes:
+            # The mental map's crops (protocol 24): every agent's after any auto-reset, then the ended envs' last ones.
+            layout += [("map", u8, (e, a, self.map_bytes)), ("final_map", u8, (d, a, self.map_bytes))]
         return [item for item in layout if item[0] not in DEVICE_FIELDS] if device else layout
 
     def step_payload_size(self, envs: int | None = None, ended: int | None = None, device: bool = False) -> int:
@@ -192,9 +209,15 @@ class Step:
     # by hand), which encodes as zeros.
     kinematics: np.ndarray | None = None
     # [E, A, I] uint8 camera images (protocol 21, Spec.image_bytes), and [E, A, I] the ended episodes' last ones, valid
-    # where done; None in a stage without a camera.
+    # where done; None in a stage without a camera. Decoded in a stage with a map block (protocol 24), each row is the
+    # camera's whole row, [E, A, Spec.camera_bytes]: the image, then the map crop (as `map` holds it) -- what the
+    # buffer keeps and the encoder reads. encode_step takes either width.
     image: np.ndarray | None = None
     final_image: np.ndarray | None = None
+    # [E, A, M] uint8 mental map crops (protocol 24, Spec.map_bytes), and the ended episodes' last ones; None without a
+    # map block.
+    map: np.ndarray | None = None
+    final_map: np.ndarray | None = None
 
 
 def no_frame(shape: tuple[int, ...]) -> np.ndarray:
@@ -203,6 +226,23 @@ def no_frame(shape: tuple[int, ...]) -> np.ndarray:
     width = len(NO_FRAME_PIXEL)
     return np.broadcast_to(np.array(NO_FRAME_PIXEL, np.uint8),
                            (*shape[:-1], shape[-1] // width, width)).reshape(shape).copy()
+
+
+def no_camera(shape: tuple[int, ...], spec: Spec) -> np.ndarray:
+    """Camera rows of `shape` [..., Spec.camera_bytes] holding no frame and no map: the image's NO_FRAME_PIXEL, then
+    the map's zeros."""
+    image = no_frame((*shape[:-1], spec.image_bytes))
+    if not spec.map_bytes:
+        return image
+    return np.concatenate([image, np.zeros((*shape[:-1], spec.map_bytes), np.uint8)], axis=-1)
+
+
+def _with_map(image, crops):
+    """The camera's row: the image's bytes, then the map's (numpy, or torch for a device view of the images)."""
+    if hasattr(image, "detach"):
+        import torch
+        return torch.cat([image, torch.as_tensor(crops).to(image.device)], dim=-1)
+    return np.concatenate([image, crops], axis=-1)
 
 
 def rows_of(step: Step, begin: int, count: int) -> Step:
@@ -262,6 +302,7 @@ def encode_spec(spec: Spec) -> bytes:
         spec.kinematics_dim,
         spec.image_bytes,
         spec.look_heads,
+        spec.map_bytes,
     )
     body += LAYOUT_COUNT.pack(len(spec.layouts))
     for layout in spec.layouts:
@@ -287,6 +328,7 @@ def decode_spec(payload: bytes) -> Spec:
         kinematics_dim=fields[13],
         image_bytes=fields[14],
         look_heads=fields[15],
+        map_bytes=fields[16],
         layouts=tuple(layouts),
         episode_info_names=tuple(names.split(",")) if names else (),
     )
@@ -294,7 +336,7 @@ def decode_spec(payload: bytes) -> Spec:
 
 # Carried for the ended envs only (Spec.step_layout); the decoder gives them back full-sized, zero elsewhere. Episode
 # info from protocol 18: every reader looks only where done is set.
-ENDED_ONLY = ("final_obs", "final_state", "episode_info", "final_image")
+ENDED_ONLY = ("final_obs", "final_state", "episode_info", "final_image", "final_map")
 
 
 def encode_step(spec: Spec, step: Step) -> bytes:
@@ -303,6 +345,14 @@ def encode_step(spec: Spec, step: Step) -> bytes:
     parts = [STEP_HEADER.pack(step.decision, step.env_begin, envs)]
     for name, dtype, shape in spec.step_layout(envs, int(done.sum())):
         array = getattr(step, name)
+        if name in IMAGE_FIELDS and array is not None and np.shape(array)[-1] != spec.image_bytes:
+            # A camera row (image and map, as decode_step gives it): its image part.
+            array = np.asarray(array)[..., :spec.image_bytes]
+        if name in MAP_FIELDS and array is None:
+            # The map part of a camera row, where the step carries the rows joined.
+            row = getattr(step, IMAGE_FIELDS[MAP_FIELDS.index(name)])
+            if row is not None and np.shape(row)[-1] == spec.camera_bytes:
+                array = np.asarray(row)[..., spec.image_bytes:]
         if array is None:
             full = (envs, *shape[1:])
             array = no_frame(full) if name in IMAGE_FIELDS else np.zeros(full if name in ENDED_ONLY else shape, dtype)
@@ -321,8 +371,9 @@ def _decode_layout(spec: Spec, envs: int, device: bool) -> list[tuple[str, np.dt
     key = (spec, envs, device)
     layout = _DECODE_LAYOUTS.get(key)
     if layout is None:
-        # The u1 flags (mask, present, done, terminated) read as bool; the images are bytes.
-        layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1") and name not in IMAGE_FIELDS)
+        # The u1 flags (mask, present, done, terminated) read as bool; the images and the map crops are bytes.
+        layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1") and name not in IMAGE_FIELDS
+                                          and name not in MAP_FIELDS)
                                          for name, dtype, shape in spec.step_layout(envs, device=device)]
     return layout
 
@@ -356,6 +407,10 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
         arrays[name] = array
     if offset != len(payload):
         raise ValueError(f"STEP of {len(payload)} bytes does not hold the {envs} envs it says")
+    if spec.map_bytes:
+        # The camera's rows as the learner keeps them: each image with its map crop after it (Step.image).
+        arrays["image"] = _with_map(arrays["image"], arrays["map"])
+        arrays["final_image"] = _with_map(arrays["final_image"], arrays["final_map"])
     return Step(decision=decision, env_begin=env_begin, **arrays)
 
 

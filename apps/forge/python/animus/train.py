@@ -47,7 +47,7 @@ from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule
-from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of
+from .mappo.networks import check_image_bytes, check_look_heads, seat_sets_of, vision_of, with_map_vin
 from .progress import ProgressWriter
 from . import blas, episode_means, protocol
 from .async_sync import Hub, Link, fetch_shared, shared_listing
@@ -626,10 +626,11 @@ class TrainingRun:
         # The sim's SPEC and stage.json must agree about the camera's bytes (protocol 21).
         # And about the free look's heads (protocol 22).
         try:
-            check_image_bytes(vision, spec.image_bytes)
+            check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
             check_look_heads(vision, spec.look_heads)
         except ValueError as error:
             raise SystemExit(f"vision: {error}") from None
+        vision = with_map_vin(vision, config.mappo.map_vin)
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
             sizes = ", ".join(f"{w}x{h}" for w, h in image["render_sizes"]) or "the canonical size"
@@ -638,6 +639,11 @@ class TrainingRun:
             print(f"Vision: a {image['width']} x {image['height']} camera (rendered at {sizes}; patch "
                   f"{image['patch']}) in {sum(e is not None for e in vision)} of {len(names)} layouts, one encoder "
                   f"per network; {look}", flush=True)
+            if image.get("map") is not None:
+                crop = image["map"]
+                print(f"Mental map: a {crop['width']} x {crop['height']} heading-up crop of {crop['cell']:g}-yard "
+                      f"cells, {crop['channels']} channels ({crop['map_bytes']} bytes an agent), read by the camera's "
+                      f"map encoder{' with its value iteration network' if crop.get('vin') else ''}", flush=True)
         def make_trainer() -> MappoTrainer:
             # The exploiter's (animus.exploit) is built by this too: the same layouts, director and seat sets, the
             # same ranks -- its update is data-parallel like the main's.
@@ -786,7 +792,7 @@ class TrainingRun:
             return RolloutBuffer(config.rollout_length, spec.num_envs, spec.agents_per_env, spec.obs_dim,
                                  spec.state_dim, spec.num_actions, self.trainer.foresight_outputs,
                                  self.trainer.recurrent_size, bool(self.trainer.goal_count),
-                                 self.trainer.slow_goal_size, self.trainer.goal_slots, spec.image_bytes,
+                                 self.trainer.slow_goal_size, self.trainer.goal_slots, spec.camera_bytes,
                                  len(self.trainer.look_heads))
 
         # What the policy carries between decisions (its memory and the goal it pursues), cleared with an episode.

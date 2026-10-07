@@ -385,9 +385,9 @@ SPEC = p.Spec(version=p.PROTOCOL_VERSION, num_envs=3, agents_per_env=2, obs_dim=
 PLAIN = dataclasses.replace(SPEC, image_bytes=0, look_heads=0)
 
 
-def test_spec_is_92_bytes_ending_with_the_look_heads():
-    assert p.PROTOCOL_VERSION == 23
-    assert p.SPEC.format == "<12I32s3I" and p.SPEC.size == 92
+def test_spec_is_96_bytes_with_the_look_heads_before_the_map_bytes():
+    assert p.PROTOCOL_VERSION == 24
+    assert p.SPEC.format == "<12I32s4I" and p.SPEC.size == 96
     payload = p.encode_spec(SPEC)
     assert payload[84:92] == struct.pack("<II", 20, 3)
     assert p.decode_spec(payload) == SPEC and p.decode_spec(p.encode_spec(PLAIN)).look_heads == 0
@@ -465,7 +465,7 @@ def test_a_sim_with_look_heads_over_the_socket(tmp_path):
         conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
-            assert p.HELLO.unpack(read_exact(conn, length))[0] == 23
+            assert p.HELLO.unpack(read_exact(conn, length))[0] == 24
             spec = p.encode_spec(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
             payload = p.encode_header(p.MsgType.STEP, len(p.encode_step(SPEC, step))) + p.encode_step(SPEC, step)

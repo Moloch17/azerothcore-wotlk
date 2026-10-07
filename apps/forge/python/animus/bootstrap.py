@@ -515,6 +515,11 @@ def _seed_entity_sets(new: dict, old: dict, new_layouts: list[str] | None = None
 #: onto its adapters' output (VisionJoin).
 VISION = ("vision.", "vision_join.")
 VISION_JOIN = "vision_join."
+#: The mental map's encoder inside the camera's (MapEncoder, perception-goals REDESIGN §3): seeded on its own, so a
+#: camera carries from a checkpoint without a map, and the map starts fresh with its join (and the VIN's output)
+#: zeroed.
+MAP = "vision.map."
+MAP_ZEROED = ("vision.map.join.", "vision.map.vin.out.")
 
 
 def _vision_revision(stage: dict | None) -> int | None:
@@ -531,11 +536,11 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
     (a revision re-laid the image, so the encoder starts fresh like the block's columns). Returns what happened, or
     None when this network has no camera. Left fresh, its join is zeroed: the seeded policy starts as it was, and the
     camera comes in as the join learns (a network trained from scratch keeps its join's ordinary initialisation)."""
-    keys = [key for key in new if key.startswith(VISION)]
+    keys = [key for key in new if key.startswith(VISION) and not key.startswith(MAP)]
     if not keys:
         return None
     fresh = None
-    if not any(key.startswith(VISION) for key in old):
+    if not any(key.startswith(VISION) and not key.startswith(MAP) for key in old):
         fresh = "fresh (the checkpoint has none)"
     elif _vision_revision(new_stage) != _vision_revision(old_stage):
         fresh = f"fresh (vision revision {_vision_revision(old_stage)} -> {_vision_revision(new_stage)})"
@@ -548,6 +553,28 @@ def _seed_vision(new: dict, old: dict, new_stage: dict | None, old_stage: dict |
         return fresh
     for key in keys:
         new[key].copy_(old[key])
+    return "carried"
+
+
+def _seed_map(new: dict, old: dict) -> str | None:
+    """Carry the mental map's encoder from a checkpoint that has one, key by key where the shapes agree (the VIN,
+    switched on later, starts fresh beside a carried map); else it starts fresh. Whatever starts fresh with an output
+    into the camera's embedding -- the map's join, the VIN's read-out -- is zeroed, so the seeded policy starts as it
+    was. None when this network has no map."""
+    keys = [key for key in new if key.startswith(MAP)]
+    if not keys:
+        return None
+    carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
+    for key in carried:
+        new[key].copy_(old[key])
+    fresh = [key for key in keys if key not in carried]
+    for key in fresh:
+        if key.startswith(MAP_ZEROED):
+            new[key].zero_()
+    if not carried:
+        return "fresh (the checkpoint has none), its join at zero"
+    if fresh:
+        return f"carried, but for {len(fresh)} new tensors ({', '.join(sorted({k.split('.')[2] for k in fresh}))})"
     return "carried"
 
 
@@ -599,6 +626,10 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         _seed_vision(critic, old["critic"], stage, old_stage)
         if vision is not None:
             print(f"  vision encoder: {vision}", flush=True)
+        crop = _seed_map(actor, old["actor"])
+        _seed_map(critic, old["critic"])
+        if crop is not None:
+            print(f"  map encoder: {crop}", flush=True)
         look = _seed_look(actor, old["actor"], stage, old_stage)
         if look is not None:
             print(f"  look head: {look}", flush=True)

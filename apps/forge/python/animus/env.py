@@ -327,8 +327,8 @@ class ClusterEnv:
             episode_info=np.zeros((count, agents, spec.episode_info_dim), np.float32),
             episode_seed=np.full(count, p.NO_EPISODE_SEED, np.uint32),
             kinematics=np.zeros((count, agents, spec.kinematics_dim), np.float32),
-            image=p.no_frame((count, agents, spec.image_bytes)) if spec.image_bytes else None,
-            final_image=p.no_frame((count, agents, spec.image_bytes)) if spec.image_bytes else None)
+            image=p.no_camera((count, agents, spec.camera_bytes), spec) if spec.image_bytes else None,
+            final_image=p.no_camera((count, agents, spec.camera_bytes), spec) if spec.image_bytes else None)
 
     def _seen(self, index: int, part: p.Step) -> p.Step:
         self._layouts[index][part.env_begin:part.env_begin + part.done.shape[0]] = part.layout

@@ -36,7 +36,8 @@ def load_spec(path: Path) -> p.Spec:
     # The run's shapes, in the protocol this learner speaks: a spec.json from before a protocol bump still serves.
     fields["version"] = p.PROTOCOL_VERSION
     return p.Spec(**fields, layouts=layouts, episode_info_names=tuple(raw.get("episode_info_names", ())),
-                  image_bytes=int(raw.get("image_bytes", 0)), look_heads=int(raw.get("look_heads", 0)))
+                  image_bytes=int(raw.get("image_bytes", 0)), look_heads=int(raw.get("look_heads", 0)),
+                  map_bytes=int(raw.get("map_bytes", 0)))
 
 
 def _read_exact(conn: socket.socket, size: int) -> bytes:
@@ -71,7 +72,9 @@ def fake_sim(path: str, spec: p.Spec, sim_ms: float, decisions: int) -> None:
     state = rng.standard_normal((envs, spec.state_dim), dtype=np.float32)
     # A camera's frames (protocol 23): random bytes, the class byte's low bits a class and its bit 5 the objective,
     # byte 4 a slot (the encoder clamps both, so noise is in range).
-    images = [rng.integers(0, 256, (envs, agents, spec.image_bytes), dtype=np.uint8) for _ in range(len(frames))]
+    # With a map block (protocol 24) each row carries its map crop after the image: random bytes too, which the map
+    # encoder clamps into its tables.
+    images = [rng.integers(0, 256, (envs, agents, spec.camera_bytes), dtype=np.uint8) for _ in range(len(frames))]
     episode = max(1, int(spec.episode_seconds * 1000 / (spec.tick_ms * spec.decision_ticks)))
     clock = rng.integers(0, episode, size=envs)
 

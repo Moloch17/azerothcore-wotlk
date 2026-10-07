@@ -118,7 +118,8 @@ def test_vision_of_keeps_each_layouts_own_first_column():
     listed = {"first": 8 + SPAN, "slots": SLOTS, "width": FEATURES, "present": 0, "class_column": 1, "type_column": 2,
               "classes": 32, "type_buckets": 64, "object_column": 3}
     assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES,
-                         "patch": 4, "render_sizes": (), "look": (), "look_names": (), "entities": listed}
+                         "patch": 4, "render_sizes": (), "look": (), "look_names": (), "entities": listed,
+                         "map": None, "camera_bytes": BYTES}
     assert vision[1]["entities"]["first"] == 12 + SPAN
 
 

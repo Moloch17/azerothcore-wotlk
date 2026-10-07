@@ -955,6 +955,39 @@ CLASS_LIMIT = 32
 DEFAULT_PATCH = 4
 #: The entity list's block in stage.json (BlockId::Entities), which comes with a camera.
 ENTITIES_BLOCK = "entities"
+#: The mental map's block in stage.json (BlockId::Map, perception-goals REDESIGN §3): its manifest's "map" describes
+#: the crop that travels as bytes after the image (protocol 24).
+MAP_BLOCK = "map"
+#: The crop's byte channels (Vision::CropChannel), and the codes (Vision::MapCode: unknown, floor, wall, door, hazard).
+MAP_CHANNELS = 6
+MAP_CODES = 5
+MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER = range(MAP_CHANNELS)
+MAP_HEIGHT_ZERO = 128
+MAP_AGE_NEVER = 255
+
+
+def _map_of(entry: dict, name: str) -> dict | None:
+    """A layout's mental map as its map block describes it -- {"first" (its scalar columns), "scalars", "height",
+    "width", "cell", "channels", "map_bytes", "codes", "classes"} -- or None without one. Refused: a crop this learner
+    does not decode (its channels or codes differ, or its bytes are not height x width x channels)."""
+    block = next((b for b in entry.get("blocks", ()) if b.get("name") == MAP_BLOCK), None)
+    if block is None:
+        return None
+    described = block.get("map")
+    if not described:
+        raise ValueError(f"{name}: stage.json has a map block without its description")
+    out = {key: int(described[key]) for key in ("height", "width", "channels", "map_bytes", "codes", "classes",
+                                                 "scalars")}
+    out["cell"] = float(described.get("cell", 2.0))
+    out["first"] = int(block["obs"][0])
+    if (out["channels"], out["codes"]) != (MAP_CHANNELS, MAP_CODES) or not 1 <= out["classes"] <= CLASS_LIMIT \
+            or out["map_bytes"] != out["height"] * out["width"] * out["channels"]:
+        raise ValueError(f"{name}: a map crop of {out['height']} x {out['width']} x {out['channels']} channels "
+                         f"({out['map_bytes']} bytes, {out['codes']} codes, {out['classes']} classes); this learner "
+                         f"decodes {MAP_CHANNELS} channels and {MAP_CODES} codes, height x width x channels bytes")
+    if int(block["obs"][1]) != out["scalars"]:
+        raise ValueError(f"{name}: the map block is {block['obs'][1]} columns, its scalars {out['scalars']}")
+    return out
 
 
 def _entities_of(entry: dict, name: str) -> dict | None:
@@ -1054,14 +1087,29 @@ def vision_of(stage: dict | None, layout_names: Sequence[str]) -> list[dict | No
         if obs_dim is not None and first + count > int(obs_dim):
             raise ValueError(f"{name}: the vision block ends at {first + count}, past the layout's {obs_dim} columns")
         image_bytes = described["height"] * described["width"] * described["bytes_per_pixel"]
-        out.append({"first": first, **described, "image_bytes": image_bytes, "entities": _entities_of(entry, name)})
+        crop = _map_of(entry, name)
+        out.append({"first": first, **described, "image_bytes": image_bytes, "entities": _entities_of(entry, name),
+                    "map": crop, "camera_bytes": image_bytes + (crop["map_bytes"] if crop else 0)})
+    maps = [entry["map"] for entry in out if entry is not None]
+    if any(crop is None for crop in maps) and any(crop is not None for crop in maps):
+        raise ValueError("some layouts with a camera have a mental map and some do not: one encoder reads them all")
     return out if any(entry is not None for entry in out) else None
 
 
+def with_map_vin(vision: list[dict | None] | None, vin: bool) -> list[dict | None] | None:
+    """`vision` with the mental map's value iteration network switched on (mappo.map_vin) where the layouts have a
+    map; as it is otherwise."""
+    if vision is None or not vin:
+        return vision
+    return [None if entry is None or entry.get("map") is None else {**entry, "map": {**entry["map"], "vin": True}}
+            for entry in vision]
+
+
 def vision_image_bytes(vision: list[dict | None] | None) -> int:
-    """The image bytes per agent stage.json's camera makes (height x width x bytes a pixel), 0 without one: what the
-    sim's SPEC must announce (Spec.image_bytes)."""
-    return next((entry["image_bytes"] for entry in vision or () if entry is not None), 0)
+    """The bytes of an agent's camera row stage.json's camera makes, 0 without one: its image (height x width x bytes
+    a pixel, the sim's Spec.image_bytes) and, with a map block, its map crop after it (Spec.map_bytes) -- the row the
+    buffer keeps and the encoder reads (Spec.camera_bytes)."""
+    return next((entry.get("camera_bytes", entry["image_bytes"]) for entry in vision or () if entry is not None), 0)
 
 
 def vision_look_heads(vision: list[dict | None] | None) -> tuple[int, ...]:
@@ -1078,10 +1126,16 @@ def check_look_heads(vision: list[dict | None] | None, spec_look_heads: int) -> 
                          f"{len(heads)} ({list(heads)})")
 
 
-def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int) -> None:
+def check_image_bytes(vision: list[dict | None] | None, spec_image_bytes: int, spec_map_bytes: int = 0) -> None:
     """Refuse a sim and a stage.json that disagree about the camera: SPEC's image bytes per agent against stage.json's
-    height x width x bytes a pixel, or one side with a camera and the other without."""
-    expected = vision_image_bytes(vision)
+    height x width x bytes a pixel, or one side with a camera and the other without; and about the mental map's crop
+    (protocol 24): SPEC's map bytes against the map block's."""
+    crop = next((entry.get("map") for entry in vision or () if entry is not None), None)
+    expected_map = crop["map_bytes"] if crop else 0
+    if expected_map != int(spec_map_bytes):
+        raise ValueError(f"the sim sends {spec_map_bytes} map bytes an agent, stage.json's map block makes "
+                         f"{expected_map}")
+    expected = next((entry["image_bytes"] for entry in vision or () if entry is not None), 0)
     if expected == int(spec_image_bytes):
         return
     if not expected:
@@ -1114,6 +1168,161 @@ def decode_slots(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Each pixel's entity slot, [N, H, W] long: 0 none, else s, the entity list's s-th entry (Vision::DecodePixel's
     sixth value)."""
     return image.reshape(-1, height, width, IMAGE_BYTES_PER_PIXEL)[..., SLOT_BYTE].long()
+
+
+def decode_map(crops: torch.Tensor, height: int, width: int) -> dict[str, torch.Tensor]:
+    """The mental map's crop bytes [N, H x W x 6] uint8 as the encoder reads them (Vision::DecodeCropCell): "code" and
+    "class" [N, H, W] long (indexes it embeds), and "values" [N, H, W, 5] float -- the floor's height over the feet
+    ((b - 128) / 127, 0 with none), whether a floor is known, visited, the newest look's age (b / 255, 1 never seen)
+    and the frontier."""
+    cells = crops.reshape(-1, height, width, MAP_CHANNELS)
+    as_float = lambda value: value.to(torch.float32)
+    rise = cells[..., MAP_HEIGHT]
+    known = rise != 0
+    return {
+        "code": cells[..., MAP_CODE].long().clamp(0, MAP_CODES - 1),
+        "class": (cells[..., MAP_CLASS] & CLASS_MASK).long(),
+        "values": torch.stack([
+            torch.where(known, (as_float(rise) - MAP_HEIGHT_ZERO) / 127.0, torch.zeros_like(as_float(rise))),
+            as_float(known),
+            as_float(cells[..., MAP_VISITED] != 0),
+            as_float(cells[..., MAP_AGE]) / 255.0,
+            as_float(cells[..., MAP_FRONTIER] != 0),
+        ], dim=-1),
+    }
+
+
+def _spatial_softmax(features: torch.Tensor, grid_x: torch.Tensor, grid_y: torch.Tensor) -> torch.Tensor:
+    """Per channel of [N, C, H, W] the expected (x, y) of its softmax over the grid, [N, 2C]."""
+    flat = features.flatten(2)
+    weights = torch.softmax(flat, dim=-1)
+    x = (weights * grid_x.to(weights.dtype)).sum(-1)
+    y = (weights * grid_y.to(weights.dtype)).sum(-1)
+    return torch.cat([x, y], dim=-1)
+
+
+class MapValueIteration(nn.Module):
+    """**The value iteration network** over the mental map's crop (perception-goals plan 2c, REDESIGN §3; behind
+    mappo.map_vin, off by default): a reward map (tanh, so the values stay bounded) from the crop's patch features and
+    the goal -- "the object seen" (any objective pixel in this decision's frame) or "unexplored" (none) -- a value
+    iteration over the patch grid as many steps as the grid is wide, so a value crosses the whole crop (a 3 x 3
+    convolution of [reward, value] into ACTIONS move values, the value their max), and its read-out: the values round
+    the body (the grid's centre READ x READ) and the softmax's expected (x, y) of the value map. Fixed shapes and steps,
+    nothing read back: a rollout graph captures it. Its output projection starts at zero, so switching it on leaves a
+    seeded policy as it was."""
+
+    ACTIONS = 8
+    READ = 4
+
+    def __init__(self, channels: int, grid: tuple[int, int], out_width: int):
+        super().__init__()
+        self.grid = grid
+        self.iterations = max(grid)
+        self.reward = nn.Conv2d(channels + 1, 1, 1)
+        self.transition = nn.Conv2d(2, self.ACTIONS, 3, padding=1, bias=False)
+        self.out = nn.Linear(self.READ * self.READ + 2, out_width)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, grid[0]), torch.linspace(-1.0, 1.0, grid[1]),
+                                        indexing="ij")
+        self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
+        self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
+
+    def values(self, features: torch.Tensor, seen: torch.Tensor) -> torch.Tensor:
+        """The value map [N, 1, H, W] after the iterations, from the features [N, C, H, W] and the goal [N]."""
+        goal = seen.to(features.dtype)[:, None, None, None].expand(-1, 1, *features.shape[2:])
+        reward = torch.tanh(self.reward(torch.cat([features, goal], dim=1)))
+        value = torch.zeros_like(reward)
+        for _ in range(self.iterations):
+            value = self.transition(torch.cat([reward, value], dim=1)).amax(dim=1, keepdim=True)
+        return value
+
+    def forward(self, features: torch.Tensor, seen: torch.Tensor) -> torch.Tensor:
+        value = self.values(features, seen)
+        rows, cols = self.grid
+        top, left = (rows - self.READ) // 2, (cols - self.READ) // 2
+        around = value[:, 0, top:top + self.READ, left:left + self.READ].flatten(1)
+        return self.out(torch.cat([around, _spatial_softmax(value, self.grid_x, self.grid_y)], dim=-1))
+
+
+class MapEncoder(nn.Module):
+    """**The mental map's encoder** (perception-goals REDESIGN §3, the Change): the one heading-up crop (48 x 48 cells
+    of 2 yd, protocol 24's bytes after the camera's image), shared by every layout as the camera is. Per cell, the code
+    embedded (CODE_EMBED wide), the entity's class through the camera's own class embedding, and five values
+    (decode_map): CODE_EMBED + the class embedding + 5 planes (15). **Patches**, as the camera's: PATCH x PATCH cells
+    (8 yd square at 2 yd; a 12 x 12 grid at 48 x 48) through Linear -> 64 + SiLU and Linear 64 -> 64 + SiLU, each
+    channel's spatial-softmax keypoint over the grid, the channels' mean, the block's scalars (its own columns, read
+    raw), and Linear -> EMBED. A convolution stack at the crop's own resolution was measured first: 3.6 times the
+    camera's update cost on the host's card, the patches a fraction of it. Optionally the value iteration network over
+    the patch grid (MapValueIteration, mappo.map_vin).
+
+    **The join** (`join`, orthogonal): EMBED -> the camera's embedding width, after a SiLU, added to the camera's
+    embedding before its own SiLU, so both networks read the map through their own camera join. Seeding from a
+    checkpoint without a map zeroes it (bootstrap._seed_map): the seeded policy starts as it was, and the map comes in
+    as the join learns."""
+
+    CODE_EMBED = 4
+    PATCH = 4
+    WIDTHS = (64, 64)
+    EMBED = 128
+
+    def __init__(self, crop: dict, class_embedding: nn.Embedding, out_width: int, starts: Sequence[int]):
+        super().__init__()
+        self.height, self.width = crop["height"], crop["width"]
+        if self.height % self.PATCH or self.width % self.PATCH:
+            raise ValueError(f"the map's crop is {self.width} x {self.height}; its encoder cuts it into {self.PATCH} x "
+                             f"{self.PATCH} patches")
+        self.map_bytes, self.scalars = crop["map_bytes"], crop["scalars"]
+        self.code_embed = nn.Embedding(MAP_CODES, self.CODE_EMBED)
+        # The camera's class embedding, held by reference: one table for the pixels, the list and the map.
+        self.__dict__["class_embedding"] = class_embedding
+        self.planes_per_cell = self.CODE_EMBED + class_embedding.embedding_dim + 5
+        self.grid = (self.height // self.PATCH, self.width // self.PATCH)
+        self.patch = nn.Linear(self.PATCH * self.PATCH * self.planes_per_cell, self.WIDTHS[0])
+        self.mix = nn.Linear(self.WIDTHS[0], self.WIDTHS[1])
+        grid_y, grid_x = torch.meshgrid(torch.linspace(-1.0, 1.0, self.grid[0]),
+                                        torch.linspace(-1.0, 1.0, self.grid[1]), indexing="ij")
+        self.register_buffer("grid_x", grid_x.reshape(-1), persistent=False)
+        self.register_buffer("grid_y", grid_y.reshape(-1), persistent=False)
+        self.embed = nn.Linear(3 * self.WIDTHS[1] + self.scalars, self.EMBED)
+        self.vin = MapValueIteration(self.WIDTHS[1], self.grid, self.EMBED) if crop.get("vin") else None
+        self.join = _linear(self.EMBED, out_width, math.sqrt(2))
+        # Each layout's first map column (the scalars), -1 for a layout without the map.
+        self.register_buffer("start", torch.tensor(list(starts), dtype=torch.long), persistent=False)
+        self.register_buffer("offsets", torch.arange(self.scalars, dtype=torch.long), persistent=False)
+
+    def planes(self, crops: torch.Tensor) -> torch.Tensor:
+        """[N, M] bytes -> [N, H, W, P] planes: the code's embedding, the class's, the five values."""
+        decoded = decode_map(crops, self.height, self.width)
+        dtype = self.embed.weight.dtype
+        # The embeddings' backward (a scatter of 2,304 cells a row onto a few rows) is about two thirds of the
+        # encoder's update on the host's card; one-hot products instead measured no faster (the code's) or slower
+        # (the class's: a 32-wide plane a cell), so they stay lookups.
+        return torch.cat([self.code_embed(decoded["code"]).to(dtype), self.class_embedding(decoded["class"]).to(dtype),
+                          decoded["values"].to(dtype)], dim=-1)
+
+    def patches(self, planes: torch.Tensor) -> torch.Tensor:
+        """[N, H, W, P] -> [N, patches, PATCH x PATCH x P], row by row as the camera's."""
+        rows, cols = self.grid
+        cut = planes.reshape(planes.shape[0], rows, self.PATCH, cols, self.PATCH, self.planes_per_cell)
+        return cut.permute(0, 1, 3, 2, 4, 5).reshape(planes.shape[0], rows * cols, -1)
+
+    def forward(self, obs: torch.Tensor, layout: torch.Tensor, crops: torch.Tensor,
+                seen: torch.Tensor | None = None) -> torch.Tensor:
+        """What the map adds to the camera's embedding (before its SiLU), [N, out_width]. `seen` [N]: the frame shows
+        the objective (the VIN's goal); none, unexplored."""
+        silu = nn.functional.silu
+        layout = layout.reshape(-1).long()
+        columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
+        scalars = obs.gather(1, columns).to(self.embed.weight.dtype)
+        features = silu(self.mix(silu(self.patch(self.patches(self.planes(crops))))))     # [N, patches, C]
+        grid = features.transpose(1, 2).reshape(features.shape[0], -1, *self.grid)
+        pooled = torch.cat([_spatial_softmax(grid, self.grid_x, self.grid_y), features.mean(dim=1), scalars], dim=-1)
+        embedded = self.embed(pooled)
+        if self.vin is not None:
+            goal = seen if seen is not None else torch.zeros(obs.shape[0], device=obs.device)
+            embedded = embedded + self.vin(grid, goal)
+        return self.join(silu(embedded))
 
 
 class VisibleEntities(EntitySets):
@@ -1253,8 +1462,18 @@ class VisionEncoder(nn.Module):
         if any(entry is not None for entry in lists):
             self.entities = VisibleEntities(lists, self.class_embed, self.WIDTHS[1], self.EMBED)
             self.slots = self.entities.slots
+        # The mental map, where the layouts have one (perception-goals REDESIGN §3): its crop follows the image in
+        # each row's bytes, and its encoder adds to the embedding.
+        crops = [entry.get("map") if entry is not None else None for entry in descriptors]
+        self.map = None
+        self.map_bytes = 0
+        if any(crop is not None for crop in crops):
+            crop = next(crop for crop in crops if crop is not None)
+            self.map = MapEncoder(crop, self.class_embed, self.EMBED,
+                                  [c["first"] if c is not None else -1 for c in crops])
+            self.map_bytes = crop["map_bytes"]
         #: Per layout with the camera, the columns its adapter and normaliser do not read: the block's scalars, which
-        #: the encoder reads raw, and its entity list's, which the list's encoder reads.
+        #: the encoder reads raw, its entity list's, which the list's encoder reads, and its map's scalars.
         self.blind = {}
         for index, entry in enumerate(descriptors):
             if entry is None:
@@ -1263,6 +1482,8 @@ class VisionEncoder(nn.Module):
             if lists[index] is not None:
                 columns += list(range(lists[index]["first"],
                                       lists[index]["first"] + lists[index]["slots"] * lists[index]["width"]))
+            if crops[index] is not None:
+                columns += list(range(crops[index]["first"], crops[index]["first"] + crops[index]["scalars"]))
             self.blind[index] = columns
 
     def gather(self, obs: torch.Tensor, layout: torch.Tensor,
@@ -1274,8 +1495,13 @@ class VisionEncoder(nn.Module):
         layout = layout.reshape(-1).long()
         columns = (self.start[layout].clamp(min=0)[:, None] + self.offsets[None, :]).clamp(max=obs.shape[-1] - 1)
         scalars = obs.gather(1, columns).to(self.embed.weight.dtype)
-        decoded = decode_image(image.reshape(-1, self.image_bytes), self.height, self.width)
+        decoded = decode_image(self.pixels(image), self.height, self.width)
         return decoded.to(self.embed.weight.dtype), scalars
+
+    def pixels(self, image: torch.Tensor) -> torch.Tensor:
+        """The image's bytes of each row [N, I]: the row's first image_bytes (its map crop follows, protocol 24)."""
+        rows = image.reshape(-1, self.image_bytes + self.map_bytes)
+        return rows[:, :self.image_bytes] if self.map_bytes else rows
 
     def planes(self, image: torch.Tensor) -> torch.Tensor:
         """[N, H, W, C] -> [N, H, W, C - 1 + CLASS_EMBED]: every channel but the class as it is, then the class's
@@ -1324,8 +1550,13 @@ class VisionEncoder(nn.Module):
         decoded, scalars = self.gather(obs, layout, image)
         features = self.features(self.patches(self.planes(decoded)))
         out = self.embed(torch.cat([self.keypoints(features), scalars], dim=-1))
+        if self.map is not None:
+            crops = image.reshape(-1, self.image_bytes + self.map_bytes)[:, self.image_bytes:]
+            # The VIN's goal: the frame shows the objective (any pixel's objective flag).
+            seen = (decoded[..., IMAGE_CHANNELS - 1] > 0.5).flatten(1).any(dim=1)
+            out = out + self.map(obs, layout, crops, seen).to(out.dtype)
         if self.entities is not None:
-            slots = decode_slots(image.reshape(-1, self.image_bytes), self.height, self.width)
+            slots = decode_slots(self.pixels(image), self.height, self.width)
             linked = self.link_features(features, slots)
             encoded = self.entities.encode_linked(obs, layout, linked)
             out = out + self.entities.pooled(obs, layout, encoded).to(out.dtype)
