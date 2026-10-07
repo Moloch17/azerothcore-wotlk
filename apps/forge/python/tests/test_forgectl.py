@@ -257,6 +257,7 @@ tty.setraw(sys.stdin.fileno())
 out = sys.stdout
 def w(s):
     out.write(s); out.flush()
+open(marker + ".up", "w").write("up")
 w("\x1b[0m\x1b[36mPress refused: class 1 noise before we typed\r\n")
 buf = b""
 eof = False
@@ -272,7 +273,9 @@ while True:
     while b"\n" in buf:
         line, _, buf = buf.partition(b"\n")
         line = line.decode()
-        if mode == "silent":
+        if mode == "hang":
+            open(marker + ".typed", "w").write(line)
+        if mode in ("silent", "hang"):
             continue
         w(line + "\r\n")
         w("\x1b[?2004l\r\x1b[?2004h")
@@ -1231,3 +1234,97 @@ def test_the_run_script_reads_env_steps_by_column_name_on_a_real_shell(tmp_path)
     assert info("empty") == {"exists": "0"} and info("missing") == {"exists": "0"}  # nothing to archive
     assert info("headeronly")["steps"] != "0" and not info("headeronly")["steps"].isdigit()
     assert info("nometrics") == {"exists": "1", "steps": ""}
+
+
+# ---- signals during a console send -----------------------------------------------------------------------------------
+
+SEND_RUNNER = '''
+import sys
+sys.path.insert(0, {apps!r})
+from forgectl import config, console
+fake, marker, settle = sys.argv[1], sys.argv[2], float(sys.argv[3])
+console.attach_argv = lambda cfg, machine: [sys.executable, fake, marker, "hang"]
+cfg = config.load({toml!r})
+console.send(cfg, cfg.host, "forge status", timeout=60, settle=settle)
+print("returned")
+'''
+
+
+def start_send_runner(tmp_path, settle):
+    """A child process running console.send against the fake console (a real pty and a real attach-like client)."""
+    import subprocess
+    fake_script = tmp_path / "fake_console.py"
+    fake_script.write_text(FAKE_CONSOLE)
+    runner = tmp_path / "runner.py"
+    runner.write_text(SEND_RUNNER.format(apps=str(CLUSTER_TOML.parent), toml=str(CLUSTER_TOML)))
+    marker = tmp_path / "marker"
+    child = subprocess.Popen([sys.executable, str(runner), str(fake_script), str(marker), str(settle)],
+                             env={**os.environ, "FORGECTL_HOME": str(tmp_path / "home")}, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    return child, marker
+
+
+def wait_for(path, seconds=15):
+    deadline = time.time() + seconds
+    while not path.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert path.exists(), f"{path.name} never appeared"
+
+
+@pytest.mark.parametrize("signum", [15, 1], ids=["SIGTERM", "SIGHUP"])
+def test_a_signal_while_waiting_for_the_reply_still_detaches_before_the_process_ends(tmp_path, signum):
+    child, marker = start_send_runner(tmp_path, settle=0.3)
+    try:
+        wait_for(tmp_path / "marker.typed")  # the line is typed and the console never answers: the send is waiting
+        child.send_signal(signum)
+        out, err = child.communicate(timeout=20)
+    finally:
+        child.kill()
+    assert child.returncode == 128 + signum and "returned" not in out
+    wait_for(marker)
+    assert marker.read_text() == "detached eof=False"  # Ctrl-P Ctrl-Q reached the console; stdin was never closed
+
+
+@pytest.mark.parametrize("signum", [15, 1], ids=["SIGTERM", "SIGHUP"])
+def test_a_signal_while_attaching_also_detaches(tmp_path, signum):
+    child, marker = start_send_runner(tmp_path, settle=30)   # still in the settle read
+    try:
+        wait_for(tmp_path / "marker.up")
+        child.send_signal(signum)
+        child.communicate(timeout=20)
+    finally:
+        child.kill()
+    assert child.returncode == 128 + signum
+    wait_for(marker)
+    assert marker.read_text() == "detached eof=False"
+
+
+def test_a_signal_during_the_detach_is_held_until_the_detach_is_done():
+    import signal
+    with pytest.raises(console.Terminated) as raised:
+        with console.SignalGuard() as guard:
+            guard.shielded = True
+            os.kill(os.getpid(), signal.SIGTERM)   # arrives "during the detach": nothing happens yet
+            assert guard.pending == signal.SIGTERM
+    assert raised.value.code == 143
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL   # the previous handlers are back
+
+
+def test_the_guard_raises_once_in_the_body_and_restores_the_handlers():
+    import signal
+    before = signal.getsignal(signal.SIGHUP)
+    with pytest.raises(console.Terminated):
+        with console.SignalGuard():
+            os.kill(os.getpid(), signal.SIGHUP)
+            time.sleep(1)  # the handler runs before this returns
+    assert signal.getsignal(signal.SIGHUP) == before
+
+
+def test_a_terminated_command_still_leaves_its_audit_line(cli_cfg, monkeypatch, forgectl_home):
+    def killed(config, machine, line, timeout=20, settle=1.5):
+        raise console.Terminated(15)
+    monkeypatch.setattr(console, "send", killed)
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["stage", "pause", "--yes"])
+    assert raised.value.code == 143
+    assert "outcome=failed" in audit_lines(forgectl_home)[0] and "Terminated" in audit_lines(forgectl_home)[0]

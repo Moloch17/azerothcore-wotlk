@@ -16,6 +16,7 @@ import pty
 import re
 import select
 import signal
+import threading
 import time
 from dataclasses import dataclass
 
@@ -107,35 +108,86 @@ def parse_reply(raw: str, line: str) -> ConsoleResult:
     return ConsoleResult(reply, prompt_seen, start is not None, raw)
 
 
+class Terminated(SystemExit):
+    """SIGTERM or SIGHUP arrived during a console send. A SystemExit, so it ends the program with 128+signal once the
+    detach in `send`'s `finally` has run (and is not mistaken for a failure of the command)."""
+
+    def __init__(self, signum: int):
+        super().__init__(128 + signum)
+        self.signum = signum
+
+
+class SignalGuard:
+    """For the length of a send, SIGTERM and SIGHUP raise `Terminated` instead of killing the process outright.
+
+    Python does not run `finally` blocks when the default SIGTERM handler ends the process, so without this a kill
+    in the middle of a send would leave a `docker attach` client dangling on the worldserver's console. The detach
+    itself is shielded: a signal during it is held back and raised afterwards, so Ctrl-P Ctrl-Q is never cut short.
+    Only the main thread can install signal handlers; elsewhere the guard does nothing."""
+
+    SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+    def __init__(self):
+        self.shielded = False
+        self.pending: int | None = None
+        self.fired = False
+        self.previous: dict = {}
+
+    def _handle(self, signum, frame):
+        if self.shielded:
+            self.pending = signum
+            return
+        if self.fired:
+            return
+        self.fired = True
+        raise Terminated(signum)
+
+    def __enter__(self):
+        if threading.current_thread() is threading.main_thread():
+            self.previous = {number: signal.signal(number, self._handle) for number in self.SIGNALS}
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        for number, handler in self.previous.items():
+            signal.signal(number, handler)
+        if self.pending is not None and exc is None:
+            raise Terminated(self.pending)
+        return False
+
+
 def send(config: Config, machine: Machine, line: str, timeout: float = 20, settle: float = 1.5) -> ConsoleResult:
     """Type `line` into the machine's worldserver console and return the reply. `timeout` is for the reply."""
-    pid, fd = spawn(attach_argv(config, machine))
-    raw = b""
-    try:
-        raw += _drain(fd, settle)  # the screen as it was when we attached, and the connection's own noise
-        if remote_failed(raw):
-            return parse_reply(raw.decode(errors="replace"), line)
-        os.write(fd, (line + "\n").encode())
-        typed = b""
+    with SignalGuard() as guard:
+        pid = fd = None
+        raw = b""
+        try:
+            pid, fd = spawn(attach_argv(config, machine))
+            raw += _drain(fd, settle)  # the screen as it was when we attached, and the connection's own noise
+            if not remote_failed(raw):
+                os.write(fd, (line + "\n").encode())
+                typed = b""
 
-        def finished(chunk: bytes) -> bool:
-            return parse_reply((typed + chunk).decode(errors="replace"), line).prompt_seen
+                def finished(chunk: bytes) -> bool:
+                    return parse_reply((typed + chunk).decode(errors="replace"), line).prompt_seen
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            more = _drain(fd, min(1.0, deadline - time.monotonic()), until=None)
-            if not more:
-                if not alive(pid):
-                    break
-                continue
-            typed += more
-            if finished(b""):
-                typed += _drain(fd, 0.4)  # the prompt can arrive a line before the last of the reply
-                break
-        raw += typed
-    finally:
-        detach(pid, fd)
-    return parse_reply(raw.decode(errors="replace"), line)
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    more = _drain(fd, min(1.0, deadline - time.monotonic()), until=None)
+                    if not more:
+                        if not alive(pid):
+                            break
+                        continue
+                    typed += more
+                    if finished(b""):
+                        typed += _drain(fd, 0.4)  # the prompt can arrive a line before the last of the reply
+                        break
+                raw += typed
+            guard.shielded = True   # from here a signal waits for the detach to finish (see SignalGuard)
+        finally:
+            if pid is not None:
+                guard.shielded = True
+                detach(pid, fd)
+        return parse_reply(raw.decode(errors="replace"), line)
 
 
 def remote_failed(raw: bytes) -> bool:

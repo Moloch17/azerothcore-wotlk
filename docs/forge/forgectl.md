@@ -105,7 +105,14 @@ optional; if you give one it must be the one running (`pause` and `cancel` act o
 How the console is reached: `docker attach` in a pty (over `ssh -tt` for a worker), typing the line, reading until the
 console prompt `AC> ` comes back (with a timeout), stripping colour codes and the interleaved log lines, and leaving
 with Ctrl-P Ctrl-Q. It never closes the console's input (end-of-file would shut the server down) and attaches with
-`--sig-proxy=false` so a signal to the client cannot reach the server. See
+`--sig-proxy=false` so a signal to the client cannot reach the server.
+
+**Signals.** Python does not run `finally` blocks when the default SIGTERM handler ends the process, which would
+leave a `docker attach` client dangling on the worldserver's console. So during a send forgectl handles SIGTERM and
+SIGHUP itself: it raises, the `finally` sends Ctrl-P Ctrl-Q and waits for the client to leave, and only then does
+forgectl exit (status 128 + the signal number: 143 for SIGTERM, 129 for SIGHUP). A second signal during the detach
+is held back until the detach is done. SIGKILL cannot be handled: if forgectl is killed that way, look for a stray
+`docker attach` on the machine (`pgrep -a -f "docker attach"`). See
 [decision 0001](decisions/0001-control-socket.md) for the proposal to replace this.
 
 ## `forgectl logs [machine] [--errors]`
