@@ -471,6 +471,15 @@ namespace Animus::Curriculum
 
         RaidView Raid;
 
+        /// **What the goal names** (M3 interact; the sight block's named row): the kind of thing the seat is to find
+        /// or act on -- its semantic class (Vision::Class), its template entry and whether it is a game object, as a
+        /// quest's log names its objective -- and how (NamedTask: 1 reach it, 2 use it, 3 use the key item on it; 0
+        /// nothing named). Never where it is.
+        uint8 NamedTask = 0;
+        uint8 NamedClass = 0;
+        uint32 NamedEntry = 0;
+        bool NamedObject = false;
+
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
         /// How near a camera ray has to pass the Objective to flag it (Vision::ObjectiveFlag): Vision::OBJECTIVE_RADIUS,
@@ -584,6 +593,10 @@ namespace Animus::Curriculum
         /// Actions.Aimless.ActRefused.
         uint32 Selections = 0;
         uint8 ActRefused = 0;
+        /// The entity a sight press named once it was found (sent or refused), and the press (EntityActions::Press):
+        /// what an encounter judges the press by (M3 interact: the right object, the lever, the key's lock).
+        ObjectGuid ActedOn;
+        uint8 ActPress = 0;
         uint32 CorpsesLooted = 0;
         uint32 NodesLooted = 0;
         uint32 ItemsLooted = 0;

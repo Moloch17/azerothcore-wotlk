@@ -28,8 +28,9 @@
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
  *   movement   move1_controls ─ move2_seek (perception-goals P1: the compass split, a hidden object found by sight)
+ *              ─ move3_interact (dungeon-curriculum M3: the named object, levers and doors, a key item; the sight block)
  *              ─ move4_follow (dungeon-curriculum I5: a party keeps with a leader through an empty dungeon)
- *   combat     move2_seek ─ combat1_fight ─ combat2_packs ─ combat3_survive (dungeon-curriculum C1-C3, Ragefire Chasm)
+ *   combat     move3_interact ─ combat1_fight ─ combat2_packs ─ combat3_survive (dungeon-curriculum C1-C3, Ragefire Chasm)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -415,6 +416,180 @@ namespace
         };
     }
 
+    /// **M3's sites** (dungeon-curriculum M3, InteractSite): the Deadmines' own doors and what opens each, with the
+    /// floor either side. Three lever doors -- the Factory Door (13965, lever 101831), the Foundry Door (16399, lever
+    /// 101834) and the Mast Room Door (16400, lever 101832), each lever a few yards from its door on one side, linked
+    /// to it by the map's own script (smart_scripts: the lever's state change activates the door) -- and the Iron Clad
+    /// Door (16397), which the cannon (16398, lock 83: the Defias Gunpowder, item 5397, whose spell 6250 opens it)
+    /// blows open from the tunnel; that door's own lever (101833) stands on the cove's side, out of the seat's reach.
+    /// The doors' locks (85, 202) take no key a hand has: only their lever, or the cannon, opens them.
+    ///
+    /// Near is the opener's side (the seat's spawns and the distinguish and key rungs' spots), Far the floor behind the
+    /// shut door (the switch rung's spots); a 3-yd grid, each point 1.5 yd or more off every wall, 3 yd or more off the
+    /// lever, lock and door.
+    ///
+    /// **How they were authored** (offline, 2026-10-06): DeadminesSitesDataTest's AuthoringScan (the navmesh read only
+    /// to author, never a bot input) on every storey, then .agents/plans/dungeon-curriculum/tools/sites.py: the
+    /// door's storey within 28 yd, cells where the vmap floor agrees with the navmesh within a yard, eroded 1.5 yd,
+    /// the shut door's footprint taken out, and flooded from either side of the door -- no cell is reached from both
+    /// (no way round the door within the site); seven Mast Room points the data test found within Seek.Clearance of a
+    /// vmap wall the navmesh's erosion missed are left out. **Validated** by DeadminesSitesDataTest against the map's vmaps
+    /// (FORGE_VISION_DATA): every point on a vmap floor within a quarter yard and clear of walls at knee height, and
+    /// no line of sight from a near point's eye to a far point that does not pass through the shut door's leaf.
+    std::vector<InteractSite> DeadminesSites()
+    {
+        return {
+            { "factory", 13965, 101831, 0,
+                {
+                    { -195.0f, -483.0f, 54.05f, 0.0f }, { -192.0f, -483.0f, 54.05f, 0.0f },
+                    { -192.0f, -480.0f, 54.04f, 0.0f }, { -192.0f, -465.0f, 54.26f, 0.0f },
+                    { -189.0f, -483.0f, 54.05f, 0.0f }, { -189.0f, -480.0f, 54.05f, 0.0f },
+                    { -189.0f, -477.0f, 54.05f, 0.0f }, { -189.0f, -474.0f, 54.05f, 0.0f },
+                    { -189.0f, -471.0f, 54.05f, 0.0f }, { -189.0f, -468.0f, 54.12f, 0.0f },
+                    { -189.0f, -465.0f, 54.21f, 0.0f }, { -186.0f, -483.0f, 54.05f, 0.0f },
+                    { -186.0f, -480.0f, 54.04f, 0.0f }
+                },
+                {
+                    { -210.0f, -462.0f, 53.82f, 0.0f }, { -210.0f, -441.0f, 54.12f, 0.0f },
+                    { -207.0f, -459.0f, 53.87f, 0.0f }, { -207.0f, -444.0f, 53.97f, 0.0f },
+                    { -204.0f, -459.0f, 54.11f, 0.0f }, { -204.0f, -456.0f, 54.23f, 0.0f },
+                    { -204.0f, -453.0f, 54.22f, 0.0f }, { -204.0f, -450.0f, 54.07f, 0.0f },
+                    { -204.0f, -447.0f, 53.89f, 0.0f }, { -204.0f, -444.0f, 53.56f, 0.0f },
+                    { -201.0f, -459.0f, 54.34f, 0.0f }, { -201.0f, -456.0f, 54.34f, 0.0f },
+                    { -201.0f, -453.0f, 54.34f, 0.0f }, { -201.0f, -450.0f, 54.22f, 0.0f },
+                    { -201.0f, -447.0f, 54.30f, 0.0f }, { -201.0f, -444.0f, 53.79f, 0.0f },
+                    { -201.0f, -441.0f, 53.40f, 0.0f }, { -201.0f, -438.0f, 53.10f, 0.0f },
+                    { -201.0f, -435.0f, 53.60f, 0.0f }, { -198.0f, -450.0f, 54.50f, 0.0f },
+                    { -198.0f, -444.0f, 53.92f, 0.0f }, { -198.0f, -441.0f, 53.42f, 0.0f },
+                    { -198.0f, -438.0f, 53.27f, 0.0f }, { -198.0f, -435.0f, 53.46f, 0.0f },
+                    { -195.0f, -450.0f, 54.48f, 0.0f }, { -195.0f, -444.0f, 53.89f, 0.0f },
+                    { -195.0f, -441.0f, 53.52f, 0.0f }, { -195.0f, -438.0f, 53.40f, 0.0f },
+                    { -195.0f, -435.0f, 53.34f, 0.0f }, { -195.0f, -432.0f, 53.77f, 0.0f },
+                    { -192.0f, -447.0f, 54.37f, 0.0f }, { -192.0f, -444.0f, 53.99f, 0.0f },
+                    { -192.0f, -441.0f, 53.51f, 0.0f }, { -192.0f, -438.0f, 53.38f, 0.0f },
+                    { -192.0f, -435.0f, 53.31f, 0.0f }, { -192.0f, -432.0f, 53.63f, 0.0f },
+                    { -189.0f, -450.0f, 54.57f, 0.0f }, { -189.0f, -441.0f, 53.39f, 0.0f },
+                    { -189.0f, -438.0f, 53.36f, 0.0f }, { -189.0f, -435.0f, 53.39f, 0.0f },
+                    { -189.0f, -432.0f, 53.74f, 0.0f }, { -186.0f, -450.0f, 54.62f, 0.0f },
+                    { -186.0f, -441.0f, 53.88f, 0.0f }, { -186.0f, -438.0f, 53.68f, 0.0f },
+                    { -186.0f, -435.0f, 53.72f, 0.0f }, { -186.0f, -432.0f, 53.79f, 0.0f },
+                    { -183.0f, -456.0f, 54.66f, 0.0f }, { -183.0f, -444.0f, 54.62f, 0.0f },
+                    { -183.0f, -441.0f, 54.25f, 0.0f }, { -183.0f, -438.0f, 54.14f, 0.0f },
+                    { -183.0f, -435.0f, 54.20f, 0.0f }, { -180.0f, -435.0f, 54.92f, 0.0f }
+                },
+            },
+            { "foundry", 16399, 101834, 0,
+                {
+                    { -159.0f, -585.0f, 19.31f, 0.0f }, { -159.0f, -582.0f, 19.31f, 0.0f },
+                    { -159.0f, -579.0f, 19.31f, 0.0f }, { -159.0f, -576.0f, 19.31f, 0.0f },
+                    { -156.0f, -585.0f, 19.31f, 0.0f }, { -156.0f, -582.0f, 19.31f, 0.0f },
+                    { -156.0f, -579.0f, 19.31f, 0.0f }, { -156.0f, -576.0f, 19.31f, 0.0f },
+                    { -153.0f, -585.0f, 19.32f, 0.0f }, { -153.0f, -582.0f, 19.32f, 0.0f },
+                    { -153.0f, -579.0f, 19.32f, 0.0f }, { -153.0f, -576.0f, 19.32f, 0.0f },
+                    { -150.0f, -585.0f, 19.32f, 0.0f }, { -150.0f, -582.0f, 19.32f, 0.0f },
+                    { -150.0f, -579.0f, 19.32f, 0.0f }, { -150.0f, -576.0f, 19.32f, 0.0f },
+                    { -150.0f, -573.0f, 19.32f, 0.0f }, { -147.0f, -585.0f, 18.86f, 0.0f },
+                    { -147.0f, -576.0f, 18.92f, 0.0f }, { -147.0f, -573.0f, 19.25f, 0.0f },
+                    { -144.0f, -576.0f, 18.99f, 0.0f }, { -144.0f, -573.0f, 19.17f, 0.0f }
+                },
+                {
+                    { -192.0f, -579.0f, 20.98f, 0.0f }, { -192.0f, -576.0f, 20.98f, 0.0f },
+                    { -192.0f, -573.0f, 20.98f, 0.0f }, { -192.0f, -570.0f, 20.98f, 0.0f },
+                    { -189.0f, -579.0f, 20.98f, 0.0f }, { -189.0f, -576.0f, 20.98f, 0.0f },
+                    { -189.0f, -573.0f, 20.98f, 0.0f }, { -189.0f, -570.0f, 20.98f, 0.0f },
+                    { -189.0f, -567.0f, 20.50f, 0.0f }, { -186.0f, -579.0f, 20.98f, 0.0f },
+                    { -186.0f, -576.0f, 20.98f, 0.0f }, { -186.0f, -573.0f, 20.56f, 0.0f },
+                    { -186.0f, -567.0f, 19.31f, 0.0f }, { -186.0f, -564.0f, 19.31f, 0.0f },
+                    { -186.0f, -561.0f, 19.31f, 0.0f }, { -183.0f, -582.0f, 19.31f, 0.0f },
+                    { -183.0f, -579.0f, 19.31f, 0.0f }, { -183.0f, -576.0f, 19.31f, 0.0f },
+                    { -183.0f, -573.0f, 19.31f, 0.0f }, { -183.0f, -570.0f, 19.31f, 0.0f },
+                    { -183.0f, -567.0f, 19.31f, 0.0f }, { -183.0f, -564.0f, 19.31f, 0.0f },
+                    { -183.0f, -561.0f, 19.31f, 0.0f }, { -180.0f, -585.0f, 19.32f, 0.0f },
+                    { -180.0f, -582.0f, 19.31f, 0.0f }, { -180.0f, -579.0f, 19.31f, 0.0f },
+                    { -180.0f, -576.0f, 19.31f, 0.0f }, { -180.0f, -573.0f, 19.31f, 0.0f },
+                    { -180.0f, -570.0f, 19.31f, 0.0f }, { -180.0f, -567.0f, 19.31f, 0.0f },
+                    { -180.0f, -564.0f, 19.31f, 0.0f }, { -180.0f, -561.0f, 19.31f, 0.0f },
+                    { -180.0f, -558.0f, 19.31f, 0.0f }, { -177.0f, -585.0f, 19.32f, 0.0f },
+                    { -177.0f, -582.0f, 19.31f, 0.0f }, { -177.0f, -579.0f, 19.31f, 0.0f },
+                    { -177.0f, -576.0f, 19.31f, 0.0f }, { -177.0f, -573.0f, 19.31f, 0.0f },
+                    { -177.0f, -570.0f, 19.31f, 0.0f }, { -177.0f, -567.0f, 19.31f, 0.0f },
+                    { -177.0f, -564.0f, 19.31f, 0.0f }, { -177.0f, -561.0f, 19.31f, 0.0f },
+                    { -174.0f, -585.0f, 19.32f, 0.0f }, { -174.0f, -573.0f, 19.31f, 0.0f },
+                    { -174.0f, -570.0f, 19.31f, 0.0f }, { -174.0f, -567.0f, 19.31f, 0.0f }
+                },
+            },
+            { "mast_room", 16400, 101832, 0,
+                {
+                    { -297.0f, -555.0f, 49.45f, 0.0f }, { -297.0f, -552.0f, 49.45f, 0.0f },
+                    { -297.0f, -549.0f, 49.44f, 0.0f }, { -297.0f, -546.0f, 49.44f, 0.0f },
+                    { -294.0f, -561.0f, 48.99f, 0.0f }, { -294.0f, -558.0f, 48.95f, 0.0f },
+                    { -294.0f, -555.0f, 49.45f, 0.0f }, { -294.0f, -552.0f, 49.45f, 0.0f },
+                    { -294.0f, -549.0f, 49.44f, 0.0f }, { -294.0f, -546.0f, 49.44f, 0.0f },
+                    { -291.0f, -561.0f, 48.86f, 0.0f }, { -291.0f, -555.0f, 49.45f, 0.0f },
+                    { -291.0f, -552.0f, 49.45f, 0.0f }, { -291.0f, -549.0f, 49.45f, 0.0f },
+                    { -291.0f, -546.0f, 49.45f, 0.0f }, { -288.0f, -561.0f, 49.01f, 0.0f },
+                    { -288.0f, -558.0f, 48.96f, 0.0f }, { -288.0f, -555.0f, 49.45f, 0.0f },
+                    { -288.0f, -552.0f, 49.45f, 0.0f }, { -288.0f, -549.0f, 49.44f, 0.0f },
+                    { -288.0f, -546.0f, 49.44f, 0.0f }, { -285.0f, -561.0f, 49.23f, 0.0f },
+                    { -285.0f, -558.0f, 49.12f, 0.0f }, { -285.0f, -555.0f, 49.45f, 0.0f },
+                    { -285.0f, -552.0f, 49.45f, 0.0f }, { -285.0f, -546.0f, 49.44f, 0.0f }
+                },
+                {
+                    { -300.0f, -531.0f, 49.41f, 0.0f }, { -300.0f, -528.0f, 49.35f, 0.0f },
+                    { -297.0f, -531.0f, 49.45f, 0.0f }, { -297.0f, -528.0f, 49.28f, 0.0f },
+                    { -297.0f, -525.0f, 49.47f, 0.0f }, { -291.0f, -528.0f, 49.75f, 0.0f },
+                    { -291.0f, -525.0f, 49.64f, 0.0f }, { -291.0f, -522.0f, 49.54f, 0.0f },
+                    { -291.0f, -519.0f, 49.54f, 0.0f }, { -291.0f, -516.0f, 49.54f, 0.0f },
+                    { -291.0f, -513.0f, 49.68f, 0.0f }, { -288.0f, -516.0f, 49.54f, 0.0f },
+                    { -288.0f, -513.0f, 49.68f, 0.0f }, { -285.0f, -531.0f, 49.25f, 0.0f },
+                    { -285.0f, -516.0f, 48.49f, 0.0f }, { -282.0f, -531.0f, 49.12f, 0.0f },
+                    { -282.0f, -528.0f, 48.89f, 0.0f }, { -282.0f, -525.0f, 48.82f, 0.0f },
+                    { -282.0f, -522.0f, 48.75f, 0.0f }, { -282.0f, -519.0f, 48.73f, 0.0f },
+                    { -282.0f, -516.0f, 49.01f, 0.0f }, { -282.0f, -513.0f, 49.29f, 0.0f },
+                    { -279.0f, -531.0f, 49.27f, 0.0f }, { -279.0f, -528.0f, 49.11f, 0.0f },
+                    { -279.0f, -519.0f, 49.24f, 0.0f }, { -279.0f, -516.0f, 49.52f, 0.0f },
+                    { -276.0f, -522.0f, 49.91f, 0.0f }, { -276.0f, -519.0f, 49.73f, 0.0f },
+                    { -276.0f, -516.0f, 49.49f, 0.0f }, { -273.0f, -522.0f, 49.95f, 0.0f }
+                },
+            },
+            { "iron_clad", 16397, 16398, 5397,
+                {
+                    { -114.0f, -654.0f, 7.48f, 0.0f }, { -111.0f, -654.0f, 7.19f, 0.0f },
+                    { -111.0f, -645.0f, 8.86f, 0.0f }, { -108.0f, -654.0f, 7.42f, 0.0f },
+                    { -108.0f, -651.0f, 7.01f, 0.0f }, { -108.0f, -648.0f, 7.51f, 0.0f },
+                    { -108.0f, -645.0f, 8.04f, 0.0f }, { -105.0f, -657.0f, 7.42f, 0.0f },
+                    { -105.0f, -654.0f, 7.42f, 0.0f }, { -105.0f, -651.0f, 6.81f, 0.0f },
+                    { -105.0f, -648.0f, 7.00f, 0.0f }, { -105.0f, -645.0f, 7.76f, 0.0f },
+                    { -102.0f, -660.0f, 7.42f, 0.0f }, { -102.0f, -657.0f, 7.42f, 0.0f },
+                    { -102.0f, -654.0f, 7.42f, 0.0f }, { -102.0f, -651.0f, 6.90f, 0.0f },
+                    { -102.0f, -648.0f, 6.95f, 0.0f }, { -99.0f, -660.0f, 7.42f, 0.0f },
+                    { -99.0f, -657.0f, 7.42f, 0.0f }, { -99.0f, -654.0f, 7.42f, 0.0f },
+                    { -99.0f, -651.0f, 6.96f, 0.0f }
+                },
+                {
+                    { -105.0f, -684.0f, 7.43f, 0.0f }, { -102.0f, -693.0f, 8.36f, 0.0f },
+                    { -102.0f, -690.0f, 8.07f, 0.0f }, { -102.0f, -684.0f, 7.42f, 0.0f },
+                    { -99.0f, -693.0f, 8.31f, 0.0f }, { -99.0f, -690.0f, 8.09f, 0.0f },
+                    { -99.0f, -687.0f, 7.88f, 0.0f }, { -99.0f, -684.0f, 7.43f, 0.0f },
+                    { -99.0f, -678.0f, 7.42f, 0.0f }, { -96.0f, -693.0f, 8.32f, 0.0f },
+                    { -96.0f, -690.0f, 8.11f, 0.0f }, { -96.0f, -687.0f, 7.90f, 0.0f },
+                    { -96.0f, -684.0f, 7.43f, 0.0f }, { -96.0f, -681.0f, 7.42f, 0.0f },
+                    { -96.0f, -678.0f, 7.42f, 0.0f }, { -93.0f, -693.0f, 8.33f, 0.0f },
+                    { -93.0f, -690.0f, 8.12f, 0.0f }, { -93.0f, -687.0f, 7.92f, 0.0f },
+                    { -93.0f, -684.0f, 7.43f, 0.0f }, { -93.0f, -681.0f, 7.42f, 0.0f },
+                    { -90.0f, -690.0f, 8.13f, 0.0f }, { -90.0f, -681.0f, 7.42f, 0.0f }
+                },
+            },
+        };
+    }
+
+    /// Where the interact stage's seats are first put, before an episode's site is drawn (the instance is cleared
+    /// round it, InteractEncounter puts the seat at its site): the Foundry Door's near side, mid-dungeon.
+    Position DeadminesMiddle()
+    {
+        return { -150.0f, -576.0f, 19.32f, 3.14f };
+    }
+
     /// **Ragefire Chasm's entrance** (the combat stages, C1-C3): where its areatrigger (2230, from Orgrimmar's Cleft of
     /// Shadow) puts a player, and where a seat that died there comes back (dungeon-curriculum I4).
     Position RagefireEntrance()
@@ -504,6 +679,47 @@ namespace
             .Level = 1,
         });
 
+        // M3 -- interact (dungeon-curriculum M3): in an empty Deadmines, at the Deadmines band (17-20, every race and
+        // class; a death knight at its own minimum), telling objects apart and using the dungeon's own levers, doors and
+        // locks -- through the sight block's entity presses alone (I1), as a client sends them. No looting. The goal
+        // names the object by its kind (the sight block's named row: class and template entry, and the task), never its
+        // place; no compass and no objective flag. Its memory is the GRU's, the mental map's and entity memory's (I2).
+        //
+        // **The ladder** (InteractDraw::Rung, the shaping fade's rungs 1, 0.5, 0), each episode at one of the four sites
+        // (DeadminesSites): distinguish -- the named object among two to four decoys of other kinds of the seek pool,
+        // all in sight of the seat; switch -- the named object behind its shut door, the lever on the seat's side
+        // opens it; key -- the cannon, named, opened only by the gunpowder the seat carries from the start (used on it,
+        // its script blows the Iron Clad Door). Each rung keeps a tenth of the one below; episodes of 60, 120 and 90 s.
+        // An evaluation plays the training rung with its seed's site, spawn, spots and kinds; the held-out "sweep"
+        // plays every rung in turn.
+        //
+        // Paid: Arrive (Outcome) for the right object reached or its lock given the key; DoorOpened (Outcome) for the
+        // switch rung's door opened by the seat's own lever press; WrongObject (Cost) for a decoy taken, each once; a
+        // refused press is the sight block's price (a locked door pressed, the key on the wrong thing); Stuck, Wall
+        // and the step cost as M2's; Sighting (Shaping) once, the first frame that lists the named object.
+        stages.push_back({
+            .Name = "move3_interact",
+            .Suffix = "_interact",
+            .Extends = "move2_seek",
+            .Summary = "an empty Deadmines: the object the goal names among decoys, behind a door its lever opens, or "
+                "the cannon fired with the gunpowder carried from the start -- all through the sight block's presses",
+            .Blocks = { Core, Move, Vision, Map, Sight, Goal },
+            .Arenas = {
+                { .Name = "sites", .Weight = 1, .Against = Opposition::Interact, .EpisodeSeconds = 120,
+                    .MapId = MAP_DEADMINES, .Objects = SeekObjects(), .SeekRadius = 3.0f,
+                    .Sites = DeadminesSites() },
+                { .Name = "sweep", .Weight = 1, .Against = Opposition::Interact, .EvalOnly = true,
+                    .EpisodeSeconds = 120, .MapId = MAP_DEADMINES, .Objects = SeekObjects(), .SeekRadius = 3.0f,
+                    .Sites = DeadminesSites() },
+            },
+            .MapId = MAP_DEADMINES,
+            .SpawnPoints = { DeadminesMiddle() },
+            .MinLevel = 17,
+            .FocusLevelFirst = 17,
+            .FocusLevelLast = 20,
+            .FocusChance = 100,
+        });
+
         // M4 -- follow (dungeon-curriculum Part 2, I5): a party of five -- a leader and four learned followers -- in an
         // empty Ragefire Chasm or Deadmines (cleared whole, as the Stockades: SpawnArea::ClearMap, and their doors,
         // levers and chests removed: ObjectPool::ClearOwn), at the dungeon's level band (the dungeon finder's). The
@@ -551,8 +767,9 @@ namespace
         // and casting at the selection as the client does; nothing situational masked. A death is never the end: it
         // comes back alive at the entrance after a short delay and walks back (I4, ArenaDefinition::RespawnAtEntrance).
         //
-        // Seeded from move2_seek (the camera, the map and the movement carry; the duel, pet, sight and combat blocks
-        // start fresh). move3_interact, the plan's base, is another branch's: when it lands, C1 extends it instead.
+        // Seeded from move3_interact (the plan's base): the camera, the map, the movement and the sight list carry --
+        // its slots widened by the combat columns, which start at zero, and its named row (revision 2), present and 0
+        // here where nothing is named; the duel, pet and combat blocks start fresh.
         //
         // C1 -- fight: one creature at a time, the next two seconds after each kill, over a 150 s episode; a caster
         // from rung 1, an elite from rung 4. `guard` stands a passive friend by the seat that every creature goes for
@@ -561,7 +778,7 @@ namespace
         stages.push_back({
             .Name = "combat1_fight",
             .Suffix = "_fight",
-            .Extends = "move2_seek",
+            .Extends = "move3_interact",
             .Summary = "a cleared Ragefire Chasm: one creature at a time, found by sight and killed with the class's "
                 "kit; in a share of them a friend to taunt off and heal",
             .Blocks = { Core, Move, Duel, Pet, Vision, Entities, Map, Sight, Combat, Goal },
@@ -864,6 +1081,32 @@ namespace
                 || pair.Spawn == pair.Object)
                 return "a sight pair is a sight arena's: two different points of its SpawnPoints";
 
+        // M3's sites: one seat on its own, on foot and dry, acting on what it sees through the sight block; the goal
+        // names what it is after, so nothing points at it -- no compass, no marker of its own.
+        bool const interact = arena.Against == Opposition::Interact;
+        if (interact && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
+            || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
+            return "an interact arena is one seat on its own, on foot and dry, with no marker or room of its own";
+        if (interact && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)))
+            return "an interact arena is walked with the move block, seen with the camera and acted on with the sight "
+                "block";
+        if (interact && stage.Has(BlockId::Compass))
+            return "an interact arena's object is found by what the goal names: the compass would point at it";
+        if (interact && (arena.Sites.empty() || arena.Objects.size() < 3 || arena.SeekRadius <= 0.0f
+            || !arena.MapId))
+            return "an interact arena needs its map, sites, at least three kinds of object (one named, two decoys) "
+                "and a radius to reach one within";
+        for (InteractSite const& site : arena.Sites)
+            if (!interact || site.Name.empty() || !site.Door || !site.Opener || site.Near.empty()
+                || (!site.Key && site.Far.empty()))
+                return "an interact site is an interact arena's: named, a door and its opener, its near side, and the "
+                    "far side a lever's door shuts off";
+        if (interact && (std::none_of(arena.Sites.begin(), arena.Sites.end(),
+            [](InteractSite const& site) { return site.Key == 0; })
+            || std::none_of(arena.Sites.begin(), arena.Sites.end(),
+            [](InteractSite const& site) { return site.Key != 0; })))
+            return "an interact arena's ladder needs a site a lever opens and one a key item opens";
         // The party follow (M4): a party of learned followers and a leader in the owner's slot, in a dungeon of its
         // own (its door is the spawn, its bosses' places the route), nothing to fight; the leader is found by sight,
         // the minimap and memory, so the camera and the party frames, and never the compass.
@@ -904,8 +1147,8 @@ namespace
 
         if (!seek && !arena.Rooms.empty())
             return "only a seek arena has rooms";
-        if (!seek && !sight && !arena.Objects.empty())
-            return "only a seek or a sight arena has objects";
+        if (!seek && !sight && !interact && !arena.Objects.empty())
+            return "only a seek, a sight or an interact arena has objects";
         for (SeekRoom const& room : arena.Rooms)
             if (room.Floor.size() < 3 || room.Name.empty())
                 return "a seek room is named and its floor is a polygon";
@@ -992,6 +1235,7 @@ namespace
         {
             return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow
                 && arena.Against != Opposition::Seek && arena.Against != Opposition::Sight
+                && arena.Against != Opposition::Interact
                 && arena.Against != Opposition::PartyFollow;
         });
         if (fights && !stage.Has(BlockId::Duel))

@@ -70,18 +70,18 @@ def test_every_ladder_steps_on_its_gate_alone_with_full_prices_from_the_start(na
 
 
 def test_the_seed_chain_runs_from_m2():
-    """C1 extends move2_seek (M3 interact, the plan's base, is another branch's), C2 C1, C3 C2; each config seeds from
+    """C1 extends move3_interact (the plan's base), C2 C1, C3 C2; each config seeds from
     its stage's chain (init_from auto, the parent's latest.pt first)."""
     extends = stage_extends()
-    assert extends["combat1_fight"] == "move2_seek"
+    assert extends["combat1_fight"] == "move3_interact"
     assert extends["combat2_packs"] == "combat1_fight"
     assert extends["combat3_survive"] == "combat2_packs"
     for name in STAGES:
         config = TrainConfig.load(CONFIGS / f"{name}.yaml")
         assert config.init_from == "auto" and config.seed_from == "latest"
     config = TrainConfig.load(CONFIGS / "combat1_fight.yaml")
-    chain = config.resolved_init_from({"seed_chain": ["move2_seek", "move1_controls"]})
-    assert [Path(path).parent.name for path in chain] == ["move2_seek", "move1_controls"]
+    chain = config.resolved_init_from({"seed_chain": ["move3_interact", "move2_seek", "move1_controls"]})
+    assert [Path(path).parent.name for path in chain] == ["move3_interact", "move2_seek", "move1_controls"]
 
 
 def test_survive_is_paid_for_staying_alive_and_never_for_coming_back():
@@ -219,3 +219,76 @@ def test_a_sight_list_widened_by_the_combat_columns_seeds_from_a_narrower_one():
         again, _ = c1.actor.vision.sight.tokens(other, layout)
     torch.testing.assert_close(codes, again)
     assert bool(present.all())
+
+
+# ------------------------------------------------------------------ Sight revision 2: the named row
+
+TASKS = ("reach", "interact", "use_item")
+NAMED = 20 + len(TASKS)
+
+
+def named_stage(width: int) -> dict:
+    """sight_stage with the sight block's named row after its slots (revision 2), as every stage with the sight block
+    now has it -- present and 0 in the combat stages, where nothing is named."""
+    stage = sight_stage(width)
+    for name in ("warrior", "priest"):
+        entry = stage["layouts"][name]
+        sight, goal = entry["blocks"][-2], entry["blocks"][-1]
+        sight["obs"][1] += NAMED
+        sight["revision"] = 2
+        sight["sight"]["named"] = {"offset": SLOTS * width, "width": NAMED, "entity_width": 20, "tasks": list(TASKS)}
+        goal["obs"][0] += NAMED
+        entry["obs_dim"] += NAMED
+    return stage
+
+
+def test_a_c1_checkpoint_on_sight_revision_1_seeds_into_revision_2():
+    """A C1 checkpoint from before M3 (sight revision 1: its slots widened by the combat columns, no named row) seeds a
+    C1 on revision 2: the list's encoder, its combat columns' projection, its pool and its pointer queries carry as
+    they were, so its slot columns read exactly as before; the named row starts fresh (its pool and gain at zero)."""
+    config = MappoConfig(hidden=(16, 16))
+    old_stage, new_stage = sight_stage(WIDE), named_stage(WIDE)
+    torch.manual_seed(0)
+    old = MappoTrainer(shapes(old_stage), 4, config, vision=vision_of(old_stage, ve.NAMES))
+    with torch.no_grad():
+        for tensor in (old.actor.vision.sight.extra.weight, old.actor.vision.sight.pool.weight,
+                       old.actor.vision.sight.memory_embed.weight, old.actor.sight_pointers.queries["select"].weight):
+            tensor.normal_()
+    new = MappoTrainer(shapes(new_stage), 4, config, vision=vision_of(new_stage, ve.NAMES))
+    seed_trainer(new, checkpoint_of(old, old_stage), spec_of(new_stage), new_stage)
+
+    before, after = old.actor.vision.sight, new.actor.vision.sight
+    for key in ("extra.weight", "extra.bias", "pool.weight", "pool.bias", "memory_embed.weight"):
+        torch.testing.assert_close(after.state_dict()[key], before.state_dict()[key])
+    torch.testing.assert_close(new.actor.sight_pointers.queries["select"].weight,
+                               old.actor.sight_pointers.queries["select"].weight)
+    assert bool((after.named_pool.weight == 0).all()) and bool((after.named_pool.bias == 0).all())
+    assert bool((after.named_gain == 0).all())
+
+    # The same slots in both layouts (the new one's named row 0, nothing named): the same tokens.
+    rows = 4
+    layout = torch.tensor([0, 1, 0, 1])
+    generator = torch.Generator().manual_seed(5)
+
+    def obs_of(stage: dict, blocks: list[torch.Tensor]) -> torch.Tensor:
+        width = max(stage["layouts"][name]["obs_dim"] for name in ve.NAMES)
+        out = torch.zeros(rows, width)
+        for row in range(rows):
+            name = ve.NAMES[int(layout[row])]
+            first = next(b for b in stage["layouts"][name]["blocks"] if b["name"] == "sight")["obs"][0]
+            out[row, first: first + SLOTS * WIDE] = blocks[row].reshape(-1)
+        return out
+
+    blocks = []
+    for _ in range(rows):
+        block = torch.randn(SLOTS, WIDE, generator=generator)
+        block[:, 0] = 1.0
+        block[:, 1] = torch.randint(0, 23, (SLOTS,), generator=generator).float()
+        block[:, 2] = torch.randint(0, 5000, (SLOTS,), generator=generator).float()
+        block[:, 3] = 0.0
+        block[:, 19] = torch.randint(0, 64, (SLOTS,), generator=generator).float()
+        blocks.append(block)
+    with torch.no_grad():
+        old_codes, _ = before.tokens(obs_of(old_stage, blocks), layout)
+        new_codes, _ = after.tokens(obs_of(new_stage, blocks), layout)
+    torch.testing.assert_close(new_codes, old_codes)

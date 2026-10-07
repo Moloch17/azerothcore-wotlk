@@ -131,7 +131,7 @@ TEST(SightBlockLayoutTest, TheListAndItsPointers)
     Cu::Layout layout;
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::Sight), "sight");
     EXPECT_EQ(Cu::SIGHT_SLOTS, 64u);
-    EXPECT_EQ(block.Size(layout).Obs, Cu::SIGHT_SLOTS * Sight::SIGHT_FEATURES);
+    EXPECT_EQ(block.Size(layout).Obs, Sight::OBS_COUNT);
     EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS);
     EXPECT_EQ(uint32(Sight::SIGHT_VISIBLE), uint32(Cu::EntitiesBlock::ENTITY_FEATURES));
 
@@ -300,7 +300,7 @@ TEST_F(SightBlockTest, OnlyEmptySlotsAndUntargetableObjectsAreMasked)
     view.Recall = &memory;
     view.SightGuids = &guids;
     view.Focus = &focus;
-    std::vector<float> obs(Cu::SIGHT_SLOTS * Sight::SIGHT_FEATURES);
+    std::vector<float> obs(Sight::OBS_COUNT);
     std::vector<uint8> mask(Sight::ACTION_COUNT, 9);
     Cu::GetBlock(Cu::BlockId::Sight).Observe(view, obs.data(), mask.data());
 

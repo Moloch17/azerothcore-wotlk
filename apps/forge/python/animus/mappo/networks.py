@@ -1032,10 +1032,20 @@ def _sight_of(entry: dict, name: str, entities: dict | None) -> dict | None:
     pointers = list(described.get("pointers", ()))
     out["presses"] = tuple(str(p["press"]) for p in pointers)
     out["pointer_first"] = tuple(int(p["first"]) for p in pointers)
+    # The named row (revision 2, M3 interact): what the goal names, after the slots -- the entity list's columns,
+    # then the task one-hot. Absent (revision 1): none.
+    named = described.get("named")
+    out["named_offset"] = int(named["offset"]) if named else -1
+    out["named_width"] = int(named["width"]) if named else 0
+    out["named_entity_width"] = int(named["entity_width"]) if named else 0
     first, count = int(block["obs"][0]), int(block["obs"][1])
-    if out["first"] != first or out["slots"] * out["width"] != count:
+    if out["first"] != first or out["slots"] * out["width"] + out["named_width"] != count:
         raise ValueError(f"{name}: the sight block spans {count} columns from {first}, its description "
-                         f"{out['slots']} slots of {out['width']} from {out['first']}")
+                         f"{out['slots']} slots of {out['width']} and a named row of {out['named_width']} from "
+                         f"{out['first']}")
+    if named and (out["named_offset"] != out["slots"] * out["width"]
+                  or out["named_entity_width"] >= out["named_width"]):
+        raise ValueError(f"{name}: the sight block's named row ({named}) does not follow its slots")
     if any(int(p["count"]) != out["slots"] for p in pointers):
         raise ValueError(f"{name}: a sight press names {[int(p['count']) for p in pointers]} slots, the list has "
                          f"{out['slots']}")
@@ -1456,6 +1466,14 @@ class SightEntities(nn.Module):
     The present slots are pooled (mean and max) onto the camera's embedding width, as the list's are: the pool is what
     seeding zeroes when the checkpoint has no sight list, so a seeded policy starts as it was.
 
+    **The named row** (sight block revision 2, M3 interact), where the layouts have one: what the goal names -- a kind,
+    never a place -- read by the same encoder (its class, type and object columns, the rest 0) plus a projection of the
+    task, as one token. It looks over the slots (a match score of each slot's token against a query of the named
+    token, softmaxed over the present slots), and the named token and the slots it matched are pooled onto the
+    embedding (named_pool: zeroed by seeding as the pool is), so the trunk knows what it is after and where what it
+    sees of it is; and each press's pointer scores gain the match times a learned weight (named_gain, from 0), so "the
+    one named" is a slot the presses can point at from their first update.
+
     **The pointer heads** read the same tokens without the pixels (an action's logits are taken from the observation
     alone): one query per press, from the actor's features (SightPointers), scored against every slot, so a press
     follows the entity, not the slot -- one head over the combined list of visible and remembered."""
@@ -1476,6 +1494,18 @@ class SightEntities(nn.Module):
         self.base = visible.width_
         self.memory_column, self.memory_ids = spec["memory_column"], spec["memory_ids"]
         self.presses = tuple(spec["presses"])
+        self.named_width = int(spec.get("named_width", 0))
+        for entry in descriptors:
+            if entry is not None and int(entry.get("named_width", 0)) != self.named_width:
+                raise ValueError("the sight lists' named rows differ: one encoder reads them all")
+        if self.named_width:
+            if int(spec["named_entity_width"]) != self.base:
+                raise ValueError(f"the sight list's named row leads with {spec['named_entity_width']} columns, the "
+                                 f"entity list's tokens read {self.base}")
+            self.named_task = _linear(self.named_width - self.base, embed, 1.0)
+            self.named_query = _linear(embed, embed, 1.0)
+            self.named_pool = _linear(2 * embed, out_width, 1.0)
+            self.named_gain = nn.Parameter(torch.zeros(max(1, len(self.presses))))
         # The entity list's encoder, held by reference (it is the list's module).
         self.__dict__["shared"] = visible
         self.extra = _linear(self.width_ - self.base, embed, 1.0)
@@ -1503,6 +1533,17 @@ class SightEntities(nn.Module):
         self.register_buffer("present_at", present, persistent=False)
         self.register_buffer("pointer_first", first, persistent=False)
         self.register_buffer("has_sight", present[:, 0] >= 0, persistent=False)
+        named = torch.zeros(layouts, max(1, self.named_width), dtype=torch.long)
+        has_named = torch.zeros(layouts, dtype=torch.bool)
+        for index, entry in enumerate(descriptors):
+            if entry is None or not self.named_width:
+                continue
+            start = entry["first"] + entry["named_offset"]
+            named[index] = torch.arange(start, start + self.named_width)
+            has_named[index] = True
+            self.blind[index] += list(range(start, start + self.named_width))
+        self.register_buffer("named_columns", named, persistent=False)
+        self.register_buffer("has_named", has_named, persistent=False)
 
     def tokens(self, obs: torch.Tensor, layout: torch.Tensor,
                linked: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1524,13 +1565,37 @@ class SightEntities(nn.Module):
         present = (present_at >= 0) & (obs.gather(1, present_at.clamp(min=0)) > 0.5)
         return codes, present
 
-    def pooled(self, codes: torch.Tensor, present: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
-        """What the list adds to the camera's embedding: [N, out], zero for a layout without it."""
+    def named(self, obs: torch.Tensor, layout: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The named row's token [N, embed] and whether a row names anything [N] (its present column; a layout
+        without the row names nothing)."""
+        layout = layout.reshape(-1).long()
+        raw = obs.gather(1, self.named_columns[layout])
+        dtype = self.pool.weight.dtype
+        token = self.shared.token(raw[:, : self.base]) + self.named_task(raw[:, self.base:].to(dtype))
+        present = self.has_named[layout] & (raw[:, 0] > 0.5)
+        return token, present
+
+    def match(self, codes: torch.Tensor, token: torch.Tensor) -> torch.Tensor:
+        """Each slot's match with the named token [N, slots]: its token against the named token's query, scaled."""
+        query = self.named_query(token).to(codes.dtype)
+        return torch.einsum("rse,re->rs", codes, query) / math.sqrt(codes.shape[-1])
+
+    def pooled(self, codes: torch.Tensor, present: torch.Tensor, layout: torch.Tensor,
+               obs: torch.Tensor | None = None) -> torch.Tensor:
+        """What the list adds to the camera's embedding: [N, out], zero for a layout without it; with the named row
+        (and `obs`), the named token and the slots that match it too."""
         weight = present.to(codes.dtype)[..., None]
         mean = (codes * weight).sum(dim=1) / weight.sum(dim=1).clamp(min=1.0)
         peak = torch.where(present[..., None], codes, torch.full_like(codes, -1.0)).amax(dim=1)
         peak = torch.where(present.any(dim=1, keepdim=True), peak, torch.zeros_like(peak))
         out = self.pool(torch.cat([mean, peak], dim=-1))
+        if self.named_width and obs is not None:
+            token, named = self.named(obs, layout)
+            scores = self.match(codes, token.to(codes.dtype)).masked_fill(~present, -1e4)
+            weights = torch.softmax(scores.float(), dim=-1).to(codes.dtype) * present.to(codes.dtype)
+            attended = (weights[..., None] * codes).sum(dim=1)
+            extra = self.named_pool(torch.cat([token.to(codes.dtype), attended], dim=-1))
+            out = out + extra * named[:, None].to(extra.dtype)
         return out * self.has_sight[layout.reshape(-1).long()][:, None].to(out.dtype)
 
     def with_pointers(self, logits: torch.Tensor, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor,
@@ -1540,9 +1605,15 @@ class SightEntities(nn.Module):
         layout = layout.reshape(-1).long()
         codes, _ = self.tokens(obs, layout)
         steps = torch.arange(self.slots, device=logits.device)[None, :]
+        matched = None
+        if self.named_width:
+            token, named = self.named(obs, layout)
+            matched = self.match(codes, token.to(codes.dtype)) * named[:, None].to(codes.dtype)
         for at, press in enumerate(self.presses):
             first = self.pointer_first[layout, at]
             scores = torch.einsum("rse,re->rs", codes, queries.queries[press](features).to(codes.dtype))
+            if matched is not None:
+                scores = scores + self.named_gain[at].to(codes.dtype) * matched
             valid = first >= 0
             columns = (first.clamp(min=0)[:, None] + steps).clamp(max=logits.shape[-1] - 1)
             kept = logits.gather(1, columns)
@@ -1748,7 +1819,7 @@ class VisionEncoder(nn.Module):
             out = out + self.entities.pooled(obs, layout, encoded).to(out.dtype)
             if self.sight is not None:
                 codes, present = self.sight.tokens(obs, layout, linked)
-                out = out + self.sight.pooled(codes, present, layout).to(out.dtype)
+                out = out + self.sight.pooled(codes, present, layout, obs).to(out.dtype)
         return nn.functional.silu(out)
 
 

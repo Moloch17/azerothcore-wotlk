@@ -423,9 +423,13 @@ TEST(CombatBlockLayoutTest, TheSightListCarriesTheCombatColumns)
     combat.Blocks.push_back(Cu::BlockId::Combat);
     Cu::Block const& sight = Cu::GetBlock(Cu::BlockId::Sight);
     EXPECT_EQ(Sight::Width(plain), uint32(Sight::SIGHT_FEATURES));
-    EXPECT_EQ(sight.Size(plain).Obs, Cu::SIGHT_SLOTS * Sight::SIGHT_FEATURES);
+    EXPECT_EQ(sight.Size(plain).Obs, uint32(Sight::OBS_COUNT));
+    EXPECT_EQ(Sight::NamedFirst(plain), uint32(Sight::NAMED_FIRST));
     EXPECT_EQ(Sight::Width(combat), uint32(Sight::SIGHT_FEATURES) + uint32(Combat::COMBAT_SLOT_FEATURES));
-    EXPECT_EQ(sight.Size(combat).Obs, Cu::SIGHT_SLOTS * Sight::Width(combat));
+    // The slots, widened, then the named row (revision 2) after them, present and 0 where nothing is named.
+    EXPECT_EQ(Sight::NamedFirst(combat), Cu::SIGHT_SLOTS * Sight::Width(combat));
+    EXPECT_EQ(sight.Size(combat).Obs, Sight::NamedFirst(combat) + uint32(Sight::NAMED_FEATURES));
+    EXPECT_EQ(sight.Revision(), 2u);
     EXPECT_EQ(sight.Size(combat).Actions, sight.Size(plain).Actions);
 
     boost::json::object entry;
@@ -435,6 +439,8 @@ TEST(CombatBlockLayoutTest, TheSightListCarriesTheCombatColumns)
     boost::json::array const& names = described.at("features").as_array();
     ASSERT_EQ(names.size(), std::size_t(Sight::Width(combat)));
     EXPECT_EQ(std::string(names[Sight::SIGHT_FEATURES].as_string()), "combat_casting");
+    boost::json::object const& named = described.at("named").as_object();
+    EXPECT_EQ(boost::json::value_to<uint64>(named.at("offset")), uint64(Sight::NamedFirst(combat)));
     EXPECT_EQ(std::string(names.back().as_string()), "combat_debuffs");
 
     Cu::Block const& block = Cu::GetBlock(Cu::BlockId::Combat);
@@ -616,7 +622,7 @@ TEST(CombatStagesTest, TheStagesLayouts)
     Cu::StageDefinition const* c3 = Cu::FindStage("combat3_survive");
     ASSERT_TRUE(c1 && c2 && c3) << "a combat stage was left out by the validation";
     EXPECT_TRUE(Cu::CurriculumProblems().empty());
-    EXPECT_EQ(c1->Extends, "move2_seek");
+    EXPECT_EQ(c1->Extends, "move3_interact");
     EXPECT_EQ(c2->Extends, "combat1_fight");
     EXPECT_EQ(c3->Extends, "combat2_packs");
     EXPECT_EQ(c1->Blocks, fight);

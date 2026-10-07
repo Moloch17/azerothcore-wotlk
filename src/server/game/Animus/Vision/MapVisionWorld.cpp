@@ -381,10 +381,12 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
         info.GameObject = true;
         info.Guid = go->GetGUID().GetRawValue();
         info.Orientation = go->GetOrientation();
-        info.Open = go->GetGoState() == GO_STATE_ACTIVE;
+        bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
+        // A door or button stands open in either of its active states (the cannon blows the Iron Clad Door into the
+        // alternative one).
+        info.Open = door ? go->GetGoState() != GO_STATE_READY : go->GetGoState() == GO_STATE_ACTIVE;
         info.Used = info.Open || go->getLootState() != GO_READY;
         GameObjectModel const* model = go->m_model;
-        bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
         if (model && model->isEnabled())
         {
             DoorShape shape;
@@ -399,12 +401,13 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
             out.Doors.push_back(shape);
             return;
         }
-        // An open door or button is out of the way; anything else is drawn by its box.
-        if (model && door)
-            return;
+        // Anything else by its box: an open door as the band its raised gate leaves at the top of its frame
+        // (OpenDoorBox: the doorway clear, the door still there to the camera, listed open), an open button whole.
         BoxShape box;
         if (!BoxOf(go, box))
             return;
+        if (info.Open && go->GetGoType() == GAMEOBJECT_TYPE_DOOR)
+            box = OpenDoorBox(box);
         box.What = info.Id.What;
         // The box's middle, back in the world (its space's middle through the rotation, the transpose of InvRot).
         float const mid[3] = { 0.5f * (box.Low[0] + box.High[0]), 0.5f * (box.Low[1] + box.High[1]),

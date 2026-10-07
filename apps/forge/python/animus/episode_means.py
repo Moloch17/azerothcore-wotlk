@@ -39,6 +39,12 @@ PER_EVENT = {
     "time_ratio_sight": "markers_sight",
     "arrive_seconds_corner": "markers_corner",
     "time_ratio_corner": "markers_corner",
+    # M3 interact (InteractEncounter): the right object's clock over the episodes that got it, and the right object
+    # by rung over the episodes that played each (sight_seconds and sight_to_arrival read as the seek stage's).
+    "right_seconds": "right_object",
+    "right_distinguish": "rung_distinguish",
+    "right_switch": "rung_switch",
+    "right_key": "rung_key",
     # M4 follow (PartyFollowEncounter): the regroups over the leader's stops each follower was counted for, their time
     # over the regroups; the rejoins after a rise at the entrance (I4) over the rises, their time over the rejoins.
     "regroup_share": "regroup_stops",

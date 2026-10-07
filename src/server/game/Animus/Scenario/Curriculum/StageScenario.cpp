@@ -48,6 +48,7 @@
 #include "MarkerEncounter.h"
 #include "SeekEncounter.h"
 #include "SightEncounter.h"
+#include "InteractEncounter.h"
 #include "CombatEncounter.h"
 #include "CombatBlock.h"
 #include "FollowEncounter.h"
@@ -114,6 +115,8 @@ namespace
     /// Yards round the spawn an instance used as empty ground is cleared over (SpawnArea::ClearMap): the whole of a
     /// small dungeon -- the Stockades spans about 150 by 290 yards.
     constexpr float INSTANCE_CLEAR_RADIUS = 300.0f;
+    /// ... and for the interact stage's Deadmines (M3), whose sites lie up to about 350 yards from its far end.
+    constexpr float INTERACT_CLEAR_RADIUS = 600.0f;
     /// ... and the party follow's dungeons, whose last bosses stand further from the door than that (the Deadmines'
     /// ship is several hundred yards from its entrance).
     constexpr float DUNGEON_CLEAR_RADIUS = 1000.0f;
@@ -494,6 +497,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     };
     auto const hasSeek = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Seek; };
     auto const hasSight = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Sight; };
+    auto const hasInteract = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Interact; };
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
@@ -553,6 +557,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* sight = nullptr;
     if (_stage.AnyArena(hasSight))
         sight = add(std::make_unique<SightEncounter>(*this, envs));
+    // M3's doors, levers and named objects: nothing to fight, nothing else to order against.
+    Encounter* interact = nullptr;
+    if (_stage.AnyArena(hasInteract))
+        interact = add(std::make_unique<InteractEncounter>(*this, envs));
     // The combat stages' creatures on a cleared dungeon: nothing else to order against.
     Encounter* combat = nullptr;
     if (_stage.AnyArena(hasCombat))
@@ -573,8 +581,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight, combat,
-        flag,
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight,
+        interact, combat, flag,
         director })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -596,7 +604,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
-                || (encounter == combat && hasCombat(arena))
+                || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -1770,6 +1778,18 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             categories["seek_room"] = std::move(rooms);
             categories["seek_object"] = std::move(objects);
         }
+        else if (arena.Against == Opposition::Interact)
+        {
+            // M3's sites and named objects (InteractEncounter): the evaluation's right object by each.
+            boost::json::array sites;
+            for (std::string const& name : InteractEncounter::SiteNames(arena))
+                sites.emplace_back(name);
+            boost::json::array objects;
+            for (std::string const& name : InteractEncounter::ObjectNames(arena))
+                objects.emplace_back(name);
+            categories["interact_site"] = std::move(sites);
+            categories["interact_object"] = std::move(objects);
+        }
         else if (arena.Against == Opposition::Sight)
         {
             // M1's object (SightEncounter): the evaluation's arrival by object.
@@ -2709,6 +2729,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
             || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat || partyFollow)
             SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
+        // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
+        else if (Arena(env).Against == Opposition::Interact)
+            SpawnArea::ClearMap(lead, INTERACT_CLEAR_RADIUS);
         else
             SpawnArea::Clear(lead);
     }

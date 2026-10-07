@@ -284,6 +284,20 @@ namespace Animus::Vision
     /// turned to face the ray (1 a top seen from above).
     [[nodiscard]] float RayBox(Vec3 origin, Vec3 dir, float limit, BoxShape const& box, float& normalZ);
 
+    /// **An open door as a ray sees it** (M3 interact): a door that stands open (its GO state not ready, its model out
+    /// of the collision tree) is still drawn, as a client still shows it -- not as the slab it was across the doorway,
+    /// which would read as shut, but as the band at the top of its frame a raised gate leaves showing (the
+    /// Deadmines' doors lift): the top OPEN_DOOR_BAND of its closed box, the doorway under it clear. Its pixels keep
+    /// the door class and its entity (listed with EntityInfo::Open), so the camera and memory tell an open door from
+    /// no door. Both casters draw it as any other box.
+    constexpr float OPEN_DOOR_BAND = 0.15f;
+    [[nodiscard]] inline BoxShape OpenDoorBox(BoxShape closed)
+    {
+        float const height = closed.High[2] - closed.Low[2];
+        closed.Low[2] = closed.High[2] - OPEN_DOOR_BAND * height;
+        return closed;
+    }
+
     /// Numbers a frame's entities nearest first (perception-goals 1b): numbers[i] is 1 + the rank of distances[i]
     /// (squared distances from the seat's head; a tie goes to the lower i) when that rank is below MAX_SEEN, else
     /// 0 -- an entity past the cap is still cast, with its class, and never listed.

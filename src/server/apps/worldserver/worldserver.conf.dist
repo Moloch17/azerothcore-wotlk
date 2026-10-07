@@ -5039,9 +5039,12 @@ AnimusForge.OutputDir = ""
 #                                 level 1, death knights at 55)
 #                                 "move2_seek" (the same Stockades: one real object in one of its 39
 #                                 rooms, found by sight with no compass, and stopped beside)
+#                                 "move3_interact" (an empty Deadmines, levels 17-20: the object the goal
+#                                 names among decoys, a door opened by its lever, the cannon fired with
+#                                 the gunpowder carried from the start; acting through the sight block)
 #                                 "move4_follow" (an empty Ragefire Chasm or Deadmines: four followers keep
 #                                 with a leader walking the dungeon's route; a death rises at the entrance)
-#                     The combat stages (dungeon-curriculum C1-C3), from move2_seek, on a cleared Ragefire Chasm
+#                     The combat stages (dungeon-curriculum C1-C3), from move3_interact, on a cleared Ragefire Chasm
 #                     at its levels, the seat seeing what it fights:
 #                       combat    "combat1_fight" (one creature at a time; a friend to taunt off and heal)
 #                                 "combat2_packs" (packs of 2-4: casters, linked, fire; one pack at a time)
@@ -5186,6 +5189,7 @@ AnimusForge.TicksPerDecision = 1
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_seek.TicksPerDecision = 5
+AnimusForge.Stage.move3_interact.TicksPerDecision = 5
 AnimusForge.Stage.move4_follow.TicksPerDecision = 5
 # The combat stages move on the player controller too.
 AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
@@ -7093,6 +7097,42 @@ AnimusForge.Curriculum.Seek.HallwayFurthest = 120.0
 AnimusForge.Curriculum.Seek.DoorwayInside = 2.0
 AnimusForge.Curriculum.Seek.DoorwayDeeper = 1.5
 AnimusForge.Curriculum.Seek.DoorwaySpread = 1.0
+
+#
+#    AnimusForge.Curriculum.Interact.*
+#        The interact stage (move3_interact, InteractEncounter): in an empty Deadmines, the object the goal names by its
+#        kind (never its place) among DecoysMin to DecoysMax decoys of other kinds, behind a door whose lever opens it,
+#        or the lock its key item opens (the cannon and the Defias Gunpowder the seat carries from the start). Arrive
+#        (Outcome) is paid once, on the right object reached (stopped within 3 yd, within ArriveRise yards of its
+#        height) or, for a lock, its key item used on it; DoorOpened (Outcome) once, the door opened by the seat's own
+#        press on its lever. WrongObject (Cost) once a decoy, stopped beside or pressed; a refused press is priced as
+#        Actions.Aimless.ActRefused. StepCost (per 50 ms), Death, Stuck, Wall and WallSlide as Seek's, the noise
+#        prices fixed from the first step. Sighting (Shaping, faded) once, on the first frame listing the named object.
+#        The ladder follows the fade's rungs (1, 0.5, 0): distinguish, switch, key; each rung keeps CarryShare of the
+#        one below, its episodes RungSeconds0 to 2. Distinguish objects stand SightNearest to SightFurthest yards off
+#        in sight of the seat, Spacing yards apart (Attempts draws). Summoned creatures within SummonSweep yards of a
+#        site's opener (the cannon's pirates) are sent away at each reset.
+AnimusForge.Curriculum.Interact.Arrive = 3.0
+AnimusForge.Curriculum.Interact.DoorOpened = 1.0
+AnimusForge.Curriculum.Interact.WrongObject = 0.5
+AnimusForge.Curriculum.Interact.StepCost = 0.0005
+AnimusForge.Curriculum.Interact.Death = 6.0
+AnimusForge.Curriculum.Interact.ArriveRise = 2.0
+AnimusForge.Curriculum.Interact.Sighting = 0.5
+AnimusForge.Curriculum.Interact.Stuck = 0.02
+AnimusForge.Curriculum.Interact.Wall = 0.02
+AnimusForge.Curriculum.Interact.WallSlide = 0.5
+AnimusForge.Curriculum.Interact.CarryShare = 0.1
+AnimusForge.Curriculum.Interact.RungSeconds0 = 60
+AnimusForge.Curriculum.Interact.RungSeconds1 = 120
+AnimusForge.Curriculum.Interact.RungSeconds2 = 90
+AnimusForge.Curriculum.Interact.DecoysMin = 2
+AnimusForge.Curriculum.Interact.DecoysMax = 4
+AnimusForge.Curriculum.Interact.Spacing = 2.5
+AnimusForge.Curriculum.Interact.SightNearest = 4.0
+AnimusForge.Curriculum.Interact.SightFurthest = 30.0
+AnimusForge.Curriculum.Interact.Attempts = 64
+AnimusForge.Curriculum.Interact.SummonSweep = 80.0
 
 #
 #    AnimusForge.Curriculum.Controls.*

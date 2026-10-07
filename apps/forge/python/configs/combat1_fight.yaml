@@ -15,9 +15,9 @@
 # from the first step: Death (over w), Hurt (small: 0.2 per maximum health taken), the kill clock (StepCost, 0.01 a
 # second a creature lives engaged), the guard's friend lost. Shaping (faded): DamageDealt.
 #
-# Seeded from move2_seek (stage.json's seed chain): the camera, its entity list, the mental map and the movement carry;
-# the duel, pet, sight and combat blocks start fresh (the sight list's pool at zero, so the seeded policy starts as it
-# was). The plan's base is M3 interact (another branch's): once it lands, C1 extends it and seeds from it instead.
+# Seeded from move3_interact (the stage file's seed chain): the camera, its entity list, the mental map, the movement
+# and the sight list carry -- its slots widened by the combat block's columns (the new ones at zero) and its named row
+# (sight revision 2) present and 0 here, where nothing is named; the duel, pet and combat blocks start fresh.
 
 run_name: combat1_fight
 socket: /tmp/animus-forge.sock

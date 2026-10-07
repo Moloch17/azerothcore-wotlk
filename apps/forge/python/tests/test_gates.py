@@ -59,6 +59,7 @@ def sim_stage_columns() -> dict[str, set[str]]:
         ("director", "DirectorEncounter"), ("instance", "InstanceEncounter"), ("quest", "QuestEncounter"),
         ("gather", "GatherEncounter"), ("town", "TownEncounter"), ("markers", "MarkerEncounter"),
         ("follow", "FollowEncounter"), ("seek", "SeekEncounter"), ("sight", "SightEncounter"),
+        ("interact", "InteractEncounter"),
         ("party_follow", "PartyFollowEncounter"), ("combat", "CombatEncounter"))}
     # The three life encounters share a base whose columns every one of them emits.
     for life in ("quest", "gather", "town"):
@@ -88,8 +89,8 @@ def sim_stage_columns() -> dict[str, set[str]]:
                                           ("Travel", "travel"), ("Flag", "flag"), ("Instance", "instance"),
                                           ("Quest", "quest"), ("Gather", "gather"), ("Town", "town"),
                                           ("Markers", "markers"), ("Follow", "follow"), ("Seek", "seek"),
-                                          ("Sight", "sight"), ("PartyFollow", "party_follow"),
-                                          ("Combat", "combat")):
+                                          ("Sight", "sight"), ("Interact", "interact"),
+                                          ("PartyFollow", "party_follow"), ("Combat", "combat")):
                 if against == opposition:
                     active.add(encounter)
             if ".Owner = true" in arena:
