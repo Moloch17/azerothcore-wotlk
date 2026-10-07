@@ -125,14 +125,15 @@ class ForgeEnv:
         return self._receive_step()
 
     def set_mode(self, evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                 opponents_only: bool = False, first_seed: int = 0, arena: int = 0) -> p.Step:
+                 opponents_only: bool = False, first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> p.Step:
         """Switch the sim between training and seeded evaluation (see protocol MODE). With `opponents_only` the
         baseline plays only the opponent seats of self-play episodes and the actions sent play the rest. `arena` pins
-        an evaluation to a held-out arena (index + 1).
+        an evaluation to a held-out arena (index + 1). `stand_in` puts the human stand-in in every party.
 
         Every env resets; the returned STEP holds the fresh observations and, like the first one, no transition.
         """
-        payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only, first_seed, arena)
+        payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only, first_seed, arena,
+                                stand_in=evaluate and stand_in)
         self.sock.sendall(p.encode_header(p.MsgType.MODE, len(payload)) + payload)
         self._pending = self._receive_decision()
         return self._pending
@@ -442,7 +443,7 @@ class ClusterEnv:
         return dataclasses.replace(part, env_begin=part.env_begin + self.offsets[index])
 
     def set_mode(self, evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                 opponents_only: bool = False, first_seed: int = 0, arena: int = 0) -> p.Step:
+                 opponents_only: bool = False, first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> p.Step:
         # An evaluation's seeds shared out in proportion to each live sim's envs, in consecutive runs, so every seed
         # is played once and reported by its own index whichever sim plays it.
         weights = [spec.num_envs if sim is not None else 0 for sim, spec in zip(self.sims, self.specs)]
@@ -451,7 +452,7 @@ class ClusterEnv:
         for index, share in enumerate(shares):
             first = start
             parts.append(self._whole(index, lambda sim, share=share, first=first: sim.set_mode(
-                evaluate, seed_base, share, baseline, opponents_only, first, arena)))
+                evaluate, seed_base, share, baseline, opponents_only, first, arena, stand_in)))
             start += share
         self._next_group = 0
         return self._joined(parts)

@@ -68,6 +68,22 @@ class ProgressWriter:
         self.headline = tuple(config.status.headline)
         self.metrics: dict = {}
         self.evaluation: dict = {}
+        # The evaluation arms' readings (eval.arms), kept apart: an arm plays every eval.arms_every evaluations, and
+        # its last reading stands until the next.
+        self.arms: dict = {}
+
+    def arm_columns(self, arm: str) -> tuple[str, ...]:
+        """The episode columns an arm's summary needs for the headline: clear_rate for clear_rate_with_human."""
+        suffix = f"_{arm}"
+        return tuple(metric[:-len(suffix)] for metric in self.headline if metric.endswith(suffix))
+
+    def arm_evaluated(self, arm: str, summary: dict) -> None:
+        """An evaluation arm's summary: its score as eval_<arm>_score, and each headline metric <metric>_<arm> as
+        eval_<metric>_<arm>, so forge status shows it beside the plain (all bots) reading."""
+        self.arms[f"eval_{arm}_score"] = summary.get("score")
+        self.arms[f"eval_{arm}_episodes"] = summary.get("episodes")
+        for metric in self.arm_columns(arm):
+            self.arms[f"eval_{metric}_{arm}"] = summary.get(metric)
 
     def training(self, row: dict) -> None:
         """An update's metrics row (train.py's metrics.csv row)."""
@@ -92,7 +108,8 @@ class ProgressWriter:
             "weakest_missing": ",".join(weakest[1]) if weakest else "",
             "reentries": sum(state.reentries for state in controller.layouts.values()) if controller else 0,
             # The headline measures' evaluation means (eval_<metric>), beside the training means (episode_<metric>).
-            **{f"eval_{metric}": (summary or {}).get(metric) for metric in self.headline},
+            **{f"eval_{metric}": (summary or {}).get(metric) for metric in self.headline
+               if f"eval_{metric}" not in self.arms},
         }
 
     def restore_evaluation(self, tracker, baseline_score: float | None, controller=None) -> None:
@@ -112,5 +129,6 @@ class ProgressWriter:
             "advanced": advanced,
             **{k: v for k, v in self.metrics.items() if k not in ("update", "env_steps")},
             **self.evaluation,
+            **self.arms,
         }
         return write_progress(self.run_dir, fields)

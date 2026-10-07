@@ -326,6 +326,9 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
                 info.Health = unit->GetMaxHealth() ? float(unit->GetHealth()) / float(unit->GetMaxHealth()) : 0.0f;
                 info.Reaction = seat->IsHostileTo(unit) ? -1 : (seat->IsFriendlyTo(unit) ? 1 : 0);
                 info.Centre = { entry.X, entry.Y, entry.Z + 0.5f * entry.Height };
+                info.Guid = unit->GetGUID().GetRawValue();
+                info.Orientation = unit->GetOrientation();
+                info.Dead = !unit->IsAlive();
                 entry.What = info.Id.What;
                 candidates.push_back(candidate);
             }
@@ -340,6 +343,10 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
         info.Id = Classify(FactsOf(seat, go));
         info.Entry = go->GetEntry();
         info.GameObject = true;
+        info.Guid = go->GetGUID().GetRawValue();
+        info.Orientation = go->GetOrientation();
+        info.Open = go->GetGoState() == GO_STATE_ACTIVE;
+        info.Used = info.Open || go->getLootState() != GO_READY;
         GameObjectModel const* model = go->m_model;
         bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
         if (model && model->isEnabled())

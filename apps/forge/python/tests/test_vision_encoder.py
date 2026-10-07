@@ -116,7 +116,7 @@ def test_vision_of_keeps_each_layouts_own_first_column():
     assert [entry and entry["first"] for entry in vision] == [8, 12, None]
     # A manifest with no patch, render sizes or look: patch 4, none, none; and its entity list after the scalars.
     listed = {"first": 8 + SPAN, "slots": SLOTS, "width": FEATURES, "present": 0, "class_column": 1, "type_column": 2,
-              "classes": 32, "type_buckets": 64, "object_column": 3}
+              "classes": 32, "type_buckets": 64, "object_column": 3, "memory_column": 19}
     assert vision[0] == {"first": 8, **{k: v for k, v in IMAGE.items() if k != "transport"}, "image_bytes": BYTES,
                          "patch": 4, "render_sizes": (), "look": (), "look_names": (), "entities": listed,
                          "map": None, "camera_bytes": BYTES}

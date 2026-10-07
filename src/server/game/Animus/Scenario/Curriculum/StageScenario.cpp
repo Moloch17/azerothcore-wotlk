@@ -622,6 +622,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     ConsumablePool::Instance();
 
     AddCoreEpisodeInfo();
+    AddStandInEpisodeInfo();
     for (Encounter* encounter : _rewardOrder)
         encounter->AddEpisodeInfo(_info);
 
@@ -1002,8 +1003,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         SeatState const& state = seat(env, index);
         return state.L ? std::max(state.Apt[Aptitude::DIRECT_HEAL], state.Apt[Aptitude::HOT_HEAL]) : 0.0f;
     });
-    // A party seat left empty this episode reports 0: ignore its row.
-    _info.Add("present", [seat](Env const& env, uint32 index) { return seat(env, index).L ? 1.0f : 0.0f; });
+    // A party seat left empty this episode reports 0: ignore its row. So does the "human" stand-in's seat
+    // (StandIn.h): the script's, not the policy's, so no class's episode and nothing the learner scores.
+    _info.Add("present", [this, seat](Env const& env, uint32 index)
+    {
+        return seat(env, index).L && Data(env).StandInPlay.Seat != int32(index) ? 1.0f : 0.0f;
+    });
     // The episode's arena: its index in stage.json's arenas.
     _info.Add("arena", [this](Env const& env, uint32)
     {
@@ -1302,9 +1307,19 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(seat(env, index).AimlessPresses);
     });
     // The aimless presses by cause (AimlessCause), and the mode changes: what each price is charging.
+    // A sight stage's refused presses only where there is a sight block: the other stages' tables are as they were.
     for (size_t cause = 0; cause < AIMLESS_CAUSES; ++cause)
-        _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
-            uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
+        if (AimlessCause(cause) != AimlessCause::ActRefused || _stage.Has(BlockId::Sight))
+            _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
+                uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
+    // A sight stage's refused presses by why (EntityActions::Refusal): what the act_refused price is charging.
+    if (_stage.Has(BlockId::Sight))
+        for (uint32 refusal = 1; refusal < EntityActions::REFUSALS; ++refusal)
+            _info.Add(std::string("act_refused_") + EntityActions::RefusalName(EntityActions::Refusal(refusal)),
+                [seat, refusal](Env const& env, uint32 index)
+                {
+                    return float(seat(env, index).ActRefusedBy[refusal]);
+                });
     // Of the goals chosen of each kind, the share reached: which kinds the seat can actually finish.
     for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
         _info.Add(std::string("goal_success_") + std::string(GoalName(SeatGoal(kind))), [seat, kind](Env const& env,
@@ -1691,6 +1706,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
                 boost::json::object manifest;
                 GetBlock(id).DescribeManifest(layout, manifest);
                 block["map"] = manifest["map"];
+            }
+            // The seen and remembered list and its pointer presses (dungeon-curriculum I1, I2), for the learner's
+            // sight encoder beside the camera's entity list.
+            if (id == BlockId::Sight)
+            {
+                boost::json::object manifest;
+                GetBlock(id).DescribeManifest(layout, manifest);
+                block["sight"] = manifest["sight"];
             }
             // Its columns by name, where the block names them: a seed follows a column that moved (bootstrap).
             boost::json::array names;
@@ -2224,6 +2247,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
     data.Arena = DrawArena(env.Evaluating);
+    // No stand-in until the seats are built and DrawStandIn says so (a build that fails leaves none).
+    data.StandInPlay = EnvState::StandInSeat();
     // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
     // own map (an instance rung, a quest giver's) still decides later, in BeforeLevel.
     data.EpisodeMapId = _stage.Arenas[data.Arena].MapId;
@@ -2260,8 +2285,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             });
     // Each seat's mental map: kept across this reset KeepShare of the time in training, older by a random offset
     // (amendment 1); never in an evaluation, which starts every seat's map empty so its scores compare. Applied at the
-    // episode's first observation, once the seat's instance is known (ObserveSeat).
-    if (_stage.Has(BlockId::Map))
+    // episode's first observation, once the seat's instance is known (ObserveSeat). Its entity memory (a sight block,
+    // dungeon-curriculum I2) lives by the same roll: a shipped bot keeps both together.
+    if (_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight))
     {
         Vision::MapRunSettings const& maps = Vision::MapCurrent();
         for (SeatState& seat : data.Seats)
@@ -2735,6 +2761,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     StockSeats(env);
     GivePets(env);
     CurrentReset.StockNs += ResetSinceNs(partMark);
+    DrawStandIn(env);
     return true;
 }
 
@@ -3483,8 +3510,16 @@ Unit* Animus::Curriculum::StageScenario::CurrentTarget(Env const& env, uint32 se
 {
     Unit* target = nullptr;
     bool chosen = false;
+    // In a stage with a sight block the seat chooses its own target from what it sees (dungeon-curriculum I1): its
+    // target is its client's selection, never one an encounter picked for it.
+    if (_stage.Has(BlockId::Sight))
+    {
+        Player* bot = env.FindBot(seat);
+        target = bot && bot->IsInWorld() ? Encoding::UnitThrough(*bot, bot->GetTarget()) : nullptr;
+        chosen = true;
+    }
     for (Encounter* encounter : ActiveEncounters(env))
-        if (encounter->SelectTarget(env, seat, target))
+        if (!chosen && encounter->SelectTarget(env, seat, target))
         {
             chosen = true;
             break;
@@ -3545,6 +3580,14 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // Its camera, in a stage with one: the vision block advances it by the decision and renders from it.
     view.Look = _stage.Has(BlockId::Vision) ? &seat.Look : nullptr;
     view.Seen = _stage.Has(BlockId::Vision) ? &seat.Seen : nullptr;
+    // Its entity memory and what the sight block's slots name, in a stage with one (dungeon-curriculum I1, I2).
+    if (_stage.Has(BlockId::Sight))
+    {
+        view.Recall = &seat.Recall;
+        view.RecallKept = seat.RecallKept;
+        view.SightGuids = &seat.SightGuids;
+        view.Focus = &seat.Focus;
+    }
     // Until this episode's client has taken its body from the server, the seat reads the server's (Client::Stop).
     view.Body = seat.Mover.Started() ? &seat.Mover.Body : nullptr;
     view.Facing = seat.Facing;
@@ -3650,8 +3693,9 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     SeatState& seat = Data(env).Seats[seatIndex];
     if (!bot || !seat.L)
         return;
-    // A scripted seat plays the script's press from its observation (ObserveSeat), not the policy's.
-    if (seat.Scripted && seat.ScriptAction >= 0)
+    // A scripted seat plays the script's press from its observation (ObserveSeat), not the policy's; so does the
+    // "human" stand-in (DecideStandIn), whose row the learner only sees as a no-op.
+    if ((seat.Scripted || Data(env).StandInPlay.Seat == int32(seatIndex)) && seat.ScriptAction >= 0)
     {
         action = seat.ScriptAction;
         seat.ScriptAction = -1;
@@ -3822,8 +3866,14 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
         return map ? map + std::size_t(agent) * _spec.MapBytes : nullptr;
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
+    {
         ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
             imageRow(seat), mapRow(seat));
+        // The "human" stand-in decides from its own row, which then leaves the learner a no-op (AgentPresence).
+        if (Data(env).StandInPlay.Seat == int32(seat))
+            DecideStandIn(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
+                imageRow(seat), mapRow(seat));
+    }
     // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
     Data(env).StepReward = nullptr;
 
@@ -3902,8 +3952,9 @@ void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* lay
 void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* present) const
 {
     EnvState const& data = Data(env);
+    // The "human" stand-in's seat is the script's (StandIn.h): the learner neither plays nor trains on its row.
     for (uint32 seat = 0; seat < _seatCount; ++seat)
-        present[seat] = data.Seats[seat].L ? 1 : 0;
+        present[seat] = data.Seats[seat].L && data.StandInPlay.Seat != int32(seat) ? 1 : 0;
 
     // A director is an agent only in the episodes that have one; elsewhere it has nothing to say and earns
     // nothing, so the learner should not train on its row.
@@ -4040,7 +4091,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
     // The mental map at the episode's first look (amendment 1): kept, older by the reset's offset, when the reset
     // rolled it and the seat is on the instance it is of; else started afresh.
-    if (_stage.Has(BlockId::Map) && bot && seat.MapPending)
+    if ((_stage.Has(BlockId::Map) || _stage.Has(BlockId::Sight)) && bot && seat.MapPending)
     {
         seat.MapPending = false;
         bool const same = seat.MapMapId == bot->GetMapId() && seat.MapInstanceId == bot->GetInstanceId();
@@ -4050,6 +4101,13 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         else
             seat.Map.Clear();
         seat.Map.Configure(Vision::MapCurrent().Caps);
+        // Entity memory by the same roll and offset (I2): every sighting in it ages as the map's looks do.
+        seat.Recall.Configure(Vision::MemoryCurrent());
+        seat.RecallKept = seat.MapKeep && same && seat.Recall.Count() > 0;
+        if (seat.RecallKept)
+            seat.Recall.Advance(seat.MapAgeOffset);
+        else
+            seat.Recall.Clear();
         seat.MapMapId = bot->GetMapId();
         seat.MapInstanceId = bot->GetInstanceId();
     }
@@ -4559,6 +4617,7 @@ char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
         case AimlessCause::CastSight:        return "cast_sight";
         case AimlessCause::CastMoving:       return "cast_moving";
         case AimlessCause::CastPower:        return "cast_power";
+        case AimlessCause::ActRefused:       return "act_refused";
         case AimlessCause::Count:            break;
     }
     return "unknown";
@@ -4593,6 +4652,7 @@ namespace
             case AimlessCause::CastSight:
             case AimlessCause::CastMoving:
             case AimlessCause::CastPower:        return tuning.AimlessCastFailed;
+            case AimlessCause::ActRefused:       return tuning.AimlessActRefused;
             case AimlessCause::Count:            break;
         }
         return tuning.Aimless;
@@ -4657,6 +4717,20 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
             ++seat.AimlessBy[size_t(failed)];
             return;
         }
+    }
+
+    // A sight block press the world refused (dungeon-curriculum I1): a remembered entity gone or out of reach, the
+    // wrong kind of thing, no key item, a cast refused. Offered rather than masked, so this charge is how the seat
+    // learns to go to a thing before it uses it, whatever the goal.
+    if (*block == BlockId::Sight && result.ActRefused && result.ActRefused < EntityActions::REFUSALS)
+    {
+        ++seat.ActRefusedBy[result.ActRefused];
+        ++seat.JudgedPresses;
+        ++seat.StepAimless;
+        ++seat.AimlessPresses;
+        ++seat.StepAimlessBy[size_t(AimlessCause::ActRefused)];
+        ++seat.AimlessBy[size_t(AimlessCause::ActRefused)];
+        return;
     }
 
     auto const chargeRepeat = [&seat]

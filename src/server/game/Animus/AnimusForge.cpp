@@ -161,6 +161,8 @@ void AnimusForge::Forge::OnStartup()
     Animus::Vision::Configure(_config.Vision);
     // The mental map's caps and persistence (perception-goals REDESIGN §3), for every seat a map block gives one.
     Animus::Vision::ConfigureMap(_config.Map);
+    // Entity memory's cap (dungeon-curriculum I2), for every seat a sight block gives one.
+    Animus::Vision::ConfigureMemory(_config.Memory);
     // The render sizes, each with its share of the draw.
     std::string renderSizes;
     float weightSum = 0.0f;
@@ -2799,6 +2801,8 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
         return false;
 
     bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
+    // The "with the human stand-in" arm: set before the evaluation's first episodes are built, cleared by training.
+    _pool->SetEvaluationStandIn(mode.Mode == 1 && (mode.Flags & MODE_FLAG_STAND_IN) != 0);
     _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly, mode.FirstSeed);
 
     if (mode.Mode == 1)
