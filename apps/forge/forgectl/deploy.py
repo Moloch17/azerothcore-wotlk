@@ -51,8 +51,9 @@ def pull_script(config: Config, machine: Machine) -> str:
 
 
 def local_build_script(config: Config, machine: Machine) -> str:
-    return (f"set -e\ncd {remote.sh_path(machine.path)}\necho \"T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n"
-            "mkdir -p env/dist\ntouch env/dist/.forge-build\ndocker compose up -d --force-recreate ac-worldserver 2>&1\n")
+    return (f"set -e\ncd {shlex.quote(str(config.repo_root))}\necho \"T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n"
+            "mkdir -p env/dist\ntouch env/dist/.forge-build\n"
+            "docker compose up -d --force-recreate ac-worldserver 2>&1\n")
 
 
 def ready_script(config: Config, sha: str, t0: str) -> str:
@@ -99,7 +100,8 @@ def report(outcomes: list[Outcome], sha: str) -> int:
                for o in outcomes]))
     bad = [o.machine.name for o in outcomes if not o.ok]
     if bad:
-        say(f"NOT READY on {sha[:9]}: {', '.join(bad)}. Nothing was skipped silently; look at `forgectl logs <machine>` "
+        say(f"NOT READY on {sha[:9]}: {', '.join(bad)}. Nothing was skipped silently; look at "
+            "`forgectl logs <machine>` "
             "and run `forgectl build --cluster` again (a machine already on the revision just rebuilds).")
         return 1
     say(f"All {len(outcomes)} machines are ready on {sha[:9]}.")
@@ -175,14 +177,15 @@ def set_host_in_toml(text: str, host: str) -> str:
 
 def move_plan(config: Config, new: Machine, stage: str | None) -> list[str]:
     old = config.host
+    others = ", ".join(m.name for m in config.cluster if m.name != new.name)
     lines = [
         f"cancel the plan on {old.name} (and the workers) and wait for 'Plan ended: cancelled'",
         (f"copy runs/{stage} (without camera/ and tb/) from {old.name} to {new.name}; an existing runs/{stage} on "
          f"{new.name} is renamed, not overwritten" if stage else
          "copy no run directory (no stage given: only the roles move)"),
-        f"set {new.name} to Role = \"host\", Host = \"\" and every other machine ({', '.join(m.name for m in config.cluster if m is not new and m.name != new.name)}) "
-        f"to Role = \"worker\", Host = \"{new.address}:{config.control_port}\" in its mod_animus_forge.conf (timestamped "
-        "backups)",
+        f"set {new.name} to Role = \"host\", Host = \"\" and every other machine ({others}) "
+        f"to Role = \"worker\", Host = \"{new.address}:{config.control_port}\" in its mod_animus_forge.conf "
+        "(timestamped backups)",
         "pull and rebuild every machine in the cluster (the roles need a worldserver restart), waiting for each",
         f"edit host = \"{new.name}\" in {config.file}; commit and push that file afterwards",
     ]
@@ -219,7 +222,8 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
 
         if stage:
             say(f"[2/6] copy runs/{stage} {old.name} -> {new.name}")
-            existing = remote.on(new, f"test -e {remote.sh_path(run_dir(config, new, stage))} && echo yes\n", timeout=30)
+            there = remote.sh_path(run_dir(config, new, stage))
+            existing = remote.on(new, f"test -e {there} && echo yes\n", timeout=30)
             if existing.out.strip() == "yes":
                 aside = time.strftime("%Y%m%d-%H%M%S")
                 remote.on(new, f"mv {remote.sh_path(run_dir(config, new, stage))} "
@@ -233,7 +237,8 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
         say("[3/6] roles and host in every machine's conf")
         stamp = time.strftime("%Y%m%d-%H%M%S")
         for machine in config.cluster:
-            role, host = ("host", "") if machine.name == new.name else ("worker", f"{new.address}:{config.control_port}")
+            role, host = ("host", "") if machine.name == new.name else (
+                "worker", f"{new.address}:{config.control_port}")
             backup = confsync.rewrite(config, machine, lambda text: confsync.set_cluster_role(text, role, host), stamp)
             say(f"  {machine.name}: Role = {role}; backup {backup}")
         done.append("confs")

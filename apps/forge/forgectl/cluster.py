@@ -26,9 +26,11 @@ echo "age=$(( $(date +%s) - $(stat -c %Y "$L" 2>/dev/null || echo 0) ))"
 echo "load=$(cut -d' ' -f1 /proc/loadavg) cpus=$(nproc)"
 echo "disk_kb=$(df -Pk . | awk 'NR==2{{print $4}}')"
 if command -v rocm-smi >/dev/null 2>&1; then
-  echo "gpu=$(rocm-smi --showmeminfo vram 2>/dev/null | awk '/Total Memory \(B\)/{{t=$NF}} /Total Used Memory \(B\)/{{u=$NF}} END{{if(t > 0) printf "%d/%d MiB", u/1048576, t/1048576}}')"
+  echo "gpu=$(rocm-smi --showmeminfo vram 2>/dev/null | awk '/Total Memory \(B\)/{{t=$NF}} \
+/Total Used Memory \(B\)/{{u=$NF}} END{{if(t > 0) printf "%d/%d MiB", u/1048576, t/1048576}}')"
 elif command -v nvidia-smi >/dev/null 2>&1; then
-  echo "gpu=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | awk -F, '$2 > 0 {{printf "%d/%d MiB", $1, $2}}')"
+  echo "gpu=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null \
+    | head -1 | awk -F, '$2 > 0 {{printf "%d/%d MiB", $1, $2}}')"
 fi
 """
 

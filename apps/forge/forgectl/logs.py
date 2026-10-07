@@ -21,10 +21,11 @@ tail -n 200 {errors_log} 2>/dev/null
 echo "##LEARNER"
 tail -c 4000000 {learner_log} 2>/dev/null | grep -a -v '^update [0-9]* | steps' | tail -n {tail} | cut -c1-600
 echo "##LASTUPDATE"
-tail -c 400000 {learner_log} 2>/dev/null | grep -a '^update [0-9]* | steps' | tail -1 
+tail -c 400000 {learner_log} 2>/dev/null | grep -a '^update [0-9]* | steps' | tail -1
 """
 
-TITLES = {"WORLDSERVER": "worldserver (docker logs)", "ERRORS": "Errors.log", "LEARNER": "learner log (the update lines left out)"}
+TITLES = {"WORLDSERVER": "worldserver (docker logs)", "ERRORS": "Errors.log",
+          "LEARNER": "learner log (the update lines left out)"}
 
 
 def split_sections(out: str) -> dict[str, list[str]]:

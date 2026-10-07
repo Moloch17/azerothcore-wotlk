@@ -276,7 +276,8 @@ def fake_console(tmp_path, monkeypatch):
     marker = tmp_path / "marker"
 
     def use(mode):
-        monkeypatch.setattr(console, "attach_argv", lambda config, machine: [sys.executable, str(script), str(marker), mode])
+        monkeypatch.setattr(console, "attach_argv",
+                            lambda config, machine: [sys.executable, str(script), str(marker), mode])
         return marker
     return use
 
@@ -431,7 +432,8 @@ def test_learner_line_parsing_and_headline():
 
 def test_status_prints_the_console_table_and_the_learner_line(cfg, sent, fake, capsys):
     sent.replies["forge status"] = ["Forge: move2_seek | training", "  learner connected"]
-    fake.when(on_target("192.168.0.68", "update"), Result(0, "update 5 | steps 10 | 7 sps | rollout 1s | entropy 0.5\n"))
+    update = "update 5 | steps 10 | 7 sps | rollout 1s | entropy 0.5\n"
+    fake.when(on_target("192.168.0.68", "update"), Result(0, update))
     assert stage.status(cfg) == 0
     out = capsys.readouterr().out
     assert "Forge: move2_seek" in out and "learner (sarah): update 5" in out and "entropy 0.5" in out
@@ -455,7 +457,8 @@ def test_logs_command_puts_problems_before_the_recent_lines(cfg, fake, capsys):
     fake.when(lambda argv, input: True, Result(0, out))
     assert logs.run(cfg, "thomas", errors_only=False, lines=10, wide=False) == 0
     text = capsys.readouterr().out
-    assert text.index("PROBLEMS") < text.index("Convergence is slow") < text.index("== worldserver (docker logs): the last")
+    recent = text.index("== worldserver (docker logs): the last")
+    assert text.index("PROBLEMS") < text.index("Convergence is slow") < recent
     assert "KeyError: 3" in text and "learner (thomas): update 7" in text
     capsys.readouterr()
     logs.run(cfg, None, errors_only=True, lines=10, wide=False)
@@ -589,7 +592,8 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 class FakeCluster:
-    """The machines' side of a deploy: pull scripts answer with T0, the ready poll succeeds after `ready_after` polls."""
+    """The machines' side of a deploy: pull scripts answer with T0, the ready poll succeeds after `ready_after`
+    polls."""
 
     def __init__(self, fake, ready_after=None, pull_fail=(), unreachable=()):
         self.polls, self.pulled = {}, []
@@ -692,12 +696,14 @@ def moves(cfg, monkeypatch, tmp_path):
     toml.write_text(CLUSTER_TOML.read_text())
     moved_cfg = dataclasses.replace(cfg, file=toml)
     monkeypatch.setattr(deploy, "deploy_state", lambda config: ("forge", SHA))
-    monkeypatch.setattr(deploy.stage_commands, "send_checked",
-                        lambda config, machine, line, timeout=25: console.ConsoleResult(["Forge: move2_seek | training"], True, True))
-    monkeypatch.setattr(deploy.stage_commands, "run",
-                        lambda config, action, stages, yes: steps.append(("stage", config.host_name, action, tuple(stages))) or 0)
-    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None: steps.append(("wait", machine.name, pattern)) or "ok line")
-    monkeypatch.setattr(deploy, "copy_run", lambda config, old, new, stage: steps.append(("copy", old.name, new.name, stage)))
+    monkeypatch.setattr(deploy.stage_commands, "send_checked", lambda config, machine, line, timeout=25:
+                        console.ConsoleResult(["Forge: move2_seek | training"], True, True))
+    monkeypatch.setattr(deploy.stage_commands, "run", lambda config, action, stages, yes:
+                        steps.append(("stage", config.host_name, action, tuple(stages))) or 0)
+    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None:
+                        steps.append(("wait", machine.name, pattern)) or "ok line")
+    monkeypatch.setattr(deploy, "copy_run", lambda config, old, new, stage:
+                        steps.append(("copy", old.name, new.name, stage)))
     monkeypatch.setattr(deploy.confsync, "rewrite",
                         lambda config, machine, transform, stamp: steps.append(("conf", machine.name, transform("")))
                         or "backup")
@@ -756,8 +762,8 @@ def test_move_host_stops_at_the_failed_step_and_says_what_was_done(moves, monkey
 
 def test_move_host_skips_the_cancel_on_an_idle_host_and_the_copy_without_a_stage(moves, monkeypatch):
     cfg, steps, _ = moves
-    monkeypatch.setattr(deploy.stage_commands, "send_checked",
-                        lambda config, machine, line, timeout=25: console.ConsoleResult(["Animus Forge is idle"], True, True))
+    monkeypatch.setattr(deploy.stage_commands, "send_checked", lambda config, machine, line, timeout=25:
+                        console.ConsoleResult(["Animus Forge is idle"], True, True))
     assert deploy.move_host(cfg, "thomas", None, yes=True, timeout_minutes=5) == 0
     assert not any(s[0] in ("copy", "ended") for s in steps) and steps[-1][0] == "build"
 
@@ -862,7 +868,7 @@ def test_the_test_script_is_tracked_and_executable():
 # ---- videos, ui and the command line ---------------------------------------------------------------------------------
 
 def test_videos_wraps_collect_videos_with_the_clusters_workers(cfg):
-    command = videos.argv(cfg, "move2_seek", "check", on_host=True)
+    command = videos.argv(cfg, "move2_seek", "check")
     assert command[0] == videos.SCRIPT and "--check" in command and command[-1] == "move2_seek"
     workers = command[command.index("--workers") + 1]
     assert workers == "spencer@192.168.0.66 thomas@192.168.0.67 moloch@192.168.0.117"
@@ -872,9 +878,18 @@ def test_videos_wraps_collect_videos_with_the_clusters_workers(cfg):
 
 def test_videos_on_host_runs_the_script_on_the_host(cfg, fake, capsys):
     fake.when(lambda argv, input: True, Result(0, "Done: 0 of 3 workers failed\n"))
-    assert videos.run(cfg, "move2_seek", check=False, dry_run=False, on_host=True) == 0
+    assert videos.run(cfg, "move2_seek", check=False, dry_run=False, on_host=True, yes=True) == 0
     argv, script, _ = fake.calls[0]
     assert argv[0] == "ssh" and "192.168.0.68" in " ".join(argv) and "./apps/forge/tools/collect-videos.sh" in script
+
+
+def test_videos_copy_asks_first_but_check_does_not(cfg, fake, monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert videos.run(cfg, "move2_seek", check=False, dry_run=False, on_host=True) == 1
+    assert fake.calls == []
+    fake.when(lambda argv, input: True, Result(0, "listing\n"))
+    assert videos.run(cfg, "move2_seek", check=True, dry_run=False, on_host=True) == 0
+    assert "--check" in fake.calls[0][1]
 
 
 def test_confirm_with_yes_does_not_ask(monkeypatch, capsys):

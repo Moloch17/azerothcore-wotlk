@@ -1,4 +1,5 @@
-"""forgectl: operate the forge cluster. Run `./forgectl --help` (or `python3 -m forgectl`, with apps/forge on the path)."""
+"""forgectl: operate the forge cluster. Run `./forgectl --help` (or `python3 -m forgectl` with apps/forge on the
+path)."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +11,8 @@ from .ui import Failure, say
 
 DESCRIPTION = """forgectl operates the forge training cluster from one place. The machines, the host and the ports come
 from apps/forge/cluster.toml. Every command says what it is about to do and what happened, exits non-zero on failure,
-and asks before it changes anything on a machine (--yes answers for you). Nothing here uses a password: ssh keys only."""
+and asks before it changes anything on a machine (--yes answers for you). Nothing here uses a password: ssh keys
+only."""
 
 EXAMPLES = """examples:
   forgectl cluster                    which machines are up, on which revision, and whether the learners step
@@ -87,6 +89,7 @@ def parser() -> argparse.ArgumentParser:
     vd.add_argument("--check", action="store_true", help="list what each worker would send; copy nothing")
     vd.add_argument("--dry-run", action="store_true", help="print the commands; connect to nothing")
     vd.add_argument("--on-host", action="store_true", help="run on the host (where the run is) instead of here")
+    vd.add_argument("--yes", action="store_true", help="do not ask before copying")
     return main
 
 
@@ -108,7 +111,7 @@ def dispatch(args, config) -> int:
     if args.command == "test":
         return testcmd.run(config, args.tree, args.build_dir, args.gpu, args.jobs)
     if args.command == "videos":
-        return videos.run(config, args.stage, args.check, args.dry_run, args.on_host)
+        return videos.run(config, args.stage, args.check, args.dry_run, args.on_host, args.yes)
     raise Failure(f"unknown command {args.command}")
 
 

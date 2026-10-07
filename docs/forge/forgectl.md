@@ -88,8 +88,8 @@ forgectl stage cancel                 stop; the learner saves latest.pt, so a ca
 forgectl stage status                 same as forgectl status without the learner line
 ```
 
-`start` and `resume` go to the host. **`pause` and `cancel` go to the host and then to every worker's console over ssh**,
-because the host's pause does not reach the workers today. The plan lists each machine before it asks. Each machine's
+`start` and `resume` go to the host. **`pause` and `cancel` go to the host and then to every worker's console over
+ssh**, because the host's pause does not reach the workers today. The plan lists each machine before it asks. Each machine's
 reply is printed under its name; a machine that does not answer is named and the exit code is 1 (the others still
 got the command). If the host does not answer, the workers are left alone. For `pause`/`cancel` a stage name is
 optional; if you give one it must be the one running (`pause` and `cancel` act on the whole plan).
@@ -110,7 +110,8 @@ problems; `--lines N` (default 40); `--wide` does not cut long lines. The defaul
 
 ## `forgectl build [--cluster]`
 
-- `forgectl build`: on this machine, `touch env/dist/.forge-build` and recreate the worldserver container (which
+- `forgectl build`: in the checkout forgectl is run from, `touch env/dist/.forge-build` and recreate the
+  worldserver container (which
   recompiles the checkout with `-march=native`), then wait for its `ready` line. Asks first.
 - `forgectl build --cluster`: checks this checkout is on the cluster branch (`forge`), **pushes it to the lan remote**,
   then runs `apps/forge/tools/cluster-pull.sh` on every machine in the cluster **in parallel**, and waits for each to

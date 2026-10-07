@@ -7,25 +7,32 @@ import subprocess
 
 from . import remote
 from .config import Config
-from .ui import Failure, say
+from .ui import Declined, Failure, confirm, say
 
 SCRIPT = "apps/forge/tools/collect-videos.sh"
+MODES = {"copy": [], "check": ["--check"], "dry-run": ["--dry-run"]}
 
 
-def argv(config: Config, stage: str, mode: str, on_host: bool) -> list[str]:
+def argv(config: Config, stage: str, mode: str) -> list[str]:
     """The script's command line. It is run on the machine that holds the run (the host), where it copies the
     workers' videos into runs/<stage>/videos/from-<worker>/."""
     workers = " ".join(w.target for w in config.workers)
-    command = [SCRIPT, *({"copy": [], "check": ["--check"], "dry-run": ["--dry-run"]}[mode]), "--workers", workers,
-               "--runs-dir", config.paths["runs"], stage]
-    return command
+    return [SCRIPT, *MODES[mode], "--workers", workers, "--runs-dir", config.paths["runs"], stage]
 
 
-def run(config: Config, stage: str, check: bool, dry_run: bool, on_host: bool) -> int:
+def run(config: Config, stage: str, check: bool, dry_run: bool, on_host: bool, yes: bool = False) -> int:
     if not re.match(r"^[A-Za-z0-9_]+$", stage):
         raise Failure(f"{stage!r} is not a stage name")
     mode = "check" if check else "dry-run" if dry_run else "copy"
-    command = argv(config, stage, mode, on_host)
+    command = argv(config, stage, mode)
+    where = config.host.name if on_host else "this machine"
+    if mode == "copy":
+        try:
+            confirm([f"copy each worker's runs/{stage}/videos/ into {where}'s run folder, under "
+                     f"videos/from-<worker>/ ({', '.join(w.name for w in config.workers)})"], yes)
+        except Declined as declined:
+            say(f"Nothing was copied ({declined}).")
+            return 1
     if on_host:
         host = config.host
         say(f"Running {SCRIPT} on {host.name}, which holds the run ({mode}) ...")

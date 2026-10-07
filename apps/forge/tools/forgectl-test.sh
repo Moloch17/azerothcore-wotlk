@@ -61,9 +61,12 @@ eval "$link" > "$B.link.log" 2>&1 || { echo "FATAL link failed"; tail -5 "$B.lin
 echo "STEP run the GTests"
 ./unit_tests > "$B.unit.log" 2>&1
 echo "UNIT_EXIT $?"
-grep -aE "^\[==========\] [0-9]+ tests? from .* ran|^\[  PASSED  \]|^\[  SKIPPED \] [0-9]+ test|^\[  FAILED  \] [0-9]+ test" \
+grep -aE "^\[==========\] [0-9]+ tests? from .* ran|^\[  PASSED  \]|^\[  SKIPPED \] [0-9]+ test" \
   "$B.unit.log" | sed 's/^/UNIT_LINE /'
-grep -aE "^\[  FAILED  \] [A-Za-z0-9_./]+" "$B.unit.log" | grep -avE "^\[  FAILED  \] [0-9]+ test" | sort -u | head -50 \
+grep -aE "^\[  FAILED  \] [0-9]+ test" \
+  "$B.unit.log" | sed 's/^/UNIT_LINE /'
+grep -aE "^\[  FAILED  \] [A-Za-z0-9_./]+" "$B.unit.log" | grep -avE "^\[  FAILED  \] [0-9]+ test" \
+  | sort -u | head -50 \
   | sed 's/^\[  FAILED  \] //; s/ (.*//; s/^/UNIT_FAILED /'
 
 echo "STEP run the CPU pytest"
