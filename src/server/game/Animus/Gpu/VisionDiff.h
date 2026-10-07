@@ -67,7 +67,8 @@ namespace Animus::GpuVision
     /// N frames round (x, y, z): positions jittered within `radius` (each set on the floor there, when there is
     /// one), yaw, camera yaw, pitch and zoom random, the render size cycling through RenderSizes and the canonical
     /// size, up to `units` random units round the feet (and the seat's own, which a ray never sees), up to `boxes`
-    /// colliderless game objects (boxes of random size, turned at random), the `doors` the scene has, all of them
+    /// colliderless game objects (boxes of random size, turned at random; a quarter of them open doors, the band
+    /// Vision::OpenDoorBox leaves, of the door class), the `doors` the scene has, all of them
     /// numbered nearest the head first as GatherSight numbers them, and mostly an objective.
     [[nodiscard]] std::vector<DiffFrame> RandomFrames(Vision::VisionWorld const& world,
         Vision::Settings const& settings, float x, float y, float z, uint32_t count, float radius,

@@ -198,6 +198,13 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
                 box.High[i] = i == 2 ? 2.0f * half : half;
             }
             box.What = Vi::Class(urand(uint32_t(Vi::Class::Chest), uint32_t(Vi::Class::OtherObject)));
+            // A quarter of them an open door (M3 interact): the band at the top of its frame, of the door class, as
+            // GatherSight draws one, so both casters are held to the same open doors.
+            if (urand(0, 3) == 0)
+            {
+                box = Vi::OpenDoorBox(box);
+                box.What = Vi::Class::Door;
+            }
             frame.Boxes.push_back(box);
         }
         frame.Doors.assign(doors.begin(), doors.end());
