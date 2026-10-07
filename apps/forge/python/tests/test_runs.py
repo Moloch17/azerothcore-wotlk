@@ -80,3 +80,25 @@ def test_resume_refuses_changed_shapes():
     now = spec_dict(state_dim=7, layouts=({"name": "warrior_dps", "obs_dim": 11, "num_actions": 4},))
 
     assert resume_mismatch(saved, now) == ["state_dim", "layouts"]
+
+
+def test_a_rungs_best_is_copied_outside_the_checkpoint_rotation(tmp_path):
+    from animus.runs import archive_rung_best, rung_best_name
+    (tmp_path / "best.pt").write_bytes(b"rung0")
+    kept = archive_rung_best(tmp_path, "fade", 0)
+    assert kept == tmp_path / "best_rung0.pt" and kept.read_bytes() == b"rung0"
+    (tmp_path / "best.pt").write_bytes(b"rung1")        # the next rung's first evaluation overwrites best.pt
+    assert kept.read_bytes() == b"rung0"
+    assert archive_rung_best(tmp_path, "costs", 2).name == rung_best_name("costs", 2) == "best_costs_rung2.pt"
+    assert list(tmp_path.glob("*.partial")) == []
+    for update in range(8):
+        (tmp_path / f"checkpoint_{update:06d}.pt").write_bytes(b"x")
+    prune_checkpoints(tmp_path, 3)
+    assert len(list(tmp_path.glob("checkpoint_*.pt"))) == 3
+    assert (tmp_path / "best_rung0.pt").exists() and (tmp_path / "best_costs_rung2.pt").exists()
+
+
+def test_a_rung_exit_with_no_best_to_copy_is_tolerated(tmp_path):
+    from animus.runs import archive_rung_best
+    assert archive_rung_best(tmp_path, "fade", 0) is None
+    assert list(tmp_path.iterdir()) == []

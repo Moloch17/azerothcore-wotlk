@@ -42,3 +42,30 @@ def test_either_name_falls_back_to_the_other_and_other_paths_are_taken_as_given(
     named.write_text("x")
     assert init_from_checkpoint(str(named)) == named
     assert init_from_checkpoint(str(tmp_path / "missing.pt")) is None
+
+
+def test_every_live_yaml_seeds_from_latest_and_a_typo_is_refused():
+    """The next stage starts from what the last one ended with, never from best.pt, which on a gate-stepped ladder is only
+    the best at the stage's current rung. No yaml overrides the default, and no yaml hands init_from or merge_from a
+    path other than the chain's (which init_from_checkpoint turns into latest.pt)."""
+    configs = sorted((Path(__file__).resolve().parents[1] / "configs").glob("*.yaml"))
+    assert len(configs) >= 12
+    for path in configs:
+        config = TrainConfig.load(path)
+        assert config.seed_from == "latest", path.name
+        assert config.init_from in ("auto", "") and config.merge_from in ("auto", ""), path.name
+    with pytest.raises(ValueError, match="seed_from"):
+        TrainConfig(seed_from="bset")
+    TrainConfig(seed_from="best")
+
+
+def test_the_seeding_code_reads_the_named_file_of_the_chains_best_pt_names(run, monkeypatch):
+    """The chain names <stage>/best.pt; with seed_from latest the file actually loaded is latest.pt."""
+    from animus import train
+    loaded = []
+    monkeypatch.setattr(train, "load_parent", lambda path: loaded.append(Path(path).name) or {"spec": {"layouts": []}})
+    config = TrainConfig()
+    candidates = [str(run / "best.pt")]
+    path, _ = train.TrainingRun.seed_candidate(candidates, config.seed_from, None, auto=False)
+    assert path.name == "latest.pt" and loaded == ["latest.pt"]
+    assert train.init_from_checkpoint(candidates[0], config.seed_from).name == "latest.pt"

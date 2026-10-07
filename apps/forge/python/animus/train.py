@@ -63,7 +63,8 @@ from .style import HumanWindows, StyleReward, startup_line as style_line
 STALL_KL = 0.0015
 STALL_WINDOW = 10
 STALL_MIN_UPDATES = 20
-from .runs import FINISHED_FILE, archive_run, prune_checkpoints, resume_checkpoint_path, resume_mismatch
+from .runs import (FINISHED_FILE, archive_run, archive_rung_best, prune_checkpoints, resume_checkpoint_path,
+                   resume_mismatch)
 from .stage import ADVANCE, ConvergenceController, Outcome, restore_evaluation_state
 from .stages import STAGE_FILE, arena_names, layout_changes, load_stage
 from .device import host
@@ -851,7 +852,7 @@ class TrainingRun:
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
             "approx_kl_move", "epochs_done", "minibatches_done",
-            "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
+            "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "ladder_stalled", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
             "stand_in_unfielded",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
@@ -1463,9 +1464,19 @@ class TrainingRun:
                 print(f"{config.run_name}: {controller.fade_message}", flush=True)
             if controller.fade.alarm:
                 print(f"{config.run_name}: {controller.fade.alarm}", flush=True)
+            if controller.fade.stall_alarm:
+                print(f"{config.run_name}: {controller.fade.stall_alarm}", flush=True)
 
             if improved:
                 self._save(self.best_path)
+            # A gate-stepped ladder left a rung at this evaluation: best.pt is now the best of that rung (this
+            # evaluation's save is in), and the next rung's first evaluation will overwrite it. Keep it before
+            # anything else (latest.pt is saved later) can record the step.
+            for ladder, rung in controller.rung_exits:
+                kept = archive_rung_best(self.run_dir, ladder, rung, self.best_path)
+                print(f"{config.run_name}: kept {kept.name if kept else 'nothing'} -- the best of the {ladder} "
+                      f"ladder's rung {rung}, which the next rung's evaluations will not overwrite", flush=True)
+            if improved:
                 if self.cast is not None and self.cast.pool is not None and config.cast.opponents == LEAGUE:
                     if league_snapshot(self.run_dir, self.best_path, f"best_{self.env_steps}") is not None:
                         self.cast.pool.reload()
@@ -2275,6 +2286,8 @@ class TrainingRun:
             "cost_scale": self.cost_scale_now,
             # The collapse alarm: the shaping ladder's rung while its gate has collapsed there, else -1 (forge status).
             "ladder_collapsed": float(self.controller.fade.rung) if self.controller.fade.collapsed else -1.0,
+            # The stall warning likewise: the rung whose gate metric has sat flat, else -1.
+            "ladder_stalled": float(self.controller.fade.rung) if self.controller.fade.stalled else -1.0,
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **(self.partners.stats() if self.partners is not None else {}),

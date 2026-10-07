@@ -601,6 +601,52 @@ A new best score saves `best.pt`.
   allows neither a plateau nor a converged class. A checkpoint carries the rung it was last re-baselined at
   (`baselined`); one saved before that, above rung 0, is dropped the same way on resume. Plateau-stepped ladders (M1,
   the cost ladders) are untouched.
+- **A gate-stepped ladder raises two warnings and acts on neither** (`ShapingFade._watch_collapse`, `_watch_stall`):
+  *collapsed* (the gate metric under a floor for 3 evaluations; `ladder_collapsed` in progress.json) and *stalled*
+  (the gate metric at the rung has not beaten its own best at the rung by more than its standard error for
+  `fade.stall_evals` = 6 evaluations running and `fade.stall_env_steps` = 20M env steps; `ladder_stalled`, the rung or
+  -1). A flat rung is not a collapse: M2's doorway sat at ~35% for 30M steps and raised nothing. The standard error is
+  the summary's `<metric>_stderr` if it has one, else the binomial estimate over the summary's episode count, else
+  0.02. One line in the learner's log, one row in `forge status`, cleared when the best improves; the last rung is not
+  watched. **Recovery is a restore, so each rung's best is kept:** when a gate-stepped ladder leaves rung k, the
+  trainer copies `best.pt` (the best of the rung being left, the stepping evaluation's save included) to
+  `best_rung<k>.pt` in the run directory, before the new rung's first evaluation can overwrite `best.pt` and before
+  `latest.pt` records the step. The file is outside the `keep_checkpoints` rotation; a resume needs none of them.
+  `best.pt` itself stays "the best at the current rung". The sim-side wing ladder has the collapse alarm only: its reads are probe counts, with no env-step clock to
+  hold a stall against.
+
+### Which ladders each gate-stepped stage has, and what the evaluation plays
+
+Every stage below steps its learner fade on `fade.gate_metric` alone (`require_plateau: false`; M1's is a plateau
+ladder and is untouched by the re-baseline). The learner's fade rung reaches the sim as the shaping scale
+(`encode_progress`, `train.py` after every update). Four encounters (Sight, Seek, Interact, PartyFollow) also read that
+scale to choose their difficulty rung, so for M1-M4 **the fade rung is the sim rung**. Every other sim ladder steps in the
+sim, on the sim's own probes or win windows, and the learner is never told about it as a fade step.
+
+| Stage | Learner ladders | Sim ladder (rung column) | Fade = sim rung? | What the evaluation plays |
+|---|---|---|---|---|
+| M1 `move1_controls` | fade, one rung, plateau-stepped | compass withholding (`compass_rung`) | yes | the training rung's withhold chance |
+| M2 `move2_seek` | fade 1/.5/.25/0 on `found` | seek rung (`seek_rung`, `at_top_rung`) | yes | seeded rooms of the **training rung**; held-out sweep at the deepest rung |
+| M3 `move3_interact` | fade 1/.5/0 on `right_object` | `interact_rung` | yes | the **training rung**; held-out sweep cycles every rung |
+| M4 `move4_follow` | fade on `follow_kept_share` | `difficulty`, `at_top_rung` | yes | the **training rung** |
+| C1-C3 `combat1..3` | fade on `won` / `won` / `survived`, `moving_classes: 1000` | per-class `DifficultyLadder` (`combat_rung`, `difficulty`, `at_top_rung`), steps on the class's own win window | no: the fade only scales shaping | seeds **spread over all rungs** (`DifficultyLadder.cpp`, `pick.Tier = seed / pairs % (maxTier + 1)`), whatever the training rung |
+| G1 `group1_roles` | fade on `won` | roles `DifficultyLadder` (`roles_rung`) | no | spread over all rungs |
+| G2 `group2_corridor` | fade on `cleared` | wing ladder (`wing_rung`), probe-stepped on the host | no | **fixed at the last wing rung** (`InstanceEncounter.cpp`, `fight.Rung = Evaluating ? last : WingRungNow()`) |
+| D1 `dungeon1_pulls` | fade on `cleared` | pull-drill ladder (`pull_rung`, 30/22/14/0 yd gaps) and the wing ladder | no | drill **fixed at the last gap**, every pack of the route; wing rung last |
+| D2 `dungeon2_ragefire` | fade on `full_clear` | wing ladder | no | fixed last rung; Wailing Caverns held out |
+| D3 `dungeon3_deadmines` | fade on `bar_clear` | wing ladder | no | fixed last rung ("the bar") |
+
+No stage has the cost ladder on (`costs.enabled: false` throughout).
+
+**The evaluation's difficulty follows a ladder only where the learner's fade is that ladder** (M2-M4, and M1's fade),
+and the learner moves those, so `rebaseline()` hears every step. No stage evaluates at the current rung of a sim-side
+ladder that moves by itself: the per-class ladders are swept, the wing and pull-drill ladders are evaluated at their
+last rung. The moving `wing_rung` and `pull_rung` appear only in training episode info (the evaluation reports a
+constant), and the learner reads only `difficulty` and `at_top_rung` from it, for the `top_rung` convergence signal and
+`ladders_settled`, never for a fade step or an evaluation condition. So there is no stage where the evaluation score
+shifts at a sim rung change the learner did not take as a fade step, and no extra re-baseline is needed. One consequence
+to know: a stage whose `convergence.top_rung` waits on a wing ladder in training (D2, D3) is blocked, with only the
+collapse alarm to say so, if that ladder stalls.
 
 ### The convergence rule (`stage.py`)
 

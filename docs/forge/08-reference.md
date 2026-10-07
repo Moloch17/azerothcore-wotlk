@@ -348,7 +348,8 @@ A flat object rewritten after every update and evaluation. Fields include:
 | `league/<tag>.pt` | Every `cast.snapshot_every_env_steps` and improved best | The league's snapshots of this run |
 | `checkpoint_<update>.pt` | Every `checkpoint_every` | Newest `keep_checkpoints` kept |
 | `latest.pt` | Checkpoints and finish | Resume point |
-| `best.pt` | Each new best evaluation | Seed for later stages, export default |
+| `best.pt` | Each new best evaluation | Seed for later stages, export default. On a gate-stepped ladder it is the best **at the current rung** (the first evaluation at a new rung overwrites it) |
+| `best_rung<k>.pt` | When a gate-stepped ladder leaves rung k | A copy of `best.pt` as the ladder steps on: the best of that easier rung, the checkpoint to restore after a collapse or stall. Outside the `keep_checkpoints` rotation; `forge export <stage> best_rung<k>` exports it. A cost ladder that is gate-stepped keeps `best_costs_rung<k>.pt` |
 | `layouts.csv` | Every `log_every` updates | Per class and build, what each is doing in the training episodes of that update (sampled actions, own ladder difficulty), and the class's convergence signals: `entropy`, `approx_kl`, `allowed_actions`, `lr_scale`, `frozen`. |
 | `finished.json` | When the stage is decided | See 8.4 |
 

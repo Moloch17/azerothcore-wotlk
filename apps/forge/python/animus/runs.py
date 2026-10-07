@@ -11,6 +11,7 @@ checkpoints are kept (latest.pt and best.pt are separate files and always stay).
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 
@@ -35,6 +36,26 @@ def prune_checkpoints(run_dir: Path, keep: int) -> list[Path]:
     for path in removed:
         path.unlink(missing_ok=True)
     return removed
+
+
+def rung_best_name(ladder: str, rung: int) -> str:
+    """The file a gate-stepped ladder's easier rung keeps its best in: best_rung<k>.pt for the shaping ladder (the
+    fade), best_<ladder>_rung<k>.pt for another. Outside CHECKPOINT_GLOB, so the rotation never prunes it."""
+    return f"best_rung{rung}.pt" if ladder == "fade" else f"best_{ladder}_rung{rung}.pt"
+
+
+def archive_rung_best(run_dir: Path, ladder: str, rung: int, best: Path | None = None) -> Path | None:
+    """Copy `best` (the run's best.pt, which is the best of the rung being left) to its rung's own file; the path, or
+    None when there was nothing to copy (no best.pt yet, as on a run resumed without one). Written then renamed, so a
+    stop mid-copy never leaves a truncated archive, and an archive already there is replaced."""
+    best = best if best is not None else run_dir / "best.pt"
+    if not best.is_file():
+        return None
+    target = run_dir / rung_best_name(ladder, rung)
+    partial = target.with_suffix(target.suffix + ".partial")
+    shutil.copyfile(best, partial)
+    partial.replace(target)
+    return target
 
 
 def archive_run(run_dir: Path) -> Path | None:

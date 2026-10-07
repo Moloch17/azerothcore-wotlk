@@ -634,6 +634,12 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         if (collapsed && *collapsed >= 0.0)
             table.AddRow({ "  WARNING ladder", Acore::StringFormat("rung {}", int32(*collapsed)),
                 "collapsed: its gate metric under the floor for 3 evaluations (see the run log)" });
+        // The stall warning, its sibling: the rung whose gate metric has sat flat (not beaten its own best by more than
+        // its standard error) for the stage's fade.stall_evals evaluations and fade.stall_env_steps env steps.
+        std::optional<double> const stalled = progress->Number("ladder_stalled");
+        if (stalled && *stalled >= 0.0)
+            table.AddRow({ "  WARNING ladder", Acore::StringFormat("rung {}", int32(*stalled)),
+                "stalled: its gate metric flat for the stage's stall window; the ladder does not act (see the run log)" });
         // The dungeon ladder's collapse alarm (WingLadder, the host's: a cluster has one): its rung while the probes
         // have stayed under the floor for three reads (five on the first rung, where it is "not learning yet").
         if (sim.WingLadderCollapsed == 0)

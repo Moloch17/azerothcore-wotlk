@@ -135,6 +135,21 @@ class LayoutState:
         return out
 
 
+STALL_FALLBACK_STDERR = 0.02
+
+
+def gate_stderr(summary: dict, metric: str, value: float | None) -> float:
+    """The standard error of an evaluation's gate metric: the summary's own `<metric>_stderr` when it has one, else the
+    binomial estimate of a share over the summary's episode count, else a fixed 0.02."""
+    own = summary.get(f"{metric}_stderr") if metric else None
+    if isinstance(own, (int, float)) and math.isfinite(own) and own >= 0.0:
+        return float(own)
+    episodes = summary.get("episodes")
+    if value is not None and 0.0 <= value <= 1.0 and isinstance(episodes, (int, float)) and episodes > 0:
+        return math.sqrt(max(value * (1.0 - value), 1e-4) / episodes)
+    return STALL_FALLBACK_STDERR
+
+
 class ShapingFade:
     """The shaping ladder (FadeConfig): which rung the stage is on, and when it moves.
 
@@ -171,6 +186,16 @@ class ShapingFade:
         self.lower_gate: float | None = None
         self.collapsed = False
         self.alarm: str | None = None
+        # The stall warning (likewise a warning only): the best gate reading at this rung, its standard error, the
+        # evaluations since it was beaten, and the env steps when it was set.
+        self.stall_evals = max(1, int(getattr(fade, "stall_evals", 6)))
+        self.stall_env_steps = max(0, int(getattr(fade, "stall_env_steps", 20_000_000)))
+        self.gate_stderr = STALL_FALLBACK_STDERR
+        self.gate_best: float | None = None
+        self.gate_best_steps = 0
+        self.evals_since_gate_best = 0
+        self.stalled = False
+        self.stall_alarm: str | None = None
 
     def _new_tracker(self) -> ConvergenceTracker:
         c = self._convergence
@@ -213,6 +238,7 @@ class ShapingFade:
         self.evals_at_rung += 1
         waited = self.evals_at_rung
         self._watch_collapse()
+        self._watch_stall(env_steps)
 
         # A regression is read off the rung's last `window` scores, once it has that many: one noisy evaluation at
         # regress_z 2 is a ~2% false alarm, which over a rung of dozens of evaluations would hold the ladder short of
@@ -251,6 +277,7 @@ class ShapingFade:
         """The latest evaluation's gate metric (the ladder config's gate_metric), read before observe()."""
         value = summary.get(self.gate_metric) if self.gate_metric else None
         self.gate_seen = float(value) if isinstance(value, (int, float)) else None
+        self.gate_stderr = gate_stderr(summary, self.gate_metric, self.gate_seen)
 
     def _gated(self) -> bool:
         """The gate metric has reached its value, or there is no gate."""
@@ -274,6 +301,10 @@ class ShapingFade:
         self.lower_gate = self.gate_seen
         self.rung_gates = []
         self.collapsed = False
+        self.gate_best = None
+        self.gate_best_steps = 0
+        self.evals_since_gate_best = 0
+        self.stalled = False
 
     COLLAPSE_EVALS = 3
     COLLAPSE_FLOOR = 0.1
@@ -297,6 +328,29 @@ class ShapingFade:
                           f" the ladder does not step back by itself -- roll back to a checkpoint or change the rung")
         self.collapsed = now
 
+    def _watch_stall(self, env_steps: int) -> None:
+        """A gate-stepped ladder's second alarm: the gate metric at this rung has not beaten its own best by more than
+        its standard error for `stall_evals` evaluations running and `stall_env_steps` env steps -- flat, which is not
+        a collapse (M2's doorway sat at ~35% for 30M steps and raised nothing). `stall_alarm` is the line to log the
+        first time; `stalled` stays until the best improves. A warning for a person: the ladder does nothing."""
+        self.stall_alarm = None
+        if self.regresses or self.gate_seen is None or self.rung >= len(self.rungs) - 1:
+            return
+        if self.gate_best is None or self.gate_seen > self.gate_best + self.gate_stderr:
+            self.gate_best, self.gate_best_steps, self.evals_since_gate_best = self.gate_seen, env_steps, 0
+            self.stalled = False
+            return
+        self.evals_since_gate_best += 1
+        waited_steps = env_steps - self.gate_best_steps
+        now = self.evals_since_gate_best >= self.stall_evals and waited_steps >= self.stall_env_steps
+        if now and not self.stalled:
+            self.stall_alarm = (f"WARNING the {self.NAME} rung {self.rung} (x{self.scale:g}) stalled: "
+                                f"{self.gate_metric} {self.gate_seen:.3g}, its best at this rung {self.gate_best:.3g} "
+                                f"({waited_steps:,} env steps and {self.evals_since_gate_best} evaluations ago; "
+                                f"beating it takes more than {self.gate_stderr:.2g}); the ladder does not act on it -- "
+                                f"look at the rung, or roll back")
+        self.stalled = now
+
     def _why(self) -> str:
         if self.gate_metric and self.gate_seen is not None:
             return f"plateaued with {self.gate_metric} {self.gate_seen:.3g} (gate {self.gate_value:g})"
@@ -311,13 +365,15 @@ class ShapingFade:
 
     def report(self) -> dict:
         return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps,
-                "collapsed": self.collapsed}
+                "collapsed": self.collapsed, "stalled": self.stalled}
 
     def state_dict(self) -> dict:
         return {"rung": self.rung, "tracker": self.tracker.state_dict(), "evals_at_rung": self.evals_at_rung,
                 "step_score": self.step_score, "step_stderr": self.step_stderr,
                 "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps,
-                "rung_gates": list(self.rung_gates), "lower_gate": self.lower_gate, "collapsed": self.collapsed}
+                "rung_gates": list(self.rung_gates), "lower_gate": self.lower_gate, "collapsed": self.collapsed,
+                "gate_best": self.gate_best, "gate_best_steps": self.gate_best_steps,
+                "evals_since_gate_best": self.evals_since_gate_best, "stalled": self.stalled}
 
     def load_state_dict(self, state: dict | None) -> None:
         if not state:
@@ -333,6 +389,11 @@ class ShapingFade:
         lower = state.get("lower_gate")
         self.lower_gate = float(lower) if lower is not None else None
         self.collapsed = bool(state.get("collapsed", False))
+        best = state.get("gate_best")
+        self.gate_best = float(best) if best is not None else None
+        self.gate_best_steps = int(state.get("gate_best_steps", 0))
+        self.evals_since_gate_best = int(state.get("evals_since_gate_best", 0))
+        self.stalled = bool(state.get("stalled", False))
 
 
 class CostLadder(ShapingFade):
@@ -441,6 +502,9 @@ class ConvergenceController:
         # The rung of each gate-stepped ladder the stage-level convergence state (the overall tracker, the classes',
         # the plateau) was last re-baselined at, saved with it; a loaded state from above its rung is stale.
         self.baselined = {"fade": 0, "costs": 0}
+        # The gate-stepped ladders (name, rung) that stepped on from a rung at the latest evaluation: the trainer
+        # archives the best checkpoint of each rung left (animus.runs.archive_rung_best) before anything overwrites it.
+        self.rung_exits: list[tuple[str, int]] = []
         self.stale_ladder = False
 
     def _tracker(self, patience: int) -> ConvergenceTracker:
@@ -593,7 +657,9 @@ class ConvergenceController:
                 state.converged = True
                 state.converged_score = score
                 state.converged_margin = state.tracker.margin(stderr)
-        if self._gate_stepped(before_rungs):
+        self.rung_exits = [(name, before_rungs[name]) for name, now in self._gate_rungs().items()
+                           if now > before_rungs[name]]
+        if self.rung_exits:
             self.rebaseline()
         return improved
 
@@ -602,10 +668,6 @@ class ConvergenceController:
         re-baselined."""
         return {"fade": 0 if self.fade.require_plateau else self.fade.rung,
                 "costs": 0 if self.costs.require_plateau else self.costs.rung}
-
-    def _gate_stepped(self, before: dict[str, int]) -> bool:
-        """A gate-stepped ladder moved on a rung at this evaluation (they never step back)."""
-        return any(now > before[name] for name, now in self._gate_rungs().items())
 
     def rebaseline(self) -> None:
         """Start the stage-level convergence over at a gate-stepped ladder's new rung.

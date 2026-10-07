@@ -320,3 +320,20 @@ def test_an_arm_reading_reaches_the_status(tmp_path):
     assert progress["eval_clear_rate_with_human"] == pytest.approx(0.62)
     assert progress["eval_clear_rate"] == pytest.approx(0.7)
     assert progress["eval_with_human_score"] == pytest.approx(1.5)
+
+
+def test_a_stage_named_as_a_partner_is_the_policy_it_ended_with_not_its_best_at_a_rung(tmp_path):
+    """best.pt is the best at the stage's current rung (a gate-stepped ladder's first evaluation at a new rung overwrites
+    it, and one saved under the old bug can be the policy from step 0), so a bare stage name is its latest.pt; a path
+    is taken as given (best_rung<k>.pt, or a best.pt someone chose)."""
+    done, only_best, neither = tmp_path / "done", tmp_path / "only_best", tmp_path / "neither"
+    for folder, names in ((done, ("best.pt", "latest.pt")), (only_best, ("best.pt",))):
+        folder.mkdir()
+        for name in names:
+            (folder / name).write_text(name)
+    config = PartnerConfig(stages=("done", "only_best", "neither"),
+                           paths=(f"{done}/best.pt", "{runs_dir}/done/best_rung1.pt"), eval_partners=("done",))
+    runs = str(tmp_path)
+    assert config.members(runs, "r") == [
+        f"{done}/latest.pt", f"{only_best}/best.pt", f"{neither}/best.pt", f"{done}/best.pt", f"{done}/best_rung1.pt"]
+    assert config.eval_members(runs, "r") == [f"{done}/latest.pt"]
