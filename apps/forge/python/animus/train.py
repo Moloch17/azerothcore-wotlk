@@ -28,7 +28,7 @@ import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -491,6 +491,57 @@ class RolloutOutcome:
                                 if foresight_outputs else None)
 
 
+@dataclass
+class TrainerInputs:
+    """What the networks of a stage are built from besides the layouts' widths: the slow-clock layout, the director's
+    sets, the seat sets and the camera (stage.json's blocks). TrainingRun builds them, and so does resume_check."""
+
+    slow_layout: int
+    director: tuple | None
+    seat_sets: object | None
+    vision: list | None
+
+
+def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInputs:
+    """The networks' stage-dependent inputs, read the way a run reads them (SystemExit on a camera the sim and
+    stage.json disagree about)."""
+    names = [layout.name for layout in spec.layouts]
+    # The layout that decides on a slow clock, by name: its index moves with the stage, and a stage without one
+    # simply has no agents of it.
+    slow_layout = names.index(config.mappo.slow_layout) if config.mappo.slow_layout in names else -1
+    # The director's members and enemies are sets (stage.json "director"): its layout index and descriptor.
+    director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
+                if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)
+    # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
+    seat_sets = seat_sets_of(stage, names) if config.mappo.seat_sets else None
+    # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch. The sim's SPEC
+    # and stage.json must agree about the camera's bytes (protocol 21) and the free look's heads (protocol 22).
+    vision = vision_of(stage, names)
+    try:
+        check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
+        check_look_heads(vision, spec.look_heads)
+    except ValueError as error:
+        raise SystemExit(f"vision: {error}") from None
+    return TrainerInputs(slow_layout, director, seat_sets, with_map_vin(vision, config.mappo.map_vin))
+
+
+def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
+    """The stage's MappoTrainer. The exploiter's (animus.exploit) is built by this too: the same layouts, director and
+    seat sets, the same ranks -- its update is data-parallel like the main's. `device` overrides both devices."""
+    return MappoTrainer(
+        [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
+        spec.state_dim,
+        config.mappo,
+        train_device=device or config.resolved_train_device(),
+        rollout_device=device or config.resolved_rollout_device(),
+        slow_layout=inputs.slow_layout,
+        ranks=ranks,
+        director=inputs.director,
+        seat_sets=inputs.seat_sets,
+        vision=inputs.vision,
+    )
+
+
 class TrainingRun:
     """One learner run against the sim, from connecting to finished.json.
 
@@ -606,32 +657,16 @@ class TrainingRun:
         if self.eval_action_mask is not None:
             print(f"Evaluation masks {list(config.eval.mask_actions)} in every layout that has them", flush=True)
 
-        # The layout that decides on a slow clock, by name: its index moves with the stage, and a stage without
-        # one simply has no agents of it.
         names = [layout.name for layout in spec.layouts]
-        self.slow_layout = names.index(config.mappo.slow_layout) if config.mappo.slow_layout in names else -1
+        inputs = trainer_inputs(config, spec, self.stage)
+        self.slow_layout = inputs.slow_layout
         if config.mappo.slow_layout and self.slow_layout < 0:
             print(f"No layout named {config.mappo.slow_layout!r} in this stage: nothing decides on a slow clock",
                   flush=True)
-
-        # The director's members and enemies are sets (stage.json "director"): its layout index and descriptor.
-        director = ((names.index(DIRECTOR_LAYOUT), self.stage["director"])
-                    if self.stage and "director" in self.stage and DIRECTOR_LAYOUT in names else None)
-        # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
-        seat_sets = seat_sets_of(self.stage, names) if config.mappo.seat_sets else None
-        if config.mappo.seat_sets and seat_sets is None:
+        if config.mappo.seat_sets and inputs.seat_sets is None:
             print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
                   flush=True)
-        # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch.
-        vision = vision_of(self.stage, names)
-        # The sim's SPEC and stage.json must agree about the camera's bytes (protocol 21).
-        # And about the free look's heads (protocol 22).
-        try:
-            check_image_bytes(vision, spec.image_bytes, spec.map_bytes)
-            check_look_heads(vision, spec.look_heads)
-        except ValueError as error:
-            raise SystemExit(f"vision: {error}") from None
-        vision = with_map_vin(vision, config.mappo.map_vin)
+        vision = inputs.vision
         if vision is not None:
             image = next(entry for entry in vision if entry is not None)
             sizes = ", ".join(f"{w}x{h}" for w, h in image["render_sizes"]) or "the canonical size"
@@ -645,24 +680,9 @@ class TrainingRun:
                 print(f"Mental map: a {crop['width']} x {crop['height']} heading-up crop of {crop['cell']:g}-yard "
                       f"cells, {crop['channels']} channels ({crop['map_bytes']} bytes an agent), read by the camera's "
                       f"map encoder{' with its value iteration network' if crop.get('vin') else ''}", flush=True)
-        def make_trainer() -> MappoTrainer:
-            # The exploiter's (animus.exploit) is built by this too: the same layouts, director and seat sets, the
-            # same ranks -- its update is data-parallel like the main's.
-            return MappoTrainer(
-                [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
-                spec.state_dim,
-                config.mappo,
-                train_device=config.resolved_train_device(),
-                rollout_device=config.resolved_rollout_device(),
-                slow_layout=self.slow_layout,
-                ranks=self.ranks.update,
-                director=director,
-                seat_sets=seat_sets,
-                vision=vision,
-            )
 
-        self.make_trainer = make_trainer
-        self.trainer = make_trainer()
+        self.make_trainer = lambda: make_trainer(config, spec, inputs, ranks=self.ranks.update)
+        self.trainer = self.make_trainer()
         if self.trainer.actor.entity_sets is not None and self.trainer.actor.entity_sets.attention:
             sets = self.trainer.actor.entity_sets
             layer = sum(parameter.numel() for name, parameter in sets.named_parameters()
