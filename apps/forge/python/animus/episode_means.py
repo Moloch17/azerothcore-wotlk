@@ -39,6 +39,10 @@ PER_EVENT = {
     "time_ratio_sight": "markers_sight",
     "arrive_seconds_corner": "markers_corner",
     "time_ratio_corner": "markers_corner",
+    # The combat stages (CombatEncounter): seconds from a respawn at the entrance to back at the fight over the
+    # rejoins, and a C1 creature's engage-to-death over the kills.
+    "rejoin_seconds": "rejoins",
+    "kill_seconds": "kills",
 }
 
 

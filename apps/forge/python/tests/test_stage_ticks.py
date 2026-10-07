@@ -17,7 +17,8 @@ CONF = REPO / "src" / "server" / "apps" / "worldserver" / "worldserver.conf.dist
 CONFIGS = REPO / "apps" / "forge" / "python" / "configs"
 
 WORLD_TICK_MAX_MS = 50
-MOVEMENT_STAGE = re.compile(r"move\d+_\w+")
+# The movement stages, and the combat stages that move on the same controller (dungeon-curriculum C1-C3).
+MOVEMENT_STAGE = re.compile(r"(?:move|combat)\d+_\w+")
 
 
 def movement_stages() -> list[str]:

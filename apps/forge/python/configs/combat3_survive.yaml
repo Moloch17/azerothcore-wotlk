@@ -1,0 +1,56 @@
+# C3 -- survive (dungeon-curriculum C3; Stages.cpp combat3_survive, CombatEncounter): the same cleared Ragefire Chasm,
+# packs that can kill -- three or four, linked, two levels up on the rung's -- pull after pull, the next waiting 30-45 yd
+# on until the seat goes for it. Food and drink are stocked and the gauntlet block eats, drinks and rests until ready, so
+# resting between pulls and backing off are the seat's own choices. A death comes back alive at the entrance after 10 s
+# and walks back to where it fell (Rejoin), and the pack it died to is still there to clear: never "give up"; 360 s.
+#
+# Outcome (tier-scaled): Clear per pack, Survived (2.0: no death in the episode); Rejoin (1.0) back within 30 yd of where
+# it fell; InterruptLanded. Cost at full price: Death (over w), Hurt, FireHurt, PullExtra, the clock. Shaping (faded):
+# DamageDealt.
+#
+# Seeded from combat2_packs: every block carries; the gauntlet block (eat, drink, rest until ready) starts fresh.
+extends: combat2_packs.yaml
+run_name: combat3_survive
+
+total_env_steps: 300000000
+
+eval:
+  report: [won, survived, packs_cleared, deaths, respawns, rejoins, rejoin_seconds, rest_seconds, extra_pulls,
+           interrupts, fire_share, hurt_share, combat_rung, difficulty, at_top_rung, target_in_view, start_walk, died,
+           reward_clear, reward_survived, reward_rejoin, reward_interrupt_landed, reward_pull_extra, reward_fire_hurt,
+           reward_hurt, reward_death, reward_step_cost, reward_damage_dealt, reward_repeat, reward_aimless,
+           reward_effort, reward_jitter]
+
+# forge status: did it live, and when it did not, did it come back -- the plan's development criterion is C3's recover
+# (rejoins over respawns) at 0.9 or more.
+status:
+  headline: [won, survived, packs_cleared, deaths, respawns, rejoins, rejoin_seconds, rest_seconds, extra_pulls,
+             hurt_share, combat_rung]
+  targets:
+    interrupts: null
+    fire_share: null
+    target_in_view: null
+    won: ">= 0.8"
+    survived: ">= 0.8"
+    packs_cleared: ">= 3"
+    rejoin_seconds: "<= 60"
+    extra_pulls: "<= 0.1"
+
+convergence:
+  measure: survived
+
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: survived
+  gate_value: 0.7
+  require_plateau: false
+  moving_classes: 1000
+
+costs:
+  enabled: false
+  gate_metric: survived
+  gate_value: 0.7
+
+layout_sampling:
+  metric: survived

@@ -28,6 +28,12 @@ PURPOSE = {
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
     "move2_seek": ("Arrive", "StepCost"),
+    # The combat stages (dungeon-curriculum C1-C3, CombatEncounter, 2026-10-06): C1's kills and surviving, its damage
+    # taken and the time a kill takes; C2's packs cleared and interrupts landed, its extra pulls and fire damage; C3's
+    # surviving, packs cleared and rejoining after a death.
+    "combat1_fight": ("Kill", "Survived", "Hurt", "StepCost"),
+    "combat2_packs": ("Clear", "InterruptLanded", "PullExtra", "FireHurt"),
+    "combat3_survive": ("Survived", "Clear", "Rejoin"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -38,6 +44,10 @@ SHAPING = {
     # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground", and REDESIGN
     # §2's "looked into a room").
     "move2_seek": ("Sighting", "NewGround", "RoomSeen"),
+    # The combat stages' one nudge: the damage dealt, in creature healths.
+    "combat1_fight": ("DamageDealt",),
+    "combat2_packs": ("DamageDealt",),
+    "combat3_survive": ("DamageDealt",),
 }
 
 # Opposition -> the encounter source that pays it.
@@ -49,6 +59,7 @@ ENCOUNTER = {
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",
+    "Combat": "Encounters/CombatEncounter.cpp",
 }
 
 

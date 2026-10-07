@@ -5039,6 +5039,12 @@ AnimusForge.OutputDir = ""
 #                                 level 1, death knights at 55)
 #                                 "move2_seek" (the same Stockades: one real object in one of its 39
 #                                 rooms, found by sight with no compass, and stopped beside)
+#                     The combat stages (dungeon-curriculum C1-C3), from move2_seek, on a cleared Ragefire Chasm
+#                     at its levels, the seat seeing what it fights:
+#                       combat    "combat1_fight" (one creature at a time; a friend to taunt off and heal)
+#                                 "combat2_packs" (packs of 2-4: casters, linked, fire; one pack at a time)
+#                                 "combat3_survive" (packs that can kill: rest between them, come back after a
+#                                 death from the entrance)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
 #                     on the git tag curriculum-movement-v1, learner configs in
 #                     apps/forge/python/configs/archive/movement-v1/.
@@ -5178,6 +5184,10 @@ AnimusForge.TicksPerDecision = 1
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_seek.TicksPerDecision = 5
+# The combat stages move on the player controller too.
+AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
+AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
+AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch

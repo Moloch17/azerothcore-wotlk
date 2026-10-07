@@ -526,6 +526,10 @@ MAP_ZEROED = ("vision.map.join.", "vision.map.vin.out.")
 SIGHT = "vision.sight."
 SIGHT_ZEROED = ("vision.sight.pool.",)
 SIGHT_POINTERS = "sight_pointers."
+#: The sight list's projection of a slot's columns past the entity list's (SightEntities.extra): the memory's, then --
+#: in a layout with the combat block (dungeon-curriculum I3) -- the combat columns appended after them. A list that
+#: grew those columns keeps the narrower list's weights for the columns it had, the new ones starting at zero.
+SIGHT_EXTRA = "vision.sight.extra.weight"
 
 
 def _vision_revision(stage: dict | None) -> int | None:
@@ -594,12 +598,24 @@ def _seed_sight(new: dict, old: dict) -> str | None:
     carried = [key for key in keys if key in old and old[key].shape == new[key].shape]
     for key in carried:
         new[key].copy_(old[key])
-    fresh = [key for key in keys if key not in carried]
+    widened = []
+    if SIGHT_EXTRA in new and SIGHT_EXTRA in old and SIGHT_EXTRA not in carried:
+        before, after = old[SIGHT_EXTRA], new[SIGHT_EXTRA]
+        if before.dim() == after.dim() == 2 and before.shape[0] == after.shape[0] \
+                and before.shape[1] < after.shape[1]:
+            after.zero_()
+            after[:, : before.shape[1]].copy_(before)
+            widened.append(SIGHT_EXTRA)
+    fresh = [key for key in keys if key not in carried and key not in widened]
     for key in fresh:
         if key.startswith(SIGHT_ZEROED):
             new[key].zero_()
     if not carried:
         return "fresh (the checkpoint has none), its pool at zero"
+    if widened:
+        columns = new[SIGHT_EXTRA].shape[1] - old[SIGHT_EXTRA].shape[1]
+        return f"carried, its slots {columns} columns wider (the new ones at zero)" + (
+            f", but for {len(fresh)} new tensors" if fresh else "")
     if fresh:
         return f"carried, but for {len(fresh)} new tensors"
     return "carried"

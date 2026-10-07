@@ -1,0 +1,176 @@
+# C1 -- fight (dungeon-curriculum C1, approved 2026-10-06; Stages.cpp combat1_fight, CombatEncounter): a cleared
+# Ragefire Chasm at its level band, 13-18 (a death knight at its own 55, against creatures of its level), every race and
+# class. The seat starts at one of the dungeon's own creature spawn points, its corridors, and one creature at a time
+# stands 18-35 yd off in its line of sight; the next comes two seconds after each kill, for 150 s. In `guard` (a quarter
+# of the episodes) a passive friend stands by the seat and every creature goes for it first: taunting it off and healing
+# it are the drill, for the classes that can.
+#
+# What it perceives (I3) is what a player does: the camera, the entities it shows and the remembered ones (the sight
+# list), each visible one's cast bar, crowd control and threat (the combat block's columns on the sight list), the party
+# frames, the target frame's threat. It chooses its target by sight (the sight list's select press) and casts at the
+# selection as the client does; its feet are the player controller's keys. A death never ends the episode: it is back
+# alive at the entrance after 10 s and walks back (I4).
+#
+# Outcome (tier-scaled, w = 1 + 0.25 x rung): Kill per creature, Survived at the end with no death. Cost at full price
+# from the first step: Death (over w), Hurt (small: 0.2 per maximum health taken), the kill clock (StepCost, 0.01 a
+# second a creature lives engaged), the guard's friend lost. Shaping (faded): DamageDealt.
+#
+# Seeded from move2_seek (stage.json's seed chain): the camera, its entity list, the mental map and the movement carry;
+# the duel, pet, sight and combat blocks start fresh (the sight list's pool at zero, so the seeded policy starts as it
+# was). The plan's base is M3 interact (another branch's): once it lands, C1 extends it and seeds from it instead.
+
+run_name: combat1_fight
+socket: /tmp/animus-forge.sock
+seed: 1
+
+init_from: auto
+seed_from: latest
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 300000000
+rollout_length: 128
+
+overlap_updates: true
+torch_threads: 4
+log_every: 1
+checkpoint_every: 100
+keep_checkpoints: 5
+
+train_device: auto
+rollout_device: auto
+
+mappo:
+  hidden: [256, 512, 512]
+  # M2's horizon: a 150 s episode whose kills come every 20-40 s (0.998 a 100 ms keeps a kill 30 s off at 0.55).
+  gamma: 0.998
+  gae_lambda: 0.985
+  reference_decision_ms: 100
+  foresight_coef: 0.25
+  foresight_horizons_seconds: [5.0, 30.0]
+  foresight_time_scale_seconds: 60.0
+  recurrent_size: 128
+  # The enemies and friends are the sight list (its own encoder and pointer heads), not the seat sets.
+  seat_sets: false
+  chunk_length: 128
+  goal_count: 12
+  goal_slots: 4
+  hindsight_coef: 0.1
+  goal_targets: 29
+  goal_every_decisions: 64
+  slow_goal_size: 128
+  slow_goal_gamma: 0.993
+  slow_goal_lambda: 0.95
+  slow_goal_lr: 0.0003
+  foresight_obs_targets: true
+  foresight_feedback: true
+  goal_lookahead: true
+  lookahead_coef: 0.5
+  slow_layout: director
+  slow_gamma: 0.996
+  slow_gae_lambda: 0.98
+  goal_entropy_scale: 1.0
+  goal_entropy_final_fraction: 0.05
+  goal_slot_entropy_weight: 0.1
+  clip: 0.2
+  value_clip: 0.2
+  entropy_coef: 0.01
+  # As M1 and M2: a tenth of the actions', so the camera is not pushed to uniform.
+  look_entropy_coef: 0.001
+  value_coef: 1.0
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  lr_final_fraction: 0.1
+  entropy_final_fraction: 0.3
+  # M2's two epochs (the camera, the map and now the sight list on the host's card).
+  epochs: 2
+  minibatches: 4
+  max_grad_norm: 0.5
+  use_value_norm: true
+  value_norm_beta: 0.99
+  per_layout_advantages: true
+  min_layout_rows: 32
+  target_kl: 0.02
+  vision_chunk_rows: 2048
+  map_vin: false
+
+# Fixed seeds: seed i plays (class, build) pair i mod pairs at rung (i / pairs) mod 6 (DifficultyLadder's spread) from
+# corridor point i mod points, so successive checkpoints fight the same fights; 240 episodes cover every pair at every
+# rung at least once. The eval videos (I0) film a sample of the same seeds, their rung read off combat_rung.
+eval:
+  every_env_steps: 10000000
+  at_start: true
+  episodes: 240
+  seed: 1000
+  deterministic: true
+  sampled_every: 3
+  trace_episodes: 32
+  report: [won, survived, kills, kill_seconds, hurt_share, deaths, respawns, rejoins, rejoin_seconds, combat_rung,
+           difficulty, at_top_rung, target_in_view, selected_share, ally_deaths, pulls, caster_pulls, start_walk,
+           died, reward_kill, reward_survived, reward_hurt, reward_death, reward_step_cost, reward_teammate_death,
+           reward_damage_dealt, reward_repeat, reward_aimless, reward_effort, reward_jitter]
+
+# forge status for this stage: did it win its fights (something killed, no death) and live, how many and how fast,
+# how much it took, whether it found its targets by sight (a selection in the frame), how it held its friend, its rung.
+# Targets are a readout, never a gate.
+status:
+  headline: [won, survived, kills, kill_seconds, hurt_share, deaths, rejoin_seconds, combat_rung, target_in_view,
+             selected_share, ally_deaths]
+  targets:
+    won: ">= 0.9"
+    survived: ">= 0.9"
+    kills: ">= 3"
+    kill_seconds: "<= 25"
+    hurt_share: "<= 0.8"
+    target_in_view: ">= 0.8"
+    ally_deaths: "<= 0.1"
+
+convergence:
+  measure: won
+  patience: 3
+  window: 4
+  z: 2.0
+  min_improvement: 0.02
+  min_improvement_abs: 0.01
+  kl: 0.003
+  entropy_slope: 0.01
+  hold_share: 0.02
+  lr_hold_until_plateau: true
+
+# The shaping fade (DamageDealt): steps on its gate alone -- the evaluation's won rate at 0.7 -- one evaluation at a rung
+# and no plateau (require_plateau: false, the dungeon plan's rule), and never waits for the classes' rungs to settle
+# (moving_classes: the per-class ladder steps on its own window's win rate, DifficultyLadder; two ladders on their own
+# gates). A curriculum ladder, not a pass gate: the stage ends on convergence.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  window: 3
+  regress_z: 2.0
+  give_up: 2
+  gate_metric: won
+  gate_value: 0.7
+  require_plateau: false
+  moving_classes: 1000
+
+# Off: every price at full price from the first step (the noise prices -- Repeat, Jitter, Aimless, Effort, Fidget -- with
+# the stage's own Hurt, FireHurt, PullExtra and the clock, which are never on a ladder), so no ladder waits on a cost
+# ladder (M1's lesson).
+costs:
+  enabled: false
+  gate_metric: won
+  gate_value: 0.7
+
+entropy_floor:
+  fraction: 0.3
+  max_boost: 4.0
+  rate: 0.05
+
+# More episodes for the classes winning least, and a fifth of training resets replay an evaluation episode that lost.
+layout_sampling:
+  enabled: true
+  strength: 1.0
+  max_ratio: 4.0
+  metric: won
+  replay_fraction: 0.2
+
+style:
+  enabled: false

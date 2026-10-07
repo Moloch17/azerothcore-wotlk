@@ -1,0 +1,57 @@
+# C2 -- packs (dungeon-curriculum C2; Stages.cpp combat2_packs, CombatEncounter): the same cleared Ragefire Chasm, packs
+# of two to four -- a caster from rung 1, linked from rung 2, fire underfoot in a third of them (in every one of `fire`'s)
+# -- with the next pack standing 30-45 yd further on: pulling it before this one is down is an extra pull. Focus,
+# interrupts, crowd control, line of sight, out of the fire, one pack at a time; 240 s.
+#
+# Outcome (tier-scaled): Clear per pack, Survived; InterruptLanded (0.25) per interrupt that stopped a cast. Cost at full
+# price from the first step: PullExtra (1.0) per pack drawn in early, FireHurt (1.0 per maximum health ground fire took),
+# Hurt, Death (over w), the clock. Shaping (faded): DamageDealt.
+#
+# Seeded from combat1_fight: every block carries (the same layout). C1's hyperparameters otherwise.
+extends: combat1_fight.yaml
+run_name: combat2_packs
+
+total_env_steps: 300000000
+
+mappo:
+  # A pack's fight and the pull that made it winnable take 30-60 s: 0.999 a 100 ms (a horizon of about 100 s).
+  gamma: 0.999
+
+eval:
+  report: [won, survived, packs_cleared, extra_pulls, interrupts, fire_share, hurt_share, deaths, rejoin_seconds,
+           combat_rung, difficulty, at_top_rung, target_in_view, selected_share, pulls, hazard_pulls, linked_pulls,
+           caster_pulls, died, reward_clear, reward_survived, reward_interrupt_landed, reward_pull_extra,
+           reward_fire_hurt, reward_hurt, reward_death, reward_step_cost, reward_damage_dealt, reward_repeat,
+           reward_aimless, reward_effort, reward_jitter]
+
+# forge status: packs cleared and the stage's habits -- one pack at a time, interrupts landed, out of the fire.
+status:
+  headline: [won, survived, packs_cleared, extra_pulls, interrupts, fire_share, hurt_share, deaths, rejoin_seconds,
+             combat_rung, target_in_view]
+  targets:
+    # C1's measures are not C2's (null drops an inherited key).
+    kills: null
+    kill_seconds: null
+    selected_share: null
+    ally_deaths: null
+    won: ">= 0.85"
+    survived: ">= 0.85"
+    packs_cleared: ">= 3"
+    extra_pulls: "<= 0.1"
+    fire_share: "<= 0.1"
+    hurt_share: "<= 1.5"
+    target_in_view: ">= 0.8"
+
+# As C1: on the gate alone, no plateau, no waiting on the classes' rungs; costs off (full price from the start).
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: won
+  gate_value: 0.7
+  require_plateau: false
+  moving_classes: 1000
+
+costs:
+  enabled: false
+  gate_metric: won
+  gate_value: 0.7

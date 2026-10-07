@@ -23,6 +23,18 @@
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
 > | `move2_seek` | 250M | 10M | 78 |
+> | `combat1_fight` | 300M | 10M | 240 |
+> | `combat2_packs` | 300M | 10M | 240 |
+> | `combat3_survive` | 300M | 10M | 240 |
+>
+> **The combat stages** (dungeon-curriculum C1-C3, 2026-10-06; `CombatEncounter`, `Opposition::Combat`) extend
+> `move2_seek` on a cleared Ragefire Chasm (map 389) at its level band, 13-18: `combat1_fight` one creature at a time
+> (and a passive friend to taunt off and heal), `combat2_packs` packs of 2-4 (casters, linked, fire underfoot, the next
+> pack further on), `combat3_survive` packs that can kill, with food and drink. The seat perceives what a player does
+> (I3): the sight list (what it sees and remembers) with each visible unit's nameplate combat columns, the party frames
+> and the target frame's threat (`BlockId::Combat`); it selects by sight and casts as the client does. A death never
+> ends an episode: the seat is back alive at the dungeon's entrance after 10 s and walks back (I4's seam,
+> `ArenaDefinition::RespawnAtEntrance`). Every ladder steps on its gate alone and every price is full from the start.
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,
