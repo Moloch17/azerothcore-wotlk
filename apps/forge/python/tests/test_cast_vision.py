@@ -399,7 +399,7 @@ def test_the_cast_facade_passes_the_image_and_the_look(tmp_path):
 
 def test_the_resident_cap_offloads_the_least_recently_played(tmp_path):
     stage = camera_stage()
-    pool = PartnerPool(partner_config(resident_members=1), spec_of(stage), stage, tmp_path, "cpu")
+    pool = PartnerPool(partner_config(resident_members=1, max_partners=1), spec_of(stage), stage, tmp_path, "cpu")
     first = pool.add(save(tmp_path, stage, "a.pt", seed=1)[0])
     second = pool.add(save(tmp_path, stage, "b.pt", seed=2)[0])
     assert first is not None and second is not None
@@ -415,3 +415,12 @@ def test_the_resident_cap_offloads_the_least_recently_played(tmp_path):
     assert residency.order[-1] is fake[2] and len(residency.order) == 3
     with pytest.raises(ValueError, match="resident_members"):
         PartnerConfig(resident_members=-1)
+
+
+def test_a_resident_cap_below_max_partners_is_refused_at_load():
+    """Below the partners one decision plays it would move members to the host and back within every decision;
+    0 (no cap) or max_partners and up load."""
+    with pytest.raises(ValueError, match="max_partners"):
+        PartnerConfig(max_partners=3, resident_members=2)
+    for good in (0, 3, 4):
+        PartnerConfig(max_partners=3, resident_members=good)

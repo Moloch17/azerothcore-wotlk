@@ -449,6 +449,10 @@ class PartnerConfig:
                              f"{self.newest_share!r}")
         if self.max_partners < 1:
             raise ValueError(f"cast.partners.max_partners: at least 1, got {self.max_partners!r}")
+        # Below the partners one decision plays, members would be moved to the host and back within every decision.
+        if 0 < self.resident_members < self.max_partners:
+            raise ValueError(f"cast.partners.resident_members: 0 (no cap) or at least max_partners "
+                             f"({self.max_partners}), got {self.resident_members!r}")
 
     @property
     def enabled(self) -> bool:
