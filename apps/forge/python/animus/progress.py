@@ -31,14 +31,18 @@ def _clean(value):
     return float(value)
 
 
-def write_progress(run_dir: Path, fields: dict) -> Path:
-    """Atomically write ``fields`` (flat: numbers, strings, None) to ``run_dir/progress.json``."""
+def write_progress(run_dir: Path, fields: dict, undefined: frozenset[str] | set[str] = frozenset()) -> Path:
+    """Atomically write ``fields`` (flat: numbers, strings, None) to ``run_dir/progress.json``.
+
+    A key in ``undefined`` that is NaN is written as null without being named in ``nonfinite``: a per-event mean with no
+    event to average (a rung's found rate before the ladder reaches it), not a fault."""
     row: dict = {}
     nonfinite = []
     for key, value in fields.items():
         value = _clean(value)
         if isinstance(value, float) and not math.isfinite(value):
-            nonfinite.append(key)
+            if not (key in undefined and math.isnan(value)):
+                nonfinite.append(key)
             value = None
         row[key] = value
     row["nonfinite"] = ",".join(nonfinite)
@@ -74,6 +78,7 @@ class ProgressWriter:
         }
         self.headline = tuple(config.status.headline)
         self.metrics: dict = {}
+        self.undefined: frozenset[str] = frozenset()
         self.evaluation: dict = {}
         # The evaluation arms' readings (eval.arms), kept apart: an arm plays every eval.arms_every evaluations, and
         # its last reading stands until the next.
@@ -109,9 +114,11 @@ class ProgressWriter:
         not), kept until it changes."""
         self.static[key] = text
 
-    def training(self, row: dict) -> None:
-        """An update's metrics row (train.py's metrics.csv row)."""
+    def training(self, row: dict, undefined: frozenset[str] | set[str] = frozenset()) -> None:
+        """An update's metrics row (train.py's metrics.csv row); `undefined` names its NaN columns that are by design
+        (episode_means.undefined) and so not warned about."""
         self.metrics = dict(row)
+        self.undefined = frozenset(undefined)
 
     def evaluated(self, env_steps: int, score: float, baseline_score: float | None, tracker, controller=None,
                   summary: dict | None = None) -> None:
@@ -155,4 +162,4 @@ class ProgressWriter:
             **self.evaluation,
             **self.arms,
         }
-        return write_progress(self.run_dir, fields)
+        return write_progress(self.run_dir, fields, self.undefined)

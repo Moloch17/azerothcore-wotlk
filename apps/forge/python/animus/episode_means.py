@@ -95,3 +95,14 @@ def means(values: np.ndarray, names: list[str] | tuple[str, ...]) -> np.ndarray:
             total = weights.sum()
             out[index[name]] = float((values[:, index[name]] * weights).sum() / total) if total > 0 else np.nan
     return out
+
+
+def undefined(values: np.ndarray, names: list[str] | tuple[str, ...]) -> set[str]:
+    """The per-event columns `means` leaves NaN because no episode had the event: nothing to average, not a fault. A
+    rung-conditional column (found_room before the ladder reaches the placement) is one, until its rung is played."""
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 2 or len(values) == 0:
+        return set()
+    index = {name: i for i, name in enumerate(names)}
+    return {name for name, count in PER_EVENT.items()
+            if name in index and count in index and values[:, index[count]].sum() <= 0}

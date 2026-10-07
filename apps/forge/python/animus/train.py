@@ -2264,8 +2264,11 @@ class TrainingRun:
             **getattr(self, "exploit_stats", {}),
             **getattr(self, "style_stats", {}),
         }
+        undefined: set[str] = set()
         if self.finished_episodes:
             means = episode_means.means(self.finished_episodes, spec.episode_info_names)
+            undefined = {f"episode_{name}" for name in episode_means.undefined(self.finished_episodes,
+                                                                               spec.episode_info_names)}
             for name, value in zip(spec.episode_info_names, means):
                 row[f"episode_{name}"] = float(value)
             self.log_layout_rows(spec)
@@ -2278,7 +2281,7 @@ class TrainingRun:
         self.audit_reward(row)
         self.audit_progress(row)
         self.logger.log(self.update, row)
-        self.progress.training(row)
+        self.progress.training(row, undefined)
         self.progress.write("training", self.update, self.env_steps)
         summary = ", ".join(
             f"{k} {v:.4g}" for k, v in row.items() if k.startswith("episode_") or k in ("entropy", "value_loss")
