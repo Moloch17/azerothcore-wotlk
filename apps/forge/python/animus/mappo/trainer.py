@@ -141,11 +141,6 @@ class MappoConfig:
     # relabelled goal was never the behaviour's, so the ratio would mean nothing). Needs goal_slots > 1 (the goal
     # block's achieved columns).
     hindsight_coef: float = 0.0
-    # **Action hints**: where the sim writes a suggested action into a layout's hint block (a whole dungeon's support,
-    # Instance.WingHint), the action head is also trained to take it, an imitation loss of this weight times the
-    # weight the sim wrote (which falls with the support, and is 0 in evaluation). The hint columns are kept out of the
-    # networks (attach_blind_columns): the policy is taught the suggestion, never shown it.
-    hint_coef: float = 0.0
     # **Self-imitation** (Oh et al. 2018, peak-play W5; animus.mappo.sil): the sil_episodes best episodes by outcome
     # score kept (their tails in the rollout each ended in), sil_batch of them replayed every minibatch, and
     # sil_coef * max(R - V, 0) * -log pi(a|s) added to the actor's loss, sil_value_coef * max(R - V, 0)^2 / 2 to the
@@ -665,7 +660,7 @@ class MappoTrainer:
         self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
         self.train_device = torch.device(train_device)
-        # The update's optional terms (hints, hindsight) as masked arithmetic over every row, rather than picked rows
+        # The update's optional terms (hindsight) as masked arithmetic over every row, rather than picked rows
         # and early-outs: on the GPU asking which rows have one waits on the device every minibatch, on the CPU it is
         # free and skipping is cheaper. The same numbers either way; a flag rather than the device, so a test can run
         # the masked path anywhere (test_update_stats).
@@ -688,7 +683,6 @@ class MappoTrainer:
         self.goal_count = self.goal_kinds * self.goal_targets if self.goal_kinds else 0
         self.slow_goal_size = config.slow_goal_size if self.goal_count else 0
         self.goal_slots = max(1, config.goal_slots) if self.goal_count else 1
-        self.hint_at: torch.Tensor | None = None
         # The slots are drawn and scored by the slow loop's own update (_update_goals); a queue needs two slots behind
         # the pair held.
         if self.goal_slots > 1 and (not self.slow_goal_size or self.goal_slots < 3):
@@ -874,93 +868,6 @@ class MappoTrainer:
         for actor in (self.actor, self._rollout_actor):
             if actor is not None and actor.goal_head is not None:
                 actor.goal_head.set_space(goals["accepts"], block_at)
-
-    def set_hint_space(self, stage: dict | None, layout_names: list[str]) -> None:
-        """Where each layout's hint block is (stage.json layouts' blocks named "hint"): its columns -- the suggested
-        action + 1, its weight, and whether the script played the decision -- are read by the imitation loss and kept
-        out of both networks."""
-        from .networks import attach_blind_columns
-        at = []
-        # Which block each layout's action belongs to, for the agreement by kind of action (hint_match_<block>).
-        self.hint_block_names: list[str] = []
-        owners: list[list[int]] = []
-        for layout in layout_names:
-            blocks = (((stage or {}).get("layouts") or {}).get(layout) or {}).get("blocks") or []
-            at.append(next((int(b["obs"][0]) for b in blocks if b.get("name") == "hint"), -1))
-            owner: list[int] = []
-            for block in blocks:
-                first, count = int(block["actions"][0]), int(block["actions"][1])
-                if count <= 0:
-                    continue
-                name = str(block.get("name"))
-                if name not in self.hint_block_names:
-                    self.hint_block_names.append(name)
-                if len(owner) < first + count:
-                    owner.extend([-1] * (first + count - len(owner)))
-                for action in range(first, first + count):
-                    owner[action] = self.hint_block_names.index(name)
-            owners.append(owner)
-        width = max((len(owner) for owner in owners), default=0)
-        self.hint_owner = torch.tensor([owner + [-1] * (width - len(owner)) for owner in owners] or [[-1]],
-                                       dtype=torch.long, device=self.train_device)
-        self.hint_at = torch.tensor(at, dtype=torch.long, device=self.train_device) if any(a >= 0 for a in at) \
-            else None
-        if self.hint_at is None:
-            return
-        columns = {index: [a, a + 1, a + 2] for index, a in enumerate(at) if a >= 0}
-        for network in (self.actor, self.critic):
-            if network is not None and hasattr(network, "adapters"):
-                attach_blind_columns(network, columns)
-        self._sync_rollout()
-
-    def _hint_loss(self, dist, obs: torch.Tensor, layout: torch.Tensor, valid: torch.Tensor, stats: dict):
-        """The imitation term for the rows with a hint: -log p(hinted action) weighted by the sim's weight, over the
-        weight; None where no row has one."""
-        if self.config.hint_coef <= 0.0 or getattr(self, "hint_at", None) is None:
-            return None
-        at = self.hint_at[layout.long()]
-        rows = (at >= 0) & valid
-        index = torch.arange(obs.shape[0], device=obs.device)
-        safe = at.clamp(min=0)
-        action = obs[index, safe].round().long() - 1
-        weight = obs[index, safe + 1].float()
-        # The no-op is never imitated: the script presses nothing while an order it gave is still walking, while
-        # resting and while the party gathers, and a policy taught those no-ops stood still on its own (2026-10-01:
-        # 2.5 kills an evaluation, none of them wiped).
-        hinted = rows & (action > 0) & (weight > 0)
-        # On the GPU masked rather than skipped: a minibatch with no hinted row adds a loss of 0 and counts nothing,
-        # and asking whether it has one would wait on the device every minibatch (the stats are read once,
-        # _host_stats). On the CPU asking is free, and hints are off in most runs (Instance.WingSupport 0).
-        if not getattr(self, "_masked_stats", False) and not bool(hinted.any()):
-            return None
-        log_prob = dist.log_prob(torch.where(hinted, action, torch.zeros_like(action)))
-        w = weight * hinted.float()
-        loss = -(log_prob * w).sum() / w.sum().clamp(min=1e-6)
-        with torch.no_grad():
-            match = (dist.logits.argmax(-1) == action) & hinted
-            count = hinted.sum()
-            owners = getattr(self, "hint_owner", None)
-            if owners is not None and owners.shape[1] > 0:
-                kind = owners[layout.long(), action.clamp(min=0, max=owners.shape[1] - 1)]
-                for index, name in enumerate(self.hint_block_names):
-                    of_kind = (kind == index) & hinted
-                    stats[f"hint_ok_{name}"] = stats.get(f"hint_ok_{name}", 0.0) + (match & of_kind).sum()
-                    stats[f"hint_all_{name}"] = stats.get(f"hint_all_{name}", 0.0) + of_kind.sum()
-            some = (count > 0).float()
-            stats["hint_loss"] = stats.get("hint_loss", 0.0) + loss.detach()
-            stats["hint_match"] = stats.get("hint_match", 0.0) + match.sum() / count.clamp(min=1)
-            stats["hint_weight"] = stats.get("hint_weight", 0.0) + (weight * hinted).sum() / count.clamp(min=1)
-            stats["hint_n"] = stats.get("hint_n", 0.0) + some
-        return self.config.hint_coef * loss
-
-    def _scripted_rows(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor | None:
-        """The rows whose action the dungeon script played (the hint block's third column): not the policy's, so out
-        of the PPO terms; the imitation loss still learns from them. None without a hint block."""
-        if getattr(self, "hint_at", None) is None:
-            return None
-        at = self.hint_at[layout.long()]
-        index = torch.arange(obs.shape[0], device=obs.device)
-        return (at >= 0) & (obs[index, (at + 2).clamp(min=0)] > 0.5)
 
     def director_columns_clear(self) -> bool:
         """Whether both networks' director adapters still read nothing from the slot columns, nor any layout's adapter
@@ -1681,9 +1588,6 @@ class MappoTrainer:
                                               goal, groups, obs)
         log_probs = dist.log_prob(data["actions"].reshape(-1)).reshape(steps, envs, agents)
         counted = data["samples"].to(torch.float32)
-        scripted = self._scripted_rows(obs, layout)
-        if scripted is not None:
-            counted = counted * (~scripted).reshape(counted.shape).to(torch.float32)
         return log_probs, counted
 
     def _sil_values(self, host: dict, data: dict) -> torch.Tensor:
@@ -1854,12 +1758,6 @@ class MappoTrainer:
                 groups = per_layout_host(host["layout"][:, picked], len(self.layouts), self.train_device)
                 dones_host = torch.from_numpy(np.repeat(host["dones"][:, picked], agents, axis=1))
                 counted = valid[:, chunk].to(torch.float32)
-                # A row the dungeon script played is not a sample of the policy: no ratio, no entropy for it.
-                scripted = self._scripted_rows(obs_all, layout_all)
-                if scripted is not None:
-                    counted = counted * (~scripted).reshape(counted.shape).to(torch.float32)
-                    auxiliary_stats["scripted_share"] = (auxiliary_stats.get("scripted_share", 0.0)
-                                                         + scripted.float().mean())
                 weight = counted.sum().clamp(min=1.0)
 
                 # The actor's half of the minibatch on one stream, the critic's on another: they share only these
@@ -2001,10 +1899,6 @@ class MappoTrainer:
                     auxiliary_stats["hindsight_loss"] = (auxiliary_stats.get("hindsight_loss", 0.0)
                                                          + hindsight_loss.detach())
                     auxiliary_stats["hindsight_rows"] = auxiliary_stats.get("hindsight_rows", 0.0) + relabelled_rows
-
-                hint_loss = self._hint_loss(dist, obs_all, layout_all, valid[:, chunk].reshape(-1), auxiliary_stats)
-                if hint_loss is not None:
-                    actor_loss = actor_loss + hint_loss
 
                 sil = self._sil_batch() if self.sil is not None else None
                 if sil is not None:
@@ -2156,21 +2050,6 @@ class MappoTrainer:
         if "goal_swap_n" in auxiliary_stats:
             count = auxiliary_stats.pop("goal_swap_n")
             stats["goal_swap_action_change"] = auxiliary_stats.pop("goal_swap_action_change") / max(count, 1.0)
-        # Hints: the imitation loss, how often the greedy action is the hint and the sim's weight, per minibatch.
-        if "hint_n" in auxiliary_stats:
-            count = auxiliary_stats.pop("hint_n")
-            for name in ("hint_loss", "hint_match", "hint_weight"):
-                value = auxiliary_stats.pop(name, 0.0)
-                if count > 0.0:
-                    stats[name] = value / count
-        for key in [k for k in auxiliary_stats if k.startswith("hint_all_")]:
-            name = key[len("hint_all_"):]
-            total = auxiliary_stats.pop(key)
-            ok = auxiliary_stats.pop(f"hint_ok_{name}", 0.0)
-            if total > 0.0:
-                stats[f"hint_match_{name}"] = ok / total
-        if "scripted_share" in auxiliary_stats:
-            stats["scripted_share"] = auxiliary_stats.pop("scripted_share") / max(1, updates)
         # Hindsight: the relabelled loss per minibatch that had one, and the rows relabelled over the update.
         if "hindsight_loss" in auxiliary_stats:
             relabelled = auxiliary_stats.pop("hindsight_rows")

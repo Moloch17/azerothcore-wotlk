@@ -62,7 +62,6 @@ namespace Animus::Curriculum
         World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
         Crowd,          // what is on the party past the pack's slots, and the pack ahead (no actions)
-        Hint,           // a suggested action the learner imitates while the support lasts; hidden from the networks
         /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
         /// friend's resurrection. Before the goal block, which stays last.
         Death,

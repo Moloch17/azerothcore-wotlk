@@ -29,7 +29,6 @@
 #include "StageDefinition.h"
 #include "StageSettings.h"
 #include "StageState.h"
-#include "WingTeacher.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -222,7 +221,8 @@ namespace Animus::Curriculum
         /// The seat the "human" stand-in plays this episode (StandIn.h), or -1 for an all-bot party. A leading
         /// stand-in is seat 0, the group's leader: what a party follow reads as the leader to keep up with.
         [[nodiscard]] int32 StandInSeat(Env const& env) const;
-        /// The stand-in's share of `arena`'s training episodes, percent: the arena's own, else StandIn.Share.
+        /// The stand-in's share of `arena`'s training episodes, percent: the arena's own, else Roles.StandInShare for a
+        /// roles arena, else StandIn.Share.
         [[nodiscard]] int32 StandInShare(uint32 arena) const;
         [[nodiscard]] bool StandInLeads(Env const& env) const;
         /// Build the owner as a seat in the owner's agent slot: a class and build of the run meeting `demand`,
@@ -252,76 +252,37 @@ namespace Animus::Curriculum
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
-        /// A rung of the whole dungeon's support ladder: the share of seats the dungeon script plays, the levels
-        /// above the dungeon's range, the wipes to spare and the weight of the hints every seat imitates.
+        /// A rung of the whole dungeon's difficulty ladder: the levels above the dungeon's range and the wipes to
+        /// spare.
         struct WingRung
         {
-            float Script;
             uint32 Lift;
             uint32 ExtraWipes;
-            float Hint;
         };
-        /// The ladder, from the most support to none: the last rung is the evaluation's own conditions. The script
-        /// leaves first, at the top level; then the levels come down one at a time, the wipes and the hints with them.
-        /// No hints from rung 9 (20-23) down: there the hint-guided runs did worse than the probes (0.40 against
-        /// 0.61, 2026-10-02), so the script's habits held the bots back.
-        static constexpr std::array<WingRung, 13> WING_RUNGS =
+        /// The ladder, from the easiest to the evaluation's own conditions (the last rung): the levels come down one at
+        /// a time, the spare wipes with them.
+        static constexpr std::array<WingRung, 9> WING_RUNGS =
         {{
-            { 1.0f, 8, 4, 1.0f },
-            { 0.75f, 8, 4, 1.0f },
-            { 0.5f, 8, 4, 1.0f },
-            { 0.25f, 8, 4, 1.0f },
-            { 0.0f, 8, 4, 1.0f },
-            { 0.0f, 7, 3, 1.0f },
-            { 0.0f, 6, 3, 1.0f },
-            { 0.0f, 5, 2, 0.75f },
-            { 0.0f, 4, 2, 0.75f },
-            { 0.0f, 3, 1, 0.0f },
-            { 0.0f, 2, 1, 0.0f },
-            { 0.0f, 1, 0, 0.0f },
-            { 0.0f, 0, 0, 0.0f },
+            { 8, 4 },
+            { 7, 3 },
+            { 6, 3 },
+            { 5, 2 },
+            { 4, 2 },
+            { 3, 1 },
+            { 2, 1 },
+            { 1, 0 },
+            { 0, 0 },
         }};
         /// The rung this process's training runs are on now (Instance.WingProbe and the rest).
         [[nodiscard]] uint32 WingRungNow() const { return _wingRung.load(std::memory_order_relaxed); }
-        /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, whether it was a
-        /// reference run (the teacher played every seat: Instance.WingReferenceShare), and how far it got (the share
-        /// of the dungeon cleared, 1 when the last boss died). Probes step the ladder; probes against the rung's own
-        /// reference runs switch hint imitation off (WingHintOff).
-        void NoteWingRun(uint32 rung, bool probe, float progress, bool reference = false);
-        /// **The enforced cutoff** (dungeon-curriculum I6): the first rung whose probes -- the policy alone -- beat the
-        /// script's clear share **at that rung** (its own reference runs, the teacher playing every seat at the rung's
-        /// levels and wipes), from which on hint imitation is off: no hint is written and no scripted seat's press is
-        /// imitated, at that rung and every later one (the old failure: bots copying a script that stood still); a
-        /// ladder falling back below it has its hints again. -1: not yet. Instance.WingHintOffRung carries it across
-        /// a restart; a cluster's host decides it for every worker (the RUNG broadcast).
-        [[nodiscard]] int32 WingHintOffRung() const { return _hintOffRung.load(std::memory_order_relaxed); }
-        /// Whether hint imitation is off at `rung`.
-        [[nodiscard]] bool WingHintOff(uint32 rung) const
-        {
-            int32 const off = WingHintOffRung();
-            return off >= 0 && rung >= uint32(off);
-        }
-        /// The cutoff's rule: a full window of probes clearing more of the dungeon, on average, than the script's runs
-        /// (at least a quarter of a window of them) -- strictly more.
-        [[nodiscard]] static bool ProbesBeatTheScript(std::vector<float> const& probes,
-            std::vector<float> const& reference, std::size_t window);
-        /// The hint weight at `rung`: the rung's own, or 0 from the cutoff on.
-        [[nodiscard]] float WingHintAt(uint32 rung) const;
-        /// Whether a training run of a whole dungeon at `rung` is drawn as a reference run: Instance.WingReferenceShare
-        /// of them while the support is on and the rung's imitation is not yet off (the cutoff's measure).
-        [[nodiscard]] bool DrawWingReference(uint32 rung) const;
-        /// Whether the dungeon teacher plays every seat of a whole dungeon's run, whatever the rung and the support
-        /// say: a local `forge run <stage> dungeon N` (the teacher's check), or a teacher-check arena
-        /// (ArenaDefinition::Teacher). Never in evaluation.
-        [[nodiscard]] bool TeacherPlays(Env const& env) const;
-        void SetLocalPolicy(std::string const& policy) override;
+        /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, and how far it got (the
+        /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
+        void NoteWingRun(uint32 rung, bool probe, float progress);
 
         std::string TakeClusterTally() override;
         void AddClusterTally(std::string const& tally) override;
         [[nodiscard]] int32 ClusterRung() const override { return int32(WingRungNow()); }
         void FollowClusterRung(uint32 rung) override;
-        [[nodiscard]] int32 ClusterHintOff() const override { return WingHintOffRung(); }
-        void FollowClusterHintOff(int32 rung) override;
         /// The decision interval, in ms of game time.
         [[nodiscard]] uint32 DecisionMs() const { return _decisionMs; }
 
@@ -435,7 +396,7 @@ namespace Animus::Curriculum
         void SetShapingScale(float scale) override;
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
-        void SetEvaluationStandIn(bool standIn) override;
+        void SetStandIn(bool standIn) override;
         void SetExploreStarts(float share, std::vector<ExploreStart> starts) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
@@ -474,10 +435,6 @@ namespace Animus::Curriculum
         [[nodiscard]] bool PartyHasLivingTank(Env const& env, Player const* bot) const;
         void JudgePress(Env const& env, SeatState& seat, Player* bot, Unit* target, uint32 action,
             SeatActionResult const& result) const;
-        /// An instructed seat's goal in a whole dungeon (SeatState::Instructed), by its role: the healer protects the
-        /// most hurt member under Instance.WingInstructHeal, the tank fights whatever is hitting someone else, and
-        /// everyone else (the healer with nobody hurt) fights the tank's target. NO_GOAL leaves the seat its own.
-        [[nodiscard]] int32 InstructedGoal(Env const& env, uint32 seatIndex, SeatView const& view, Player* bot) const;
         /// How far the seat is from where its goal wants it, in yards: the gap to its spec's range from the target
         /// under Fight and Position. Negative when the goal names no place (or there is no goal or target).
         /// The yards to where the goals want the seat: the nearer of the two slots' (-1 when neither says).
@@ -498,24 +455,10 @@ namespace Animus::Curriculum
         void SettleDeath(Env& env, SeatState& seat, Player* bot);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
         /// The episode's stand-in, once its seats are built (StandInSeat.cpp): whether there is one (a party or raid
-        /// arena: StandIn.Share of training episodes, every episode of a stand-in evaluation), which seat, its style.
+        /// arena: its share of training episodes while the learner has a frozen partner to play it, every episode of a
+        /// stand-in evaluation), which seat, and its style -- leading (seat 0, the group's leader) or following, in a
+        /// seat whose build fits the role it wants. The learner plays its row with a frozen partner (present 2).
         void DrawStandIn(Env& env);
-        /// The stand-in's decision from its seat's own row (`obs`, `mask` as ObserveSeat wrote them): the keys it
-        /// holds from now and the press it makes (SeatState::ScriptAction). Then its row is blanked: no-op only.
-        void DecideStandIn(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
-        /// The stand-in's enemy in a stage with the sight block: one its sight list names (its selection, else the
-        /// nearest in a fight with the party, else the nearest), never a server list's.
-        [[nodiscard]] Unit* SightTarget(Env const& env, uint32 seat, Player* bot) const;
-    public:
-        /// The stand-in's situation for its hands (WingTeacher::Hands): what its seat saw as the teacher reads it
-        /// (SeatState::StandInSeen), its role its style's, and only the enemies and things its sight list names.
-        [[nodiscard]] static WingTeacher::Facts StandInFacts(SeatState const& seat, StandIn::Role role);
-    private:
-        /// The dungeon teacher's knowledge of a seat's situation (WingTeacherSeat.cpp): read off the world and the
-        /// seat's view on the map's thread, as a script may know it -- never a bot input. `obs` and `mask` are the
-        /// seat's row as just observed (for whether a pull from range can be cast).
-        [[nodiscard]] WingTeacher::Facts TeacherFacts(Env const& env, uint32 seat, SeatView const& view, Player* bot,
-            float const* obs, uint8 const* mask) const;
         /// The stand-in's episode info columns (with_stand_in and its style), in a stage with a party or raid arena.
         void AddStandInEpisodeInfo();
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
@@ -599,8 +542,9 @@ namespace Animus::Curriculum
         std::atomic<float> _costScale{ 1.0f };
         /// The arena an evaluation is pinned to (MODE's arena), its index + 1; 0 = the stage's own draw.
         std::atomic<uint32> _evaluationArena{ 0 };
-        /// Whether evaluation episodes play the "human" stand-in (MODE_FLAG_STAND_IN).
-        std::atomic<bool> _evaluationStandIn{ false };
+        /// Whether the learner plays a stand-in's row (MODE_FLAG_STAND_IN): an evaluation then has one in every party,
+        /// training in its share of them; without it no party has one.
+        std::atomic<bool> _standIn{ false };
         mutable std::mutex _exploreLock;
         float _exploreShare = 0.0f;
         std::vector<ExploreStart> _exploreStarts;
@@ -611,13 +555,6 @@ namespace Animus::Curriculum
         std::vector<float> _wingProbes;         // the rung's probes' progress, the latest WingRungRuns
         std::vector<float> _wingOthers;         // ... its other training runs'
         std::array<float, WING_RUNGS.size()> _wingSteppedAt{};  // the probes' mean when each rung was stepped onto
-        /// Each rung's latest WingRungRuns reference runs (the teacher playing every seat at the rung): its script's
-        /// clear share, which that rung's probes have to beat for hint imitation to end (WingHintOffRung).
-        std::array<std::vector<float>, WING_RUNGS.size()> _wingReference{};
-        std::atomic<int32> _hintOffRung{ -1 };
-        /// The local policy is the dungeon teacher's (`forge run <stage> dungeon N`): it plays every seat.
-        std::atomic<bool> _teacherRun{ false };
-        std::string _wingTallyReference;
         /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
         /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
         bool _wingFollower = false;

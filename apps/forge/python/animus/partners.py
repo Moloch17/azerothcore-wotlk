@@ -3,8 +3,9 @@
 The bots must work with anyone -- above all a human collaborator who may lead, follow or take any role -- and a party
 of five copies of one policy only ever learns to work with itself. So in a share of a party's episodes some of its
 seats are played by **frozen partners**: earlier stages' best checkpoints (by stage name), any checkpoint by path, and
-this run's own snapshots on a clock. The sim's "human" stand-in (StandIn.h) is the other half of the same lesson: a
-scripted seat with a person's habits, whose row the sim already reports as not present.
+this run's own snapshots on a clock. The sim's "human" stand-in (StandIn.h) is the other half of the same lesson: one
+seat the sim picks -- leading from seat 0 or following, in the role it wants -- whose row (present 2 on the wire,
+Step.stand_in) a member of this same pool plays, never a script.
 
 **The pool.** Each member's party outcome -- the live seats' mean of the stage's own outcome measure (``score``, the
 evaluation's ``score_outcome`` by default) in the episodes it partnered -- is averaged over ``rate_window`` episodes.
@@ -21,6 +22,12 @@ live seat and never the seat a drill is about (stage.json's arena ``drill_seat``
 episode is for); each drawn seat gets a member whose checkpoint has that seat's layout (a member without it is never
 drawn for it, so no partner row silently falls back to the live policy). Partner rows take the frozen actor's action and are
 never samples; their episodes are left out of the training statistics, and the league never sees them.
+
+**The stand-in.** Every row the sim marks as the stand-in's gets a member at its episode's first decision, whatever
+``share`` says, and it is not one of the ``max_partners`` seats the share draws. The sim fields a stand-in only while
+the learner says it can (MODE_FLAG_STAND_IN: ``Partners.can_field_stand_in``, a member for some layout); a stand-in row
+whose layout no member has is played by the live policy and still never trained on (``stand_in_unfielded`` counts
+them).
 
 **Evaluation.** The plain evaluation is "all bots". The eval arm "with_partners" (eval.arms) plays a fixed partner set
 (``eval_partners``, else the stage and path members) in every party, argmax, with its own random numbers seeded from
@@ -292,10 +299,18 @@ class Partners:
         self.partner_rows_total = 0
         self.fallback_total = 0
         self.episodes_with = 0
+        self.stand_in_rows_total = 0
+        self.stand_in_unfielded_total = 0
 
     @property
     def enabled(self) -> bool:
         return self.rule is not None and bool(self.pool.active()) and self.share > 0.0
+
+    @property
+    def can_field_stand_in(self) -> bool:
+        """Whether a member could play the "human" stand-in's row: a party stage with someone in the pool (the learner
+        says so to the sim with MODE_FLAG_STAND_IN; without it the sim fields no stand-in)."""
+        return self.rule is not None and bool(self.pool.active())
 
     def draw(self, step) -> None:
         """The envs starting an episode at this decision: whether they have partners, which seats, and whom."""
@@ -304,17 +319,29 @@ class Partners:
             return
         self.fresh[fresh] = False
         self.assigned[fresh] = -1
+        if not self.can_field_stand_in:
+            return
+        present = np.asarray(step.present, dtype=bool)
+        # The stand-in's seat first (the sim drew it): a member for its layout, whatever the share says.
+        stand_in = getattr(step, "stand_in", None)
+        if stand_in is not None:
+            stand_in = np.asarray(stand_in, dtype=bool) & present
+            for env in fresh:
+                for seat in np.flatnonzero(stand_in[env]):
+                    self.assigned[env, seat] = self.pool.draw_for(int(step.layout[env, seat]), self.rng)
+                    self.stand_in_rows_total += 1
+                    self.stand_in_unfielded_total += int(self.assigned[env, seat] < 0)
         if not self.enabled:
             return
         state = host(step.state)
         party = self.rule.envs(state)
-        present = np.asarray(step.present, dtype=bool)
         for env in fresh:
             if not party[env] or self.rng.random() >= self.share:
                 continue
             drilled = self.rule.drill_seat(state, int(env))
+            standing_in = stand_in[env] if stand_in is not None else np.zeros(present.shape[1], dtype=bool)
             seats = [seat for seat in range(min(self.rule.seats, present.shape[1]))
-                     if present[env, seat] and seat != drilled]
+                     if present[env, seat] and seat != drilled and not standing_in[seat]]
             # Always at least one live seat: the policy is what is being trained (a drill's seat is one already).
             live_drilled = 0 <= drilled < present.shape[1] and bool(present[env, drilled])
             room = min(self.config.max_partners, len(seats) - (0 if live_drilled else 1))
@@ -396,14 +423,18 @@ class Partners:
     def stats(self) -> dict[str, float]:
         share = self.partner_rows_total / self.rows_total if self.rows_total else 0.0
         out = {"partner_rows": float(share), "partner_fallback_rows": float(self.fallback_total),
-               "partner_members": float(len(self.pool.active())), "partner_episodes": float(self.episodes_with)}
+               "partner_members": float(len(self.pool.active())), "partner_episodes": float(self.episodes_with),
+               "stand_in_episodes": float(self.stand_in_rows_total),
+               "stand_in_unfielded": float(self.stand_in_unfielded_total)}
         self.rows_total = self.partner_rows_total = self.fallback_total = self.episodes_with = 0
+        self.stand_in_rows_total = self.stand_in_unfielded_total = 0
         return out
 
 
 def with_partners_chooser(choose, partners: Partners):
-    """The "with_partners" eval arm's chooser: the learner's actions with the fixed partners' over their rows, and the
-    rows to leave unscored (run_evaluation's `excluded`)."""
+    """The "with_partners" eval arm's chooser -- and the "with_human" arm's, whose Partners has share 0 and so plays
+    only the stand-in's rows: the learner's actions with the fixed partners' over their rows, and the rows to leave
+    unscored (run_evaluation's `excluded`)."""
 
     def chooser(step):
         partners.clear(step.done)

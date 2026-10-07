@@ -5,11 +5,11 @@
 # interact (CMSG_GAMEOBJ_USE through the session's handler) and the Iron Clad Door by the cannon and the Defias
 # Gunpowder carried from the door (CMSG_USE_ITEM): the sight block's presses; nothing opens by itself, nothing is
 # looted.
-# Deaths rise at the entrance and walk back; the second wipe ends a run. The teacher hints and tapers to none as in D2.
+# Deaths rise at the entrance and walk back; the second wipe ends a run. The difficulty ladder as in D2.
 #
 # **The bar** (the user's, unchanged since 2026-10-02): at levels 17-20, 70% or more of the evaluation's runs cleared
-# with at most one wipe and no help -- bar_clear (the evaluation is the ladder's last rung: the band's own levels, no
-# teacher, one wipe spared). Measured per boss (boss_*) and by role (deaths_tank, _healer, _damage: each seat's place in
+# with at most one wipe -- bar_clear (the evaluation is the ladder's last rung: the band's own levels, one wipe
+# spared). Measured per boss (boss_*) and by role (deaths_tank, _healer, _damage: each seat's place in
 # the party, read off its build). Wailing Caverns is held out, as in D2.
 #
 # Outcome and Cost as D2's. Seeded from dungeon2_ragefire: the same layout, every block carries.
@@ -25,7 +25,7 @@ eval:
   report: [bar_clear, cleared, full_clear, wing_cleared_share, wing_route_share, wing_wipes, chain_pulls, ready_pulls,
            boss_rhahkzor, boss_sneed_shredder, boss_sneed, boss_gilnid, boss_smite, boss_greenskin, boss_cookie,
            boss_vancleef, wing_boss_kills, wing_trash_kills, wing_rises, wing_rejoins, wing_rejoin_seconds, wing_rung,
-           at_top_rung, wing_level, wing_probe, wing_scripted, with_stand_in, without_stand_in, clear_standin,
+           at_top_rung, wing_level, wing_probe, with_stand_in, without_stand_in, clear_standin,
            clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths,
            level, died, reward_kill, reward_clear, reward_ready_pull, reward_pull_extra, reward_idle, reward_lost,
            reward_death, reward_step_cost, reward_timeout, reward_approach, reward_threat, reward_damage_dealt,

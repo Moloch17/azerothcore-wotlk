@@ -715,12 +715,10 @@ namespace Animus::Curriculum
             uint32 ProgressMs = 0;
             uint32 ProgressSeen = 0;            // kills + waypoints at ProgressMs
             uint32 Wipes = 0;
-            /// The run's rung of the support ladder and the wipes it stands up at the door, fixed when the
+            /// The run's rung of the difficulty ladder and the wipes it stands up at the door, fixed when the
             /// run is drawn; and whether it is an evaluation's, which the running route share leaves out.
             uint32 Rung = 0;                    // the ladder's rung the run was drawn on (StageScenario::WING_RUNGS)
-            bool Probe = false;                 // no script, no hints: a measure of the policy (Instance.WingProbe)
-            /// The teacher plays every seat: the script's clear share at the rung (Instance.WingReferenceShare).
-            bool Reference = false;
+            bool Probe = false;                 // a measure of the policy at the rung (Instance.WingProbe)
             uint32 WipesAllowed = 1;
             bool Evaluating = false;
             /// The fight under way, for the wipe's log line (Instance.WingTrace): when it began, what had been killed
@@ -747,7 +745,6 @@ namespace Animus::Curriculum
             uint32 OnParty = 0;
             float CrowdSeconds = 0.0f;          // seconds the party had more than a pack on it
             uint32 HostileTotal = 0;            // the instance's creatures a full clear kills, at the start
-            bool Scripted = false;              // a seat of this run was played by the script (WingScript)
             uint32 LastMs = 0;                  // the run's clock at its last update, and its level, for its log line
             uint32 Level = 0;
             uint32 StuckLoggedMs = 0;           // when the next "Wing stuck" line may be written

@@ -60,10 +60,11 @@ namespace
     }
 }
 
-// SPEC is "<12I32s4I", 96 bytes, ending with ImageBytes, LookHeads, then MapBytes (protocol 24, the mental map).
+// SPEC is "<12I32s4I", 96 bytes, ending with ImageBytes, LookHeads, then MapBytes (protocol 24, the mental map; 25
+// changed only what present means).
 TEST(VisionProtocolTest, SpecCarriesLookHeads)
 {
-    EXPECT_EQ(PROTOCOL_VERSION, 24u);
+    EXPECT_EQ(PROTOCOL_VERSION, 25u);
     EXPECT_EQ(sizeof(SpecMsg), 96u);
     EXPECT_EQ(offsetof(SpecMsg, ImageBytes), 84u);
     EXPECT_EQ(offsetof(SpecMsg, LookHeads), 88u);

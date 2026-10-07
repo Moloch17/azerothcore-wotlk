@@ -45,10 +45,6 @@ PURPOSE = {
     # tank's hold, the healer's keep, the damage dealer's focus, the puller's clean pulls and the extra ones it drags
     # in -- and the party's packs cleared.
     "group1_roles": ("DrillHold", "DrillKeep", "DrillFocus", "PullClean", "PullExtra", "Clear"),
-    # The dungeon teacher's checks (I6; not training stages, but a learner pointed at one is paid for the dungeon):
-    # every pack and boss killed (Kill, the last boss's WingBoss among them) and each death priced.
-    "teacher_ragefire": ("Kill", "Death"),
-    "teacher_deadmines": ("Kill", "Death"),
     # The dungeon stages (dungeon-curriculum G2, D1-D3, InstanceEncounter, 2026-10-07): G2's packs cleared in route
     # order (Clear) and pulls started ready (ReadyPull), its chain pulls (PullExtra) and standing about (Idle); D1's
     # clean pull (PullClean) and the pack it drags in (PullExtra); D2's and D3's bosses (Kill), full clear (Clear),

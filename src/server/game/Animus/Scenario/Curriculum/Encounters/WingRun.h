@@ -29,11 +29,11 @@
 /// on their own (DungeonStagesTest).
 namespace Animus::Curriculum::WingRun
 {
-    /// The support ladder's rungs (StageScenario::WING_RUNGS, 13) a tier spans: a run's outcome terms scale with
-    /// 1 + Difficulty.TierScale x its tier, rung 0 (the most support, eight levels up) tier 0 and the evaluation's rung
-    /// 12 (the dungeon's own levels, no help) tier 4, so a ladder that steps down raises what a clear pays rather
+    /// The difficulty ladder's rungs (StageScenario::WING_RUNGS, 9) a tier spans: a run's outcome terms scale with
+    /// 1 + Difficulty.TierScale x its tier, rung 0 (the easiest, eight levels up) tier 0 and the evaluation's rung 8
+    /// (the dungeon's own levels, no wipes spared) tier 4, so a ladder that steps down raises what a clear pays rather
     /// than the score falling as it gets harder (animus-tier-scaled-outcomes).
-    constexpr uint32_t RUNGS_PER_TIER = 3;
+    constexpr uint32_t RUNGS_PER_TIER = 2;
 
     [[nodiscard]] constexpr uint32_t TierOfRung(uint32_t rung)
     {

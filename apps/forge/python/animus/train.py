@@ -42,7 +42,6 @@ from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
 from .explore import ExploreArchive, cells_of, mark_columns
-from .hint_cutoff import HintCutoff
 from .exploit import JOIN, Exploit, exploiter_name
 from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
                          format_summary,
@@ -751,12 +750,6 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
-        # The hint block's columns (a dungeon's suggested action) are kept out of both networks, seeded or resumed.
-        self.trainer.set_hint_space(self.stage, [layout.name for layout in self.spec.layouts])
-        # Hint imitation ends per rung once the probes beat the script there (wing_hint_off_rung; animus.hint_cutoff).
-        self.hint_cutoff = HintCutoff(self.spec.episode_info_names, self.trainer.config)
-        self.reference_column = (self.spec.episode_info_names.index("wing_reference")
-                                 if "wing_reference" in self.spec.episode_info_names else None)
         # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
@@ -839,12 +832,9 @@ class TrainingRun:
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
             "approx_kl_move", "epochs_done", "minibatches_done",
             "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
-            "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes",
+            "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
+            "stand_in_unfielded",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
-            # Action hints (mappo.hint_coef): the imitation loss, the greedy action's agreement, the sim's weight.
-            "hint_loss", "hint_match", "hint_weight", "scripted_share",
-            *(f"hint_match_{block}" for block in ("core", "move", "duel", "pack", "party", "support", "crowd", "pet",
-                                                  "gauntlet", "companion")),
         ]
         if self.style is not None:
             # The style reward (animus.style): what it paid a decision, the scale it was paid at, and the
@@ -1120,7 +1110,13 @@ class TrainingRun:
         score_name = partners.score if partners.score in names else "won"
         self.partner_score_column = names.index(score_name) if score_name in names else None
         self.last_partner_snapshot_env_steps = self.env_steps
-        if partners.enabled:
+        # The "human" stand-in (I7): a party arena whose stage.json stand_in_share is above 0 has one in that share of
+        # its training episodes, played by a member of the same pool -- so the pool is kept for it even with
+        # cast.partners.share 0.
+        self.stand_in_share = max((int(arena.get("stand_in_share", -1))
+                                   for arena in (self.stage or {}).get("arenas", ())), default=-1)
+        pooled = bool(self.partner_members) or partners.snapshot_every_env_steps > 0
+        if partners.enabled or (self.stand_in_share > 0 and pooled):
             self.partners = Partners(partners, spec, self.stage, self.run_dir, self.trainer.rollout_device,
                                      self.partner_members, seed=config.seed + 7)
             if self.partners.rule is None:
@@ -1191,9 +1187,8 @@ class TrainingRun:
         names = [layout.name for layout in spec.layouts]
 
         def prepare(trainer) -> None:
-            # As the main's: the stage's goal and hint spaces, blind director columns, every rank the leader's.
+            # As the main's: the stage's goal space, blind director columns, every rank the leader's.
             trainer.set_goal_space(self.stage, names)
-            trainer.set_hint_space(self.stage, names)
             trainer.clear_director_columns()
             for module in (trainer.actor, trainer.critic, trainer.value_norm):
                 if module is not None:
@@ -1310,6 +1305,7 @@ class TrainingRun:
         first, count = weighted_share(episodes, self.rank_envs, self.ranks.rank)
         result, self.step = run_evaluation(self.env, self.spec, choose_actions, count, seed, first_seed=first,
                                            any_playing=self.ranks.any if self.ranks.active else None,
+                                           training_stand_in=self.field_stand_in(),
                                            spec_names=self.spec_names,
                                            categories=self.episode_categories,
                                            score_column=self.config.eval.score_column(), **options)
@@ -1592,7 +1588,12 @@ class TrainingRun:
             choose, options = self.learner_actions(), {}
             arm_partners = None
             if arm == "with_human":
+                # The stand-in's row played by the fixed partner set, argmax; the arm is skipped without one.
+                arm_partners = self.eval_partners(arm, share=0.0)
+                if arm_partners is None:
+                    continue
                 options["stand_in"] = True
+                choose, options["excluded"] = with_partners_chooser(choose, arm_partners)
             elif arm == "with_partners":
                 arm_partners = self.eval_partners()
                 if arm_partners is None:
@@ -1618,22 +1619,34 @@ class TrainingRun:
                   f"{(plain or {}).get('score', float('nan')):.4g}) over {result.episodes} episodes in "
                   f"{result.seconds:.0f} s" + (f"; {shown}" if shown else ""), flush=True)
 
-    def eval_partners(self) -> Partners | None:
-        """The "with_partners" arm's fixed partner set (cast.partners.eval_partners, else its stage and path members),
-        argmax, in every party, its draws seeded from the evaluation's seed and this rank; None without one."""
+    def eval_partners(self, arm: str = "with_partners", share: float = 1.0) -> Partners | None:
+        """An arm's fixed partner set (cast.partners.eval_partners, else its stage and path members), argmax, its draws
+        seeded from the evaluation's seed and this rank; None without one. "with_partners" (share 1) puts them in some
+        seats of every party; "with_human" (share 0) only in the stand-in's seat."""
         partners = self.config.cast.partners
         if not self.partner_eval_members:
-            print("eval.arms.with_partners: cast.partners names no partner (stages, paths or eval_partners); skipped",
+            print(f"eval.arms.{arm}: cast.partners names no partner (stages, paths or eval_partners); skipped",
                   flush=True)
             return None
-        arm = Partners(partners, self.spec, self.stage, self.run_dir, self.trainer.rollout_device,
-                       self.partner_eval_members, seed=self.config.eval.seed * 1000 + self.ranks.rank, share=1.0,
-                       deterministic=True, snapshots=False)
-        if not arm.enabled:
-            print(f"eval.arms.with_partners: no partner to play (missing {', '.join(arm.pool.missing) or 'none'}, "
+        played = Partners(partners, self.spec, self.stage, self.run_dir, self.trainer.rollout_device,
+                          self.partner_eval_members, seed=self.config.eval.seed * 1000 + self.ranks.rank, share=share,
+                          deterministic=True, snapshots=False)
+        if not (played.enabled if share > 0.0 else played.can_field_stand_in):
+            print(f"eval.arms.{arm}: no partner to play (missing {', '.join(played.pool.missing) or 'none'}, "
                   f"or the stage has no party); skipped", flush=True)
             return None
-        return arm
+        return played
+
+    def field_stand_in(self) -> bool:
+        """Whether training fields the "human" stand-in: a stage with a stand-in share and a partner in the pool to
+        play it (MODE_FLAG_STAND_IN in the training MODE). Said in forge status either way."""
+        fielded = self.stand_in_share > 0 and self.partners is not None and self.partners.can_field_stand_in
+        if self.stand_in_share > 0:
+            self.progress.note("stand_in", (
+                f"fielded in up to {self.stand_in_share}% of the parties, a frozen partner from a pool of "
+                f"{len(self.partners.pool.active())}" if fielded
+                else "not fielded yet: no partner checkpoint in the pool (cast.partners) to play it"))
+        return fielded
 
     def send_replay(self, result: EvalResult) -> None:
         """Send the sim the seeds this evaluation lost, for training resets to rebuild (protocol REPLAY)."""
@@ -2050,6 +2063,11 @@ class TrainingRun:
             if partner_rows.any():
                 actions, look = self.partners.act_and_look(part, actions, partner_rows, look)
                 present = present & ~partner_rows
+        # Nor is the "human" stand-in's row, whoever plays it (a partner; the live policy where no member has its
+        # layout): the policy never trains on it.
+        stand_in = getattr(part, "stand_in", None)
+        if stand_in is not None:
+            present = present & ~np.asarray(stand_in, dtype=bool)
         goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
             goals if goals is not None else (None, None, None, None, None, None))
         # The obs, state and mask may be views of the sim's device buffers (protocol 15), which the sim overwrites
@@ -2137,12 +2155,6 @@ class TrainingRun:
         present = self.present_column
         keep = np.ones(len(ended), dtype=bool) if present is None else ended[:, present] > 0.0
         keep &= ~partnered.reshape(-1)
-        self.hint_cutoff.observe(ended[keep])
-        # A whole dungeon's reference run (the teacher played every seat: the cutoff's measure) is hint data, not the
-        # policy's: out of the training statistics.
-        reference = self.reference_column
-        if reference is not None:
-            keep &= ended[:, reference] <= 0.5
         self.finished_episodes.extend(ended[keep])
         self.finished_layouts.extend(int(index) for index in ended_layouts[keep])
         if self.link is not None:
@@ -2427,6 +2439,10 @@ class TrainingRun:
     def run(self) -> int:
         """The whole run; returns the process exit code."""
         self.step = self.env.reset()
+        # The sim fields no stand-in until the learner says it can play one: said once here, then with every training
+        # MODE after an evaluation (a pool that gained its first member since).
+        if self.ranks.broadcast(self.field_stand_in()):
+            self.step = self.env.set_mode(False, stand_in=True)
         if self.cast is not None or self.partners is not None:
             self._reset_far_side()
         self.progress.write("training", self.update, self.env_steps)

@@ -253,10 +253,6 @@ namespace Animus::Curriculum
         /// joins (Instance.Pull*). Training only, unless the stage is all drills (EvaluatesDrills: dungeon1_pulls,
         /// whose evaluation drills the pack its seed names).
         bool PullDrill = false;
-        /// InstanceLadder::Wing: the dungeon teacher (WingTeacher) plays every seat of every run, whatever the ladder's
-        /// rung and the support say, for checking the teacher (`forge run teacher_ragefire dungeon 96`); never in an
-        /// evaluation, and not for training (StageScenario::TeacherPlays).
-        bool Teacher = false;
         /// Played only when an evaluation pins it (the learner's eval.heldout, MODE's arena): never drawn in training
         /// nor in an ordinary evaluation, whatever its weight. Content a stage is measured on and never trained on --
         /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run
@@ -467,11 +463,6 @@ namespace Animus::Curriculum
         /// power at the entrance (EntranceRespawn's RespawnClock and RiseAtEntrance), to walk back on the controller.
         /// The episode goes on (StageScenario::DeadForGood is never true). An instanced arena's, never with DeathRuns.
         bool RespawnAtEntrance = false;
-        /// InstanceLadder::Wing: **the dungeon teacher hints and tapers** on this arena's training runs (dungeon-
-        /// curriculum G2, D2, D3): the script's share of seats and the hint weight of the ladder's rung
-        /// (StageScenario::WING_RUNGS), off from the per-rung cutoff (Instance.WingHintOffRung), whatever
-        /// Instance.WingSupport says. Never in a probe, a reference run's measure or an evaluation.
-        bool Taught = false;
         /// InstanceLadder::Wing: **a corridor** (dungeon-curriculum G2): a run is this many of the route's packs in
         /// route order -- the packs before the first cleared as a party that came from the door left them, the
         /// party set down short of the first, the run won when every one of them is cleared. Pull, fight, rest, ready,
@@ -580,10 +571,6 @@ namespace Animus::Curriculum
     /// Every curriculum stage, every base before the stages that extend it. Invalid definitions (an unknown or later
     /// base, a repeated block, parts that need a missing block) are logged and left out.
     [[nodiscard]] std::vector<StageDefinition> const& CurriculumStages();
-
-    /// Whether a learned seat ever plays the stage: some arena is not the teacher's own runs (ArenaDefinition::Teacher).
-    /// A stage that trains a policy perceives only what a player does -- never the crowd block's server-list reads.
-    [[nodiscard]] bool TrainsAPolicy(StageDefinition const& stage);
 
     [[nodiscard]] StageDefinition const* FindStage(std::string_view name);
 

@@ -183,7 +183,7 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     if (!_scenario.Stage().AnyArena(creature))
         table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     // A wing stage's rung comes first of the `_rung` columns (the evaluation videos read the first: Vision::
-    // EvalVideoRungColumn): the pull drill's ladder in a stage of drills, the support ladder's otherwise -- the
+    // EvalVideoRungColumn): the pull drill's ladder in a stage of drills, the difficulty ladder's otherwise -- the
     // row a stage pins (boss_rung) is the same every run.
     bool const wings = _scenario.Stage().AnyArena([](ArenaDefinition const& arena)
     {
@@ -195,8 +195,8 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         table.Add("wing_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
         // At the top of the run's own ladder (the learner's convergence.top_rung: a stage converges on its real task,
-        // never on a rung with help): a drill's PULL_GAPS, else the support ladder's last rung -- the evaluation's
-        // conditions, with no teacher. A stage's pinned row (difficulty) is the same every run and says nothing.
+        // never on an easier rung): a drill's PULL_GAPS, else the difficulty ladder's last rung -- the evaluation's
+        // conditions. A stage's pinned row (difficulty) is the same every run and says nothing.
         table.Add("at_top_rung", [this](Env const& env, uint32)
         {
             EnvInstance const& fight = _envs[env.Index];
@@ -239,28 +239,6 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
             EnvInstance const& fight = _envs[env.Index];
             return fight.Rejoins ? float(fight.RejoinMsTotal) / float(fight.Rejoins) / 1000.0f : 0.0f;
         });
-        // Hint imitation off for the run's rung (StageScenario::WingHintOffRung): the learner switches hint_coef off
-        // on the episodes that say so, whatever its config asks (animus.hint_cutoff).
-        table.Add("wing_hint_off", [this](Env const& env, uint32)
-        {
-            return _scenario.Data(env).WingHintOff ? 1.0f : 0.0f;
-        });
-        // The cutoff's rung as the sim has it at the run's end (-1 none), and -2 for a run that is no whole dungeon's
-        // training run (another arena, a drill, an evaluation): the learner holds hint_coef at 0 exactly while the
-        // runs' rung is at or past it.
-        table.Add("wing_hint_off_rung", [this](Env const& env, uint32)
-        {
-            EnvInstance const& fight = _envs[env.Index];
-            if (!Wing(env) || fight.Route.empty() || fight.Drill || fight.Evaluating)
-                return -2.0f;
-            return float(_scenario.WingHintOffRung());
-        });
-        // A reference run: the teacher played every seat (Instance.WingReferenceShare); hint data, not the policy's.
-        table.Add("wing_reference", [this](Env const& env, uint32)
-        {
-            return _envs[env.Index].Reference ? 1.0f : 0.0f;
-        });
-        table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
         // **The party stages' measures** (dungeon-curriculum G2, D1-D3, 2026-10-07). The run's success as the stage
         // counts it (`cleared`: a drill's pack alone and dead, a corridor's packs all cleared, a whole dungeon's last
@@ -436,10 +414,9 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // The run just ended counts toward the support's running share (training runs of a whole dungeon only).
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
     if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
-        LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
+        LOG_INFO("module.animus", "Wing run: env {} {}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
             "{} bosses, last boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
             env.Index, fight.Evaluating ? "eval" : fight.Started ? "train from a cell" : "train",
-            fight.Reference ? " reference" : fight.Scripted ? " scripted" : "",
             fight.Probe ? " probe" : "", fight.Rung, fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
             fight.BossDead ? "killed" : "alive", fight.Wipes, fight.Rises, fight.Rejoins,
@@ -459,7 +436,7 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
             ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
         float const progress = fight.CorridorRun ? fight.Corridor.Share()
             : fight.BossDead ? 1.0f : std::min(1.0f, cleared);
-        _scenario.NoteWingRun(fight.Rung, fight.Probe, progress, fight.Reference);
+        _scenario.NoteWingRun(fight.Rung, fight.Probe, progress);
     }
     fight = EnvInstance();
 }
@@ -507,9 +484,8 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
     data.EpisodeLevel = fight.Row->Level;
     // A whole dungeon is run by characters of its own level range: the dungeon finder's target range for the map
     // and difficulty (LFGDungeons.dbc), a level drawn in it every run. The row's level is the fallback.
-    // Training runs it at the support ladder's rung (StageScenario::WING_RUNGS): above that range, with wipes to
-    // spare, the script playing some seats and every seat shown its hints; a probe at the rung's level and wipes with
-    // neither; an evaluation as it is.
+    // Training runs it at the difficulty ladder's rung (StageScenario::WING_RUNGS): above that range, with wipes to
+    // spare; an evaluation as it is.
     if (Wing(env))
     {
         CurriculumTuning::InstanceTuning const& tuning = _scenario.Tuning().Instance;
@@ -517,28 +493,13 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         fight.Rung = env.Evaluating ? uint32(StageScenario::WING_RUNGS.size()) - 1 : _scenario.WingRungNow();
         StageScenario::WingRung const& rung = StageScenario::WING_RUNGS[fight.Rung];
         // A pull drill is one pull by the learned seats, at about the dungeon's own levels: a party far above them
-        // walks past what a party of the level would pull, and the drill is about what it would pull. No probes, no
-        // script, one wipe; the hints as the support has them. A stage of drills alone (dungeon1_pulls) evaluates
-        // them too, each seed its own pack (StartDrill); any other leaves them to training.
+        // walks past what a party of the level would pull, and the drill is about what it would pull. No probes, one
+        // wipe. A stage of drills alone (dungeon1_pulls) evaluates them too, each seed its own pack (StartDrill); any
+        // other leaves them to training.
         fight.Drill = arena.PullDrill && (!env.Evaluating || EvaluatesDrills(_scenario.Stage().Arenas));
         fight.CorridorRun = arena.CorridorPacks > 0 && !fight.Drill;
-        // The teacher's own runs (a teacher arena, or `forge run <stage> dungeon N`): it plays every seat, and no run
-        // is a probe. Never in evaluation.
-        bool const teacher = _scenario.TeacherPlays(env) && !fight.Drill;
-        fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && !teacher
-            && frand(0.0f, 1.0f) < tuning.WingProbe;
+        fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && frand(0.0f, 1.0f) < tuning.WingProbe;
         fight.WipesAllowed = fight.Drill ? 1 : tuning.WingWipes + rung.ExtraWipes;
-        // The script's seats and hints are a support switched on by hand (Instance.WingSupport), or always on a taught
-        // arena (ArenaDefinition::Taught: the party stages G2, D2, D3): off, the rungs are the levels and the wipes
-        // alone. Hint imitation is off from the rung the probes beat the script on.
-        bool const supported = (tuning.WingSupport || teacher || arena.Taught) && !env.Evaluating && !fight.Probe;
-        // A reference run (Instance.WingReferenceShare): the teacher plays every seat at the rung's levels and wipes,
-        // the script's clear share at the rung -- the measure the rung's probes have to beat (WingHintOffRung).
-        fight.Reference = supported && !teacher && !fight.Drill && !fight.Started
-            && _scenario.DrawWingReference(fight.Rung);
-        data.WingScript = teacher || fight.Reference ? 1.0f : supported && !fight.Drill ? rung.Script : 0.0f;
-        data.WingHintOff = _scenario.WingHintOff(fight.Rung);
-        data.WingHint = supported ? _scenario.WingHintAt(fight.Rung) : 0.0f;
         // The arena's own band (the Deadmines' bar: 17-20) where it names one, else the dungeon finder's range.
         auto const [low, high] = arena.LevelFirst ? std::pair<uint32, uint32>(arena.LevelFirst, arena.LevelLast)
             : DungeonLevels(*fight.Row);
@@ -1127,8 +1088,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             {
                 uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
                 SeatState const& state = data.Seats[index];
-                std::string const& reason = state.ScriptReason;
-                // What it pressed against what the script suggested, by name.
+                // What it pressed, by name.
                 std::string presses;
                 if (state.L)
                 {
@@ -1138,15 +1098,14 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                         return action >= 0 && std::size_t(action) < names.size() ? names[std::size_t(action)]
                             : std::string("-");
                     };
-                    presses = Acore::StringFormat(" pressed {} hint {}", name(state.Pressed), name(state.HintAction));
+                    presses = Acore::StringFormat(" pressed {}", name(state.Pressed));
                 }
-                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd at ({:.0f} {:.0f} {:.0f}){}{}{}{}]",
+                seats += Acore::StringFormat("{}[{}{} hp {:.0f}% mana {} {:.0f}yd at ({:.0f} {:.0f} {:.0f}){}{}{}]",
                     seats.empty() ? "" : " ", index, bot == tank ? " tank" : "", bot->GetHealthPct(),
                     maxMana ? std::to_string(bot->GetPower(POWER_MANA) * 100 / maxMana) + "%" : "-",
                     tank && tank->IsInMap(bot) ? bot->GetExactDist(tank) : -1.0f, bot->GetPositionX(),
                     bot->GetPositionY(), bot->GetPositionZ(), bot->IsAlive() ? "" : " dead",
-                    bot->IsInCombat() ? " combat" : "", presses,
-                    reason.empty() ? std::string() : " {" + reason + "}");
+                    bot->IsInCombat() ? " combat" : "", presses);
             }
         float const toNext = tank && fight.RouteNext < fight.Route.size()
             ? tank->GetExactDist(&fight.Route[fight.RouteNext]) : -1.0f;
@@ -1210,8 +1169,6 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 ? Acore::StringFormat("{:.0f} yd ({})", tank->GetExactDist(&fight.Ahead), fight.AheadSize)
                 : std::string("none"), seats);
     }
-    for (uint32 index = 0; index < data.ActiveSeats && !fight.Scripted; ++index)
-        fight.Scripted = data.Seats[index].Scripted;
 
     // A wing: the next point of the route reached by any seat out of a fight -- ground is taken by clearing it, not
     // by running past what is still fighting (the Deadmines' parties ran into the next pack mid-fight and had eight on
@@ -1230,7 +1187,7 @@ void Animus::Curriculum::InstanceEncounter::RiseDead(Env& env, EnvInstance& figh
 {
     // The dead rejoin (dungeon-curriculum I4; the user, 2026-10-06: no graveyard): a seat that dies is out for
     // Respawn.DelayMs, then is alive at the instance's entrance and walks back to the party on the controller --
-    // its own walk, the teacher's for a seat the teacher plays, never a teleport to the party. It has rejoined
+    // its own walk, never a teleport to the party. It has rejoined
     // within Respawn.RejoinYards of the party: the tank, or the living party's middle while the tank is down.
     CurriculumTuning::RespawnTuning const& tuning = _scenario.Tuning().Respawn;
     EnvState& data = _scenario.Data(env);
@@ -2944,8 +2901,8 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
     }
 
     // **A sight stage perceives what a player does** (the coordinator's ruling, 2026-10-07): the route -- its next
-    // point, the tank's place on it, the next packs in order -- is the teacher's knowledge, kept in SeatView::Crowd for
-    // its decisions (a script may know it), never the seat's objective (no flag in its camera) nor its goal places.
+    // point, the tank's place on it, the next packs in order -- is the encounter's own bookkeeping, kept in
+    // SeatView::Crowd, never the seat's objective (no flag in its camera) nor its goal places.
     // Those are what it saw, its map's frontier, the dungeon map's layout and its leader (SeenWorld).
     if (_scenario.Stage().Has(BlockId::Sight))
     {
