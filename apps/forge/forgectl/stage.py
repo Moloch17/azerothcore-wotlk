@@ -40,6 +40,22 @@ def send_checked(config: Config, machine: Machine, line: str, timeout: float = 2
     return result
 
 
+def host_plan_state(config: Config) -> tuple[str, str]:
+    """("idle" | "running" | "down" | "unknown", the first line of the host's `forge status`). "down" is a worldserver
+    container that is not running (nothing can be training); "unknown" is a console that did not answer while the
+    container is up, which is not evidence that nothing runs."""
+    host = config.host
+    try:
+        status = send_checked(config, host, "forge status")
+    except Failure as failure:
+        up = remote.on(host, f"docker ps -q --filter name=^/{config.worldserver}$ --filter status=running\n")
+        if up.ok and not up.out.strip():
+            return "down", f"the worldserver container is not running on {host.name}"
+        return "unknown", str(failure)
+    first = status.lines[0] if status.lines else ""
+    return ("idle" if "idle" in first.lower() else "running"), first
+
+
 def show(machine: Machine, result: console.ConsoleResult) -> None:
     say(f"--- {machine.name} ---")
     say(result.text if result.lines else "(no reply text: the command was accepted silently)")

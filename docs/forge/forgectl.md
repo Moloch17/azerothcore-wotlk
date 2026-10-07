@@ -125,8 +125,17 @@ spencer  TIMED OUT    60.0 min  no 'ready' line for 012345678 within 60 min (bui
 ```
 
 A machine that fails its pull (`PULL FAILED`, with the last lines of its output), cannot be reached (`UNREACHABLE`) or
-is not ready in time (`TIMED OUT`) is named and the exit code is 1. **A build restarts every worldserver, which stops
-a training stage**: `forgectl stage cancel` first and `forgectl stage resume <stage>` afterwards. After a build, a
+is not ready in time (`TIMED OUT`) is named and the exit code is 1.
+
+**A build restarts every worldserver, which would kill a training stage without its final checkpoint save** (a
+`stage cancel` saves `latest.pt` first). So `build --cluster` first reads the host's `forge status` and **refuses if a
+stage is running, even with `--yes`**, and also if the console does not answer while the worldserver container is up
+(it cannot tell). Two ways forward: `forgectl stage cancel` yourself first, or pass **`--stop-running`**: the plan
+then starts with "cancel the running stage on every machine ... and wait for 'Plan ended'", and after you confirm it
+sends the cancel to the host and every worker (a machine that does not take it stops the build before anything is
+pushed), waits for "Plan ended" on the host, and only then pushes and builds. The audit line says the stage was
+stopped. Afterwards `forgectl stage resume <stage>` continues the run from `latest.pt`. A host whose worldserver
+container is not running at all can be rebuilt without the flag. After a build, a
 change to the curriculum keys still needs `forgectl conf-sync`; then `forgectl cluster` should show one revision.
 
 ## `forgectl conf-sync [--check]`

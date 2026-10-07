@@ -108,20 +108,40 @@ def report(outcomes: list[Outcome], sha: str) -> int:
     return 0
 
 
-def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push: bool = True) -> int:
+def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push: bool = True,
+          stop_running: bool = False) -> int:
     branch, sha = deploy_state(config)
+    running = ""
     if cluster:
         if push and branch != config.branch:
             raise Failure(f"this checkout is on {branch!r} but the cluster runs {config.branch!r}: check out "
                           f"{config.branch} (or merge into it) before deploying")
+        state, running_line = stage_commands.host_plan_state(config)
+        if state == "unknown":
+            raise Failure(f"cannot tell whether a stage is running on {config.host.name} ({running_line}); a "
+                          "rebuild restarts every worldserver and would kill it without a final checkpoint save. "
+                          "Look at `forgectl cluster` and `forgectl logs`, then try again")
+        if state == "running":
+            running = running_line
+            if not stop_running:
+                raise Failure(f"a stage is running ({running_line!r} on {config.host.name}): a rebuild restarts every "
+                              "worldserver and kills it without the final checkpoint save that `stage cancel` makes. "
+                              "Run `forgectl stage cancel` first, or pass --stop-running to cancel it as part of "
+                              "this build")
         targets = config.cluster
         plan = ([f"push {config.branch} ({sha[:9]}) to the remote {config.lan_remote!r}"] if push else []) + [
             f"on {', '.join(m.name for m in targets)} (in parallel): run apps/forge/tools/cluster-pull.sh (pull, "
             "then recreate the worldserver container, which recompiles from source)",
             "wait until each prints 'AzerothCore rev. <sha> ... ready', for up to "
             f"{timeout_minutes:.0f} min each",
-            "WARNING: every worldserver restarts, which stops any stage that is training; `forgectl stage cancel` "
-            "first, then `forgectl stage resume <stage>` afterwards"]
+            "every worldserver restarts" + (": no stage is running now" if not running else
+                                            ", which is why the running stage is cancelled first"),
+            ]
+        if running:
+            plan.insert(0, f"--stop-running: cancel the running stage ({running}) on "
+                           f"{', '.join(m.name for m in targets)} (every learner saves latest.pt first) and wait "
+                           f"for 'Plan ended' on {config.host.name}")
+            plan.append("afterwards `forgectl stage resume <stage>` continues the cancelled run from its latest.pt")
     else:
         targets = [m for m in config.machines if m.local] or [config.host]
         plan = [f"on {targets[0].name} (this machine): touch env/dist/.forge-build and recreate the worldserver "
@@ -133,6 +153,13 @@ def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push
         say(f"Nothing was changed ({declined}).")
         return 1
     audit.touch(targets)
+    if running:
+        audit.note(f"stopped the running stage first: {running}")
+        note(f"cancelling the running stage on {', '.join(m.name for m in targets)} before the build ...")
+        if stage_commands.run(config, "cancel", [], yes=True) != 0:
+            raise Failure("the cancel was not accepted everywhere, so nothing was built (a worldserver that is "
+                          "restarted under a running stage loses its final checkpoint save); check `forgectl cluster`")
+        wait_plan_ended(config, config.host)
     if cluster and push:
         note(f"pushing {config.branch} to {config.lan_remote} ...")
         local_git(config, "push", config.lan_remote, config.branch)

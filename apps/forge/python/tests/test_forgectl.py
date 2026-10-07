@@ -645,6 +645,7 @@ def deployable(cfg, fake, monkeypatch):
         git_calls.append(args)
         return {"rev-parse --abbrev-ref HEAD": "forge", "rev-parse HEAD": SHA}.get(" ".join(args), "")
     monkeypatch.setattr(deploy, "local_git", local_git)
+    monkeypatch.setattr(console, "send", FakeConsole(replies={"forge status": ["Animus Forge is idle"]}))
     return git_calls
 
 
@@ -655,7 +656,7 @@ def test_cluster_build_pushes_pulls_everywhere_and_reports_each_machine(cfg, fak
     assert sorted(cluster_fake.pulled) == ["192.168.0.117", "192.168.0.66", "192.168.0.67", "192.168.0.68"]
     assert cluster_fake.polls["192.168.0.66"] == 3  # waited for the slow one
     out = capsys.readouterr().out
-    assert out.count("ready") >= 4 and "All 4 machines are ready" in out and "stops any stage" in out
+    assert out.count("ready") >= 4 and "All 4 machines are ready" in out and "every worldserver restarts: no stage is running now" in out
 
 
 def test_a_machine_that_never_gets_ready_is_reported_and_fails_the_build(cfg, fake, deployable, monkeypatch, capsys):
@@ -1039,3 +1040,93 @@ def test_two_runs_append_and_keep_both_lines(cli_cfg, sent, forgectl_home):
     cli.main(["stage", "cancel", "--yes"])
     assert [l.split('cmd="')[1].split('"')[0] for l in audit_lines(forgectl_home)] == [
         "forgectl stage pause --yes", "forgectl stage cancel --yes"]
+
+
+# ---- build --cluster under a running stage ---------------------------------------------------------------------------
+
+RUNNING = ["Forge: move2_seek | training"]
+IDLE = ["Animus Forge is idle"]
+
+
+@pytest.fixture
+def host_console(monkeypatch):
+    """The host's console as the build sees it; replies["forge status"] is what decides running or idle."""
+    recorder = FakeConsole(replies={"forge status": RUNNING})
+    monkeypatch.setattr(console, "send", recorder)
+    return recorder
+
+
+@pytest.fixture
+def plan_end(monkeypatch):
+    """wait_for_log answers 'Plan ended' and remembers what it was asked."""
+    seen = []
+    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None:
+                        seen.append((machine.name, pattern)) or "Plan ended: cancelled")
+    return seen
+
+
+def test_a_running_stage_makes_the_cluster_build_refuse_even_with_yes(cfg, fake, deployable, host_console, capsys):
+    cluster_fake = FakeCluster(fake)
+    with pytest.raises(ui.Failure, match="a stage is running.*stage cancel.*--stop-running"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5)
+    assert cluster_fake.pulled == [] and ("push", "lan", "forge") not in deployable
+    assert [line for _, line in host_console.sent] == ["forge status"]  # nothing but the read-only status
+
+
+def test_stop_running_cancels_everywhere_waits_for_plan_ended_then_builds(cfg, fake, deployable, host_console,
+                                                                          monkeypatch, capsys):
+    cluster_fake = FakeCluster(fake)
+    ended = []
+    monkeypatch.setattr(deploy, "wait_for_log", lambda config, machine, pattern, seconds, since=None:
+                        ended.append((machine.name, pattern, list(cluster_fake.pulled), len(host_console.sent)))
+                        or "Plan ended: cancelled")
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True) == 0
+    cancels = [name for name, line in host_console.sent if line == "forge cancel"]
+    assert cancels == ["sarah", "spencer", "thomas", "moloch"]
+    assert ended == [("sarah", "Plan ended", [], 5)]  # 1 status + 4 cancels were sent, and nothing was pulled yet
+    assert len(cluster_fake.pulled) == 4
+    out = capsys.readouterr().out
+    assert "--stop-running: cancel the running stage" in out and "wait for 'Plan ended' on sarah" in out
+
+
+def test_stop_running_does_nothing_extra_on_an_idle_host(cfg, fake, deployable, host_console, plan_end):
+    host_console.replies["forge status"] = IDLE
+    FakeCluster(fake)
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True) == 0
+    assert not any(line == "forge cancel" for _, line in host_console.sent) and plan_end == []
+
+
+def test_a_cancel_that_does_not_reach_everyone_builds_nothing(cfg, fake, deployable, plan_end, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(replies={"forge status": RUNNING}, fail_on=("thomas",)))
+    cluster_fake = FakeCluster(fake)
+    with pytest.raises(ui.Failure, match="cancel was not accepted everywhere"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5, stop_running=True)
+    assert cluster_fake.pulled == [] and ("push", "lan", "forge") not in deployable
+
+
+def test_a_console_that_does_not_answer_is_not_taken_for_an_idle_host(cfg, fake, deployable, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    cluster_fake = FakeCluster(fake)
+    fake.rules.insert(0, (lambda argv, input: "docker ps" in (input or ""), Result(0, "abc123\n")))  # it is up
+    with pytest.raises(ui.Failure, match="cannot tell whether a stage is running"):
+        deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5)
+    assert cluster_fake.pulled == []
+
+
+def test_a_host_whose_worldserver_is_down_can_be_rebuilt(cfg, fake, deployable, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    cluster_fake = FakeCluster(fake)  # answers the docker ps with nothing: no container is running
+    assert deploy.build(cfg, cluster=True, yes=True, timeout_minutes=5) == 0
+    assert len(cluster_fake.pulled) == 4
+
+
+def test_the_cli_passes_stop_running_and_logs_the_cancel(cfg, fake, deployable, host_console, plan_end, forgectl_home,
+                                                         monkeypatch):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    FakeCluster(fake)
+    assert cli.main(["build", "--cluster", "--yes"]) == 1
+    assert cli.main(["build", "--cluster", "--yes", "--stop-running"]) == 0
+    refused, done = audit_lines(forgectl_home)
+    assert "outcome=failed" in refused and "confirm=not-reached" in refused and "a stage is running" in refused
+    assert "outcome=done" in done and "stopped the running stage first" in done

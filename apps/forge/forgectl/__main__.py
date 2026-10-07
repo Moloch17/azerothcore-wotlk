@@ -68,6 +68,9 @@ def parser() -> argparse.ArgumentParser:
     bd.add_argument("--cluster", action="store_true", help="push to the lan remote, then cluster-pull on every "
                                                           "machine in the cluster, and wait for each to be ready")
     bd.add_argument("--yes", action="store_true", help="do not ask")
+    bd.add_argument("--stop-running", action="store_true",
+                    help="with --cluster: if a stage is running, cancel it on every machine (it saves latest.pt), "
+                         "wait for 'Plan ended', then build; without this a running stage makes the build refuse")
     bd.add_argument("--timeout", type=float, default=60, help="minutes to wait for each machine (default 60)")
 
     cs = add("conf-sync", "copy the host's AnimusForge.Curriculum.* keys to every worker's conf (with backups)",
@@ -105,7 +108,7 @@ def dispatch(args, config) -> int:
     if args.command == "logs":
         return logs.run(config, args.machine, args.errors, args.lines, args.wide)
     if args.command == "build":
-        return deploy.build(config, args.cluster, args.yes, args.timeout)
+        return deploy.build(config, args.cluster, args.yes, args.timeout, stop_running=args.stop_running)
     if args.command == "conf-sync":
         return confsync.run(config, args.check, args.yes)
     if args.command == "test":
