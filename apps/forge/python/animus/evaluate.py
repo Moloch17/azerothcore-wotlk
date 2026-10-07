@@ -34,6 +34,19 @@ from .stages import STAGE_FILE, layout_changes, load_stage
 from .device import host
 
 
+def mappo_from_checkpoint(saved: dict, emit=print) -> MappoConfig:
+    """The MappoConfig a checkpoint was saved with, as this build knows it. Only for a checkpoint's saved config: one
+    saved by an older build carries options since removed, which are dropped (one line names them). A yaml is never
+    read this way: TrainConfig.load stays strict, so a typo in a live config is still an error."""
+    known = {field.name for field in fields(MappoConfig)}
+    dropped = sorted(key for key in saved if key not in known)
+    if dropped:
+        emit(f"evaluate: the checkpoint's config has {len(dropped)} option(s) this build no longer has, ignored: "
+             f"{', '.join(dropped)}")
+    kept = {key: value for key, value in saved.items() if key in known}
+    return MappoConfig(**{**kept, "hidden": tuple(saved["hidden"])})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", required=True)
@@ -53,10 +66,7 @@ def main() -> None:
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     saved = checkpoint["config"]
-    # The keys this build's MappoConfig has: a checkpoint saved by an older build carries options since removed.
-    known = {field.name for field in fields(MappoConfig)}
-    mappo = MappoConfig(**{**{key: value for key, value in saved["mappo"].items() if key in known},
-                           "hidden": tuple(saved["mappo"]["hidden"])})
+    mappo = mappo_from_checkpoint(saved["mappo"])
     socket_path = args.socket or saved.get("socket", TrainConfig.socket)
 
     env = ForgeEnv(socket_path)
