@@ -116,6 +116,7 @@ char const* Animus::Curriculum::EntityActions::RefusalName(Refusal refusal)
         case Refusal::NoItem:   return "no_item";
         case Refusal::NoTarget: return "no_target";
         case Refusal::Cast:     return "cast";
+        case Refusal::Locked:   return "locked";
         case Refusal::Count:    break;
     }
     return "unknown";
@@ -197,12 +198,21 @@ bool Animus::Curriculum::EntityActions::OpensLoot(uint32 goType)
         || goType == GAMEOBJECT_TYPE_FISHINGHOLE;
 }
 
+bool Animus::Curriculum::EntityActions::LockedToHand(uint32 goType, uint32 lockId)
+{
+    return lockId && (goType == GAMEOBJECT_TYPE_DOOR || goType == GAMEOBJECT_TYPE_BUTTON
+        || goType == GAMEOBJECT_TYPE_GOOBER);
+}
+
 Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::JudgeObjectUse(ObjectFacts const& facts)
 {
     if (OpensLoot(facts.Type))
         return Refusal::Loot;
     if (!facts.Selectable)
         return Refusal::Kind;
+    // The server's handler opens a locked door to any hand (GameObject::Use takes no lock); the client never sends it.
+    if (facts.Locked)
+        return Refusal::Locked;
     if (facts.Distance > facts.Reach)
         return Refusal::Reach;
     return Refusal::None;
@@ -278,6 +288,8 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
     WorldObject* object = resolve(bot, ObjectGuid(guid));
     if (!object)
         return refuse(Refusal::Gone);
+    result.ActedOn = object->GetGUID();
+    result.ActPress = uint8(press);
     Unit* unit = object->ToUnit();
     GameObject* go = object->ToGameObject();
 
@@ -327,6 +339,7 @@ Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Ap
                 facts.Selectable = !go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE);
                 facts.Reach = go->GetInteractionDistance();
                 facts.Distance = go->IsWithinDistInMap(bot) ? 0.0f : facts.Reach + 1.0f;
+                facts.Locked = LockedToHand(go->GetGoType(), go->GetGOInfo()->GetLockId());
                 if (Refusal const refusal = JudgeObjectUse(facts); refusal != Refusal::None)
                     return refuse(refusal);
                 WorldPacket packet = GameObjectUse(go->GetGUID());

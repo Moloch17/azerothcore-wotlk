@@ -42,6 +42,8 @@ namespace
         "pitch_sin", "pitch_cos", "centroid_x", "centroid_y", "share", "memory" };
     constexpr char const* PRESS_NAMES[uint32(Animus::Curriculum::EntityActions::Press::Count)] = { "select",
         "interact", "use_item", "assist", "focus" };
+    constexpr uint32 NAMED_TASKS = uint32(Sight::NAMED_FEATURES) - uint32(Entities::ENTITY_FEATURES);
+    constexpr char const* TASK_NAMES[NAMED_TASKS] = { "reach", "interact", "use_item" };
 
     /// A remembered entity's entity-list columns, from the camera of this frame to where it was last seen.
     void WriteRecalled(Vi::SeenList const& seen, Vi::Remembered const& entry, float* out)
@@ -102,7 +104,7 @@ namespace
 
 Animus::Curriculum::BlockSize Animus::Curriculum::SightBlock::Size(Layout const& /*layout*/) const
 {
-    return BlockSize{ SIGHT_SLOTS * SIGHT_FEATURES, ACTION_COUNT };
+    return BlockSize{ OBS_COUNT, ACTION_COUNT };
 }
 
 void Animus::Curriculum::SightBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
@@ -141,6 +143,15 @@ void Animus::Curriculum::SightBlock::DescribeManifest(Layout const& layout, boos
         pointers.emplace_back(std::move(pointer));
     }
     sight["pointers"] = std::move(pointers);
+    boost::json::object named;
+    named["offset"] = NAMED_FIRST;
+    named["width"] = uint32(NAMED_FEATURES);
+    named["entity_width"] = uint32(Entities::ENTITY_FEATURES);
+    boost::json::array tasks;
+    for (char const* task : TASK_NAMES)
+        tasks.push_back(boost::json::string(task));
+    named["tasks"] = std::move(tasks);
+    sight["named"] = std::move(named);
     block["sight"] = std::move(sight);
 }
 
@@ -187,9 +198,23 @@ void Animus::Curriculum::SightBlock::Write(Vision::SeenList const& seen, Vision:
     }
 }
 
+void Animus::Curriculum::SightBlock::WriteNamed(SeatView const& view, float* out)
+{
+    std::fill(out, out + NAMED_FEATURES, 0.0f);
+    if (!view.NamedTask || view.NamedTask > NAMED_TASKS)
+        return;
+    out[Entities::ENTITY_PRESENT] = 1.0f;
+    out[Entities::ENTITY_CLASS] = float(view.NamedClass);
+    out[Entities::ENTITY_TYPE] = float(view.NamedEntry);
+    out[Entities::ENTITY_OBJECT] = view.NamedObject ? 1.0f : 0.0f;
+    out[NAMED_REACH + view.NamedTask - 1] = 1.0f;
+}
+
 void Animus::Curriculum::SightBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
-    std::fill(obs, obs + SIGHT_SLOTS * SIGHT_FEATURES, 0.0f);
+    std::fill(obs, obs + OBS_COUNT, 0.0f);
+    // What the goal names, whatever the frame shows: a quest's log says it with the eyes shut.
+    WriteNamed(view, obs + NAMED_FIRST);
     if (mask)
         std::fill(mask, mask + ACTION_COUNT, uint8(0));
     if (view.SightGuids)

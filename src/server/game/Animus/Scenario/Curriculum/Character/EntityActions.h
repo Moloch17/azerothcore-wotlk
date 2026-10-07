@@ -80,6 +80,9 @@ namespace Animus::Curriculum::EntityActions
         NoItem,         // no item the seat carries is used on such a thing
         NoTarget,       // assist: the unit has no target, or one the client does not have
         Cast,           // the cast was refused otherwise (its SpellCastResult)
+        /// A door, button or goober with a lock (a door its lever opens, the Deadmines' cannon that takes the
+        /// gunpowder): the client sends no use for a locked thing, it shows the lock (M3 interact).
+        Locked,
         Count
     };
     constexpr uint32 REFUSALS = uint32(Refusal::Count);
@@ -120,7 +123,11 @@ namespace Animus::Curriculum::EntityActions
         bool Selectable = true;     // no GO_FLAG_NOT_SELECTABLE
         float Distance = 0.0f;      // from the seat, as IsWithinDistInMap measures it
         float Reach = 0.0f;         // GameObject::GetInteractionDistance
+        bool Locked = false;        // a door, button or goober whose template names a lock (LockedToHand)
     };
+    /// Whether a game object of `goType` with lock `lockId` is shut to a hand on it: a door, a button or a goober
+    /// with any lock. Its lever, or the item its lock takes, opens it; a chest's lock is the loot refusal's.
+    [[nodiscard]] bool LockedToHand(uint32 goType, uint32 lockId);
     [[nodiscard]] Refusal JudgeObjectUse(ObjectFacts const& facts);
 
     /// A creature's (or player's) interaction, judged from what the client knows of it (GetNPCIfCanInteractWith).
@@ -151,7 +158,8 @@ namespace Animus::Curriculum::EntityActions
         ClientPort& port = SessionPort());
 
     /// **A press** on the entity `guid` (raw): judged as above, then sent. `focus` is the seat's client focus (Focus
-    /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal.
+    /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal; ActedOn
+    /// and ActPress the entity and the press, sent or refused, once it was found.
     Refusal Apply(Press press, Player* bot, uint64 guid, ObjectGuid& focus, SeatActionResult& result,
         ClientPort& port = SessionPort(), Resolver const& resolve = ResolveAtClient);
 }
