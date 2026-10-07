@@ -154,11 +154,9 @@ Player* Animus::BotFactory::Create(BotSpec const& spec, WorldSession* session)
 
 Map* Animus::BotFactory::PlaceInNewInstance(Player* bot, uint32 mapId, Position const& pos)
 {
-    // A groupless player with no bind for this map always gets a brand new instance. A battleground map gives
-    // the sim its own copy too (MapInstanced::CreateSimBattleground), which is how the flag stages get Warsong
-    // Gulch's real ground.
+    // A groupless player with no bind for this map always gets a brand new instance.
     Map* map = sMapMgr->CreateMap(mapId, bot);
-    if (!map || !(map->IsDungeon() || map->IsBattlegroundOrArena()))
+    if (!map || !map->IsDungeon())
     {
         LOG_ERROR("module.animus", "Map {} did not produce an instance for bot {}", mapId, bot->GetName());
         return nullptr;

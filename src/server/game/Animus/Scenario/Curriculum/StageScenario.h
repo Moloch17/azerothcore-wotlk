@@ -129,8 +129,6 @@ namespace Animus::Curriculum
 
         [[nodiscard]] char const* Name() const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
-        /// The far side of a self-play arena: its seats.
-        [[nodiscard]] bool IsOpponentSeat(Env const& env, uint32 agent) const override;
         [[nodiscard]] ScenarioSpec Spec() const override { return _spec; }
 
         bool Setup(Env& env) override;
@@ -173,12 +171,9 @@ namespace Animus::Curriculum
         /// Where a sight stage's goal places come from in a dungeon (StageDefinition::GoalPlaces and its conf key).
         [[nodiscard]] SeenPlaces::Source GoalPlaces() const { return _goalPlaces; }
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
-        /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
-        /// seat a side, which is what a Mirror is.
+        /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else is one side.
         [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
-        /// A seat questing alone beside two groups sharing a zone (ArenaDefinition::LoneSeats): on no side, so no
-        /// director commands it and no one is its teammate. SideOf still names a side for it, only so that arrays
-        /// kept a side can be indexed; OnSide is what membership asks.
+        /// A seat questing alone beside two groups sharing a zone (ArenaDefinition::LoneSeats): on no side.
         [[nodiscard]] bool IsLoneSeat(Env const& env, uint32 seat) const;
         /// Whether `seat` plays for `side`: SideOf, less the lone seats.
         [[nodiscard]] bool OnSide(Env const& env, uint32 seat, uint32 side) const
@@ -228,15 +223,6 @@ namespace Animus::Curriculum
         Player* BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start, AptitudeDemand demand);
         /// Release the owner's seat: its character goes and its slot reads empty.
         void ReleaseOwnerSeat(Env& env);
-        /// The seats of `side`, in seat order, and how many there are (at most TEAM_SEATS).
-        uint32 SideSeats(Env const& env, uint32 side, std::array<uint32, TEAM_SEATS>& out) const;
-        /// Whether a side can see `unit` at all: any one of its living seats can.
-        ///
-        /// A side's knowledge is the union of its members', which is a notion the scenario did not have --
-        /// ViewSeat filters what one seat sees (StageScenario.cpp, the `hidden` lambda) and nothing filtered
-        /// anything per side. A director commands a side, so this is the visibility its observation is built
-        /// from. Dead seats are excluded: a side that wiped should not go on spotting.
-        [[nodiscard]] bool SideCanSee(Env const& env, uint32 side, Unit const* unit) const;
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
@@ -391,7 +377,7 @@ namespace Animus::Curriculum
         /// The seat's current character made ready for a new episode in place of a rebuild (Characters.ReuseEpisodes):
         /// alive, full, unbuffed, cooldowns clear, pet away, moved to `start`. Null when it cannot be (then BuildSeat).
         Player* ReuseSeat(Env& env, uint32 seat, Position const& start);
-        void Configure(Player* bot, SeatState& seat, bool pvp) const;
+        void Configure(Player* bot, SeatState& seat) const;
         /// Every seat's potions, bandages, stones and flask for the episode (after the encounters are built).
         void StockSeats(Env& env);
         /// Pet classes start with their pet out Characters.PetOutChance percent of the time (after StockSeats).

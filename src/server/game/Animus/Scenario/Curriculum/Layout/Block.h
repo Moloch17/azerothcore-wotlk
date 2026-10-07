@@ -51,12 +51,10 @@ namespace Animus::Curriculum
         Gauntlet = 5,       // pull timing, food, drink, sustain spells
         Companion = 6,      // the owner: follow, assist, guard, heal it
         Party = 7,          // three teammates: follow the tank, assist, guard and heal them
-        Pvp = 8,            // the enemy player's class, role and state
         Context = 9,        // the situation: allies, hostile players and creatures, PvP flag, map kind (no actions)
         Hostiles = 10,       // per enemy slot: player or creature, class, healing, stealth, pet (no actions)
         Pet = 11,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
         Travel = 12,         // mounts, flying and an objective to get to
-        Flag = 13,           // a flag match: both flags, both bases, the score (no actions)
         Support = 14,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
         World = 16,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast = 17,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)

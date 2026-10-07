@@ -22,7 +22,6 @@
 #include "Define.h"
 #include "RewardLedger.h"
 
-class Battleground;
 #include <vector>
 
 class Map;
@@ -72,13 +71,8 @@ namespace Animus::Curriculum
         /// After the episode's arena and its seats' classes are drawn and before its level: an encounter that fixes
         /// the level, the map or the spawn (an instance's boss rung) writes them into the EnvState here.
         virtual void BeforeLevel(Env& /*env*/) { }
-        /// After the episode's level is drawn and before its seats are built. A battleground has to exist before
-        /// them: a seat reaches its map through the battleground instance it was told to join.
+        /// After the episode's level is drawn and before its seats are built.
         virtual void BeforeSeats(Env& /*env*/, uint8 /*level*/) { }
-        /// The battleground this encounter runs for `env`, when it runs one: its seats join it rather than being
-        /// placed in an instance of their own.
-        [[nodiscard]] virtual Battleground* MatchFor(Env const& /*env*/) const { return nullptr; }
-
         /// After the seats' new bots are placed, in encounter order: build what the episode fights and prepare the
         /// seats for it. `level` is the seats' level. False when the env cannot be built.
         virtual bool Build(Env& /*env*/, Map* /*map*/, uint8 /*level*/) { return true; }

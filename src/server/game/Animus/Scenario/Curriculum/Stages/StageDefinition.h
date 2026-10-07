@@ -37,7 +37,6 @@ namespace Animus::Curriculum
     {
         Solo,           // one seat
         Party,          // one group (1-GROUP_SEATS with a character each episode): a tank, a healer and damage
-        Mirror,         // two seats that fight each other (self-play)
         Raid,           // the arena's seats as RAID_GROUPS groups of GROUP_SEATS: a tank and a healer per group
         Teams,          // TEAM_COUNT sides of TEAM_SEATS against each other (self-play), each side a group
     };
@@ -47,9 +46,7 @@ namespace Animus::Curriculum
     {
         Creature,       // one same-level creature spawned out of aggro range
         Pulls,          // packs of creatures (see PullSchedule)
-        MirrorSeat,     // the other seat (SeatPlan::Mirror)
         Travel,         // a place to get to (ArenaDefinition::Flying for one best reached in the air)
-        Flag,           // Warsong Gulch's rules between the two mirror seats: take the other's flag home
         Hazards,        // nothing to fight: ground to get off (HazardEncounter)
         Instance,       // a real dungeon or raid boss in its own instance (InstanceEncounter, ArenaDefinition::Instance)
         Quest,          // a quest of the level band, giver to turn-in, in the world's own zone (QuestEncounter)
@@ -234,7 +231,6 @@ namespace Animus::Curriculum
         /// is one (there is no scripted owner): an owner arena sets it.
         bool OwnerCast = false;
         bool PartyGroup = false;        // the owner and seats form a core group
-        bool Pvp = false;               // against players: resilience gear, no resurrecting oneself
         /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
         /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
         InstanceLadder Instance = InstanceLadder::None;
@@ -501,9 +497,6 @@ namespace Animus::Curriculum
         /// here instead, on ground no weight has ever been updated against, is what makes `arrived` and `saved`
         /// claims about the policy rather than about the map.
         std::vector<Position> HeldOutSpawnPoints{};
-        /// Where a flag arena's bases are, one per side. Empty: the second base is searched for, BaseMin-BaseMax
-        /// from the first, which is what a stage with no map of its own has to do. Warsong Gulch has real ones.
-        std::vector<Position> FlagBases{};
         /// The lowest level its characters may be (flying needs 60), raising a host's fixed level too.
         uint8 MinLevel = 0;
         /// A band most of a stage's training characters are drawn in (FocusChance percent of them; the rest at any

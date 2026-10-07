@@ -57,7 +57,7 @@ namespace Animus::Curriculum
         static void LearnProficiencies(Player* bot);
 
         /// Destroys everything equipped or in the backpack and equips a new, enchanted set for the bot's level.
-        void Equip(Player* bot, SpecProfile const& spec, bool pvp) const;
+        void Equip(Player* bot, SpecProfile const& spec) const;
 
     private:
         enum Pool : uint8
@@ -152,18 +152,18 @@ namespace Animus::Curriculum
         void EquipQuiver(Player* bot) const;
 
         /// Candidates for the level from a pool, reaching below the level's item level band as needed. The result
-        /// is memoised: it is a pure function of these six arguments over pools that are built in the constructor
+        /// is memoised: it is a pure function of these five arguments over pools that are built in the constructor
         /// and never touched again, and it is asked for it the same way for every character of a level and spec.
         [[nodiscard]] std::vector<Candidate const*> const& Window(Pool pool, uint8 level, StatProfile stats,
-            int32 subclass, bool needStats, bool pvp) const;
+            int32 subclass, bool needStats) const;
 
-        /// The six arguments of Window packed into one key.
+        /// The five arguments of Window packed into one key.
         [[nodiscard]] static uint64 WindowKey(Pool pool, uint8 level, StatProfile stats, int32 subclass,
-            bool needStats, bool pvp);
+            bool needStats);
 
-        bool EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats, bool pvp,
+        bool EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats,
             int32 subclass = -1) const;
-        bool EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout, bool pvp) const;
+        bool EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout) const;
         void StoreAmmo(Player* bot) const;
 
         ClassKit const& _kit;

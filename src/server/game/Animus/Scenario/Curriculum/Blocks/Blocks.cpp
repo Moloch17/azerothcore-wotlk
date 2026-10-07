@@ -30,7 +30,6 @@
 #include "DuelBlock.h"
 #include "EntitiesBlock.h"
 #include "MoveBlock.h"
-#include "FlagBlock.h"
 #include "ForecastBlock.h"
 #include "GoalBlock.h"
 #include "GauntletBlock.h"
@@ -41,7 +40,6 @@
 #include "PartyBlock.h"
 #include "PartyFramesBlock.h"
 #include "PetBlock.h"
-#include "PvpBlock.h"
 #include "SightBlock.h"
 #include "SupportBlock.h"
 #include "TravelBlock.h"
@@ -120,12 +118,10 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static GauntletBlock const gauntlet;
     static CompanionBlock const companion;
     static PartyBlock const party;
-    static PvpBlock const pvp;
     static ContextBlock const context;
     static HostilesBlock const hostiles;
     static PetBlock const pet;
     static TravelBlock const travel;
-    static FlagBlock const flag;
     static SupportBlock const support;
     static WorldBlock const world;
     static ForecastBlock const forecast;
@@ -151,12 +147,10 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
         table[std::size_t(BlockId::Gauntlet)] = &gauntlet;
         table[std::size_t(BlockId::Companion)] = &companion;
         table[std::size_t(BlockId::Party)] = &party;
-        table[std::size_t(BlockId::Pvp)] = &pvp;
         table[std::size_t(BlockId::Context)] = &context;
         table[std::size_t(BlockId::Hostiles)] = &hostiles;
         table[std::size_t(BlockId::Pet)] = &pet;
         table[std::size_t(BlockId::Travel)] = &travel;
-        table[std::size_t(BlockId::Flag)] = &flag;
         table[std::size_t(BlockId::Support)] = &support;
         table[std::size_t(BlockId::World)] = &world;
         table[std::size_t(BlockId::Forecast)] = &forecast;

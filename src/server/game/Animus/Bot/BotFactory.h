@@ -51,12 +51,6 @@ namespace Animus::BotFactory
         uint8 Gender = 0;
         uint8 Level = 1;
         uint32 AccountId = 0;
-        /// The battleground instance this bot joins, and on whose side. 0 = none, and the bot is placed the
-        /// ordinary way. A battleground map is reached only through this: MapInstanced asks the player which
-        /// battleground it was invited to.
-        uint32 BattlegroundId = 0;
-        uint32 BattlegroundType = 0;
-        uint8 BattlegroundTeam = 0;
         /// The difficulty a new instance is opened at when this bot is the first in (Difficulty: DUNGEON_*, RAID_*).
         uint8 DungeonDifficulty = 0;
         uint8 RaidDifficulty = 0;

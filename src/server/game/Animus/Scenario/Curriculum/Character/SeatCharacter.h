@@ -55,10 +55,10 @@ namespace Animus::Curriculum
         };
 
         /// Proficiencies, spec `spec`'s talents (`plan`, moving `noisePoints` for TalentPlan::Noisy) and glyphs, the
-        /// class's trainer spells and gear (resilience gear with `pvp`), then full health and mana, full energy and no
+        /// class's trainer spells and gear (no resilience gear), then full health and mana, full energy and no
         /// rage or runic power. The bot's talent points must be right for its map (InitTalentForLevel after placing
         /// it).
-        Built Configure(Player* bot, Layout const& layout, uint8 spec, bool pvp,
+        Built Configure(Player* bot, Layout const& layout, uint8 spec,
             TalentPlan plan = TalentPlan::Standard, uint32 noisePoints = 0);
 
         /// Get a character ready to fight something that fights back: no XP (levelling up would change the character

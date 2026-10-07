@@ -643,20 +643,20 @@ void Animus::Curriculum::GearBuilder::BuildPools(StatProfile stats)
 }
 
 uint64 Animus::Curriculum::GearBuilder::WindowKey(Pool pool, uint8 level, StatProfile stats, int32 subclass,
-    bool needStats, bool pvp)
+    bool needStats)
 {
     // subclass is -1 for "any", so it is stored one above itself to keep the key unsigned.
     return uint64(uint8(pool)) | (uint64(level) << 8) | (uint64(uint8(stats)) << 16)
-        | (uint64(uint8(subclass + 1)) << 24) | (uint64(needStats) << 32) | (uint64(pvp) << 33);
+        | (uint64(uint8(subclass + 1)) << 24) | (uint64(needStats) << 32);
 }
 
 std::vector<Animus::Curriculum::GearBuilder::Candidate const*> const& Animus::Curriculum::GearBuilder::Window(
-    Pool pool, uint8 level, StatProfile stats, int32 subclass, bool needStats, bool pvp) const
+    Pool pool, uint8 level, StatProfile stats, int32 subclass, bool needStats) const
 {
     // Nineteen slots, each asking up to twice for stats and up to four times down the armor fallbacks, and each
     // ask walking a whole pool four times as the item level band widens -- per character, per episode, for an
     // answer that depends on nothing that changed since the last character of the same level and spec.
-    uint64 const key = WindowKey(pool, level, stats, subclass, needStats, pvp);
+    uint64 const key = WindowKey(pool, level, stats, subclass, needStats);
     {
         std::shared_lock lock(_windowLock);
         if (auto const cached = _windows.find(key); cached != _windows.end())
@@ -683,7 +683,7 @@ std::vector<Animus::Curriculum::GearBuilder::Candidate const*> const& Animus::Cu
                 continue;
 
             if ((subclass >= 0 && candidate.SubClass != uint32(subclass)) || (needStats && !candidate.Stats)
-                || (candidate.Pvp && !pvp) || (candidate.Epic && !epics))
+                || candidate.Pvp || (candidate.Epic && !epics))
                 continue;
 
             found.push_back(&candidate);
@@ -697,7 +697,7 @@ std::vector<Animus::Curriculum::GearBuilder::Candidate const*> const& Animus::Cu
 }
 
 bool Animus::Curriculum::GearBuilder::EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats,
-    bool pvp, int32 subclass) const
+    int32 subclass) const
 {
     uint8 const level = bot->GetLevel();
 
@@ -718,7 +718,7 @@ bool Animus::Curriculum::GearBuilder::EquipFromPool(Player* bot, uint8 slot, Poo
     {
         for (int32 armorSubclass : subclasses)
         {
-            std::vector<Candidate const*> candidates = Window(pool, level, stats, armorSubclass, needStats, pvp);
+            std::vector<Candidate const*> candidates = Window(pool, level, stats, armorSubclass, needStats);
             std::vector<double> weights;
             weights.reserve(candidates.size());
             for (Candidate const* c : candidates)
@@ -769,43 +769,42 @@ void Animus::Curriculum::GearBuilder::LearnProficiencies(Player* bot)
     bot->UpdateSkillsToMaxSkillsForLevel();
 }
 
-bool Animus::Curriculum::GearBuilder::EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout,
-    bool pvp) const
+bool Animus::Curriculum::GearBuilder::EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout) const
 {
     StatProfile const stats = spec.Stats;
 
     switch (layout)
     {
         case WeaponLayout::TwoHand:
-            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats, pvp);
+            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats);
         case WeaponLayout::Staff:
-            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats, pvp, ITEM_SUBCLASS_WEAPON_STAFF);
+            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats, ITEM_SUBCLASS_WEAPON_STAFF);
         case WeaponLayout::DualWield:
         case WeaponLayout::DualWieldDaggers:
         {
             int32 const subclass = layout == WeaponLayout::DualWieldDaggers ? int32(ITEM_SUBCLASS_WEAPON_DAGGER) : -1;
             if (!bot->CanDualWield()
-                || !EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats, pvp, subclass))
+                || !EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats, subclass))
                 return false;
-            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_OFF_HAND, stats, pvp, subclass);
+            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_OFF_HAND, stats, subclass);
             return true;
         }
         case WeaponLayout::OneHand:
-            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats, pvp);
+            return EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats);
         case WeaponLayout::OneHandShield:
-            if (!EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats, pvp))
+            if (!EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats))
                 return false;
-            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_SHIELD, stats, pvp);
+            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_SHIELD, stats);
             return true;
         case WeaponLayout::OneHandHeld:
-            if (!EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats, pvp))
+            if (!EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_MAIN_HAND, stats))
                 return false;
-            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_HELD, stats, pvp);
+            EquipFromPool(bot, EQUIPMENT_SLOT_OFFHAND, POOL_HELD, stats);
             return true;
         case WeaponLayout::TwoHandRanged:
         {
-            bool const ranged = EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_RANGED, stats, pvp);
-            bool const melee = EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats, pvp);
+            bool const ranged = EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_RANGED, stats);
+            bool const melee = EquipFromPool(bot, EQUIPMENT_SLOT_MAINHAND, POOL_TWO_HAND, stats);
             return ranged || melee;
         }
     }
@@ -813,7 +812,7 @@ bool Animus::Curriculum::GearBuilder::EquipWeapons(Player* bot, SpecProfile cons
     return false;
 }
 
-void Animus::Curriculum::GearBuilder::Equip(Player* bot, SpecProfile const& spec, bool pvp) const
+void Animus::Curriculum::GearBuilder::Equip(Player* bot, SpecProfile const& spec) const
 {
     // Starting outfit, the previous episode's set, bags and backpack contents.
     for (uint8 slot = EQUIPMENT_SLOT_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
@@ -823,24 +822,24 @@ void Animus::Curriculum::GearBuilder::Equip(Player* bot, SpecProfile const& spec
     StatProfile const stats = spec.Stats;
     int32 const armor = int32(_kit.ArmorSubclass(bot->GetLevel()));
 
-    EquipFromPool(bot, EQUIPMENT_SLOT_HEAD, POOL_HEAD, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_NECK, POOL_NECK, stats, pvp);
-    EquipFromPool(bot, EQUIPMENT_SLOT_SHOULDERS, POOL_SHOULDERS, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_CHEST, POOL_CHEST, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_WAIST, POOL_WAIST, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_LEGS, POOL_LEGS, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_FEET, POOL_FEET, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_WRISTS, POOL_WRISTS, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_HANDS, POOL_HANDS, stats, pvp, armor);
-    EquipFromPool(bot, EQUIPMENT_SLOT_FINGER1, POOL_FINGER, stats, pvp);
-    EquipFromPool(bot, EQUIPMENT_SLOT_FINGER2, POOL_FINGER, stats, pvp);
-    EquipFromPool(bot, EQUIPMENT_SLOT_TRINKET1, POOL_TRINKET, stats, pvp);
-    EquipFromPool(bot, EQUIPMENT_SLOT_TRINKET2, POOL_TRINKET, stats, pvp);
-    EquipFromPool(bot, EQUIPMENT_SLOT_BACK, POOL_BACK, stats, pvp);
+    EquipFromPool(bot, EQUIPMENT_SLOT_HEAD, POOL_HEAD, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_NECK, POOL_NECK, stats);
+    EquipFromPool(bot, EQUIPMENT_SLOT_SHOULDERS, POOL_SHOULDERS, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_CHEST, POOL_CHEST, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_WAIST, POOL_WAIST, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_LEGS, POOL_LEGS, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_FEET, POOL_FEET, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_WRISTS, POOL_WRISTS, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_HANDS, POOL_HANDS, stats, armor);
+    EquipFromPool(bot, EQUIPMENT_SLOT_FINGER1, POOL_FINGER, stats);
+    EquipFromPool(bot, EQUIPMENT_SLOT_FINGER2, POOL_FINGER, stats);
+    EquipFromPool(bot, EQUIPMENT_SLOT_TRINKET1, POOL_TRINKET, stats);
+    EquipFromPool(bot, EQUIPMENT_SLOT_TRINKET2, POOL_TRINKET, stats);
+    EquipFromPool(bot, EQUIPMENT_SLOT_BACK, POOL_BACK, stats);
 
     for (WeaponLayout layout : spec.Weapons)
     {
-        if (EquipWeapons(bot, spec, layout, pvp))
+        if (EquipWeapons(bot, spec, layout))
             break;
 
         for (uint8 slot : { EQUIPMENT_SLOT_MAINHAND, EQUIPMENT_SLOT_OFFHAND, EQUIPMENT_SLOT_RANGED })
@@ -849,11 +848,11 @@ void Animus::Curriculum::GearBuilder::Equip(Player* bot, SpecProfile const& spec
     }
 
     if (spec.Wand && !bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
-        EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_WAND, stats, pvp);
+        EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_WAND, stats);
 
     // Paladins, shamans, druids and death knights carry a relic in the ranged slot.
     if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
-        EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_RELIC, stats, pvp);
+        EquipFromPool(bot, EQUIPMENT_SLOT_RANGED, POOL_RELIC, stats);
 
     EquipQuiver(bot);
     StoreAmmo(bot);

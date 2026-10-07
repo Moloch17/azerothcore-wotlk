@@ -24,7 +24,6 @@
 #include "ResetTiming.h"
 #include "ControllerCost.h"
 #include "CharmInfo.h"
-#include "Battleground.h"
 #include "BotAccounts.h"
 #include "Config.h"
 #include "Containers.h"
@@ -345,7 +344,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         return arena.Owner || arena.PartyGroup || arena.Against == Opposition::Instance
             || (arena.MapId && arena.MapId != _spawnMapId)
             || arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
-            || arena.Against == Opposition::Town || arena.Against == Opposition::Flag;
+            || arena.Against == Opposition::Town;
     });
 
     // A map-thread reset cannot load a grid's collision and navmesh: while map tasks run, those wait for the world
@@ -445,11 +444,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     // The encounters any of the stage's arenas uses, in build order.
     uint32 const envs = settings.Envs;
-    OpponentEncounter* opponent = nullptr;
     PullsEncounter* pulls = nullptr;
     CreatureEncounter* creature = nullptr;
     TravelEncounter* travel = nullptr;
-    FlagEncounter* flag = nullptr;
     InstanceEncounter* instance = nullptr;
 
     auto const add = [this](auto encounter)
@@ -459,15 +456,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         return raw;
     };
 
-    auto const fightsPlayer = [](ArenaDefinition const& arena)
-    {
-        return arena.Against == Opposition::MirrorSeat || arena.Against == Opposition::Flag;
-    };
     auto const hasPulls = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Pulls; };
     auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
     auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
     auto const hasTravel = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Travel; };
-    auto const hasFlag = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Flag; };
     auto const hasInstance = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Instance; };
     auto const hasQuest = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Quest; };
     auto const hasGather = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Gather; };
@@ -488,8 +480,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
     // it); both check it. Rewards do not depend on each other's order: what several read (a seat's damage taken, the
     // owner's totals) is computed before any encounter's Reward.
-    if (_stage.AnyArena(fightsPlayer))
-        opponent = add(std::make_unique<OpponentEncounter>(*this, envs));
     if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
         _owner = add(std::make_unique<OwnerEncounter>(*this, envs));
     if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.PartyGroup; }))
@@ -550,16 +540,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* roles = nullptr;
     if (_stage.AnyArena(hasRoles))
         roles = add(std::make_unique<RolesEncounter>(*this, envs));
-    // After the opponent, which makes the two seats enemies.
-    if (_stage.AnyArena(hasFlag))
-        flag = add(std::make_unique<FlagEncounter>(*this, envs));
 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, travel, markers, _follow, _partyFollow, seek, sight,
-        interact, combat, roles, flag })
+        town, hazards, _owner, _party, travel, markers, _follow, _partyFollow, seek, sight,
+        interact, combat, roles })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -569,10 +556,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     {
         auto const uses = [&](Encounter const* encounter)
         {
-            return (encounter == opponent && fightsPlayer(arena)) || (encounter == _owner && arena.Owner)
+            return (encounter == _owner && arena.Owner)
                 || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
                 || (encounter == creature && hasCreature(arena))
-                || (encounter == travel && hasTravel(arena)) || (encounter == flag && hasFlag(arena))
+                || (encounter == travel && hasTravel(arena))
                 || (encounter == hazards && hasHazards(arena))
                 || (encounter == instance && hasInstance(arena))
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
@@ -1023,12 +1010,6 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // An episode that could not be built ends at once and is rebuilt: 1 on that episode's row. How often a stage's
     // resets fail -- a quest the bot refuses, a spot with no objective -- is what it trains on less than it seems.
     _info.Add("build_failed", [this](Env const& env, uint32) { return Data(env).BuildFailed ? 1.0f : 0.0f; });
-    // The other side of a self-play episode.
-    _info.Add("opponent_seat", [this](Env const& env, uint32 index)
-    {
-        return IsOpponentSeat(env, index) ? 1.0f : 0.0f;
-    });
-
     // Fights against something that fights back.
     auto const tally = [this](Env const& env, uint32 index) -> CombatTally const&
     {
@@ -1575,17 +1556,9 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["weight"] = _arenaWeights[arena];
         entry["seats"] = definition.SeatCount();
         entry["episode_seconds"] = _arenaEpisodeMs[arena] / IN_MILLISECONDS;
-        entry["pvp"] = definition.Pvp;
         entry["checkpoints"] = definition.Checkpoints;
-        // The seat plan and a team's width, so the learner can tell an arena's opponent seats (IsOpponentSeat) and
-        // play them from a frozen checkpoint (its cast league) without a word on the wire.
-        entry["plan"] = definition.Seats == SeatPlan::Solo ? "solo" : definition.Seats == SeatPlan::Party ? "party"
-            : definition.Seats == SeatPlan::Mirror ? "mirror" : definition.Seats == SeatPlan::Raid ? "raid"
-            // Two groups sharing a zone are teams that do not fight each other: nothing for a cast league to play.
-            : definition.Against == Opposition::Quest ? "shared" : "teams";
-        entry["team_seats"] = definition.Seats == SeatPlan::Teams ? definition.TeamSeats
-            : definition.Seats == SeatPlan::Mirror ? 1u : 0u;
-        entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
+        // The seat plan, so the learner can tell a party's arena from a solo seat's.
+        entry["plan"] = definition.Seats == SeatPlan::Solo ? "solo" : "party";
         entry["eval_only"] = definition.EvalOnly;
         // The party stages' arenas (G2, D1-D3): a pull drill, a corridor's length, and the stand-in's share of the
         // training runs.
@@ -1973,16 +1946,10 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     // (i + seat) % count. Each pair is then scored on an equal share of the seeds, whatever the env count, so a
     // paladin's healing build is as well measured as its tanking one and two checkpoints meet the same characters.
     //
-    // Except the far side of a one-on-one, which walks every other pair in turn: seed i's opponent is (i + 1 +
-    // (i / count) % (count - 1)) % count, so each pair meets each of the others equally often over the seeds. Paired
-    // (i + 1) as the rest are, a seat met its own class's other build or the next class in the list and nothing
-    // else -- 68% of stage12_pvp's evaluation fights were one class against itself (2026-09-28).
     if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
     {
         std::size_t const count = castings.size();
         std::size_t const index = env.EpisodeSeedIndex;
-        if (seat == 1 && count > 1 && Arena(env).Seats == SeatPlan::Mirror)
-            return castings[(index + 1 + (index / count) % (count - 1)) % count];
         return castings[(index + seat) % count];
     }
 
@@ -2158,20 +2125,6 @@ bool Animus::Curriculum::StageScenario::IsLoneSeat(Env const& env, uint32 seat) 
     ArenaDefinition const& arena = Arena(env);
     return arena.Seats == SeatPlan::Teams && arena.LoneSeats
         && seat >= std::min(arena.TeamSeats, TEAM_SEATS) * TEAM_COUNT && seat < arena.SeatCount();
-}
-
-bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 agent) const
-{
-    // Self-play: the far side of the match is the opponent. One seat a side in a Mirror, TEAM_SEATS of them in
-    // a Teams arena. Two groups sharing a zone are not opponents.
-    if (Arena(env).Against == Opposition::Quest)
-        return false;
-    switch (Arena(env).Seats)
-    {
-        case SeatPlan::Mirror: return agent == 1;
-        case SeatPlan::Teams:  return agent >= Arena(env).TeamSeats;
-        default:               return false;
-    }
 }
 
 bool Animus::Curriculum::StageScenario::Setup(Env& env)
@@ -2505,23 +2458,15 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // for a few episodes rather than building a new one (the build was a quarter of a decision's cost). The env then
     // keeps its level too, since every seat shares one; the level draw is random anyway, so holding it a few
     // episodes biases nothing. Never in an evaluation (its seeded spread of characters is the yardstick), never on
-    // a battleground (the match is rebuilt with the episode), never a seat that was empty or lost.
+    // never a seat that was empty or lost.
     std::array<bool, MAX_SEATS> reuse{};
     uint8 keptLevel = 0;
-    // The encounters ended the last match in ResetEpisode above and make the next one in BeforeSeats below, so
-    // MatchFor is empty here: the map says whether the seats stand in a battleground. Reusing a seat there moved a
-    // bot within a map whose match had just been taken down; the move failed, and with it the whole build --
-    // most stage25_warsong resets, each followed by old bots on a map with no match asking to be sent home.
-    Map const* envMap = env.FindMap();
-    bool const onMatch = (envMap && envMap->IsBattlegroundOrArena())
-        || std::any_of(ActiveEncounters(env).begin(), ActiveEncounters(env).end(),
-            [&env](Encounter const* encounter) { return encounter->MatchFor(env) != nullptr; });
     // (An env whose last episode was on another map, an instance rung, rebuilds on the map this one wants.)
     // A dungeon run starts from a fresh instance every episode: every creature alive, every boss's script at its
     // start. Reused, the trash a group killed stayed dead for the next one, and only the boss was reset.
     bool const freshInstance = Arena(env).Instance == InstanceLadder::Wing;
     bool const changesMap = (env.FindMap() && env.FindMap()->GetId() != EpisodeMapId(env)) || freshInstance;
-    if (!firstBuild && !env.Evaluating && !onMatch && !changesMap && _tuning.Characters.ReuseEpisodes > 0)
+    if (!firstBuild && !env.Evaluating && !changesMap && _tuning.Characters.ReuseEpisodes > 0)
         for (uint32 seat = 0; seat < data.ActiveSeats && seat < previousActiveSeats; ++seat)
         {
             SeatState const& s = data.Seats[seat];
@@ -2557,10 +2502,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // episode fixed to another map (an instance rung) opens a new instance of that map; the old one unloads once
     // its last bot has left.
     Map* map = (!firstBuild || env.InstanceId) && !freshInstance ? env.FindMap() : nullptr;
-    // A battleground's map is its match's: a new match (FlagEncounter::BeforeSeats) gets a map of its own, which the
-    // first seat's bot opens through the invitation it carries. Reused, the new bots stood on the last match's map --
-    // "map 596 cannot unload: Forge31s19a (bg id 660)" -- and it was unloaded under them.
-    if (map && (map->GetId() != EpisodeMapId(env) || map->IsBattlegroundOrArena()))
+    if (map && map->GetId() != EpisodeMapId(env))
         map = nullptr;
 
     // A continent is not one map for the whole pool any more: the envs are dealt out over replicas of it, each
@@ -2584,7 +2526,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
     {
         Position start = SpawnPointFor(env);
-        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid || arena.Seats == SeatPlan::Teams)
+        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
         {
             // Within a group as a party has always spread; groups themselves step back in rows, so forty seats do
             // not spawn in one line forty spacings long.
@@ -2592,12 +2534,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             uint32 const group = seat / GROUP_SEATS;
             start.m_positionX += (inGroup % 2 ? -PARTY_SPACING : PARTY_SPACING) * float(1 + inGroup / 2);
             start.m_positionY += (inGroup % 2 ? PARTY_SPACING : -PARTY_SPACING) - PARTY_SPACING * 2.0f * float(group);
-        }
-        else if (arena.Seats == SeatPlan::Mirror && seat == 1 && firstNew)
-        {
-            // Out of range of the first seat's new bot, at a random bearing, facing a random way.
-            start = Opponents::FindSpawnPoint(firstNew, map);
-            start.SetOrientation(frand(0.0f, 2.0f * float(M_PI)));
         }
 
         Player* bot = reuse[seat] ? ReuseSeat(env, seat, start) : BuildSeat(env, seat, map, level, start);
@@ -2770,16 +2706,13 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     SeatState& seat = Data(env).Seats[seatIndex];
     Layout const& layout = *seat.L;
 
-    // A team match needs real factions, not labels: the battleground counts a side by GetBgTeamId, but whether
-    // two seats can fight each other comes from their races. Side 0 draws Alliance, side 1 Horde; every class has
-    // both in Wrath, so no layout is lost. Any other arena draws from the whole list as it always did.
+    // A party follow's whole party is one faction (EnvState::EpisodeTeam); any other episode draws from the whole
+    // list.
     std::vector<uint8> const& races = layout.Assets->Races;
     std::vector<uint8> pool;
-    if (Arena(env).Seats == SeatPlan::Teams || Data(env).EpisodeTeam)
+    if (Data(env).EpisodeTeam)
     {
-        // A life episode's quest or town belongs to a side too (EnvState::EpisodeTeam).
-        TeamId const want = Data(env).EpisodeTeam ? TeamId(Data(env).EpisodeTeam - 1)
-            : seatIndex < Arena(env).TeamSeats ? TEAM_ALLIANCE : TEAM_HORDE;
+        TeamId const want = TeamId(Data(env).EpisodeTeam - 1);
         for (uint8 race : races)
             if (Player::TeamIdForRace(race) == want)
                 pool.push_back(race);
@@ -2803,17 +2736,6 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
     spec.Level = level;
     spec.AccountId = BotAccounts::Seat(env.Id, seatIndex, session);
-
-    // A battleground stage sends its seats to the match rather than to an instance of their own; the side is the
-    // one their race already belongs to.
-    for (Encounter const* encounter : ActiveEncounters(env))
-        if (Battleground* match = encounter->MatchFor(env))
-        {
-            spec.BattlegroundId = match->GetInstanceID();
-            spec.BattlegroundType = uint32(match->GetBgTypeID());
-            spec.BattlegroundTeam = uint8(seatIndex < TEAM_SEATS ? TEAM_ALLIANCE : TEAM_HORDE);
-            break;
-        }
 
     // An instance rung opens its map at the difficulty it names (MapInstanced asks the first player in).
     spec.DungeonDifficulty = Data(env).DungeonDifficulty;
@@ -2842,7 +2764,7 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     // quest-rewarded points); recompute them on the spawn map.
     bot->InitTalentForLevel();
     CurrentReset.PlaceNs += ResetSinceNs(resetMark);
-    Configure(bot, seat, Arena(env).Pvp);
+    Configure(bot, seat);
     CurrentReset.ConfigureNs += ResetSinceNs(resetMark);
     return bot;
 }
@@ -2878,12 +2800,12 @@ Player* Animus::Curriculum::StageScenario::ReuseSeat(Env& env, uint32 seatIndex,
     return bot;
 }
 
-void Animus::Curriculum::StageScenario::Configure(Player* bot, SeatState& seat, bool pvp) const
+void Animus::Curriculum::StageScenario::Configure(Player* bot, SeatState& seat) const
 {
     // Most characters get the spec's standard build; the rest have to be played as they are.
     seat.TalentPlan = RandomTalentPlan(_tuning.Characters);
     uint32 const noise = std::max<uint32>(1, _tuning.Characters.TalentNoisePoints);
-    SeatCharacter::Built const built = SeatCharacter::Configure(bot, *seat.L, seat.Spec, pvp, seat.TalentPlan,
+    SeatCharacter::Built const built = SeatCharacter::Configure(bot, *seat.L, seat.Spec, seat.TalentPlan,
         urand(1, noise));
     seat.Build = built.Build;
     seat.UnspentTalentPoints = built.UnspentTalentPoints;
@@ -3031,7 +2953,7 @@ bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatI
     if (!tally.Died || (bot && bot->IsAlive()))
         return false;
 
-    bool const canResurrect = bot && !Arena(env).Pvp && bot->GetUInt32Value(PLAYER_SELF_RES_SPELL);
+    bool const canResurrect = bot && bot->GetUInt32Value(PLAYER_SELF_RES_SPELL);
     return !canResurrect || env.EpisodeElapsedMs >= tally.DeathMs + _tuning.Resurrection.GraceMs;
 }
 
@@ -3586,7 +3508,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.CombatTime = seat.InCombat
         ? std::min(1.0f, float(env.EpisodeElapsedMs - seat.CombatStartMs) / MAX_COMBAT_TIME_MS) : 0.0f;
     view.Supplies = seat.Supplies;
-    view.SelfResurrectAllowed = !Arena(env).Pvp;
+    view.SelfResurrectAllowed = true;
     view.DeathRuns = Arena(env).DeathRuns;
     view.DeadSeconds = seat.DeathRun.DeadSinceMs && env.EpisodeElapsedMs > seat.DeathRun.DeadSinceMs
         ? float(env.EpisodeElapsedMs - seat.DeathRun.DeadSinceMs) / 1000.0f : 0.0f;
@@ -3670,8 +3592,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
         for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
             if (hidden(view.Enemies[slot]))
                 view.Enemies[slot] = nullptr;
-
-        view.OpponentHidden = hidden(view.Opponent);
     }
 
     return view;
@@ -3971,32 +3891,6 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         body.InCombat = bot->IsInCombat();
         K::Write(seconds, body, out);
     }
-}
-
-bool Animus::Curriculum::StageScenario::SideCanSee(Env const& env, uint32 side, Unit const* unit) const
-{
-    if (!unit)
-        return false;
-
-    for (uint32 seat = 0; seat < _seatCount; ++seat)
-        if (OnSide(env, seat, side))
-            if (Player const* bot = SeatBot(env, seat); bot && bot->IsAlive() && Encoding::CanSee(bot, unit))
-                return true;
-
-    return false;
-}
-
-uint32 Animus::Curriculum::StageScenario::SideSeats(Env const& env, uint32 side,
-    std::array<uint32, TEAM_SEATS>& out) const
-{
-    out.fill(NO_SEAT);
-
-    uint32 count = 0;
-    for (uint32 seat = 0; seat < _seatCount && count < TEAM_SEATS; ++seat)
-        if (OnSide(env, seat, side))
-            out[count++] = seat;
-
-    return count;
 }
 
 void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, float* obs, uint8* mask,
@@ -5685,8 +5579,7 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
         features[STATE_SEAT_Y] = RelativePosition(bot->GetPositionY(), originY);
     }
 
-    // The enemies: the env's targets (creatures, or the scripted enemy player); in self-play each seat's opponent is
-    // the other seat, already in the seat block.
+    // The enemies: the env's targets.
     Player* owner = Owner(env);
     float const leadLevel = float(data.Seats[0].Level);
     for (uint32 slot = 0; slot < env.Targets.size() && slot < PACK_SLOTS; ++slot)

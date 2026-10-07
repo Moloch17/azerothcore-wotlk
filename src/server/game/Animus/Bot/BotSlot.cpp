@@ -55,12 +55,7 @@ Player* Animus::BotSlot::CreateNext(BotFactory::BotSpec spec, Map*& map, uint32 
     if (!bot)
         return nullptr;
 
-    // Told before it is placed: the map it lands on is the battleground's, and MapInstanced reaches that
-    // through the invitation this records.
-    if (spec.BattlegroundId)
-        bot->SetBattlegroundId(spec.BattlegroundId, BattlegroundTypeId(spec.BattlegroundType), 0, true, false,
-            TeamId(spec.BattlegroundTeam));
-    // Likewise the difficulty: MapInstanced opens a new instance at the first player's.
+    // Told before it is placed: MapInstanced opens a new instance at the first player's.
     bot->SetDungeonDifficulty(Difficulty(spec.DungeonDifficulty));
     bot->SetRaidDifficulty(Difficulty(spec.RaidDifficulty));
 

@@ -26,7 +26,7 @@
 #include "TravelBlock.h"
 
 Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Configure(Player* bot,
-    Layout const& layout, uint8 specIndex, bool pvp, TalentPlan plan, uint32 noisePoints)
+    Layout const& layout, uint8 specIndex, TalentPlan plan, uint32 noisePoints)
 {
     ClassAssets const& assets = *layout.Assets;
     SpecProfile const& spec = layout.Profile->Specs[specIndex];
@@ -61,7 +61,7 @@ Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Conf
     if (layout.Has(BlockId::Travel))
         TravelBlock::LearnRiding(bot);
     assets.Talents->ApplyGlyphs(bot, spec.Name);
-    assets.Gear->Equip(bot, spec, pvp);
+    assets.Gear->Equip(bot, spec);
 
     for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
         if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))

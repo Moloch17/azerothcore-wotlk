@@ -81,15 +81,6 @@ namespace Animus::Curriculum
 
     [[nodiscard]] EnemyRank RankEnemy(Unit const* enemy, Unit const* tank);
 
-    /// Enemy players: both sides of a self-play match are the learner's seats.
-    namespace EnemyPlayers
-    {
-        /// Give `enemy` the other side's faction and flag both for PvP, which players need to attack each other.
-        void MakeEnemies(Player* player, Player* enemy);
-        /// Flag a player for PvP (zone updates can drop the flag).
-        void Flag(Player* player);
-    }
-
     /// A same-level creature spawned out of aggro range, which fights back. Reward: CombatReward::OneOnOne.
     ///
     /// Its difficulty adapts per class/role (CurriculumTuning::DifficultyTuning): once a class/role wins most of its
@@ -916,59 +907,6 @@ namespace Animus::Curriculum
         std::deque<bool> _drillRuns;
     };
 
-    /// The other seat of a self-play match (Opposition::MirrorSeat, and a flag match's sides). Reward:
-    /// CombatReward::OneOnOne against it.
-    class OpponentEncounter final : public Encounter
-    {
-    public:
-        OpponentEncounter(StageScenario& scenario, uint32 envs);
-
-        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
-        void AddEpisodeInfo(EpisodeInfoTable& table) override;
-        bool Build(Env& env, Map* map, uint8 level) override;
-        void Update(Env& env) override;
-        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
-        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
-        void View(Env const& env, uint32 seat, SeatView& view) const override;
-        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
-        [[nodiscard]] bool IsTerminal(Env const& env) const override;
-        void Deactivate(Env& env) override;
-        void Teardown(Env& env) override;
-
-    private:
-        struct EnvOpponent
-        {
-            /// Per seat: a casting opponent the seat just cast an interrupt at, how many it has landed, and how long
-            /// the opponent has been held out of the fight. An opponent casts and heals, so stopping one matters at
-            /// least as much as it does against a creature.
-            std::array<ObjectGuid, MAX_SEATS> PendingInterrupt{};
-            std::array<uint32, MAX_SEATS> Interrupts{};
-            std::array<uint32, MAX_SEATS> ControlMs{};
-        };
-
-        /// Whether the seats fight each other: one a side in a Mirror arena, TeamSeats of them a side in a Teams arena.
-        [[nodiscard]] bool Mirror(Env const& env) const
-        {
-            SeatPlan const seats = _scenario.Arena(env).Seats;
-            return seats == SeatPlan::Mirror || seats == SeatPlan::Teams;
-        }
-        [[nodiscard]] bool Flag(Env const& env) const
-        {
-            return _scenario.Arena(env).Against == Opposition::Flag;
-        }
-        void TrackInterrupt(Env& env, uint32 seat, Unit const* opponent, RewardLedger& ledger);
-        /// Count time out of the hunter's sight, and pay for the moment contact breaks.
-        void TrackHiding(Env& env, uint32 seat, Player* bot, Player const* hunter, RewardLedger& ledger);
-        void TrackStalking(Env& env, uint32 seat, Player* bot, Player const* quarry, bool seen,
-            RewardLedger& ledger);
-        [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
-        /// The seats of the side `seat` fights, in that side's own seat order, capped at the slots a seat can
-        /// observe. The order has to be stable across a match: target selection indexes it.
-        uint32 EnemySeats(Env const& env, uint32 seat, std::array<uint32, PACK_SLOTS>& out) const;
-
-        std::vector<EnvOpponent> _envs;
-    };
-
     /// A place to get to: on the ground a reachable spot 60-320 yd away by path, in a flying arena a spot 350-700 yd
     /// away. Reward: potential shaping on the distance left, arriving (on the ground; faster pays more), damage taken
     /// (falls), death. The episode ends on arriving or dying.
@@ -1297,98 +1235,6 @@ namespace Animus::Curriculum
         std::unordered_map<uint64, std::vector<PooledTrip>> _pools;
     };
 
-    /// Warsong Gulch's rules between the two mirror seats: each has a flag at its base; touching the other's takes it
-    /// (and dismounts the carrier, who cannot mount while carrying), touching one's own dropped flag returns it, and
-    /// carrying the other's home while one's own is there captures it. A carrier who dies drops the flag where it fell;
-    /// a dropped flag goes home on its own after a while. The dead stand up at their base after a wave. First to
-    /// Flag.CapturesToWin ends the match. The seat's travel objective is where its side needs it next.
-    class FlagEncounter final : public Encounter
-    {
-    public:
-        FlagEncounter(StageScenario& scenario, uint32 envs);
-
-        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
-        void AddEpisodeInfo(EpisodeInfoTable& table) override;
-        void ResetEpisode(Env& env) override;
-        void BeforeSeats(Env& env, uint8 level) override;
-        bool Build(Env& env, Map* map, uint8 level) override;
-        void Update(Env& env) override;
-        void View(Env const& env, uint32 seat, SeatView& view) const override;
-        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
-        [[nodiscard]] bool IsTerminal(Env const& env) const override;
-
-    private:
-        /// What a seat heads for, in the order a player would pick it.
-        enum class Goal : uint8 { None, CaptureHome, ReturnOwn, TakeEnemy, PickUpEnemy, ChaseCarrier };
-
-        struct Side
-        {
-            Position Base;
-            SeatView::FlagState State = SeatView::FlagState::AtBase;   // this side's own flag
-            Position Dropped;
-            uint32 DroppedMs = 0;
-            uint32 Captures = 0;
-            uint32 Pickups = 0;
-            uint32 Returns = 0;
-            uint32 CarrierKills = 0;
-            uint32 Deaths = 0;
-            /// The seat carrying this side's flag, NO_SEAT when nobody is. With one seat a side this was the
-            /// other seat by construction; with ten it has to be said.
-            uint32 CarriedBy = NO_SEAT;
-            // This decision's events, paid to every seat of the side: Update clears them at its top, so all ten
-            // read the same decision rather than the first to be rewarded taking them.
-            uint32 StepCaptures = 0;
-            uint32 StepPickups = 0;
-            uint32 StepReturns = 0;
-            uint32 StepCarrierKills = 0;
-            uint32 StepLost = 0;
-        };
-
-        /// What belongs to a seat rather than to its side. These sat on Side while a side was one seat.
-        struct SeatFlagState
-        {
-            bool Dead = false;
-            uint32 RespawnMs = 0;
-            uint32 StepDeaths = 0;              // charged to the seat that died, not to its side
-            uint32 ReachSteps = 0;              // decisions with a flag close enough to use
-            uint32 Steps = 0;                   // decisions, to divide it by
-            float LastDistance = -1.0f;         // shaping toward the current goal; < 0 = none yet
-            Goal LastGoal = Goal::None;
-        };
-
-        struct EnvFlags
-        {
-            Battleground* Match = nullptr;             // the scripted battleground, when the arena runs one
-            std::array<Group*, TEAM_COUNT> Groups{};    // a side is a group, so its healers can reach it
-            std::array<Side, TEAM_COUNT> Sides;
-            std::array<SeatFlagState, TEAM_MATCH_SEATS> Seats;
-            bool Built = false;
-        };
-
-        /// Which side a seat plays for: seats 0..TEAM_SEATS-1 are side 0, the rest side 1. A Mirror arena has
-        /// one seat a side and lands on 0 and 1 as it always did.
-        [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
-        /// Make each side a group, so party and raid spells reach a team-mate. Disband undoes it.
-        void FormTeams(Env& env);
-        void Disband(Env& env);
-        /// The real Warsong Gulch for this env, made before its seats so they can be told to join it. Null for
-        /// an arena that plays the flag rules itself (stage 11's one on one).
-        [[nodiscard]] Battleground* Match(Env const& env) const;
-        [[nodiscard]] Battleground* MatchFor(Env const& env) const override { return Match(env); }
-        /// Take the match down with the episode that was it.
-        void EndMatch(Env& env);
-        /// The stage ending: the match and the groups go before the seats' bots are destroyed. Left standing, the
-        /// battleground kept pointers to them and its next update touched a freed player (a segfault in
-        /// Battleground::_ProcessJoin -> Player::ResetAllPowers once a sweep moved past stage25_warsong).
-        void Teardown(Env& env) override;
-        /// Read the script's score and flag state back into the side view the seats and rewards use.
-        void ReadMatch(Env& env);
-
-        /// Where seat `seat` should go now, and why.
-        [[nodiscard]] Goal CurrentGoal(Env const& env, uint32 seat, Position& place) const;
-
-        std::vector<EnvFlags> _envs;
-    };
 }
 
 #endif
