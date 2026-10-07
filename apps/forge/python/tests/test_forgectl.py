@@ -660,7 +660,8 @@ def test_cluster_build_pushes_pulls_everywhere_and_reports_each_machine(cfg, fak
     assert sorted(cluster_fake.pulled) == ["192.168.0.117", "192.168.0.66", "192.168.0.67", "192.168.0.68"]
     assert cluster_fake.polls["192.168.0.66"] == 3  # waited for the slow one
     out = capsys.readouterr().out
-    assert out.count("ready") >= 4 and "All 4 machines are ready" in out and "every worldserver restarts: no stage is running now" in out
+    assert out.count("ready") >= 4 and "All 4 machines are ready" in out
+    assert "every worldserver restarts: no stage is running now" in out
 
 
 def test_a_machine_that_never_gets_ready_is_reported_and_fails_the_build(cfg, fake, deployable, monkeypatch, capsys):
@@ -1544,3 +1545,82 @@ def test_a_write_that_does_not_report_or_fails_is_an_error_that_says_the_conf_is
 def test_the_conf_text_cannot_carry_the_heredoc_marker(cfg):
     with pytest.raises(ui.Failure, match="heredoc marker"):
         confsync.write_script(cfg, cfg.machine("spencer"), "a\nFORGECTL_CONF_EOF\n", "s1")
+
+
+# ---- move-host stopping part-way: the mixed-state report -------------------------------------------------------------
+
+def test_a_stop_after_the_confs_were_rewritten_says_mixed_state_and_gives_each_restore_command(moves, monkeypatch,
+                                                                                               capsys):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "build", lambda config, **kw: 1)
+    assert deploy.move_host(cfg, "thomas", "move2_seek", yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert "STOPPED" in out and "THE CLUSTER IS IN A MIXED STATE" in out
+    assert "still hold the roles they started with (the host is sarah)" in out and "Do not resume" in out
+    stamp = re.search(r"mod_animus_forge\.conf\.bak-(\d{8}-\d{6})", out).group(1)
+    conf = "env/dist/etc/modules/mod_animus_forge.conf"
+    for name, address in (("sarah", "192.168.0.68"), ("spencer", "192.168.0.66"), ("thomas", "192.168.0.67"),
+                          ("moloch", "192.168.0.117")):
+        assert f"  {name}: ~/animus-forge/{conf}.bak-{stamp}" in out
+        user = name
+        assert (f"      restore: ssh {user}@{address} 'cp -p \"$HOME\"/animus-forge/{conf}.bak-{stamp} "
+                f"\"$HOME\"/animus-forge/{conf}'") in out
+    assert 'host = "sarah"' in toml.read_text()
+
+
+def test_a_conf_write_that_fails_part_way_lists_only_the_machines_it_reached(moves, monkeypatch, capsys):
+    cfg, steps, toml = moves
+    calls = []
+
+    def rewrite(config, machine, transform, stamp):
+        calls.append(machine.name)
+        if machine.name == "thomas":
+            raise ui.Failure("thomas: writing the conf failed (unreachable)")
+        return "backup"
+    monkeypatch.setattr(deploy.confsync, "rewrite", rewrite)
+    assert deploy.move_host(cfg, "moloch", None, yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert calls == ["sarah", "spencer", "thomas"]
+    assert "MIXED STATE" in out and "The confs of 3 machine(s)" in out
+    assert "  sarah:" in out and "  thomas:" in out and "  moloch:" not in out
+    assert "may have no backup" in out
+
+
+def test_a_stop_before_any_conf_was_touched_is_not_called_a_mixed_state(moves, monkeypatch, capsys):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "copy_run", lambda config, old, new, stage: (_ for _ in ()).throw(
+        ui.Failure("copying runs/move2_seek failed")))
+    assert deploy.move_host(cfg, "thomas", "move2_seek", yes=True, timeout_minutes=5) == 1
+    out = capsys.readouterr().out
+    assert "STOPPED" in out and "MIXED STATE" not in out and "restore:" not in out
+
+
+def test_the_restore_command_really_restores_the_conf(cfg, tmp_path):
+    home = tmp_path / "home"
+    conf = home / "animus-forge/env/dist/etc/modules/mod_animus_forge.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text("rewritten\n")
+    (conf.parent / "mod_animus_forge.conf.bak-20261007-120000").write_text("original\n")
+    import shlex
+    machine = cfg.machine("spencer")
+    words = shlex.split(confsync.restore_command(cfg, machine, "20261007-120000"))
+    assert words[:2] == ["ssh", "spencer@192.168.0.66"] and len(words) == 3  # the remote command is one argument
+    import subprocess
+    subprocess.run(["bash", "-c", words[2]], env={**os.environ, "HOME": str(home)}, check=True)
+    assert conf.read_text() == "original\n"
+    local = dataclasses.replace(machine, local=True)
+    conf.write_text("rewritten again\n")
+    assert not confsync.restore_command(cfg, local, "20261007-120000").startswith("ssh")
+    subprocess.run(["bash", "-c", confsync.restore_command(cfg, local, "20261007-120000")],
+                   env={**os.environ, "HOME": str(home)}, check=True)
+    assert conf.read_text() == "original\n"
+
+
+def test_the_audit_line_of_a_stopped_move_says_it_was_mixed(moves, monkeypatch, forgectl_home):
+    cfg, steps, toml = moves
+    monkeypatch.setattr(deploy, "build", lambda config, **kw: 1)
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: cfg)
+    assert cli.main(["cluster", "move-host", "thomas", "move2_seek", "--yes"]) == 1
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=failed" in line and "stopped in a mixed state" in line
+    assert "machines=sarah,spencer,thomas,moloch" in line

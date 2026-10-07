@@ -222,6 +222,26 @@ def move_plan(config: Config, new: Machine, stage: str | None) -> list[str]:
     return lines
 
 
+def mixed_state_report(config: Config, new: Machine, attempted: list[Machine], stamp: str) -> list[str]:
+    """What to print when move-host stops after it began rewriting confs: the cluster is in a mixed state."""
+    old = config.host
+    lines = [
+        f"THE CLUSTER IS IN A MIXED STATE. The confs of {len(attempted)} machine(s) were rewritten (or the rewrite was "
+        f"started) to make {new.name} the host, but the worldservers that are running still hold the roles they "
+        f"started with (the host is {old.name}), and not every machine has been rebuilt. {config.file.name} still "
+        f"says host = \"{old.name}\". Do not resume a stage until this is settled.",
+        "Backups of each conf (made just before it was rewritten) and the command that restores it:"]
+    for machine in attempted:
+        lines.append(f"  {machine.name}: {confsync.backup_path(config, machine, stamp)}")
+        lines.append(f"      restore: {confsync.restore_command(config, machine, stamp)}")
+    lines.append("A machine whose rewrite failed may have no backup (the failure came before the copy): then its conf "
+                 "was not changed.")
+    lines.append("To finish the move instead: fix the cause and run `forgectl build --cluster`, then set host = "
+                 f"\"{new.name}\" in {config.file}. To undo it: run the restore commands above, then "
+                 "`forgectl build --cluster` so every worldserver reads its restored conf.")
+    return lines
+
+
 def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout_minutes: float) -> int:
     new, old = config.machine(target), config.host
     if new.name == old.name:
@@ -238,6 +258,8 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
         return 1
     audit.touch(config.cluster)
     done: list[str] = []
+    attempted: list[Machine] = []   # machines whose conf rewrite was started; the backup path follows from `stamp`
+    stamp = time.strftime("%Y%m%d-%H%M%S")
     try:
         say(f"[1/6] cancel on {old.name}")
         status = stage_commands.send_checked(config, old, "forge status")
@@ -264,10 +286,10 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
             say("[2/6] no stage given: no run directory copied")
 
         say("[3/6] roles and host in every machine's conf")
-        stamp = time.strftime("%Y%m%d-%H%M%S")
         for machine in config.cluster:
             role, host = ("host", "") if machine.name == new.name else (
                 "worker", f"{new.address}:{config.control_port}")
+            attempted.append(machine)
             backup = confsync.rewrite(config, machine, lambda text: confsync.set_cluster_role(text, role, host), stamp)
             say(f"  {machine.name}: Role = {role}; backup {backup}")
         done.append("confs")
@@ -280,6 +302,10 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
         say(f"STOPPED: {failure}")
         say(f"Done before it stopped: {', '.join(done) or 'nothing'}. Fix the cause and redo the missing steps by "
             "hand (docs/forge/cluster.md, 'what it does underneath'); nothing was rolled back.")
+        if attempted:
+            for report_line in mixed_state_report(config, new, attempted, stamp):
+                say(report_line)
+            audit.note("stopped in a mixed state: confs rewritten on " + ", ".join(m.name for m in attempted))
         return 1
 
     say("[5/6] cluster.toml")

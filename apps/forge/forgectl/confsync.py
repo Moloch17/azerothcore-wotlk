@@ -167,7 +167,18 @@ def upload(config: Config, machine: Machine, text: str, stamp: str) -> str:
     elif how != "mv":
         say(f"  {machine.name}: mv over the conf failed (bind-mounted file?): wrote it in place instead, after "
             "checking the temporary copy")
+    return backup_path(config, machine, stamp)
+
+
+def backup_path(config: Config, machine: Machine, stamp: str) -> str:
     return config.path_of(machine, "conf") + f".bak-{stamp}"
+
+
+def restore_command(config: Config, machine: Machine, stamp: str) -> str:
+    """The command an operator can paste to put the machine's conf back from its backup of this stamp."""
+    inner = (f"cp -p {remote.sh_path(backup_path(config, machine, stamp))} "
+             f"{remote.sh_path(config.path_of(machine, 'conf'))}")
+    return inner if machine.local else f"ssh {machine.target} {shlex.quote(inner)}"
 
 
 def rewrite(config: Config, machine: Machine, transform, stamp: str) -> str:

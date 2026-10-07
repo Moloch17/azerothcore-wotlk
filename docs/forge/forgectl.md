@@ -204,6 +204,12 @@ renamed, not overwritten); (3) sets the roles and host address in every machine'
 rebuilds every machine and waits for each; (5) edits `host = ` in `apps/forge/cluster.toml`, which you then commit and
 push; (6) resumes the stage on the new host and looks for "N worker learners join this run". If a step fails it stops,
 says which steps were done and rolls nothing back; redo the rest by hand from the "underneath" section of cluster.md.
+If it stops after it began rewriting the confs (step 3 or 4) it also prints **THE CLUSTER IS IN A MIXED STATE**: the
+confs on disk may say the new roles while the running worldservers still hold the old ones and not every machine is
+rebuilt. It lists each machine's conf backup path and the exact command that restores it (`ssh user@address 'cp -p
+<backup> <conf>'`, to paste), and says how to finish (`forgectl build --cluster`, then set `host =` in cluster.toml)
+or undo (restore, then `forgectl build --cluster` so the worldservers read the restored confs). Do not resume a stage
+until it is settled. The audit line notes the mixed stop.
 Without `<stage>` no run is copied or resumed. The target must have `in_cluster = true`.
 
 ## `forgectl test [--gpu]`

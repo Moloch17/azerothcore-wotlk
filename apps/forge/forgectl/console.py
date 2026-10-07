@@ -183,7 +183,8 @@ def machine_lock(machine: Machine, timeout: float = LOCK_TIMEOUT):
                     holder = os.pread(descriptor, 200, 0).decode(errors="replace").strip() or "unknown"
                     raise Failure(f"another forgectl (holder: {holder}) is typing into {machine.name}'s console and "
                                   f"did not finish within {timeout:.0f} s; nothing was sent. Two runs at once would "
-                                  f"interleave their characters. Try again when it is done (lock file {path}).") from None
+                                  f"interleave their characters. Try again when it is done (lock file "
+                                  f"{path}).") from None
                 if not announced:
                     note(f"another forgectl is typing into {machine.name}'s console; waiting up to {timeout:.0f} s "
                          f"for it (lock file {path}) ...")
