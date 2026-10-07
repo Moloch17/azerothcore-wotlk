@@ -32,13 +32,16 @@ mappo:
   # alone take 7.3 s an update at four epochs (3.6 s at two), on a host already learner-bound at four x 3.8 s. Go back
   # to 4 if the first 10 minutes show the KL or the found rate lagging (approx_kl well under target_kl at two).
   epochs: 2
-  # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
-  look_entropy_coef: 0.001
-  # 3e-4 to 47M; halved at the deploy's resume (2026-10-07): the doorway rung held at 29-37% found from 18M to 47M
-  # (the ladder fell back to the hallway at ~31M and stepped up again at 40M) with approx KL often 0.03-0.04 against
-  # target_kl 0.02.
-  actor_lr: 0.00015
-  critic_lr: 0.00015
+  # 0.4 of movement's from the deploy's resume (2026-10-07; M1's tenth to 47M): the doorway rung (the object seen only
+  # by looking into a cell) held at 39% found for 30M steps with 46% of episodes ever sighting it and 85% of those
+  # arriving -- a search failure, not a reach one. The camera turned on 1.7% of decisions (5.5% at 30M) and the look
+  # entropy fell 1.08 -> 0.72. A prior toward looking around, never a mask.
+  look_entropy_coef: 0.004
+  # Fresh learning at the usual rate: M1's were halved for its last stretch and M2 extends M1. Kept at 3e-4 at the
+  # deploy's resume (2026-10-07): movement's own KL sat at 0.014 (under target) over the doorway stall; the joint
+  # KL's excess was the look heads'.
+  actor_lr: 0.0003
+  critic_lr: 0.0003
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   vision_chunk_rows: 2048
