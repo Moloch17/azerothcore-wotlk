@@ -171,16 +171,12 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
         return;
     if (view.Crowd.Used)
         view.Crowd.Used->push_back(object->GetGUID());
-    // As a player does it: a chest is looted (the gunpowder), a lock that takes a key gets the key's own use (the
-    // gunpowder on the cannon, whose script answers that spell), and anything else is a right-click -- a lever or a
-    // button runs what it is linked to, a door opens.
+    // As a player does it: a lock that takes a key gets the key's own use (the gunpowder on the cannon, whose script
+    // answers that spell), and anything else is a right-click -- a lever or a button runs what it is linked to, a door
+    // opens. Nothing is looted (the user, 2026-10-06): no chest is offered (InstanceEncounter::Usable), and one never
+    // is opened here.
     if (object->GetGoType() == GAMEOBJECT_TYPE_CHEST)
-    {
-        uint32 items = 0;
-        uint32 copper = 0;
-        WorldActions::LootAll(bot, object, items, copper);
         return;
-    }
     if (uint32 const key = KeyOf(object))
     {
         if (Item* carried = bot->GetItemByEntry(key))

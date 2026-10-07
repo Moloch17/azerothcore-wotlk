@@ -319,6 +319,9 @@ namespace Animus::Curriculum
             float WingRungTarget = 0.6f;
             float WingRungFallback = 0.5f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
+            /// The rung from which hint imitation is off (StageScenario::WingHintOffRung), as a resumed run reached it:
+            /// the probes beat the script's clear share there. -1: not yet, the ladder decides.
+            int32 WingHintOffRung = -1;
             /// The dungeon script's seats and hints on the ladder's rungs (WingRung::Script, ::Hint): a support, off by
             /// default, switched on when a rung has not stepped for a long stretch. Off, the rungs lift the level and
             /// spare wipes only, and every run learns from its own rewards.
@@ -334,10 +337,6 @@ namespace Animus::Curriculum
             uint32 WingCrowdFree = 4;
             /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
             uint32 WingFullClear = 1;
-            /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
-            uint32 WingRiseMs = 30000;
-            /// 1: a closed door opens by itself when a seat reaches it out of a fight (before the use action existed).
-            uint32 WingAutoDoors = 0;
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
             /// leader.
             float WingStray = 0.02f;
@@ -1615,6 +1614,7 @@ namespace Animus::Curriculum
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
+            f("Instance.WingHintOffRung", tuning.Instance.WingHintOffRung);
             f("Instance.WingSupport", tuning.Instance.WingSupport);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
@@ -1623,8 +1623,6 @@ namespace Animus::Curriculum
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
             f("Instance.WingFullClear", tuning.Instance.WingFullClear);
-            f("Instance.WingRiseMs", tuning.Instance.WingRiseMs);
-            f("Instance.WingAutoDoors", tuning.Instance.WingAutoDoors);
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Instance.PullClean", tuning.Instance.PullClean);

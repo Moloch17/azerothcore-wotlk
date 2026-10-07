@@ -26,6 +26,7 @@
 #include "CreatureAI.h"
 #include "CrowdBlock.h"
 #include "DBCStores.h"
+#include "EntranceRespawn.h"
 #include "Env.h"
 #include "GameObject.h"
 #include "EpisodeInfoTable.h"
@@ -55,8 +56,6 @@
 
 namespace
 {
-    /// A closed door this near a living seat opens (InstanceEncounter::UpdateWingEnemies).
-    constexpr float DOOR_REACH = 15.0f;
     constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far (CrowdView::Object)
 
     /// Every gameobject within `range` of a point, flat: UpdateWingEnemies' one visit from the party's middle.
@@ -209,6 +208,18 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         table.Add("wing_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
         table.Add("wing_probe", [this](Env const& env, uint32) { return _envs[env.Index].Probe ? 1.0f : 0.0f; });
         table.Add("wing_rises", [this](Env const& env, uint32) { return float(_envs[env.Index].Rises); });
+        table.Add("wing_rejoins", [this](Env const& env, uint32) { return float(_envs[env.Index].Rejoins); });
+        table.Add("wing_rejoin_seconds", [this](Env const& env, uint32)
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            return fight.Rejoins ? float(fight.RejoinMsTotal) / float(fight.Rejoins) / 1000.0f : 0.0f;
+        });
+        // Hint imitation off for the run's rung (StageScenario::WingHintOffRung): the learner switches hint_coef off
+        // on the episodes that say so, whatever its config asks (animus.hint_cutoff).
+        table.Add("wing_hint_off", [this](Env const& env, uint32)
+        {
+            return _scenario.Data(env).WingHintOff ? 1.0f : 0.0f;
+        });
         table.Add("wing_scripted", [this](Env const& env, uint32) { return _envs[env.Index].Scripted ? 1.0f : 0.0f; });
         table.Add("wing_level", [this](Env const& env, uint32) { return float(_scenario.Data(env).EpisodeLevel); });
         // Go-Explore: whether the run started from a cell, its arena and row, and the cells it reached (MarkCell).
@@ -266,12 +277,12 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     // One line a finished run (Instance.WingTrace): how far it got, what it killed and how it ended.
     if (!fight.Route.empty() && _scenario.Tuning().Instance.WingTrace)
         LOG_INFO("module.animus", "Wing run: env {} {}{}{} rung {} level {} | point {}/{} at the end, {} of {} creatures killed, "
-            "{} bosses, last boss {} | {} wipes, {:.0f}s with no progress at the end | {}",
+            "{} bosses, last boss {} | {} wipes, {} rises, {} rejoined | {:.0f}s with no progress at the end | {}",
             env.Index, fight.Evaluating ? "eval" : fight.Started ? "train from a cell" : "train",
             fight.Scripted ? " scripted" : "",
             fight.Probe ? " probe" : "", fight.Rung, fight.Level,
             fight.RouteNext, fight.Route.size(), fight.TrashKills, fight.HostileTotal, fight.BossKills,
-            fight.BossDead ? "killed" : "alive", fight.Wipes,
+            fight.BossDead ? "killed" : "alive", fight.Wipes, fight.Rises, fight.Rejoins,
             float(fight.LastMs - std::min(fight.LastMs, fight.ProgressMs)) / 1000.0f,
             fight.BossDead ? "cleared" : fight.Wiped ? "wiped" : "out of time");
     // Every training run from the door counts for its rung; the probes are the policy's own. A run started from a
@@ -280,7 +291,8 @@ void Animus::Curriculum::InstanceEncounter::ResetEpisode(Env& env)
     {
         float const cleared = fight.HostileTotal
             ? float(fight.TrashKills + (fight.BossDead ? 1 : 0)) / float(fight.HostileTotal + 1) : 0.0f;
-        _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : std::min(1.0f, cleared));
+        _scenario.NoteWingRun(fight.Rung, fight.Probe, fight.BossDead ? 1.0f : std::min(1.0f, cleared),
+            fight.Scripted);
     }
     fight = EnvInstance();
 }
@@ -339,13 +351,18 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         // walks past what a party of the level would pull, and the drill is about what it would pull. No probes, no
         // script, one wipe; the hints as the support has them.
         fight.Drill = _scenario.Arena(env).PullDrill && !env.Evaluating;
-        fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && frand(0.0f, 1.0f) < tuning.WingProbe;
+        // The teacher's own runs (a teacher arena, or `forge run <stage> dungeon N`): it plays every seat, and no run
+        // is a probe. Never in evaluation.
+        bool const teacher = _scenario.TeacherPlays(env) && !fight.Drill;
+        fight.Probe = !env.Evaluating && !fight.Drill && !fight.Started && !teacher
+            && frand(0.0f, 1.0f) < tuning.WingProbe;
         fight.WipesAllowed = fight.Drill ? 1 : tuning.WingWipes + rung.ExtraWipes;
         // The script's seats and hints are a support switched on by hand (Instance.WingSupport): off, the rungs are
-        // the levels and the wipes alone.
-        bool const supported = tuning.WingSupport && !env.Evaluating && !fight.Probe;
-        data.WingScript = supported && !fight.Drill ? rung.Script : 0.0f;
-        data.WingHint = supported ? rung.Hint : 0.0f;
+        // the levels and the wipes alone. Hint imitation is off from the rung the probes beat the script on.
+        bool const supported = (tuning.WingSupport || teacher) && !env.Evaluating && !fight.Probe;
+        data.WingScript = teacher ? 1.0f : supported && !fight.Drill ? rung.Script : 0.0f;
+        data.WingHintOff = _scenario.WingHintOff(fight.Rung);
+        data.WingHint = supported ? _scenario.WingHintAt(fight.Rung) : 0.0f;
         auto const [low, high] = DungeonLevels(*fight.Row);
         uint32 const lift = fight.Drill ? std::min(rung.Lift, tuning.PullLift) : rung.Lift;
         data.EpisodeLevel = uint8(std::min<uint32>(urand(low, high) + lift, DEFAULT_MAX_LEVEL));
@@ -365,6 +382,7 @@ void Animus::Curriculum::InstanceEncounter::BeforeLevel(Env& env)
         entrance = sObjectMgr->GetMapEntranceTrigger(fight.Row->MapId);
     data.EpisodeSpawn.Relocate(entrance->target_X, entrance->target_Y, entrance->target_Z, entrance->target_Orientation);
     data.HasEpisodeSpawn = true;
+    fight.Entrance = data.EpisodeSpawn;
 }
 
 std::vector<Animus::Curriculum::BossRow const*> const& Animus::Curriculum::InstanceEncounter::Rows(
@@ -611,6 +629,11 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
                 supplies.FoodItem = consumables.Food(seatState.Level);
                 supplies.DrinkItem = bot->GetMaxPower(POWER_MANA) ? consumables.Drink(seatState.Level) : 0;
                 StockConsumables(bot, supplies.FoodItem, supplies.DrinkItem, _scenario.Tuning().Instance.WingSupplies);
+                // What a lock on the way takes -- the Deadmines' cannon its gunpowder -- carried from the door: nothing
+                // is looted (the user, 2026-10-06), and the key is used on the lock with a real press (CMSG_USE_ITEM).
+                for (uint32 key : KeyItems(fight.MapId))
+                    if (!bot->HasItemCount(key, 1))
+                        bot->AddItem(key, 1);
             }
         return true;
     }
@@ -803,36 +826,21 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
             around.empty() ? " nothing" : around);
     }
 
-    // The dead rejoin: one nobody has raised by Instance.WingRiseMs after the fight is over rises at the door, as a
-    // player who released and ran back would, and walks back to the group (the pull waits for it).
-    for (uint32 index = 0; index < data.ActiveSeats; ++index)
+    // A wipe -- nobody standing -- counts once (Instance.WingWipes and more while the support lasts); past the run's
+    // allowance it ends the run. Short of it, the party rises at the entrance as any death does, below.
+    if (fight.Wipe.Note(anyoneAlive, fight.BossDead))
     {
-        Player* bot = _scenario.SeatBot(env, index);
-        SeatInstance& seatState = fight.Seats[index];
-        if (!bot || bot->IsAlive())
+        ++fight.Wipes;
+        if (_scenario.Tuning().Instance.WingTrace)
+            LogWipe(env, fight);
+        fight.Trace = EnvInstance::FightTrace();
+        if (fight.Wipes >= fight.WipesAllowed)
         {
-            seatState.DeadSinceMs = 0;
-            continue;
-        }
-        if (fight.Fighting || !anyoneAlive)
-        {
-            seatState.DeadSinceMs = 0;
-            continue;
-        }
-        if (!seatState.DeadSinceMs)
-            seatState.DeadSinceMs = std::max<uint32>(1, env.EpisodeElapsedMs);
-        if (env.EpisodeElapsedMs >= seatState.DeadSinceMs + _scenario.Tuning().Instance.WingRiseMs)
-        {
-            bot->ResurrectPlayer(0.5f);
-            bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
-            BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
-            bot->CombatStopWithPets(true);
-            seatState.DeathPaid = false;
-            seatState.Walk = 0;
-            seatState.DeadSinceMs = 0;
-            ++fight.Rises;
+            fight.Wiped = true;
+            return;
         }
     }
+    RiseDead(env, fight);
 
     // A thing the tank has had within reach of the script (25 yd), out of a fight, unused for 45 s is out of its
     // reach (on a ledge, in the wall): it is passed by for the rest of the run, as used.
@@ -993,9 +1001,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
 
     // A wing: the next point of the route reached by any seat out of a fight -- ground is taken by clearing it, not
     // by running past what is still fighting (the Deadmines' parties ran into the next pack mid-fight and had eight on
-    // them at once, 2026-10-01); a wipe stands the party up at the door (until
-    // the run's allowance, Instance.WingWipes and more while the support lasts, which ends it), with the trash that
-    // killed it still where it was.
+    // them at once, 2026-10-01).
     if (fight.RouteNext < fight.Route.size() && !fight.Fighting && (!fight.Drill || fight.RouteNext < fight.DrillPoint))
         for (uint32 index = 0; index < data.ActiveSeats; ++index)
             if (Player* bot = _scenario.SeatBot(env, index); bot && bot->IsAlive()
@@ -1004,33 +1010,69 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 ++fight.RouteNext;
                 break;
             }
-    if (!anyoneAlive && !fight.BossDead)
+}
+
+void Animus::Curriculum::InstanceEncounter::RiseDead(Env& env, EnvInstance& fight)
+{
+    // The dead rejoin (dungeon-curriculum I4; the user, 2026-10-06: no graveyard): a seat that dies is out for
+    // Respawn.DelayMs, then is alive at the instance's entrance and walks back to the party on the controller --
+    // its own walk, the teacher's for a seat the teacher plays, never a teleport to the party. It has rejoined
+    // within Respawn.RejoinYards of the party: the tank, or the living party's middle while the tank is down.
+    CurriculumTuning::RespawnTuning const& tuning = _scenario.Tuning().Respawn;
+    EnvState& data = _scenario.Data(env);
+    Player* tank = nullptr;
+    for (uint32 index = 0; index < data.ActiveSeats && !tank; ++index)
+        if (Player* bot = _scenario.SeatBot(env, index); bot && bot->GetGUID() == fight.Tank && bot->IsAlive()
+            && bot->IsInWorld())
+            tank = bot;
+    for (uint32 index = 0; index < data.ActiveSeats; ++index)
     {
-        ++fight.Wipes;
-        if (_scenario.Tuning().Instance.WingTrace)
-            LogWipe(env, fight);
-        fight.Trace = EnvInstance::FightTrace();
-        if (fight.Wipes >= fight.WipesAllowed)
+        Player* bot = _scenario.SeatBot(env, index);
+        if (!bot || !bot->IsInWorld())
+            continue;
+        SeatInstance& seatState = fight.Seats[index];
+        float partyYards = -1.0f;
+        if (bot->IsAlive())
         {
-            fight.Wiped = true;
-            return;
-        }
-        for (uint32 index = 0; index < data.ActiveSeats; ++index)
-            if (Player* bot = _scenario.SeatBot(env, index))
+            if (tank && tank != bot && tank->IsInMap(bot))
+                partyYards = bot->GetExactDist(tank);
+            else
             {
-                bot->ResurrectPlayer(0.5f);
-                bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA) / 2);
-                BotFactory::TeleportWithinMap(bot, data.EpisodeSpawn);
-                // Out of the fight it lost: what killed it stays where it was, and a party still flagged in combat
-                // with it could not eat or drink at the door, and waited there for the hour (2026-10-01).
-                bot->CombatStopWithPets(true);
-                fight.Seats[index].DeathPaid = false;
-                fight.Seats[index].Walk = 0;
+                float x = 0.0f;
+                float y = 0.0f;
+                uint32 others = 0;
+                for (uint32 other = 0; other < data.ActiveSeats; ++other)
+                    if (Player* member = _scenario.SeatBot(env, other); member && member != bot && member->IsAlive()
+                        && member->IsInMap(bot))
+                    {
+                        x += member->GetPositionX();
+                        y += member->GetPositionY();
+                        ++others;
+                    }
+                if (others)
+                    partyYards = bot->GetExactDist2d(x / float(others), y / float(others));
             }
-        if (Player* owner = _scenario.Owner(env); owner && !owner->IsAlive())
+        }
+        RespawnClock::Step const step = seatState.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive(), partyYards,
+            tuning.DelayMs, tuning.RejoinYards);
+        if (step == RespawnClock::Step::Rise)
         {
-            owner->ResurrectPlayer(0.5f);
-            BotFactory::TeleportWithinMap(owner, data.EpisodeSpawn);
+            RiseAtEntrance(bot, data.Seats[index], fight.Entrance, env.EpisodeElapsedMs);
+            seatState.Clock.Risen(env.EpisodeElapsedMs);
+            seatState.DeathPaid = false;
+            // Its place on the route is the entrance's: it walks the route back, point by point.
+            seatState.Walk = 0;
+            seatState.DenseAt = 0;
+            seatState.OffRoute = false;
+            seatState.Detour.clear();
+            ++fight.Rises;
+        }
+        else if (step == RespawnClock::Step::Rejoined)
+        {
+            ++fight.Rejoins;
+            fight.RejoinMsTotal = 0;
+            for (SeatInstance const& any : fight.Seats)
+                fight.RejoinMsTotal += any.Clock.RejoinMsTotal;
         }
     }
 }
@@ -1198,10 +1240,10 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
     {
         case GAMEOBJECT_TYPE_BUTTON:
         case GAMEOBJECT_TYPE_GOOBER:
-        case GAMEOBJECT_TYPE_CHEST:
         {
-            // Only a chest any hand opens (the Deadmines' gunpowder): a vein, a herb or a locked chest wants a skill
-            // the party may not have, and the tank stood by a Tin Vein in the wall for the hour (2026-10-01).
+            // Not one that wants a skill the party may not have: the tank stood by a Tin Vein in the wall for the
+            // hour (2026-10-01). No chest at all: nothing is looted (the user, 2026-10-06) -- what a lock takes is
+            // carried from the door (KeyItems).
             LockEntry const* lock = sLockStore.LookupEntry(object->GetGOInfo()->GetLockId());
             for (uint32 i = 0; lock && i < MAX_LOCK_CASE; ++i)
                 if (lock->Type[i] == LOCK_KEY_SKILL && lock->Skill[i])
@@ -1214,6 +1256,31 @@ bool Animus::Curriculum::InstanceEncounter::Usable(GameObject const* object)
         default:
             return false;
     }
+}
+
+std::vector<uint32> const& Animus::Curriculum::InstanceEncounter::KeyItems(uint32 mapId)
+{
+    // Once per map: the key items (LOCK_KEY_ITEM) of the map's spawned game objects' locks -- the Deadmines' cannon
+    // takes the Defias Gunpowder.
+    static std::mutex lock;
+    static std::map<uint32, std::vector<uint32>> keys;
+    std::lock_guard<std::mutex> guard(lock);
+    auto const known = keys.find(mapId);
+    if (known != keys.end())
+        return known->second;
+    std::vector<uint32>& found = keys[mapId];
+    for (auto const& [spawnId, data] : sObjectMgr->GetAllGOData())
+    {
+        if (data.mapid != mapId)
+            continue;
+        GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(data.id);
+        LockEntry const* entry = info ? sLockStore.LookupEntry(info->GetLockId()) : nullptr;
+        for (uint32 i = 0; entry && i < MAX_LOCK_CASE; ++i)
+            if (entry->Type[i] == LOCK_KEY_ITEM && entry->Index[i] && sObjectMgr->GetItemTemplate(entry->Index[i])
+                && std::find(found.begin(), found.end(), entry->Index[i]) == found.end())
+                found.push_back(entry->Index[i]);
+    }
+    return found;
 }
 
 bool Animus::Curriculum::InstanceEncounter::Wing(Env const& env) const
@@ -1755,11 +1822,10 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
     if (!seat || !seat->IsInWorld())
         return;
 
-    // What the party can use near it -- a lever, a button, the Deadmines' cannon, a closed door it may open -- for the
-    // crowd block's use action (CrowdBlock::ACTION_USE_OBJECT): a dungeon's way on is opened the way a player opens
-    // it (2026-10-01: "they need to be able to use the proper actions to activate doors and cannons"). With
-    // Instance.WingAutoDoors a closed door also opens by itself when a seat reaches it out of a fight, as it did
-    // before the action existed.
+    // What the party can use near it -- a lever, a button, the Deadmines' cannon, a closed door it may open: a
+    // dungeon's way on is opened the way a player opens it (2026-10-01: "they need to be able to use the proper
+    // actions to activate doors and cannons"), with a press on it (the sight block's interact or use-item). Nothing
+    // opens by itself.
     bool fighting = false;
     for (uint32 slot = 0; slot < env.Targets.size() && !fighting; ++slot)
         if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
@@ -1802,19 +1868,11 @@ void Animus::Curriculum::InstanceEncounter::UpdateWingEnemies(Env& env, EnvInsta
                 || std::find(fight.Used.begin(), fight.Used.end(), object->GetGUID()) != fight.Used.end())
                 continue;
             bool seen = false;
-            bool reached = false;
             for (uint32 index = 0; index < livingCount; ++index)
-            {
-                float const distance = living[index]->GetExactDist(object);
-                seen = seen || distance <= OBJECT_SIGHT;
-                reached = reached || distance <= DOOR_REACH;
-            }
+                seen = seen || living[index]->GetExactDist(object) <= OBJECT_SIGHT;
             if (!seen)
                 continue;
             fight.Objects.push_back(object->GetGUID());
-            if (!fighting && reached && _scenario.Tuning().Instance.WingAutoDoors
-                && object->GetGoType() == GAMEOBJECT_TYPE_DOOR)
-                object->SetGoState(GO_STATE_ACTIVE);
         }
     }
 
@@ -2581,8 +2639,8 @@ void Animus::Curriculum::InstanceEncounter::CutAdvanceAtDoors(SeatView& view, En
 {
     // A spline goes through anything, and the advance launches without pathfinding (as the old 6-yard step did,
     // MovePoint with generatePath off): a run that crossed a closed door walked through it, and never needed to open
-    // it. The run ends where the first closed door begins; at the door, there is no run, and the seat opens it
-    // (ACTION_USE_OBJECT, or Instance.WingAutoDoors on reach). The carry-on reads the same path.
+    // it. The run ends where the first closed door begins; at the door, there is no run, and the seat opens it with
+    // a press (or what opens it: a lever, the cannon). The carry-on reads the same path.
     if (!view.Bot || !view.Crowd.HasStep || !view.Crowd.PathPoints || fight.ClosedDoors.empty())
         return;
     std::vector<RouteShortcut::Point> path;

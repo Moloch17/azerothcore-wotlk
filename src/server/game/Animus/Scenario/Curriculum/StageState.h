@@ -37,6 +37,7 @@
 #include "SeatCharacter.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
+#include "WingTeacher.h"
 #include <array>
 #include <vector>
 
@@ -407,7 +408,10 @@ namespace Animus::Curriculum
         int32 ScriptAction = -1;
         int32 HintAction = -1;                  // the script's suggestion this decision, and what the seat pressed
         int32 Pressed = -1;                     // (the "Wing stuck" log line)
-        std::string ScriptReason;               // why the dungeon script chose it (Baselines::LastDungeonReason)
+        std::string ScriptReason;               // why the dungeon teacher chose it (WingTeacher::Choice::Reason)
+        /// The "human" stand-in's view of its situation as the teacher reads one (StageScenario::TeacherFacts), kept
+        /// by ObserveSeat for DecideStandIn in a stage with the sight block: its hands act on it.
+        WingTeacher::Facts StandInSeen;
         std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -786,6 +790,9 @@ namespace Animus::Curriculum
         /// evaluation.
         float WingScript = 0.0f;
         float WingHint = 0.0f;
+        /// Hint imitation switched off for this run's rung (StageScenario::WingHintOff): the probes beat the script, so
+        /// neither a hint nor a scripted seat's own press is imitated.
+        bool WingHintOff = false;
         /// The side the episode wants its seats on (TeamId + 1; 0: any): a quest or a town belongs to one. The race
         /// draw honours it, and a kept character of the other side is rebuilt.
         uint8 EpisodeTeam = 0;

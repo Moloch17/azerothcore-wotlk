@@ -529,6 +529,45 @@ namespace
             .MapId = MAP_RAGEFIRE_CHASM,
         });
 
+        // **The dungeon teacher's check** (dungeon-curriculum I6): not training stages -- they are in no queue, and
+        // their arenas' runs are the teacher's (ArenaDefinition::Teacher). The teacher (WingTeacher) plays every seat
+        // of a whole dungeon, door to last boss with every pack and side boss on the way, on the player controller's
+        // keys and the sight block's presses: `forge run teacher_ragefire dungeon 96` reads its "Wing run" lines, the
+        // gate before any taper (the user's rule: consistent full clears of every pull and boss). The blocks are a
+        // whole dungeon's as the dungeon stages (D1-D3) have them: the fight's (duel, pet, pack, gauntlet, party,
+        // support, crowd), the camera with its entity list and the sight block's presses, the party frames, the hint
+        // block the teacher writes, and the goal block.
+        stages.push_back({
+            .Name = "teacher_ragefire",
+            .Suffix = "_teacher",
+            .Extends = "move4_follow",
+            .Summary = "the dungeon teacher's check: it plays a party of five through Ragefire Chasm, door to Bazzalan, "
+                "every pack and side boss, on the controller and the sight presses (not for training)",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Party, Support, Crowd, Vision, Sight, PartyFrames, Hint,
+                Goal },
+            .Arenas = {
+                { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .Teacher = true,
+                    .EpisodeSeconds = 7200 },
+            },
+            .InDefaultQueue = false,
+        });
+        stages.push_back({
+            .Name = "teacher_deadmines",
+            .Suffix = "_teacher",
+            .Extends = "teacher_ragefire",
+            .Summary = "the dungeon teacher's check: it plays a party of five through the Deadmines, door to VanCleef, "
+                "every pack and side boss, its doors and the cannon by real presses (not for training)",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Party, Support, Crowd, Vision, Sight, PartyFrames, Hint,
+                Goal },
+            .Arenas = {
+                { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .Teacher = true,
+                    .EpisodeSeconds = 14400 },
+            },
+            .InDefaultQueue = false,
+        });
+
         return stages;
     }
 
@@ -591,6 +630,9 @@ namespace
             return "pack health is a percentage of a pull's creatures' own";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
+        if (arena.Teacher && (arena.Instance != InstanceLadder::Wing || arena.PullDrill || arena.EvalOnly
+            || !stage.Has(BlockId::Sight)))
+            return "a teacher arena is a whole dungeon's run, played by the teacher on the sight block's presses";
         if (arena.EvalOnly && arena.PullDrill)
             return "a held-out arena is played by evaluations, which never play a pull drill";
         if (arena.OwnerCast && !arena.Owner)

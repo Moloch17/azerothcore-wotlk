@@ -20,13 +20,9 @@
 #include "ClassAssets.h"
 #include "CompassBlock.h"
 #include "CoreBlock.h"
-#include "CrowdBlock.h"
 #include "DuelBlock.h"
 #include "GauntletBlock.h"
-#include "IncomingSpell.h"
 #include "MoveBlock.h"
-#include "PackBlock.h"
-#include "PartyBlock.h"
 #include "PetBlock.h"
 #include "SupportBlock.h"
 #include "SharedDefines.h"
@@ -333,34 +329,40 @@ namespace
     /// only ticks while it isn't on the target); out of combat, a buff not already on the bot, one per exclusive kind
     /// (a seal, an aura, an armor); otherwise nothing. Casting for its own sake resets the swing timer, and the first
     /// spell in catalog order is often a buff that can be cast again forever.
-    std::optional<int32> Rotation(Row const& row, Layout const& layout)
+    bool Castable(std::vector<ActionCatalog::Action> const& actions, uint32 action)
+    {
+        return actions[action].Type == ActionCatalog::Kind::Spell;
+    }
+
+    /// The spec's own form, while in no form (the tracked forms' one-hot starts with FORM_NONE).
+    std::optional<int32> SpecFormSpell(Row const& row, Layout const& layout)
     {
         std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
-        auto const castable = [&actions](uint32 action)
-        {
-            return actions[action].Type == ActionCatalog::Kind::Spell;
-        };
-
-        // In no form (the tracked forms' one-hot starts with FORM_NONE): the spec's own.
         SpecProfile const* spec = SpecOf(row, layout);
-        if (spec && row.Obs(BlockId::Core, CoreBlock::OBS_FORM_FIRST) > 0.0f)
+        if (!spec || row.Obs(BlockId::Core, CoreBlock::OBS_FORM_FIRST) <= 0.0f)
+            return std::nullopt;
+
+        for (SpecForm const& entry : SPEC_FORMS)
         {
-            for (SpecForm const& entry : SPEC_FORMS)
-            {
-                if (entry.Class != layout.Profile->Class || entry.Spec != spec->Name)
-                    continue;
+            if (entry.Class != layout.Profile->Class || entry.Spec != spec->Name)
+                continue;
 
-                for (uint32 form : entry.Forms)
-                    for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
-                        if (form && castable(action) && actions[action].FirstRank == form)
-                            if (std::optional<int32> shift = row.Allowed(BlockId::Core, action))
-                                return shift;
-            }
+            for (uint32 form : entry.Forms)
+                for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
+                    if (form && Castable(actions, action) && actions[action].FirstRank == form)
+                        if (std::optional<int32> shift = row.Allowed(BlockId::Core, action))
+                            return shift;
         }
+        return std::nullopt;
+    }
 
+    /// The first allowed damaging spell (one that only ticks while it isn't on the target).
+    std::optional<int32> DamageSpell(Row const& row, Layout const& layout)
+    {
+        std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
         for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
         {
-            if (!castable(action))
+            if (!Castable(actions, action))
                 continue;
 
             SpellUse const use = UseOf(sSpellMgr->GetSpellInfo(actions[action].FirstRank));
@@ -369,21 +371,24 @@ namespace
                 if (std::optional<int32> cast = row.Allowed(BlockId::Core, action))
                     return cast;
         }
+        return std::nullopt;
+    }
 
-        if (row.Obs(BlockId::Duel, DuelBlock::OBS_BOT_IN_COMBAT) > 0.0f)
-            return std::nullopt;
-
+    /// Out of combat, a buff not already on the bot, one per exclusive kind (a seal, an aura, an armor).
+    std::optional<int32> BuffSpell(Row const& row, Layout const& layout)
+    {
+        std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
         // Exclusive kinds already on the bot: a second seal would only replace the first, and back again.
         std::vector<SpellSpecificType> active;
         for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
-            if (castable(action) && ActionFeature(row, action, ACTION_AURA_ON_SELF) > 0.0f)
+            if (Castable(actions, action) && ActionFeature(row, action, ACTION_AURA_ON_SELF) > 0.0f)
                 if (SpellInfo const* info = sSpellMgr->GetSpellInfo(actions[action].FirstRank))
                     if (info->GetSpellSpecific() != SPELL_SPECIFIC_NORMAL)
                         active.push_back(info->GetSpellSpecific());
 
         for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
         {
-            if (!castable(action) || ActionFeature(row, action, ACTION_AURA_ON_SELF) > 0.0f)
+            if (!Castable(actions, action) || ActionFeature(row, action, ACTION_AURA_ON_SELF) > 0.0f)
                 continue;
 
             SpellInfo const* info = sSpellMgr->GetSpellInfo(actions[action].FirstRank);
@@ -394,8 +399,22 @@ namespace
             if (std::optional<int32> cast = row.Allowed(BlockId::Core, action))
                 return cast;
         }
-
         return std::nullopt;
+    }
+
+    /// `fight`'s spells, first match wins: the spec's form while in no form; the first allowed damaging spell (one that
+    /// only ticks while it isn't on the target); out of combat, a buff not already on the bot, one per exclusive kind
+    /// (a seal, an aura, an armor); otherwise nothing. Casting for its own sake resets the swing timer, and the first
+    /// spell in catalog order is often a buff that can be cast again forever.
+    std::optional<int32> Rotation(Row const& row, Layout const& layout)
+    {
+        if (std::optional<int32> shift = SpecFormSpell(row, layout))
+            return shift;
+        if (std::optional<int32> cast = DamageSpell(row, layout))
+            return cast;
+        if (row.Obs(BlockId::Duel, DuelBlock::OBS_BOT_IN_COMBAT) > 0.0f)
+            return std::nullopt;
+        return BuffSpell(row, layout);
     }
 
     /// The first allowed core spell action that `wanted` picks.
@@ -808,128 +827,6 @@ namespace
 
 namespace
 {
-    /// `dungeon`: a party clearing a dungeon pack by pack, as players do. The tank leads along the route, waits for
-    /// the party to be up and gathered, pulls the nearest pack and takes whatever hits somebody else; everyone else
-    /// stays with the tank, attacks the tank's target, and the healer keeps them up. Between pulls everyone eats,
-    /// drinks and raises the dead. Reads only the row, like every baseline.
-    constexpr float DUNGEON_PULL_YARDS = 28.0f;         // the tank pulls the pack ahead from this close
-    constexpr float DUNGEON_READY_HEALTH = 0.7f;        // ... once everybody has this much health
-    constexpr float DUNGEON_READY_MANA = 0.7f;          // ... and the healer this much mana
-    constexpr float DUNGEON_GATHER_YARDS = 20.0f;       // ... and is this near
-    constexpr float DUNGEON_FOLLOW_YARDS = 6.0f;        // out of a fight, the others keep this close to the tank
-    constexpr float DUNGEON_LEASH_YARDS = 30.0f;        // in a fight, they come back past this
-    constexpr float DUNGEON_REST_HEALTH = 0.7f;
-    constexpr float DUNGEON_REST_MANA = 0.6f;
-    /// The tank waits this long with nothing done for the party's health and mana, then pulls as it is.
-    constexpr float DUNGEON_WAIT_SECONDS = 60.0f;
-
-    float SlotObs(Row const& row, uint32 slot, uint32 feature)
-    {
-        return row.Obs(BlockId::Pack, PackBlock::OBS_GLOBAL_COUNT + slot * PackBlock::SLOT_FEATURES + feature);
-    }
-
-    float MemberObs(Row const& row, uint32 member, uint32 feature)
-    {
-        return row.Obs(BlockId::Party, PartyBlock::OBS_GLOBAL_COUNT + member * PartyBlock::MEMBER_FEATURES + feature);
-    }
-
-    bool SlotLive(Row const& row, uint32 slot)
-    {
-        return SlotObs(row, slot, PackBlock::SLOT_PRESENT) > 0.0f && SlotObs(row, slot, PackBlock::SLOT_ALIVE) > 0.0f;
-    }
-
-    bool SlotFighting(Row const& row, uint32 slot)
-    {
-        return SlotLive(row, slot) && SlotObs(row, slot, PackBlock::SLOT_IN_COMBAT) > 0.0f;
-    }
-
-    bool MemberLive(Row const& row, uint32 member)
-    {
-        return MemberObs(row, member, PartyBlock::MEMBER_PRESENT) > 0.0f
-            && MemberObs(row, member, PartyBlock::MEMBER_ALIVE) > 0.0f;
-    }
-
-    /// The slot attacked by a party member (or by the seat), nearest first, or -1.
-    int32 SlotOnParty(Row const& row, bool notOnSeat)
-    {
-        int32 best = -1;
-        for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
-        {
-            if (!SlotFighting(row, slot))
-                continue;
-            bool const onSeat = SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
-            // The party block names only the first slots; past them a member's attackers are not read.
-            bool onMember = false;
-            for (uint32 member = 0; member < GROUP_MEMBERS && !onMember && slot < NAMED_ENEMY_SLOTS; ++member)
-                onMember = MemberLive(row, member)
-                    && MemberObs(row, member, PartyBlock::MEMBER_SLOT_ON_FIRST + slot) > 0.0f;
-            if (!(onMember || (onSeat && !notOnSeat)) || (notOnSeat && onSeat))
-                continue;
-            if (best < 0
-                || SlotObs(row, slot, PackBlock::SLOT_DISTANCE) < SlotObs(row, uint32(best), PackBlock::SLOT_DISTANCE))
-                best = int32(slot);
-        }
-        return best;
-    }
-
-    bool IsDungeonTank(Row const& row)
-    {
-        if (row.Has(BlockId::Crowd))
-            return row.Obs(BlockId::Crowd, CrowdBlock::OBS_IS_TANK) > 0.0f;
-        return CanHoldThePull(row);
-    }
-
-    std::optional<int32> SelectSlot(Row const& row, uint32 slot)
-    {
-        if (SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) > 0.0f)
-            return std::nullopt;
-        return row.Allowed(BlockId::Pack, PackBlock::ACTION_SLOT_FIRST + slot);
-    }
-
-    /// Eat and drink out of a fight, and keep sitting until full.
-    std::optional<int32> Rest(Row const& row)
-    {
-        if (!row.Has(BlockId::Gauntlet))
-            return std::nullopt;
-        float const health = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH);
-        float const mana = row.Obs(BlockId::Core, CoreBlock::OBS_MANA);
-        // A seat with mana: some left, or drinks to get it back with (only a mana user is given them). At exactly
-        // none the script never drank, and a caster stood at 0% for the rest of the run (2026-10-03).
-        bool const usesMana = mana > 0.0f || row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINK_LEFT) > 0.0f;
-        bool const eating = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_EATING) > 0.0f;
-        bool const drinking = row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINKING) > 0.0f;
-        if ((eating && health < 0.99f) || (drinking && usesMana && mana < 0.99f))
-            return 0;
-        bool const wantsFood = health < DUNGEON_REST_HEALTH
-            && row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_FOOD_LEFT) > 0.0f;
-        bool const wantsDrink = usesMana && mana < DUNGEON_REST_MANA
-            && row.Obs(BlockId::Gauntlet, GauntletBlock::OBS_DRINK_LEFT) > 0.0f;
-        if (wantsFood)
-            if (std::optional<int32> eat = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_EAT))
-                return eat;
-        if (wantsDrink)
-            if (std::optional<int32> drink = row.Allowed(BlockId::Gauntlet, GauntletBlock::ACTION_DRINK))
-                return drink;
-        // Eating and drinking wait for the seat to stand still: a seat turning and stepping on the spot was never
-        // offered its drink, and the script said nothing instead of stopping it.
-        if ((wantsFood || wantsDrink) && row.Has(BlockId::Move) && row.Obs(BlockId::Move, MoveBlock::OBS_MOVING) > 0.0f)
-            if (std::optional<int32> halt = Halt(row))
-                return halt;
-        return std::nullopt;
-    }
-
-    std::optional<int32> Revive(Row const& row)
-    {
-        if (!row.Has(BlockId::Party))
-            return std::nullopt;
-        BlockSlice const& slice = row.RowLayout().Slice(BlockId::Party);
-        for (uint32 action = PartyBlock::ACTION_REVIVE_FIRST; action < slice.ActionCount; ++action)
-            if (std::optional<int32> revive = row.Allowed(BlockId::Party, action))
-                return revive;
-        return std::nullopt;
-    }
-
-    /// The fight itself once the right slot is the target: the rotation, closing in, the pet.
     /// What a catalog spell does in a party's fight, read off the spell: a taunt, an interrupt, threat on many at
     /// once, or crowd control that holds an extra enemy out of the fight (Polymorph, Sap, Shackle, Hibernate -- not a
     /// fear, which sends it running into the next pack).
@@ -990,336 +887,51 @@ namespace
         return info->HasAura(SPELL_AURA_MOD_CONFUSE) || info->HasAura(SPELL_AURA_TRANSFORM)
             || (info->HasAura(SPELL_AURA_MOD_STUN) && info->GetMaxDuration() >= 8000);
     }
-
-    std::optional<int32> Engage(Row const& row, Layout const& layout)
-    {
-        if (std::optional<int32> action = Fight(row, layout))
-            return action;
-        if (std::optional<int32> ability = PetDamage(row, layout))
-            return ability;
-        return Rotation(row, layout);
-    }
-
-    /// Why the dungeon script chose what it chose last on this thread, for the "Wing stuck" log line.
-    thread_local std::string DungeonReason;
-
-    std::optional<int32> Dungeon(Row const& row, Layout const& layout)
-    {
-        DungeonReason = "fight";
-        if (!row.Has(BlockId::Pack) || !row.Has(BlockId::Party))
-            return Fight(row, layout);
-
-        // One healer: the seat that heals best of the group (ties both heal). Every other build with a heal in it -- a
-        // feral druid, an enhancement shaman, a retribution paladin -- deals damage: the first script let them all
-        // heal, the fights ran 80-110 s and the real healer died dry (2026-10-01).
-        bool const tank = IsDungeonTank(row);
-        float const ownHealing = std::max({ AptitudeOf(row, Aptitude::DIRECT_HEAL), AptitudeOf(row, Aptitude::HOT_HEAL),
-            AptitudeOf(row, Aptitude::AREA_HEAL) });
-        bool const healer = !tank && CanHeal(row)
-            && ownHealing >= row.Obs(BlockId::Party, PartyBlock::OBS_BEST_HEALING) - 1e-3f;
-        bool fighting = row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_ON_PARTY) > 0.0f;
-        for (uint32 slot = 0; slot < PACK_SLOTS && !fighting; ++slot)
-            fighting = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f;
-        if (!fighting)
-            fighting = SlotOnParty(row, false) >= 0;
-
-        // The leader is the party's tank, as the crowd block shows it; keeping up with it is the seek helper on the
-        // move block's keys (the engine's follow-the-tank is gone, player-controller C9).
-        bool const hasCrowd = row.Has(BlockId::Crowd);
-        bool const hasLeader = !tank && hasCrowd && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_PRESENT) > 0.0f;
-        float const leaderYards = hasLeader ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_DISTANCE) * 100.0f : 0.0f;
-        auto const follow = [&row]()
-        {
-            return Seek(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_SIN),
-                row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_COS));
-        };
-        // Along the route to the objective (the engine's advance is gone): toward the compass block's objective.
-        auto const advance = [&row]()
-        {
-            return Seek(row, Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_SIN),
-                Compass(row, CompassBlock::OBS_OBJECTIVE_BEARING_COS));
-        };
-
-        if (fighting)
-        {
-            if (healer)
-                if (std::optional<int32> heal = Support(row, layout))
-                    return heal;
-
-            int32 want = -1;
-            if (tank)
-            {
-                // Whatever is on somebody else first, then what it already holds, then the nearest in the fight.
-                want = SlotOnParty(row, true);
-                if (want < 0)
-                    for (uint32 slot = 0; slot < PACK_SLOTS && want < 0; ++slot)
-                        if (SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) > 0.0f)
-                            want = int32(slot);
-                if (want < 0)
-                    want = SlotOnParty(row, false);
-            }
-            else
-            {
-                // Back to the tank if the fight has drawn the seat away; then the tank's target.
-                if (hasLeader && leaderYards > DUNGEON_LEASH_YARDS)
-                    if (std::optional<int32> back = follow())
-                    {
-                        DungeonReason = "fight: back to the tank";
-                        return back;
-                    }
-                if (hasLeader)
-                    for (uint32 slot = 0; slot < NAMED_ENEMY_SLOTS && want < 0; ++slot)
-                        if (row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f
-                            && SlotFighting(row, slot))
-                            want = int32(slot);
-                if (want < 0)
-                    want = SlotOnParty(row, false);
-            }
-
-            if (want >= 0)
-                if (std::optional<int32> select = SelectSlot(row, uint32(want)))
-                    return select;
-
-            // How the fight stands: enemies in it, and those on somebody other than the tank.
-            uint32 inFight = 0;
-            uint32 loose = 0;
-            bool controlled = false;
-            for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
-                if (SlotFighting(row, slot))
-                {
-                    ++inFight;
-                    controlled = controlled || SlotObs(row, slot, PackBlock::SLOT_CROWD_CONTROLLED) > 0.0f;
-                }
-            if (row.Has(BlockId::Crowd))
-            {
-                float const onParty = row.Obs(BlockId::Crowd, CrowdBlock::OBS_ON_PARTY) * 8.0f;
-                loose = uint32(std::lround(row.Obs(BlockId::Crowd, CrowdBlock::OBS_LOOSE) * 8.0f));
-                inFight = std::max(inFight, uint32(std::lround(onParty)));
-            }
-
-            if (tank)
-            {
-                // What it pulled still coming in: back to the party (the encounter points its objective there),
-                // so the fight happens where the party waits and not beside the next pack.
-                bool coming = false;
-                for (uint32 slot = 0; slot < PACK_SLOTS && !coming; ++slot)
-                    coming = SlotFighting(row, slot) && SlotObs(row, slot, PackBlock::SLOT_ATTACKS_BOT) > 0.0f
-                        && SlotObs(row, slot, PackBlock::SLOT_DISTANCE) * 60.0f > 10.0f;
-                if (coming)
-                    if (std::optional<int32> back = advance())
-                    {
-                        DungeonReason = "fight: falling back with the pull";
-                        return back;
-                    }
-                // The loose one it just took: taunt it. Several loose, or a crowd: threat on all of them at once.
-                if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f)
-                    if (std::optional<int32> taunt = FirstSpell(row, layout, IsTaunt))
-                        return taunt;
-                if (loose >= 2 || inFight >= 3)
-                    if (std::optional<int32> area = FirstSpell(row, layout, IsAreaThreat))
-                        return area;
-                // Its threat abilities before plain damage: the tank's damage read like a damage dealer's.
-                if (want >= 0 || SlotOnParty(row, false) >= 0)
-                    if (std::optional<int32> threat = FirstSpell(row, layout, IsHighThreat))
-                        return threat;
-            }
-            else if (!healer)
-            {
-                // A cast it can stop, on the enemy it is hitting.
-                if (want >= 0 && SlotObs(row, uint32(want), uint32(PackBlock::SLOT_CAST_FIRST)
-                    + uint32(IncomingSpell::FEATURE_INTERRUPTIBLE)) > 0.0f)
-                    if (std::optional<int32> stop = FirstSpell(row, layout, IsInterrupt))
-                        return stop;
-                // More than the tank can hold: one extra enemy -- not the tank's -- held out of the fight, once.
-                if (!controlled && (loose >= 2 || inFight >= 4))
-                    for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
-                    {
-                        if (!SlotFighting(row, slot) || (hasLeader && slot < NAMED_ENEMY_SLOTS
-                            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_TANK_TARGET_FIRST + slot) > 0.0f))
-                            continue;
-                        if (SlotObs(row, slot, PackBlock::SLOT_CURRENT_TARGET) == 0.0f)
-                        {
-                            if (std::optional<int32> select = SelectSlot(row, slot))
-                                return select;
-                            break;
-                        }
-                        if (std::optional<int32> hold = FirstSpell(row, layout, IsCrowdControl))
-                            return hold;
-                        break;
-                    }
-                // The tank's pull still on its way in: wait for it to reach the tank.
-                if (want >= 0 && hasLeader && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
-                    && SlotObs(row, uint32(want), PackBlock::SLOT_DISTANCE) * 60.0f > leaderYards + 8.0f)
-                {
-                    DungeonReason = "fight: waiting for the pull to reach the tank";
-                    if (std::optional<int32> halt = Halt(row))
-                        return halt;
-                    return 0;
-                }
-                // About to take it off the tank: hold back a moment.
-                if (want >= 0 && SlotObs(row, uint32(want), PackBlock::SLOT_ATTACKS_BOT) == 0.0f
-                    && SlotObs(row, uint32(want), PackBlock::SLOT_THREAT_SHARE) >= 0.9f)
-                {
-                    DungeonReason = "fight: holding back (threat)";
-                    return 0;
-                }
-            }
-
-            if (want >= 0 || healer)
-                if (std::optional<int32> action = Engage(row, layout))
-                    return action;
-            return 0;
-        }
-
-        DungeonReason = "between pulls";
-        // Between pulls: raise the dead, heal whoever is actually hurt, then eat and drink. The healer kept its shield
-        // and heal over time up between pulls and never got its mana back, and the pull waited for it (2026-10-01).
-        if (std::optional<int32> revive = Revive(row))
-            return revive;
-        bool hurt = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) < DUNGEON_READY_HEALTH;
-        for (uint32 member = 0; member < GROUP_MEMBERS && !hurt; ++member)
-            hurt = MemberLive(row, member) && MemberObs(row, member, PartyBlock::MEMBER_HEALTH) < DUNGEON_READY_HEALTH;
-        if (healer && hurt)
-            if (std::optional<int32> heal = Support(row, layout))
-                return heal;
-        if (std::optional<int32> rest = Rest(row))
-        {
-            DungeonReason = *rest ? "eat or drink" : "eating or drinking";
-            return rest;
-        }
-
-        if (!tank)
-        {
-            // Out of the gathering (risen at the door, left behind): back along the route to it. The seek helper
-            // presses nothing while the seat is already on its way, so nothing is pressed again for nothing.
-            if (hasLeader && leaderYards > DUNGEON_GATHER_YARDS)
-            {
-                DungeonReason = Acore::StringFormat("walking the route to the tank ({:.0f} yd)", leaderYards);
-                if (std::optional<int32> go = advance())
-                    return go;
-                // At its place on the route and the tank still far: straight to the tank (stragglers stood here).
-                if (std::optional<int32> go = follow())
-                    return go;
-                DungeonReason += ", nothing to press";
-                return 0;
-            }
-            if (hasLeader && leaderYards > DUNGEON_FOLLOW_YARDS)
-            {
-                DungeonReason = Acore::StringFormat("following the tank ({:.0f} yd)", leaderYards);
-                if (std::optional<int32> go = follow())
-                    return go;
-                return 0;
-            }
-            if (std::optional<int32> halt = Halt(row))
-                return halt;
-            return 0;
-        }
-
-        // The tank: everybody up, rested and gathered before the next pull -- every member alive, healthy and near,
-        // and the healer's mana up (the healer's mana is what a pull spends; the others' waited the hour out).
-        // Waited out: a minute with nothing done (CrowdBlock::OBS_STILL) and the health and mana waits are over -- with
-        // no drinks left or a caster that never drank, the tank waited out the whole run (2026-10-03).
-        bool const waitedOut = row.Has(BlockId::Crowd)
-            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_STILL) * 120.0f >= DUNGEON_WAIT_SECONDS;
-        bool ready = waitedOut || row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) >= DUNGEON_READY_HEALTH;
-        float const bestHealing = row.Obs(BlockId::Party, PartyBlock::OBS_BEST_HEALING);
-        for (uint32 member = 0; member < GROUP_MEMBERS && ready; ++member)
-        {
-            // Every member, the dead included: the healer raises them between pulls, or they rise at the door
-            // (Instance.WingRiseMs) and walk back, and the pull waits until they have rejoined.
-            float const mana = MemberObs(row, member, PartyBlock::MEMBER_MANA);
-            float const memberHealing = MemberObs(row, member, uint32(PartyBlock::MEMBER_APTITUDE_FIRST)
-                + uint32(Aptitude::BRIEF_HEALING));
-            bool const heals = memberHealing >= std::max(bestHealing - 1e-3f, AptitudeDemand::KeepsThemUp().AtLeast);
-            ready = MemberLive(row, member)
-                && (waitedOut || MemberObs(row, member, PartyBlock::MEMBER_HEALTH) >= DUNGEON_READY_HEALTH)
-                && (waitedOut || !heals || mana <= 0.0f || mana >= DUNGEON_READY_MANA)
-                && MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f <= DUNGEON_GATHER_YARDS;
-        }
-        if (!ready)
-        {
-            DungeonReason = "the tank waits:";
-            if (row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH) < DUNGEON_READY_HEALTH)
-                DungeonReason += " its own health";
-            for (uint32 member = 0; member < GROUP_MEMBERS; ++member)
-            {
-                if (MemberObs(row, member, PartyBlock::MEMBER_PRESENT) == 0.0f)
-                    continue;
-                if (!MemberLive(row, member))
-                    DungeonReason += Acore::StringFormat(" member {} dead;", member);
-                else if (MemberObs(row, member, PartyBlock::MEMBER_HEALTH) < DUNGEON_READY_HEALTH)
-                    DungeonReason += Acore::StringFormat(" member {} health;", member);
-                else if (MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f > DUNGEON_GATHER_YARDS)
-                    DungeonReason += Acore::StringFormat(" member {} {:.0f} yd;", member,
-                        MemberObs(row, member, PartyBlock::MEMBER_DISTANCE) * 40.0f);
-                else if (MemberObs(row, member, PartyBlock::MEMBER_MANA) > 0.0f
-                    && MemberObs(row, member, PartyBlock::MEMBER_MANA) < DUNGEON_READY_MANA)
-                    DungeonReason += Acore::StringFormat(" member {} mana {:.0f}%;", member,
-                        MemberObs(row, member, PartyBlock::MEMBER_MANA) * 100.0f);
-            }
-            // A tank that rose at the door goes back to its party rather than waiting for it to come out.
-            if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_BEHIND) > 0.0f)
-                if (std::optional<int32> go = advance())
-                    return go;
-            if (std::optional<int32> halt = Halt(row))
-                return halt;
-            return 0;
-        }
-
-        // The pack ahead, close enough: target its nearest and go and get it.
-        float const ahead = row.Has(BlockId::Crowd) ? row.Obs(BlockId::Crowd, CrowdBlock::OBS_AHEAD_DISTANCE) * 60.0f
-            : 60.0f;
-        if (ahead <= DUNGEON_PULL_YARDS)
-        {
-            int32 nearest = -1;
-            for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
-                if (SlotLive(row, slot) && (nearest < 0 || SlotObs(row, slot, PackBlock::SLOT_DISTANCE)
-                    < SlotObs(row, uint32(nearest), PackBlock::SLOT_DISTANCE)))
-                    nearest = int32(slot);
-            if (nearest >= 0)
-            {
-                DungeonReason = "the tank pulls";
-                if (std::optional<int32> select = SelectSlot(row, uint32(nearest)))
-                    return select;
-                // From range when it can: one enemy brought back rather than the tank walking into the pack.
-                if (std::optional<int32> shot = FirstSpell(row, layout, IsRangedPull))
-                    return shot;
-                if (std::optional<int32> action = Engage(row, layout))
-                    return action;
-                return 0;
-            }
-        }
-
-        // What opens the way on -- a lever, the cannon, a door -- once nothing is left to pull near it: walk to it and
-        // use it.
-        if (row.Has(BlockId::Crowd) && row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_PRESENT) > 0.0f
-            && row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_DISTANCE) * 40.0f <= DUNGEON_PULL_YARDS)
-        {
-            if (std::optional<int32> use = row.Allowed(BlockId::Crowd, CrowdBlock::ACTION_USE_OBJECT))
-                return use;
-            if (std::optional<int32> go = Seek(row, row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_SIN),
-                    row.Obs(BlockId::Crowd, CrowdBlock::OBS_OBJECT_COS)))
-                return go;
-        }
-
-        // On along the route: turned toward the objective and held forward (the seek helper presses nothing while the
-        // seat is already going the right way).
-        DungeonReason = "the tank advances";
-        if (std::optional<int32> go = advance())
-            return go;
-        return 0;
-    }
 }
 
-std::string const& Animus::Curriculum::Baselines::LastDungeonReason()
+std::optional<int32> Animus::Curriculum::Baselines::SpellFor(WingTeacher::Spell spell, Layout const& layout,
+    float const* obs, uint8 const* mask)
 {
-    return DungeonReason;
+    using Spell = WingTeacher::Spell;
+    if (!layout.Has(BlockId::Core))
+        return std::nullopt;
+    Row const row(layout, obs, mask);
+    switch (spell)
+    {
+        case Spell::Damage:
+            return DamageSpell(row, layout);
+        case Spell::Taunt:
+            return FirstSpell(row, layout, IsTaunt);
+        case Spell::AreaThreat:
+            return FirstSpell(row, layout, IsAreaThreat);
+        case Spell::HighThreat:
+            return FirstSpell(row, layout, IsHighThreat);
+        case Spell::RangedPull:
+            return FirstSpell(row, layout, IsRangedPull);
+        case Spell::Interrupt:
+            return FirstSpell(row, layout, IsInterrupt);
+        case Spell::Heal:
+            // A plain heal first; a heal over time or a shield where that is all it has.
+            if (std::optional<int32> heal = FirstSpell(row, layout,
+                [](ActionCatalog::Action const& action) { return action.DirectHeal; }))
+                return heal;
+            return FirstSpell(row, layout, [](ActionCatalog::Action const& action) { return action.Healing; });
+        case Spell::Defensive:
+            return FirstSpell(row, layout, [](ActionCatalog::Action const& action) { return action.Defensive; });
+        case Spell::Buff:
+            if (std::optional<int32> shift = SpecFormSpell(row, layout))
+                return shift;
+            return BuffSpell(row, layout);
+        case Spell::None:
+            break;
+    }
+    return std::nullopt;
 }
 
 bool Animus::Curriculum::Baselines::Supports(std::string const& policy, Layout const& layout)
 {
     return policy == "greedy" || (policy == "fight" && layout.Has(BlockId::Duel))
-        || (policy == "dungeon" && layout.Has(BlockId::Duel))
+        || (policy == "dungeon" && layout.Has(BlockId::Duel) && layout.Has(BlockId::Sight))
         || (policy == "life" && layout.Has(BlockId::World) && layout.Has(BlockId::Duel));
 }
 
@@ -1349,8 +961,10 @@ int32 Animus::Curriculum::Baselines::Choose(std::string const& policy, Layout co
         return 0;
     }
 
-    if (policy == "dungeon" && layout.Has(BlockId::Duel))
-        return Dungeon(row, layout).value_or(0);
+    // The dungeon teacher plays from the world, not the row (WingTeacher; StageScenario::TeachSeat): its presses
+    // reach a seat through the seat's script action, and the row alone has nothing to say.
+    if (policy == "dungeon")
+        return 0;
 
     if (policy == "fight" && layout.Has(BlockId::Duel))
     {

@@ -42,7 +42,6 @@
 #include "World.h"
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
-#include "HintBlock.h"
 #include "Encounters.h"
 #include "MarkerEncounter.h"
 #include "SeekEncounter.h"
@@ -326,6 +325,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The ladder is not saved with the policy: a run resumed from a checkpoint names the rung it had reached.
     _wingRung.store(std::min<uint32>(_tuning.Instance.WingRungStart, uint32(WING_RUNGS.size()) - 1),
         std::memory_order_relaxed);
+    // Nor is the hint cutoff: a resumed run names the rung its log gave (Instance.WingHintOffRung).
+    if (_tuning.Instance.WingHintOffRung >= 0)
+        _hintOffRung.store(std::min<int32>(_tuning.Instance.WingHintOffRung, int32(WING_RUNGS.size()) - 1),
+            std::memory_order_relaxed);
 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
@@ -2017,7 +2020,7 @@ Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::Dr
     return castings.back();
 }
 
-void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress)
+void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, float progress, bool scripted)
 {
     // The ladder moves only on what the policy does alone (2026-10-01: "taper off only based on the progress made by
     // the learner"): the probes, against a fixed target (Instance.WingRungTarget) -- the rung's other runs, as the
@@ -2025,24 +2028,36 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
     CurriculumTuning::InstanceTuning const& tuning = _tuning.Instance;
     std::lock_guard<std::mutex> guard(_wingLadderLock);
     uint32 const now = _wingRung.load(std::memory_order_relaxed);
-    if (rung != now)
-        return;
     progress = std::clamp(progress, 0.0f, 1.0f);
+    std::size_t const window = std::max<uint32>(1, tuning.WingRungRuns);
     // A worker reports its runs to the host, whose ladder is the cluster's.
     if (_wingFollower)
     {
+        if (rung != now)
+            return;
         if (_wingTallyRung != rung)
         {
             _wingTallyProbes.clear();
             _wingTallyOthers.clear();
+            _wingTallyScripted.clear();
             _wingTallyRung = rung;
         }
-        std::string& tally = probe ? _wingTallyProbes : _wingTallyOthers;
+        std::string& tally = probe ? _wingTallyProbes : scripted ? _wingTallyScripted : _wingTallyOthers;
         tally += Acore::StringFormat("{}{:.3f}", tally.empty() ? "" : ",", progress);
         return;
     }
 
-    std::size_t const window = std::max<uint32>(1, tuning.WingRungRuns);
+    // The script's clear share: the latest runs the teacher played a seat in, whatever their rung -- what the
+    // probes have to beat for hint imitation to end.
+    if (scripted && !probe)
+    {
+        _wingScripted.push_back(progress);
+        if (_wingScripted.size() > window)
+            _wingScripted.erase(_wingScripted.begin());
+    }
+    if (rung != now)
+        return;
+
     std::vector<float>& runs = probe ? _wingProbes : _wingOthers;
     runs.push_back(progress);
     if (runs.size() > window)
@@ -2059,6 +2074,19 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
     };
     float const probes = mean(_wingProbes);
     float const others = mean(_wingOthers);
+
+    // **The enforced cutoff** (dungeon-curriculum I6): the policy alone has beaten the script, so imitating the
+    // script can only hold it back (the old failure: bots copying a script that stood still). Off from this rung on,
+    // for good; never on a script's share measured on fewer than a quarter of a window of runs.
+    if (_hintOffRung.load(std::memory_order_relaxed) < 0 && ProbesBeatTheScript(_wingProbes, _wingScripted, window))
+    {
+        _hintOffRung.store(int32(now), std::memory_order_relaxed);
+        LOG_INFO("module.animus", "{}: hint imitation is off from rung {}: the last {} probes made {:.2f} of the "
+            "dungeon, beating the script's {:.2f} over its last {} runs (keep it on a resume with "
+            "Instance.WingHintOffRung = {})", Name(), now, window, probes, mean(_wingScripted), _wingScripted.size(),
+            now);
+    }
+
     uint32 next = now;
     if (now + 1 < WING_RUNGS.size() && probes >= tuning.WingRungTarget)
         next = now + 1;
@@ -2077,27 +2105,66 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
     _wingOthers.clear();
 }
 
+bool Animus::Curriculum::StageScenario::ProbesBeatTheScript(std::vector<float> const& probes,
+    std::vector<float> const& scripted, std::size_t window)
+{
+    // A full window of probes, and a script's share measured on at least a quarter of one.
+    if (probes.size() < std::max<std::size_t>(1, window) || scripted.size() < std::max<std::size_t>(1, window / 4))
+        return false;
+    auto const mean = [](std::vector<float> const& values)
+    {
+        float sum = 0.0f;
+        for (float value : values)
+            sum += value;
+        return sum / float(values.size());
+    };
+    return mean(probes) > mean(scripted);
+}
+
+float Animus::Curriculum::StageScenario::WingHintAt(uint32 rung) const
+{
+    rung = std::min<uint32>(rung, uint32(WING_RUNGS.size()) - 1);
+    return WingHintOff(rung) ? 0.0f : WING_RUNGS[rung].Hint;
+}
+
+bool Animus::Curriculum::StageScenario::TeacherPlays(Env const& env) const
+{
+    return !env.Evaluating && Arena(env).Instance == InstanceLadder::Wing
+        && (Arena(env).Teacher || _teacherRun.load(std::memory_order_relaxed));
+}
+
+void Animus::Curriculum::StageScenario::SetLocalPolicy(std::string const& policy)
+{
+    bool const teacher = policy == "dungeon";
+    if (teacher != _teacherRun.exchange(teacher, std::memory_order_relaxed) && teacher)
+        LOG_INFO("module.animus", "{}: the dungeon teacher plays every seat of every whole dungeon's run", Name());
+}
+
 std::string Animus::Curriculum::StageScenario::TakeClusterTally()
 {
     std::lock_guard<std::mutex> guard(_wingLadderLock);
-    if (!_wingFollower || (_wingTallyProbes.empty() && _wingTallyOthers.empty()))
+    if (!_wingFollower || (_wingTallyProbes.empty() && _wingTallyOthers.empty() && _wingTallyScripted.empty()))
         return {};
-    std::string tally = Acore::StringFormat("{}/{}/{}", _wingTallyRung,
-        _wingTallyProbes.empty() ? "-" : _wingTallyProbes, _wingTallyOthers.empty() ? "-" : _wingTallyOthers);
+    std::string tally = Acore::StringFormat("{}/{}/{}/{}", _wingTallyRung,
+        _wingTallyProbes.empty() ? "-" : _wingTallyProbes, _wingTallyOthers.empty() ? "-" : _wingTallyOthers,
+        _wingTallyScripted.empty() ? "-" : _wingTallyScripted);
     _wingTallyProbes.clear();
     _wingTallyOthers.clear();
+    _wingTallyScripted.clear();
     return tally;
 }
 
 void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally)
 {
-    // "rung/probes/others": each a comma-separated list of runs' progress, or "-".
+    // "rung/probes/others[/scripted]": each a comma-separated list of runs' progress, or "-". A worker built before
+    // the scripted list sends three.
     std::size_t const first = tally.find('/');
     std::size_t const second = first == std::string::npos ? std::string::npos : tally.find('/', first + 1);
     if (second == std::string::npos)
         return;
+    std::size_t const third = tally.find('/', second + 1);
     uint32 const rung = uint32(std::strtoul(tally.substr(0, first).c_str(), nullptr, 10));
-    auto const each = [&](std::string const& list, bool probe)
+    auto const each = [&](std::string const& list, bool probe, bool scripted)
     {
         if (list == "-")
             return;
@@ -2105,12 +2172,18 @@ void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally
         while (at < list.size())
         {
             std::size_t const end = std::min(list.find(',', at), list.size());
-            NoteWingRun(rung, probe, std::strtof(list.substr(at, end - at).c_str(), nullptr));
+            NoteWingRun(rung, probe, std::strtof(list.substr(at, end - at).c_str(), nullptr), scripted);
             at = end + 1;
         }
     };
-    each(tally.substr(second + 1), false);
-    each(tally.substr(first + 1, second - first - 1), true);
+    if (third != std::string::npos)
+    {
+        each(tally.substr(second + 1, third - second - 1), false, false);
+        each(tally.substr(third + 1), false, true);
+    }
+    else
+        each(tally.substr(second + 1), false, false);
+    each(tally.substr(first + 1, second - first - 1), true, false);
 }
 
 void Animus::Curriculum::StageScenario::FollowClusterRung(uint32 rung)
@@ -2121,6 +2194,18 @@ void Animus::Curriculum::StageScenario::FollowClusterRung(uint32 rung)
     if (next != _wingRung.load(std::memory_order_relaxed))
         LOG_INFO("module.animus", "{}: the host puts the dungeon ladder on rung {}", Name(), next);
     _wingRung.store(next, std::memory_order_relaxed);
+}
+
+void Animus::Curriculum::StageScenario::FollowClusterHintOff(int32 rung)
+{
+    // The host's cutoff, once it has one: a worker never switches imitation back on, nor decides for itself.
+    if (rung < 0)
+        return;
+    int32 const now = _hintOffRung.load(std::memory_order_relaxed);
+    if (now >= 0 && now <= rung)
+        return;
+    _hintOffRung.store(std::min<int32>(rung, int32(WING_RUNGS.size()) - 1), std::memory_order_relaxed);
+    LOG_INFO("module.animus", "{}: the host switches hint imitation off from rung {}", Name(), rung);
 }
 
 float Animus::Curriculum::StageScenario::Weight(Layout const& layout, uint8 spec) const
@@ -2273,6 +2358,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     data.DungeonDifficulty = 0;
     data.RaidDifficulty = 0;
     data.HasEpisodeSpawn = false;
+    // A whole dungeon's support is its run's own (InstanceEncounter::BeforeLevel): none in any other arena.
+    data.WingScript = 0.0f;
+    data.WingHint = 0.0f;
+    data.WingHintOff = false;
 
     // A spawn point per episode, not per env. Keyed on env.Index, an env stood on the same patch of ground for
     // its whole life: 128 envs saw 8 places between them, every episode, and a policy can fit that rather than
@@ -4285,14 +4374,17 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             if (mask[action] && Paced(env, seat, action))
                 mask[action] = 0;
 
-    // The scripted dungeon run (Baselines "dungeon": the tank pulls one pack at a time, the rest stay with it and hit
-    // its target, the healer keeps them up), while a whole dungeon's support lasts. A scripted seat (drawn once a run
-    // with the rung's script share) plays it -- its action this decision is the script's, whatever the policy sends -- so
-    // parties reach the whole dungeon before they can clear it themselves; every seat is also shown it as a hint to
-    // imitate (HintBlock) at the rung's hint weight. Both step down the ladder as the probes succeed, and neither is
-    // there in a probe or in evaluation. The waiting the script does (the no-op) is part of what it shows.
+    // The dungeon teacher (WingTeacher; dungeon-curriculum I6), while a whole dungeon's support lasts: the tank leads
+    // and pulls one pack at a time, the others stay with it and hit its target, the healer keeps them up -- on the
+    // player controller's keys and the sight block's presses, as a seat plays. A scripted seat (drawn once a run with
+    // the rung's script share) plays it: its press this decision is the teacher's, whatever the policy sends, so
+    // parties reach the whole dungeon before they can clear it themselves. Every seat is also shown it as a hint to
+    // imitate (HintBlock) at the rung's hint weight -- only a press, never "nothing": a teacher waiting hints the key it
+    // lets go of, or nothing at all. Both step down the ladder as the probes succeed; neither is there in a probe or
+    // in evaluation; and once the probes beat the script, imitation is off (StageScenario::WingHintOffRung).
     seat.ScriptAction = -1;
-    if (mask && bot && bot->IsAlive() && seat.L->Has(BlockId::Hint) && Arena(env).Instance == InstanceLadder::Wing)
+    seat.HintAction = -1;
+    if (mask && bot && Arena(env).Instance == InstanceLadder::Wing && !env.Evaluating)
     {
         EnvState const& wing = Data(env);
         if (!seat.ScriptDrawn)
@@ -4300,21 +4392,24 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
             seat.ScriptDrawn = true;
             seat.Scripted = frand(0.0f, 1.0f) < wing.WingScript;
         }
-        float const weight = std::max(wing.WingHint, seat.Scripted ? 1.0f : 0.0f);
-        if (weight > 0.0f || seat.Scripted)
-            if (int32 const hint = Baselines::Choose("dungeon", *seat.L, obs, mask);
-                hint >= 0 && hint < int32(seat.L->NumActions) && mask[hint])
-            {
-                float* columns = obs + seat.L->Slice(BlockId::Hint).ObsFirst;
-                columns[HintBlock::OBS_ACTION] = float(hint + 1);
-                columns[HintBlock::OBS_WEIGHT] = std::max(weight, seat.Scripted ? 0.05f : 0.0f);
-                columns[HintBlock::OBS_SCRIPTED] = seat.Scripted ? 1.0f : 0.0f;
-                if (seat.Scripted)
-                    seat.ScriptAction = hint;
-                seat.HintAction = hint;
-                seat.ScriptReason = Baselines::LastDungeonReason();
-            }
+        float const weight = wing.WingHintOff ? 0.0f : std::max(wing.WingHint, seat.Scripted ? 1.0f : 0.0f);
+        int32 press = -1;
+        if (bot->IsAlive() && (weight > 0.0f || seat.Scripted) && seat.L->Has(BlockId::Sight))
+        {
+            WingTeacher::Choice const choice = WingTeacher::Decide(TeacherFacts(env, seatIndex, view, bot, obs, mask));
+            press = Baselines::TeacherPress(choice, *seat.L, obs, mask);
+            seat.ScriptReason = choice.Reason;
+        }
+        if (seat.Scripted)
+            seat.ScriptAction = std::max(press, 0);
+        seat.HintAction = press;
+        if (seat.L->Has(BlockId::Hint))
+            Baselines::WriteHint(obs + seat.L->Slice(BlockId::Hint).ObsFirst, press, weight, seat.Scripted);
     }
+
+    // The "human" stand-in's hands read its seat's situation as the teacher does (DecideStandIn, next).
+    if (bot && Data(env).StandInPlay.Seat == int32(seatIndex) && seat.L->Has(BlockId::Sight))
+        seat.StandInSeen = TeacherFacts(env, seatIndex, view, bot, obs, mask);
 }
 
 bool Animus::Curriculum::StageScenario::Paced(Env const& env, SeatState const& seat, uint32 action) const

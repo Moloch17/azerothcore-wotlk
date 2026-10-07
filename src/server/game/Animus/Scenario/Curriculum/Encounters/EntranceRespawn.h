@@ -111,6 +111,29 @@ namespace Animus::Curriculum
         }
     };
 
+    /// **A wipe in a whole dungeon** (InstanceEncounter, I4 wired into the wing runs): nobody standing counts as one
+    /// wipe, once, until somebody stands again -- risen at the entrance by its RespawnClock like any death, never stood
+    /// up at the door all together by a teleport. The run ends past its allowance of wipes.
+    struct WipeLatch
+    {
+        bool Counted = false;
+
+        /// One decision: whether anybody of the party is alive, whether the dungeon is cleared. True when a new
+        /// wipe is counted now.
+        bool Note(bool anyoneAlive, bool cleared)
+        {
+            if (anyoneAlive || cleared)
+            {
+                Counted = false;
+                return false;
+            }
+            if (Counted)
+                return false;
+            Counted = true;
+            return true;
+        }
+    };
+
     /// Stand `bot` up at `entrance` as RespawnClock's Rise asks: alive, full health and power, out of combat, no keys
     /// held, its player controller started again from where the server put it (the body would otherwise walk on from
     /// where it died). False when the move failed; it is alive either way.
