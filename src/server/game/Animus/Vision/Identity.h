@@ -93,6 +93,11 @@ namespace Animus::Vision
     /// An entity of a frame, as the entity list reads it (perception-goals 1b): what it is to the seat, its template
     /// (a creature's or game object's entry; 0 for a player), its level and health (a game object's 0 and 1), how its
     /// nameplate reads, and its middle (the list's distance and direction are to it).
+    ///
+    /// What entity memory (perception-goals 3) keeps of it besides: its GUID, raw -- the sim's own handle, never
+    /// observed (the observation gets a memory id) -- the way it faces, and the state a player reads off it: dead, a
+    /// door or button standing open (its GO state active), a game object used (activated, or its loot state past
+    /// ready).
     struct EntityInfo
     {
         Identity Id;
@@ -102,6 +107,11 @@ namespace Animus::Vision
         float Health = 1.0f;
         int8_t Reaction = 0;
         Vec3 Centre;
+        uint64_t Guid = 0;
+        float Orientation = 0.0f;
+        bool Dead = false;
+        bool Open = false;
+        bool Used = false;
     };
 
     /// **A seat's entity list for this decision** (perception-goals 1b): what its last frame saw, in slot order --

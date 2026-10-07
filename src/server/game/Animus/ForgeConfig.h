@@ -21,6 +21,7 @@
 
 #include "Camera.h"
 #include "Define.h"
+#include "EntityMemory.h"
 #include "MentalMap.h"
 #include "Position.h"
 #include "StageSettings.h"
@@ -126,6 +127,10 @@ namespace AnimusForge
         /// perception-goals REDESIGN §3, amendments 1 and 3). The process's, like the camera's
         /// (Animus::Vision::ConfigureMap).
         Animus::Vision::MapRunSettings Map;
+        /// AnimusForge.Memory.MaxEntities: the entities a seat's entity memory keeps (dungeon-curriculum I2; a stage
+        /// with a sight block). Training's is Vision::MEMORY_TRAINING_CAP; a realm's may differ. It lives across resets
+        /// as the map does (Map.KeepShare, Map.AgeOffsetSeconds).
+        Animus::Vision::MemorySettings Memory;
 
         /// Remote policy only: start the Python learner as a child process once the socket is up.
         bool LearnerAutoStart = true;

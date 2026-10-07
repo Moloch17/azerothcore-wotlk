@@ -5498,6 +5498,16 @@ AnimusForge.Map.KeepShare = 0.5
 
 AnimusForge.Map.AgeOffsetSeconds = 600
 
+#
+#    AnimusForge.Memory.MaxEntities
+#        Description: Entity memory (a stage with a sight block, dungeon-curriculum I2): the most
+#                     entities a seat remembers -- what each was, where and how it was last seen --
+#                     the least recently seen going first. Training's is 64; a realm may keep more.
+#                     Kept across resets with the map (AnimusForge.Map.KeepShare, AgeOffsetSeconds).
+#        Default:     64 - (1 to 1024)
+
+AnimusForge.Memory.MaxEntities = 64
+
 ###################################################################################################
 # LEARNER
 #
