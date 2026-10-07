@@ -134,6 +134,11 @@ TEST(SightBlockLayoutTest, TheListAndItsPointers)
     EXPECT_EQ(block.Size(layout).Obs, Sight::OBS_COUNT);
     EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS + 1) << "five pointer groups, then clear focus";
     EXPECT_EQ(block.ActionName(layout, Sight::ACTION_CLEAR_FOCUS), "clear_focus");
+    // The manifest's action names are every press's own (by-name seeding relies on them): clear_focus once.
+    uint32 clears = 0;
+    for (uint32 local = 0; local < Sight::ACTION_COUNT; ++local)
+        clears += block.ActionName(layout, local) == "clear_focus" ? 1 : 0;
+    EXPECT_EQ(clears, 1u);
     EXPECT_EQ(uint32(Sight::SIGHT_VISIBLE), uint32(Cu::EntitiesBlock::ENTITY_FEATURES));
 
     boost::json::object entry;

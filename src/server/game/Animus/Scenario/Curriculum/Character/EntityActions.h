@@ -167,6 +167,13 @@ namespace Animus::Curriculum::EntityActions
     /// handler -- which takes it for the first controlled unit only, as the client's pet bar is. False with no pet.
     bool PetAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port = SessionPort());
     [[nodiscard]] WorldPacket PetAction(ObjectGuid pet, uint32 data, ObjectGuid target);
+    /// A hunter's Call Pet (883): its current pet -- the beast it tamed, in its pet stable -- called back.
+    constexpr uint32 CALL_PET_SPELL = 883;
+    /// Call Pet as the client casts it: CMSG_CAST_SPELL with no target (a self-cast).
+    [[nodiscard]] WorldPacket CallPet(uint8 castCount);
+    /// Call Pet through the seat's session's handler (CastThroughClient): the server's own checks and its own summon
+    /// from the pet stable (in memory: the sealed pool's pet load, Pet::LoadPetFromDB). Its refusal read back.
+    CastOutcome CallPetThroughClient(Player* bot, ClientPort& port = SessionPort());
 
     /// **A press** on the entity `guid` (raw): judged as above, then sent. `focus` is the seat's client focus (Focus
     /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal; ActedOn

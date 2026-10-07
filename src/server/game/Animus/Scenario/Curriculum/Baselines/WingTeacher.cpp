@@ -146,13 +146,14 @@ namespace
             choice.Add({ Wt::Do::PetAttack, 0, -1, Wt::Spell::None });
     }
 
-    /// Out of a fight with no pet out: summon it, standing (a demon's summon is a cast), the hunter's call first.
+    /// Out of a fight with no pet out: revive or summon it, standing (a demon's summon is a cast), else the hunter's
+    /// call (Call Pet) -- every one of them a cast through the client.
     void Summon(Wt::Facts const& facts, Wt::Choice& choice)
     {
         if (!facts.PetClass || facts.PetOut || facts.Forward != 0)
             return;
-        choice.Add({ Wt::Do::CallPet, 0, -1, Wt::Spell::None });
         AddCast(choice, Wt::Spell::Summon);
+        choice.Add({ Wt::Do::CallPet, 0, -1, Wt::Spell::None });
     }
 
     /// Eating and drinking between pulls: sit until full, stop first, then eat and drink. True when it has a say.

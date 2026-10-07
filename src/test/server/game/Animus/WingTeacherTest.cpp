@@ -824,10 +824,10 @@ TEST(WingTeacherTest, PetsAreSummonedAndSentAtTheTarget)
     Wt::Choice choice = Wt::Decide(facts);
     EXPECT_TRUE(Has(choice, Wt::Do::CallPet)) << choice.Reason;
     EXPECT_TRUE(Casts(choice, Wt::Spell::Summon)) << choice.Reason;
-    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell), int32(space.Duel.First + space.CallPet));
-    std::vector<uint8> noCall = mask;
-    noCall[space.Duel.First + space.CallPet] = 0;
-    EXPECT_EQ(Wt::Press(choice, space, noCall.data(), AnySpell), AnySpell(Wt::Spell::Summon)) << "a warlock's demon";
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell), AnySpell(Wt::Spell::Summon))
+        << "revive or summon first (a warlock's demon, Revive Pet, Call Pet)";
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), [](Wt::Spell) { return -1; }),
+        int32(space.Duel.First + space.CallPet)) << "else the duel block's call, Call Pet through the client";
     facts.Forward = 1;
     EXPECT_FALSE(Has(Wt::Decide(facts), Wt::Do::CallPet)) << "a summon is cast standing";
     facts.Forward = 0;
@@ -871,4 +871,19 @@ TEST(WingTeacherTest, PetsAreSummonedAndSentAtTheTarget)
     EXPECT_EQ(UNIT_ACTION_BUTTON_ACTION(data), uint32(COMMAND_ATTACK));
     EXPECT_EQ(UNIT_ACTION_BUTTON_TYPE(data), uint32(ACT_COMMAND));
     EXPECT_EQ(readTarget, mob);
+
+    // The hunter's call, as the client casts it in a sight stage (the duel block's call-beast, the teacher's call):
+    // CMSG_CAST_SPELL of Call Pet with no target, through the handler (CallPetThroughClient).
+    WorldPacket call = Ea::CallPet(3);
+    EXPECT_EQ(call.GetOpcode(), CMSG_CAST_SPELL);
+    call.rpos(0);
+    uint8 count = 0;
+    uint32 spell = 0;
+    uint8 flags = 1;
+    uint32 targetMask = 1;
+    call >> count >> spell >> flags >> targetMask;
+    EXPECT_EQ(count, 3u);
+    EXPECT_EQ(spell, Ea::CALL_PET_SPELL);
+    EXPECT_EQ(spell, 883u);
+    EXPECT_EQ(targetMask, 0u) << "a self-cast names no target";
 }

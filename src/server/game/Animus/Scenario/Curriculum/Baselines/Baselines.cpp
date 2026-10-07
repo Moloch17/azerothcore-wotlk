@@ -925,7 +925,13 @@ std::optional<int32> Animus::Curriculum::Baselines::SpellFor(WingTeacher::Spell 
             return BuffSpell(row, layout);
         case Spell::Summon:
         {
-            // The best summon it knows, as `fight` picks it; a hunter's Call Pet.
+            // A dead pet revived (Revive Pet), else the best summon it knows, as `fight` picks it; a hunter's Call Pet.
+            if (std::optional<int32> revive = FirstSpell(row, layout, [](ActionCatalog::Action const& action)
+                {
+                    SpellInfo const* info = SpellOf(action);
+                    return info && info->HasEffect(SPELL_EFFECT_RESURRECT_PET);
+                }))
+                return revive;
             std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
             for (uint32 summon : PET_SUMMONS)
                 for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)

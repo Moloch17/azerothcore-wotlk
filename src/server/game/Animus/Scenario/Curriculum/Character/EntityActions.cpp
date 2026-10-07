@@ -308,6 +308,19 @@ WorldPacket Animus::Curriculum::EntityActions::PetAction(ObjectGuid pet, uint32 
     return packet;
 }
 
+WorldPacket Animus::Curriculum::EntityActions::CallPet(uint8 castCount)
+{
+    SpellCastTargets none;
+    return CastSpell(CALL_PET_SPELL, castCount, none);
+}
+
+Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions::CallPetThroughClient(Player* bot,
+    ClientPort& port)
+{
+    SpellCastTargets none;
+    return CastThroughClient(bot, sSpellMgr->GetSpellInfo(CALL_PET_SPELL), none, port);
+}
+
 bool Animus::Curriculum::EntityActions::PetAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)
 {
     Unit* pet = bot ? bot->GetFirstControlled() : nullptr;
