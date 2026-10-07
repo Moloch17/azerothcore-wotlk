@@ -48,8 +48,13 @@ def test_the_stage_config_reads_its_measures_and_gates_on_the_rungs_arrival():
     assert headline[0] == "arrived"
     assert {"arrived_no_compass", "arrived_with_compass", "compass_withheld"} <= set(headline)
     # M1's measures and targets kept: the stop's precision, the overshoot, the time ratio, the course kinks.
-    for kept in ("arrive_seconds", "time_ratio", "stop_distance", "overshoot", "course_kinks"):
+    for kept in ("arrive_seconds_sight", "time_ratio_sight", "stop_distance", "overshoot", "course_kinks"):
         assert kept in headline and kept in config.status.targets
+    # The time ratio split by placement: round a corner it is read apart, never against the in-sight target.
+    assert "time_ratio_corner" in headline and "time_ratio_corner" not in config.status.targets
+    for kind in ("sight", "corner"):
+        assert PER_EVENT[f"time_ratio_{kind}"] == PER_EVENT[f"arrive_seconds_{kind}"] == f"markers_{kind}"
+        assert f"time_ratio_{kind}" in config.eval.report and f"markers_{kind}" in config.eval.report
     assert set(config.status.targets) <= set(headline)
     assert config.status.targets["stop_distance"] == "<= 0.5"
     # Every column the headline and the evaluation name is one the sim reports (or the evaluation derives).

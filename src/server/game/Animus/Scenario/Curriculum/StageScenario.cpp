@@ -1721,6 +1721,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             for (std::string const& name : SightEncounter::ObjectNames(arena))
                 objects.emplace_back(name);
             categories["sight_object"] = std::move(objects);
+            // ... and by where it stood (episode info objective_corner): every measure in sight and round a corner.
+            categories["objective_corner"] = boost::json::array{ "in_sight", "corner" };
         }
 
     // Every term's category (RewardTermCategory), so the learner's reward audit reads what the sim pays rather than
@@ -3563,6 +3565,11 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
 
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->View(env, seatIndex, view);
+    // Where a trip's objective is, the seat knows only through a compass it is shown (or the travel block's own
+    // bearing): without one -- a stage with no compass block, or an episode that withholds it -- the goal block has
+    // no place for it, so its TravelTo cannot read "within 20 yd" through walls (GoalBlock::PlaceOf).
+    view.ObjectivePlaceKnown = GoalBlock::ObjectivePlaceKnown(_stage.Has(BlockId::Compass), view.CompassWithheld,
+        _stage.Has(BlockId::Travel));
 
     // What a player could not know. The critic's state keeps everything.
     if (bot && bot->IsAlive())

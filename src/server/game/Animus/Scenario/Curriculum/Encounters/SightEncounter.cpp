@@ -111,6 +111,26 @@ void Animus::Curriculum::SightEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     // ran after first reaching it.
     table.Add("arrive_seconds", [this](Env const& env, uint32) { return _envs[env.Index].ArriveSeconds; });
     table.Add("time_ratio", [this](Env const& env, uint32) { return _envs[env.Index].TimeRatio; });
+    // The same, split by where the object stood: in sight of the spawn, or round a corner -- whose optimum is still
+    // the straight line through the wall, so its ratio reads high by the corner, not by slowness. Each per arrival of
+    // its kind (PER_EVENT on markers_sight and markers_corner).
+    auto const kind = [this](bool corner, auto value)
+    {
+        return [this, corner, value](Env const& env, uint32)
+        {
+            EnvSight const& sight = _envs[env.Index];
+            return sight.Reached && sight.Corner == corner ? value(sight) : 0.0f;
+        };
+    };
+    auto const one = [](EnvSight const&) { return 1.0f; };
+    auto const seconds = [](EnvSight const& sight) { return sight.ArriveSeconds; };
+    auto const ratio = [](EnvSight const& sight) { return sight.TimeRatio; };
+    table.Add("markers_sight", kind(false, one));
+    table.Add("markers_corner", kind(true, one));
+    table.Add("arrive_seconds_sight", kind(false, seconds));
+    table.Add("arrive_seconds_corner", kind(true, seconds));
+    table.Add("time_ratio_sight", kind(false, ratio));
+    table.Add("time_ratio_corner", kind(true, ratio));
     table.Add("overshoot", [this](Env const& env, uint32)
     {
         EnvSight const& sight = _envs[env.Index];

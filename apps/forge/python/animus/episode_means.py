@@ -28,6 +28,11 @@ PER_EVENT = {
     # showed it.
     "arrived_no_compass": "compass_withheld",
     "arrived_with_compass": "compass_present",
+    # ... and its time and time ratio by where the object stood: in sight of the spawn, or round a corner.
+    "arrive_seconds_sight": "markers_sight",
+    "time_ratio_sight": "markers_sight",
+    "arrive_seconds_corner": "markers_corner",
+    "time_ratio_corner": "markers_corner",
 }
 
 

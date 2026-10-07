@@ -140,8 +140,10 @@ bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Posi
     WorldView const& world = view.World;
     if (!world.Active && !world.RoutePlaces)
     {
-        // A trip's objective, where there is no journal (Available).
-        if (t == GOAL_TARGET_ASSIGNMENT && view.HasObjective)
+        // A trip's objective, where there is no journal (Available) -- and only where the seat is told where it is
+        // (SeatView::ObjectivePlaceKnown): with the compass withheld, or no compass at all, TravelTo's reached bit
+        // would otherwise say "within PLACE_REACH" through walls. Arrival is the encounter's to decide and pay.
+        if (t == GOAL_TARGET_ASSIGNMENT && view.HasObjective && view.ObjectivePlaceKnown)
             return where = view.Objective, true;
         return false;
     }

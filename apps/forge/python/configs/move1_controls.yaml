@@ -115,7 +115,9 @@ eval:
   sampled_every: 3
   trace_episodes: 64
   report: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, compass_withhold_chance, compass_rung,
-           arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, distance_travelled, objective_distance,
+           arrive_seconds, time_ratio, arrive_seconds_sight, time_ratio_sight, arrive_seconds_corner,
+           time_ratio_corner, markers_sight, markers_corner, stop_distance, overshoot, stops_near, distance_travelled,
+           objective_distance,
            objective_corner, objective_visible, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds,
            movement_casts, died, timed_out, reward_arrive, reward_step_cost, reward_progress, reward_facing,
            reward_wall, reward_stuck, reward_jitter, reward_effort, reward_repeat]
@@ -124,15 +126,17 @@ eval:
 # compass and without, how fast, how precisely, and how cleanly it got there. compass_withheld is the share of the
 # episodes that withheld it (training: the rung's chance). Watch arrived_no_compass against it (amendment 5): near 0 at
 # the 0.6 rung means the camera is not being learned. stop_distance is the air between the body and the object's widest
-# side. Targets are a readout, never a gate.
+# side. The time and its ratio are read in sight of the spawn (_sight): round a corner (_corner) the optimum is still
+# the straight line through the wall, so its ratio reads high by the corner, not by slowness; the evaluation's tables
+# also split every measure by placement (category objective_corner). Targets are a readout, never a gate.
 status:
-  headline: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds, time_ratio,
-             stop_distance, overshoot, stops_near, course_kinks, control_changes_per_minute, wall_seconds, timed_out,
-             died]
+  headline: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds_sight,
+             time_ratio_sight, time_ratio_corner, stop_distance, overshoot, stops_near, course_kinks,
+             control_changes_per_minute, wall_seconds, timed_out, died]
   targets:
     arrived: ">= 0.95"
-    arrive_seconds: "<= 18"
-    time_ratio: "<= 1.1"
+    arrive_seconds_sight: "<= 18"
+    time_ratio_sight: "<= 1.1"
     stop_distance: "<= 0.5"
     overshoot: "<= 0.5"
     stops_near: "<= 1.2"

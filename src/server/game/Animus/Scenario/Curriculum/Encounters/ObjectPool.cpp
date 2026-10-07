@@ -42,7 +42,14 @@ void Animus::Curriculum::ObjectPool::Remove(Map* map, ObjectGuid& object)
 {
     if (map && !object.IsEmpty())
         if (GameObject* spawned = map->GetGameObject(object))
+        {
+            // Gone at once, not at the map's next update (Delete only queues it): out of every phase, so no camera
+            // sees it, and its model out of the dynamic tree's casts, so the next placement's line of sight and the
+            // seat standing where it stood meet nothing of it.
+            spawned->SetPhaseMask(0, false);
+            spawned->EnableCollision(false);
             spawned->Delete();
+        }
     object.Clear();
 }
 

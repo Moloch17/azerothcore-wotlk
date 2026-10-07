@@ -29,7 +29,7 @@ def test_m1_reads_its_runs_by_arrival_time_and_precision():
     config = TrainConfig.load(CONFIGS / "move1_controls.yaml")
     # Arrival first, then by compass (the redesign's withholding ladder), then the time and the stop's precision.
     assert config.status.headline[:3] == ("arrived", "arrived_no_compass", "arrived_with_compass")
-    assert {"arrive_seconds", "time_ratio", "stop_distance"} <= set(config.status.headline)
+    assert {"arrive_seconds_sight", "time_ratio_sight", "stop_distance"} <= set(config.status.headline)
     assert config.status.targets["arrived"] == ">= 0.95"
     assert config.convergence.measure == "arrived"
 

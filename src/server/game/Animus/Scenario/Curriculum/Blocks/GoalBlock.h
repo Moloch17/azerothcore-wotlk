@@ -80,6 +80,14 @@ namespace Animus::Curriculum
         /// area); false for a target that is not a place, or not there.
         static bool PlaceOf(SeatView const& view, uint32 target, Position& where);
 
+        /// Whether a seat is told where a trip's objective is (SeatView::ObjectivePlaceKnown): its stage carries the
+        /// compass and this episode shows it, or the stage carries the travel block (whose own columns bear on it).
+        [[nodiscard]] static constexpr bool ObjectivePlaceKnown(bool compassBlock, bool compassWithheld,
+            bool travelBlock)
+        {
+            return (compassBlock && !compassWithheld) || travelBlock;
+        }
+
         /// How near a journal place counts as reached (TravelTo).
         static constexpr float PLACE_REACH = 20.0f;
     };
