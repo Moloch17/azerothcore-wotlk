@@ -28,7 +28,11 @@ from . import protocol as p
 
 
 def load_spec(path: Path) -> p.Spec:
-    raw = json.loads(path.read_text())
+    return spec_from_dict(json.loads(path.read_text()))
+
+
+def spec_from_dict(raw: dict) -> p.Spec:
+    """A Spec from its asdict() form: a run's spec.json, or the `spec` a checkpoint carries."""
     layouts = tuple(p.Layout(item["name"], item["obs_dim"], item["num_actions"]) for item in raw.get("layouts", ()))
     fields = {name: raw[name] for name in ("version", "num_envs", "agents_per_env", "obs_dim", "state_dim",
                                            "num_actions", "episode_info_dim", "goal_count", "tick_ms",

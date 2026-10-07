@@ -31,6 +31,9 @@ mappo:
 eval:
   every_env_steps: 10000000
   episodes: 64
+  # M2's held-out "sweep" is an arena this stage does not have: left inherited, the learner refuses to start
+  # (train.heldout_arenas). Null drops it.
+  heldout: null
   report: [follow_kept_share, follow_distance_mean, regroup_share, regroup_seconds, regroups, regroup_stops,
            lost_seconds, blocking_seconds, deaths, rises, rejoins, rejoin_seconds, rejoined, dead_seconds,
            leader_route_share, leader_stops_reached, leader_skips, leader_sudden_stops, leader_drops, leader_rises,
@@ -82,6 +85,9 @@ fade:
 # ladder (the dungeon plan's rule; M1's stall).
 costs:
   enabled: false
+  # M2's gate (found, 0.8) is inherited and means nothing here: this stage reports no `found` column (null drops it).
+  gate_metric: null
+  gate_value: null
 
 layout_sampling:
   metric: follow_kept_share
