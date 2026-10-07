@@ -107,6 +107,14 @@ console prompt `AC> ` comes back (with a timeout), stripping colour codes and th
 with Ctrl-P Ctrl-Q. It never closes the console's input (end-of-file would shut the server down) and attaches with
 `--sig-proxy=false` so a signal to the client cannot reach the server.
 
+**One run per console.** Two forgectl runs typing into the same machine's console at once would interleave their
+characters. Each send holds an exclusive `flock` on `~/.forgectl/locks/<machine>.lock` (on the machine forgectl runs
+on, one lock per target machine, so different machines do not wait for each other) from before the attach until after
+the detach. A second run prints "another forgectl is typing into <machine>'s console; waiting up to 90 s", and if the
+first is still going it stops with that machine's `FAILED` line (the lock file holds the holder's pid) and sends
+nothing. The kernel releases the lock if the holder dies. The lock only covers forgectl runs on the same computer: a
+person typing in `docker attach` by hand, or forgectl on another computer, is not excluded.
+
 **Signals.** Python does not run `finally` blocks when the default SIGTERM handler ends the process, which would
 leave a `docker attach` client dangling on the worldserver's console. So during a send forgectl handles SIGTERM and
 SIGHUP itself: it raises, the `finally` sends Ctrl-P Ctrl-Q and waits for the client to leave, and only then does

@@ -11,6 +11,7 @@ log lines that interleave with the reply are dropped; and it works through ssh f
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import pty
 import re
@@ -18,14 +19,17 @@ import select
 import signal
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from . import remote
 from .config import Config, Machine
-from .ui import strip_ansi
+from .home import forgectl_home
+from .ui import Failure, note, strip_ansi
 
 PROMPT = "AC> "
 DETACH_KEYS = b"\x10\x11"  # Ctrl-P Ctrl-Q
+LOCK_TIMEOUT = 90.0   # seconds a send waits for another forgectl that is typing into the same console
 # A log line starts with a colour escape (the logger colours by level); a command's reply is plain text.
 PRIVATE_MODE = re.compile(r"\x1b\[\?[0-9;]*[hl]")  # bracketed paste on/off, which readline writes around a line
 LOG_LINE = re.compile(r"^(?:\x1b\[[0-9;]*m)+")
@@ -155,9 +159,48 @@ class SignalGuard:
         return False
 
 
-def send(config: Config, machine: Machine, line: str, timeout: float = 20, settle: float = 1.5) -> ConsoleResult:
-    """Type `line` into the machine's worldserver console and return the reply. `timeout` is for the reply."""
-    with SignalGuard() as guard:
+def lock_path(machine: Machine):
+    return forgectl_home() / "locks" / f"{machine.name}.lock"
+
+
+@contextmanager
+def machine_lock(machine: Machine, timeout: float = LOCK_TIMEOUT):
+    """One forgectl at a time types into a machine's console: two at once would interleave their characters. An
+    exclusive flock on ~/.forgectl/locks/<machine>.lock, held for the whole send and released by the kernel if the
+    process dies. Waits up to `timeout` seconds (saying so), then raises Failure."""
+    path = lock_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)   # not inherited by the attach client (close-on-exec)
+    try:
+        deadline = time.monotonic() + timeout
+        announced = False
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    holder = os.pread(descriptor, 200, 0).decode(errors="replace").strip() or "unknown"
+                    raise Failure(f"another forgectl (holder: {holder}) is typing into {machine.name}'s console and "
+                                  f"did not finish within {timeout:.0f} s; nothing was sent. Two runs at once would "
+                                  f"interleave their characters. Try again when it is done (lock file {path}).") from None
+                if not announced:
+                    note(f"another forgectl is typing into {machine.name}'s console; waiting up to {timeout:.0f} s "
+                         f"for it (lock file {path}) ...")
+                    announced = True
+                time.sleep(0.2)
+        os.ftruncate(descriptor, 0)
+        os.pwrite(descriptor, f"pid {os.getpid()}".encode(), 0)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def send(config: Config, machine: Machine, line: str, timeout: float = 20, settle: float = 1.5,
+         lock_timeout: float = LOCK_TIMEOUT) -> ConsoleResult:
+    """Type `line` into the machine's worldserver console and return the reply. `timeout` is for the reply;
+    `lock_timeout` for waiting on another forgectl that is using the same console."""
+    with SignalGuard() as guard, machine_lock(machine, lock_timeout):
         pid = fd = None
         raw = b""
         try:

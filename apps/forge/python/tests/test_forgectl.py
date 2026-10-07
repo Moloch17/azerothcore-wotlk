@@ -1328,3 +1328,103 @@ def test_a_terminated_command_still_leaves_its_audit_line(cli_cfg, monkeypatch, 
         cli.main(["stage", "pause", "--yes"])
     assert raised.value.code == 143
     assert "outcome=failed" in audit_lines(forgectl_home)[0] and "Terminated" in audit_lines(forgectl_home)[0]
+
+
+# ---- one forgectl per console at a time ------------------------------------------------------------------------------
+
+def hold_lock(machine):
+    """Take the machine's console lock the way another forgectl run does (another open file: flock conflicts)."""
+    import fcntl
+    path = console.lock_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    os.pwrite(descriptor, b"pid 4242", 0)
+    return descriptor
+
+
+def test_a_second_forgectl_waits_then_gives_up_with_a_clear_message_and_sends_nothing(cfg, monkeypatch, capsys,
+                                                                                      forgectl_home):
+    monkeypatch.setattr(console, "spawn", lambda argv: pytest.fail("attached while another run held the console"))
+    holder = hold_lock(cfg.host)
+    try:
+        started = time.monotonic()
+        with pytest.raises(ui.Failure, match=r"another forgectl \(holder: pid 4242\) is typing into sarah's console"
+                                              r".*nothing was sent.*interleave"):
+            console.send(cfg, cfg.host, "forge status", lock_timeout=0.6)
+        assert 0.5 < time.monotonic() - started < 5
+    finally:
+        os.close(holder)
+    assert "waiting up to 1 s" in capsys.readouterr().out
+    assert (forgectl_home / "locks" / "sarah.lock").exists()
+
+
+def test_a_waiting_forgectl_goes_ahead_when_the_first_one_finishes(cfg, fake_console):
+    import threading
+    marker = fake_console("echo")
+    holder = hold_lock(cfg.host)
+    threading.Timer(0.7, lambda: os.close(holder)).start()
+    result = console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.3, lock_timeout=10)
+    assert result.ok and result.lines[0] == "Forge: move2_seek | training"
+
+
+def test_other_machines_do_not_wait_for_each_others_lock(cfg, fake_console):
+    fake_console("echo")
+    holder = hold_lock(cfg.host)
+    try:
+        result = console.send(cfg, cfg.machine("thomas"), "forge status", timeout=10, settle=0.3, lock_timeout=0.5)
+    finally:
+        os.close(holder)
+    assert result.ok
+
+
+def test_two_sends_to_one_console_never_overlap(cfg, fake_console, monkeypatch):
+    import threading
+    fake_console("echo")
+    events, real_spawn, real_detach = [], console.spawn, console.detach
+
+    def spawn(argv):
+        events.append("attach")
+        return real_spawn(argv)
+
+    def detach(pid, fd):
+        real_detach(pid, fd)
+        events.append("detach")
+    monkeypatch.setattr(console, "spawn", spawn)
+    monkeypatch.setattr(console, "detach", detach)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(
+        console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.4, lock_timeout=30))) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert events == ["attach", "detach", "attach", "detach"] and all(r.ok for r in results)
+
+
+def test_a_killed_holder_releases_the_lock(cfg, fake_console, tmp_path):
+    import subprocess
+    fake_console("echo")
+    script = ("import fcntl, os, sys, time\n"
+              "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)\nfcntl.flock(fd, fcntl.LOCK_EX)\n"
+              "print('held', flush=True)\ntime.sleep(60)\n")
+    path = console.lock_path(cfg.host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    child = subprocess.Popen([sys.executable, "-c", script, str(path)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "held"
+        with pytest.raises(ui.Failure, match="another forgectl"):
+            console.send(cfg, cfg.host, "forge status", lock_timeout=0.3)
+        child.kill()
+        child.wait()
+        assert console.send(cfg, cfg.host, "forge status", timeout=10, settle=0.3, lock_timeout=5).ok
+    finally:
+        child.kill()
+
+
+def test_a_stage_command_reports_a_busy_console_as_that_machines_failure(cfg, monkeypatch, capsys):
+    def busy(config, machine, line, timeout=20, settle=1.5):
+        raise ui.Failure(f"another forgectl is typing into {machine.name}'s console")
+    monkeypatch.setattr(console, "send", busy)
+    assert stage.run(cfg, "cancel", [], yes=True) == 1
+    assert "FAILED another forgectl is typing into sarah's console" in capsys.readouterr().out
