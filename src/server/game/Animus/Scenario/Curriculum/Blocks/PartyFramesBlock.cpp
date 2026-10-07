@@ -21,7 +21,6 @@
 #include "EncoderSupport.h"
 #include "EntityActions.h"
 #include "Group.h"
-#include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerController.h"
 #include "StringFormat.h"
@@ -127,22 +126,21 @@ void Animus::Curriculum::PartyFramesBlock::FillFromGroup(SeatView& view)
     if (!group)
         return;
 
+    // The others in the group's order (in a raid, the seat's own subgroup: a 3.3.5 party frame shows only those),
+    // then the leader rotated to the front when it is one of them.
     std::array<Player*, GROUP_MEMBERS> members{};
     uint32 count = 0;
     ObjectGuid const leader = group->GetLeaderGUID();
-    // The leader first (when it is not the seat), then the rest in the group's order. In a raid, the seat's own
-    // subgroup: a 3.3.5 party frame shows only those.
-    if (Player* lead = leader != bot->GetGUID() ? ObjectAccessor::FindConnectedPlayer(leader) : nullptr;
-        lead && lead->IsInWorld() && lead->GetGroup() == group && group->SameSubGroup(bot, lead))
-        members[count++] = lead;
     for (GroupReference* ref = group->GetFirstMember(); ref && count < GROUP_MEMBERS; ref = ref->next())
     {
         Player* member = ref->GetSource();
-        if (!member || member == bot || member->GetGUID() == leader || !member->IsInWorld()
-            || !group->SameSubGroup(bot, member))
+        if (!member || member == bot || !member->IsInWorld() || !group->SameSubGroup(bot, member))
             continue;
         members[count++] = member;
     }
+    auto const lead = std::find_if(members.begin(), members.begin() + count,
+        [&leader](Player const* member) { return member->GetGUID() == leader; });
+    std::rotate(members.begin(), lead, lead + (lead != members.begin() + count ? 1 : 0));
 
     Movement::BodyState const* body = view.Body;
     float const selfX = body ? body->X : bot->GetPositionX();
