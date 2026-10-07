@@ -706,7 +706,6 @@ TEST(CombatStagesTest, TheStagesLayouts)
             EXPECT_EQ(arena.Against, Cu::Opposition::Combat) << arena.Name;
             EXPECT_EQ(arena.Combat, drill) << arena.Name;
             EXPECT_TRUE(arena.RespawnAtEntrance) << arena.Name << ": no stage ends at the first death";
-            EXPECT_FALSE(arena.DeathRuns) << arena.Name << ": no graveyard, ghost or corpse run";
             EXPECT_GE(arena.EpisodeSeconds, 150u) << arena.Name;
         }
     }
@@ -718,11 +717,9 @@ TEST(CombatStagesTest, TheStagesLayouts)
     layout.Blocks = c1->Blocks;
     EXPECT_EQ(Sight::Width(layout), uint32(Sight::SIGHT_FEATURES) + uint32(Combat::COMBAT_SLOT_FEATURES));
 
-    // A party member's state has one source (PartyFrames revision 2): no stage shows it beside the party or support
-    // block's slots, and a combat stage with a party has the party frames.
+    // A combat stage with a party has the party frames (PartyFrames revision 2, the members' one source).
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
     {
-        EXPECT_FALSE(stage.Has(Id::PartyFrames) && (stage.Has(Id::Party) || stage.Has(Id::Support))) << stage.Name;
         if (stage.Has(Id::Combat) && stage.SeatCount() > 1)
             EXPECT_TRUE(stage.Has(Id::PartyFrames)) << stage.Name;
     }

@@ -441,7 +441,6 @@ TEST(PartyFollowTest, TheStageIsDefined)
         EXPECT_EQ(arena.Against, Cu::Opposition::PartyFollow);
         EXPECT_EQ(arena.Seats, Cu::SeatPlan::Party);
         EXPECT_EQ(arena.PartySize, Cu::GROUP_MEMBERS);
-        EXPECT_FALSE(arena.DeathRuns);
     }
     for (std::string const& problem : Cu::CurriculumProblems())
         ADD_FAILURE() << problem;

@@ -430,8 +430,6 @@ namespace Animus::Curriculum
         /// The door-to-boss plan, once per boss: over the layered field where it covers the dungeon (FieldRoute),
         /// else the server's navmesh as before.
         [[nodiscard]] WingPlan WingRoute(Env const& env, Map* map, Player* seat, Creature* boss) const;
-        /// An advance's run cut short at the first closed door on it (RouteShortcut::CutAtDoors, A8).
-        static void CutAdvanceAtDoors(SeatView& view, EnvInstance const& fight);
         /// The plan over the layered field, from the door (`seat`) through `bosses` in order (the last one last);
         /// WingPlan::Field false when the field cannot walk that far.
         [[nodiscard]] WingPlan FieldWingRoute(Env const& env, Map* map, Player* seat, Creature* boss,

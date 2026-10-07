@@ -24,7 +24,6 @@
 #include "CombatRewardScenario.h"
 #include "Creature.h"
 #include "CreatureAI.h"
-#include "CrowdBlock.h"
 #include "DBCStores.h"
 #include "EntranceRespawn.h"
 #include "Env.h"
@@ -70,7 +69,26 @@ Animus::Curriculum::EnemyRank Animus::Curriculum::RankEnemy(Unit const* enemy, U
 
 namespace
 {
-    constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far (CrowdView::Object)
+    constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far
+
+    /// The item a lock is opened with (LOCK_KEY_ITEM), or 0: the Deadmines' cannon takes the Defias Gunpowder.
+    uint32 KeyOf(GameObject const* object)
+    {
+        LockEntry const* lock = sLockStore.LookupEntry(object->GetGOInfo()->GetLockId());
+        if (!lock)
+            return 0;
+        for (uint32 i = 0; i < MAX_LOCK_CASE; ++i)
+            if (lock->Type[i] == LOCK_KEY_ITEM && lock->Index[i])
+                return lock->Index[i];
+        return 0;
+    }
+
+    /// Whether `bot` can use `object` as it stands: a key it needs is carried.
+    bool CanUse(Player const* bot, GameObject const* object)
+    {
+        uint32 const key = KeyOf(object);
+        return !key || bot->HasItemCount(key, 1);
+    }
 
     /// Every gameobject within `range` of a point, flat: UpdateWingEnemies' one visit from the party's middle.
     class GameObjectsNearPoint
@@ -1023,7 +1041,7 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
         if (tank && !fight.Fighting)
             for (ObjectGuid const& guid : fight.Objects)
                 if (GameObject* object = ObjectAccessor::GetGameObject(*tank, guid); object && Usable(object)
-                    && CrowdBlock::CanUse(tank, object) && tank->GetExactDist(object) <= NEAR_OBJECT_YARDS
+                    && CanUse(tank, object) && tank->GetExactDist(object) <= NEAR_OBJECT_YARDS
                     && std::find(fight.Used.begin(), fight.Used.end(), guid) == fight.Used.end()
                     && (!nearest || tank->GetExactDist(object) < tank->GetExactDist(nearest)))
                     nearest = object;
@@ -1137,24 +1155,8 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
                 if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->IsInCombat())
                     fighters += Acore::StringFormat(" {}({} on {})", enemy->GetEntry(),
                         tankPlayer->GetExactDist(enemy), enemy->GetVictim() ? enemy->GetVictim()->GetName() : "nobody");
-            uint32 tankSeat = 0;
-            for (uint32 index = 0; index < data.ActiveSeats; ++index)
-                if (_scenario.SeatBot(env, index) == tankPlayer)
-                    tankSeat = index;
-            SeatView probe;
-            probe.Bot = tankPlayer;
-            View(env, tankSeat, probe);
-            SeatInstance const& own = fight.Seats[tankSeat];
-            seats += Acore::StringFormat(" | fighting {}{}, moving {}, objective {:.0f} yd at ({:.0f} {:.0f} {:.0f}), "
-                "point ({:.0f} {:.0f} {:.0f}), route yard {} of {} ({:.1f} yd off it), step {}, detour {} points",
-                fight.Fighting ? 1 : 0, fighters, tankPlayer->isMoving() ? 1 : 0,
-                tankPlayer->GetExactDist(&probe.Objective), probe.Objective.GetPositionX(),
-                probe.Objective.GetPositionY(), probe.Objective.GetPositionZ(), next.GetPositionX(), next.GetPositionY(),
-                next.GetPositionZ(), own.DenseAt, fight.Dense.size(),
-                own.DenseAt < fight.Dense.size() ? tankPlayer->GetExactDist(&fight.Dense[own.DenseAt]) : -1.0f,
-                probe.Crowd.HasStep ? Acore::StringFormat("({:.0f} {:.0f} {:.0f})", probe.Crowd.Step.GetPositionX(),
-                    probe.Crowd.Step.GetPositionY(), probe.Crowd.Step.GetPositionZ()) : std::string("none"),
-                own.Detour.size());
+            seats += Acore::StringFormat(" | fighting {}{}, moving {}", fight.Fighting ? 1 : 0, fighters,
+                tankPlayer->isMoving() ? 1 : 0);
         }
         LOG_INFO("module.animus", "Wing stuck: env {} {:.0f}s still at point {}/{} (tank {:.0f} yd from it), {} on the "
             "party, pack ahead {} | {}", env.Index, float(still) / 1000.0f, fight.RouteNext, fight.Route.size(), toNext,
@@ -2658,7 +2660,10 @@ void Animus::Curriculum::InstanceEncounter::NoteDrill(uint32 rung, bool clean)
 
 void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
-    // A wing's route: the next point is where the party is going, a TravelTo target (GoalBlock's assignment slot).
+    // A wing's seats perceive what a player does (the coordinator's ruling, 2026-10-07: every dungeon stage carries the
+    // sight block): the goal head's places and assignment are what the seat saw, its map's frontier, the dungeon
+    // map's layout and its leader (SeenWorld) -- never the route, the tank's place on it or the packs in order,
+    // which are the encounter's own bookkeeping.
     EnvInstance const& fight = _envs[env.Index];
     if (!Wing(env) || fight.Route.empty())
         return;
@@ -2667,242 +2672,7 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         view.FoodItem = fight.Seats[seat].FoodItem;
         view.DrinkItem = fight.Seats[seat].DrinkItem;
     }
-    CrowdView& crowd = view.Crowd;
-    crowd.Present = true;
-    crowd.OnParty = fight.OnParty;
-    crowd.OnTank = fight.OnTank;
-    crowd.Elites = fight.Elites;
-    if (view.Bot)
-    {
-        crowd.Tank = fight.Tank.IsEmpty() ? nullptr : ObjectAccessor::GetUnit(*view.Bot, fight.Tank);
-        for (ObjectGuid const& guid : fight.Overflow)
-            if (Unit* unit = ObjectAccessor::GetUnit(*view.Bot, guid); unit && crowd.Count < CROWD_SLOTS)
-                crowd.Units[crowd.Count++] = unit;
-    }
-    crowd.Used = &fight.Used;
-    if (view.Bot)
-        for (ObjectGuid const& guid : fight.Objects)
-            if (GameObject* object = ObjectAccessor::GetGameObject(*view.Bot, guid); object && Usable(object)
-                && CrowdBlock::CanUse(view.Bot, object)
-                && (!crowd.Object || view.Bot->GetExactDist(object) < view.Bot->GetExactDist(crowd.Object)))
-                crowd.Object = object;
-    crowd.HasAhead = fight.HasAhead;
-    crowd.Ahead = fight.Ahead;
-    crowd.AheadSize = fight.AheadSize;
-    crowd.HasSecond = fight.HasSecond;
-    crowd.Second = fight.Second;
-    crowd.Still = float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, fight.ProgressMs)) / 120000.0f;
-    view.HasObjective = true;
-    // The seat's own place on the route (SeatInstance::Walk): the tank walks it up to the route's next point, the
-    // others up to the tank's place, point by point from wherever they stood up -- after a wipe stood the party up at
-    // the door the next point was hundreds of yards on through the rock, and the seats walked into walls towards it.
-    // A seat that has caught up with the tank's place goes to the tank itself: the tank waits short of its next
-    // point for the party, and a seat sent to that point waited there for the tank (2026-10-01).
-    std::size_t const last = std::min<std::size_t>(fight.RouteNext, fight.Route.size() - 1);
-    std::size_t walk = last;
-    std::size_t tankWalk = last;
-    int32 tankIndex = -1;
-    for (uint32 index = 0; index < MAX_SEATS; ++index)
-        if (Player* bot = _scenario.SeatBot(env, index))
-        {
-            if (bot == view.Bot)
-                walk = std::min<std::size_t>(fight.Seats[index].Walk, last);
-            if (bot->GetGUID() == fight.Tank)
-            {
-                tankWalk = std::min<std::size_t>(fight.Seats[index].Walk, last);
-                tankIndex = int32(index);
-            }
-        }
-    view.Objective = fight.Route[walk];
-    // The objective's own yard of the field route, where it has one: a route point's, or the tank's.
-    int32 objectiveYard = fight.RouteDense.size() == fight.Route.size() ? int32(fight.RouteDense[walk]) : -1;
-    // A pull coming in: the tank's objective is a route point behind it, back where the party waits, so what it pulled
-    // is fought there and not beside the next pack (2026-10-01: eight enemies at once at the mine's entrance, the
-    // packs pulled where they stood). Only while something attacking the tank is still more than PULL_BACK_YARDS out.
-    constexpr float PULL_BACK_YARDS = 10.0f;
-    if (view.Bot && view.Crowd.Tank == view.Bot && fight.Fighting)
-    {
-        bool coming = false;
-        for (uint32 slot = 0; slot < env.Targets.size() && !coming; ++slot)
-            if (Unit const* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive() && enemy->GetVictim() == view.Bot
-                && enemy->IsInMap(view.Bot) && view.Bot->GetExactDist(enemy) > PULL_BACK_YARDS)
-                coming = true;
-        if (coming)
-        {
-            view.Objective = fight.Route[walk > 0 ? walk - 1 : 0];
-            if (objectiveYard >= 0)
-                objectiveYard = int32(fight.RouteDense[walk > 0 ? walk - 1 : 0]);
-        }
-    }
-    // Behind the party: the route's next point (the party's) is well ahead of the seat's own place -- the tank that
-    // rose at the door, walking back to a party that is still deep in.
-    view.Crowd.Behind = walk + 2 < last;
-    Unit const* tank = view.Crowd.Tank;
-    if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot) && walk >= tankWalk)
-    {
-        view.Objective.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
-        objectiveYard = tankIndex >= 0 ? int32(fight.Seats[std::size_t(tankIndex)].DenseAt) : -1;
-    }
-
-    // The dungeon's progress in the goal head's own words (peak-play W3), as TravelTo targets: places 0..5 the next
-    // packs not yet cleared, in route order (a navmesh route has no packs: route points two apart instead); place 6
-    // the route's next point, the step on; place 7, for a seat other than the tank, the tank itself (regroup); and the
-    // seat's own objective in the assignment slot it had before. The slow loop chooses among them and is credited by
-    // what the run achieves (WorldView::RoutePlaces).
-    WorldView& world = view.World;
-    {
-        constexpr uint32 PACK_PLACES = WorldView::JOURNAL_PLACES - 2;
-        world.RoutePlaces = true;
-        world.HasAssignment = true;
-        world.Assignment = view.Objective;
-        uint32 place = 0;
-        for (EnvInstance::RoutePack const& pack : fight.RoutePacks)
-        {
-            if (place >= PACK_PLACES)
-                break;
-            if (pack.Cleared)
-                continue;
-            world.Places[place].Present = true;
-            world.Places[place++].Where = pack.At;
-        }
-        if (fight.RoutePacks.empty())
-            for (std::size_t point = last + 2; point < fight.Route.size() && place < PACK_PLACES; point += 2)
-            {
-                world.Places[place].Present = true;
-                world.Places[place++].Where = fight.Route[point];
-            }
-        world.Places[PACK_PLACES].Present = true;
-        world.Places[PACK_PLACES].Where = fight.Route[last];
-        if (view.Bot && tank && tank != view.Bot && tank->IsAlive() && tank->IsInMap(view.Bot))
-        {
-            WorldView::JournalPlace& regroup = world.Places[WorldView::JOURNAL_PLACES - 1];
-            regroup.Present = true;
-            regroup.Where.Relocate(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
-        }
-    }
-
-    // Where the advance action steps: a few yards on along the field route towards the objective, from the yard
-    // of it the seat stands on. Off the route, nothing: the server's path to the objective is the way back to it.
-    if (view.Bot && seat < fight.Seats.size() && !fight.Dense.empty() && fight.RouteDense.size() == fight.Route.size())
-    {
-        constexpr int32 STEP_YARDS = 6;
-        constexpr float ON_ROUTE = 6.0f;
-        auto const nearestYard = [&fight](Position const& at, uint32 hint)
-        {
-            std::size_t const size = fight.Dense.size();
-            auto const search = [&](std::size_t first, std::size_t last)
-            {
-                std::pair<uint32, float> best{ uint32(first), std::numeric_limits<float>::max() };
-                for (std::size_t i = first; i < last; ++i)
-                    if (float const d = at.GetExactDist(&fight.Dense[i]); d < best.second)
-                        best = { uint32(i), d };
-                return best;
-            };
-            std::size_t const from = hint > 60 ? hint - 60 : 0;
-            std::pair<uint32, float> best = search(from, std::min(size, std::size_t(hint) + 120));
-            if (best.second > ON_ROUTE * 2.0f)
-                best = search(0, size);
-            return best;
-        };
-        // The seat's yard: on from the one it stood on last, where the route is still under it. The route passes
-        // some ground twice (out to a side pack and back), and the nearest yard of all flipped between the two
-        // passes: at Ragefire's route point 30 the tank stepped back and forth on the spot for the rest of the run
-        // (2026-10-03).
-        SeatInstance const& own = fight.Seats[seat];
-        Position const at(view.Bot->GetPositionX(), view.Bot->GetPositionY(), view.Bot->GetPositionZ());
-        std::pair<uint32, float> near{ own.DenseAt, std::numeric_limits<float>::max() };
-        {
-            std::size_t const first = own.DenseAt > 8 ? own.DenseAt - 8 : 0;
-            std::size_t const end = std::min(fight.Dense.size(), std::size_t(own.DenseAt) + 24);
-            for (std::size_t i = first; i < end; ++i)
-                if (float const d = at.GetExactDist(&fight.Dense[i]); d < near.second)
-                    near = { uint32(i), d };
-        }
-        if (near.second > ON_ROUTE)
-            near = nearestYard(at, own.DenseAt);
-        auto const [yard, off] = near;
-        own.DenseAt = yard;
-        uint32 const hint = fight.RouteDense[std::min<std::size_t>(walk, fight.RouteDense.size() - 1)];
-        uint32 const target = objectiveYard >= 0 && std::size_t(objectiveYard) < fight.Dense.size()
-            ? uint32(objectiveYard) : nearestYard(view.Objective, hint).first;
-        // Off the route past ON_ROUTE, and back on it only within REJOIN_ROUTE: at the edge the seat would otherwise
-        // swap between the route and the detour every decision (movement-smooth A8).
-        constexpr float REJOIN_ROUTE = 4.0f;
-        own.OffRoute = own.OffRoute ? off > REJOIN_ROUTE : off > ON_ROUTE;
-        if (!own.OffRoute)
-        {
-            own.Detour.clear();
-            if (target != yard)
-            {
-                // Corner to corner along the route (RouteShortcut), about RouteShortcut::ADVANCE_YARDS of it; a few
-                // yards on, as it always was, where the plan has no corners.
-                std::vector<uint32> const chain = fight.CornerAhead.size() == fight.Dense.size()
-                    ? RouteShortcut::Chain(fight.CornerAhead, fight.CornerBack, yard, target) : std::vector<uint32>();
-                if (chain.empty())
-                {
-                    int32 const delta = std::clamp(int32(target) - int32(yard), -STEP_YARDS, STEP_YARDS);
-                    view.Crowd.Path[0] = fight.Dense[std::size_t(int32(yard) + delta)];
-                    view.Crowd.PathPoints = 1;
-                }
-                else
-                    for (uint32 corner : chain)
-                        view.Crowd.Path[view.Crowd.PathPoints++] = fight.Dense[corner];
-                view.Crowd.HasStep = true;
-                view.Crowd.Step = view.Crowd.Path[0];
-            }
-        }
-        else if (!view.Bot->IsInCombat())
-        {
-            // Off the route and out of a fight: the seat's own way back over the field, lava and all, replanned
-            // every few seconds as it walks. The server's path cannot leave a cavern its navmesh does not join.
-            constexpr uint32 DETOUR_REPLAN_MS = 5000;
-            constexpr uint32 DETOUR_NODES = 200000;
-            Position const at(view.Bot->GetPositionX(), view.Bot->GetPositionY(), view.Bot->GetPositionZ());
-            if (own.Detour.empty() || env.EpisodeElapsedMs >= own.DetourMs + DETOUR_REPLAN_MS)
-            {
-                own.DetourMs = env.EpisodeElapsedMs;
-                if (!FieldRoute::Plan(fight.MapId, at, fight.Dense[target], own.Detour, DETOUR_NODES))
-                    own.Detour.clear();
-            }
-            if (!own.Detour.empty())
-            {
-                std::size_t nearest = 0;
-                float best = std::numeric_limits<float>::max();
-                for (std::size_t i = 0; i < own.Detour.size(); ++i)
-                    if (float const d = at.GetExactDist(&own.Detour[i]); d < best)
-                    {
-                        best = d;
-                        nearest = i;
-                    }
-                view.Crowd.HasStep = true;
-                // About RouteShortcut::ADVANCE_YARDS of it, a point every STEP_YARDS.
-                for (std::size_t ahead = STEP_YARDS; view.Crowd.PathPoints < 3; ahead += STEP_YARDS)
-                {
-                    std::size_t const point = std::min(own.Detour.size() - 1, nearest + ahead);
-                    view.Crowd.Path[view.Crowd.PathPoints++] = own.Detour[point];
-                    if (point == own.Detour.size() - 1)
-                        break;
-                }
-                view.Crowd.Step = view.Crowd.Path[0];
-            }
-        }
-        CutAdvanceAtDoors(view, fight);
-        if (!fight.ClosedDoors.empty())
-            view.ClosedDoors = &fight.ClosedDoors;
-    }
-
-    // **A sight stage perceives what a player does** (the coordinator's ruling, 2026-10-07): the route -- its next
-    // point, the tank's place on it, the next packs in order -- is the encounter's own bookkeeping, kept in
-    // SeatView::Crowd, never the seat's objective (no flag in its camera) nor its goal places.
-    // Those are what it saw, its map's frontier, the dungeon map's layout and its leader (SeenWorld).
-    if (_scenario.Stage().Has(BlockId::Sight))
-    {
-        view.Crowd.HasObjective = view.HasObjective;
-        view.Crowd.Objective = view.Objective;
-        view.HasObjective = false;
-        view.Objective = Position();
-        SeenWorld(env, seat, view);
-    }
+    SeenWorld(env, seat, view);
 }
 
 void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 seat, SeatView& view) const
@@ -2983,36 +2753,6 @@ void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 sea
     world.HasAssignment = choice.HasAssignment;
     if (choice.HasAssignment)
         world.Assignment.Relocate(choice.Assignment.X, choice.Assignment.Y, choice.Assignment.Z);
-}
-
-void Animus::Curriculum::InstanceEncounter::CutAdvanceAtDoors(SeatView& view, EnvInstance const& fight)
-{
-    // A spline goes through anything, and the advance launches without pathfinding (as the old 6-yard step did,
-    // MovePoint with generatePath off): a run that crossed a closed door walked through it, and never needed to open
-    // it. The run ends where the first closed door begins; at the door, there is no run, and the seat opens it with
-    // a press (or what opens it: a lever, the cannon). The carry-on reads the same path.
-    if (!view.Bot || !view.Crowd.HasStep || !view.Crowd.PathPoints || fight.ClosedDoors.empty())
-        return;
-    std::vector<RouteShortcut::Point> path;
-    for (uint32 i = 0; i < view.Crowd.PathPoints; ++i)
-        path.push_back({ view.Crowd.Path[i].GetPositionX(), view.Crowd.Path[i].GetPositionY() });
-    std::size_t const kept = RouteShortcut::CutAtDoors({ view.Bot->GetPositionX(), view.Bot->GetPositionY() }, path,
-        fight.ClosedDoors);
-    if (kept == view.Crowd.PathPoints && path.back().X == view.Crowd.Path[kept - 1].GetPositionX()
-        && path.back().Y == view.Crowd.Path[kept - 1].GetPositionY())
-        return;
-    view.Crowd.AtDoor = true;
-    view.Crowd.PathPoints = uint32(kept);
-    if (!kept)
-    {
-        view.Crowd.HasStep = false;
-        return;
-    }
-    Position& last = view.Crowd.Path[kept - 1];
-    float const ground = view.Bot->GetMap()->GetHeight(view.Bot->GetPhaseMask(), path[kept - 1].X, path[kept - 1].Y,
-        last.GetPositionZ() + 2.0f, true, 6.0f);
-    last.Relocate(path[kept - 1].X, path[kept - 1].Y, ground > INVALID_HEIGHT ? ground : last.GetPositionZ());
-    view.Crowd.Step = view.Crowd.Path[0];
 }
 
 void Animus::Curriculum::InstanceEncounter::RewardWing(Env& env, uint32 seatIndex, Player* bot,

@@ -173,15 +173,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Duel:      return "duel";
         case BlockId::Pack:      return "pack";
         case BlockId::Gauntlet:  return "gauntlet";
-        case BlockId::Companion: return "companion";
-        case BlockId::Party:     return "party";
-        case BlockId::Context:   return "context";
-        case BlockId::Hostiles:  return "hostiles";
         case BlockId::Pet:       return "pet";
-        case BlockId::Support:   return "support";
-        case BlockId::Forecast:  return "forecast";
-        case BlockId::Crowd:     return "crowd";
-        case BlockId::Death:     return "death";
         case BlockId::Vision:    return "vision";
         case BlockId::Entities:  return "entities";
         case BlockId::Map:       return "map";
@@ -203,11 +195,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
     layout.Profile = &profile;
     layout.Assets = &ClassAssets::For(profile);
     layout.Blocks = stage.Blocks;
-
-    // Resurrections and the soulstone are cast on a dead or living ally (companion and party blocks). Heals, shields
-    // and buffs are core actions cast on the support block's selected friend.
-    if (stage.Has(BlockId::Companion) || stage.Has(BlockId::Party))
-        layout.AllyRevives = layout.Catalog().Revives();
 
     layout.BuffGroups = BuffGroupsOf(layout.Catalog());
 

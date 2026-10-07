@@ -213,11 +213,6 @@ namespace Animus::Curriculum
         /// the learner holds it without its goal head being trained on it. Paid only by the goal's own terms beside
         /// the stage's: the fast loop learns to follow a goal before the slow loop learns to choose one.
         bool CommandedGoals = false;
-        /// **Death runs on** (next-run plan, Wave 6): a seat that dies is not stood up and does not end the episode.
-        /// It releases, runs its ghost back to the corpse and rises there, takes the spirit healer's resurrection, or
-        /// waits for a friend's (DeathBlock, which the stage must carry). Open-world arenas only: a release inside an
-        /// instance would take the ghost to another map.
-        bool DeathRuns = false;
         /// Where this arena's envs start, when its ground is not the stage's: used in place of the stage's when the
         /// episode is this arena's; empty means the stage's.
         std::vector<Position> SpawnPoints{};

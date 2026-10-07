@@ -58,40 +58,6 @@ namespace Animus::Curriculum
     struct Layout;
     class SeatMemory;
 
-    /// What is on the party past the pack's slots, as a whole dungeon reports it (CrowdBlock).
-    struct CrowdView
-    {
-        bool Present = false;
-        uint32 OnParty = 0;                         // creatures whose victim is one of the party
-        uint32 OnTank = 0;                          // ... the party's tank
-        uint32 Elites = 0;
-        Unit const* Tank = nullptr;                 // the seat the crowd is counted against
-        GameObject* Object = nullptr;               // the nearest thing the party can use: a lever, the cannon
-        std::vector<ObjectGuid>* Used = nullptr;    // where a use is recorded, so each thing is used once a run
-        bool Behind = false;                        // the seat's place on the route is behind the party's (risen)
-        std::array<Unit*, CROWD_SLOTS> Units{};     // the next enemies past the pack's slots, fight first
-        uint32 Count = 0;
-        bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it
-        Position Ahead;
-        uint32 AheadSize = 0;
-        bool HasSecond = false;                     // the nearest creature out of the fight past the pack ahead
-        Position Second;
-        float Still = 0.0f;                         // time without progress or a fight / 120 s
-        /// A few yards on along the dungeon's field route towards the seat's objective: where the advance action
-        /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
-        bool HasStep = false;
-        Position Step;
-        /// The run an advance walks (movement-smooth A8): the route's corners about 18 yards on (Step the first), or
-        /// the detour's points back to it.
-        std::array<Position, 6> Path{};
-        uint32 PathPoints = 0;
-        bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
-        /// The seat's place on the dungeon's route (the next route point, or the tank), the encounter's bookkeeping,
-        /// never an observation: in a sight stage SeatView::Objective is not set from it (SeenPlaces).
-        bool HasObjective = false;
-        Position Objective;
-    };
-
     /// A dungeon's way on, as the goal head names it (peak-play W3, InstanceEncounter::View and SeenWorld): the goal
     /// block's TravelTo places and its assignment. (The journal of the first curriculum's quests, with the corpses,
     /// nodes and vendors beside it, was deleted with it; the goal space keeps its targets, which are the layout's.)
@@ -332,24 +298,14 @@ namespace Animus::Curriculum
         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
         uint64 NowMs = 0;                           // the clock Memory was kept with
         uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
-        /// The closed doors near a dungeon wing's party (InstanceEncounter's EnvInstance::ClosedDoors); null
-        /// elsewhere. Steer's runs stop at one, as the advance's do: a spline walks through anything.
-        std::vector<RouteShortcut::Door> const* ClosedDoors = nullptr;
 
         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
         // a hunter's beasts on offer.
         float CombatTime = 0.0f;                    // time in combat / 60 s, clamped; 0 out of combat
         BattleSupplies Supplies;
         bool SelfResurrectAllowed = true;           // not in the PvP stages
-        /// Death runs on here (ArenaDefinition::DeathRuns; a companion in the world): a dead seat releases, runs
-        /// back and rises (DeathBlock) rather than being stood up. And how long it has been dead, in seconds.
-        bool DeathRuns = false;
-        float DeadSeconds = 0.0f;
         std::array<uint32, STABLE_SLOTS> Stable{};
         uint32 StableCount = 0;
-
-        // The crowd past the pack's slots (CrowdBlock), where the encounter reports one.
-        CrowdView Crowd;
 
         // Pack: the current pull's enemies, in slot order (null for a slot whose enemy is gone).
         std::array<Unit*, PACK_SLOTS> Enemies{};
@@ -583,12 +539,6 @@ namespace Animus::Curriculum
 
         uint32 PreparationMs = 0;                   // a helpful spell started out of combat: its cast time or a GCD
         bool SelfResurrected = false;
-        /// After dying, where death runs on (DeathBlock): the spirit released, a friend's resurrection accepted
-        /// (the runner takes it), risen at the corpse, or raised by the spirit healer.
-        bool Released = false;
-        bool AcceptResurrection = false;
-        bool RoseAtCorpse = false;
-        bool SpiritHealer = false;
         uint32 Revives = 0;                         // resurrection spells started on a dead ally
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in

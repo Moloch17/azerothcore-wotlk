@@ -61,9 +61,6 @@ TEST(RolesStageTest, TheStageIsDefined)
     EXPECT_EQ(stage->Merges, std::vector<std::string>{ "move4_follow" });
     EXPECT_EQ(stage->Blocks, (std::vector<Id>{ Id::Core, Id::Move, Id::Duel, Id::Pet, Id::Gauntlet, Id::Vision,
         Id::Entities, Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Goal }));
-    // One source of party-member state: never the server lists of the party or support blocks.
-    EXPECT_FALSE(stage->Has(Id::Party));
-    EXPECT_FALSE(stage->Has(Id::Support));
     EXPECT_FALSE(stage->Has(Id::Pack));
     EXPECT_EQ(Cu::GetBlock(Id::PartyFrames).Revision(), 2u);
     EXPECT_EQ(Cu::GetBlock(Id::Combat).Revision(), 1u);
@@ -97,7 +94,6 @@ TEST(RolesStageTest, TheStageIsDefined)
         EXPECT_TRUE(arena.ProperParty) << arena.Name;
         EXPECT_TRUE(arena.PartyGroup) << arena.Name;
         EXPECT_TRUE(arena.RespawnAtEntrance) << arena.Name << ": no stage ends at the first death";
-        EXPECT_FALSE(arena.DeathRuns) << arena.Name << ": no graveyard, ghost or corpse run";
         EXPECT_EQ(arena.Combat, Cu::CombatDrill::None) << arena.Name;
         EXPECT_GE(arena.EpisodeSeconds, 240u) << arena.Name;
         EXPECT_FALSE(arena.EvalOnly) << arena.Name;

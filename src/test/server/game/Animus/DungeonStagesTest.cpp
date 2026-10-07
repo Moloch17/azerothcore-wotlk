@@ -112,9 +112,8 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
         for (Id block : { Id::Core, Id::Move, Id::Duel, Id::Pet, Id::Pack, Id::Gauntlet, Id::Vision, Id::Entities,
             Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Goal })
             EXPECT_TRUE(stage.Has(block)) << name << " " << Cu::BlockName(block);
-        // The party frames (revision 2) are the members' one source: no party or support block beside them.
-        for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Companion })
-            EXPECT_FALSE(stage.Has(block)) << name << " " << Cu::BlockName(block);
+        // The party frames (revision 2) are the members' one source; nothing points at an objective.
+        EXPECT_FALSE(stage.Has(Id::Compass)) << name;
         EXPECT_EQ(stage.SeatCount(), Cu::GROUP_SEATS) << name;
         for (Cu::ArenaDefinition const& arena : stage.Arenas)
         {
@@ -122,7 +121,6 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             EXPECT_EQ(arena.Instance, Cu::InstanceLadder::Wing) << name << " " << arena.Name;
             EXPECT_EQ(arena.Seats, Cu::SeatPlan::Party) << name << " " << arena.Name;
             EXPECT_TRUE(arena.PartyGroup) << name << " " << arena.Name;
-            EXPECT_FALSE(arena.DeathRuns) << name << " " << arena.Name << ": no corpse run";
             EXPECT_GE(arena.InstanceRow, 0) << name << " " << arena.Name;
         }
     }
@@ -406,7 +404,6 @@ TEST(DungeonStagesTest, TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandler
 {
     Cu::StageDefinition const& d3 = Stage("dungeon3_deadmines");
     ASSERT_TRUE(d3.Has(Cu::BlockId::Sight));
-    EXPECT_FALSE(d3.Has(Cu::BlockId::Crowd)) << "no use-object press off a server list";
     EXPECT_EQ(Cu::SightBlock::PressOf(Cu::SightBlock::ACTION_INTERACT_FIRST), Ea::Press::Interact);
     EXPECT_EQ(Cu::SightBlock::PressOf(Cu::SightBlock::ACTION_USE_ITEM_FIRST), Ea::Press::UseItem);
 
@@ -509,16 +506,6 @@ TEST(DungeonStagesTest, ARisenSeatWalkingBackIsAwayNotLost)
     // Wandering off again afterwards is a stray.
     EXPECT_TRUE(Wr::Strays(true, false, clock.Rejoining, true, 40.0f, stray));
     EXPECT_EQ(Cu::RewardTermCategory(Cu::RewardTerm::Away), Cu::RewardCategory::Cost);
-}
-
-// **No learned seat reads the crowd block** (bots perceive only what a player perceives): its pack ahead, overflow and
-// nearest object are radius reads off the server's lists. Every stage trains a policy, so none carries it: the startup
-// check refuses it anywhere.
-TEST(DungeonStagesTest, NoStageDeclaresTheCrowdBlock)
-{
-    EXPECT_TRUE(Cu::CurriculumProblems().empty());
-    for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
-        EXPECT_FALSE(stage.Has(Cu::BlockId::Crowd)) << stage.Name << " trains a policy on the crowd block";
 }
 
 namespace

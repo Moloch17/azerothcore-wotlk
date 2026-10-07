@@ -154,7 +154,6 @@ namespace Animus::Curriculum::Encoding
     void Revive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally, SeatActionResult& result);
 
     /// Revive features, two per revive: known (a spell the bot knows, or a soulstone in its bags) and cooldown.
-    void WriteRevives(SeatView const& view, float* out);
 
     /// The bot's pet, or its first living controlled unit other than a totem.
     [[nodiscard]] Unit* FirstPet(Player* bot);

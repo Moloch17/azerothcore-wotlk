@@ -49,17 +49,7 @@ namespace Animus::Curriculum
         Duel = 3,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
         Pack = 4,           // enemy slots, target selection, tactical spells
         Gauntlet = 5,       // pull timing, food, drink, sustain spells
-        Companion = 6,      // the owner: follow, assist, guard, heal it
-        Party = 7,          // three teammates: follow the tank, assist, guard and heal them
-        Context = 9,        // the situation: allies, hostile players and creatures, PvP flag, map kind (no actions)
-        Hostiles = 10,       // per enemy slot: player or creature, class, healing, stealth, pet (no actions)
         Pet = 11,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
-        Support = 14,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
-        Forecast = 17,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
-        Crowd = 18,          // what is on the party past the pack's slots, and the pack ahead (no actions)
-        /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
-        /// friend's resurrection. Before the goal block, which stays last.
-        Death = 19,
         /// What the seat's camera sees: a depth-and-meaning image and the camera's scalars (camera-vision; no
         /// actions). Before the goal block, which stays last.
         Vision = 20,

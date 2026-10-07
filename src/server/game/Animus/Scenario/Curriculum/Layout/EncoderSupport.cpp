@@ -147,11 +147,8 @@ namespace Animus::Curriculum::Encoding
         // else the selection when it is one, else the seat itself -- the client's self-cast.
         if (view.L && view.L->Has(BlockId::Sight))
             return BeneficialTarget(view.Bot, view.Focus ? UnitThrough(*view.Bot, *view.Focus) : nullptr, view.Target);
-        if (!view.L || !view.L->Has(BlockId::Support))
-            return view.Bot;
 
-        Unit* selected = FriendUnit(view, view.FriendSlot);
-        return selected && selected->IsAlive() ? selected : nullptr;
+        return view.Bot;
     }
 
     bool AimsAtFriend(SpellInfo const* info)
@@ -211,36 +208,6 @@ namespace Animus::Curriculum::Encoding
             unit ? bot->HasInArc(float(M_PI), unit) : false, bot->isMoving(), !bot->movespline->Finalized(),
             bot->IsNonMeleeSpellCast(false, true, true),
             info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
-    }
-
-    /// Where a heal goes: the selected friend when it can take it, else the most hurt living friend the heal reaches
-    /// (range and line of sight), else the selected friend as before. Heals went only to the selected friend, which
-    /// starts as the seat itself, and a heal on a friend at full health is masked: a healer that kept an enemy
-    /// selected and seldom picked a friend was seldom offered a heal at all (2026-10-03, stage6: holy paladins had
-    /// Holy Light open 13 decisions a fight against a priest's 60-90 for its heals, and cast two heals a fight).
-    Unit* HealTarget(SeatView const& view, ActionCatalog::Action const& def, SpellInfo const* info)
-    {
-        Unit* selected = SupportTarget(view);
-        Player* bot = view.Bot;
-        if (!def.Healing || !view.L || !view.L->Has(BlockId::Support))
-            return selected;
-
-        float const range = info->GetMaxRange(true, bot);
-        auto const takes = [&](Unit* unit)
-        {
-            return unit && unit->IsAlive() && (!def.DirectHeal || !unit->IsFullHealth())
-                && (!def.KeepsAura || !OwnAuraHasPlentyLeft(unit, info, bot->GetGUID()))
-                && (unit == bot || (bot->IsWithinDistInMap(unit, range) && bot->IsWithinLOSInMap(unit)));
-        };
-        if (takes(selected))
-            return selected;
-
-        Unit* best = nullptr;
-        for (uint32 slot = 0; slot < FRIEND_SLOTS; ++slot)
-            if (Unit* unit = FriendUnit(view, slot); unit && unit != selected && !unit->IsFullHealth() && takes(unit)
-                && (!best || unit->GetHealthPct() < best->GetHealthPct()))
-                best = unit;
-        return best ? best : selected;
     }
 
     bool MountCastInProgress(Player const* bot)
@@ -373,7 +340,7 @@ namespace Animus::Curriculum::Encoding
         Unit* friendUnit = nullptr;
         if (info->IsPositive())
         {
-            friendUnit = AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
+            friendUnit = AimsAtFriend(info) ? SupportTarget(view) : bot;
             if (!friendUnit)
                 return false;
 
@@ -419,7 +386,7 @@ namespace Animus::Curriculum::Encoding
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
-        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
+        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? SupportTarget(view) : bot;
         if (info->IsPositive() && !friendUnit)
         {
             NotePressRefused(bot, info, nullptr, 1002);
@@ -614,28 +581,6 @@ namespace Animus::Curriculum::Encoding
         {
             ++result.SpellCasts;
             ++result.Revives;
-        }
-    }
-
-    void WriteRevives(SeatView const& view, float* out)
-    {
-        Player* bot = view.Bot;
-        std::vector<ActionCatalog::Action> const& revives = view.L->AllyRevives;
-        for (uint32 i = 0; i < revives.size(); ++i)
-        {
-            if (revives[i].Type == ActionCatalog::Kind::Soulstone)
-            {
-                if (view.Supplies.Soulstone && bot->GetItemCount(view.Supplies.Soulstone))
-                {
-                    out[i * 2] = 1.0f;
-                    out[i * 2 + 1] = ItemCooldownFraction(bot, view.Supplies.Soulstone);
-                }
-            }
-            else if (SpellInfo const* info = ActionCatalog::KnownRank(bot, revives[i].FirstRank))
-            {
-                out[i * 2] = 1.0f;
-                out[i * 2 + 1] = CooldownFraction(bot, info);
-            }
         }
     }
 

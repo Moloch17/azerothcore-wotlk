@@ -37,8 +37,6 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     if (!bot || !bot->IsAlive())
     {
         kinds[uint32(SeatGoal::Fight)] = true;
-        // Standing up again at its own corpse, where death runs on (DeathBlock).
-        kinds[uint32(SeatGoal::Resurrect)] = bot && view.DeathRuns;
         return;
     }
 
@@ -68,17 +66,6 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
             friends = true;
         }
 
-    // Dead friends a seat with a resurrection can raise (Resurrect about a friend slot).
-    bool deadFriends = false;
-    if (view.L && !view.L->AllyRevives.empty())
-        for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)
-            if (Unit* friendUnit = Encoding::FriendUnit(view, slot); friendUnit && friendUnit != bot
-                && !friendUnit->IsAlive())
-            {
-                targets[GOAL_TARGET_FRIEND_FIRST + slot] = true;
-                deadFriends = true;
-            }
-
     // A dungeon's way on (WorldView::RoutePlaces): its places and the assignment. A stage without it (the movement
     // stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
     WorldView const& world = view.World;
@@ -104,7 +91,6 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     // Loot, Gather and Interact are in the goal space (it is the layout's) but nothing offers them: no looting, no
     // gathering, no quests (the first curriculum's life encounters were deleted).
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
-    kinds[uint32(SeatGoal::Resurrect)] = deadFriends;
 
     // A kind with no target it accepts is not on offer after all.
     for (uint32 kind = 0; kind < GOAL_COUNT; ++kind)
@@ -153,9 +139,7 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
         return;
     if (!bot->IsAlive())
     {
-        // Dead, only standing up again at its own corpse is still to do.
-        possible = SeatGoal(GoalKindOf(goal)) == SeatGoal::Resurrect && GoalTargetOf(goal) == GOAL_TARGET_NONE
-            && view.DeathRuns;
+        // Dead, nothing is still to do: nothing offers a dead seat a goal but to fight on.
         return;
     }
 

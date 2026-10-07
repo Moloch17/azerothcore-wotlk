@@ -1026,8 +1026,6 @@ namespace
     /// Why `arena` cannot be played with `stage`'s blocks, or empty.
     std::string ArenaProblem(StageDefinition const& stage, ArenaDefinition const& arena)
     {
-        if (arena.DeathRuns && (!stage.Has(BlockId::Death) || arena.Against == Opposition::Instance))
-            return "death runs on in the open world, with the death block";
         bool const instance = arena.Against == Opposition::Instance;
         if (instance != (arena.Instance != InstanceLadder::None))
             return "an instance ladder goes with fighting in an instance, and only with that";
@@ -1145,7 +1143,7 @@ namespace
             return "a roles drill goes with a party drilling on a cleared dungeon (Opposition::Roles), and only with "
                 "that";
         if (roles && (arena.Seats != SeatPlan::Party || arena.PartySize || !arena.ProperParty || !arena.PartyGroup
-            || arena.DeathRuns || !arena.RespawnAtEntrance
+            || !arena.RespawnAtEntrance
             || arena.DrillRole != RolesDraw::DrilledRole(arena.Roles)))
             return "a roles arena is a proper party of five in a core group, its drilled "
                 "role the drill's, its dead back at the entrance";
@@ -1158,8 +1156,8 @@ namespace
         bool const combat = arena.Against == Opposition::Combat;
         if (combat != (arena.Combat != CombatDrill::None))
             return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";
-        if (combat && (arena.Seats != SeatPlan::Solo || arena.DeathRuns))
-            return "a combat arena is one seat on its own, with no corpse run";
+        if (combat && arena.Seats != SeatPlan::Solo)
+            return "a combat arena is one seat on its own";
         if (combat && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
             || !stage.Has(BlockId::Combat)))
             return "a combat arena is fought by sight: the move, vision, sight and combat blocks";
@@ -1169,8 +1167,8 @@ namespace
             return "a friend to guard is a single fight's (CombatDrill::Fight)";
         if (combat && (arena.MapId ? arena.MapId : stage.MapId) == 0)
             return "a combat arena is on a dungeon's own map";
-        if (arena.RespawnAtEntrance && (arena.DeathRuns || (arena.MapId ? arena.MapId : stage.MapId) == 0))
-            return "a seat comes back at an instance's entrance, never with a corpse run";
+        if (arena.RespawnAtEntrance && (arena.MapId ? arena.MapId : stage.MapId) == 0)
+            return "a seat comes back at an instance's entrance, so the arena is on an instance's map";
 
         if (!seek && !arena.Rooms.empty())
             return "only a seek arena has rooms";
@@ -1211,16 +1209,6 @@ namespace
             if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || sight < entities)
                 return "the sight block reads what the camera's entity list wrote: it needs the vision block, after it";
         }
-        // A party member's state has one source, the party frames block (revision 2, G1: the combat block's member
-        // frames moved into it): never beside the party or the support block, whose teammate and friend slots would
-        // show the same members' health and power a second time -- and from the server's list at that.
-        // The crowd block's columns (the pack ahead, the overflow, the nearest object) are radius reads off the server's
-        // lists, through walls: never a learned seat's (bots perceive what a player perceives), and every stage trains
-        // a policy.
-        if (stage.Has(BlockId::Crowd))
-            return "the crowd block reads the server's lists through walls: no stage a policy trains in may carry it";
-        if (stage.Has(BlockId::PartyFrames) && (stage.Has(BlockId::Party) || stage.Has(BlockId::Support)))
-            return "a party member's frame is the party frames block's alone: not beside the party or support block";
         // ... and a combat stage with a party reads its members there: the combat block keeps only the player frame and
         // the pet frame (its revision 1), so without the party frames block its party would be unseen.
         if (stage.Has(BlockId::Combat) && stage.SeatCount() > 1 && !stage.Has(BlockId::PartyFrames))

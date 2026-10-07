@@ -298,7 +298,6 @@ namespace Animus::Curriculum
         [[nodiscard]] bool DeadForGood(Env const& env, uint32 seat) const;
 
         /// Whether seat `seat`'s bot is alive and knows a resurrection spell it could cast on an ally.
-        [[nodiscard]] bool SeatCanResurrect(Env const& env, uint32 seat) const;
 
         /// The name of spec `spec` of class `layout` ("feral_bear"), for logs and reports; "?" if there is no such
         /// spec. A spec is the name of a talent template, which is a real thing about a build -- unlike a role,
@@ -402,7 +401,6 @@ namespace Animus::Curriculum
         /// At the reward: settle a step's verdict, the fidget seconds, stops and starts, and charge the decision's
         /// aimless presses, effort and fidgeting.
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
-        void SettleDeath(Env& env, SeatState& seat, Player* bot);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
         /// The episode's stand-in, once its seats are built (StandInSeat.cpp): whether there is one (a party or raid
         /// arena: its share of training episodes while the learner has a frozen partner to play it, every episode of a
