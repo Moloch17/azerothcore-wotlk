@@ -6,6 +6,9 @@
     conf_prune.py --prune CONF                        comment them out (a timestamped backup is written first)
     conf_prune.py --check|--prune --ssh user@host:PATH    the same, over ssh (BatchMode, no passwords), for a cluster
                                                       machine; ~/ in PATH is the remote user's home
+    conf_prune.py --list-backups CONF|--ssh ...       the stamps of the backups --prune wrote (<conf>.bak-<stamp>)
+    conf_prune.py --restore STAMP CONF|--ssh ...      put that backup back as the conf (the conf as it is now is kept
+                                                      first as <conf>.pre-restore-<now>, so a restore can be undone)
 
 CONF is a machine's mod_animus_forge.conf or worldserver.conf (the sim reads both: ForgeMain.cpp loads
 modules/mod_animus_forge.conf after worldserver.conf). A key is *unknown* when the checkout's
@@ -189,6 +192,49 @@ def write_conf(spec: str, ssh: bool, runner: Runner, original: str, pruned: str,
     return f"{target}:{backup}"
 
 
+BACKUP = re.compile(r"\.bak-(\d{8}-\d{6})$")
+
+
+def list_backups(spec: str, ssh: bool, runner: Runner) -> list[str]:
+    """The stamps of the backups of a conf, oldest first."""
+    if not ssh:
+        path = Path(spec)
+        names = [str(item) for item in path.parent.glob(path.name + ".bak-*")]
+    else:
+        target, path = spec.split(":", 1)
+        code, out, error = runner(ssh_command(target, f"ls -1 {quote(path)}.bak-* 2>/dev/null; true"), None)
+        if code:
+            raise SystemExit(f"conf_prune: ssh {target}: could not list the backups of {path}: {error.strip() or code}")
+        names = out.split()
+    return sorted(found.group(1) for name in names if (found := BACKUP.search(name)))
+
+
+def restore_conf(spec: str, ssh: bool, runner: Runner, stamp: str) -> tuple[str, str]:
+    """Put <conf>.bak-<stamp> back as the conf. The conf as it is now is first copied to <conf>.pre-restore-<now>.
+    Returns (the backup restored, where the replaced conf went)."""
+    if not re.fullmatch(r"\d{8}-\d{6}", stamp):
+        raise SystemExit(f"conf_prune: {stamp!r} is not a backup stamp (YYYYMMDD-HHMMSS: --list-backups prints them)")
+    kept_as = f".pre-restore-{time.strftime('%Y%m%d-%H%M%S')}"
+    if not ssh:
+        path = Path(spec)
+        backup = path.with_name(f"{path.name}.bak-{stamp}")
+        if not backup.is_file():
+            raise SystemExit(f"conf_prune: no backup {backup} (--list-backups lists them)")
+        kept = path.with_name(path.name + kept_as)
+        kept.write_text(path.read_text())
+        path.write_text(backup.read_text())
+        return str(backup), str(kept)
+    target, path = spec.split(":", 1)
+    backup = f"{path}.bak-{stamp}"
+    script = (f"set -e; test -f {quote(backup)}; cp -p {quote(path)} {quote(path + kept_as)}; "
+              f"cp -p {quote(backup)} {quote(path + '.new')}; mv {quote(path + '.new')} {quote(path)}")
+    code, _, error = runner(ssh_command(target, script), None)
+    if code:
+        raise SystemExit(f"conf_prune: ssh {target}: could not restore {backup} (is there such a backup? "
+                         f"--list-backups): {error.strip() or code}")
+    return f"{target}:{backup}", f"{target}:{path}{kept_as}"
+
+
 def run(args: argparse.Namespace, runner: Runner = local_runner, out=sys.stdout) -> int:
     repo = Path(args.repo)
     if args.removed:
@@ -200,6 +246,16 @@ def run(args: argparse.Namespace, runner: Runner = local_runner, out=sys.stdout)
             print(f"  {group}: {count}", file=out)
         return 0
     spec = args.ssh or args.conf
+    if args.list_backups or args.restore:
+        stamps = list_backups(spec, bool(args.ssh), runner)
+        if args.list_backups:
+            for stamp in stamps:
+                print(stamp, file=out)
+            print(f"{len(stamps)} backup(s) of {spec}", file=out)
+            return 0
+        restored, kept = restore_conf(spec, bool(args.ssh), runner, args.restore)
+        print(f"restored {spec} from {restored}; the conf it replaced is {kept}", file=out)
+        return 0
     dist_text = Path(args.dist).read_text() if args.dist else (
         git_show(repo, args.dist_rev) if args.dist_rev else (repo / DIST).read_text())
     known = dist_keys(dist_text)
@@ -219,6 +275,7 @@ def run(args: argparse.Namespace, runner: Runner = local_runner, out=sys.stdout)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         backup = write_conf(spec, bool(args.ssh), runner, conf_text, prune_text(conf_text, unknown, stamp), stamp)
         print(f"commented out {len(unknown)} line(s); the original is {backup}", file=out)
+        print(f"to undo: conf_prune.py --restore {stamp} {'--ssh ' if args.ssh else ''}{spec}", file=out)
     return 1 if (args.check and unknown) else 0
 
 
@@ -232,15 +289,17 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dist", help="the template to compare against (default: this checkout's)")
     parser.add_argument("--dist-rev", help="compare against the template at this git revision")
     parser.add_argument("--old", metavar="REV", help="say which unknown keys the old build did not read either")
+    parser.add_argument("--list-backups", action="store_true", help="list the stamps of CONF's --prune backups")
+    parser.add_argument("--restore", metavar="STAMP", help="put CONF's backup <conf>.bak-STAMP back as the conf")
     parser.add_argument("--no-stage-check", action="store_true", help="do not flag keys of stages that are gone")
     parser.add_argument("--repo", default=str(REPO))
     args = parser.parse_args(argv)
     if args.removed:
-        if args.check or args.prune or args.conf or args.ssh:
+        if args.check or args.prune or args.conf or args.ssh or args.list_backups or args.restore:
             parser.error("--removed stands alone")
     else:
-        if args.check == args.prune:
-            parser.error("one of --removed, --check or --prune")
+        if [args.check, args.prune, args.list_backups, bool(args.restore)].count(True) != 1:
+            parser.error("one of --removed, --check, --prune, --list-backups or --restore")
         if bool(args.conf) == bool(args.ssh):
             parser.error("give CONF or --ssh USER@HOST:PATH, not both or neither")
         if args.ssh and ":" not in args.ssh:

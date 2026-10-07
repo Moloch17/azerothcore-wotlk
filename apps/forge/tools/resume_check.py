@@ -24,6 +24,18 @@ counts are not in stage.json: they are taken from the checkpoint's saved spec un
 spec.json, which the learner writes to a run directory on any start), and one rollout step (it needs observations from
 the sim). Both are said in the output, as UNVERIFIED, rather than faked.
 
+    resume_check.py --fresh --stage STAGE --stage-json PATH [--config YAML] [--set ...] [--overlay ...]
+    resume_check.py --fresh --all --stage-json-dir DIR      (DIR/<stage>/stage.json, the 12 live stages)
+
+--fresh is the check for a stage that has never run on the learner (no checkpoint): from the stage's learner yaml and
+the stage.json the sim wrote for it, it builds what TrainingRun.__init__ builds before it trains -- the spec (from
+stage.json: camera and map bytes, look heads, layouts, episode columns), the held-out arenas (train.heldout_arenas),
+eval.phases and eval.mask_actions against the stage's arenas and actions, the score and gate columns against the
+stage's episode columns, the convergence controller with its ladders, the trainer inputs and the trainer itself on
+CPU -- and says PASS or FAIL per stage with the first error. It is the only check that the learner side of a stage
+nobody has trained starts. What it cannot know (the sim's state width and goal count, which stage.json does not
+carry) it takes from STATE_DIM and GOAL_COUNT below (--state-dim, --goal-count override them).
+
 Exit status: 0 every check passed (UNVERIFIED lines allowed), 1 a check failed, 2 the inputs could not be read.
 Run it in the dev container with the learner's python: /azerothcore/apps/forge/python/.venv/bin/python.
 """
@@ -45,6 +57,16 @@ sys.path.insert(0, str(PYTHON_DIR))
 SIM_INJECTED = ("socket", "run_name", "runs_dir", "layouts_dir", "torch_threads", "cluster_sims", "rank", "ranks",
                 "local_rank", "local_ranks", "dist_address", "dist_iface", "train_device", "rollout_device",
                 "mappo.rank_sync")
+
+
+#: The critic's input width and the goal space a sim's SPEC announces, the same in every stage (the C++ constants
+#: StageScenario::STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS * STATE_ENEMY_FEATURES, and
+#: GOAL_JOINT_COUNT); stage.json does not carry them. A test pins them against the M2 checkpoint's saved spec.
+STATE_DIM = 1958
+GOAL_COUNT = 348
+#: Stages are the yamls in configs/ except the fast profile.
+CONFIG_DIR = PYTHON_DIR / "configs"
+NOT_STAGES = ("fast",)
 
 
 @dataclass
@@ -243,9 +265,20 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
                    f"falls {dict(ladder.falls)}; held {ladder.held}; settled {ladder.settled}; "
                    f"evaluations at the rung {ladder.evals_at_rung}; gate {ladder.gate_metric or '-'} "
                    f">= {ladder.gate_value:g}")
+    saved_plateau = saved_controller.get("plateau_env_steps")
+    env_steps = int(checkpoint.get("env_steps") or 0)
+    lr_scale = controller.lr_scale(env_steps)
+    notes = []
+    if saved_plateau != controller.plateau_env_steps:
+        notes.append(f"NOTE: plateau_env_steps was {saved_plateau} in the checkpoint and is {controller.plateau_env_steps} "
+                     "after the restore: the resume cleared a convergence state it judged not to be the stage's own "
+                     "(e.g. one read at a gate-stepped ladder's easier rungs)")
     report.add("PASS" if not dropped else "FAIL", "evaluation state (best score, convergence history)",
                *([f"kept: score kind {score_kind or 'the return'}, best {controller.tracker.best}, "
-                  f"evaluations {controller.evals}"] if not dropped else [dropped]))
+                  f"evaluations {controller.evals}"] if not dropped else [dropped]),
+               f"plateau_env_steps {controller.plateau_env_steps}; lr_scale {lr_scale:g} at env step {env_steps:,} "
+               f"(the learning rate the resumed run starts at is mappo.actor_lr x this)",
+               *notes)
 
     # 6. Config values that differ from the checkpoint's.
     differences = config_differences(checkpoint.get("config", {}), config.to_dict())
@@ -263,16 +296,201 @@ def check_resume(run_dir: Path, stage_json: Path, config_path: Path, checkpoint_
     return report
 
 
+# ------------------------------------------------------------------------------------------------ --fresh
+
+def fresh_spec(stage: dict, state_dim: int = STATE_DIM, goal_count: int = GOAL_COUNT):
+    """The Spec a sim would announce for this stage.json: everything stage.json carries (layouts, episode columns, the
+    camera's and the map's bytes, the look heads, the episode length) and, for the two numbers it does not, the
+    constants of the sim."""
+    from animus.mappo.networks import vision_of
+    from animus.protocol import Layout, Spec
+
+    layouts = stage.get("layouts") or {}
+    if not layouts:
+        raise ValueError("stage.json has no layouts")
+    names = list(layouts)
+    vision = vision_of(stage, names)
+    camera = next((entry for entry in vision or () if entry is not None), None)
+    crop = camera.get("map") if camera else None
+    episode = max([int(arena.get("episode_seconds", 0)) for arena in stage.get("arenas", ())] or [60])
+    columns = tuple(stage.get("episode_info", ()))
+    return Spec(version=25, num_envs=8, agents_per_env=int(stage.get("seats", 1)),
+                obs_dim=max(layouts[name]["obs_dim"] for name in names), state_dim=state_dim,
+                num_actions=max(layouts[name]["num_actions"] for name in names), episode_info_dim=len(columns),
+                goal_count=goal_count, tick_ms=250, decision_ticks=1, episode_seconds=episode,
+                scenario=str(stage.get("stage")), episode_info_names=columns,
+                layouts=tuple(Layout(name, layouts[name]["obs_dim"], layouts[name]["num_actions"]) for name in names),
+                image_bytes=int(camera["image_bytes"]) if camera else 0,
+                look_heads=len(camera.get("look", ())) if camera else 0,
+                map_bytes=int(crop["map_bytes"]) if crop else 0)
+
+
+def _read_stage(path: Path, expected: str):
+    stage = json.loads(Path(path).read_text())
+    if stage.get("stage") != expected:
+        raise ValueError(f"{path} is the stage.json of {stage.get('stage')!r}, not {expected!r}")
+    return (f"{stage.get('stage')}, format {stage.get('format')}, {len(stage.get('layouts', {}))} layouts, "
+            f"{len(stage.get('arenas', ()))} arenas", stage)
+
+
+def _load_config(path: Path, sets, overlays, stage_name: str):
+    from animus.config import TrainConfig
+
+    config = TrainConfig.load(path, sets or [], overlays or [])
+    config.run_name = stage_name
+    return (f"eval.every_env_steps {config.eval.every_env_steps:,}", config)
+
+
+def _spec_step(stage: dict, state_dim: int, goal_count: int):
+    spec = fresh_spec(stage, state_dim, goal_count)
+    return (f"{len(spec.layouts)} layouts, obs {spec.obs_dim}, actions {spec.num_actions}, camera "
+            f"{spec.image_bytes} + map {spec.map_bytes} bytes, {spec.look_heads} look heads", spec)
+
+
+def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = None, sets: list[str] | None = None,
+                overlays: list[str] | None = None, state_dim: int = STATE_DIM,
+                goal_count: int = GOAL_COUNT) -> Report:
+    """What a fresh start of `stage_name` builds on the learner's side, each step a check; stops at the first FAIL."""
+    from animus.evaluation import RATIO_METRICS, action_mask_table
+    from animus.stage import ConvergenceController
+    from animus.train import heldout_arenas, make_trainer, trainer_inputs
+
+    report = Report()
+    config_path = config_path or CONFIG_DIR / f"{stage_name}.yaml"
+
+    def step(title: str, build):
+        """Run `build`: PASS with its detail line and its result, or FAIL with the error (and None)."""
+        try:
+            detail, result = build()
+        except Exception as error:  # noqa: BLE001 - whatever stops the start is the finding
+            report.add("FAIL", title, f"{type(error).__name__}: {(str(error) or '?').splitlines()[0][:400]}")
+            return None
+        except SystemExit as error:   # the learner's own refusals (a camera the stage and the spec disagree on)
+            report.add("FAIL", title, f"refused: {str(error).splitlines()[0][:400] if str(error) else 'exit'}")
+            return None
+        report.add("PASS", title, *([detail] if detail else []))
+        return result if result is not None else True
+
+    stage = step(f"stage.json read: {stage_json}", lambda: _read_stage(stage_json, stage_name))
+    if stage is None:
+        return report
+    config = step(f"learner config: {config_path}", lambda: _load_config(config_path, sets, overlays, stage_name))
+    if config is None:
+        return report
+    spec = step("spec from stage.json", lambda: _spec_step(stage, state_dim, goal_count))
+    if spec is None:
+        return report
+    arenas = [arena.get("name") for arena in stage.get("arenas", ())]
+    names = [layout.name for layout in spec.layouts]
+
+    def heldout():
+        held = heldout_arenas(config.eval.heldout, stage)
+        shown = {name: f"arena {pin}, {episodes} episodes" for name, (pin, episodes) in held.items()}
+        return (f"eval.heldout -> {shown or 'none'}", held)
+
+    def phases():
+        wanted = {str(phase): [str(name) for name in members] for phase, members in config.eval.phases.items()}
+        unknown = sorted({name for members in wanted.values() for name in members} - set(arenas))
+        if unknown:
+            raise ValueError(f"eval.phases names arenas the stage does not have: {unknown} (its arenas: {arenas})")
+        return (f"{len(wanted)} phase(s)" if wanted else "", wanted)
+
+    def masks():
+        action_names = {name: layout.get("action_names", []) for name, layout in stage["layouts"].items()}
+        table = action_mask_table(config.eval.mask_actions, names, action_names, spec.num_actions)
+        return (f"eval.mask_actions {list(config.eval.mask_actions)}" if config.eval.mask_actions else "", table)
+
+    def ladders():
+        columns = set(spec.episode_info_names)
+        score = config.eval.score_column()
+        if score and score not in columns:
+            raise ValueError(f"the evaluation scores on {score!r}, which the stage's episode columns do not have")
+        controller = ConvergenceController(
+            config, names, sim_fallback_ceiling=float((stage.get("tuning") or {}).get("Markers.FallbackCeiling", 0.0)))
+        lines = []
+        for label, ladder in (("fade", controller.fade), ("costs", controller.costs)):
+            if not ladder.enabled:
+                lines.append(f"{label} ladder off")
+                continue
+            if ladder.gate_metric and ladder.gate_metric not in columns | set(RATIO_METRICS):
+                raise ValueError(f"the {label} ladder's gate_metric {ladder.gate_metric!r} is not one of the stage's "
+                                 "episode columns or the evaluation's ratio metrics: it would never step")
+            lines.append(f"{label} ladder: {len(ladder.rungs)} rungs {list(ladder.rungs)}, gate "
+                         f"{ladder.gate_metric or '-'} >= {ladder.gate_value:g}, "
+                         f"{'regresses' if ladder.regresses else 'gate-stepped'}")
+        return ("; ".join(lines) + f"; score {score or 'the return'}", controller)
+
+    def build():
+        inputs = trainer_inputs(config, spec, stage)
+        trainer = make_trainer(config, spec, inputs, device="cpu")
+        parameters = sum(parameter.numel() for parameter in trainer.actor.parameters())
+        return (f"{len(names)} layouts, actor {parameters:,} parameters, camera "
+                f"{'yes' if inputs.vision is not None else 'no'}, seat sets {'yes' if inputs.seat_sets else 'no'}",
+                trainer)
+
+    for title, build_step in (("held-out arenas (train.heldout_arenas)", heldout),
+                              ("eval.phases against the arenas", phases),
+                              ("eval.mask_actions against each layout's actions", masks),
+                              ("ladder configuration (ConvergenceController)", ladders),
+                              ("trainer inputs and MappoTrainer on CPU", build)):
+        if step(title, build_step) is None:
+            break
+    return report
+
+
+def live_stage_names(config_dir: Path = CONFIG_DIR) -> list[str]:
+    return sorted(path.stem for path in config_dir.glob("*.yaml") if path.stem not in NOT_STAGES)
+
+
+def run_fresh(stages: list[str], stage_json_for, out=None, **kwargs) -> int:
+    """PASS/FAIL per stage, one line each (the first error on a FAIL); exit status 1 if any failed."""
+    out = out or sys.stdout
+    results = []
+    for name in stages:
+        path = stage_json_for(name)
+        if not Path(path).is_file():
+            results.append((name, f"no stage.json at {path}"))
+            continue
+        report = check_fresh(name, Path(path), **kwargs)
+        failed = next((check for check in report.checks if check.status == "FAIL"), None)
+        results.append((name, None if failed is None else f"{failed.title}: {failed.details[0]}"))
+    for name, error in results:
+        print(f"{name:20s} {'FAIL' if error else 'PASS'}" + (f"  {error}" if error else ""), file=out)
+    failures = [name for name, error in results if error]
+    print(f"{len(results) - len(failures)} of {len(results)} stages start on the learner" +
+          (f"; FAILED: {', '.join(failures)}" if failures else ""), file=out)
+    return 1 if failures else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run_dir", nargs="?", type=Path, help="runs/<stage> (a copy of it; only read)")
-    parser.add_argument("--stage-json", type=Path, required=True, help="the stage.json the new build wrote")
+    parser.add_argument("--stage-json", type=Path, help="the stage.json the new build wrote")
+    parser.add_argument("--fresh", action="store_true", help="a stage that has never run: build its learner side")
+    parser.add_argument("--stage", help="--fresh: the stage's name (configs/<stage>.yaml)")
+    parser.add_argument("--all", action="store_true", help="--fresh: every live stage (needs --stage-json-dir)")
+    parser.add_argument("--stage-json-dir", type=Path, help="--fresh --all: the directory holding <stage>/stage.json")
+    parser.add_argument("--state-dim", type=int, default=STATE_DIM, help="--fresh: the critic's input width")
+    parser.add_argument("--goal-count", type=int, default=GOAL_COUNT, help="--fresh: the goal space's width")
     parser.add_argument("--config", type=Path, help="the stage's learner yaml (default configs/<stage>.yaml)")
     parser.add_argument("--checkpoint", type=Path, help="the checkpoint (default RUN_DIR/latest.pt)")
     parser.add_argument("--spec", type=Path, help="the new build's spec.json")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", dest="sets")
     parser.add_argument("--overlay", action="append", default=[], metavar="YAML")
     args = parser.parse_args(argv)
+    if args.fresh:
+        if bool(args.all) == bool(args.stage):
+            parser.error("--fresh takes --stage NAME or --all")
+        if args.all and not args.stage_json_dir:
+            parser.error("--fresh --all needs --stage-json-dir")
+        if args.stage and not args.stage_json:
+            parser.error("--fresh --stage needs --stage-json")
+        extra = dict(sets=args.sets, overlays=args.overlay, state_dim=args.state_dim, goal_count=args.goal_count)
+        if args.all:
+            return run_fresh(live_stage_names(), lambda name: args.stage_json_dir / name / "stage.json", **extra)
+        return run_fresh([args.stage], lambda name: args.stage_json, config_path=args.config, **extra)
+    if not args.stage_json:
+        parser.error("--stage-json is required")
     try:
         stage_name = json.loads(args.stage_json.read_text()).get("stage")
         run_dir = args.run_dir or Path("runs") / str(stage_name)

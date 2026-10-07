@@ -1,7 +1,9 @@
 """apps/forge/tools/resume_check.py: the dry-run resume of the deploy gate, on a tiny fixture checkpoint."""
 
 import copy
+import io
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -192,3 +194,124 @@ def test_the_run_directory_is_only_read(run):
     before = {path.name: path.stat().st_mtime_ns for path in run["dir"].iterdir()}
     report_of(run)
     assert {path.name: path.stat().st_mtime_ns for path in run["dir"].iterdir()} == before
+
+
+# ---------------------------------------------------------------------------------------------------- the lr line
+
+def test_the_evaluation_state_line_shows_the_plateau_and_the_learning_rate_scale(run):
+    text = report_of(run).text()
+    assert "plateau_env_steps None; lr_scale 1 at env step 345,678" in text
+    assert "NOTE: plateau_env_steps" not in text
+
+
+def test_a_plateau_the_restore_clears_is_noted(run):
+    checkpoint = torch.load(run["dir"] / "latest.pt", map_location="cpu", weights_only=False)
+    checkpoint["controller"]["plateau_env_steps"] = 1000
+    torch.save(checkpoint, run["dir"] / "latest.pt")
+    # restored as saved: no note (this build keeps what a checkpoint says)
+    text = report_of(run).text()
+    assert "plateau_env_steps 1000; lr_scale" in text
+
+
+# -------------------------------------------------------------------------------------------------------- --fresh
+
+FIXTURES = Path(__file__).parent / "fixtures"          # real stage.json files, copied out of the live run's backups
+M2 = FIXTURES / "stage_move2_seek.json"
+M1 = FIXTURES / "stage_move1_controls.json"
+
+
+def fresh_text(name: str, stage_path: Path, **kwargs):
+    out = io.StringIO()
+    code = rc.run_fresh([name], lambda _: stage_path, out=out, **kwargs)
+    return code, out.getvalue()
+
+
+def test_fresh_passes_the_real_m1_and_m2_stage_files():
+    for name, path in (("move2_seek", M2), ("move1_controls", M1)):
+        report = rc.check_fresh(name, path)
+        assert not report.failed, report.text()
+        assert [check.title.split(" (")[0] for check in report.checks][-1] == "trainer inputs and MappoTrainer on CPU"
+        assert any("held-out arenas" in check.title for check in report.checks)
+
+
+def test_fresh_fails_on_a_heldout_arena_the_stage_lacks(tmp_path):
+    stage = json.loads(M2.read_text())
+    stage["arenas"] = [arena for arena in stage["arenas"] if arena["name"] != "sweep"]
+    path = tmp_path / "stage.json"
+    path.write_text(json.dumps(stage))
+    code, text = fresh_text("move2_seek", path)
+    assert code == 1
+    assert "FAIL" in text and "held-out arenas" in text and "'sweep'" in text and "does not have" in text
+
+
+def test_fresh_fails_on_a_heldout_arena_the_stage_trains_on(tmp_path):
+    stage = json.loads(M2.read_text())
+    for arena in stage["arenas"]:
+        arena["eval_only"] = False
+    path = tmp_path / "stage.json"
+    path.write_text(json.dumps(stage))
+    code, text = fresh_text("move2_seek", path)
+    assert code == 1 and "trains on" in text
+
+
+def test_fresh_fails_on_a_gate_column_the_stage_lacks(tmp_path):
+    stage = json.loads(M2.read_text())
+    stage["episode_info"] = [name for name in stage["episode_info"] if name != "found"]
+    path = tmp_path / "stage.json"
+    path.write_text(json.dumps(stage))
+    code, text = fresh_text("move2_seek", path)
+    assert code == 1 and "gate_metric 'found'" in text
+
+
+def test_fresh_fails_on_a_stage_file_of_another_stage_and_on_a_missing_one(tmp_path):
+    code, text = fresh_text("move1_controls", M2)
+    assert code == 1 and "stage.json of 'move2_seek'" in text
+    code, text = fresh_text("move2_seek", tmp_path / "nothing.json")
+    assert code == 1 and "no stage.json at" in text
+
+
+def test_fresh_fails_on_a_camera_the_stage_describes_without_its_image(tmp_path):
+    stage = json.loads(M2.read_text())
+    for layout in stage["layouts"].values():
+        for block in layout["blocks"]:
+            block.pop("image", None)
+    path = tmp_path / "stage.json"
+    path.write_text(json.dumps(stage))
+    code, text = fresh_text("move2_seek", path)
+    assert code == 1 and "FAIL" in text
+
+
+def test_fresh_all_reports_every_live_stage_and_names_the_ones_without_files(tmp_path, capsys):
+    names = rc.live_stage_names()
+    assert len(names) == 12 and "fast" not in names and "move3_interact" in names and "dungeon3_deadmines" in names
+    (tmp_path / "move2_seek").mkdir()
+    (tmp_path / "move2_seek" / "stage.json").write_text(M2.read_text())
+    code = rc.main(["--fresh", "--all", "--stage-json-dir", str(tmp_path)])
+    text = capsys.readouterr().out
+    assert code == 1
+    assert re.search(r"^move2_seek\s+PASS$", text, re.M)
+    assert re.search(r"^move3_interact\s+FAIL\s+no stage.json at", text, re.M)
+    assert "1 of 12 stages start on the learner; FAILED:" in text
+
+
+def test_fresh_single_stage_through_the_cli(capsys):
+    assert rc.main(["--fresh", "--stage", "move2_seek", "--stage-json", str(M2)]) == 0
+    assert "move2_seek" in capsys.readouterr().out
+
+
+def test_fresh_cli_refuses_incomplete_arguments():
+    for bad in (["--fresh"], ["--fresh", "--all"], ["--fresh", "--stage", "move2_seek"],
+                ["--fresh", "--all", "--stage", "move2_seek", "--stage-json-dir", "x"]):
+        with pytest.raises(SystemExit):
+            rc.main(bad)
+
+
+def test_the_sims_state_and_goal_widths_are_the_ones_a_real_checkpoint_announces():
+    backup = ROOT / "var" / "backups" / "2026-10-07" / "move2_seek" / "latest.pt"
+    if not backup.is_file():
+        pytest.skip("the M2 backup checkpoint is not on this machine")
+    spec = torch.load(backup, map_location="cpu", weights_only=False)["spec"]
+    assert (spec["state_dim"], spec["goal_count"]) == (rc.STATE_DIM, rc.GOAL_COUNT)
+    built = rc.fresh_spec(json.loads(M2.read_text()))
+    for key in ("obs_dim", "num_actions", "image_bytes", "look_heads", "map_bytes", "episode_info_dim"):
+        assert getattr(built, key) == spec[key], key
