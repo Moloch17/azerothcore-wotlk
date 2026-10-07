@@ -56,6 +56,18 @@
 #include <mutex>
 #include <tuple>
 
+Animus::Curriculum::EnemyRank Animus::Curriculum::RankEnemy(Unit const* enemy, Unit const* tank)
+{
+    if (!enemy || !enemy->IsAlive())
+        return EnemyRank::Gone;
+    if (!enemy->IsInCombat())
+        return EnemyRank::Standing;
+    if (tank && tank->IsAlive() && tank->GetVictim() == enemy)
+        return EnemyRank::TankTarget;
+    Unit const* victim = enemy->GetVictim();
+    return victim && victim->IsPlayer() ? EnemyRank::OnPlayer : EnemyRank::Fighting;
+}
+
 namespace
 {
     constexpr float OBJECT_SIGHT = 40.0f;      // the party sees what it can use this far (CrowdView::Object)
@@ -177,11 +189,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::InstanceEncounte
 void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
     // The rung (the ladder's tier, which the evaluation spreads its seeds over) and the fight's outcome. The rung
-    // is `difficulty` -- the column the convergence rule's ladder signal reads -- unless the stage has a creature
-    // duel, which reports its own tier under that name (the crossroads); `boss_rung` is always there.
-    auto const creature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
-    if (!_scenario.Stage().AnyArena(creature))
-        table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
+    // is `difficulty` -- the column the convergence rule's ladder signal reads; `boss_rung` is the same.
+    table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     // A wing stage's rung comes first of the `_rung` columns (the evaluation videos read the first: Vision::
     // EvalVideoRungColumn): the pull drill's ladder in a stage of drills, the difficulty ladder's otherwise -- the
     // row a stage pins (boss_rung) is the same every run.
@@ -821,12 +830,6 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
         at.m_positionX += (inGroup % 2 ? -ROW_SPACING : ROW_SPACING) * float(1 + inGroup / 2);
         at.m_positionY += (inGroup % 2 ? ROW_SPACING : -ROW_SPACING) - ROW_SPACING * 2.0f * float(group);
         BotFactory::TeleportWithinMap(bot, at);
-    }
-    if (Player* owner = _scenario.Owner(env))
-    {
-        Position at = engage;
-        at.m_positionX += ROW_SPACING;
-        BotFactory::TeleportWithinMap(owner, at);
     }
 
     // The trash between the door and the boss was never pulled; what stands around the boss goes too, except the

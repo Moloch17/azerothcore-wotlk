@@ -193,21 +193,9 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
     for (uint32 seat = 1; seat < data.ActiveSeats; ++seat)
         _scenario.SeatBot(env, seat)->SetFaction(lead->GetFaction());
 
-    // The owner stands in for the player whose party the companions join: it leads. A raid in an instance has no
-    // owner (forty seats leave no slot for one), so its first seat leads.
-    Player* owner = _scenario.Owner(env);
+    // The party is five learned seats: the first one leads.
     bool const raid = _scenario.Arena(env).Seats == SeatPlan::Raid;
-    // A group running a dungeon, which is five learned seats, has no owner: its first seat leads, as a raid's does.
-    // So does a proper party drilling against pulls.
-    bool const dungeon = _scenario.Arena(env).Against == Opposition::Instance && !_scenario.Arena(env).Owner;
-    bool const drill = _scenario.Arena(env).ProperParty && !_scenario.Arena(env).Owner;
-    if (!owner && !raid && !dungeon && !drill)
-    {
-        // The party stage always has an owner; it has to be built first (see the build order in StageScenario).
-        LOG_ERROR("module.animus", "{}: env {} builds its party group before its owner", _scenario.Name(), env.Index);
-        return false;
-    }
-    Player* leader = owner ? owner : lead;
+    Player* leader = lead;
 
     EnvParty& party = _envs[env.Index];
     if (party.PartyGroup)
@@ -371,10 +359,9 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
 
 void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
 {
-    // A dead teammate the seat resurrected stood up, where no owner encounter pays for it (stage13's raids have no
-    // owner, and their revives went unpaid).
+    // A dead teammate the seat resurrected stood up: paid here.
     SeatState& reviver = _scenario.Data(env).Seats[seatIndex];
-    if (reviver.StepRevivedAlly && !_scenario.Arena(env).Owner)
+    if (reviver.StepRevivedAlly)
     {
         ledger.Add(RewardTerm::Revive, _scenario.Tuning().Resurrection.ReviveAlly);
         reviver.StepRevivedAlly = false;
@@ -551,7 +538,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
             onOthers += victim && victim != bot && victim->IsPlayer() ? 1 : 0;
             enemyNear = enemyNear || (enemy->IsInMap(bot) && bot->GetExactDist(enemy) <= tuning.IdleReach);
         }
-    // Beside an owner the owner encounter pays the tank for this (Owner.TankHold). The party's tank also pays for
+    // The party's tank also pays for
     // every enemy on somebody else (Raid.TankLoose): holding the pull is its job, and the Deadmines' parties lost
     // their fights with two of eight enemies on the tank (2026-10-01). A dungeon's drawn tank is the tank.
     bool const tank = IsTank(state);
@@ -575,7 +562,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     RewardTerm const keepTerm = drilled ? RewardTerm::DrillKeep : RewardTerm::TeammateHealing;
     // The tank in its tanking stance, form or aura while it fights: what a protection warrior, a bear or a paladin with
     // Righteous Fury takes far less from, and holds a pull with.
-    if (tank && !arena.Owner && bot->IsInCombat() && InTankingStance(bot))
+    if (tank && bot->IsInCombat() && InTankingStance(bot))
         ledger.Add(RewardTerm::Threat, drill * tuning.TankStance * scale);
     if (tank && bot->IsAlive() && bot->IsInCombat())
     {
@@ -583,7 +570,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
         reading.TankFightMs += _scenario.DecisionMs();
         reading.TankModeMs += InTankingStance(bot) ? _scenario.DecisionMs() : 0;
     }
-    if (tank && !arena.Owner)
+    if (tank)
     {
         seat.EnemiesHeld += onBot;
         seat.EnemiesOnParty += onBot + onOthers;
@@ -594,7 +581,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // A damage dealer of a party with a tank: paid for the damage it puts on the tank's target, charged for each
     // enemy it has taken off the tank (Raid.TankTarget, Raid.PulledOff). The Deadmines' damage dealers hit whatever
     // was nearest and died with the enemies on them (2026-10-01).
-    if (!tank && !healer && !raid && !arena.Owner)
+    if (!tank && !healer && !raid)
         if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive())
         {
             Unit const* tankTarget = partyTank->GetVictim();
@@ -613,7 +600,7 @@ void Animus::Curriculum::PartyEncounter::RewardRole(Env& env, uint32 seatIndex, 
     // A damage dealer or the healer with enemies on it while the party's tank is alive and has not engaged: the pull
     // was opened before the tank was there to take it (Raid.EarlyPull, a cost). A linked pack then turns on whoever
     // opened -- the stage6 parties' damage dealers kept enemies ~8 s a fight (2026-10-03).
-    if (!tank && !raid && !arena.Owner && onBot)
+    if (!tank && !raid && onBot)
         if (Player* partyTank = Tank(env); partyTank && partyTank != bot && partyTank->IsAlive()
             && !partyTank->IsInCombat())
             ledger.Add(RewardTerm::EarlyPull, -drill * tuning.EarlyPull * float(onBot) * scale);

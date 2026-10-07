@@ -708,7 +708,6 @@ TEST(CombatStagesTest, TheStagesLayouts)
             EXPECT_TRUE(arena.RespawnAtEntrance) << arena.Name << ": no stage ends at the first death";
             EXPECT_FALSE(arena.DeathRuns) << arena.Name << ": no graveyard, ghost or corpse run";
             EXPECT_GE(arena.EpisodeSeconds, 150u) << arena.Name;
-            EXPECT_EQ(arena.Schedule, Cu::PullSchedule::None) << arena.Name;
         }
     }
     EXPECT_TRUE(std::any_of(c1->Arenas.begin(), c1->Arenas.end(), [](auto const& arena) { return arena.Ally; }));

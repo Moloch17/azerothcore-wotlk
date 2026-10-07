@@ -334,7 +334,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // on the map thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
     _resetsStayOnMap = _continent && !stage.AnyArena([this](ArenaDefinition const& arena)
     {
-        return arena.Owner || arena.PartyGroup || arena.Against == Opposition::Instance
+        return arena.PartyGroup || arena.Against == Opposition::Instance
             || (arena.MapId && arena.MapId != _spawnMapId);
     });
 
@@ -400,19 +400,18 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _layouts.push_back(std::move(layout));
     }
 
-    // An owner can be any class, whatever StageSettings::Classes says: build every profile's assets now (seconds
-    // each) rather than on the world thread in the middle of an episode reset.
-    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
+    // The party follow's leader can be any class, whatever StageSettings::Classes says: build every profile's assets
+    // now (seconds each) rather than on the world thread in the middle of an episode reset.
+    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Against == Opposition::PartyFollow; }))
         for (ClassProfile const& profile : ClassProfiles())
             ClassAssets::For(profile);
 
-    // The owner's own row, after the seats, where an arena plays it from a frozen checkpoint.
-    // ... or the party follow's leader (Opposition::PartyFollow): the same slot, moved by the controller, played by a
+    // The owner's slot, after the seats: the party follow's leader (Opposition::PartyFollow): the same slot, moved by the controller, played by a
     // frozen checkpoint in the episodes that cast it and by the encounter's own keys in the rest. The leader is no
     // dead code: PartyFollowEncounter builds it in this slot (OwnerAgent) and CastOwnerActive plays it.
     _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
     {
-        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::PartyFollow;
+        return arena.Against == Opposition::PartyFollow;
     });
     _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
@@ -435,8 +434,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     // The encounters any of the stage's arenas uses, in build order.
     uint32 const envs = settings.Envs;
-    PullsEncounter* pulls = nullptr;
-    CreatureEncounter* creature = nullptr;
     InstanceEncounter* instance = nullptr;
 
     auto const add = [this](auto encounter)
@@ -446,11 +443,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         return raw;
     };
 
-    auto const hasPulls = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Pulls; };
-    auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
-    auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
     auto const hasInstance = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Instance; };
-    auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const hasPartyFollow = [](ArenaDefinition const& arena)
     {
         return arena.Against == Opposition::PartyFollow;
@@ -461,27 +454,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
     auto const hasRoles = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Roles; };
 
-    // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
-    // it); both check it. Rewards do not depend on each other's order: what several read (a seat's damage taken, the
-    // owner's totals) is computed before any encounter's Reward.
-    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
-        _owner = add(std::make_unique<OwnerEncounter>(*this, envs));
+    // Rewards do not depend on each other's order: what several read (a seat's damage taken) is computed before any
+    // encounter's Reward.
     if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.PartyGroup; }))
         _party = add(std::make_unique<PartyEncounter>(*this, envs));
-    // After the owner and the group: it moves both to the boss.
+    // After the group: it moves it to the boss.
     if (_stage.AnyArena(hasInstance))
         instance = add(std::make_unique<InstanceEncounter>(*this, envs));
-    if (_stage.AnyArena(hasPulls))
-        pulls = add(std::make_unique<PullsEncounter>(*this, envs));
-    if (_stage.AnyArena(hasCreature))
-        creature = add(std::make_unique<CreatureEncounter>(*this, envs));
-    Encounter* dummy = nullptr;
-    if (_stage.AnyArena(hasDummy))
-        dummy = add(std::make_unique<DummyEncounter>(*this, envs));
-    // Nothing to fight and nothing to order: it only puts fire on the ground, so it can go anywhere in the order.
-    Encounter* hazards = nullptr;
-    if (_stage.AnyArena(hasHazards))
-        hazards = add(std::make_unique<HazardEncounter>(*this, envs));
     // The party follow's leader: built in the owner's slot, nothing else to order against.
     if (_stage.AnyArena(hasPartyFollow))
         _partyFollow = add(std::make_unique<PartyFollowEncounter>(*this, envs));
@@ -507,10 +486,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         roles = add(std::make_unique<RolesEncounter>(*this, envs));
 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
-    // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
-    // while the drill around it worked.
-    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance,
-        hazards, _owner, _party, _partyFollow, seek, sight,
+    // runs -- it is only the columns and the terms that are missed.
+    for (Encounter* encounter : std::initializer_list<Encounter*>{ instance, _party, _partyFollow, seek, sight,
         interact, combat, roles })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -521,12 +498,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     {
         auto const uses = [&](Encounter const* encounter)
         {
-            return (encounter == _owner && arena.Owner)
-                || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
-                || (encounter == creature && hasCreature(arena))
-                || (encounter == hazards && hasHazards(arena))
+            return (encounter == _party && arena.PartyGroup)
                 || (encounter == instance && hasInstance(arena))
-                || (encounter == dummy && hasDummy(arena))
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
@@ -550,9 +523,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             Acore::StringFormat("{}Arena.{}.{}.WeightFinal", settings.TuningPrefix, _stage.Name, arena.Name),
             arena.WeightFinal >= 0 ? arena.WeightFinal : int32(_arenaWeights.back()), false))));
 
-        _arenaMaxRung.push_back(sConfigMgr->GetOption<int32>(
-            Acore::StringFormat("{}Arena.{}.{}.MaxRung", settings.TuningPrefix, _stage.Name, arena.Name),
-            arena.MaxRung, false));
         // The "human" stand-in's share of the arena's training episodes (I7): its own, else StandIn.Share's (-1).
         _arenaStandInShare.push_back(std::clamp(sConfigMgr->GetOption<int32>(
             Acore::StringFormat("{}Arena.{}.{}.StandInShare", settings.TuningPrefix, _stage.Name, arena.Name),
@@ -580,12 +550,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     _spec.LongestEpisodeSeconds = longestMs / IN_MILLISECONDS;
 
-    // Load it at startup rather than on the first episode. A hazard stage fights nothing but still draws its
-    // ground from the pool (OpponentPool::RandomHazardSpell), and without this the first episode of every env
-    // paid for the load.
-    if (_stage.AnyArena(hasCreature) || _stage.AnyArena(hasPulls) || _stage.AnyArena(hasHazards)
-        || _stage.AnyArena(hasDummy))
-        Opponents::OpponentPool::Instance();
     ConsumablePool::Instance();
 
     AddCoreEpisodeInfo();
@@ -723,12 +687,6 @@ Animus::Curriculum::ArenaDefinition const& Animus::Curriculum::StageScenario::Ar
 {
     uint32 const arena = Data(env).Arena;
     return _stage.Arenas[arena < _stage.Arenas.size() ? arena : 0];
-}
-
-int32 Animus::Curriculum::StageScenario::ArenaMaxRung(Env const& env) const
-{
-    uint32 const arena = Data(env).Arena;
-    return arena < _arenaMaxRung.size() ? _arenaMaxRung[arena] : -1;
 }
 
 bool Animus::Curriculum::StageScenario::Uses(Env const& env, Encounter const& encounter) const
@@ -1739,19 +1697,12 @@ Player* Animus::Curriculum::StageScenario::SeatBotInWorld(Env const& env, uint32
     return bot && bot->IsInWorld() ? bot : nullptr;
 }
 
-Player* Animus::Curriculum::StageScenario::Owner(Env const& env) const
-{
-    return _owner && Arena(env).Owner ? _owner->Find(env) : nullptr;
-}
-
 bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
 {
     if (!_castOwner)
         return false;
-    // An owner is always its own row, an evaluation's too; the party follow's leader keeps its script in one.
+    // The party follow's leader keeps its script in an evaluation.
     ArenaDefinition const& arena = Arena(env);
-    if (arena.OwnerCast && _owner && _owner->IsCast(env))
-        return true;
     return !env.Evaluating && arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env);
 }
 
@@ -2217,11 +2168,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         else if (!classic)
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
                 demands[seat] = RollDemand(_tuning.Party.RoleTankChance, _tuning.Party.RoleHealerChance);
-
-        // A drill arena fixes the seats it is about, after the makeup is drawn, so the rest of the group is still
-        // whatever the party would have been.
-        for (uint32 seat = 0; seat < arena.SeatAptitudes.size() && seat < data.ActiveSeats; ++seat)
-            demands[seat] = arena.SeatAptitudes[seat];
 
         for (uint32 seat = 0; seat < _seatCount; ++seat)
         {
@@ -2746,8 +2692,7 @@ void Animus::Curriculum::StageScenario::StockSeats(Env& env)
     EnvState& data = Data(env);
 
     // Warlocks hand out healthstones to the party they are in.
-    Player* owner = Owner(env);
-    bool warlockInParty = owner && owner->getClass() == CLASS_WARLOCK;
+    bool warlockInParty = false;
     if (Arena(env).PartyGroup)
         for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             if (data.Seats[seat].L && data.Seats[seat].L->Profile->Class == CLASS_WARLOCK)
@@ -2780,11 +2725,9 @@ void Animus::Curriculum::StageScenario::AcceptResurrections(Env& env)
 {
     EnvState& data = Data(env);
 
-    // The seats, then the owner in the slot past them.
     std::array<Player*, MAX_SEATS + 1> players{};
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         players[seat] = SeatBot(env, seat);
-    players[MAX_SEATS] = Owner(env);
 
     for (uint32 slot = 0; slot < players.size(); ++slot)
     {
@@ -4220,15 +4163,12 @@ void Animus::Curriculum::StageScenario::ObserveGoalSignals(Env const& env, SeatS
     seat.BelowRecover = below;
 
     // The event: something a plan should answer changed -- the seat newly below the escape line, more enemies in
-    // the fight than before, or the owner newly under attack.
+    // the fight than before.
     constexpr float EVENT_HEALTH_PCT = 35.0f;
     bool const low = bot->GetHealthPct() < EVENT_HEALTH_PCT;
-    Player const* owner = Owner(env);
-    bool const ownerAttacked = owner && owner->IsAlive() && !owner->getAttackers().empty();
-    seat.Event = (low && !seat.EventLow) || enemies > seat.EventEnemies || (ownerAttacked && !seat.EventOwnerAttacked);
+    seat.Event = (low && !seat.EventLow) || enemies > seat.EventEnemies;
     seat.EventLow = low;
     seat.EventEnemies = enemies;
-    seat.EventOwnerAttacked = ownerAttacked;
 }
 
 char const* Animus::Curriculum::AimlessCauseName(AimlessCause cause)
@@ -4873,9 +4813,9 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
             seat.FidgetHeldMs = 0;
 
         // A ranged seat moving in a fight it could stand and shoot in: its target in reach and in sight, nothing
-        // underfoot, nothing in melee with it, its owner (if it has one) close. Moving stops a hunter's Auto Shot
-        // and a caster's cast, which is what a player stands still to avoid. Kiting, stepping out of melee or out
-        // of fire, getting back into range or sight and keeping up with the owner are untouched.
+        // underfoot, nothing in melee with it. Moving stops a hunter's Auto Shot and a caster's cast, which is what a
+        // player stands still to avoid. Kiting, stepping out of melee or out of fire and getting back into range or
+        // sight are untouched.
         bool const ranged = seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee;
         bool needless = false;
         if (ranged && moving && combat && target && target->IsAlive() && !focusMoving)
@@ -4886,10 +4826,8 @@ void Animus::Curriculum::StageScenario::SettleIntent(Env& env, SeatState& seat, 
             for (Unit* attacker : bot->getAttackers())
                 if (attacker->IsAlive() && attacker->IsWithinMeleeRange(bot))
                     meleed = true;
-            Player* owner = Owner(env);
-            bool const ownerNear = !owner || !owner->IsAlive() || bot->GetDistance(owner) <= 15.0f;
             needless = distance >= minRange && distance <= 30.0f && bot->IsWithinLOSInMap(target) && !meleed
-                && ownerNear && !Encoding::StandingInHazards(bot, nullptr);
+                && !Encoding::StandingInHazards(bot, nullptr);
             // Held Actions.SettleGraceMs first, as the fidget is.
             seat.NeedlessHeldMs = needless ? seat.NeedlessHeldMs + _decisionMs : 0;
             if (needless && MovePrice::Settled(seat.NeedlessHeldMs, tuning.SettleGraceMs))
@@ -5174,12 +5112,10 @@ void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex,
         int32 Agent;
     };
 
-    // At most every seat and the owner: a fixed array, not a vector per seat per decision.
-    std::array<Friend, MAX_SEATS + 1> friendList;
+    // At most every seat: a fixed array, not a vector per seat per decision.
+    std::array<Friend, MAX_SEATS> friendList;
     uint32 friendCount = 0;
     friendList[friendCount++] = { bot, -1, int32(seatIndex) };
-    if (Player* owner = Owner(env))
-        friendList[friendCount++] = { owner, 0, -1 };
     for (uint32 other = 0; other < _seatCount && friendCount < friendList.size(); ++other)
         if (Player* teammate = other != seatIndex && Data(env).Seats[other].L ? SeatBotInWorld(env, other) : nullptr)
             friendList[friendCount++] = { teammate, -1, int32(other) };
@@ -5397,12 +5333,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
         if (uint32 const spent = seat.StepHealingPowerSpent; spent && bot->getPowerType() == POWER_MANA)
         {
-            // Pull after pull, the mana a heal costs is already paid for at the next engagement (readiness), so
-            // charging it here as well prices the same mana twice. The charge is a stand-in for an opportunity cost
-            // and belongs where there is no later fight to have one.
-            PullSchedule const schedule = Arena(env).Schedule;
-            bool const readiness = schedule == PullSchedule::Gauntlet || schedule == PullSchedule::Sequence;
-            float const weight = readiness ? _tuning.Support.HealingManaWithReadiness : _tuning.Support.HealingMana;
+            float const weight = _tuning.Support.HealingMana;
             if (weight > 0.0f)
                 seat.Rewards.Add(RewardTerm::HealingMana,
                     -weight * float(spent) / float(std::max<uint32>(1, bot->GetMaxPower(POWER_MANA))));
@@ -5464,7 +5395,6 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
     }
 
     // The enemies: the env's targets.
-    Player* owner = Owner(env);
     float const leadLevel = float(data.Seats[0].Level);
     for (uint32 slot = 0; slot < env.Targets.size() && slot < PACK_SLOTS; ++slot)
     {
@@ -5484,7 +5414,6 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
         features[STATE_ENEMY_ELITE] = enemy->ToCreature() && enemy->ToCreature()->isElite() ? 1.0f : 0.0f;
         features[STATE_ENEMY_LEVEL_DIFF] = (float(enemy->GetLevel()) - leadLevel) / 5.0f;
         features[STATE_ENEMY_IN_COMBAT] = enemy->IsInCombat() ? 1.0f : 0.0f;
-        features[STATE_ENEMY_ON_OWNER] = victim && victim == owner ? 1.0f : 0.0f;
         for (uint32 seat = 0; seat < _seatCount; ++seat)
         {
             if (!victim || victim != bots[seat])

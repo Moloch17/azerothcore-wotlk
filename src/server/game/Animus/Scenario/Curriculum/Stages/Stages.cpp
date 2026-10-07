@@ -1026,56 +1026,34 @@ namespace
     /// Why `arena` cannot be played with `stage`'s blocks, or empty.
     std::string ArenaProblem(StageDefinition const& stage, ArenaDefinition const& arena)
     {
-        bool const pulls = arena.Against == Opposition::Pulls;
-
-        if (pulls != (arena.Schedule != PullSchedule::None))
-            return "a pull schedule goes with pulls, and only with pulls";
-        if (pulls && !stage.Has(BlockId::Pack))
-            return "pulls need the pack block";
         if (arena.DeathRuns && (!stage.Has(BlockId::Death) || arena.Against == Opposition::Instance))
             return "death runs on in the open world, with the death block";
-        if ((arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence)
-            && !stage.Has(BlockId::Gauntlet))
-            return "the gauntlet schedule needs the gauntlet block";
         bool const instance = arena.Against == Opposition::Instance;
         if (instance != (arena.Instance != InstanceLadder::None))
             return "an instance ladder goes with fighting in an instance, and only with that";
-        if (instance && (!stage.Has(BlockId::Pack) || arena.Schedule != PullSchedule::None))
-            return "an instance needs the pack block and no pull schedule";
+        if (instance && !stage.Has(BlockId::Pack))
+            return "an instance needs the pack block";
         if (instance && arena.Seats != SeatPlan::Party && arena.Seats != SeatPlan::Raid)
             return "an instance is fought by a party or a raid";
         if (arena.RaidSeats && (arena.Seats != SeatPlan::Raid || arena.RaidSeats > MAX_SEATS
             || arena.RaidSeats % GROUP_SEATS))
             return "RaidSeats is a raid's seat count: a multiple of GROUP_SEATS, up to MAX_SEATS";
-        if (arena.Owner && (!(pulls || instance) || !stage.Has(BlockId::Companion)))
-            return "an owner needs pulls or an instance, and the companion block";
-        if (arena.Owner && !arena.OwnerCast)
-            return "an owner is played through its row (OwnerCast): there is no scripted owner";
-        // A raid is a group of its own, in an instance or against pulls (stage12's raid arenas): no owner.
-        bool const raidGroup = arena.Seats == SeatPlan::Raid
-            && (instance || arena.Against == Opposition::Pulls);
-        // Its members are read through the party block's slots, or (a perception-true stage) the party frames.
-        if (arena.PartyGroup && !stage.Has(BlockId::Party) && !stage.Has(BlockId::PartyFrames))
-            return "a party group needs the party block or the party frames block";
-        // So is a group running a dungeon: five learned seats and no owner.
+        // A raid is a group of its own, in an instance.
+        bool const raidGroup = arena.Seats == SeatPlan::Raid && instance;
+        // Its members are read through the party frames.
+        if (arena.PartyGroup && !stage.Has(BlockId::PartyFrames))
+            return "a party group needs the party frames block";
+        // A group running a dungeon: five learned seats.
         bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
-        // And a proper party drilling against pulls (the archived roles and group stages) or on a dungeon's ground
-        // (the roles stage, G1: Opposition::Roles).
+        // And a proper party drilling on a dungeon's ground (the roles stage, G1: Opposition::Roles).
         bool const roles = arena.Against == Opposition::Roles;
-        bool const drillGroup = arena.ProperParty && (pulls || roles) && arena.Seats == SeatPlan::Party
-            && !arena.Owner;
-        if (arena.PartyGroup && !raidGroup && !dungeonGroup && !drillGroup
-            && (!arena.Owner || arena.Seats != SeatPlan::Party))
-            return "a party group needs an owner and party seats, unless it is a raid, a dungeon or a drill";
+        bool const drillGroup = arena.ProperParty && roles && arena.Seats == SeatPlan::Party;
+        if (arena.PartyGroup && !raidGroup && !dungeonGroup && !drillGroup)
+            return "a party group is a raid, a dungeon's or a drill's";
         if (arena.ProperParty && !(drillGroup && arena.PartyGroup))
-            return "a proper party is drawn for a party drill against pulls or on a dungeon's ground (a whole dungeon "
-                "draws its own)";
+            return "a proper party is drawn for a party drill on a dungeon's ground (a whole dungeon draws its own)";
         if (arena.DrillRole > DRILL_DAMAGE || (arena.DrillRole && !arena.ProperParty))
             return "a drilled role (1 tank, 2 healer, 3 damage) is a proper party's";
-        if (arena.Schedule == PullSchedule::Camp && (!arena.ProperParty || !stage.Has(BlockId::Crowd)))
-            return "a camp is a proper party's pull drill, read through the crowd block";
-        if (arena.PackHealthPct != 100 && (!pulls || arena.PackHealthPct == 0))
-            return "pack health is a percentage of a pull's creatures' own";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
         if (arena.EvalOnly && arena.PullDrill)
@@ -1092,14 +1070,10 @@ namespace
         if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party
             && arena.Seats != SeatPlan::Raid))
             return "the stand-in's share is a percentage of a party's (or a raid's) training episodes";
-        if (arena.OwnerCast && !arena.Owner)
-            return "a cast owner is still an owner: the arena has to have one";
-        if (arena.OwnerCast && stage.SeatCount() + 1 > MAX_SEATS)
-            return "a cast owner needs a seat slot past the seats, and a raid has none to spare";
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;
-        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Schedule != PullSchedule::None))
+        if (seek && (arena.Seats != SeatPlan::Solo))
             return "a seek arena is one seat on its own";
         if (seek && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)))
             return "a seek arena is walked with the move block and searched with the camera (the vision block)";
@@ -1111,8 +1085,7 @@ namespace
         // hallway points (its SpawnPoints, which it spawns at too); walked to with the move block, pointed at by the
         // compass (withheld more often each rung) and seen with the camera.
         bool const sight = arena.Against == Opposition::Sight;
-        if (sight && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || !arena.Rooms.empty()))
+        if (sight && (arena.Seats != SeatPlan::Solo || !arena.Rooms.empty()))
             return "a sight arena is one seat on its own, with no room of its own";
         if (sight && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Vision)))
             return "a sight arena is walked with the move block, pointed at by the compass and seen with the camera";
@@ -1126,8 +1099,7 @@ namespace
         // M3's sites: one seat on its own, on foot and dry, acting on what it sees through the sight block; the goal
         // names what it is after, so nothing points at it -- no compass, no marker of its own.
         bool const interact = arena.Against == Opposition::Interact;
-        if (interact && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || !arena.Rooms.empty()))
+        if (interact && (arena.Seats != SeatPlan::Solo || !arena.Rooms.empty()))
             return "an interact arena is one seat on its own, with no room of its own";
         if (interact && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)))
             return "an interact arena is walked with the move block, seen with the camera and acted on with the sight "
@@ -1153,8 +1125,7 @@ namespace
         // the minimap and memory, so the camera and the party frames, and never the compass.
         bool const partyFollow = arena.Against == Opposition::PartyFollow;
         if (partyFollow && (arena.Seats != SeatPlan::Party || !arena.PartySize || arena.PartySize > GROUP_MEMBERS
-            || arena.Owner || arena.PartyGroup
-            || arena.Schedule != PullSchedule::None || !arena.MapId))
+            || arena.PartyGroup || !arena.MapId))
             return "a party follow is a party of 1 to GROUP_MEMBERS followers and its leader, on a dungeon's map, "
                 "with nothing to fight";
         if (partyFollow && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)
@@ -1174,9 +1145,9 @@ namespace
             return "a roles drill goes with a party drilling on a cleared dungeon (Opposition::Roles), and only with "
                 "that";
         if (roles && (arena.Seats != SeatPlan::Party || arena.PartySize || !arena.ProperParty || !arena.PartyGroup
-            || arena.Owner || arena.Schedule != PullSchedule::None || arena.DeathRuns || !arena.RespawnAtEntrance
+            || arena.DeathRuns || !arena.RespawnAtEntrance
             || arena.DrillRole != RolesDraw::DrilledRole(arena.Roles)))
-            return "a roles arena is a proper party of five in a core group, no owner or pull schedule, its drilled "
+            return "a roles arena is a proper party of five in a core group, its drilled "
                 "role the drill's, its dead back at the entrance";
         if (roles && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
             || !stage.Has(BlockId::Combat) || !stage.Has(BlockId::PartyFrames) || !stage.Has(BlockId::Gauntlet)))
@@ -1187,9 +1158,8 @@ namespace
         bool const combat = arena.Against == Opposition::Combat;
         if (combat != (arena.Combat != CombatDrill::None))
             return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";
-        if (combat && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.DeathRuns))
-            return "a combat arena is one seat on its own, with no pull schedule, owner or corpse run";
+        if (combat && (arena.Seats != SeatPlan::Solo || arena.DeathRuns))
+            return "a combat arena is one seat on its own, with no corpse run";
         if (combat && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
             || !stage.Has(BlockId::Combat)))
             return "a combat arena is fought by sight: the move, vision, sight and combat blocks";
@@ -1210,14 +1180,6 @@ namespace
             if (room.Floor.size() < 3 || room.Name.empty())
                 return "a seek room is named and its floor is a polygon";
 
-        bool const dummy = arena.Against == Opposition::Dummy;
-        if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None))
-            return "the rotation drill is one seat on its own against its dummies";
-        if (arena.Drill != DummyDrill::Still && !dummy)
-            return "only a dummy arena has a drill";
-        if (dummy && arena.Drill == DummyDrill::Moving && !stage.Has(BlockId::Pack))
-            return "the moving drill's extra dummies need the pack block's slots";
         // An arena on a map of its own stands on its own ground: the stage's points are on the stage's map. An
         // encounter that finds its own spawn (an instance's door, a quest giver, a node field, an inn) needs none.
         bool const ownSpawn = instance || arena.Against == Opposition::PartyFollow;
@@ -1336,10 +1298,8 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
 {
     switch (Seats)
     {
-        // A party is the owner and its companions: GROUP_MEMBERS learned seats beside it, which is what this
-        // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid. With no
-        // owner it is a whole group of learned seats (the dungeon, 2026-09-30).
-        case SeatPlan::Party:  return PartySize ? PartySize : Owner ? GROUP_MEMBERS : GROUP_SEATS;
+        // A party is a whole group of learned seats (the dungeon, 2026-09-30), or PartySize of them.
+        case SeatPlan::Party:  return PartySize ? PartySize : GROUP_SEATS;
         case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
         case SeatPlan::Solo:   break;
     }

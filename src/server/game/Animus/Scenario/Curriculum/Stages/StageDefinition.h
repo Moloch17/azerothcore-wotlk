@@ -43,11 +43,7 @@ namespace Animus::Curriculum
     /// What the seats fight.
     enum class Opposition : uint8
     {
-        Creature,       // one same-level creature spawned out of aggro range
-        Pulls,          // packs of creatures (see PullSchedule)
-        Hazards,        // nothing to fight: ground to get off (HazardEncounter)
         Instance,       // a real dungeon or raid boss in its own instance (InstanceEncounter, ArenaDefinition::Instance)
-        Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
         /// Nothing to fight: one real object in one of a dungeon's rooms, found by sight and stopped beside
         /// (SeekEncounter, ArenaDefinition::Rooms and Objects) -- M2 seek.
         Seek,
@@ -149,15 +145,6 @@ namespace Animus::Curriculum
         std::vector<Position> Far{};
     };
 
-    /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
-    enum class DummyDrill : uint8
-    {
-        Still,          // one dummy standing still: the rotation at its simplest
-        Moving,         // wandering dummies, more arriving to switch to
-        Hitting,        // one that hits back and can be killed: output while being hit, the tank's drill
-        Bleeding,       // a still dummy while damage lands on the seat: output while keeping itself up
-    };
-
     /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
     /// the ten-, twenty-five- and forty-man raids.
     enum class InstanceLadder : uint8
@@ -169,17 +156,6 @@ namespace Animus::Curriculum
         Raid40,
         /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
         Wing,
-    };
-
-    enum class PullSchedule : uint8
-    {
-        None,
-        SinglePack,     // one pack; the episode ends when it is cleared
-        Gauntlet,       // pull after pull with a break between, until the episode ends
-        Sequence,       // a known run of pulls in a fixed order, the same every episode, won by clearing the last
-        /// A camp: two to four packs standing at once, apart (the pull drill). Won by killing them all; a pack fought
-        /// beside another is charged, a pack killed on its own is paid. A single pack's ladder and terms otherwise.
-        Camp,
     };
 
     /// Most arenas a stage can mix (the critic state has one column per arena).
@@ -198,14 +174,8 @@ namespace Animus::Curriculum
         /// <TuningPrefix>Arena.<stage>.<name>.WeightFinal
         int32 WeightFinal = -1;
         SeatPlan Seats = SeatPlan::Solo;
-        Opposition Against = Opposition::Creature;
-        PullSchedule Schedule = PullSchedule::None;
-        bool Owner = false;             // an owner the seats fight for
-        /// The owner is an agent of its own: one more row on the wire, after the seats (and the directors), which
-        /// the learner plays from a frozen checkpoint (its cast, stage.json `cast`) and never trains. Every owner
-        /// is one (there is no scripted owner): an owner arena sets it.
-        bool OwnerCast = false;
-        bool PartyGroup = false;        // the owner and seats form a core group
+        Opposition Against = Opposition::Instance;
+        bool PartyGroup = false;        // the seats form a core group (PartyEncounter)
         /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
         /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
         InstanceLadder Instance = InstanceLadder::None;
@@ -228,35 +198,16 @@ namespace Animus::Curriculum
         /// own draw (Party.SizeWeight*, or a whole group). The party follow's four followers beside its leader.
         uint32 PartySize = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
-        /// What the first seats must be able to do (entry i is seat i); the rest are drawn as usual. A drill stage
-        /// fixes the seat it is about -- one that has to hold what it pulls, one that has to keep a group up --
-        /// where the ordinary party asks for nothing in particular and the lesson is smeared over whoever
-        /// happened to turn up.
-        std::vector<AptitudeDemand> SeatAptitudes{};
         /// A full party of five drawn as a dungeon's is (StageScenario::FitsDungeonRole): a tank, a healer and three
         /// damage dealers by what their specs are geared for.
         bool ProperParty = false;
         /// The role this arena drills (DungeonRole: 1 tank, 2 healer, 3 damage; 0 none): that seat is seat 0 -- the
         /// one whose class and build climbs the pack ladder -- and its role's terms are weighted Raid.DrillWeight.
         uint8 DrillRole = 0;
-        /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
-        uint32 PackHealthPct = 100;
-        /// Opposition::Dummy: what the dummy does. Ignored by every other arena.
-        DummyDrill Drill = DummyDrill::Still;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.
         bool Hazards = false;
-        /// Pin the pack ladder instead of letting it climb: -1 leaves it to Pulls.MaxTier, 0 and up hold every
-        /// class/role at that rung for training and evaluation alike (DifficultyLadder::Draw takes it as the cap,
-        /// and a cap of 0 leaves review and stretch draws nowhere to go).
-        ///
-        /// A drill wants one variable. With the ladder climbing, the thing being drilled and the difficulty of
-        /// everything around it move together, and a metric that rises can mean either "it is not learning" or
-        /// "there is more of it to meet" -- stage3_hazards spent 7M steps with its hazard seconds rising against a
-        /// rising rung and neither reading could be ruled out. Overridden per arena by
-        /// `<TuningPrefix>Arena.<stage>.<arena>.MaxRung`.
-        int32 MaxRung = -1;
         /// **Commanded goals** (next-run plan, 3.4): the sim gives the seat its primary goal -- a random one of those
         /// the goal block offers, every COMMAND_EVERY decisions or when it ends -- as a director's order is given, so
         /// the learner holds it without its goal head being trained on it. Paid only by the goal's own terms beside

@@ -110,7 +110,7 @@ void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
         : (uint64(rand32()) << 32) | uint64(rand32());
     // Only a party without an owner can be led by it: an owner leads its own party. Nor a drill's: seat 0 is the
     // drilled role's (ArenaDefinition::DrillRole), and a leading stand-in would sit there.
-    StandIn::Style const style = StandIn::Draw(seed, _tuning.StandIn, !arena.Owner && !arena.DrillRole);
+    StandIn::Style const style = StandIn::Draw(seed, _tuning.StandIn, !arena.DrillRole);
 
     // A leader sits in seat 0, the group's leader (PartyEncounter::Build). A follower takes a seat whose build plays
     // the role it wants, when there is one, else any; its own random numbers pick among them.

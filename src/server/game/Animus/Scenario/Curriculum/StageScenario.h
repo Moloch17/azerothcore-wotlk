@@ -38,7 +38,6 @@
 
 namespace Animus::Curriculum
 {
-    class OwnerEncounter;
     class PartyFollowEncounter;
     class PartyEncounter;
 
@@ -158,8 +157,6 @@ namespace Animus::Curriculum
         /// that arena and a row below `rows`, by weight; none otherwise, and the run starts at the door.
         [[nodiscard]] std::optional<ExploreStart> DrawExploreStart(uint32 arena, uint32 rows) const;
 
-        /// The arena's pinned pack rung, or -1 when the ladder is free to climb (ArenaDefinition::MaxRung).
-        [[nodiscard]] int32 ArenaMaxRung(Env const& env) const;
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
         /// The encounters the env's current episode uses, in build order.
@@ -287,9 +284,6 @@ namespace Animus::Curriculum
         /// What SeatReward last resolved as this seat's target (SeatState::CurrentTargetGuid), for the const readers
         /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
         [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
-
-        /// The owner, or null (no owner in the env's arena, or none built).
-        [[nodiscard]] Player* Owner(Env const& env) const;
 
         /// The party's living tank seat, or null (no party in the env's arena).
         [[nodiscard]] Player* PartyTank(Env const& env) const;
@@ -457,7 +451,7 @@ namespace Animus::Curriculum
         /// StageSettings::ContinentReplicas resolved against the env count and the phase cap.
         uint32 _envsPerReplica = 31;
         uint32 _seatCount = 1;
-        bool _castOwner = false;            // some arena plays its owner as an agent (ArenaDefinition::OwnerCast)
+        bool _castOwner = false;            // the party follow's leader is an agent in the owner's slot
         uint32 _level = 0;                  // StageSettings::Level: every character's level, 0 = random
         float _decisionScale = 1.0f;
         uint32 _decisionMs = 0;
@@ -506,13 +500,11 @@ namespace Animus::Curriculum
         std::string _wingTallyOthers;
         uint32 _wingTallyRung = 0;
         std::vector<uint32> _arenaEpisodeMs;
-        std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         /// Per arena: the stand-in's share of its training episodes, percent (ArenaDefinition::StandInShare and its
         /// conf
         /// key); -1: StandIn.Share's.
         std::vector<int32> _arenaStandInShare;
         SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenOnly;
-        OwnerEncounter* _owner = nullptr;
         /// The party follow's leader (M4), in the owner's slot: PartyFollowEncounter builds it there (OwnerAgent),
         /// CastOwnerActive says when a frozen checkpoint plays its row, and the controller moves it as a seat's.
         /// Not dead code: the owner's slot and these two uses are what the leader stands on.

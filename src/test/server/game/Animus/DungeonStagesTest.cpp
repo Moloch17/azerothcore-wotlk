@@ -122,8 +122,7 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             EXPECT_EQ(arena.Instance, Cu::InstanceLadder::Wing) << name << " " << arena.Name;
             EXPECT_EQ(arena.Seats, Cu::SeatPlan::Party) << name << " " << arena.Name;
             EXPECT_TRUE(arena.PartyGroup) << name << " " << arena.Name;
-            EXPECT_FALSE(arena.Owner || arena.DeathRuns) << name << " "
-                << arena.Name << ": no owner, no corpse run";
+            EXPECT_FALSE(arena.DeathRuns) << name << " " << arena.Name << ": no corpse run";
             EXPECT_GE(arena.InstanceRow, 0) << name << " " << arena.Name;
         }
     }

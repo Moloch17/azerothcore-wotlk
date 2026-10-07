@@ -96,10 +96,8 @@ TEST(RolesStageTest, TheStageIsDefined)
         EXPECT_EQ(arena.SeatCount(), Cu::GROUP_SEATS) << arena.Name;
         EXPECT_TRUE(arena.ProperParty) << arena.Name;
         EXPECT_TRUE(arena.PartyGroup) << arena.Name;
-        EXPECT_FALSE(arena.Owner) << arena.Name;
         EXPECT_TRUE(arena.RespawnAtEntrance) << arena.Name << ": no stage ends at the first death";
         EXPECT_FALSE(arena.DeathRuns) << arena.Name << ": no graveyard, ghost or corpse run";
-        EXPECT_EQ(arena.Schedule, Cu::PullSchedule::None) << arena.Name;
         EXPECT_EQ(arena.Combat, Cu::CombatDrill::None) << arena.Name;
         EXPECT_GE(arena.EpisodeSeconds, 240u) << arena.Name;
         EXPECT_FALSE(arena.EvalOnly) << arena.Name;
