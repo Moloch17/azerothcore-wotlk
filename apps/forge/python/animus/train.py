@@ -1125,6 +1125,10 @@ class TrainingRun:
                       f"{partners.score}): {', '.join(m.name for m in self.partners.pool.active()) or 'nobody yet'}"
                       + (f"; missing {', '.join(self.partners.pool.missing)}" if self.partners.pool.missing else "")
                       + (f"; unusable {', '.join(self.partners.pool.unusable)}" if self.partners.pool.unusable
+                         else "")
+                      + "".join(f"; {m.name} {m.actor.resident_bytes() / 2**20:.1f} MB of weights"
+                                for m in self.partners.pool.active() if m.actor is not None)
+                      + (f"; at most {partners.resident_members} on the device" if partners.resident_members
                          else ""), flush=True)
                 if self.ranks.leader:
                     self.partners.pool.write()
@@ -2019,7 +2023,9 @@ class TrainingRun:
         if self.cast is not None:
             cast_rows = self.cast.rows(part)
             if cast_rows.any():
-                actions = self.cast.act(part, actions, cast_rows)
+                # Its rows' look too (protocol 22): a frozen actor with a camera reads its rows' images and turns
+                # its own camera; one without holds it.
+                actions, look = self.cast.act_and_look(part, actions, cast_rows, look)
                 present = present & ~cast_rows
                 # The exploiter's episodes: the far side is its to play (animus.exploit); the league skipped them.
                 if self.exploit is not None and self.exploit.active:
@@ -2033,7 +2039,7 @@ class TrainingRun:
         if self.partners is not None:
             partner_rows = self.partners.rows(part)
             if partner_rows.any():
-                actions = self.partners.act(part, actions, partner_rows)
+                actions, look = self.partners.act_and_look(part, actions, partner_rows, look)
                 present = present & ~partner_rows
         goal, goal_log_prob, goal_chosen, slow_before, slow_value, goal_slots = (
             goals if goals is not None else (None, None, None, None, None, None))

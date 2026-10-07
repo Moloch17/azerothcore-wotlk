@@ -36,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cast import CastActor, league_snapshot
+from .cast import CastActor, Residency, league_snapshot
 from .device import host
 from .stages import arena_state_span
 
@@ -98,6 +98,7 @@ class Partner:
     episodes: int = 0
     score: float = math.nan  # the party's outcome with it, an average over rate_window episodes
     retired: bool = False
+    layouts: frozenset = frozenset()  # the stage layouts its checkpoint plays (read once, when it joins)
 
     @property
     def name(self) -> str:
@@ -120,6 +121,8 @@ class PartnerPool:
         self.counter = 0
         self.missing: list[str] = []
         self.unusable: list[str] = []
+        # At most cast.partners.resident_members frozen actors on the device, the rest offloaded (animus.cast).
+        self.residency = Residency(getattr(config, "resident_members", 0))
 
     def add(self, path: Path, kind: str = KIND_STAGE) -> Partner | None:
         path = Path(path)
@@ -129,11 +132,13 @@ class PartnerPool:
             self.missing.append(str(path))
             return None
         member = Partner(path=path, kind=kind, order=self.counter)
-        # Built now, so a checkpoint the frozen actor cannot play is named at once rather than failing mid-rollout:
-        # today that is any checkpoint with a camera (animus.distill.build_teacher refuses a vision block).
+        # Built now, so a checkpoint the frozen actor cannot play is named at once rather than failing mid-rollout: a
+        # camera this stage cannot feed it (animus.distill.check_camera), weights that do not load.
         try:
-            self.actor_of(member)
+            member.layouts = frozenset(self.actor_of(member).teacher.layouts)
         except (ValueError, KeyError, RuntimeError) as error:
+            self.residency.forget(member.actor)
+            member.actor = None
             self.unusable.append(f"{path} ({error})")
             return None
         self.counter += 1
@@ -144,14 +149,14 @@ class PartnerPool:
     def actor_of(self, member: Partner) -> CastActor:
         if member.actor is None:
             member.actor = CastActor(member.path, self.spec, self.stage, self.device, self.deterministic)
-        return member.actor
+        return self.residency.touch(member.actor)
 
     def active(self) -> list[Partner]:
         return [member for member in self.members if not member.retired]
 
     def covers(self, member: Partner, layout: int) -> bool:
         """Whether the member's checkpoint has stage layout `layout` (it would fall back to the live policy else)."""
-        return int(layout) in self.actor_of(member).teacher.layouts
+        return int(layout) in member.layouts
 
     def newest_snapshot(self) -> Partner | None:
         snapshots = [member for member in self.active() if member.kind == KIND_SNAPSHOT]
@@ -310,16 +315,23 @@ class Partners:
         return rows
 
     def act(self, step, live_actions: np.ndarray, rows: np.ndarray) -> np.ndarray:
+        return self.act_and_look(step, live_actions, rows)[0]
+
+    def act_and_look(self, step, live_actions: np.ndarray, rows: np.ndarray,
+                     look: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray | None]:
+        """The partner rows' actions over `live_actions` and their look over `look` (the live policy's [E, A, heads],
+        None without one): each partner reads its rows' camera bytes (step.image, where they are) and sends its own
+        look, the hold for one without a camera."""
         actions = live_actions.copy()
         if not rows.any():
-            return actions
-        obs, mask = host(step.obs), host(step.mask)
+            return actions, look
+        obs, mask, image = host(step.obs), host(step.mask), getattr(step, "image", None)
         for index in np.unique(self.assigned[rows]):
             mine = rows & (self.assigned == index)
             actor = self.pool.actor_of(self.pool.members[int(index)])
-            actions = actor.act(obs, mask, step.layout, mine, actions)
+            actions, look = actor.decide(obs, mask, step.layout, mine, actions, image, look)
             self.fallback_total += actor.fallback_rows
-        return actions
+        return actions, look
 
     def ended_rows(self, done: np.ndarray) -> np.ndarray:
         """[n, A] bool: the partner rows of the episodes ending in envs `done` (before clear)."""
@@ -375,11 +387,16 @@ def with_partners_chooser(choose, partners: Partners):
     def chooser(step):
         partners.clear(step.done)
         chosen = choose(step)
-        actions, rest = (chosen[0], chosen[1:]) if isinstance(chosen, tuple) else (chosen, ())
+        # (actions), (actions, goals) or (actions, goals, look): run_evaluation's shapes.
+        actions, goals, look = (tuple(chosen) + (None,) * (3 - len(chosen)) if isinstance(chosen, tuple)
+                                else (chosen, None, None))
         rows = partners.rows(step)
         if rows.any():
-            actions = partners.act(step, np.asarray(actions), rows)
-        return (actions, *rest) if rest else actions
+            actions, look = partners.act_and_look(step, np.asarray(actions), rows,
+                                                  None if look is None else np.asarray(look))
+        if look is not None:
+            return actions, goals, look
+        return (actions, goals) if goals is not None else actions
 
     def excluded(env: int) -> np.ndarray:
         return partners.assigned[env] >= 0
