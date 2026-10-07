@@ -64,7 +64,7 @@ STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
 ACT_HEADER = struct.Struct("<II")
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
-MODE_FLAG_SCRIPTED_OPPONENTS = 1  # unused since the scripted baselines went; the sim ignores it; goes at the next protocol change
+# Flag bit 1 is unused (it was SCRIPTED_OPPONENTS) and goes at the next protocol change (Protocol.h).
 # The learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): an evaluation has it in
 # one seat of every party, training in its share of them; without the flag no party has one.
 MODE_FLAG_STAND_IN = 2

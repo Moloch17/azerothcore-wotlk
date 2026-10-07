@@ -437,20 +437,19 @@ def action_mask_table(names, layout_names, action_names: dict[str, list[str]], n
     return table
 
 
-def casting_weights(summary: dict, baseline: dict | None, strength: float, max_ratio: float,
+def casting_weights(summary: dict, strength: float, max_ratio: float,
                     metric: str = "", roles: dict[str, str] | None = None,
                     role_metrics: dict | None = None) -> dict[str, float]:
-    """How often training episodes should draw each (class, role), from the gap to the baseline's score for it
+    """How often training episodes should draw each (class, role), from how low its score is against the others'
     and, with `metric`, from how far it falls short on that summary field (higher is better).
 
-    A stage is gated on its weakest class and role, so an episode of a pair that trails its baseline is worth more
-    than one of a pair that is already clear of it. Per pair and not per model: one model is a whole class now, and
+    A stage is gated on its weakest class and role, so an episode of a pair that scores lowest is worth more than
+    one of a pair that is already clear of the rest. Per pair and not per model: one model is a whole class now, and
     weighting a paladin that heals badly by its average would send it more tanking episodes it did not need. The
-    baseline gap alone misses a pair that beats a weak baseline yet fails an absolute gate -- stage4_duel's mage
-    beat the old scripted mage while killing 68% of the time -- so the shortfall on the gated metric counts as well,
-    whichever of the two is larger. Each is measured in its own standard deviations, so the weights do not depend
-    on the size of the scenario's rewards, and the spread is capped: the heaviest pair draws at most `max_ratio`
-    times the lightest, whatever the scores are. Weights average 1 (the even draw).
+    score alone misses a pair that scores well yet fails an absolute gate, so the shortfall on the gated metric counts
+    as well, whichever of the two is larger. Each is measured in its own standard deviations, so the weights do not
+    depend on the size of the scenario's rewards, and the spread is capped: the heaviest pair draws at most
+    `max_ratio` times the lightest, whatever the scores are. Weights average 1 (the even draw).
     """
     rows = summary.get("castings", {})
     names = [name for name, row in rows.items() if row.get("score") is not None]
@@ -461,12 +460,9 @@ def casting_weights(summary: dict, baseline: dict | None, strength: float, max_r
         spread = float(values.std())
         return (values - values.mean()) / spread if spread > 1e-9 else np.zeros_like(values)
 
-    base = (baseline or {}).get("castings", {})
-    gaps = np.array([float(base.get(name, {}).get("score") or 0.0) - float(rows[name]["score"]) for name in names])
-    need = standardised(gaps)
+    need = standardised(-np.array([float(rows[name]["score"]) for name in names]))
     if metric and all(rows[name].get(metric) is not None for name in names):
-        # The larger of the two needs, not their sum: a wide lead over a weak baseline must not cancel a gate
-        # the layout is failing.
+        # The larger of the two needs, not their sum: a high score must not cancel a gate the layout is failing.
         need = np.maximum(need, standardised(-np.array([float(rows[name][metric]) for name in names])))
     need = np.maximum(need, role_needs(rows, names, roles or {}, role_metrics or {}))
     if not need.any():

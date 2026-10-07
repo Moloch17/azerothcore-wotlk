@@ -118,6 +118,9 @@ class EvalConfig:
     arms_every: int = 1
 
     def __post_init__(self) -> None:
+        if self.baseline not in ("", "random"):
+            raise ValueError(f"eval.baseline: expected \"random\" (the one policy the sim can play for a floor) or "
+                             f"\"\", got {self.baseline!r}")
         unknown = sorted(set(self.arms) - set(EVAL_ARMS))
         if unknown:
             raise ValueError(f"eval.arms: unknown arm(s) {unknown}; expected some of {list(EVAL_ARMS)}")
@@ -559,8 +562,7 @@ class StatusConfig:
 class LayoutSamplingConfig:
     """Training episodes draw a class/build uniformly, so each layout gets its share of the data whatever it is
     worth. A stage is gated on its weakest layout, though, so the data is worth most where the score is lowest --
-    against eval.baseline's per-layout score when the stage has one, else the layouts' own scores against each
-    other -- and where `metric` falls shortest. After every evaluation the learner sends the sim a weight per layout
+    against the other layouts' scores -- and where `metric` falls shortest. After every evaluation the learner sends the sim a weight per layout
     (protocol WEIGHTS) and training episodes draw layouts in proportion; evaluation stays uniform, whatever the
     weights are. Needs eval.every_env_steps.
     """
@@ -569,9 +571,9 @@ class LayoutSamplingConfig:
     strength: float = 1.0  # e^(strength x gap in standard deviations of the gaps): 0 = uniform
     max_ratio: float = 3.0  # the heaviest layout draws at most this many times the lightest
     # A summary field where higher is better (an episode info column or a derived one such as clean_kill): a layout's
-    # need is the larger of its baseline gap and its shortfall on this, each in standard deviations over the layouts.
-    # A layout can beat a weak baseline and still fail an absolute gate; this sends the data there too.
-    # "" = the baseline gap alone.
+    # need is the larger of its score shortfall and its shortfall on this, each in standard deviations over the layouts.
+    # A layout can score well and still fail an absolute gate; this sends the data there too.
+    # "" = the score alone.
     metric: str = ""
     # Replaying lost fights: after every training evaluation the sim is sent the seeds of the episodes that fell
     # short on `metric` (a per-episode 0/1 field such as clean_kill), and this share of training resets rebuilds one

@@ -50,9 +50,7 @@ def test_two_builds_of_one_role_are_told_apart():
 def test_the_weights_ask_for_more_of_the_build_that_is_failing():
     summary = {"castings": {"paladin_protection": {"score": 9.0}, "paladin_holy": {"score": 1.0},
                             "mage_frost": {"score": 5.0}}}
-    baseline = {"castings": {"paladin_protection": {"score": 5.0}, "paladin_holy": {"score": 5.0},
-                             "mage_frost": {"score": 5.0}}}
-    weights = casting_weights(summary, baseline, strength=1.0, max_ratio=4.0)
+    weights = casting_weights(summary, strength=1.0, max_ratio=4.0)
 
     # The holy build gets the data, not the paladin: protection is not asked to train harder for its sake.
     assert weights["paladin_holy"] > weights["mage_frost"] > weights["paladin_protection"]

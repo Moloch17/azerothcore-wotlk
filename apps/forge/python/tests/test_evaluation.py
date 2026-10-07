@@ -488,10 +488,9 @@ def test_summary_groups_by_talent_build():
     assert same.summary(())["builds"] == {}
 
 
-def test_casting_weights_favour_the_layouts_below_baseline():
+def test_casting_weights_favour_the_layouts_scoring_lowest():
     summary = {"castings": {"rogue_dps": {"score": 6.0}, "mage_dps": {"score": 9.0}, "priest_dps": {"score": 8.0}}}
-    baseline = {"castings": {"rogue_dps": {"score": 8.5}, "mage_dps": {"score": 4.0}, "priest_dps": {"score": 8.0}}}
-    weights = casting_weights(summary, baseline, strength=1.0, max_ratio=3.0)
+    weights = casting_weights(summary, strength=1.0, max_ratio=3.0)
 
     assert weights["rogue_dps"] > weights["priest_dps"] > weights["mage_dps"]
     assert np.mean(list(weights.values())) == pytest.approx(1.0)  # the episode count is unchanged
@@ -513,43 +512,41 @@ def test_casting_weights_grade_a_build_against_its_role():
              "paladin_protection": "tank", "warrior_protection": "tank"}
     role_metrics = {"healer": ["-teammates_died", "group_kept_share", "healing_coverage"], "tank": ["tank_hold_share"]}
 
-    weights = casting_weights(summary, None, strength=1.0, max_ratio=4.0, roles=roles, role_metrics=role_metrics)
+    weights = casting_weights(summary, strength=1.0, max_ratio=4.0, roles=roles, role_metrics=role_metrics)
 
     assert weights["paladin_holy"] == max(weights.values())
     assert weights["paladin_holy"] > weights["priest_holy"] and weights["paladin_holy"] > weights["druid_restoration"]
     assert weights["paladin_protection"] > weights["warrior_protection"]   # its role's lower hold
     assert np.mean(list(weights.values())) == pytest.approx(1.0)
     # Without role metrics every build scored alike, and every build drew alike.
-    flat = casting_weights(summary, None, strength=1.0, max_ratio=4.0)
+    flat = casting_weights(summary, strength=1.0, max_ratio=4.0)
     assert all(weight == pytest.approx(1.0) for weight in flat.values())
 
 
 def test_casting_weights_follow_the_metric_short_of_the_gate_too():
-    """stage4_duel's mage beat the scripted mage's score while killing 68% of the time: the baseline gap alone gave
-    it less data than a class and build already killing every time."""
+    """A mage that scores well while killing 68% of the time is the build the gate fails: the score alone gave it less
+    data than a class and build already killing every time."""
     summary = {"castings": {
         "mage_dps": {"score": 7.0, "clean_kill": 0.68},
         "rogue_dps": {"score": 7.8, "clean_kill": 0.95},
         "warrior_dps": {"score": 7.4, "clean_kill": 0.93},
     }}
-    baseline = {"castings": {"mage_dps": {"score": 2.6}, "rogue_dps": {"score": 7.6}, "warrior_dps": {"score": 7.0}}}
 
-    by_score = casting_weights(summary, baseline, 1.0, 4.0)
-    assert by_score["mage_dps"] < by_score["rogue_dps"]
-    weights = casting_weights(summary, baseline, 1.0, 4.0, metric="clean_kill")
+    by_score = casting_weights(summary, 1.0, 4.0)
+    assert by_score["mage_dps"] > by_score["rogue_dps"]     # the lowest score draws most
+    weights = casting_weights(summary, 1.0, 4.0, metric="clean_kill")
     assert weights["mage_dps"] == max(weights.values())
     assert np.mean(list(weights.values())) == pytest.approx(1.0)
-    # A metric some layout does not report leaves the baseline gap to decide.
+    # A metric some layout does not report leaves the score to decide.
     del summary["castings"]["rogue_dps"]["clean_kill"]
-    assert casting_weights(summary, baseline, 1.0, 4.0, metric="clean_kill") == pytest.approx(by_score)
+    assert casting_weights(summary, 1.0, 4.0, metric="clean_kill") == pytest.approx(by_score)
 
 
-def test_casting_weights_are_even_without_a_spread_or_a_baseline():
+def test_casting_weights_are_even_without_a_spread():
     summary = {"castings": {"a": {"score": 5.0}, "b": {"score": 5.0}}}
-    baseline = {"castings": {"a": {"score": 4.0}, "b": {"score": 4.0}}}
-    assert casting_weights(summary, baseline, 1.0, 3.0) == {"a": 1.0, "b": 1.0}
-    assert casting_weights(summary, baseline, 0.0, 3.0) == {"a": 1.0, "b": 1.0}  # strength 0 = uniform
-    assert casting_weights({"castings": {}}, baseline, 1.0, 3.0) == {}
+    assert casting_weights(summary, 1.0, 3.0) == {"a": 1.0, "b": 1.0}
+    assert casting_weights(summary, 0.0, 3.0) == {"a": 1.0, "b": 1.0}  # strength 0 = uniform
+    assert casting_weights({"castings": {}}, 1.0, 3.0) == {}
 
 
 def test_livelocked_counts_episodes_not_cancels():
