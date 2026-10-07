@@ -83,8 +83,9 @@ mappo:
   # 10M). A tenth of movement's (overseer, 2026-10-06); it follows the same schedule and floor.
   look_entropy_coef: 0.001
   value_coef: 1.0
-  actor_lr: 0.0003
-  critic_lr: 0.0003
+  # Halved at 93M (2026-10-06): approx KL ~0.043 and clip ~37% held classes short of the KL convergence signal.
+  actor_lr: 0.00015
+  critic_lr: 0.00015
   lr_final_fraction: 0.1
   # A floor on exploration: 25 held controls, and the last half-yard of a stop is found by trying.
   entropy_final_fraction: 0.3

@@ -28,6 +28,10 @@ PURPOSE = {
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
     "move2_seek": ("Arrive", "StepCost"),
+    # M4 follow (dungeon-curriculum I5, 2026-10-06): keep with the leader through the dungeon -- FollowKept per second
+    # in the band, Regroup on coming back to it after each of the leader's stops -- and Death, each one a price the
+    # episode goes on past (I4).
+    "move4_follow": ("FollowKept", "Regroup", "Death"),
     # The combat stages (dungeon-curriculum C1-C3, CombatEncounter, 2026-10-06): C1's kills and surviving, its damage
     # taken and the time a kill takes; C2's packs cleared and interrupts landed, its extra pulls and fire damage; C3's
     # surviving, packs cleared and rejoining after a death.
@@ -56,6 +60,7 @@ ENCOUNTER = {
     "Follow": "Encounters/FollowEncounter.cpp",
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
+    "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

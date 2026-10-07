@@ -145,6 +145,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Sighting:              return "sighting";
         case RewardTerm::NewGround:             return "new_ground";
         case RewardTerm::RoomSeen:              return "room_seen";
+        case RewardTerm::Regroup:               return "regroup";
+        case RewardTerm::Blocking:              return "blocking";
         case RewardTerm::Survived:              return "survived";
         case RewardTerm::InterruptLanded:       return "interrupt_landed";
         case RewardTerm::Rejoin:                return "rejoin";

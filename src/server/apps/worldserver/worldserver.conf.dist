@@ -5039,6 +5039,8 @@ AnimusForge.OutputDir = ""
 #                                 level 1, death knights at 55)
 #                                 "move2_seek" (the same Stockades: one real object in one of its 39
 #                                 rooms, found by sight with no compass, and stopped beside)
+#                                 "move4_follow" (an empty Ragefire Chasm or Deadmines: four followers keep
+#                                 with a leader walking the dungeon's route; a death rises at the entrance)
 #                     The combat stages (dungeon-curriculum C1-C3), from move2_seek, on a cleared Ragefire Chasm
 #                     at its levels, the seat seeing what it fights:
 #                       combat    "combat1_fight" (one creature at a time; a friend to taunt off and heal)
@@ -5184,6 +5186,7 @@ AnimusForge.TicksPerDecision = 1
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_seek.TicksPerDecision = 5
+AnimusForge.Stage.move4_follow.TicksPerDecision = 5
 # The combat stages move on the player controller too.
 AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
 AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
@@ -6997,6 +7000,56 @@ AnimusForge.Curriculum.Follow.CastFromRung = 4
 AnimusForge.Curriculum.Follow.CastShare = 50
 AnimusForge.Curriculum.Follow.WinShare = 0.8
 AnimusForge.Curriculum.Follow.CatchUpSeconds = 2.0
+
+#
+#    AnimusForge.Curriculum.Respawn.*
+#        Death in an instance (dungeon-curriculum I4; move4_follow on): a seat that dies is out for DelayMs, then stands
+#        up alive at full health and power at the instance's entrance and plays on -- no graveyard, ghost or corpse
+#        run, no teleport to the party, no end to the episode -- and walks back on the controller. It has rejoined
+#        once within RejoinYards of the party's leader (of the living party's centroid while the leader is down).
+AnimusForge.Curriculum.Respawn.DelayMs = 10000
+AnimusForge.Curriculum.Respawn.RejoinYards = 15.0
+
+#
+#    AnimusForge.Curriculum.PartyFollow.*
+#        The party follow (move4_follow; dungeon-curriculum I5): a party keeps with a leader walking a dungeon's route
+#        from the door through its bosses' places, stopping StopSecondsFirst (rung 0) to StopSecondsLast (top rung)
+#        at each. The leader walks below WalkRungs; from SuddenFromRung it also stops unannounced for
+#        SuddenStopMinMs-SuddenStopMaxMs every SuddenGapMin-SuddenGapMax s; from BackStepFromRung BackStepChance
+#        percent of those stops step back BackStepYards first. A leg the leader is stuck on for GiveUpMs is given up
+#        for the next stop. CastShare percent of training episodes give the leader to a frozen checkpoint
+#        (cast.agents.leader; 0 until one exists that walks dungeons).
+#        Paid: Kept per second within [BandMin, BandMax] yd of the leader (Outcome); Regroup once per leader stop of
+#        RegroupMinStopMs or more, on coming into the band, x (1 - seconds/RegroupWindow) (Outcome); Lost per second
+#        past LostYards and Blocking per second within BlockYards ahead of a moving leader, inside BlockHalfAngle
+#        degrees of its facing (Costs); Death per death (Cost). Party members within MinimapYards are the minimap's
+#        dots (the party frames block).
+AnimusForge.Curriculum.PartyFollow.BandMin = 3.0
+AnimusForge.Curriculum.PartyFollow.BandMax = 10.0
+AnimusForge.Curriculum.PartyFollow.LostYards = 40.0
+AnimusForge.Curriculum.PartyFollow.Kept = 0.02
+AnimusForge.Curriculum.PartyFollow.Lost = 0.02
+AnimusForge.Curriculum.PartyFollow.Regroup = 0.5
+AnimusForge.Curriculum.PartyFollow.RegroupWindow = 20.0
+AnimusForge.Curriculum.PartyFollow.RegroupMinStopMs = 2000
+AnimusForge.Curriculum.PartyFollow.Blocking = 0.05
+AnimusForge.Curriculum.PartyFollow.BlockYards = 2.5
+AnimusForge.Curriculum.PartyFollow.BlockHalfAngle = 45.0
+AnimusForge.Curriculum.PartyFollow.Death = 3.0
+AnimusForge.Curriculum.PartyFollow.MinimapYards = 60.0
+AnimusForge.Curriculum.PartyFollow.WalkRungs = 1
+AnimusForge.Curriculum.PartyFollow.SuddenFromRung = 2
+AnimusForge.Curriculum.PartyFollow.BackStepFromRung = 3
+AnimusForge.Curriculum.PartyFollow.StopSecondsFirst = 8.0
+AnimusForge.Curriculum.PartyFollow.StopSecondsLast = 3.0
+AnimusForge.Curriculum.PartyFollow.SuddenStopMinMs = 1000
+AnimusForge.Curriculum.PartyFollow.SuddenStopMaxMs = 4000
+AnimusForge.Curriculum.PartyFollow.SuddenGapMin = 12.0
+AnimusForge.Curriculum.PartyFollow.SuddenGapMax = 30.0
+AnimusForge.Curriculum.PartyFollow.BackStepYards = 4.0
+AnimusForge.Curriculum.PartyFollow.BackStepChance = 30
+AnimusForge.Curriculum.PartyFollow.GiveUpMs = 6000
+AnimusForge.Curriculum.PartyFollow.CastShare = 0
 
 #
 #    AnimusForge.Curriculum.Seek.*

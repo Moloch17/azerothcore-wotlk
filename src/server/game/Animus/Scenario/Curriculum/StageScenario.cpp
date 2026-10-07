@@ -51,6 +51,7 @@
 #include "CombatEncounter.h"
 #include "CombatBlock.h"
 #include "FollowEncounter.h"
+#include "PartyFollowEncounter.h"
 #include "BuildRetry.h"
 #include "SpellMgr.h"
 #include "Env.h"
@@ -113,6 +114,9 @@ namespace
     /// Yards round the spawn an instance used as empty ground is cleared over (SpawnArea::ClearMap): the whole of a
     /// small dungeon -- the Stockades spans about 150 by 290 yards.
     constexpr float INSTANCE_CLEAR_RADIUS = 300.0f;
+    /// ... and the party follow's dungeons, whose last bosses stand further from the door than that (the Deadmines'
+    /// ship is several hundred yards from its entrance).
+    constexpr float DUNGEON_CLEAR_RADIUS = 1000.0f;
     constexpr float GOAL_RANGE_SLACK_YARDS = 5.0f;  // a ranged spec holds its range to within this (SeatGoal::Position)
     constexpr float LOW_HEALTH_PCT = 35.0f;         // a friend below this is low (low_health_seconds)
     /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
@@ -427,7 +431,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // checkpoint in the episodes that cast it and by the seek helper's keys in the rest.
     _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
     {
-        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::Follow;
+        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::Follow
+            || arena.Against == Opposition::PartyFollow;
     });
     _spec.AgentsPerEnv = _seatCount + (HasDirectors() ? TEAM_COUNT : 0) + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
@@ -483,6 +488,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
     auto const hasFollow = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Follow; };
+    auto const hasPartyFollow = [](ArenaDefinition const& arena)
+    {
+        return arena.Against == Opposition::PartyFollow;
+    };
     auto const hasSeek = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Seek; };
     auto const hasSight = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Sight; };
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
@@ -533,6 +542,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The follow stage's leader: built in the owner's slot, nothing else to order against.
     if (_stage.AnyArena(hasFollow))
         _follow = add(std::make_unique<FollowEncounter>(*this, envs));
+    // The party follow's leader: in the owner's slot as the follow stage's, nothing else to order against.
+    if (_stage.AnyArena(hasPartyFollow))
+        _partyFollow = add(std::make_unique<PartyFollowEncounter>(*this, envs));
     // The seek stage's hidden object: nothing to fight, nothing else to order against.
     Encounter* seek = nullptr;
     if (_stage.AnyArena(hasSeek))
@@ -561,7 +573,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, seek, sight, combat, flag,
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight, combat,
+        flag,
         director })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -581,6 +594,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
                 || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
+                || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == combat && hasCombat(arena))
                 || (encounter == director && directed(arena));
@@ -1623,7 +1637,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         boost::json::object& entry = cast.emplace_back(boost::json::object()).get_object();
         entry["agent"] = OwnerAgent();
         // The learner's cast.agents names it: the follow stage's leader, or the owner.
-        entry["name"] = _follow ? "leader" : "owner";
+        entry["name"] = _follow || _partyFollow ? "leader" : "owner";
     }
 
     // The stages a run seeds from, closest first: the learner takes the first one that has been trained.
@@ -1854,7 +1868,8 @@ bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
         return false;
     ArenaDefinition const& arena = Arena(env);
     return (arena.OwnerCast && _owner && _owner->IsCast(env))
-        || (arena.Against == Opposition::Follow && _follow && _follow->IsCast(env));
+        || (arena.Against == Opposition::Follow && _follow && _follow->IsCast(env))
+        || (arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env));
 }
 
 Player* Animus::Curriculum::StageScenario::BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start,
@@ -2372,7 +2387,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         // time. Companions in the open world keep the random size (1-4, Party.SizeWeight*).
         bool const instance = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
         bool const proper = (instance && arena.Instance == InstanceLadder::Wing) || arena.ProperParty;
-        if (arena.Seats == SeatPlan::Party && !instance && !arena.ProperParty)
+        // A party of a fixed size (ArenaDefinition::PartySize: the party follow's followers) keeps it.
+        if (arena.Seats == SeatPlan::Party && !instance && !arena.ProperParty && !arena.PartySize)
             data.ActiveSeats = RandomPartySize(_tuning.Party);
 
         // Some parties are the classic makeup (somebody to hold the pull, somebody to keep the hurt one up, and no
@@ -2498,7 +2514,9 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // and Scarlet Monastery rungs were fought twenty levels over. Seat 0 once kept its class (the rung was drawn for
     // it), and a death knight there put 54% of the Deadmines runs at 55 (2026-09-30): a dungeon's seats are all
     // characters of its level range now, seat 0 included.
-    bool const dungeonLevel = arena.Against == Opposition::Instance && arena.Instance == InstanceLadder::Wing;
+    // The party follow (M4) runs a dungeon at its level band too, and a death knight there would lift it to 55.
+    bool const dungeonLevel = (arena.Against == Opposition::Instance && arena.Instance == InstanceLadder::Wing)
+        || arena.Against == Opposition::PartyFollow;
     if (data.EpisodeLevel)
         for (uint32 seat = dungeonLevel ? 0 : 1; seat < data.ActiveSeats; ++seat)
         {
@@ -2682,11 +2700,15 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // A continent's own creatures are in another phase than the env's, and belong to every env.
     // An instance used as empty ground (a marker arena: M1's Stockades) is cleared whole, its far grids loaded first,
     // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
-    if (firstBuild && map->Instanceable())
+    // The party follow (M4) moves between dungeons from episode to episode, so each new instance it opens is emptied
+    // when it opens, not only the env's first.
+    bool const partyFollow = Arena(env).Against == Opposition::PartyFollow;
+    bool const newInstance = env.MapId != map->GetId() || env.InstanceId != map->GetInstanceId();
+    if ((firstBuild || (partyFollow && newInstance)) && map->Instanceable())
     {
         if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
-            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat)
-            SpawnArea::ClearMap(lead, INSTANCE_CLEAR_RADIUS);
+            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat || partyFollow)
+            SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
         else
             SpawnArea::Clear(lead);
     }
@@ -3365,7 +3387,8 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
         tick(seat);
     // The owner's slot when it is played through its row, or when it holds the follow stage's leader, whose
     // scripted keys the controller moves as it moves a seat's.
-    if (CastOwnerActive(env) || (_follow && Arena(env).Against == Opposition::Follow && _follow->HasLeader(env)))
+    if (CastOwnerActive(env) || (_follow && Arena(env).Against == Opposition::Follow && _follow->HasLeader(env))
+        || (_partyFollow && Arena(env).Against == Opposition::PartyFollow && _partyFollow->HasLeader(env)))
         tick(OwnerAgent());
     if (seatTicks)
         Movement::ControllerCost::Add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(

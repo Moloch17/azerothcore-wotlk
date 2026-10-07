@@ -436,13 +436,23 @@ class PartnerConfig:
     # The "with_partners" eval arm's fixed partner set: stage names or checkpoint paths, as above. () = the pool's
     # stage and path members (its snapshots move, so they are never part of a fixed set).
     eval_partners: tuple[str, ...] = ()
+    # Partners whose frozen weights stay on the device at once (0 = all of them): the least recently played past it
+    # are offloaded to the host and brought back when they next play (animus.cast.Residency). Each camera-era member
+    # carries its own camera encoder; on an 8 GB card keep this a little above max_partners.
+    resident_members: int = 0
 
     def __post_init__(self) -> None:
+        if self.resident_members < 0:
+            raise ValueError(f"cast.partners.resident_members: 0 (no cap) or more, got {self.resident_members!r}")
         if not 0.0 <= self.share <= 1.0 or not 0.0 <= self.newest_share <= 1.0:
             raise ValueError(f"cast.partners: share and newest_share are shares (0 to 1), got {self.share!r} and "
                              f"{self.newest_share!r}")
         if self.max_partners < 1:
             raise ValueError(f"cast.partners.max_partners: at least 1, got {self.max_partners!r}")
+        # Below the partners one decision plays, members would be moved to the host and back within every decision.
+        if 0 < self.resident_members < self.max_partners:
+            raise ValueError(f"cast.partners.resident_members: 0 (no cap) or at least max_partners "
+                             f"({self.max_partners}), got {self.resident_members!r}")
 
     @property
     def enabled(self) -> bool:
@@ -489,6 +499,9 @@ class CastConfig:
     retire_above: float = 0.85  # a member the live policy beats this often over a full window is retired
     keep_newest: int = 2  # never retired or pruned
     exploiter_floor: float = 0.15  # the least share of the draw each exploiter in the league gets (animus.exploit)
+    # League members whose frozen weights stay on the device at once (0 = all of them); the rest wait on the host
+    # (animus.cast.Residency), as cast.partners.resident_members.
+    resident_members: int = 0
     # Co-op partners in party seats (animus.partners), apart from the league's opponents.
     partners: PartnerConfig = field(default_factory=PartnerConfig)
 

@@ -175,6 +175,11 @@ namespace Animus::Curriculum
         /// show a room's floor (Seek.RoomSeen), by the episode's own bookkeeping, never the remembered map's
         /// (amendment 6). Shaping, as the other two.
         RoomSeen,
+        /// The party follow (M4, PartyFollowEncounter): back in the band of the leader after it stopped, sooner paying
+        /// more (Outcome: the stops are the leader's, so it cannot be farmed); standing in a moving leader's way
+        /// (Cost).
+        Regroup,
+        Blocking,
         /// The combat stages (CombatEncounter, dungeon-curriculum C1-C3): what each is for, paid as Outcome so the fade
         /// never takes it -- an episode ended with no death (Combat.Survived), an interrupt that stopped a cast
         /// (Combat.InterruptLanded), and walking back to the fight after a respawn at the entrance (Combat.Rejoin) --
@@ -236,6 +241,8 @@ namespace Animus::Curriculum
             case RewardTerm::PullClean:
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:
+            // The party follow's regroup at the leader's stops (2026-10-06).
+            case RewardTerm::Regroup:
             // The combat stages' own (2026-10-06): surviving, interrupts landed, rejoining after a respawn.
             case RewardTerm::Survived:
             case RewardTerm::InterruptLanded:
@@ -269,6 +276,7 @@ namespace Animus::Curriculum
             case RewardTerm::Drowning:
             case RewardTerm::Lost:
             case RewardTerm::Aggro:
+            case RewardTerm::Blocking:
             // The combat stages' prices: health taken, and what ground fire took.
             case RewardTerm::Hurt:
             case RewardTerm::FireHurt:

@@ -19,10 +19,20 @@
 > Evaluations play 78 episodes at the training rung; the held-out `sweep` arena is the full 195-pair sweep at the top
 > rung, for the stage's end.
 >
+> `move4_follow` (dungeon-curriculum M4; I5 and I4, 2026-10-06) extends `move2_seek`: a party of five in an empty
+> Ragefire Chasm or Deadmines at the dungeon's level band -- a leader in the owner's slot walking the dungeon's route
+> from the door through each boss's place (the script's keys on the player controller; PartyFollowEncounter,
+> `Opposition::PartyFollow`) and four learned followers keeping 3-10 yd from it, out of its way, regrouping at its
+> stops. The followers see the leader through the camera, the mental map and the party frames block
+> (`BlockId::PartyFrames`: the frames always, the minimap's dots within 60 yd). A follower that dies rises at the
+> entrance after `Respawn.DelayMs` and walks back (EntranceRespawn); no episode ends on a death. Its ladder (the fade's
+> rungs: walking, running, sudden stops, steps back) steps on the kept share alone; no cost ladder.
+>
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
 > | `move2_seek` | 250M | 10M | 78 |
+> | `move4_follow` | 250M | 10M | 64 |
 > | `combat1_fight` | 300M | 10M | 240 |
 > | `combat2_packs` | 300M | 10M | 240 |
 > | `combat3_survive` | 300M | 10M | 240 |
