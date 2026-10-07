@@ -1,0 +1,99 @@
+# D2 -- Ragefire (dungeon-curriculum D2; Stages.cpp dungeon2_ragefire, InstanceEncounter's whole wing): Ragefire Chasm
+# from the door to Bazzalan, a full clear -- every pull of the route and every side boss (Oggleflint, Taragaman,
+# Jergosh) -- by a party of five at the dungeon finder's band, lifted by the ladder's rung. Deaths and rejoins are in
+# play: a seat that dies is alive at the entrance 10 s later and walks back (I4); the first wipe is scored and the party
+# rises at the entrance, the second ends the run (Instance.WingWipes 2, and the ladder's spare ones). Half the training
+# runs start from a cell an earlier run reached (Go-Explore: explore below); an evaluation always starts at the door.
+#
+# The dungeon teacher hints and tapers to none on the whole dungeon's ladder (WING_RUNGS, stepping on the probes alone:
+# 0.6 of the dungeon cleared over 40 probes), its imitation off from the rung the probes beat its own reference runs on.
+# The evaluation plays the ladder's last rung: the band's own levels, no help, one wipe to spare.
+#
+# Outcome (x the rung's tier scale): the bosses (Kill: Instance.WingMidBoss each on the way, WingBoss the last), the
+# full
+# clear (Clear: Instance.WingClear), the kills, the pulls started ready (ReadyPull). Cost at full price: wipes and
+# deaths
+# (Death), chain pulls (PullExtra), standing about (Idle), straying from the leader (Lost), the clock (StepCost:
+# Instance.WingClock, and Timeout for the route left).
+#
+# **Held out: Wailing Caverns** (the arena `heldout`, the WING ladder's row 2, door to Lord Serpentis): never in a
+# training draw (ArenaDefinition::EvalOnly; DungeonStagesTest), played by eval.heldout below on its own seeds every
+# fourth evaluation, the last, and each new best -- a reading, never a target.
+#
+# Seeded from dungeon1_pulls: the same layout, every block carries.
+extends: dungeon1_pulls.yaml
+run_name: dungeon2_ragefire
+
+total_env_steps: 1500000000
+
+mappo:
+  # A run is 20-60 minutes.
+  gamma: 0.999
+  hint_coef: 1.0
+
+# Go-Explore (animus.explore): half the training runs start from a cell an earlier run reached -- its packs gone, the
+# party at its place on the route -- rather than the door; an evaluation always starts at the door.
+explore:
+  enabled: true
+  share: 0.5
+
+eval:
+  every_env_steps: 20000000
+  episodes: 64
+  sampled_every: 4
+  heldout:
+    heldout: 16
+  report: [cleared, full_clear, bar_clear, wing_cleared_share, wing_route_share, wing_wipes, chain_pulls, ready_pulls,
+           boss_oggleflint, boss_taragaman, boss_jergosh, boss_bazzalan, wing_boss_kills, wing_trash_kills, wing_rises,
+           wing_rejoins, wing_rejoin_seconds, wing_rung, wing_level, wing_probe, wing_scripted, with_stand_in,
+           without_stand_in, clear_standin, clear_allbot, role_tank, role_healer, role_damage, deaths_tank,
+           deaths_healer, deaths_damage, seat_deaths, died, reward_kill, reward_clear, reward_ready_pull,
+           reward_pull_extra, reward_idle, reward_lost, reward_death, reward_step_cost, reward_timeout,
+           reward_approach, reward_threat, reward_damage_dealt, reward_repeat, reward_aimless, reward_effort,
+           reward_jitter]
+  arms:
+    with_human: 32
+    with_partners: 32
+  arms_every: 2
+
+# forge status: the full clears (the plan's D2 gate: 70% or more), the last boss and each side boss, wipes, chain pulls,
+# rejoins, the stand-in split, and the ladder's rung.
+status:
+  headline: [full_clear, cleared, wing_cleared_share, wing_wipes, boss_oggleflint, boss_taragaman, boss_jergosh,
+             boss_bazzalan, chain_pulls, wing_rejoin_seconds, clear_allbot, clear_standin, standin_gap, wing_rung]
+  targets:
+    # D1's drill measures are not D2's.
+    drill_extra: null
+    full_clear: ">= 0.7"
+    cleared: ">= 0.7"
+    wing_wipes: "<= 1"
+    chain_pulls: "<= 1"
+    wing_rejoin_seconds: "<= 90"
+    standin_gap: "<= 0.1"
+  excluded:
+    death_knight: "Ragefire is run at its level band and a death knight starts at 55"
+
+convergence:
+  measure: full_clear
+
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: full_clear
+  gate_value: 0.5
+  require_plateau: false
+  moving_classes: 1000
+
+costs:
+  enabled: false
+  gate_metric: full_clear
+  gate_value: 0.5
+
+layout_sampling:
+  metric: full_clear
+
+cast:
+  partners:
+    stages: [dungeon1_pulls]
+    score: cleared
+    eval_partners: [dungeon1_pulls]

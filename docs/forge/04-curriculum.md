@@ -47,8 +47,8 @@
 > (carried from the door; nothing is looted). A death rises at the entrance after `Respawn.DelayMs` and the teacher
 > walks it back. `forge run teacher_ragefire dungeon 96` is the teacher's gate (every pull and side boss cleared,
 > before any taper): read its "Wing run" lines. In a training stage the same teacher hints every seat and plays the
-> rung's share of them (`Instance.WingSupport`), and hint imitation ends for good once the probes beat the script
-> (`Instance.WingHintOffRung`; the learner's `animus.hint_cutoff`).
+> rung's share of them (`Instance.WingSupport`, or always on a taught arena), and hint imitation ends for good once
+> the probes beat the script (`Instance.WingHintOffRung`; the learner's `animus.hint_cutoff`).
 >
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
@@ -62,6 +62,10 @@
 > | `group1_roles` | 400M | 10M | 384 |
 > | `teacher_ragefire` | 100M | 1M | 8 |
 > | `teacher_deadmines` | 100M | 1M | 8 |
+> | `group2_corridor` | 500M | 10M | 128 |
+> | `dungeon1_pulls` | 300M | 10M | 192 |
+> | `dungeon2_ragefire` | 1500M | 20M | 64 |
+> | `dungeon3_deadmines` | 2000M | 20M | 64 |
 >
 > **The combat stages** (dungeon-curriculum C1-C3, 2026-10-06; `CombatEncounter`, `Opposition::Combat`) extend
 > `move3_interact` on a cleared Ragefire Chasm (map 389) at its level band, 13-18: `combat1_fight` one creature at a time
@@ -91,6 +95,28 @@
 > lesson is the drilled seat's own Outcome (DrillHold, DrillKeep, DrillFocus, PullClean), tier-scaled, its misses a
 > Cost; Clear and Survived every seat's. Pack after pack for the episode's clock; a death rises at the entrance and
 > walks back to the party.
+>
+> **The dungeon stages** (dungeon-curriculum G2, D1-D3, 2026-10-07; `InstanceEncounter`, `InstanceLadder::Wing`):
+> a party of five on a real dungeon's own ground -- a fresh instance a run, every pack and patrol where the world
+> database stands it -- with G1's blocks (the party frames revision 2, the sight list and the combat block's frames)
+> and the pack and hint blocks; no crowd block (its pack ahead and nearest object were radius reads through walls) and
+> no party or support block. `group2_corridor` extends `group1_roles`: four of a wing's packs in route order a run
+> (`ArenaDefinition::CorridorPacks`), in Ragefire and the Deadmines -- pull, fight, rest, ready, next. `dungeon1_pulls`
+> drills one Ragefire pack a run on its own ground (the pull drill, evaluated as a drill: `EvaluatesDrills`).
+> `dungeon2_ragefire` is the door to Bazzalan, a full clear; `dungeon3_deadmines` the door to VanCleef at 17-20
+> (`LevelFirst`/`LevelLast`), its doors and levers by an interact and the cannon by its gunpowder -- the bar is 70% of
+> the evaluation's runs cleared with at most one wipe (`bar_clear`), read per boss (`boss_*`) and by role
+> (`deaths_tank`, ...). The dungeon teacher hints and tapers on G2, D2 and D3 (`ArenaDefinition::Taught`, whatever
+> `Instance.WingSupport` says) down the whole dungeon's ladder, its imitation off from the cutoff rung. **Wailing
+> Caverns is held out** from D2 on (the arena `heldout`, `EvalOnly`: never in a training draw, played by
+> `eval.heldout`). The "human" stand-in plays a fifth of every stage's training runs (`ArenaDefinition::StandInShare`),
+> and H is read as `clear_standin` (the `with_human` arm) beside `clear_allbot` (the plain evaluation) and their gap
+> `standin_gap` (within ~10 points). Outcome: Clear (a corridor's packs in route order, a full clear), ReadyPull (a pull
+> started with the party ready), Kill (bosses, trash), PullClean (the drill); Cost at full price: PullExtra (a chain
+> pull), Idle (standing about), Lost (straying from the leader), Death (deaths and wipes; the second wipe ends a run),
+> StepCost (the clock). A run's outcome scales with the ladder's rung (`WingRun::TierOfRung`), not the pinned row.
+> Evaluation videos film one seat a party, spread over the tank, healer and damage places and their classes
+> (`Vision::EvalVideoAgent`); `apps/forge/tools/collect-videos.sh <stage>` brings the workers' videos home.
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

@@ -17,6 +17,11 @@ from pathlib import Path
 
 PROGRESS_FILE = "progress.json"
 
+#: Split measures only an evaluation arm reads (H, dungeon-curriculum I7): arm -> {its column: (the plain evaluation's
+#: column it stands beside, the gap's name)}. The plain evaluation is all bots, so the stand-in party's clears are the
+#: with_human arm's; the gap is all bots minus the stand-in party.
+ARM_SPLITS = {"with_human": {"clear_standin": ("clear_allbot", "standin_gap")}}
+
 
 def _clean(value):
     if isinstance(value, bool):
@@ -86,6 +91,18 @@ class ProgressWriter:
         self.arms[f"eval_{arm}_episodes"] = summary.get("episodes")
         for metric in self.arm_columns(arm):
             self.arms[f"eval_{metric}_{arm}"] = summary.get(metric)
+        # A split measure only the arm reads (ARM_SPLITS: clear_standin -- the plain evaluation is all bots, so it has
+        # none) is the arm's eval_<metric>, and its gap to the plain evaluation's all-bot reading eval_<gap> (H: the
+        # stand-in party within ~10 points of the all-bot one).
+        for metric, (plain, gap) in ARM_SPLITS.get(arm, {}).items():
+            if metric not in self.headline and gap not in self.headline:
+                continue
+            value = summary.get(metric)
+            self.arms[f"eval_{metric}"] = value
+            base = self.evaluation.get(f"eval_{plain}")
+            self.arms[f"eval_{gap}"] = (float(base) - float(value)
+                                        if isinstance(base, (int, float)) and isinstance(value, (int, float))
+                                        else None)
 
     def training(self, row: dict) -> None:
         """An update's metrics row (train.py's metrics.csv row)."""

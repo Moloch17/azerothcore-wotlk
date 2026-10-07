@@ -70,6 +70,14 @@ PER_EVENT = {
     "focus_share": "drill_focus",
     "pulled_seconds": "drill_focus",
     "clean_share": "packs_cleared",
+    # The party stages (InstanceEncounter, dungeon-curriculum G2-D3): H's split -- the run's success over the episodes
+    # with the "human" stand-in in a seat, and over the all-bot ones -- and each place's deaths over the rows of that
+    # place (by role, read off the build).
+    "clear_standin": "with_stand_in",
+    "clear_allbot": "without_stand_in",
+    "deaths_tank": "role_tank",
+    "deaths_healer": "role_healer",
+    "deaths_damage": "role_damage",
 }
 
 

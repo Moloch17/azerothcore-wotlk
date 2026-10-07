@@ -22,10 +22,12 @@ REPO = Path(__file__).resolve().parents[4]
 STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
 COMPILE_DB = Path(os.environ["ANIMUS_COMPILE_DB"]) if os.environ.get("ANIMUS_COMPILE_DB") else None
 # The movement curriculum as rebuilt (2026-10-05): M1, M2 seek (perception-goals P1, 2026-10-06), M3 interact and M4
-# follow; then the combat stages (dungeon-curriculum C1-C3, 2026-10-06), the party stages (G1, 2026-10-07) and the
-# dungeon teacher's check stages (I6), in no queue. Later stages add themselves here as they land.
+# follow; then the combat stages (dungeon-curriculum C1-C3, 2026-10-06), the party stages (G1, 2026-10-07), the
+# dungeon teacher's check stages (I6), in no queue, and the dungeon stages (G2, D1-D3, 2026-10-07). Later stages add
+# themselves here as they land.
 MOVEMENT = ["move1_controls", "move2_seek", "move3_interact", "move4_follow", "combat1_fight", "combat2_packs",
-            "combat3_survive", "group1_roles", "teacher_ragefire", "teacher_deadmines"]
+            "combat3_survive", "group1_roles", "teacher_ragefire", "teacher_deadmines", "group2_corridor",
+            "dungeon1_pulls", "dungeon2_ragefire", "dungeon3_deadmines"]
 
 LOG_STUB = """#pragma once
 #define LOG_ERROR(category, ...) ((void)0)

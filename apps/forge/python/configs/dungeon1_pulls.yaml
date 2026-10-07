@@ -1,0 +1,78 @@
+# D1 -- pulls (dungeon-curriculum D1; Stages.cpp dungeon1_pulls, InstanceEncounter's pull drill): Ragefire Chasm, one
+# pack a run on its own ground -- the packs before it cleared, the party set down 35 yd or more back along the route
+# from it, clear of everything left standing, every pack of the route a start. Clean pulls on real geometry, with the
+# patrols the world database walks: pull the pack, kill it, nothing else drawn in. Levels: the dungeon finder's band,
+# at most two above it (Instance.PullLift).
+#
+# The ladder by gate: the drill's own (Instance.PullRung*), which opens packs by how far the nearest other pack stands
+# -- 30, 22, 14 yd, then any -- once 100 drills on the newest rung have pulled clean 70% of the time; its rung is
+# pull_rung. Its evaluations drill too (a stage of drills alone: EvaluatesDrills), each seed its pack
+# (WingRun::SeededPick) at the training rung, so successive checkpoints pull the same packs.
+#
+# Outcome (x the drill rung's tier scale): the pack pulled and killed on its own (PullClean; the tank in full, the
+# others
+# Instance.PullOthers of it), the pull started ready (ReadyPull). Cost at full price from the first step: a second pack
+# drawn in (PullExtra, which ends the run), the clock with the pack alive (Timeout), standing about past 20 s (Idle),
+# straying from the leader (Lost), deaths (Death).
+#
+# Seeded from group2_corridor: the same layout, every block carries.
+extends: group2_corridor.yaml
+run_name: dungeon1_pulls
+
+total_env_steps: 300000000
+
+mappo:
+  # A drill is a minute or two.
+  gamma: 0.998
+  # No teacher in the drill: nothing is hinted.
+  hint_coef: 0.0
+
+eval:
+  every_env_steps: 10000000
+  episodes: 192
+  report: [cleared, drill_clean, drill_extra, drill_pulled, drill_gap, pull_rung, ready_pulls, wing_wipes, wing_rises,
+           wing_rejoins, wing_level, with_stand_in, without_stand_in, clear_standin, clear_allbot, role_tank,
+           role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths, died,
+           reward_pull_clean, reward_pull_extra, reward_ready_pull, reward_kill, reward_idle, reward_lost,
+           reward_death, reward_step_cost, reward_timeout, reward_damage_dealt, reward_repeat, reward_aimless,
+           reward_effort, reward_jitter]
+
+status:
+  headline: [cleared, drill_clean, drill_extra, drill_pulled, ready_pulls, wing_wipes, clear_allbot, clear_standin,
+             standin_gap, deaths_tank, pull_rung]
+  targets:
+    # G2's corridor measures are not D1's.
+    corridor_in_order: null
+    chain_pulls: null
+    wing_rejoin_seconds: null
+    cleared: ">= 0.8"
+    drill_extra: "<= 0.1"
+    wing_wipes: "<= 0.1"
+    standin_gap: "<= 0.1"
+  excluded:
+    death_knight: "the drill is at Ragefire's level band and a death knight starts at 55"
+
+convergence:
+  measure: cleared
+
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: cleared
+  gate_value: 0.7
+  require_plateau: false
+  moving_classes: 1000
+
+costs:
+  enabled: false
+  gate_metric: cleared
+  gate_value: 0.7
+
+layout_sampling:
+  metric: cleared
+
+cast:
+  partners:
+    stages: [group2_corridor]
+    score: cleared
+    eval_partners: [group2_corridor]

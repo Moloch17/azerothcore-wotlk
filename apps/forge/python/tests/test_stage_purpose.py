@@ -49,6 +49,14 @@ PURPOSE = {
     # every pack and boss killed (Kill, the last boss's WingBoss among them) and each death priced.
     "teacher_ragefire": ("Kill", "Death"),
     "teacher_deadmines": ("Kill", "Death"),
+    # The dungeon stages (dungeon-curriculum G2, D1-D3, InstanceEncounter, 2026-10-07): G2's packs cleared in route
+    # order (Clear) and pulls started ready (ReadyPull), its chain pulls (PullExtra) and standing about (Idle); D1's
+    # clean pull (PullClean) and the pack it drags in (PullExtra); D2's and D3's bosses (Kill), full clear (Clear),
+    # wipes (Death) and the clock (StepCost). Staying with the leader is Lost, a Cost, in all four.
+    "group2_corridor": ("Clear", "ReadyPull", "PullExtra", "Idle", "Lost", "Death"),
+    "dungeon1_pulls": ("PullClean", "PullExtra", "Idle", "Death"),
+    "dungeon2_ragefire": ("Kill", "Clear", "Death", "StepCost", "PullExtra", "Lost"),
+    "dungeon3_deadmines": ("Kill", "Clear", "Death", "StepCost", "PullExtra", "Lost"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -66,6 +74,11 @@ SHAPING = {
     "combat2_packs": ("DamageDealt",),
     "combat3_survive": ("DamageDealt",),
     "group1_roles": ("DamageDealt",),
+    # The dungeon stages' nudges: the route walked (Approach) and the crowd past a pack (Threat).
+    "group2_corridor": ("Approach", "Threat"),
+    "dungeon1_pulls": ("Approach",),
+    "dungeon2_ragefire": ("Approach", "Threat"),
+    "dungeon3_deadmines": ("Approach", "Threat"),
 }
 
 # Opposition -> the encounter source that pays it.
