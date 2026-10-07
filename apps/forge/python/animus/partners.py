@@ -11,7 +11,7 @@ Step.stand_in) a member of this same pool plays, never a script.
 evaluation's ``score_outcome`` by default) in the episodes it partnered -- is averaged over ``rate_window`` episodes.
 Outcomes are not win rates in [0, 1], so they are normalised across the pool: the member the party does best with is
 1, the worst 0, and a member not yet met counts as the worst so it is met. The draw weight is
-``(1 - normalised)^2 + floor`` -- the co-op mirror of the league's prioritised fictitious self-play (animus.cast): the
+``(1 - normalised)^2 + floor`` -- prioritised fictitious self-play weights: the
 partners the party carries worst are met most, so the policy learns to carry weak or odd ones, and the floor keeps
 every member in use. ``newest_share`` of the draws go to the newest snapshot whatever the weights say. Snapshots past
 ``pool_size`` are pruned, the best-carried first, never the newest ``keep_newest``; stage and path members stay.
@@ -21,7 +21,7 @@ whether it has partners (``share``), then up to ``max_partners`` of its present 
 live seat and never the seat a drill is about (stage.json's arena ``drill_seat``: G1's drilled role, whose lesson the
 episode is for); each drawn seat gets a member whose checkpoint has that seat's layout (a member without it is never
 drawn for it, so no partner row silently falls back to the live policy). Partner rows take the frozen actor's action and are
-never samples; their episodes are left out of the training statistics, and the league never sees them.
+never samples; their episodes are left out of the training statistics.
 
 **The stand-in.** Every row the sim marks as the stand-in's gets a member at its episode's first decision, whatever
 ``share`` says, and it is not one of the ``max_partners`` seats the share draws. The sim fields a stand-in only while
@@ -44,7 +44,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cast import CastActor, Residency, league_snapshot
+from .cast import CastActor, Residency, snapshot
 from .device import host
 from .stages import arena_state_span
 
@@ -57,7 +57,7 @@ KIND_SNAPSHOT = "snapshot"
 
 def partner_snapshot(run_dir: Path, source: Path, tag: str) -> Path | None:
     """Copy `source` into <run_dir>/partners/<tag>.pt; None when it is already there or missing."""
-    return league_snapshot(run_dir, source, tag, folder=PARTNERS_DIR)
+    return snapshot(run_dir, source, tag, PARTNERS_DIR)
 
 
 # ------------------------------------------------------------------ which envs are parties

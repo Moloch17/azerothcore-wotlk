@@ -220,7 +220,7 @@ def test_reads_the_cpp_serializers_sample_when_present():
     for item in records:
         rtype = item.get("type")
         if isinstance(rtype, str):
-            rtype = r.TYPE_OF[rtype]
+            rtype = next(code for code, (name, _) in r.PREFIX.items() if name == rtype)
         if rtype not in r.PREFIX or rtype == r.FILE_HEADER:
             continue
         index = seen.get(rtype, 0)

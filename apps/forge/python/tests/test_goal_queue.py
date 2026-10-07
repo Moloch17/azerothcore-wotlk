@@ -137,7 +137,7 @@ def test_a_rollout_and_update_with_four_slots():
         mask = np.ones((envs, 1, 2), bool)
         layout = np.zeros((envs, 1), np.int64)
         memory = acting.memory.copy()
-        actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                                  state=acting)
         assert goals[5].shape == (envs, 1, SLOTS) and acting.queue.shape == (envs, 1, SLOTS - 2)
         assert trainer.wire_goals(goals[0]).shape == (envs, 1, 2)
@@ -232,7 +232,7 @@ def test_hindsight_relabels_what_was_achieved():
         mask = np.ones((envs, 1, 2), bool)
         layout = np.zeros((envs, 1), np.int64)
         memory = acting.memory.copy()
-        actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                                  state=acting)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals)
         buffer.add_outcome(np.ones((envs, 1), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),

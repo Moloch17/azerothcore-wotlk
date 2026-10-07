@@ -19,18 +19,21 @@ def test_the_vectorised_span_gae_matches_the_reference():
     steps, envs, agents = 30, 3, 2
     rewards = rng.normal(size=(steps, envs, agents)).astype(np.float32)
     values = rng.normal(size=(steps, envs, agents)).astype(np.float32)
-    final = rng.normal(size=(steps, envs, agents)).astype(np.float32)
-    last = rng.normal(size=(envs, agents)).astype(np.float32)
+    final = np.zeros((steps, envs, agents), np.float32)       # no bootstrap values: the span GAE has none
+    last = np.zeros((envs, agents), np.float32)
+    # Every span closes in a termination (the rollout's last step ends every episode): a span cut by the rollout's end
+    # or by a truncation has no honest bootstrap and is left out of the trace (the next test), which the reference
+    # takes from its `last` and `final` arguments instead.
     dones = rng.random((steps, envs)) < 0.08
-    terminated = dones & (rng.random((steps, envs)) < 0.5)
+    dones[-1] = True
+    terminated = dones.copy()
     chosen = rng.random((steps, envs, agents)) < 0.3
     chosen[0] = True
     expected_adv, expected_ret = compute_slow_gae(rewards, values, dones, terminated, final, last, chosen,
                                                   np.ones_like(chosen), 0.97, 0.9)
-    adv, ret, valid = compute_span_gae(rewards, values, dones, terminated, chosen, 0.97, 0.9, final, last)
+    adv, ret, _ = compute_span_gae(rewards, values, dones, terminated, chosen, 0.97, 0.9)
     assert np.allclose(adv[chosen], expected_adv[chosen], atol=1e-5)
     assert np.allclose(ret[chosen], expected_ret[chosen], atol=1e-5)
-    assert (valid == chosen).all()
 
 
 def test_a_span_with_no_honest_bootstrap_is_left_out():
@@ -72,7 +75,7 @@ def rollout_with_every_part_on(**overrides):
         mask = np.ones((envs, 1, 2), bool)
         layout = np.zeros((envs, 1), np.int64)
         memory = acting.memory.copy()
-        actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                                  state=acting)
         assert len(goals) == 6 and goals[3].shape == (envs, 1, 5)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals)

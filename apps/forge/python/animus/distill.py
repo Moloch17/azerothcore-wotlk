@@ -18,7 +18,6 @@ from dataclasses import dataclass
 
 import torch
 
-from .bootstrap import DIRECTOR_LAYOUT
 
 from .mappo.networks import (LayoutActor, MASKED_LOGIT, load_actor_state, seat_sets_of, vision_image_bytes,
                               vision_look_heads, vision_of, with_map_vin)
@@ -83,7 +82,7 @@ def _index_pairs(student: dict[str, tuple[Span, Span]] | None, teacher: dict[str
 
 
 def frozen_actor(checkpoint: dict, device) -> LayoutActor:
-    """A checkpoint's actor rebuilt as it was trained -- its layouts, memory, goal head, director, seat sets and camera
+    """A checkpoint's actor rebuilt as it was trained -- its layouts, memory, goal head, seat sets and camera
     (VisionEncoder with its MapEncoder, entity list, SightEntities and look head, all from the checkpoint's own
     stage.json) -- loaded with its weights by name, frozen, on `device`. Refused, never started fresh: weights the
     rebuilt actor has no place for or lacks (load_actor_state), a camera block vision_of cannot read (from before
@@ -103,13 +102,8 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
     horizons = mappo.get("foresight_horizons_seconds", ())
     foresight_outputs = ((len(horizons) + 1 + (3 if obs_targets else 0))
                          if float(mappo.get("foresight_coef", 0.0) or 0.0) > 0.0 else 0)
-    # A directed stage's actor has the director's set encoder (stage.json "director"): rebuilt from the teacher's own
-    # stage, or its weights would not load -- the first fast pass stopped at stage12_duel_pvp, whose league was seeded
-    # with the raid stage's directed checkpoint.
     t_names = [entry["name"] for entry in t_spec["layouts"]]
     t_stage = checkpoint.get("stage")
-    director = ((t_names.index(DIRECTOR_LAYOUT), t_stage["director"])
-                if t_stage and "director" in t_stage and DIRECTOR_LAYOUT in t_names else None)
     # And a stage's seat sets, when its actor was trained with them (mappo.seat_sets), from its own stage.json.
     seat_sets = seat_sets_of(t_stage, t_names) if mappo.get("seat_sets", False) else None
     # Its camera, from its own stage.json, with the map's value iteration network as its own run had it.
@@ -118,7 +112,7 @@ def frozen_actor(checkpoint: dict, device) -> LayoutActor:
         raise ValueError("the checkpoint's actor has a camera (vision.* weights) but no stage.json describes it")
     actor = LayoutActor(t_layouts, hidden, foresight_outputs, recurrent_size, goal_count, goal_targets, slow_size,
                         bool(mappo.get("foresight_feedback", False)), bool(mappo.get("goal_lookahead", False)),
-                        director=director, goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,
+                        goal_slots=int(mappo.get("goal_slots", 1) or 1), seat_sets=seat_sets,
                         entity_attention=bool(mappo.get("entity_attention", False)) and seat_sets is not None,
                         vision=vision)
     load_actor_state(actor, checkpoint["trainer"]["actor"])
@@ -460,15 +454,3 @@ class Distiller:
             return None
 
         return self.coef * (total / rows_taught), rows_taught
-
-    def step_loss(self, obs: torch.Tensor, state: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
-                  logits: torch.Tensor, memories: dict[int, torch.Tensor], dones: torch.Tensor):
-        """One decision of a replayed sequence (MappoTrainer's recurrent update): the same loss as __call__, with the
-        teachers' memories carried in `memories` and cleared where `dones`. Returns (loss, rows) with rows 0 when
-        nothing was taught."""
-        if self.coef < 1e-4:
-            return None
-        total, rows = self.kl(obs, state, layout, mask, logits, memories, dones)
-        if rows == 0:
-            return None
-        return self.coef * (total / rows), rows

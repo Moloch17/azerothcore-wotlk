@@ -255,8 +255,8 @@ def fill(trainer, envs=3, agents=2, steps=4):
     acting = trainer.acting_state(envs, agents)
     for step in range(steps):
         memory, critic_memory = acting.memory.copy(), acting.critic_memory.copy()
-        (o, mask, l, st), im, acting, (chosen, log_probs, values, _, goals, _) = decide(trainer, envs, agents, step,
-                                                                                         state=acting)
+        (o, mask, l, st), im, acting, (chosen, log_probs, values, _, goals) = decide(trainer, envs, agents, step,
+                                                                                      state=acting)
         buffer.add_decision(o, st, mask, l, chosen, log_probs, values, None, None, memory, goals, critic_memory,
                             image=im, look=acting.look, look_log_prob=acting.look_log_prob)
         np.testing.assert_array_equal(buffer.look[step], acting.look)
@@ -275,9 +275,6 @@ def test_the_rollout_buffer_holds_the_look():
     # A buffer without look heads keeps none, and its sequences do not carry one.
     plain = RolloutBuffer(2, 1, 1, 3, 2, 2)
     assert plain.look.shape == (2, 1, 1, 0) and "look" not in plain.sequences()
-    # An exploiter's view shares the main's look (what was sent), as it shares the actions.
-    view = RolloutBuffer.view_of(buffer, 0, trainer.recurrent_size, False, 0, 1)
-    assert view.look is buffer.look and view.look_heads == 3
 
 
 def test_the_update_trains_the_look_head_with_its_entropy_and_says_whether_it_turns():

@@ -36,7 +36,6 @@ PATH_EVERY = 8              # grid samples between recorded trip path points (2 
 FIGHT_GAP = 8.0             # seconds without damage that end a fight
 IDLE_SECONDS = 8.0          # no movement and no turning for this long is idle
 IDLE_TURN = math.radians(1.0)
-INTERACT_RADIUS = 10.0      # yards from an interaction a trip may end
 STUCK_SECONDS = 3.0         # keys held this long with the body going nowhere is stuck
 STUCK_YARDS = 1.5
 

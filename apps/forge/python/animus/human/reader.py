@@ -42,7 +42,6 @@ BLOCK_BYTES = 32 << 20          # decompressed bytes framed and parsed at once
 READ_BYTES = 1 << 20            # compressed bytes read from disk at once
 
 STREAMS = {1: "session", 2: "move", 3: "action", 4: "snapshot", 5: "outcome", 6: "companion"}
-STREAM_IDS = {name: sid for sid, name in STREAMS.items()}
 
 
 class CaptureError(ValueError):
@@ -136,7 +135,6 @@ PREFIX: dict[int, tuple[str, np.dtype]] = {
                                            ("reason", "u1")]),
 }
 PREFIX = {rtype: (name, np.dtype(fields)) for rtype, (name, fields) in PREFIX.items()}
-TYPE_OF = {name: rtype for rtype, (name, _) in PREFIX.items()}
 # Fields a later format appended to a record, which an older file's record lacks: read as 0 there. The record's
 # shortest valid payload is its prefix without them.
 APPENDED: dict[int, tuple[str, ...]] = {MOVE: ("server_ms",)}       # format 3
@@ -574,12 +572,6 @@ class CaptureDir:
                 yield hour, path, batch
             if stats is not None:
                 stats.append(file_stats)
-
-    def read_hour(self, hour: HourDir, stream: str) -> Batch:
-        """One stream's records for one hour, across its map shards. Fine for the small streams (session,
-        companion, action); the move and snapshot streams are better read per shard."""
-        batches = [batch for path in hour.files(stream) for batch in read_file(path)]
-        return merge(batches)
 
     def index_report(self) -> dict:
         """Dropped and paused streams, summed over the range's closed hours, and the hours with no index yet."""

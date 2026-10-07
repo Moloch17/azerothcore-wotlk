@@ -60,26 +60,15 @@ def blank_step(decision: int) -> p.Step:
     )
 
 
-def test_travel_failures_are_named_by_how_far_they_wandered():
-    """lost, wedged and spl derive from arrived, distance_travelled and walk_distance: a trip that did not arrive and
-    covered three times its path wandered, one that covered half of it never got going, and spl is success weighted
-    by how much further than the path the seat walked."""
+def test_failed_seeds_are_the_episodes_below_one():
     result = EvalResult(
         policy="learner",
         returns=np.zeros(4),
-        infos=np.array([[1.0, 100.0, 100.0], [0.0, 400.0, 100.0], [0.0, 30.0, 100.0], [1.0, 200.0, 100.0]],
-                       dtype=np.float32),
-        info_names=("arrived", "distance_travelled", "walk_distance"),
+        infos=np.array([[1.0], [0.0], [0.0], [1.0]], dtype=np.float32),
+        info_names=("arrived",),
         layouts=("warrior_dps",) * 4,
         seeds=(0, 1, 2, 3),
     )
-    derived = result.derived()
-    assert derived["lost"].tolist() == [0.0, 1.0, 0.0, 0.0]
-    assert derived["wedged"].tolist() == [0.0, 0.0, 1.0, 0.0]
-    assert derived["spl"].tolist() == pytest.approx([1.0, 0.0, 0.0, 0.5])
-    summary = result.summary(("arrived",))
-    assert summary["lost"] == 0.25 and summary["wedged"] == 0.25
-    assert summary["spl"] == pytest.approx(0.375)
     assert result.failed_seeds("arrived") == [1, 2]
 
 
@@ -287,18 +276,6 @@ def test_arena_summary_needs_several_arenas():
     assert single.summary(())["arenas"] == {}
 
 
-def test_the_summary_has_a_row_per_phase():
-    """eval.phases (the ship stage): a phase's rows are its arenas' episodes, and an arena named by no phase is in
-    none of them."""
-    infos = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [0.0, 2.0]], np.float32)
-    result = EvalResult("learner", np.array([1.0, 3.0, 5.0, 7.0]), infos, ("level", "arena"),
-                        arenas=("travel", "duel", "arena_1v1"))
-    summary = result.summary((), {"movement": ("travel",), "pvp": ("arena_1v1", "not_here")})
-    assert summary["phases"]["movement"]["episodes"] == 1 and summary["phases"]["movement"]["score"] == 1.0
-    assert summary["phases"]["pvp"]["episodes"] == 2 and summary["phases"]["pvp"]["score"] == 6.0
-    assert "classes" not in summary["phases"]
-
-
 def test_stderr_in_summary():
     result = EvalResult("learner", np.array([1.0, 3.0, 5.0, 7.0]), np.zeros((4, 0), np.float32), ())
     assert result.stderr == pytest.approx(np.std([1, 3, 5, 7], ddof=1) / 2)
@@ -345,20 +322,6 @@ def test_convergence_waits_for_a_flat_trend():
     assert recovering.evals_since_best == 3
     assert recovering.projected_gain() == pytest.approx(1.5)
     assert not recovering.converged(300)
-
-
-def test_convergence_segment_reset_keeps_best():
-    tracker = ConvergenceTracker(patience=1, min_improvement=0.0, min_improvement_abs=0.5)
-    tracker.observe(5.0, 0)
-    tracker.observe(4.0, 10)
-    assert tracker.converged(10)
-    tracker.reset_segment(10)
-    assert tracker.best == 5.0 and tracker.evals_since_best == 0
-    assert not tracker.converged(10)
-    assert not tracker.converged(15, min_env_steps=10)  # counted from the restart
-    tracker.observe(4.5, 20)
-    assert tracker.converged(20, min_env_steps=10)
-    assert tracker.projected_gain() is None  # one point in the new segment
 
 
 def test_config_overrides(tmp_path):

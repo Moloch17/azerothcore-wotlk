@@ -113,15 +113,3 @@ def layout_changes(old_stage: dict | None, new_stage: dict | None) -> list[str]:
 def model_names(stage: dict | None) -> dict[str, str]:
     """Layout name -> model name (warrior -> warrior_duel): one model per class, covering its every role."""
     return dict(stage.get("models", {})) if stage else {}
-
-
-def arena_plans(stage: dict | None) -> list[tuple[str, int]]:
-    """Each arena's (seat plan, team width) -- "solo", "party", "mirror", "raid", "teams" or "shared" (groups
-    sharing a zone, not opponents) -- from a stage.json of format 3; [] for an older one."""
-    return [(str(arena.get("plan", "solo")), int(arena.get("team_seats", 0) or 0))
-            for arena in (stage or {}).get("arenas", ()) if "plan" in arena]
-
-
-def cast_agents(stage: dict | None) -> list[dict]:
-    """The agents the stage declares for a frozen checkpoint to play: [{agent, name}]."""
-    return [dict(entry) for entry in (stage or {}).get("cast", ()) if "agent" in entry]

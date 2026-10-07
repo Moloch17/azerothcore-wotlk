@@ -65,9 +65,6 @@ mappo:
   foresight_feedback: true
   goal_lookahead: true
   lookahead_coef: 0.5
-  slow_layout: director
-  slow_gamma: 0.996
-  slow_gae_lambda: 0.98
   goal_entropy_scale: 1.0
   goal_entropy_final_fraction: 0.05
   goal_slot_entropy_weight: 0.1

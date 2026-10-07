@@ -25,7 +25,7 @@ made a square root of it NaN, and within two updates every weight of every rank 
 a plain TCP connection, on a trusted LAN like the rest of the cluster's links.
 
 The leader also serves the checkpoints the run read -- the parents it seeded from, the teachers, the cast's agents
-and its league -- and a follower fetches any it lacks before it sets up (fetch_shared), so every rank loads the same
+and its partners -- and a follower fetches any it lacks before it sets up (fetch_shared), so every rank loads the same
 files. Each machine's runs directory is its own, and the host's is the one those files are written to: until this, a
 follower without them seeded nothing, distilled nothing and, in a stage whose owner is a cast checkpoint, died at
 startup while the host trained alone (2026-09-27).
@@ -294,7 +294,7 @@ class Hub:
             self.control.update(control)
 
     def share(self, listing: dict[str, Path]) -> None:
-        """Serve more files (a new league member), and tell the followers there is something new to fetch: the
+        """Serve more files (a new co-op partner), and tell the followers there is something new to fetch: the
         control's `shared` count goes up, and a follower that sees it change fetches what it lacks (Run.apply_control).
         """
         with self.lock:

@@ -16,7 +16,7 @@ from ..parallel import Ranks
 from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
-                       log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
+                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
                        split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
                        look_hold_indices)
 from .valuenorm import ValueNorm
@@ -170,26 +170,6 @@ class MappoConfig:
     # primary's. Summed at full weight over four slots of 12 kinds x 29 targets, the bonus held the head near uniform
     # (goal entropy 10.4-12.2 nats through the next-run trial, 2026-09-30) and actions stopped depending on goals.
     goal_slot_entropy_weight: float = 0.1
-    # A layout whose agents decide on a slower clock than the seats and are credited on that clock: the director
-    # (Curriculum::DirectorLayout). Named rather than indexed, because a layout's index moves with the stage.
-    #
-    # Its agents choose an action every slow_every_decisions and keep it in between, as the goal head keeps a
-    # goal, and -- unlike the goal head -- their transitions are stored over those choices: one transition runs
-    # from the decision that made a call to the next one, carrying every reward in between. Without that the
-    # cadence buys nothing, because a call would still be credited over the seats' horizon.
-    #
-    # The cadence is not only about credit. Measured on stage19_duo_led at 5.9M steps with the director choosing
-    # every decision: it changed the standing order on 0.706 of them, where the scripted director changed it on
-    # 0.03. A seat cannot follow an order that moves every 1.4 decisions, and order_focus_kept sat at chance for
-    # the whole run.
-    slow_layout: str = ""
-    slow_every_decisions: int = 10
-    # Per slow decision, not per reference_decision_ms: with slow_every_decisions 10 and 250 ms decisions, a step
-    # is 2.5 s, so 0.996 is a ~10 minute value horizon and 0.98 about 2 minutes of credit -- against the seats'
-    # 100 s and 9 s. Rewards inside one span are summed rather than discounted: a span is seconds, the horizon
-    # minutes.
-    slow_gamma: float = 0.996
-    slow_gae_lambda: float = 0.98
     foresight_coef: float = 0.0
     foresight_horizons_seconds: tuple[float, ...] = (5.0, 30.0)
     foresight_time_scale_seconds: float = 60.0
@@ -235,9 +215,6 @@ class ActingState:
     critic_memory: np.ndarray | None = None
     goal: np.ndarray | None = None
     age: np.ndarray | None = None
-    # A slow layout's standing action and how many decisions it has stood for, kept as the goal is.
-    action: np.ndarray | None = None
-    slow_age: np.ndarray | None = None
     # The two-clock seat's slow memory [E, A, S] (MappoConfig.slow_goal_size), stepped only when a goal is chosen.
     slow_memory: np.ndarray | None = None
     # The goals queued behind the two held [E, A, goal_slots - 2] (-1 none): the learner's own (decide_goals).
@@ -273,10 +250,6 @@ class ActingState:
             self.queue[done] = -1
         if self.slow_memory is not None:
             self.slow_memory[done] = 0.0
-        if self.slow_age is not None:
-            # 0 makes the first decision of the new episode a choosing one, so a span never crosses an episode.
-            self.action[done] = 0
-            self.slow_age[done] = 0
 
 
 #: An epoch may exceed the target this far before the update stops: the measure is noisy over one epoch.
@@ -332,7 +305,6 @@ class _Decided:
         self.goal_chosen = None
         self.goal_chosen_at = None
         self.slow_before_at = self.slow_after_at = self.slow_value_at = None
-        self.chosen = None
         self.goal_at = self.goal_log_prob_at = self.foresight_at = self.memory_at = None
         self.goal_slots_at = self.queue_at = None
         self.actions_at = self.log_probs_at = None
@@ -360,10 +332,8 @@ class _Decided:
         if self.memory_at is not None:
             self.state.memory = fetched[self.memory_at]
         taken = fetched[self.actions_at]
-        if self.chosen is not None:
-            self.state.action = taken
         foresight = fetched[self.foresight_at] if self.foresight_at is not None else None
-        return taken, fetched[self.log_probs_at], foresight, goals, self.chosen
+        return taken, fetched[self.log_probs_at], foresight, goals
 
 
 class _Packed:
@@ -487,7 +457,7 @@ class _RolloutGraph:
         # decision's kernels.
         if trainer.goal_count:
             # The goal decision (LayoutActor.decide_goals): the queue promoted, the clock, the goal block's ended and
-            # event, and the director's primary; masked by what the goal block says is there.
+            # event, and the primary an order set; masked by what the goal block says is there.
             goal_features = features
             slow_before = None
             if trainer.slow_goal_size:
@@ -564,7 +534,6 @@ class _RolloutGraph:
         if trainer.recurrent_size:
             np.copyto(host["memory"].numpy(), state.memory)
             np.copyto(host["critic_memory"].numpy(), state.critic_memory)
-        chosen = None
         if trainer.goal_count:
             # A goal is chosen on its own clock and kept in between; a cleared state (a new episode) chooses at once.
             chosen = (state.age % max(1, trainer.config.goal_every_decisions)) == 0
@@ -602,7 +571,7 @@ class _RolloutGraph:
         if "look" in fetched:
             state.look = fetched["look"]
             state.look_log_prob = fetched["look_log_prob"]
-        return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals, None
+        return fetched["actions"], fetched["log_probs"], fetched["values"], fetched.get("foresight"), goals
 
 
 def _host_stats(values: dict) -> dict[str, float]:
@@ -626,21 +595,14 @@ class MappoTrainer:
         config: MappoConfig,
         train_device: str = "cpu",
         rollout_device: str = "cpu",
-        slow_layout: int = -1,
         ranks=None,
-        director=None,
         seat_sets=None,
         vision=None,
     ):
-        """layouts: (obs dim, action count) per agent layout, in the sim's layout order. `slow_layout` is the
-        index of config.slow_layout among them, resolved by the caller (layouts carry no names here); -1 when the
-        run has none. `director` is (the director layout's index, stage.json's "director"): its members and
-        enemies are read as sets, and its turns are the sim's (the "may_call" column)."""
+        """layouts: (obs dim, action count) per agent layout, in the sim's layout order."""
         skip_distribution_checks()
         self.config = config
         self.layouts = list(layouts)
-        self.slow_layout = slow_layout if config.slow_layout else -1
-        self.director = director
         # Per layout stage.json's seat sets, when mappo.seat_sets is on (EntitySets); None leaves the networks as they
         # were.
         self.seat_sets = seat_sets if config.seat_sets else None
@@ -653,9 +615,6 @@ class MappoTrainer:
         self.look_heads = vision_look_heads(vision)
         if self.image_bytes and config.sil_coef > 0.0:
             raise ValueError("mappo.sil_coef with a camera: self-imitation keeps no images yet (camera-vision)")
-        # The column whose flag says a slow layout's agent may choose now (the sim decides its turns); -1 = its clock.
-        self.slow_choose_column = (int(director[1].get("may_call", -1))
-                                   if director is not None and director[0] == self.slow_layout else -1)
         # Data-parallel learners (animus.parallel.Ranks): gradients and statistics reduced across them; alone, none.
         self.ranks = ranks if ranks is not None else Ranks()
         self.state_dim = state_dim
@@ -689,13 +648,13 @@ class MappoTrainer:
             raise ValueError("mappo.goal_slots > 1 needs mappo.slow_goal_size and at least 3 slots (a queue)")
         self.actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size,
                                  self.goal_kinds, self.goal_targets, self.slow_goal_size, config.foresight_feedback,
-                                 config.goal_lookahead, director, self.goal_slots,
+                                 config.goal_lookahead, self.goal_slots,
                                  self.seat_sets, config.entity_attention, self.vision).to(self.train_device)
         if self.actor.goal_head is not None:
             self.actor.goal_head.slot_entropy_weight = config.goal_slot_entropy_weight
         # One camera encoder for both networks: the actor's, which the critic reads by reference (VisionEncoder).
         self.critic = LayoutCritic(state_dim, self.layouts, hidden, self.goal_kinds,
-                                   self.recurrent_size, self.goal_targets, director,
+                                   self.recurrent_size, self.goal_targets,
                                    self.goal_slots, self.seat_sets, config.entity_attention,
                                    self.vision, self.actor.vision).to(self.train_device)
         # Self-imitation's replay of the best episodes (sil_coef > 0), and the per-decision discount its returns use
@@ -824,24 +783,6 @@ class MappoTrainer:
             for group in optimizer.param_groups:
                 group["lr"] = rate * scale
 
-    @torch.no_grad()
-    def shrink_perturb(self, shrink: float, perturb: float) -> None:
-        """weights = shrink x weights + perturb x freshly initialised weights (Ash & Adams, 2020)."""
-        hidden = list(self.config.hidden)
-        fresh_actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
-                                  self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                                  self.config.goal_lookahead, self.director, self.goal_slots, self.seat_sets,
-                                  self.config.entity_attention, self.vision)
-        # As the trained pair: the critic reads the actor's camera encoder, so its parameters line up with the critic's.
-        fresh = (fresh_actor,
-                 LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
-                              self.goal_targets, self.director, self.goal_slots, self.seat_sets,
-                              self.config.entity_attention, self.vision, fresh_actor.vision))
-        for network, init in zip((self.actor, self.critic), fresh):
-            for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
-                param.mul_(shrink).add_(init_param, alpha=perturb)
-        self._sync_rollout()
-
     # ------------------------------------------------------------------ rollout
 
     def sync_rollout(self) -> None:
@@ -870,13 +811,9 @@ class MappoTrainer:
                 actor.goal_head.set_space(goals["accepts"], block_at)
 
     def director_columns_clear(self) -> bool:
-        """Whether both networks' director adapters still read nothing from the slot columns, nor any layout's adapter
-        from its seat sets' or camera's columns."""
+        """Whether no layout's adapter reads its seat sets' or camera's columns (the name is the one resume_check.py
+        calls)."""
         for network in (self.actor, self.critic):
-            if getattr(network, "director_sets", None) is not None:
-                weight = network.adapters[network.director_index].weight
-                if bool((weight[:, network.director_sets.column_mask] != 0).any()):
-                    return False
             for index in range(len(network.adapters)):
                 for tag in ("set", "vision"):
                     keep = getattr(network, f"{tag}_keep_{index}", None)
@@ -884,11 +821,11 @@ class MappoTrainer:
                         return False
         return True
 
-    def clear_director_columns(self) -> None:
-        """Zero the director adapters' slot columns in both networks, and in the rollout copies."""
-        from .networks import clear_director_columns
+    def clear_blind_columns(self) -> None:
+        """Zero the adapters' seat set and camera columns in both networks, and in the rollout copies."""
+        from .networks import clear_blind_columns
         for network in (self.actor, self.critic):
-            clear_director_columns(network)
+            clear_blind_columns(network)
         self._sync_rollout()
 
     def _sync_rollout(self) -> None:
@@ -916,7 +853,7 @@ class MappoTrainer:
 
     def _tensor(self, array: np.ndarray, dtype=None) -> torch.Tensor:
         # A device tensor (the sim's device buffers, protocol 15) on the rollout's device is used where it is: sending
-        # it to the host and back up cost the eager decision -- every director stage's -- two copies of every input.
+        # it to the host and back up cost the eager decision two copies of every input.
         # On another device it is copied blocking: a non-blocking copy there is ordered on neither the rollout's
         # stream nor its downloads, and one to the host can be read before it lands.
         if isinstance(array, torch.Tensor):
@@ -933,16 +870,16 @@ class MappoTrainer:
 
     def _graphs_apply(self, state: "ActingState | None") -> bool:
         """Whether a rollout decision runs as a captured graph (_rollout_graph): on the GPU, turned on, with an acting
-        state, and without what branches on the host (a slow layout's held decisions, the director's and the seat
-        sets' row picks). The camera (VisionEncoder) is none of those: its shapes are fixed, graphs stay on."""
+        state, and without what branches on the host (the seat sets' row picks). The camera (VisionEncoder) is not one
+        of those: its shapes are fixed, graphs stay on."""
         return not (self._rollout_stream is None or not self.config.rollout_graphs or state is None
-                    or self.slow_layout >= 0 or self.director is not None or self.seat_sets is not None)
+                    or self.seat_sets is not None)
 
     def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
                        state: "ActingState | None") -> "_RolloutGraph | None":
         """The captured decision for this batch shape, captured on first use; None where it does not apply: off the
-        GPU, turned off (mappo.rollout_graphs), without an acting state, or with a slow layout (its held decisions
-        branch on the host)."""
+        GPU, turned off (mappo.rollout_graphs), without an acting state, or with seat sets (their row picks branch
+        on the host)."""
         if not self._graphs_apply(state):
             return None
         envs, agents = layout.shape
@@ -991,7 +928,7 @@ class MappoTrainer:
         """
         obs, mask = host(obs), host(mask)
         with self._rollout_context():
-            actions, log_probs, _, _, _ = self._decide(obs, mask, layout, deterministic, state, image=image)
+            actions, log_probs, _, _ = self._decide(obs, mask, layout, deterministic, state, image=image)
         return actions, log_probs
 
     @torch.inference_mode()
@@ -999,8 +936,7 @@ class MappoTrainer:
                       deterministic: bool = False, state: "ActingState | None" = None, image=None):
         """act() and value() of one decision in one pass over the inputs: the rows are converted and grouped by
         layout once for both networks. Returns (actions, log_probs, values, foresight or None, goals or None), the
-        last three [E, A, H + 1], (goal, goal log prob, whether this decision chose it), and which
-        decisions are samples (a slow layout's held ones are not; None when the run has no slow layout)."""
+        last three [E, A, H + 1], (goal, goal log prob, whether this decision chose it)."""
         with self._rollout_context():
             envs, agents = layout.shape
             graph = self._rollout_graph(obs, mask, layout, state_features, deterministic, state)
@@ -1038,10 +974,10 @@ class MappoTrainer:
             values_at = downloads.add(values.reshape(envs, agents))
 
             fetched = downloads.finish()
-            actions, log_probs, foresight, goals, chosen = decided.finish(fetched)
+            actions, log_probs, foresight, goals = decided.finish(fetched)
             if carried_at is not None:
                 state.critic_memory = fetched[carried_at]
-            return actions, log_probs, fetched[values_at], foresight, goals, chosen
+            return actions, log_probs, fetched[values_at], foresight, goals
 
     @torch.no_grad()
     def _decide(self, obs: np.ndarray, mask: np.ndarray, layout: np.ndarray, deterministic: bool,
@@ -1106,25 +1042,6 @@ class MappoTrainer:
             log_probs = log_probs + look_log_prob.to(log_probs.dtype)
             decided.look_at = downloads.add(look.reshape(envs, agents, -1).to(torch.int8))
             decided.look_log_prob_at = downloads.add(look_log_prob.reshape(envs, agents).to(torch.float32))
-
-        # A slow layout speaks on its own clock and its call stands in between, so the seats have something
-        # steady enough to act on. The log probabilities of the held decisions are the sampled action's and not
-        # the held one's, which costs nothing: a held decision is not a sample and never reaches the loss.
-        if self.slow_layout >= 0 and state is not None and state.slow_age is not None:
-            every = max(1, self.config.slow_every_decisions)
-            slow = layout == self.slow_layout
-            # The sim's turns where it decides them (the director's "may call"), else the learner's own clock.
-            if self.slow_choose_column >= 0:
-                choosing = slow & (host(obs)[..., self.slow_choose_column] > 0.5)
-            else:
-                choosing = slow & (state.slow_age % every == 0)
-            holding = slow & ~choosing
-            if holding.any():
-                actions = torch.where(self._tensor(holding).reshape(rows).bool(),
-                                      self._tensor(state.action, torch.long).reshape(rows), actions)
-            decided.chosen = ~slow | choosing
-            # A choosing decision starts the count again at 1, as the goal head's age does.
-            state.slow_age = np.where(slow, np.where(decided.chosen, 1, state.slow_age + 1), 0)
 
         if self.foresight_outputs:
             decided.foresight_at = downloads.add(
@@ -1211,8 +1128,6 @@ class MappoTrainer:
                            if self.recurrent_size else None),
             goal=np.zeros((envs, agents), dtype=np.int64) if self.goal_count else None,
             age=np.zeros((envs, agents), dtype=np.int64) if self.goal_count else None,
-            action=np.zeros((envs, agents), dtype=np.int64) if self.slow_layout >= 0 else None,
-            slow_age=np.zeros((envs, agents), dtype=np.int64) if self.slow_layout >= 0 else None,
             slow_memory=(np.zeros((envs, agents, self.slow_goal_size), dtype=np.float32) if self.slow_goal_size
                          else None),
             queue=(np.full((envs, agents, self.goal_slots - 2), -1, dtype=np.int64) if self.goal_slots > 2
@@ -1391,7 +1306,7 @@ class MappoTrainer:
         layout = rows(buffer.layout).long().reshape(-1)
         goal = rows(buffer.goal).long().reshape(-1)
         # With two goals and a queue: the slots each choice drew (scored again below), the primary as held for the
-        # lookahead's outcome, and whether the primary was the director's (not drawn, so not scored).
+        # lookahead's outcome, and whether the primary was an order's (not drawn, so not scored).
         slots = rows(buffer.goal_slots).long().reshape(length * columns, -1) if head.slots > 1 else None
         if slots is not None:
             goal = split_goal_pair(goal, head.count)[0]

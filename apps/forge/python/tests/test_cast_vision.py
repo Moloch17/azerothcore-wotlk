@@ -401,10 +401,10 @@ def test_partners_act_and_look_and_the_eval_chooser_carries_the_look(tmp_path):
 
 def test_the_cast_facade_passes_the_image_and_the_look(tmp_path):
     stage = camera_stage()
-    stage["arenas"][0] = {"name": "party", "plan": "mirror", "team_seats": 0}
+    stage["cast"] = [{"agent": 1, "name": "owner"}]
     path, _ = save(tmp_path, stage)
-    config = CastConfig(opponents=str(path), opponent_share=1.0)
-    cast = Cast(config, spec_of(stage), stage, tmp_path, "cpu", None)
+    config = CastConfig(agents={"owner": str(path)})
+    cast = Cast(config, spec_of(stage), stage, "cpu")
     step = step_rows(stage)
     rows = cast.rows(step)
     assert rows[:, 1].all() and not rows[:, 0].any()

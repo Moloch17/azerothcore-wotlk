@@ -14,7 +14,7 @@ import torch
 
 from animus.bootstrap import seed_trainer
 from animus.export import export_layouts
-from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, VisionJoin, owns_vision, update_norms,
+from animus.mappo.networks import (LayoutActor, LayoutCritic, VisionEncoder, VisionJoin, update_norms,
                                    vision_of, without_blind_columns)
 from animus.mappo.trainer import MappoConfig, MappoTrainer
 from animus.protocol import Layout
@@ -382,7 +382,7 @@ def test_seeding_from_a_checkpoint_without_a_camera_leaves_the_policy_as_it_was(
 def test_the_actor_and_the_critic_share_one_camera_encoder():
     trainer = MappoTrainer(shapes(stage()), 4, MappoConfig(hidden=(16, 16)), vision=vision_of(stage(), NAMES))
     assert trainer.actor.vision is not None and trainer.critic.vision is trainer.actor.vision
-    assert owns_vision(trainer.actor) and not owns_vision(trainer.critic)
+    assert "vision" in trainer.actor._modules and "vision" not in trainer.critic._modules   # the critic holds a reference
     # The rollout copies share theirs too, and it is not the trained one.
     assert trainer._rollout_critic.vision is trainer._rollout_actor.vision
     assert trainer._rollout_actor.vision is not trainer.actor.vision
@@ -436,7 +436,7 @@ def test_both_losses_train_the_shared_camera_once_per_minibatch(two_clock):
         st = np.random.default_rng(step).standard_normal((envs, 4)).astype(np.float32)
         mask = np.ones((envs, 2, 5), bool)
         memory = acting.memory.copy()
-        chosen, log_probs, values, _, goals, _ = trainer.act_and_value(o, mask, l, st, state=acting, image=im)
+        chosen, log_probs, values, _, goals = trainer.act_and_value(o, mask, l, st, state=acting, image=im)
         buffer.add_decision(o, st, mask, l, chosen, log_probs, values, None, None, memory, goals, image=im)
         np.testing.assert_array_equal(buffer.image[step], im)
         buffer.add_outcome(np.ones((envs, 2), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),

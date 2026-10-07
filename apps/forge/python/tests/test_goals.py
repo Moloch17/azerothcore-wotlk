@@ -23,7 +23,7 @@ def test_a_goal_is_kept_until_its_clock_comes_round():
     goals = []
     chosen = []
     for _ in range(7):
-        _, _, _, _, record, _ = trainer.act_and_value(obs, mask, layout, np.zeros((2, 4), np.float32),
+        _, _, _, _, record = trainer.act_and_value(obs, mask, layout, np.zeros((2, 4), np.float32),
                                                   state=acting)
         goals.append(record[0].copy())
         chosen.append(record[2].copy())
@@ -58,7 +58,7 @@ def test_goals_and_memory_together():
         mask = np.ones((2, 1, 2), bool)
         layout = np.zeros((2, 1), np.int64)
         memory = acting.memory.copy()
-        actions, log_probs, values, _, goals, _ = trainer.act_and_value(obs, mask, layout, state, state=acting)
+        actions, log_probs, values, _, goals = trainer.act_and_value(obs, mask, layout, state, state=acting)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, None, memory, goals)
         dones = np.zeros(2, bool)
         buffer.add_outcome(rng.random((2, 1), dtype=np.float32), dones, dones, np.zeros((2, 1), np.float32))
@@ -76,7 +76,7 @@ def rollout_with_goals(trainer, steps=4, recurrent=False):
         mask = np.ones((2, 1, 2), bool)
         layout = np.zeros((2, 1), np.int64)
         memory = acting.memory.copy() if recurrent else None
-        actions, log_probs, values, _, goals, _ = trainer.act_and_value(obs, mask, layout, state, state=acting)
+        actions, log_probs, values, _, goals = trainer.act_and_value(obs, mask, layout, state, state=acting)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, None, memory, goals)
         dones = np.zeros(2, bool)
         buffer.add_outcome(rng.random((2, 1), dtype=np.float32), dones, dones, np.zeros((2, 1), np.float32))

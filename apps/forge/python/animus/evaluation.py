@@ -47,16 +47,9 @@ LIVELOCK_CANCELS = 20
 # (target.metrics, target.layout_metrics); they are not episode info names, so validation allows them by name.
 # clean_kill: the fight was won outright -- the opponent killed and the seat never dead. killed and died are gated
 # apart, and their means cannot say whether the episodes that killed are the ones that did not die.
-# lost / wedged / spl, on a travel stage: how a trip failed. A seat that did not arrive and covered more than
-# LOST_ABOVE times the path it was given wandered (38 of 42 stage1_move failures and 57 of 61 stage2_travel's); one
-# that covered less than WEDGED_BELOW of it never got going. They want opposite fixes and look identical in `arrived`.
-# spl is success weighted by path length -- arrived x path / max(path, covered), the navigation literature's SPL --
-# 1 for a seat that walked exactly the path and 0 for one that did not arrive.
-DERIVED_METRICS = ("livelocked", "clean_kill", "lost", "wedged", "spl")
+DERIVED_METRICS = ("livelocked", "clean_kill")
 # Ratios of sums over an evaluation's episodes (EvalResult.summary), on the movement stages that report the columns.
-RATIO_METRICS = ("arrived_narrow", "fallback_share", "arrived_at_rung")
-LOST_ABOVE = 3.0
-WEDGED_BELOW = 0.5
+RATIO_METRICS = ("arrived_at_rung",)
 
 #: The episode info column an evaluation is scored on by default: the episode's Outcome and Cost terms before any
 #: rung's tier and any role's scale (RewardLedger::Score, peak-play plan W0).
@@ -206,8 +199,7 @@ class EvalResult:
         return sorted({int(seed) for seed, value in zip(self.seeds, values) if value < 1.0})
 
     def derived(self) -> dict[str, np.ndarray]:
-        """Per episode, the DERIVED_METRICS the episode info can give: 1.0 where it holds, else 0.0 (spl, a
-        weighted success, is a fraction)."""
+        """Per episode, the DERIVED_METRICS the episode info can give: 1.0 where it holds, else 0.0."""
         out = {}
         # The share of episodes stuck in a cast/stop loop. A mean of casts_cancelled hides it: the loop is a tail,
         # not a shift (stage4_duel warlock: median 4 cancels, maximum 299), so it is counted per episode.
@@ -217,21 +209,11 @@ class EvalResult:
         killed, died = self.column("killed"), self.column("died")
         if killed is not None and died is not None:
             out["clean_kill"] = ((killed > 0.0) & (died <= 0.0)).astype(np.float64)
-        arrived, covered, path = (self.column("arrived"), self.column("distance_travelled"),
-                                  self.column("walk_distance"))
-        if arrived is not None and covered is not None and path is not None:
-            length = np.maximum(path.astype(np.float64), 1e-6)
-            failed = arrived <= 0.0
-            out["lost"] = (failed & (covered > LOST_ABOVE * length)).astype(np.float64)
-            out["wedged"] = (failed & (covered < WEDGED_BELOW * length)).astype(np.float64)
-            out["spl"] = np.where(arrived > 0.0, length / np.maximum(length, covered), 0.0).astype(np.float64)
         return out
 
-    def summary(self, columns: tuple[str, ...], phases: dict[str, tuple[str, ...]] | None = None) -> dict:
+    def summary(self, columns: tuple[str, ...]) -> dict:
         """Score and means of `columns`: overall, per level band, per layout, per arena, per talent build and per
-        difficulty tier, and for each tier but the top one everything up to it, per layout too ("up_to"). With
-        `phases` (eval.phases: a phase's name -> its arenas), per curriculum phase as well: the ship stage is judged
-        phase by phase, so one it lets slip is named rather than averaged away."""
+        difficulty tier, and for each tier but the top one everything up to it, per layout too ("up_to")."""
         present = [c for c in columns if c in self.info_names]
         derived = self.derived()
         episodes = self._episode_of_row()
@@ -262,12 +244,6 @@ class EvalResult:
             out.update(ratios(rows))
             return out
 
-        # The movement stages' narrow skill, as ratios of sums over the episodes (a mean of per-episode ratios would
-        # weigh a one-leg episode as much as a four-leg one, and has nothing to say for an episode with no such leg):
-        # arrived_narrow, narrow legs stopped on over narrow legs placed as asked; fallback_share, narrow legs that
-        # fell back to an ordinary marker over every narrow leg asked for (MarkerEncounter).
-        narrow, narrow_arrived, fallbacks = (self.column("narrow_legs"), self.column("narrow_arrived"),
-                                             self.column("fallback_legs"))
         # M1's withholding ladder (SightEncounter, perception-goals REDESIGN amendment 7): an evaluation plays every
         # pair with the compass and without, half and half, whatever the rung, so its plain arrival rate is not the
         # rung's. arrived_at_rung is the arrival at the training rung's own mix -- the chance it withholds the
@@ -292,17 +268,11 @@ class EvalResult:
                     out["arrived_at_rung"] = rate_no
                 else:
                     out["arrived_at_rung"] = None
-            if narrow is not None and narrow_arrived is not None:
-                placed = float(narrow[rows].sum())
-                out["arrived_narrow"] = float(narrow_arrived[rows].sum()) / placed if placed > 0 else None
-                if fallbacks is not None:
-                    asked = placed + float(fallbacks[rows].sum())
-                    out["fallback_share"] = float(fallbacks[rows].sum()) / asked if asked > 0 else None
             return out
 
         everything = np.ones(self.episodes, dtype=bool)
         result = {"policy": self.policy, **means(everything), "bands": {}, "layouts": {}, "specs": {},
-                  "castings": {}, "arenas": {}, "phases": {}, "builds": {}, "difficulties": {}, "up_to": {},
+                  "castings": {}, "arenas": {}, "builds": {}, "difficulties": {}, "up_to": {},
                   "categories": {}}
         # By each named category (the seek stage's room and object: found by room, found by object type), under
         # "<column>=<name>"; a name no episode drew is left out.
@@ -357,10 +327,6 @@ class EvalResult:
                 rows = arenas == index
                 if rows.any():
                     result["arenas"][arena] = means(rows)
-            for phase, members in (phases or {}).items():
-                rows = np.isin(arenas, [self.arenas.index(name) for name in members if name in self.arenas])
-                if rows.any():
-                    result["phases"][phase] = means(rows)
         # The creature duel's difficulty tiers (episode info "difficulty"): an evaluation spreads its seeds over them.
         tiers = self.column("difficulty")
         if tiers is not None and len(set(tiers.tolist())) > 1:
@@ -711,8 +677,6 @@ class ConvergenceTracker:
     best_env_steps: int = 0
     evals_since_best: int = 0
     last_margin: float = 0.0  # the margin the latest evaluation had to beat
-    segment_index: int = 0  # history index where the current segment starts
-    segment_env_steps: int = 0
     history: list[tuple[int, float, float]] = field(default_factory=list)  # (env steps, score, stderr)
 
     def margin(self, stderr: float = 0.0) -> float:
@@ -735,8 +699,8 @@ class ConvergenceTracker:
         return False
 
     def projected_gain(self) -> float | None:
-        """Score gain over the next `patience` evaluations on the current segment's trend; None below 3 points."""
-        points = self.history[self.segment_index:][-max(3, self.window):]
+        """Score gain over the next `patience` evaluations on the recent trend; None below 3 points."""
+        points = self.history[-max(3, self.window):]
         if len(points) < 3:
             return None
         steps = np.array([point[0] for point in points], dtype=np.float64)
@@ -750,12 +714,12 @@ class ConvergenceTracker:
     def converged(self, env_steps: int, min_env_steps: int = 0) -> bool:
         if self.patience <= 0 or self.evals_since_best < self.patience:
             return False
-        if env_steps - self.segment_env_steps < min_env_steps:
+        if env_steps < min_env_steps:
             return False
         gain = self.projected_gain()
         if gain is None:
             return True
-        recent = self.history[self.segment_index:][-max(3, self.window):]
+        recent = self.history[-max(3, self.window):]
         stderr = float(np.mean([point[2] for point in recent]))
         return gain <= self.margin(stderr)
 
@@ -767,20 +731,12 @@ class ConvergenceTracker:
         self.best_env_steps = env_steps
         self.evals_since_best = 0
 
-    def reset_segment(self, env_steps: int) -> None:
-        """Start a new segment (after a restart): counters and trend start over, the best score is kept."""
-        self.segment_index = len(self.history)
-        self.segment_env_steps = env_steps
-        self.evals_since_best = 0
-
     def state_dict(self) -> dict:
         return {
             "best": self.best,
             "best_stderr": self.best_stderr,
             "best_env_steps": self.best_env_steps,
             "evals_since_best": self.evals_since_best,
-            "segment_index": self.segment_index,
-            "segment_env_steps": self.segment_env_steps,
             "history": list(self.history),
         }
 
@@ -793,8 +749,6 @@ class ConvergenceTracker:
         self.best_env_steps = 0
         self.evals_since_best = 0
         self.last_margin = 0.0
-        self.segment_index = 0
-        self.segment_env_steps = 0
         self.history = []
 
     def load_state_dict(self, state: dict | None) -> None:
@@ -804,8 +758,6 @@ class ConvergenceTracker:
         self.best_stderr = state.get("best_stderr", 0.0)
         self.best_env_steps = state.get("best_env_steps", 0)
         self.evals_since_best = state.get("evals_since_best", 0)
-        self.segment_index = state.get("segment_index", 0)
-        self.segment_env_steps = state.get("segment_env_steps", 0)
         self.history = [tuple(h) for h in state.get("history", [])]
 
 
@@ -819,7 +771,7 @@ def format_summary(summary: dict, baseline: dict | None, columns: tuple[str, ...
 
     names = ["score", *[c for c in columns if c in summary], *[d for d in DERIVED_METRICS if d in summary]]
     rows = [("all", summary, baseline)]
-    for group in ("bands", "layouts", "arenas", "phases", "builds", "difficulties", "categories"):
+    for group in ("bands", "layouts", "arenas", "builds", "difficulties", "categories"):
         for key, row in summary.get(group, {}).items():
             label = f"tier {key}" if group == "difficulties" else key
             rows.append((label, row, (baseline or {}).get(group, {}).get(key)))

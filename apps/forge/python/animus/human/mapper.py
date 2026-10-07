@@ -49,10 +49,6 @@ CONF_SCALE = 0.05
 DB_CONTAINER = "ac-animus-forge-database"
 WORLD_DB = "acore_world"
 
-# MoveControls.h: the move block's local actions (revision 2).
-MOVE_ACTIONS = 25
-
-
 def move_local(space: fit.Space, index: int) -> int | None:
     """The move block's local action for an emulator action: its index less one (the emulator's action 0 is no
     press, None)."""
@@ -184,15 +180,6 @@ def map_cast(spell: int, ranks: dict[int, int], catalog: Catalog) -> tuple[int |
         return None, "", 0.0
     name = catalog.names[action] if action < len(catalog.names) else f"action_{action}"
     return action, name, 1.0
-
-
-def selection_slot(target: int, units: np.ndarray) -> int | None:
-    """The slot rank of a selected unit among the snapshot's units of the same reaction, nearest first."""
-    hit = np.flatnonzero(units["unit"] == target)
-    if len(hit) == 0:
-        return None
-    same = np.flatnonzero(units["reaction"] == units["reaction"][hit[0]])
-    return int(np.flatnonzero(same == hit[0])[0])
 
 
 # spell_ranks export.

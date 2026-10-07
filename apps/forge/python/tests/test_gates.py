@@ -1,13 +1,10 @@
-"""The shipped configs against the curriculum that emits their columns, and the one gate helper left."""
+"""The shipped configs against the curriculum that emits their columns."""
 
 import re
 from pathlib import Path
 
-import pytest
-
 from animus.config import TrainConfig
 from animus.evaluation import DERIVED_METRICS
-from animus.gates import wilson_bound
 
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 
@@ -31,15 +28,6 @@ def _curriculum_file(relative: str) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
-
-
-def test_wilson_bound_tightens_with_evidence():
-    assert wilson_bound(1.0, 0, 0.95, lower=True) == 0.0
-    few, many = wilson_bound(0.95, 20, 0.95, lower=True), wilson_bound(0.95, 2000, 0.95, lower=True)
-    assert 0.0 < few < many < 0.95
-    assert wilson_bound(0.5, 100, 0.95, lower=False) > 0.5 > wilson_bound(0.5, 100, 0.95, lower=True)
-    with pytest.raises(ValueError):
-        wilson_bound(0.5, 10, 1.5, lower=True)
 
 
 def sim_stage_columns() -> dict[str, set[str]]:
