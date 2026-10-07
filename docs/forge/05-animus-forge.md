@@ -597,7 +597,7 @@ A new best score saves `best.pt`.
   judged a plateau at every step (M2, 2026-10-07: the rates annealed to 0.41 with two rungs still to learn) and could
   call a class converged on reaching the top. At each forward step the overall tracker, the plateau (`lr_scale` back to
   1), the best summary and every class's tracker, scores, `converged` flag, score, margin and re-entries start over;
-  KL, entropy, rung and league windows, which hold no score, are kept. Until its last rung a gate-stepped fade
+  KL, entropy and rung windows, which hold no score, are kept. Until its last rung a gate-stepped fade
   allows neither a plateau nor a converged class. A checkpoint carries the rung it was last re-baselined at
   (`baselined`); one saved before that, above rung 0, is dropped the same way on resume. Plateau-stepped ladders (M1,
   the cost ladders) are untouched.
@@ -661,8 +661,7 @@ last `convergence.window` evaluations. A class has converged when all four hold:
 3. **Entropy settled** -- its entropy over `ln(allowed actions)` has a slope within `convergence.entropy_slope`
    (0.01) per evaluation and sits above `entropy_floor.fraction` when one is set: not still exploring, not collapsed.
 4. **The ladder settled** -- on a ladder stage its training rung (the mean `difficulty` of its training episodes)
-   has not moved by half a rung; on a league stage the live policy's win rate against the hardest league member has
-   moved by less than 0.05.
+   has not moved by half a rung.
 
 `layouts.csv` carries each class's `entropy`, `approx_kl`, `allowed_actions`, `lr_scale` and `frozen` per update,
 and `progress.json` says which classes have converged and what the weakest one is still missing.
@@ -774,51 +773,25 @@ Nothing halts the plan but a crash. The advance is appended to `stage.jsonl` wit
 `finished.json` records the reason, the step and update counts, the best score and where it was reached, and per
 class whether it converged, how many times it re-entered, and which signals it was missing.
 
-### The cast: frozen checkpoints in the seats a script used to play (`cast.py`)
+### The cast: frozen checkpoints in the seats the stage declares (`cast.py`)
 
-The far side of a self-play arena -- seat 1 of a `Mirror` arena, the second team of a `Teams` one -- is played in
-training by a **frozen checkpoint** rather than by the live policy alone, and any agent the sim declares in
-stage.json's `cast` list (an owner played for the seats) likewise. Their rows take the frozen actor's action and
-are not samples. Nothing changes on the wire: the learner tells an opponent seat from stage.json (each arena's
-`plan` and `team_seats`, the episode's arena from the critic state one-hot) and a declared agent from the `cast`
-list; a frozen actor is `distill.build_teacher`'s, mapped block by block onto the stage, with its own memory and
-goals per row.
+Any agent the sim declares in stage.json's `cast` list (an owner played for the seats: the follow stage's leader) is
+played in training by a **frozen checkpoint** named in `cast.agents`. Its rows take the frozen actor's action and are
+not samples. Nothing changes on the wire: the learner reads the declared agents from the `cast` list; a frozen actor is
+`distill.build_teacher`'s, mapped block by block onto the stage, with its own memory and goals per row. The self-play
+league (`cast.opponents`), the exploiter and the mirror and teams arenas they served were removed with the first
+curriculum (git history keeps them).
 
 ```yaml
 cast:
-  opponents: league        # "" live self-play | auto = the seed chain's parent best.pt | league = parent + this run's snapshots | a path
-  parent: "{runs_dir}/stage12_duel_pvp/best.pt"   # the league's first member when the seed parent is a PvE policy
-  opponent_share: 0.5      # share of self-play episodes whose far side is cast, drawn per env at episode start
-  agents: {owner: "{runs_dir}/stage5_pack/best.pt"}   # stage.json `cast` entries by name
-  snapshot_every_env_steps: 5000000
-  league_size: 8
-  rate_window: 200
-  floor: 0.05
-  retire_above: 0.85
-  keep_newest: 2
+  agents: {leader: "{runs_dir}/<stage>/best.pt"}   # stage.json `cast` entries by name
 ```
 
-**The league is fed on a clock, not on `best.pt` alone.** `best.pt` moves only behind the convergence margin, so a
-league fed from it can go a whole stage without a new member. Every `snapshot_every_env_steps` the current
-`latest.pt` is copied into `<run_dir>/league/step_<env steps>.pt`, and every improved `best.pt` into
-`best_<env steps>.pt`. Members are drawn per episode by prioritised fictitious self-play weights,
-`(1 - p)^2 + floor` with `p` the live policy's win rate against the member (an average over `rate_window` of the
-live seats' `won` at the episode's end), so the ones the policy still loses to are met most and none is forgotten.
-A member beaten above `retire_above` for a full window is retired; the newest `keep_newest` never are, and
-`league_size` prunes the most-beaten first, never the newest or the hardest. `league.json` in the run directory
-lists them, and `metrics.csv` carries `cast_rows` (the share of rows cast), `cast_fallback_rows` (rows whose layout
-the checkpoint lacked), `cast_members` and `cast_hardest_win_rate` -- the live policy's win rate against its
-hardest member, which climbing toward 1 says the pool has gone stale and the clock is too slow. The convergence
-rule reads it too: on a league stage a class's ladder signal is that this rate has settled.
+`metrics.csv` carries `cast_rows` (the share of rows cast) and `cast_fallback_rows` (rows whose layout the checkpoint
+lacked). The co-op partners (`cast.partners`, `partners.py`) reuse the same frozen actor.
 
 **The evaluation never runs a cast actor.** The far side of a seeded evaluation is the learner's own, so scores stay
-comparable across runs; the league is a training-time device.
-
-**The owner as a cast seat** (`ArenaDefinition::OwnerCast`, the companion, party, tanking, triage and crossroads
-arenas): the sim builds the owner as a seat in an agent slot of its own after the seats and the directors, declares
-it in stage.json's `cast` list, observes it and applies its action like any seat, pays it nothing and leaves its
-episode-info row empty; the learner plays the row from `cast.agents.owner`, in evaluations too. There is no scripted
-owner, enemy player or ambusher: the sim's scripted players (`ScriptedPlayer`) are gone.
+comparable across runs.
 
 ## 5.20 Checkpoints, resume and export
 

@@ -307,8 +307,7 @@ Written to `<OutputDir>/layouts/<stage>/stage.json` and copied into each run:
 
 `reason` (`converged` or `budget`), `advanced` (always true: nothing halts a plan), `env_steps`, `update`,
 `best_score`, `best_env_steps`, and `layouts`: per class, `converged`, `reentries`, `missing` (which of `score`,
-`kl`, `entropy`, `ladder` it still lacked, or `never played`), and its last `score`, `kl`, `entropy`, `rung` and
-`league` readings.
+`kl`, `entropy`, `ladder` it still lacked, or `never played`), and its last `score`, `kl`, `entropy` and `rung` readings.
 
 ### `progress.json`
 
@@ -318,8 +317,7 @@ A flat object rewritten after every update and evaluation. Fields include:
 - evaluation settings: `eval_every`, `patience`, `window`, `baseline`
 - state: `phase` (`training`, `evaluating`, `finished`, `stopped`), `update`, `env_steps`, `updated_at`,
   `finish_reason` (`converged` or `budget`), `advanced`
-- latest training metrics, `lr_scale`, `frozen_layouts`, `cast_rows`, `cast_fallback_rows`, `cast_members` and
-  `cast_hardest_win_rate` among them
+- latest training metrics, `lr_scale`, `frozen_layouts`, `cast_rows`, `cast_fallback_rows` among them
 - evaluation: `evals`, `last_eval_env_steps`, `last_eval_score`, `baseline_score`, `best_score`, `best_env_steps`,
   `evals_since_best`
 - convergence per class: `converged_layouts` and `active_layouts` (comma-separated), `weakest_layout` and
@@ -344,8 +342,6 @@ A flat object rewritten after every update and evaluation. Fields include:
 | `eval_episodes.jsonl` | Every evaluation | One row per scored episode: update, env_steps, policy, seed, layout, return, every episode info column, the derived `clean_kill` and `livelocked`, and (learner rows) `actions`: each action taken other than the no-op, by name, with its count, and `allowed`: how many of the episode's decisions allowed each action, so one never taken can be told from one never offered |
 | `eval_baseline.json` | Once per run | The baseline summary and its cache key |
 | `stage.jsonl` | The advance | Decision, reason, every class's convergence signals |
-| `league.json` | Every evaluation and snapshot, on a league stage | The cast league's members, fights, win rates and retirements (5.19) |
-| `league/<tag>.pt` | Every `cast.snapshot_every_env_steps` and improved best | The league's snapshots of this run |
 | `checkpoint_<update>.pt` | Every `checkpoint_every` | Newest `keep_checkpoints` kept |
 | `latest.pt` | Checkpoints and finish | Resume point |
 | `best.pt` | Each new best evaluation | Seed for later stages, export default. On a gate-stepped ladder it is the best **at the current rung** (the first evaluation at a new rung overwrites it) |
