@@ -161,6 +161,8 @@ namespace Animus::Curriculum
         /// env.Targets as the packs stand (the critic's and the step statistics' list, never the seat's).
         void ListTargets(Env& env) const;
         [[nodiscard]] Creature* Member(Env const& env, ObjectGuid guid) const;
+        /// A creature of the pull in front is alive and in a fight (the kill clock's, and the gauntlet's pull time).
+        [[nodiscard]] bool FrontFighting(Env const& env) const;
         void Despawn(Env& env);
 
         std::vector<EnvCombat> _envs;

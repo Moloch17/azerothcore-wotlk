@@ -450,13 +450,25 @@ void Animus::Curriculum::CombatEncounter::View(Env const& env, uint32 /*seat*/, 
         view.DrinkItem = view.Bot && view.Bot->GetMaxPower(POWER_MANA) ? consumables.Drink(combat.Level) : 0;
         view.GauntletSupplies = CONSUMABLE_COUNT;
     }
-    if (!combat.Packs.empty())
+    if (FrontFighting(env))
     {
         Pack const& front = combat.Packs.front();
-        view.ElitePull = front.Elite && front.Engaged;
-        if (front.Engaged)
-            view.PullTime = std::min(1.0f, float(env.EpisodeElapsedMs - front.EngageMs) / 60000.0f);
+        view.ElitePull = front.Elite;
+        view.PullTime = std::min(1.0f, float(env.EpisodeElapsedMs - front.EngageMs) / 60000.0f);
     }
+}
+
+bool Animus::Curriculum::CombatEncounter::FrontFighting(Env const& env) const
+{
+    // A member of the pull in front alive and in a fight: the kill clock runs. Not once it has gone home (the seat
+    // dead, or backed off out of its leash), however long ago it was first engaged.
+    EnvCombat const& combat = _envs[env.Index];
+    if (combat.Packs.empty())
+        return false;
+    for (ObjectGuid const& guid : combat.Packs.front().Members)
+        if (Creature* member = Member(env, guid); member && member->IsAlive() && member->IsInCombat())
+            return true;
+    return false;
 }
 
 void Animus::Curriculum::CombatEncounter::BeforeRewards(Env& env)
@@ -465,15 +477,9 @@ void Animus::Curriculum::CombatEncounter::BeforeRewards(Env& env)
     combat.NewKills = 0;
     combat.NewClears = 0;
     combat.NewExtra = 0;
-    if (combat.Packs.empty())
-        return;
-
-    Map* map = env.FindMap();
-    Player* bot = _scenario.SeatBot(env, 0);
-    CombatDrill const drill = Drill(env);
-
-    // The friend of the guard arena.
     combat.NewAllyDeath = false;
+
+    // The friend of the guard arena (whether or not a creature stands: it may fall as the last one does).
     if (!combat.Ally.IsEmpty() && !combat.AllyDead)
         if (Creature* ally = Member(env, combat.Ally); !ally || !ally->IsAlive())
         {
@@ -481,6 +487,12 @@ void Animus::Curriculum::CombatEncounter::BeforeRewards(Env& env)
             combat.NewAllyDeath = true;
             ++combat.AllyDeaths;
         }
+    if (combat.Packs.empty())
+        return;
+
+    Map* map = env.FindMap();
+    Player* bot = _scenario.SeatBot(env, 0);
+    CombatDrill const drill = Drill(env);
 
     // The pack in front: each death counted once, and cleared when none is left.
     Pack& front = combat.Packs.front();
@@ -576,7 +588,7 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         ledger.Add(RewardTerm::Hurt, -tuning.Hurt * hurt);
     if (fire > 0.0f)
         ledger.Add(RewardTerm::FireHurt, -tuning.FireHurt * fire);
-    if (!combat.Packs.empty() && combat.Packs.front().Engaged)
+    if (FrontFighting(env))
         ledger.Add(RewardTerm::StepCost, -tuning.Clock * decision);
 
     // Shaping: damage dealt, in the front pull's creature healths.

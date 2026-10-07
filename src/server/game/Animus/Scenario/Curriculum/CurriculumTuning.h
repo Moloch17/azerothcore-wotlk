@@ -1310,8 +1310,8 @@ namespace Animus::Curriculum
             int32 HazardChance = 33;
             uint32 SurviveSize = 3;
             uint32 SurviveLevels = 2;
-            float FightNearest = 18.0f;
-            float FightFurthest = 35.0f;
+            float FightNearest = 28.0f;
+            float FightFurthest = 40.0f;
             float NextNearest = 30.0f;
             float NextFurthest = 45.0f;
             uint32 NextFightMs = 2000;

@@ -1,6 +1,6 @@
 """The combat stages (dungeon-curriculum C1-C3; the sim's CombatEncounter) and their perception-true inputs (I3): the
 configs load and read their own measures, every ladder steps on its gate alone with every price at full price from the
-start, the seed chain runs from M2, and a sight list widened by the combat block's columns seeds from a narrower one with
+start, the seed chain runs from M2, and a sight list widened by the combat columns seeds from a narrower one with
 the seeded policy acting as it did."""
 
 import re

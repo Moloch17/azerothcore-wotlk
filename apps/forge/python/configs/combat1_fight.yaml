@@ -1,9 +1,9 @@
 # C1 -- fight (dungeon-curriculum C1, approved 2026-10-06; Stages.cpp combat1_fight, CombatEncounter): a cleared
 # Ragefire Chasm at its level band, 13-18 (a death knight at its own 55, against creatures of its level), every race and
 # class. The seat starts at one of the dungeon's own creature spawn points, its corridors, and one creature at a time
-# stands 18-35 yd off in its line of sight; the next comes two seconds after each kill, for 150 s. In `guard` (a quarter
-# of the episodes) a passive friend stands by the seat and every creature goes for it first: taunting it off and healing
-# it are the drill, for the classes that can.
+# stands 28-40 yd off (past its aggro) in its line of sight; the next comes two seconds after each kill, for 150 s. In
+# `guard` (a quarter of the episodes) a passive friend stands by the seat and every creature goes for it first: taunting
+# it off and healing it are the drill, for the classes that can.
 #
 # What it perceives (I3) is what a player does: the camera, the entities it shows and the remembered ones (the sight
 # list), each visible one's cast bar, crowd control and threat (the combat block's columns on the sight list), the party
@@ -136,10 +136,10 @@ convergence:
   hold_share: 0.02
   lr_hold_until_plateau: true
 
-# The shaping fade (DamageDealt): steps on its gate alone -- the evaluation's won rate at 0.7 -- one evaluation at a rung
-# and no plateau (require_plateau: false, the dungeon plan's rule), and never waits for the classes' rungs to settle
-# (moving_classes: the per-class ladder steps on its own window's win rate, DifficultyLadder; two ladders on their own
-# gates). A curriculum ladder, not a pass gate: the stage ends on convergence.
+# The shaping fade (DamageDealt): steps on its gate alone -- the evaluation's won rate at 0.7 -- one evaluation at a
+# rung and no plateau (require_plateau: false, the dungeon plan's rule), and never waits for the classes' rungs to
+# settle (moving_classes: the per-class ladder steps on its own window's win rate, DifficultyLadder; two ladders on
+# their own gates). A curriculum ladder, not a pass gate: the stage ends on convergence.
 fade:
   enabled: true
   rungs: [1.0, 0.5, 0.25, 0.0]
@@ -151,9 +151,9 @@ fade:
   require_plateau: false
   moving_classes: 1000
 
-# Off: every price at full price from the first step (the noise prices -- Repeat, Jitter, Aimless, Effort, Fidget -- with
-# the stage's own Hurt, FireHurt, PullExtra and the clock, which are never on a ladder), so no ladder waits on a cost
-# ladder (M1's lesson).
+# Off: every price at full price from the first step (the noise prices -- Repeat, Jitter, Aimless, Effort, Fidget --
+# with the stage's own Hurt, FireHurt, PullExtra and the clock, which are never on a ladder), so no ladder waits on a
+# cost ladder (M1's lesson).
 costs:
   enabled: false
   gate_metric: won

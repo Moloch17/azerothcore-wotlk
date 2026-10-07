@@ -1,11 +1,11 @@
 # C2 -- packs (dungeon-curriculum C2; Stages.cpp combat2_packs, CombatEncounter): the same cleared Ragefire Chasm, packs
-# of two to four -- a caster from rung 1, linked from rung 2, fire underfoot in a third of them (in every one of `fire`'s)
-# -- with the next pack standing 30-45 yd further on: pulling it before this one is down is an extra pull. Focus,
-# interrupts, crowd control, line of sight, out of the fire, one pack at a time; 240 s.
+# of two to four -- a caster from rung 1, linked from rung 2, fire underfoot in a third of them (in every one of
+# `fire`'s) -- with the next pack standing 30-45 yd further on: pulling it before this one is down is an extra pull.
+# Focus, interrupts, crowd control, line of sight, out of the fire, one pack at a time; 240 s.
 #
-# Outcome (tier-scaled): Clear per pack, Survived; InterruptLanded (0.25) per interrupt that stopped a cast. Cost at full
-# price from the first step: PullExtra (1.0) per pack drawn in early, FireHurt (1.0 per maximum health ground fire took),
-# Hurt, Death (over w), the clock. Shaping (faded): DamageDealt.
+# Outcome (tier-scaled): Clear per pack, Survived; InterruptLanded (0.25) per interrupt that stopped a cast. Cost at
+# full price from the first step: PullExtra (1.0) per pack drawn in early, FireHurt (1.0 per maximum health ground fire
+# took), Hurt, Death (over w), the clock. Shaping (faded): DamageDealt.
 #
 # Seeded from combat1_fight: every block carries (the same layout). C1's hyperparameters otherwise.
 extends: combat1_fight.yaml

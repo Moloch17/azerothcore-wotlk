@@ -7082,7 +7082,7 @@ AnimusForge.Curriculum.Controls.WallSlide = 0.5
 #        caster from CasterTier, linked packs from LinkedTier, HazardChance percent of C2 packs with fire; C3's packs
 #        SurviveSize strong, SurviveLevels higher. The seat starts on one of the dungeon's own creature spawns within
 #        CorridorWalk yards' walk of the entrance (CorridorSpacing apart); a pull stands FightNearest-FightFurthest
-#        yards off in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
+#        yards off (past a same-level creature's ~20 yd aggro, so the seat chooses when to fight) in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
 #        after a kill. A death: RespawnDelayMs out, then alive at the entrance (dungeon-curriculum I4).
 AnimusForge.Curriculum.Combat.Kill = 1.0
 AnimusForge.Curriculum.Combat.Clear = 2.0
@@ -7106,8 +7106,8 @@ AnimusForge.Curriculum.Combat.LinkedTier = 2
 AnimusForge.Curriculum.Combat.HazardChance = 33
 AnimusForge.Curriculum.Combat.SurviveSize = 3
 AnimusForge.Curriculum.Combat.SurviveLevels = 2
-AnimusForge.Curriculum.Combat.FightNearest = 18.0
-AnimusForge.Curriculum.Combat.FightFurthest = 35.0
+AnimusForge.Curriculum.Combat.FightNearest = 28.0
+AnimusForge.Curriculum.Combat.FightFurthest = 40.0
 AnimusForge.Curriculum.Combat.NextNearest = 30.0
 AnimusForge.Curriculum.Combat.NextFurthest = 45.0
 AnimusForge.Curriculum.Combat.NextFightMs = 2000
