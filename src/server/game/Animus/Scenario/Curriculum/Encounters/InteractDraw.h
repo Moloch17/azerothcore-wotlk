@@ -129,7 +129,6 @@ namespace Animus::Curriculum::InteractDraw
         uint32 Site = 0;
         float SpawnU = 0.0f;
         float TargetU = 0.0f;
-        float DecoysU = 0.0f;
         float KindsU = 0.0f;
         float CountU = 0.0f;
         float FacingU = 0.0f;
@@ -140,7 +139,6 @@ namespace Animus::Curriculum::InteractDraw
         out.Site = sites.empty() ? 0 : sites[seed % sites.size()];
         out.SpawnU = SeekDraw::SeedUniform(seed, 101);
         out.TargetU = SeekDraw::SeedUniform(seed, 102);
-        out.DecoysU = SeekDraw::SeedUniform(seed, 103);
         out.KindsU = SeekDraw::SeedUniform(seed, 104);
         out.CountU = SeekDraw::SeedUniform(seed, 105);
         out.FacingU = SeekDraw::SeedUniform(seed, 106);

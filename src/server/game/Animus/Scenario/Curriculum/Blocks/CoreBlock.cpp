@@ -476,9 +476,7 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
             break;
     }
 
-    bool const started = Encoding::ApplySpellAction(view, view.Target, def, result);
-    if (started && def.From == ActionCatalog::Group::Sustain)
-        ++result.SustainCasts;
+    Encoding::ApplySpellAction(view, view.Target, def, result);
     // The keys the seat holds are its own (MoveBlock): a cast does not let go of them for it, as no client lets go of
     // a player's. Casting while moving is refused or cancelled by the core's own rules, read off the real movement
     // state (player-controller §5), and the seat learns to stop first.

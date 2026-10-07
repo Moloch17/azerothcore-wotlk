@@ -208,7 +208,6 @@ namespace Animus::Vision
     /// The decoded image channels the learner's encoder reads (the slot is not one of them: perception-goals
     /// amendment 10), and the scalars.
     constexpr uint32_t CHANNELS = 5;
-    constexpr uint32_t KINDS = uint32_t(Kind::Count);
     constexpr uint32_t CLASS_CHANNEL = 3;
     constexpr uint32_t SCALARS = 11;
 

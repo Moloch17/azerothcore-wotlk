@@ -3208,8 +3208,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // replaces the closing rate with the one toward the objective where there is one.
     view.MoveRate = seat.MoveRate;
     view.CloseRate = seat.CloseRate;
-    view.SubmergedTime = seat.SubmergedSinceMs && env.EpisodeElapsedMs > seat.SubmergedSinceMs
-        ? float(env.EpisodeElapsedMs - seat.SubmergedSinceMs) / 1000.0f : 0.0f;
     view.BreathSpent = float(seat.BreathSpentMs) / float(std::max<uint32>(1, BreathMs()));
     view.Build = &seat.Build;
     view.KnownRanks = &seat.KnownRanks;
@@ -5121,7 +5119,6 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     }
     if (seat.Holds[1].Goal != NO_GOAL)
     {
-        ++seat.SecondaryDecisions;
         seat.Rewards.Add(RewardTerm::GoalSwitch, -_tuning.Goals.Secondary);
     }
 

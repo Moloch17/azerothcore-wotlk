@@ -562,7 +562,6 @@ void Animus::Curriculum::PartyFollowEncounter::View(Env const& env, uint32 seat,
         view.HasObjective = party.NextStop < party.Stops.size();
         if (view.HasObjective)
             view.Objective = party.Stops[party.NextStop];
-        view.ArriveWithin = LEADER_ARRIVE;
         return;
     }
 

@@ -434,7 +434,6 @@ namespace Animus::Curriculum::Encoding
         uint32 const chain = info->GetFirstRankSpell() ? info->GetFirstRankSpell()->Id : info->Id;
         result.CastTankMode = chain == 71 || chain == 25780 || chain == 5487 || chain == 9634 || chain == 48263;
         result.CastTrap = IsTrapSpell(info);
-        result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
         // inside its radius, measured from where it lands (the target's spot for a ground spell, else the caster).
         if (info->IsPositive())

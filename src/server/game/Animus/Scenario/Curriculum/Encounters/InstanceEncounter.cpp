@@ -611,8 +611,6 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
     {
         seatState.DenseAt = 0;
         seatState.Detour.clear();
-        seatState.DetourMs = 0;
-        seatState.OffRoute = false;
     }
     // The creatures a full clear kills: the ones a seat can walk to, with a field route (WingPlan::Reachable),
     // and the bosses; every hostile one with the navmesh's.
@@ -1012,7 +1010,6 @@ void Animus::Curriculum::InstanceEncounter::RiseDead(Env& env, EnvInstance& figh
             // Its place on the route is the entrance's: it walks the route back, point by point.
             seatState.Walk = 0;
             seatState.DenseAt = 0;
-            seatState.OffRoute = false;
             seatState.Detour.clear();
             ++fight.Rises;
         }
@@ -1031,8 +1028,6 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
     EnvInstance::FightTrace& trace = fight.Trace;
     EnvState const& data = _scenario.Data(env);
     fight.OnParty = 0;
-    fight.OnTank = 0;
-    fight.Elites = 0;
     // The tank: the living seat with the most mitigation among those that can hold a pull, else among all -- the
     // party block's rule (PartyEncounter::Tank), so the seats follow the one the crowd is counted against. A party
     // of level-17 builds none of which could hold one had no tank and stood at the door (2026-10-01).
@@ -1109,8 +1104,6 @@ void Animus::Curriculum::InstanceEncounter::TraceWing(Env& env, EnvInstance& fig
                 elites += creature->isElite() ? 1 : 0;
         }
         fight.OnParty = engaged;
-        fight.OnTank = onTank;
-        fight.Elites = elites;
         if (engaged > _scenario.Tuning().Instance.WingCrowdFree)
             fight.CrowdSeconds += float(_scenario.DecisionMs()) / 1000.0f;
         if (engaged > trace.PeakEngaged)

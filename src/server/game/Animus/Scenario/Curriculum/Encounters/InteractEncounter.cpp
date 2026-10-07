@@ -334,7 +334,6 @@ bool Animus::Curriculum::InteractEncounter::Build(Env& env, Map* map, uint8 /*le
         pick.Site = sites[urand(0, uint32(sites.size()) - 1)];
         pick.SpawnU = frand(0.0f, 1.0f);
         pick.TargetU = frand(0.0f, 1.0f);
-        pick.DecoysU = frand(0.0f, 1.0f);
         pick.KindsU = frand(0.0f, 1.0f);
         pick.CountU = frand(0.0f, 1.0f);
         pick.FacingU = frand(0.0f, 1.0f);
@@ -544,7 +543,6 @@ void Animus::Curriculum::InteractEncounter::View(Env const& env, uint32 /*seat*/
         view.NamedEntry = state.NamedEntry;
         view.NamedObject = true;
     }
-    view.ArriveWithin = _scenario.Arena(env).SeekRadius;
 }
 
 void Animus::Curriculum::InteractEncounter::Found(Env const& env, EnvInteract& state) const

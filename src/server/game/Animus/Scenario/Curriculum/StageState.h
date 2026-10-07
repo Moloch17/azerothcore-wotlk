@@ -312,12 +312,10 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalsChosenBy{};
         std::array<uint32, GOAL_COUNT> GoalsReachedBy{};
         uint32 GoalTargetedDecisions = 0;       // decisions under a goal about a named target
-        uint32 SecondaryDecisions = 0;          // decisions a secondary goal was held (Goals.Secondary)
         /// The goal block's event (GoalBlock::OBS_EVENT): what was true at the last observation, so only a change
         /// raises it -- health under the escape line, the enemies in the fight, the owner under attack.
         bool EventLow = false;
         uint32 EventEnemies = 0;
-        bool EventOwnerAttacked = false;
         bool Event = false;
         /// What the seat achieved this decision, whatever it was pursuing (GoalBlock's hindsight columns), and what
         /// it is measured against: which enemy slots were alive, and whether the seat was below Recover's line.
@@ -331,7 +329,6 @@ namespace Animus::Curriculum
         std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
-        uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
 
         /// An absorb the bot keeps on a friend, as it was at the last reward: what it soaked since is read from how
@@ -543,10 +540,8 @@ namespace Animus::Curriculum
             GoalsReached = 0;
             GoalsLost = 0;
             GoalTargetedDecisions = 0;
-            SecondaryDecisions = 0;
             EventLow = false;
             EventEnemies = 0;
-            EventOwnerAttacked = false;
             Event = false;
             Achieved = NO_GOAL;
             Commanded = NO_GOAL;
@@ -554,7 +549,6 @@ namespace Animus::Curriculum
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;
-            FriendSlot = FRIEND_SELF;
             RankTier = 0;
             Absorbs.clear();
             HealsOnFull = 0;

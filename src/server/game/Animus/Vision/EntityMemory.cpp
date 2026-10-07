@@ -100,7 +100,6 @@ Animus::Vision::Remembered* Animus::Vision::EntityMemory::Make(uint64_t guid)
     *place = Remembered();
     place->Guid = guid;
     place->MemoryId = id;
-    place->FirstSeen = _clock;
     ++_count;
     return place;
 }

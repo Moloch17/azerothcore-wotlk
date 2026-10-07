@@ -285,7 +285,6 @@ namespace Animus::Curriculum
         /// Where the sight block's presses and a sight stage's casts go: null for the seat's session's handlers
         /// (EntityActions::SessionPort); a test's recorder otherwise.
         EntityActions::ClientPort* Port = nullptr;
-        float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
         /// under a water-breathing aura, when the core runs no timer at all.
@@ -404,10 +403,6 @@ namespace Animus::Curriculum
         /// far running would have carried it, and the share of the distance to the objective that closed.
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        /// How near counts as arrived, which is not the same number indoors as it is in open country. Carried
-        /// on the view so OBS_AT_OBJECTIVE, the masks that ask whether the seat is there yet, and the reward
-        /// that pays for arriving all read one answer.
-        float ArriveWithin = 6.0f;
 
         /// A dungeon's way on (WorldView), as the goal head names it.
         WorldView World;
@@ -433,7 +428,6 @@ namespace Animus::Curriculum
         uint32 SpellCasts = 0;
         // What a world press did (WorldBlock): the life encounters read these for their rewards and columns.
         uint32 Interactions = 0;
-        uint32 Wasted = 0;                          // a press that did nothing in the world
         /// The sight block's presses (EntityActions): a selection, an assist or a focus taken, and a press refused
         /// before it was sent or by the server's cast checks (EntityActions::Refusal, 0 none), priced as
         /// Actions.Aimless.ActRefused.
@@ -443,21 +437,8 @@ namespace Animus::Curriculum
         /// what an encounter judges the press by (M3 interact: the right object, the lever, the key's lock).
         ObjectGuid ActedOn;
         uint8 ActPress = 0;
-        uint32 CorpsesLooted = 0;
-        uint32 NodesLooted = 0;
-        uint32 ItemsLooted = 0;
-        uint32 CopperLooted = 0;
-        uint32 GatherCasts = 0;                     // gathering and skinning casts started
-        uint32 Equipped = 0;
-        uint32 CopperSold = 0;
-        uint32 Repairs = 0;
-        uint32 CopperRepaired = 0;
-        uint32 SuppliesBought = 0;
-        bool QuestAccepted = false;
-        bool QuestTurnedIn = false;
         uint32 TrinketUses = 0;
         uint32 ItemUses = 0;                        // use effects of an equipped weapon or off-hand item
-        uint32 SustainCasts = 0;
         uint32 FoodUsed = 0;
         uint32 DrinkUsed = 0;
         uint32 HealsOnFull = 0;                     // direct heals started on a friend at full health (masked: 0)
@@ -514,7 +495,6 @@ namespace Animus::Curriculum
         bool KeyStillHeld = false;                  // the control already held, pressed again: not a press
         bool ControlChanged = false;                // a move press that changed a held control (MoveBlock)
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
-        bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius
     };
 }

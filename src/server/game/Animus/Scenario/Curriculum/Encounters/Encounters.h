@@ -208,10 +208,8 @@ namespace Animus::Curriculum
             /// Off the route out of a fight -- fallen into a cavern, kited away -- its own field way back to it,
             /// planned at DetourMs and again every DETOUR_REPLAN_MS.
             mutable std::vector<Position> Detour;
-            mutable uint32 DetourMs = 0;
             /// Taken off the route (past 6 yards from it) and not yet back on it (within 4): the way back is the
             /// detour until then, so a seat at the edge does not swap the two every decision (movement-smooth A8).
-            mutable bool OffRoute = false;
             /// The frontier of its own mental map (SeenPlaces::Frontier), refreshed every FRONTIER_MS: its goal places'
             /// way on in a sight stage.
             mutable std::vector<SeenPlaces::Point> Frontier;
@@ -296,8 +294,6 @@ namespace Animus::Curriculum
             WipeLatch Wipe;                     // the party is down and its wipe counted, until somebody stands
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
             /// and the nearest pack not in the fight.
-            uint32 OnTank = 0;
-            uint32 Elites = 0;
             ObjectGuid Tank;
             std::vector<ObjectGuid> Overflow;
             std::vector<ObjectGuid> Objects;    // what the party can use near it (CrowdBlock::ACTION_USE_OBJECT)

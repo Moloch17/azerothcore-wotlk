@@ -75,7 +75,6 @@ namespace Animus::Vision
         float Heading = 0.0f;       // the way it faced
         Vec3 Velocity;              // its course between its last two close sightings, yards a second
         bool Moving = false;        // ... faster than MOVING_SPEED
-        double FirstSeen = 0.0;     // the memory's clock
         double LastSeen = 0.0;
         uint64_t LastWrite = 0;     // the write that last saw it
     };

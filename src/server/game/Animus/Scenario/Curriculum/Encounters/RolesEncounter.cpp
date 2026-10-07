@@ -514,8 +514,6 @@ void Animus::Curriculum::RolesEncounter::BeforeRewards(Env& env)
     if (allDown && !roles.AllDown)
         ++roles.Tally.Wipes;
     roles.AllDown = allDown;
-    if (allDown)
-        roles.PartyDeadSeconds += float(_scenario.DecisionMs()) / 1000.0f;
 
     // Packs cleared: each death counted once, a pack cleared when none of it is left; its place goes to the next.
     bool removed = false;

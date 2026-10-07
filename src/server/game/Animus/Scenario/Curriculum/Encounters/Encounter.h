@@ -41,7 +41,6 @@ namespace Animus::Curriculum
     struct SeatView;
 
     /// Who stood up again after a pull (see Encounter::OnRecovered).
-    constexpr int32 RECOVERED_OWNER = -1;
 
     /// One part of what a stage's envs contain besides the seats: a creature, pulls, the owner, the party group, the
     /// enemy player. The scenario creates the encounters any of its arenas asks for; each episode it calls the hooks
