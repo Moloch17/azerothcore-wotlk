@@ -72,6 +72,49 @@ namespace Animus::Vision
     /// With `map`, a mini-map inset in its top right corner: MapPanel, half the picture's height, framed.
     [[nodiscard]] std::string CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale,
         uint8_t const* map = nullptr);
+
+    /// A picture as RGB: Width x Height pixels, row by row from the top, 3 bytes a pixel.
+    struct RgbImage
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        std::vector<uint8_t> Pixels;
+    };
+
+    /// CompositePng's picture before it is packed: width x scale by height x scale, the inset included.
+    [[nodiscard]] RgbImage CompositeRgb(Settings const& settings, uint8_t const* image, uint32_t scale,
+        uint8_t const* map = nullptr);
+
+    /// An RGB PNG of the picture (filter 0, one IDAT); empty on failure.
+    [[nodiscard]] std::string RgbPng(RgbImage const& picture);
+
+    /// **An animated PNG** (APNG, which browsers play as they play a GIF), built frame by frame: each frame's rows are
+    /// filtered -- Up for a row repeating the one above (a scaled-up picture's rows mostly do), Sub otherwise -- and
+    /// deflated as it comes, so only the packed frames are kept. Every frame is whole (no blending), shown for
+    /// delayNumerator / delayDenominator seconds, and the animation loops.
+    class ApngWriter
+    {
+    public:
+        ApngWriter(uint32_t width, uint32_t height, uint16_t delayNumerator, uint16_t delayDenominator);
+
+        /// False, and the frame left out, when its size is not the animation's or deflating it fails.
+        bool Add(RgbImage const& frame);
+
+        [[nodiscard]] uint32_t Frames() const { return uint32_t(_packed.size()); }
+        [[nodiscard]] std::size_t PackedBytes() const { return _packedBytes; }
+
+        /// The file: signature, IHDR, acTL, then per frame fcTL and its data (IDAT for the first, which is also the
+        /// still image a viewer without APNG shows, fdAT after), IEND. Empty without frames.
+        [[nodiscard]] std::string Finish() const;
+
+    private:
+        uint32_t _width;
+        uint32_t _height;
+        uint16_t _delayNumerator;
+        uint16_t _delayDenominator;
+        std::vector<std::string> _packed;
+        std::size_t _packedBytes = 0;
+    };
 }
 
 #endif

@@ -5463,6 +5463,29 @@ AnimusForge.Vision.AuditInterval = 300
 AnimusForge.Vision.AuditSeats = 4
 
 #
+#    AnimusForge.Vision.EvalVideos
+#        Description: Episodes of every evaluation filmed as the seat saw them, for watching later:
+#                     one frame a decision (the composite picture, with the mini-map inset where
+#                     the stage has a map), written as an animated PNG (a browser plays it) with a
+#                     JSON sidecar (class, race, layout, seed, rung, outcome, the episode's
+#                     measures) to runs/<scenario>/videos/<env steps>/<seed>-<class>-<outcome>.png,
+#                     and an index.json and index.html per evaluation. The episodes are chosen from
+#                     the evaluation's seeds alone, spread over the classes and rungs, so every
+#                     checkpoint films the same ones. A cluster's sims each film this many of
+#                     their own share. 0 films none.
+#        Default:     8 - (0 to 64)
+
+AnimusForge.Vision.EvalVideos = 8
+
+#
+#    AnimusForge.Vision.EvalVideoScale
+#        Description: Each camera pixel drawn this many times as wide and high in the videos
+#                     (nearest pixel): 4 makes a 128 x 64 camera 512 x 256.
+#        Default:     4 - (1 to 8)
+
+AnimusForge.Vision.EvalVideoScale = 4
+
+#
 #    AnimusForge.Map.MaxTiles
 #        Description: The mental map (a stage with a map block, perception-goals REDESIGN §3):
 #                     the most 32 x 32-yard tiles a seat's map keeps, the least recently written

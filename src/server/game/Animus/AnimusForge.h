@@ -25,6 +25,7 @@
 #include "MapMgr.h"
 #include "MapUpdater.h"
 #include "EnvPool.h"
+#include "EvalVideo.h"
 #include "ForgeConfig.h"
 #include "SeatEncoder.h"
 #include "LearnerProcess.h"
@@ -279,6 +280,12 @@ namespace AnimusForge
         /// AuditSeats seats' frames, the bytes the learner is about to get for this decision, saved as PNGs with a
         /// row each in audit.csv under runs/<scenario>/camera/, for a person to check what the bots see.
         void MaybeAuditCamera();
+        /// Evaluation videos (AnimusForge.Vision.EvalVideos): as a group's STEP goes out, each filmed episode's frame
+        /// -- the bytes the learner is sent, the ended episodes' last -- and the chosen seeds' episodes as they start.
+        void CaptureEvalVideos(uint32 group);
+        /// A MODE: whatever was being filmed ends, and an evaluation of the learner's (not a scripted baseline's)
+        /// chooses its episodes to film from the seeds `modes` play here.
+        void BeginEvalVideos(std::vector<ModeMsg> const& modes);
         /// Every STALL_CHECK_SECONDS while a stage runs: whether the resets stall the sim (Animus::Stall), logged as
         /// "Reset stall: ..." at once and again every STALL_RELOG_SECONDS while it lasts -- not only in `forge status`
         /// or at the stage's end, where the M3 dry check's halved throughput was first named.
@@ -459,6 +466,10 @@ namespace AnimusForge
         std::chrono::steady_clock::time_point _scenarioStarted;
         std::chrono::steady_clock::time_point _lastReport;
         std::chrono::steady_clock::time_point _lastAudit;   // the camera audit's last frames, or the scenario's start
+        Animus::Vision::EvalVideoRecorder _evalVideos;
+        std::string _evalVideoLabel;        // the last evaluation's directory name, for its held-out arenas
+        uint64 _evalVideoCaptureNs = 0;     // the world thread's time filming, and the STEPs it filmed in
+        uint64 _evalVideoCaptures = 0;
         std::optional<std::chrono::steady_clock::time_point> _lastAct;
         /// An ACT's look section, checked here before any of it reaches the pool (protocol 22).
         std::vector<int32> _actLook;
