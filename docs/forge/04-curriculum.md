@@ -761,14 +761,13 @@ Each seat has a `RewardLedger`. An encounter adds `(term, value)` pairs, and the
 each term's episode total. Every term that any encounter of the stage pays becomes an episode info column
 `reward_<term>`, so TensorBoard shows exactly what the stage pays for.
 
-Terms: `damage_dealt`, `damage_taken`, `step_cost`, `casting`, `approach`, `stealth_opener`, `stealth_utility`, `kill`,
-`clear`, `health_kept`, `death`, `threat`, `teammate_damage_taken`, `teammate_healing`, `teammate_threat`,
-`teammate_death`, `revive`, `progress`, `arrive`, `timeout`, `stall`, `readiness`, `self_healing`, `goal_reached`,
-`goal_switch`, `goal_progress`, `opener_damage`, `repeat`, `jitter`, `aimless`, `effort`, `fidget`, `hazard`,
-`healing_mana`, `boss_progress`, `combat_clock`, `ranged`, `pet_tank`, `pull_clean`, `early_pull`, `drill_hold`,
-`drill_focus`, `drill_keep`, `pull_extra`, `facing`, `stuck`, `wall`, `follow_kept`, `lost`, `sighting`, `new_ground`,
-`room_seen`, `door_opened`, `wrong_object`, `regroup`, `blocking`, `survived`, `interrupt_landed`, `away`, `hurt`,
-`fire_hurt`, `ready_pull`, `idle` (`RewardTerm`).
+Terms: `damage_dealt`, `step_cost`, `approach`, `kill`, `clear`, `death`, `threat`, `teammate_damage_taken`,
+`teammate_healing`, `teammate_threat`, `teammate_death`, `revive`, `progress`, `arrive`, `timeout`, `stall`,
+`self_healing`, `goal_reached`, `goal_switch`, `goal_progress`, `repeat`, `jitter`, `aimless`, `effort`, `fidget`,
+`hazard`, `healing_mana`, `combat_clock`, `pull_clean`, `early_pull`, `drill_hold`, `drill_focus`, `drill_keep`,
+`pull_extra`, `facing`, `stuck`, `wall`, `follow_kept`, `lost`, `sighting`, `new_ground`, `room_seen`, `door_opened`,
+`wrong_object`, `regroup`, `blocking`, `survived`, `interrupt_landed`, `away`, `hurt`, `fire_hurt`, `ready_pull`,
+`idle` (`RewardTerm`).
 
 **Looking after itself and its friends (every stage).** `self_healing` pays `Support.SelfHealing` (0.5) times the
 bot's effective healing on itself plus what its own absorbs soaked and its own damage-taken reductions prevented on
@@ -811,42 +810,8 @@ below 35%); gauntlets add `buff_coverage` at engage.
 
 ### Fighting terms (defaults)
 
-**One-on-one** (duel, PvP, escort duel; `Duel.*`, `Casting.*`):
-
-- per decision: damage dealt x2, damage taken x1, potential-based approach shaping toward the spec's range (melee
-  3.5 yd, ranged 25 yd; 0.5 per 40 yd closed), step cost 0.0002
-- stealth: +0.5 for a harmful spell cast from stealth that breaks it (Ambush, Garrote, Cheap Shot, Pounce, an attack
-  out of Shadowmeld; it can't be repeated without earning stealth back), +0.05 for one that keeps it (Sap, Distract,
-  Premeditation), once per target per stealth so it can't be farmed
-- casting: -0.03 per second already spent on a cast-time spell that didn't finish, +0.03 per second of cast time for
-  each one that finished in combat (channels pay through their ticks), and -0.05 for each cast the seat cut short
-  itself (the stop-casting action, or moving out of its own cast), however little of it had run, so a start/stop loop
-  costs more than an episode can earn. An enemy's interrupt costs only the seconds lost
-- kill: +10, plus up to +1 for the share of the episode length left since the fight was engaged (the bot or its
-  opponent entered combat), plus up to +0.5 for the share of health kept (damage taken is already charged as it happens, so a
-  larger share would pay for surviving over winning). The approach, stealth and preparation before engaging
-  cost only the discount
-- death: -10 each time, including after a self-resurrection. With a self-resurrection available the seat has
-  `Resurrection.GraceMs` to use it before the episode ends
-- timeout (creature duel only): -10 when the episode's time runs out with neither side dead. The fight is lost, so the
-  episode ends as a terminal outcome rather than a cut-off the critic bootstraps past; before it, never engaging was
-  the cheapest way to lose
-- stall (creature duel only): -0.08 per second the fight hasn't started once `Duel.StallGraceMs` (15 s) of the episode
-  are gone. The timeout comes 900 decisions later, too far for the policy to tell standing still from closing in: at
-  20M steps stage4_duel's deterministic policy stood where it spawned for the whole episode in 67 of 2048 evaluation
-  fights. Preparing isn't stalling: the grace grows by the time the seat spent starting helpful spells out of combat
-  (buffs, forms, stances, stealth, pet summons, conjuring; each its cast time, at least a 1.5 s global cooldown), up to
-  `Duel.PreparationRefundMaxMs` (15 s), so a warlock summoning its demon or a druid shifting before the pull isn't
-  charged for it and nothing has to start prepared. `preparation_seconds` in the episode info is that time, uncapped
-- repeats (every stage): -0.02 per press of the same action past the free ones in its window, and only when the
-  press did nothing -- a spell that started casting, an item or a pet ability is never a repeat, because a caster's
-  rotation is one nuke over and over. Orders to a pet already obeying, a target selected again and a stance pressed
-  twice all still count (see Repeats, 4.3)
-- winning outweighs winning fast: with the kill at 10, speed at most 1 and a loss at -10, a risky fast opener only pays
-  more than a sure slow win above about 97% odds (at the earlier 3, 3 and -3 it was 79%)
-
-The combat stages (`CombatEncounter`) and the dungeon stages (`InstanceEncounter`) price the same kills, clears, deaths
-and hazards through `CombatReward`, and add their own terms (the ledger's list above, each named for what it pays);
+The combat stages (`CombatEncounter`) and the dungeon stages (`InstanceEncounter`) price kills, clears, deaths and
+hazards, each with its own terms (the ledger's list above, each named for what it pays);
 every price is in the stage's tuning keys (4.9, `Stage.<name>.*`) and, with its category (Outcome, Cost, Shaping), in
 `RewardLedger.h`. The first curriculum's gauntlet, companion, party, travel and flag-match terms went with it (git tag
 `curriculum-v1`).
@@ -884,12 +849,11 @@ writing. Min/max pairs are put in order on load.
 |---|---|
 | `Characters.*` | High-level threshold and chance, how talent points are spent, how often a pet class starts with its pet out |
 | `Party.*` | Size weights, classic makeup chance, role chances, teammate reward weights |
-| `Duel.*` | One-on-one reward weights and preferred ranges |
-| `Casting.*` | Cast time wasted and completed, the charge per self-inflicted cancel |
+| `Duel.*` | The approach range (`MeleeRange`, `RangedRange`) |
 | `Actions.*` | Pacing: how soon the same action, the same movement order, a stop of a new cast and a recast of a stopped spell are allowed again |
 | `Difficulty.*`, `Goals.*`, `Support.*`, `Hazards.*`, `Options.*`, `Resurrection.*`, `Respawn.*` | Ladders, goal prices, self-healing and hazard prices, durative-action clocks, resurrection grace, the respawn at the entrance |
-| `Controls.*`, `Markers.*`, `Seek.*`, `Interact.*`, `Evade.*` | The movement stages' prices and ladders |
-| `Combat.*`, `Roles.*`, `PartyFollow.*`, `Instance.*`, `Raid.*`, `StandIn.*`, `Stealth.*` | The combat, roles, follow and dungeon stages' prices, ladders and the stand-in |
+| `Controls.*`, `Markers.*`, `Seek.*`, `Interact.*` | The movement stages' prices and ladders |
+| `Combat.*`, `Roles.*`, `PartyFollow.*`, `Instance.*`, `Raid.*`, `StandIn.*` | The combat, roles, follow and dungeon stages' prices, ladders and the stand-in |
 | `Arena.<stage>.<arena>.Weight` | Arena weights (read by `StageScenario`, not `Visit`) |
 | `Arena.<stage>.<arena>.MaxRung` | The arena's pinned pack rung, `-1` for none (read by `StageScenario`, not `Visit`) |
 
@@ -910,25 +874,18 @@ Every stage reports these **core columns** per seat:
   indices into the stage's or the arena's `SpawnPoints`.
   Equal, the first choice worked; different, that point could not build an episode and the reset moved on.
   A point drawn often and built from never is ground no episode can start on.
-- `killed`, `died`, `time_to_kill`, `damage_taken`, `health_left`, `stealth_openers`, `stealth_utility_casts`,
-  `pet_summoned`, `pet_at_start`, `pet_damage_share` (of the seat's damage, what its pets and guardians dealt),
+- `died`, `health_left`, `stealth_openers`, `stealth_utility_casts`,
+  `pet_at_start`, `pet_damage_share` (of the seat's damage, what its pets and guardians dealt),
   `pet_died`, `pet_abilities` (pet bar abilities started), `pet_orders` (stances, follow, stay, sending the pet in),
-  `item_uses` (use effects of the main-hand or off-hand item),
-  `opponent` (creature entry)
+  `item_uses` (use effects of the main-hand or off-hand item)
 - what the seat did with its pet: `pet_attack_orders`, `pet_passive_orders`, `pet_defensive_orders`,
   `pet_aggressive_orders`, `pet_follow_orders`, `pet_stay_orders` (each order given), `pet_out_seconds`, and the share
   of that time the pet was attacking something (`pet_attacking_share`), set passive (`pet_passive_share`) or told to
   stay (`pet_staying_share`). A pet's abilities are the policy's to cast: its spells are learned with autocast off
-- `casts_completed`, `casts_cancelled`, `cast_seconds_wasted`, `cancelled_stopped`, `cancelled_moved`,
-  `cancelled_target`, `cancelled_other`
 - `consumables_used`, `self_resurrections`
-- how a fight ended, to tell the ways of losing apart: `timed_out` (creature duel: time ran out with neither side
-  dead), `engaged`, `engage_time`, `target_health_left`, `distance_at_end`, `form_at_end` (the `ShapeshiftForm`),
-  `power_left` (of the primary power), `target_evade_seconds` and `out_of_sight_seconds` (creature duel: the opponent
-  evading, and engaged without line of sight to it), `target_unreachable_seconds` and `target_teleports` (creature duel:
-  the opponent without a path to its victim, and put beside it for that), `actions_per_minute` (actions other than the
-  no-op), `repeated_presses` (presses charged by `Actions.Repeat`), `turn_reversals` and `bearing_flips` (steering
-  charged by `Actions.Jitter`)
+- how an episode ended: `timed_out`, `target_health_left`, `distance_at_end`, `form_at_end` (the `ShapeshiftForm`),
+  `power_left` (of the primary power), `actions_per_minute` (actions other than the no-op), `repeated_presses`
+  (presses charged by `Actions.Repeat`), `turn_reversals` and `bearing_flips` (steering charged by `Actions.Jitter`)
 - how the seat fights, to grade a spec's playstyle (they reward nothing):
   - `melee_damage_share`, `shot_damage_share`, `spell_damage_share`: the seat's own damage by the game's damage class
     (`SpellInfo::DmgClass`), as shares of all its damage, so with `pet_damage_share` they add up to 1. Melee is melee
@@ -936,16 +893,6 @@ Every stage reports these **core columns** per seat:
     Shot, a wand) and spells are the rest, DoTs included. The damage hook doesn't say which spell dealt a hit, so the
     library notes the spell in `ModifySpellDamageTaken` and `ModifyPeriodicDamageAurasTick`, which run just before it
     for the same attacker and victim. Spell damage it can't match counts as a spell
-  - `in_melee_share`, `target_on_pet_share` (one-on-one arenas): the share of the fight, engaged with the seat alive,
-    it spent within melee reach of the opponent, and the share the opponent spent attacking its pet or guardian. A
-    hunter's shots can't be used inside melee reach (`SPELL_FAILED_TOO_CLOSE`), so for a hunter `in_melee_share` is
-    the share of the fight it played melee. For a caster it is mostly where the opponent chose to fight
-  - `target_rooted_share`, `target_snared_share`, `roots_applied`, `snares_applied` (one-on-one arenas): the share of
-    the same time the opponent spent rooted (Frost Nova, Entangling Roots) or slowed (Concussive Shot, Wing Clip,
-    Frost Shock, Earthbind) by the seat, its pet or its totems, and how often one went on where there was none
-  - `feign_deaths`, `feign_death_resets` (one-on-one arenas): how often the seat feigned death, and how often its
-    opponent then evaded home at full health (within 3 s of the feign ending) because nothing else held it. With a pet
-    on the opponent, feign death hands the fight to the pet; without one it throws the fight away
 
 Encounters then add their own columns:
 
