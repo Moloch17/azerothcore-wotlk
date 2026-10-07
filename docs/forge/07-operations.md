@@ -234,6 +234,16 @@ stage when it stops improving and `latest` is then near-best by construction; it
 diverge. For a long build where that protection is worth more than the freshness, set `seed_from: best` in the
 learner config of the stage that seeds from it; it applies to merge parents as well as the base.
 
+On a gate-stepped ladder `best.pt` means only "the best at the stage's current rung": the first evaluation at each new
+rung overwrites it (the best of the rung left is kept as `best_rung<k>.pt`). `seed_from` is validated (`best` or
+`latest`), and every live yaml seeds from `latest`.
+
+**Which checkpoint a co-op partner is** (`cast.partners.stages`). A bare stage name is that stage's `latest.pt`, the
+policy it ended with, and its `best.pt` only when it has no `latest.pt`. A finished stage's `latest.pt` is its
+top-rung policy (a gate-stepped stage converges only at its last rung); its `best.pt` is the best of whichever rung the
+last evaluation overwrote, and one saved before the re-baseline fix can be the policy from step 0. A `paths` entry is
+taken as given, for a deliberate `best_rung<k>.pt` or `best.pt`.
+
 | `<OutputDir>/runs/<stage>/stage.jsonl` | Restart, advance and halt decisions with their gates |
 | `forge scenarios` | Every stage's run: finished and why, checkpoints, steps, best score |
 

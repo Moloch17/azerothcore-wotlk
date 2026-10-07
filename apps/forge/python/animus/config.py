@@ -424,8 +424,11 @@ class PartnerConfig:
     (1 - normalised)^2 + floor -- the co-op mirror of the league's prioritised fictitious self-play, so the partners
     the party carries worst are met most and none is forgotten."""
 
-    # Earlier stages' best checkpoints by stage name ({runs_dir}/<name>/best.pt), and any checkpoint by path
-    # ({runs_dir}, {run_name} filled in). A missing one is skipped with a line saying so.
+    # Earlier stages by name, each as the policy the stage ended with ({runs_dir}/<name>/latest.pt, else its best.pt:
+    # best.pt is only the best at the stage's *current* rung, which a gate-stepped ladder's first evaluation at each
+    # new rung overwrites, and one saved under the old convergence bug can be the policy from step 0), and any
+    # checkpoint by path ({runs_dir}, {run_name} filled in; a path is taken as given, best_rung<k>.pt included). A
+    # missing one is skipped with a line saying so.
     stages: tuple[str, ...] = ()
     paths: tuple[str, ...] = ()
     # This run's own snapshots join the pool (<run_dir>/partners/) on this clock of latest.pt and on every improved
@@ -468,11 +471,16 @@ class PartnerConfig:
         return self.share > 0.0 and (bool(self.stages) or bool(self.paths) or self.snapshot_every_env_steps > 0)
 
     def resolve(self, names, runs_dir: str, run_name: str) -> list[str]:
-        """Stage names and paths as checkpoint paths: a bare name is {runs_dir}/<name>/best.pt."""
+        """Stage names and paths as checkpoint paths: a bare name is the stage's latest.pt (what it ended with, a
+        competent policy for a finished stage), its best.pt when it has no latest.pt; a path is taken as given."""
         out = []
         for name in names:
             text = str(name).format(runs_dir=runs_dir, run_name=run_name)
-            out.append(text if ("/" in text or text.endswith(".pt")) else str(Path(runs_dir) / text / "best.pt"))
+            if "/" in text or text.endswith(".pt"):
+                out.append(text)
+                continue
+            folder = Path(runs_dir) / text
+            out.append(str(folder / ("latest.pt" if (folder / "latest.pt").exists() else "best.pt")))
         return out
 
     def members(self, runs_dir: str, run_name: str) -> list[str]:
@@ -701,6 +709,11 @@ class TrainConfig:
     status: StatusConfig = field(default_factory=StatusConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     exploit: ExploitConfig = field(default_factory=ExploitConfig)
+
+    def __post_init__(self) -> None:
+        # Anything else would read as "best" (animus.train.init_from_checkpoint), which a typo must not do quietly.
+        if self.seed_from not in ("best", "latest"):
+            raise ValueError(f"seed_from: expected \"best\" or \"latest\", got {self.seed_from!r}")
 
     @property
     def shared_runs(self) -> str:
