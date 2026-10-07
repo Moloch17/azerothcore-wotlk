@@ -288,6 +288,14 @@ What to do: **nothing automatically.** The other half of the stages do not stall
 to 916 productive updates. Read it together with the evaluation: if the score is not improving either, the rest
 of the run is wall clock and the budget is better spent on the next stage.
 
+**`rollout graph captured: E envs x A agents, ...` / `rollout graphs NOT used: <reason>`**
+
+Printed once per batch shape (the first capture) and once per reason graphs are off (not on a GPU,
+`mappo.rollout_graphs` off, no acting state, seat sets). These are not warnings but a check: in the first minutes of a
+resumed run, a `captured` line confirms the rollout runs as GPU graphs; a `NOT used` line means it fell back to the
+eager path and throughput will be lower. A call without an acting state (an evaluation) can print its own `NOT used`
+line next to the `captured` ones; that is expected.
+
 ### Controlling a run
 
 | Goal | Command |

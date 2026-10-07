@@ -368,6 +368,17 @@ class _Packed:
         self.host_bytes.copy_(self.device_bytes, non_blocking=True)
 
 
+def announce_graph(seen: set, key, message: str, emit=None) -> bool:
+    """One line in the learner's stdout (the run log) the first time `key` is seen: a rollout graph captured for a batch
+    shape, or the reason graphs are not used. A silent fall-back to the eager path would cost throughput unnoticed.
+    Returns whether it printed."""
+    if key in seen:
+        return False
+    seen.add(key)
+    (emit or (lambda line: print(line, flush=True)))(message)
+    return True
+
+
 class _RolloutGraph:
     """One rollout decision (MappoTrainer.act_and_value with an acting state) captured as a CUDA / HIP graph for one
     batch shape: upload from fixed pinned buffers, the actor (goal, actions, foresight, memory) and the critic
@@ -672,6 +683,7 @@ class MappoTrainer:
         self._update_streams = (tuple(torch.cuda.Stream(device=self.train_device) for _ in range(2))
                                 if self.train_device.type == "cuda" else (None, None))
         self._rollout_graphs: dict[tuple, _RolloutGraph] = {}
+        self._graph_log_seen: set = set()
         #: The last act_and_value's obs, mask and state on the device, when a device-fed graph took them (else None).
         self.device_inputs: dict[str, torch.Tensor] | None = None
         self._shared_adapters: SharedInputDense | None = None   # the rollout graph's actor + critic adapters
@@ -868,19 +880,32 @@ class MappoTrainer:
         # Up from pinned memory without waiting: from pageable memory every input would wait for the device.
         return to_device(torch.as_tensor(np.ascontiguousarray(array), dtype=dtype), self.rollout_device)
 
+    def _graphs_off_reason(self, state: "ActingState | None") -> "str | None":
+        """Why a rollout decision does not run as a captured graph, None when it does (_rollout_graph): on the GPU,
+        turned on, with an acting state, and without what branches on the host (the seat sets' row picks). The camera
+        (VisionEncoder) is not one of those: its shapes are fixed, graphs stay on."""
+        if self._rollout_stream is None:
+            return "the rollout is not on a GPU"
+        if not self.config.rollout_graphs:
+            return "mappo.rollout_graphs is off"
+        if state is None:
+            return "this call has no acting state"
+        if self.seat_sets is not None:
+            return "seat sets are on (their row picks branch on the host)"
+        return None
+
     def _graphs_apply(self, state: "ActingState | None") -> bool:
-        """Whether a rollout decision runs as a captured graph (_rollout_graph): on the GPU, turned on, with an acting
-        state, and without what branches on the host (the seat sets' row picks). The camera (VisionEncoder) is not one
-        of those: its shapes are fixed, graphs stay on."""
-        return not (self._rollout_stream is None or not self.config.rollout_graphs or state is None
-                    or self.seat_sets is not None)
+        return self._graphs_off_reason(state) is None
 
     def _rollout_graph(self, obs, mask, layout, state_features, deterministic: bool,
                        state: "ActingState | None") -> "_RolloutGraph | None":
         """The captured decision for this batch shape, captured on first use; None where it does not apply: off the
         GPU, turned off (mappo.rollout_graphs), without an acting state, or with seat sets (their row picks branch
-        on the host)."""
-        if not self._graphs_apply(state):
+        on the host). The first capture of each shape, and each reason graphs are not used, is logged once."""
+        reason = self._graphs_off_reason(state)
+        if reason is not None:
+            announce_graph(self._graph_log_seen, ("off", reason), f"rollout graphs NOT used: {reason}; decisions run "
+                           "on the eager path")
             return None
         envs, agents = layout.shape
         device_fed = isinstance(obs, torch.Tensor)
@@ -889,6 +914,10 @@ class MappoTrainer:
         if graph is None:
             graph = self._rollout_graphs[key] = _RolloutGraph(self, envs, agents, obs, mask, state_features,
                                                               bool(deterministic), device_fed)
+            announce_graph(self._graph_log_seen, ("on", key), f"rollout graph captured: {envs} envs x {agents} agents, "
+                           f"obs {key[2]}, mask {key[3]}, state {key[4]}, "
+                           f"{'deterministic' if key[5] else 'sampled'}, {'device' if key[6] else 'host'}-fed "
+                           f"({len(self._rollout_graphs)} graph(s))")
         return graph
 
     def _groups(self, layout: np.ndarray, layout_t: torch.Tensor):
