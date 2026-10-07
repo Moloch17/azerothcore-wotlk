@@ -85,7 +85,8 @@ docker exec -e HIP_VISIBLE_DEVICES=0 -w /azerothcore/apps/forge/python ac-animus
 ```
 
 Success: `exit=0`, a summary line `N passed` with **zero failures and zero skips caused by a missing GPU** (`-rs` prints
-no skip whose reason says a GPU is needed), and no `Segmentation fault`. The fused-GRU tests (`test_recurrent.py`, the ones
+no skip whose reason says a GPU is needed), and no `Segmentation fault`. The fused-GRU tests (`test_recurrent.py`, the
+ones
 marked `requires_gpu`) once crashed the interpreter; a segfault ends pytest with no summary line at all, so **a run
 that prints no summary is a failure**, not a pass. Run it a second time: it must be the same.
 
@@ -167,12 +168,14 @@ DEV apps/forge/python/.venv/bin/python apps/forge/tools/resume_check.py var/gate
 
 (`scp` of the old stage.json is only for reading; the tool compares the checkpoint's own saved stage with the new one.)
 Success, exit 0 and a last line `OK: every check that can run here passed`, with these lines `PASS`:
-`resume compatibility` (**empty**), `layout check` (**empty**), both networks with `missing 0 / unexpected 0 / wrong shape
+`resume compatibility` (**empty**), `layout check` (**empty**), both networks with `missing 0 / unexpected 0 / wrong
+shape
 0`, `MappoTrainer.load_state_dict`, and `evaluation state`. The `fade ladder` line shows the rung, falls, held and
 settled the resumed run will start with: compare them with `forge status` on the host. Config values that differ from
 the checkpoint's are listed; keys the cleanup removed (`mappo.hint_coef`, `eval.opponent_baseline`) show as
 `saved ... -> now "<absent>"` and are harmless. Two lines are `UNVERIFIED` by design: the sim's SPEC (the numbers
-`stage.json` does not carry; pass `--spec <a spec.json the new build's learner wrote>` once you have one) and one rollout
+`stage.json` does not carry; pass `--spec <a spec.json the new build's learner wrote>` once you have one) and one
+rollout
 step (it needs the sim): step 8's first updates are that check.
 
 ## 6. Stop the stage, back it up, prune the confs
@@ -189,10 +192,12 @@ console you did not touch keeps running. Then back the run up and take the last 
 with:
 
 ```
-ssh sarah@192.168.0.68 'cp -a ~/animus-forge/var/animus-forge/shared/runs/move2_seek ~/animus-forge/var/backups/<date>-pre-deploy'
+ssh sarah@192.168.0.68 'cp -a ~/animus-forge/var/animus-forge/shared/runs/move2_seek \
+    ~/animus-forge/var/backups/<date>-pre-deploy'
 rsync -a --exclude camera --exclude tb --exclude videos \
     sarah@192.168.0.68:~/animus-forge/var/animus-forge/shared/runs/move2_seek var/gate/before/
-DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py var/gate/before/move2_seek --json var/gate/before.json
+DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py var/gate/before/move2_seek \
+    --json var/gate/before.json
 ```
 
 Success: the backup exists, and `run_snapshot.py` prints the stage's headline columns, the medians of the last updates'
@@ -228,19 +233,23 @@ done
 (a machine without one of the two files is an `ssh ... could not read` error for that file; skip it.) `--check` exits 1
 while unknown keys remain. Then `--prune` instead of `--check`: each unknown assignment is commented out in place
 (`#pruned <stamp> (<why>): <the original line>`), never deleted, after `<file>.bak-<stamp>` is written on that machine.
-The backup is how step 9 restores a tuned value. Success: a second `--check` per file ends `0 unknown key(s)` and exits 0.
+The backup is how step 9 restores a tuned value. Success: a second `--check` per file ends `0 unknown key(s)` and exits
+0.
 
 Last, the keys that remain must be the same on every machine (the fingerprint hashes their effective values):
 
 ```
 for m in sarah@192.168.0.68 spencer@192.168.0.66 thomas@192.168.0.67 moloch@192.168.0.117; do
-  ssh -o BatchMode=yes $m 'cd ~/animus-forge/env/dist/etc && cat worldserver.conf modules/mod_animus_forge.conf 2>/dev/null \
-     | grep -E "^[[:space:]]*AnimusForge\.Curriculum\." | sed "s/[[:space:]]//g" | sort' > var/gate/curriculum.$m.txt
+  ssh -o BatchMode=yes $m 'cd ~/animus-forge/env/dist/etc && \
+     cat worldserver.conf modules/mod_animus_forge.conf 2>/dev/null \
+     | grep -E "^[[:space:]]*AnimusForge\.Curriculum\." | sed "s/[[:space:]]//g" | sort' \
+     > var/gate/curriculum.$m.txt
 done
 sha256sum var/gate/curriculum.*.txt
 ```
 
-Success: the same hash on all four (a worker with a different tuned value is refused by the host after step 7; this finds
+Success: the same hash on all four (a worker with a different tuned value is refused by the host after step 7; this
+finds
 it first). A difference in a *removed* key does not matter; one in a kept key does.
 
 ## 7. Push, pull, rebuild every machine
@@ -290,8 +299,10 @@ After the first evaluation (`eval.every_env_steps`: 10M env steps for M2, about 
 ```
 rsync -a --exclude camera --exclude tb --exclude videos \
     sarah@192.168.0.68:~/animus-forge/var/animus-forge/shared/runs/move2_seek var/gate/after/
-DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py var/gate/after/move2_seek --json var/gate/after.json
-DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py --compare var/gate/before.json var/gate/after.json
+DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py var/gate/after/move2_seek \
+    --json var/gate/after.json
+DEV apps/forge/python/.venv/bin/python apps/forge/tools/run_snapshot.py --compare \
+    var/gate/before.json var/gate/after.json
 ```
 
 Success: the new build continues where the old one stopped. The evaluation's headline columns (the stage's
@@ -309,7 +320,8 @@ starts from M2's checkpoint when the convergence signals end it). Never `forge s
 Rolling back is the tag plus the confs, on every machine, with the stage cancelled first (`forge cancel`):
 
 ```
-ssh <machine> 'cd ~/animus-forge && git fetch moloch@192.168.0.69:git/animus-forge.git --tags && git checkout pre-<change>-<date>'
+ssh <machine> 'cd ~/animus-forge && git fetch moloch@192.168.0.69:git/animus-forge.git --tags && \
+    git checkout pre-<change>-<date>'
 ssh <machine> 'cd ~/animus-forge/env/dist/etc && for f in modules/mod_animus_forge.conf worldserver.conf; do \
    b=$(ls -t $f.bak-* 2>/dev/null | tail -1); [ -n "$b" ] && cp -p "$b" $f; done'
 ssh <machine> 'cd ~/animus-forge && touch env/dist/.forge-build && docker compose up -d --force-recreate ac-worldserver'
@@ -318,7 +330,8 @@ ssh <machine> 'cd ~/animus-forge && touch env/dist/.forge-build && docker compos
 (`tail -1` of `ls -t` is the oldest backup, the file as it was before the first prune; restore the file named in
 step 6's output if there are several.) Then the fingerprint check of step 7 and `forge resume <stage>`. The run
 directory needs nothing if the new build only trained on: its `latest.pt` has the old shapes (step 4 proved that), and
-the old build resumes it; if a run was damaged, restore `var/backups/<date>-pre-deploy` over it with the stage cancelled.
+the old build resumes it; if a run was damaged, restore `var/backups/<date>-pre-deploy` over it with the stage
+cancelled.
 When the machines are back on `forge` afterwards, `git checkout forge` before the next `cluster-pull.sh` (it pulls
 fast-forward only and a detached checkout cannot).
 
@@ -328,7 +341,8 @@ A conf that still holds keys the new build dropped neither refuses startup nor c
 From the source:
 
 - **The loader does not look for unknown keys in these files.** `ConfigMgr::AddKey` rejects a key only when the file
-  was loaded as *optional* (`src/common/Configuration/Config.cpp:245`, `if (isOptional && itr == _configOptions.end())`).
+  was loaded as *optional* (`src/common/Configuration/Config.cpp:245`, `if (isOptional && itr ==
+  _configOptions.end())`).
   `worldserver.conf` is loaded by `LoadInitial` with `isOptional = false` (`Config.cpp:455`); the modules' confs by
   `LoadModulesConfigs` with `false` (`Config.cpp:770`); and the forge's own `modules/mod_animus_forge.conf` by
   `ForgeMain.cpp:361`, `LoadAdditionalFile(forgeConf, false)`, deliberately in full (the comment at
@@ -338,7 +352,8 @@ From the source:
   `ConfigPolicy::unknownOptionSeverity`, `Error` by default (`src/common/Configuration/Config.h:40`), and skipped
   (`Config.cpp:247-249`). It aborts only when the core is compiled with `CONFIG_ABORT_INCORRECT_OPTIONS`
   (`Config.cpp:251`), an option that defaults to 0 (`conf/dist/config.cmake:138`) and that nothing in the tree turns on.
-- **The curriculum keys are read by name, never scanned.** `CurriculumTuning::Load` asks for each key `Visit` lists, with
+- **The curriculum keys are read by name, never scanned.** `CurriculumTuning::Load` asks for each key `Visit` lists,
+  with
   its default (`Scenario/Curriculum/CurriculumTuning.cpp:58-71`, `sConfigMgr->GetOption(prefix + key, value, false)`):
   a key that `Visit` does not list is never requested. The only prefix scans are
   `GetKeysByString("AnimusForge.Stage.")` in `ForgeConfig.cpp:184` and `:230`, which keep entries ending `.Envs` or
