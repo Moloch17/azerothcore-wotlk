@@ -222,26 +222,27 @@ def test_the_stand_in_split_reaches_forge_status(tmp_path):
 
 
 def test_the_video_collector_dry_run_names_every_worker_and_connects_to_none():
-    """apps/forge/tools/collect-videos.sh --dry-run: one rsync over key-based, BatchMode SSH per worker (eli left out),
-    each into videos/from-<worker>/ of this machine's run, videos only; nothing is connected to. A stage name is
-    required, and nothing else is taken for one."""
+    """apps/forge/tools/collect-videos.sh --dry-run: one tar over key-based, BatchMode SSH per worker (eli left out;
+    no rsync needed on the worker), from its ~/animus-forge clone into videos/from-<worker>/ of this machine's run,
+    videos only; nothing is connected to. A stage name is required, and nothing else is taken for one."""
     run = subprocess.run(["bash", str(COLLECT), "--dry-run", "dungeon3_deadmines"], capture_output=True, text=True,
                          timeout=30)
     assert run.returncode == 0, run.stderr
-    lines = [line for line in run.stdout.splitlines() if line.startswith("rsync")]
+    lines = [line for line in run.stdout.splitlines() if line.startswith("ssh ")]
     workers = ("spencer@192.168.0.66", "thomas@192.168.0.67", "sarah@192.168.0.68", "moloch@192.168.0.117")
     assert len(lines) == len(workers)
     for worker, line in zip(workers, lines):
         name = worker.split("@")[0]
-        assert f"{worker}:azerothcore/var/animus-forge/shared/runs/dungeon3_deadmines/videos/" in line
-        assert f"var/animus-forge/shared/runs/dungeon3_deadmines/videos/from-{name}/" in line
-        assert "BatchMode=yes" in line and "--exclude=\\*" in line
+        assert f" {worker} " in line
+        assert "cd animus-forge/var/animus-forge/shared/runs/dungeon3_deadmines/videos" in line
+        assert f"-C var/animus-forge/shared/runs/dungeon3_deadmines/videos/from-{name}/" in line
+        assert "BatchMode=yes" in line and "-name '*.png'" in line and "rsync" not in line
     assert "192.168.0.65" not in run.stdout and "eli" not in run.stdout
     assert "password" not in COLLECT.read_text().lower().replace("never a password prompt", "")
     custom = subprocess.run(["bash", str(COLLECT), "--dry-run", "--workers", "a@h1", "--remote-dir", "/srv/forge",
                              "group2_corridor"], capture_output=True, text=True, timeout=30)
-    assert custom.returncode == 0 and "a@h1:/srv/forge/var/animus-forge/shared/runs/group2_corridor/videos/" in \
-        custom.stdout
+    assert custom.returncode == 0 and "cd /srv/forge/var/animus-forge/shared/runs/group2_corridor/videos" in \
+        custom.stdout and " a@h1 " in custom.stdout
     for bad in ([], ["../etc"], ["--bogus", "x"]):
         refused = subprocess.run(["bash", str(COLLECT), "--dry-run", *bad], capture_output=True, text=True, timeout=30)
         assert refused.returncode != 0, bad
