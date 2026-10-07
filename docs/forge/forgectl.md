@@ -16,6 +16,10 @@ that changes a machine (a console command, a build, a conf write) prints a plan 
 never a password (`ssh -o BatchMode=yes`), and a machine that does not answer in time is reported, never waited on
 forever.
 
+**`--yes` is for the human operator's own scripts. An automated assistant that uses it is subject to the permission
+system exactly as before; it must not construct a way around a refusal.** (A refusal here, such as the build under
+a running stage or `--yes` without `--archive-ok`, is the tool doing its job: it is not an obstacle to route around.)
+
 **The cluster file.** The machines, the host, the lan remote and branch, the ports, the container names and the dev
 container are in one tracked file, [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml). To add a worker, add a
 `[[machine]]` block with `in_cluster = true`; to drop one (like eli), set `in_cluster = false`. `--config FILE` or
