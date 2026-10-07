@@ -7197,6 +7197,62 @@ AnimusForge.Curriculum.ScriptedPlayers.DefensiveBelow = 0.35
 #   ... breaks crowd control when its health is under this
 AnimusForge.Curriculum.ScriptedPlayers.BreakBelow = 0.6
 
+#
+#    AnimusForge.Curriculum.StandIn.*
+#        The "human" stand-in (dungeon-curriculum I7): one seat of a party or raid arena played like a person -- it
+#        leads or follows, plays a role its build can (tank, healer or damage), at a fast or slow pace, with quirks
+#        (pulls early, wanders off to look, stops to rest, lags behind, goes AFK) -- so the learned seats learn to
+#        play with anyone. It moves by held keys on the player controller and presses the seat's own actions. Its
+#        style is drawn per episode from a seed (an evaluation's from its seed index). Its row is no sample.
+
+#   percent of a party or raid arena's training episodes with a stand-in (0 = never). Evaluations have one only in
+#   the learner's "with the human stand-in" arm (eval.arms.with_human), in every episode of it
+AnimusForge.Curriculum.StandIn.Share = 0
+#   percent of styles that lead (only where the party has no owner; a leader sits in seat 0, the group's leader)
+AnimusForge.Curriculum.StandIn.LeadChance = 50
+#   percent of styles that want to tank, and to heal (the rest deal damage); a build that cannot deals damage
+AnimusForge.Curriculum.StandIn.TankChance = 34
+AnimusForge.Curriculum.StandIn.HealerChance = 33
+#   percent of styles at the slow pace: longer breathers between pulls, slower to react when a fight starts
+AnimusForge.Curriculum.StandIn.SlowChance = 50
+#   each quirk: percent of styles with it, how often it fires per minute while it may, and how long it lasts (ms)
+AnimusForge.Curriculum.StandIn.PullEarlyChance = 30
+AnimusForge.Curriculum.StandIn.PullEarlyPerMinute = 0.5
+AnimusForge.Curriculum.StandIn.PullEarlyMinMs = 8000
+AnimusForge.Curriculum.StandIn.PullEarlyMaxMs = 20000
+AnimusForge.Curriculum.StandIn.WanderChance = 40
+AnimusForge.Curriculum.StandIn.WanderPerMinute = 1.0
+AnimusForge.Curriculum.StandIn.WanderMinMs = 6000
+AnimusForge.Curriculum.StandIn.WanderMaxMs = 15000
+AnimusForge.Curriculum.StandIn.RestChance = 50
+AnimusForge.Curriculum.StandIn.RestPerMinute = 0.5
+AnimusForge.Curriculum.StandIn.RestMinMs = 8000
+AnimusForge.Curriculum.StandIn.RestMaxMs = 20000
+AnimusForge.Curriculum.StandIn.LagChance = 40
+AnimusForge.Curriculum.StandIn.LagPerMinute = 1.0
+AnimusForge.Curriculum.StandIn.LagMinMs = 5000
+AnimusForge.Curriculum.StandIn.LagMaxMs = 15000
+AnimusForge.Curriculum.StandIn.AfkChance = 25
+AnimusForge.Curriculum.StandIn.AfkPerMinute = 0.3
+AnimusForge.Curriculum.StandIn.AfkMinMs = 10000
+AnimusForge.Curriculum.StandIn.AfkMaxMs = 30000
+#   a resting style always stops when its health or mana share is under this
+AnimusForge.Curriculum.StandIn.RestBelow = 0.4
+#   yards: a follower keeps this close to the leader, and this close while it lags; a wander's spot
+AnimusForge.Curriculum.StandIn.FollowYards = 6.0
+AnimusForge.Curriculum.StandIn.LagYards = 25.0
+AnimusForge.Curriculum.StandIn.WanderMinYards = 10.0
+AnimusForge.Curriculum.StandIn.WanderMaxYards = 25.0
+#   yards it fights from: a tank or melee build, a ranged build, a healer (back from the fight)
+AnimusForge.Curriculum.StandIn.MeleeYards = 3.0
+AnimusForge.Curriculum.StandIn.RangedYards = 25.0
+AnimusForge.Curriculum.StandIn.HealerYards = 20.0
+#   ms: the breather after a fight, fast and slow pace; how long after a fight starts it joins in
+AnimusForge.Curriculum.StandIn.FastWaitMs = 1500
+AnimusForge.Curriculum.StandIn.SlowWaitMs = 8000
+AnimusForge.Curriculum.StandIn.FastReactMs = 250
+AnimusForge.Curriculum.StandIn.SlowReactMs = 1500
+
 #   Travel arenas. Ground: a place this many yards away by path
 AnimusForge.Curriculum.Travel.ObjectiveMin = 60.0
 AnimusForge.Curriculum.Travel.ObjectiveMax = 320.0

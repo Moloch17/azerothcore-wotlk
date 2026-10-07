@@ -214,6 +214,10 @@ namespace Animus::Curriculum
         /// Whether this episode's owner is played through its row: a cast-owner arena, not an evaluation, and
         /// not one of the episodes Owner.CastScriptedShare keeps scripted.
         [[nodiscard]] bool CastOwnerActive(Env const& env) const;
+        /// The seat the "human" stand-in plays this episode (StandIn.h), or -1 for an all-bot party. A leading
+        /// stand-in is seat 0, the group's leader: what a party follow reads as the leader to keep up with.
+        [[nodiscard]] int32 StandInSeat(Env const& env) const;
+        [[nodiscard]] bool StandInLeads(Env const& env) const;
         /// Build the owner as a seat in the owner's agent slot: a class and build of the run meeting `demand`,
         /// at `level`, placed at `start`; null when nothing could be built. The caller sets its faction and
         /// records it as the env's ally.
@@ -386,6 +390,7 @@ namespace Animus::Curriculum
         void SetShapingScale(float scale) override;
         void SetCostScale(float scale) override;
         bool PinEvaluationArena(uint32 pin) override;
+        void SetEvaluationStandIn(bool standIn) override;
         void SetExploreStarts(float share, std::vector<ExploreStart> starts) override;
         /// The encounters arena `arena` uses, in build order and in reward order.
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
@@ -447,6 +452,14 @@ namespace Animus::Curriculum
         void SettleIntent(Env& env, SeatState& seat, Player* bot, Unit* target);
         void SettleDeath(Env& env, SeatState& seat, Player* bot);
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
+        /// The episode's stand-in, once its seats are built (StandInSeat.cpp): whether there is one (a party or raid
+        /// arena: StandIn.Share of training episodes, every episode of a stand-in evaluation), which seat, its style.
+        void DrawStandIn(Env& env);
+        /// The stand-in's decision from its seat's own row (`obs`, `mask` as ObserveSeat wrote them): the keys it
+        /// holds from now and the press it makes (SeatState::ScriptAction). Then its row is blanked: no-op only.
+        void DecideStandIn(Env& env, uint32 seat, float* obs, uint8* mask, uint8* image, uint8* map);
+        /// The stand-in's episode info columns (with_stand_in and its style), in a stage with a party or raid arena.
+        void AddStandInEpisodeInfo();
         /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
         /// and which calls it may make (DirectorLayout).
         void ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask);
@@ -528,6 +541,8 @@ namespace Animus::Curriculum
         std::atomic<float> _costScale{ 1.0f };
         /// The arena an evaluation is pinned to (MODE's arena), its index + 1; 0 = the stage's own draw.
         std::atomic<uint32> _evaluationArena{ 0 };
+        /// Whether evaluation episodes play the "human" stand-in (MODE_FLAG_STAND_IN).
+        std::atomic<bool> _evaluationStandIn{ false };
         mutable std::mutex _exploreLock;
         float _exploreShare = 0.0f;
         std::vector<ExploreStart> _exploreStarts;

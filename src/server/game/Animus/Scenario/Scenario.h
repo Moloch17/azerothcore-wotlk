@@ -200,6 +200,10 @@ namespace Animus
         /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
         /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
         virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }
+        /// Whether the next evaluation plays the "human" stand-in in every episode that has a party
+        /// (MODE_FLAG_STAND_IN: the learner's "with the human stand-in" arm); off, an evaluation's parties are all
+        /// bots. Scenarios without a stand-in ignore it.
+        virtual void SetEvaluationStandIn(bool /*standIn*/) { }
         /// The cells training runs of a dungeon wing start from, `share` of the time (EXPLORE_STARTS); replaces the
         /// last table. Scenarios without wings ignore it.
         virtual void SetExploreStarts(float /*share*/, std::vector<ExploreStart> /*starts*/) { }

@@ -622,6 +622,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     ConsumablePool::Instance();
 
     AddCoreEpisodeInfo();
+    AddStandInEpisodeInfo();
     for (Encounter* encounter : _rewardOrder)
         encounter->AddEpisodeInfo(_info);
 
@@ -1002,8 +1003,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         SeatState const& state = seat(env, index);
         return state.L ? std::max(state.Apt[Aptitude::DIRECT_HEAL], state.Apt[Aptitude::HOT_HEAL]) : 0.0f;
     });
-    // A party seat left empty this episode reports 0: ignore its row.
-    _info.Add("present", [seat](Env const& env, uint32 index) { return seat(env, index).L ? 1.0f : 0.0f; });
+    // A party seat left empty this episode reports 0: ignore its row. So does the "human" stand-in's seat
+    // (StandIn.h): the script's, not the policy's, so no class's episode and nothing the learner scores.
+    _info.Add("present", [this, seat](Env const& env, uint32 index)
+    {
+        return seat(env, index).L && Data(env).StandInPlay.Seat != int32(index) ? 1.0f : 0.0f;
+    });
     // The episode's arena: its index in stage.json's arenas.
     _info.Add("arena", [this](Env const& env, uint32)
     {
@@ -2224,6 +2229,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The episode's arena, drawn first: an evaluation episode's random numbers decide it like everything else.
     std::vector<Encounter*> const previousEncounters = ActiveEncounters(env);
     data.Arena = DrawArena(env.Evaluating);
+    // No stand-in until the seats are built and DrawStandIn says so (a build that fails leaves none).
+    data.StandInPlay = EnvState::StandInSeat();
     // An arena on a map of its own (ArenaDefinition::MapId) sends the episode there; an encounter that fixes its
     // own map (an instance rung, a quest giver's) still decides later, in BeforeLevel.
     data.EpisodeMapId = _stage.Arenas[data.Arena].MapId;
@@ -2735,6 +2742,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     StockSeats(env);
     GivePets(env);
     CurrentReset.StockNs += ResetSinceNs(partMark);
+    DrawStandIn(env);
     return true;
 }
 
@@ -3650,8 +3658,9 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     SeatState& seat = Data(env).Seats[seatIndex];
     if (!bot || !seat.L)
         return;
-    // A scripted seat plays the script's press from its observation (ObserveSeat), not the policy's.
-    if (seat.Scripted && seat.ScriptAction >= 0)
+    // A scripted seat plays the script's press from its observation (ObserveSeat), not the policy's; so does the
+    // "human" stand-in (DecideStandIn), whose row the learner only sees as a no-op.
+    if ((seat.Scripted || Data(env).StandInPlay.Seat == int32(seatIndex)) && seat.ScriptAction >= 0)
     {
         action = seat.ScriptAction;
         seat.ScriptAction = -1;
@@ -3822,8 +3831,14 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
         return map ? map + std::size_t(agent) * _spec.MapBytes : nullptr;
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
+    {
         ObserveSeat(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
             imageRow(seat), mapRow(seat));
+        // The "human" stand-in decides from its own row, which then leaves the learner a no-op (AgentPresence).
+        if (Data(env).StandInPlay.Seat == int32(seat))
+            DecideStandIn(env, seat, obs + seat * _spec.ObsDim, mask ? mask + seat * _spec.NumActions : nullptr,
+                imageRow(seat), mapRow(seat));
+    }
     // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
     Data(env).StepReward = nullptr;
 
@@ -3902,8 +3917,9 @@ void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* lay
 void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* present) const
 {
     EnvState const& data = Data(env);
+    // The "human" stand-in's seat is the script's (StandIn.h): the learner neither plays nor trains on its row.
     for (uint32 seat = 0; seat < _seatCount; ++seat)
-        present[seat] = data.Seats[seat].L ? 1 : 0;
+        present[seat] = data.Seats[seat].L && data.StandInPlay.Seat != int32(seat) ? 1 : 0;
 
     // A director is an agent only in the episodes that have one; elsewhere it has nothing to say and earns
     // nothing, so the learner should not train on its row.
