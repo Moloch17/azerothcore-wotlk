@@ -32,15 +32,24 @@ namespace Animus::Curriculum
     /// It moves one way. Once `window` probes at a rung have made, on average, `target` of the dungeon, it steps
     /// down a rung; it never steps back on a score, because a harder rung scores lower by design (the same bug held
     /// M2 at its easiest rung, 2026-10-07). What it does keep is an alarm: the probes' mean, read once for each
-    /// `window` fresh probes at a rung, under a floor -- COLLAPSE_FLOOR, or COLLAPSE_SHARE of the mean that earned
-    /// the rung -- for COLLAPSE_READS reads running. The alarm is a warning for a person; the ladder does not move on
-    /// it. It is computed here, in the ladder the host decides with, so it exists once for the whole cluster.
+    /// `window` fresh probes at a rung, under a floor for COLLAPSE_READS reads running. The alarm is a warning for a
+    /// person; the ladder does not move on it. It is computed here, in the ladder the host decides with, so it exists
+    /// once for the whole cluster.
+    ///
+    /// **Above rung 0** the floor is COLLAPSE_FLOOR, or COLLAPSE_SHARE of the mean that earned the rung, whichever is
+    /// higher, and the rung "collapsed". **At rung 0** there is no earned mean: the floor is COLLAPSE_FLOOR alone, it
+    /// takes COLLAPSE_READS_FIRST reads (a policy still learning its first dungeon is slower to move than one that
+    /// lost its footing), and the line says the stage "is not learning yet". **After a resume** the mean that earned
+    /// the rung is unknown (the rung comes from WingRungStart, not from this object's history), so the floor is the
+    /// absolute COLLAPSE_FLOOR there too. The alarm raised and cleared are both returned, for the host to log and to
+    /// write into the run's own events.log.
     ///
     /// Not thread-safe by itself (StageScenario holds its lock); Rung() and CollapsedRung() may be read anywhere.
     class WingLadder
     {
     public:
         static constexpr uint32_t COLLAPSE_READS = 3;
+        static constexpr uint32_t COLLAPSE_READS_FIRST = 5;     // at rung 0
         static constexpr float COLLAPSE_FLOOR = 0.1f;
         static constexpr float COLLAPSE_SHARE = 0.25f;
 
@@ -55,8 +64,11 @@ namespace Animus::Curriculum
         struct Result
         {
             std::optional<Step> Moved;
-            /// The line to log the first time the rung collapses (once per collapse).
+            /// The line to log the first time the rung collapses or, at rung 0, is not learning (once per episode of
+            /// it).
             std::optional<std::string> Alarm;
+            /// The line to log when a flagged rung's probes come back over the floor.
+            std::optional<std::string> Cleared;
         };
 
         WingLadder(uint32_t rungs, uint32_t window, float target, uint32_t start);

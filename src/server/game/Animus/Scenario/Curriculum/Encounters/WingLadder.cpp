@@ -79,23 +79,33 @@ Animus::Curriculum::WingLadder::Result Animus::Curriculum::WingLadder::Note(uint
         return result;
     _sinceRead = 0;
     _reads.push_back(probes);
-    if (now == 0)
-        return result;
 
+    // Rung 0 has no earned mean to take a share of, and a resumed ladder has lost it (_lower stays 0): the absolute
+    // floor alone, and at rung 0 more reads.
+    uint32_t const needed = now == 0 ? COLLAPSE_READS_FIRST : COLLAPSE_READS;
     float const floor = std::max(COLLAPSE_FLOOR, COLLAPSE_SHARE * _lower);
-    bool collapsed = _reads.size() >= COLLAPSE_READS;
-    for (std::size_t i = _reads.size() - std::min<std::size_t>(_reads.size(), COLLAPSE_READS); i < _reads.size(); ++i)
+    bool collapsed = _reads.size() >= needed;
+    for (std::size_t i = _reads.size() - std::min<std::size_t>(_reads.size(), needed); i < _reads.size(); ++i)
         collapsed = collapsed && _reads[i] < floor;
-    if (collapsed && _collapsed.load(std::memory_order_relaxed) < 0)
+    bool const was = _collapsed.load(std::memory_order_relaxed) >= 0;
+    if (collapsed && !was)
     {
         std::string reads;
-        for (std::size_t i = _reads.size() - COLLAPSE_READS; i < _reads.size(); ++i)
+        for (std::size_t i = _reads.size() - needed; i < _reads.size(); ++i)
             reads += Acore::StringFormat("{}{:.3f}", reads.empty() ? "" : ", ", _reads[i]);
-        result.Alarm = Acore::StringFormat("WARNING the dungeon ladder's rung {} collapsed: the probes made {} of the "
-            "dungeon over {} reads of {} runs, under {:.3f} (the rung below earned {:.3f}); the ladder does not step "
-            "back by itself -- roll back to a checkpoint or change the rung", now, reads, COLLAPSE_READS, _window,
-            floor, _lower);
+        if (now == 0)
+            result.Alarm = Acore::StringFormat("WARNING the dungeon ladder's first rung is not learning yet: the probes "
+                "made {} of the dungeon over {} reads of {} runs, under {:.3f}; the ladder does not move on it", reads,
+                needed, _window, floor);
+        else
+            result.Alarm = Acore::StringFormat("WARNING the dungeon ladder's rung {} collapsed: the probes made {} of "
+                "the dungeon over {} reads of {} runs, under {:.3f} (the rung below earned {:.3f}); the ladder does "
+                "not step back by itself -- roll back to a checkpoint or change the rung", now, reads, needed, _window,
+                floor, _lower);
     }
+    else if (was && !collapsed && probes >= floor)
+        result.Cleared = Acore::StringFormat("the dungeon ladder's rung {} is over the floor again: the probes made "
+            "{:.3f} of the dungeon (floor {:.3f})", now, probes, floor);
     _collapsed.store(collapsed ? int32_t(now) : -1, std::memory_order_relaxed);
     return result;
 }

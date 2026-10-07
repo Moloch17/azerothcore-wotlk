@@ -76,6 +76,10 @@ namespace Animus
 
         /// Where a stage writes its layout manifests and stage.json (<LayoutsDir>/<stage>/); empty = nowhere.
         std::string LayoutsDir;
+
+        /// The run's own event log (<RunsDir>/<stage>/events.log): one timestamped line per event the sim itself
+        /// wants a person to find in the run directory, appended and never rewritten. Empty = nowhere (mod-animus).
+        std::string EventsLog;
     };
 }
 

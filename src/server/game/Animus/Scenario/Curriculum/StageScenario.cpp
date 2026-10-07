@@ -82,6 +82,7 @@
 #include <boost/json/serialize.hpp>
 #include <algorithm>
 #include <filesystem>
+#include <ctime>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -323,6 +324,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     _wingLadder(uint32(WING_RUNGS.size()), _tuning.Instance.WingRungRuns, _tuning.Instance.WingRungTarget,
         _tuning.Instance.WingRungStart)
 {
+    _eventsLog = settings.EventsLog;
 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
@@ -1845,7 +1847,35 @@ void Animus::Curriculum::StageScenario::NoteWingRun(uint32 rung, bool probe, flo
             result.Moved->To, std::max<uint32>(1, _tuning.Instance.WingRungRuns), result.Moved->Probes,
             _tuning.Instance.WingRungTarget, result.Moved->Others);
     if (result.Alarm)
+    {
         LOG_WARN("module.animus", "{}: {}", Name(), *result.Alarm);
+        AppendRunEvent(*result.Alarm);
+    }
+    if (result.Cleared)
+    {
+        LOG_INFO("module.animus", "{}: {}", Name(), *result.Cleared);
+        AppendRunEvent(*result.Cleared);
+    }
+}
+
+void Animus::Curriculum::StageScenario::AppendRunEvent(std::string const& line) const
+{
+    if (_eventsLog.empty())
+        return;
+
+    std::error_code error;
+    std::filesystem::path const path(_eventsLog);
+    std::filesystem::create_directories(path.parent_path(), error);
+    std::time_t const now = std::time(nullptr);
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    std::ofstream out(path, std::ios::app);
+    if (out)
+        out << stamp << ' ' << Name() << ": " << line << '\n';
+    else
+        LOG_WARN("module.animus", "{}: could not append to {}", Name(), _eventsLog);
 }
 
 std::string Animus::Curriculum::StageScenario::TakeClusterTally()

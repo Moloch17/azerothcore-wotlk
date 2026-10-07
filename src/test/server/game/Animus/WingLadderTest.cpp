@@ -94,7 +94,9 @@ TEST(WingLadderTest, TheAlarmFiresOnceAfterThreeLowReadsAndClearsOnRecovery)
         EXPECT_EQ(ladder.CollapsedRung(), 1);
     }
     // A read over the floor clears it; the ladder is where it was.
-    EXPECT_FALSE(Probes(ladder, 0.5f, WINDOW).Moved);
+    Cu::WingLadder::Result const better = Probes(ladder, 0.5f, WINDOW);
+    EXPECT_FALSE(better.Moved);
+    EXPECT_TRUE(better.Cleared);
     EXPECT_EQ(ladder.CollapsedRung(), -1);
     EXPECT_EQ(ladder.Rung(), 1u);
 }
@@ -109,11 +111,54 @@ TEST(WingLadderTest, ReadsAreFreshProbesNotASlidingWindow)
     EXPECT_TRUE(Probes(ladder, 0.05f, 1).Alarm);
 }
 
-TEST(WingLadderTest, TheFirstRungHasNoAlarm)
+// Rung 0 has no earned mean: the floor is the absolute one alone, five reads run, and the line says "not learning yet".
+TEST(WingLadderTest, TheFirstRungWarnsThatItIsNotLearningAfterFiveLowReads)
 {
     Cu::WingLadder ladder = Ladder();
-    EXPECT_FALSE(Probes(ladder, 0.0f, 10 * WINDOW).Alarm);
+    for (uint32_t read = 0; read + 1 < Cu::WingLadder::COLLAPSE_READS_FIRST; ++read)
+    {
+        EXPECT_FALSE(Probes(ladder, 0.0f).Alarm) << "read " << read;
+        EXPECT_EQ(ladder.CollapsedRung(), -1);
+    }
+    Cu::WingLadder::Result const fifth = Probes(ladder, 0.0f);
+    ASSERT_TRUE(fifth.Alarm);
+    EXPECT_NE(fifth.Alarm->find("WARNING"), std::string::npos);
+    EXPECT_NE(fifth.Alarm->find("not learning yet"), std::string::npos);
+    EXPECT_EQ(fifth.Alarm->find("collapsed"), std::string::npos);
+    EXPECT_FALSE(fifth.Moved);
+    EXPECT_EQ(ladder.CollapsedRung(), 0);
+    EXPECT_EQ(ladder.Rung(), 0u);
+
+    // Once per episode of it; a read over the floor clears it, and says so.
+    for (uint32_t i = 0; i < 4; ++i)
+        EXPECT_FALSE(Probes(ladder, 0.0f).Alarm);
+    EXPECT_EQ(ladder.CollapsedRung(), 0);
+    Cu::WingLadder::Result const better = Probes(ladder, 0.3f);
+    EXPECT_TRUE(better.Cleared);
+    EXPECT_FALSE(better.Alarm);
     EXPECT_EQ(ladder.CollapsedRung(), -1);
+    EXPECT_EQ(ladder.Rung(), 0u);
+}
+
+// Over the absolute floor (0.1) the first rung is learning, however little: no alarm.
+TEST(WingLadderTest, TheFirstRungOverTheFloorNeverWarns)
+{
+    Cu::WingLadder ladder = Ladder();
+    EXPECT_FALSE(Probes(ladder, 0.15f, 10 * WINDOW).Alarm);
+    EXPECT_EQ(ladder.CollapsedRung(), -1);
+}
+
+// A resumed ladder starts on a rung it has no earned mean for: the floor is the absolute 0.1, not a share of 0.
+TEST(WingLadderTest, ALadderStartedOnARungUsesTheAbsoluteFloor)
+{
+    Cu::WingLadder ladder = Ladder(3);
+    EXPECT_FALSE(Probes(ladder, 0.12f, 6 * WINDOW).Alarm);
+    EXPECT_EQ(ladder.CollapsedRung(), -1);
+    Cu::WingLadder::Result last;
+    for (uint32_t read = 0; read < Cu::WingLadder::COLLAPSE_READS; ++read)
+        last = Probes(ladder, 0.05f);
+    ASSERT_TRUE(last.Alarm);
+    EXPECT_NE(last.Alarm->find("collapsed"), std::string::npos);
 }
 
 TEST(WingLadderTest, AFollowerTakesTheHostsRungWithinTheLadder)

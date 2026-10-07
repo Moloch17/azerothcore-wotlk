@@ -233,6 +233,8 @@ namespace Animus::Curriculum
         /// A finished training run of a whole dungeon on rung `rung`: whether it was a probe, and how far it got (the
         /// share of the dungeon cleared, 1 when the last boss died). Probes step the ladder.
         void NoteWingRun(uint32 rung, bool probe, float progress);
+        /// One timestamped line appended to the run's events.log (StageSettings::EventsLog), where the sim has one.
+        void AppendRunEvent(std::string const& line) const;
 
         std::string TakeClusterTally() override;
         void AddClusterTally(std::string const& tally) override;
@@ -491,6 +493,7 @@ namespace Animus::Curriculum
         /// lose a step to each other, which a running average does not mind.
         WingLadder _wingLadder;
         std::mutex _wingLadderLock;
+        std::string _eventsLog;                 // StageSettings::EventsLog
         /// A cluster worker follows the host's rung and reports its runs instead of stepping (FollowClusterRung);
         /// the runs since its last report, as "rung/probes/others" with comma-separated progress.
         bool _wingFollower = false;
