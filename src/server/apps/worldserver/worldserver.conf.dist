@@ -7126,23 +7126,25 @@ AnimusForge.Curriculum.Controls.WallSlide = 0.5
 #        The combat stages (combat1_fight, combat2_packs, combat3_survive; CombatEncounter, dungeon-curriculum C1-C3):
 #        creatures on a cleared Ragefire Chasm, fought by a seat that sees them. Outcome (times the tier's
 #        w = 1 + Difficulty.TierScale x tier): Kill a C1 creature, Clear a C2/C3 pack, Survived the episode with no
-#        death (SurviveSurvived in C3); InterruptLanded an interrupt that stopped a cast, Rejoin back within
-#        RejoinYards of the fight after a respawn (C3), unscaled. Cost, fixed price from the first step: Death and
-#        AllyDeath (divided by w), Hurt and FireHurt per maximum health taken (all of it, and from ground effects),
-#        ExtraPull a second pack drawn in, Clock per second a creature of the pull is alive and engaged. Shaping
-#        (faded): Damage per creature health dealt. The ladder (per class and build, on its window alone): the seat's
-#        level + LevelBase + rung x LevelsPerTier (C2 half the steps, its packs growing), elites from EliteTier, a
-#        caster from CasterTier, linked packs from LinkedTier, HazardChance percent of C2 packs with fire; C3's packs
-#        SurviveSize strong, SurviveLevels higher. The seat starts on one of the dungeon's own creature spawns within
-#        CorridorWalk yards' walk of the entrance (CorridorSpacing apart); a pull stands FightNearest-FightFurthest
-#        yards off (past a same-level creature's ~20 yd aggro, so the seat chooses when to fight) in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
-#        after a kill. A death: RespawnDelayMs out, then alive at the entrance (dungeon-curriculum I4).
+#        death (SurviveSurvived in C3); InterruptLanded an interrupt that stopped a cast, unscaled. Cost, fixed price
+#        from the first step: Away per second dead or away from the fight (walking back from the entrance, or beyond
+#        AwayYards of the pull while it fights), Death and AllyDeath (divided by w), Hurt and FireHurt per maximum
+#        health taken (all of it, and from ground effects), ExtraPull a second pack drawn in, Clock per second a
+#        creature of the pull is alive and engaged. Shaping (faded): Damage per creature health dealt. The ladder (per
+#        class and build, on its window alone): the seat's level + LevelBase + rung x LevelsPerTier (C2 half the steps,
+#        its packs growing), elites from EliteTier, a caster from CasterTier, linked packs from LinkedTier,
+#        HazardChance percent of C2 packs with fire; C3's packs SurviveSize strong, SurviveLevels higher. The seat
+#        starts on one of the dungeon's own creature spawns within CorridorWalk yards' walk of the entrance
+#        (CorridorSpacing apart); a pull stands FightNearest-FightFurthest yards off (past a same-level creature's
+#        ~20 yd aggro) in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
+#        after a kill. A death: Respawn.DelayMs out, then alive at the entrance (dungeon-curriculum I4).
 AnimusForge.Curriculum.Combat.Kill = 1.0
 AnimusForge.Curriculum.Combat.Clear = 2.0
 AnimusForge.Curriculum.Combat.Survived = 1.0
 AnimusForge.Curriculum.Combat.SurviveSurvived = 2.0
 AnimusForge.Curriculum.Combat.InterruptLanded = 0.25
-AnimusForge.Curriculum.Combat.Rejoin = 1.0
+AnimusForge.Curriculum.Combat.Away = 0.02
+AnimusForge.Curriculum.Combat.AwayYards = 30.0
 AnimusForge.Curriculum.Combat.Death = 2.0
 AnimusForge.Curriculum.Combat.AllyDeath = 1.0
 AnimusForge.Curriculum.Combat.Hurt = 0.2
@@ -7166,8 +7168,6 @@ AnimusForge.Curriculum.Combat.NextFurthest = 45.0
 AnimusForge.Curriculum.Combat.NextFightMs = 2000
 AnimusForge.Curriculum.Combat.CorridorWalk = 220.0
 AnimusForge.Curriculum.Combat.CorridorSpacing = 8.0
-AnimusForge.Curriculum.Combat.RespawnDelayMs = 10000
-AnimusForge.Curriculum.Combat.RejoinYards = 30.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

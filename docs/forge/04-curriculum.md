@@ -43,8 +43,8 @@
 > pack further on), `combat3_survive` packs that can kill, with food and drink. The seat perceives what a player does
 > (I3): the sight list (what it sees and remembers) with each visible unit's nameplate combat columns, the party frames
 > and the target frame's threat (`BlockId::Combat`); it selects by sight and casts as the client does. A death never
-> ends an episode: the seat is back alive at the dungeon's entrance after 10 s and walks back (I4's seam,
-> `ArenaDefinition::RespawnAtEntrance`). Every ladder steps on its gate alone and every price is full from the start.
+> ends an episode: the seat is back alive at the dungeon's entrance after 10 s and walks back (I4's
+> EntranceRespawn, `ArenaDefinition::RespawnAtEntrance`); every second dead or away from the fight is a Cost. Every ladder steps on its gate alone and every price is full from the start.
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

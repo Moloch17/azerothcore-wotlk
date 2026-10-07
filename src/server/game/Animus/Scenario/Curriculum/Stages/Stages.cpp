@@ -605,8 +605,8 @@ namespace
         // C3 -- survive: packs that can kill (three or four, two levels up on the rung's), pull after pull, the next
         // waiting until the seat goes for it; food and drink stocked (the gauntlet block: eat, drink, rest until
         // ready), so resting between pulls and backing off are the seat's own choices. A death comes back at the
-        // entrance and walks back to where it fell (Rejoin), and the pack is still there to clear: never "give up".
-        // Outcome: packs cleared, survived, rejoined, interrupts landed.
+        // entrance and walks back, and the pack is still there to clear: never "give up". Outcome: survived (its
+        // purpose), packs cleared, interrupts landed; every second dead or away from the fight a Cost (Away).
         stages.push_back({
             .Name = "combat3_survive",
             .Suffix = "_survive",

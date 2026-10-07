@@ -24,6 +24,7 @@
 #include "CombatBlock.h"
 #include "CombatDraw.h"
 #include "CurriculumTuning.h"
+#include "EntranceRespawn.h"
 #include "EntitiesBlock.h"
 #include "EntityMemory.h"
 #include "Layout.h"
@@ -33,6 +34,7 @@
 #include "SightBlock.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
+#include "StageState.h"
 #include "TestCreature.h"
 #include "TestMap.h"
 #include "ThreatManager.h"
@@ -535,38 +537,62 @@ TEST(CombatDrawTest, TheCorridorPointsAreReachableAndApart)
     EXPECT_FLOAT_EQ(kept[1].X, 50.0f);
 }
 
-// I4's seam: a dead seat comes back after the delay, alive at the map's entrance (its areatrigger's target; the
-// episode's spawn without one), and is back at the fight once within the yards of where it fell, on its floor.
-TEST(CombatRespawnTest, BackAtTheEntranceAfterTheDelayAndRejoinedAtTheFight)
+// Away from the fight (Combat.Away, a Cost): every second dead; alive, the walk back from the entrance and a fighting
+// pull left behind beyond the yards; never standing back before a pull is engaged. No term pays for coming back.
+TEST(CombatRespawnTest, AwayIsDeadOrOffFromTheFight)
 {
-    EXPECT_FALSE(Draw::RespawnDue(0, 50000, 10000));
-    EXPECT_FALSE(Draw::RespawnDue(1000, 10999, 10000));
-    EXPECT_TRUE(Draw::RespawnDue(1000, 11000, 10000));
+    EXPECT_TRUE(Draw::AwayCharged(false, false, false, 0.0f, 30.0f));
+    EXPECT_TRUE(Draw::AwayCharged(true, true, false, 31.0f, 30.0f));
+    EXPECT_FALSE(Draw::AwayCharged(true, true, false, 29.0f, 30.0f));
+    EXPECT_TRUE(Draw::AwayCharged(true, false, true, 45.0f, 30.0f));
+    EXPECT_FALSE(Draw::AwayCharged(true, false, false, 45.0f, 30.0f));
+    EXPECT_EQ(Cu::RewardTermCategory(Cu::RewardTerm::Away), Cu::RewardCategory::Cost);
+    EXPECT_EQ(Cu::RewardTermName(Cu::RewardTerm::Away), "away");
+}
 
-    AreaTriggerTeleport entrance{ 389, 3.81f, -14.82f, -17.84f, 4.39f };
-    Position const spawn(1.0f, 2.0f, 3.0f, 0.0f);
-    Position const at = Cu::StageScenario::EntranceOf(&entrance, spawn);
-    EXPECT_FLOAT_EQ(at.GetPositionX(), 3.81f);
-    EXPECT_FLOAT_EQ(at.GetPositionY(), -14.82f);
-    EXPECT_FLOAT_EQ(at.GetPositionZ(), -17.84f);
-    EXPECT_FLOAT_EQ(at.GetOrientation(), 4.39f);
-    EXPECT_FLOAT_EQ(Cu::StageScenario::EntranceOf(nullptr, spawn).GetPositionX(), 1.0f);
+// I4's one implementation drives the combat stages' deaths: the clock says when to rise, after the delay, and when the
+// risen seat is back within the yards of the fight.
+TEST(CombatRespawnTest, TheClockRisesAfterTheDelayAndRejoinsAtTheFight)
+{
+    Cu::RespawnClock clock;
+    EXPECT_EQ(clock.Note(1000, false, -1.0f, 10000, 15.0f), Cu::RespawnClock::Step::Died);
+    EXPECT_EQ(clock.Note(10999, false, -1.0f, 10000, 15.0f), Cu::RespawnClock::Step::None);
+    EXPECT_EQ(clock.Note(11000, false, -1.0f, 10000, 15.0f), Cu::RespawnClock::Step::Rise);
+    clock.Risen(11000);
+    EXPECT_EQ(clock.Note(20000, true, 80.0f, 10000, 15.0f), Cu::RespawnClock::Step::None);
+    EXPECT_EQ(clock.Note(41000, true, 12.0f, 10000, 15.0f), Cu::RespawnClock::Step::Rejoined);
+    EXPECT_FLOAT_EQ(clock.RejoinSeconds(), 30.0f);
+}
 
-    Draw::Point const fell{ 100.0f, 0.0f, -20.0f };
-    EXPECT_TRUE(Draw::Rejoined({ 110.0f, 10.0f, -21.0f }, fell, 30.0f));
-    EXPECT_FALSE(Draw::Rejoined({ 140.0f, 0.0f, -20.0f }, fell, 30.0f));
-    EXPECT_FALSE(Draw::Rejoined({ 100.0f, 0.0f, 0.0f }, fell, 30.0f));      // a floor above
+// No server-side leak after a rise: the seat's last frame is forgotten, so the enemy list -- the frame's visible hostiles
+// -- is empty until its camera casts a frame at the entrance, however many it saw where it died.
+TEST_F(CombatPerceptionTest, ARisenSeatSeesNoEnemyUntilAFrameIsCast)
+{
+    TestCreature* mob = CreateTestCreature(131, 90131, TEST_FACTION_HOSTILE_TO_ALL);
+    Cu::SeatState seat;
+    seat.Seen.Count = 1;
+    seat.Seen.Info[0] = Listed(mob->GetGUID().GetRawValue(), -1);
+    seat.SightGuids[0] = mob->GetGUID().GetRawValue();
+    std::array<Unit*, Cu::PACK_SLOTS> enemies{};
+    ASSERT_EQ(Combat::VisibleEnemies(seat.Seen, Knowing({ mob }), enemies.data(), Cu::PACK_SLOTS), 1u);
+
+    // Before anything else, whether or not the seat could be stood up (here no bot is: the fixture's map cannot move
+    // one), the frame is forgotten.
+    EXPECT_FALSE(Cu::RiseAtEntrance(nullptr, seat, Position(3.81f, -14.82f, -17.84f, 4.39f), 5000));
+    EXPECT_EQ(seat.Seen.Count, 0u);
+    EXPECT_EQ(seat.SightGuids[0], 0u);
+    EXPECT_EQ(Combat::VisibleEnemies(seat.Seen, Knowing({ mob }), enemies.data(), Cu::PACK_SLOTS), 0u);
+    EXPECT_FALSE(Combat::InView(seat.Seen, mob->GetGUID().GetRawValue()));
 }
 
 // The combat stages' own terms: their purposes Outcome (never faded), their prices Cost.
 TEST(CombatStagesTest, TheirTermsAreOutcomeAndCost)
 {
     using Cu::RewardTerm;
-    for (RewardTerm term : { RewardTerm::Survived, RewardTerm::InterruptLanded, RewardTerm::Rejoin, RewardTerm::Kill,
-        RewardTerm::Clear })
+    for (RewardTerm term : { RewardTerm::Survived, RewardTerm::InterruptLanded, RewardTerm::Kill, RewardTerm::Clear })
         EXPECT_EQ(Cu::RewardTermCategory(term), Cu::RewardCategory::Outcome) << Cu::RewardTermName(term);
-    for (RewardTerm term : { RewardTerm::Hurt, RewardTerm::FireHurt, RewardTerm::PullExtra, RewardTerm::Death,
-        RewardTerm::StepCost, RewardTerm::TeammateDeath })
+    for (RewardTerm term : { RewardTerm::Away, RewardTerm::Hurt, RewardTerm::FireHurt, RewardTerm::PullExtra,
+        RewardTerm::Death, RewardTerm::StepCost, RewardTerm::TeammateDeath })
         EXPECT_EQ(Cu::RewardTermCategory(term), Cu::RewardCategory::Cost) << Cu::RewardTermName(term);
     EXPECT_EQ(Cu::RewardTermName(RewardTerm::InterruptLanded), "interrupt_landed");
     EXPECT_EQ(Cu::RewardTermName(RewardTerm::FireHurt), "fire_hurt");

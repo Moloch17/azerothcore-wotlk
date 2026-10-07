@@ -48,10 +48,6 @@ namespace
     /// A corridor point's floor: the body's height for the liquid test.
     constexpr float BODY_HEIGHT = 2.0f;
 
-    Draw::Point PointOf(Position const& at)
-    {
-        return { at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() };
-    }
 }
 
 Animus::Curriculum::CombatEncounter::CombatEncounter(StageScenario& scenario, uint32 envs)
@@ -62,7 +58,7 @@ Animus::Curriculum::CombatEncounter::CombatEncounter(StageScenario& scenario, ui
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CombatEncounter::RewardTerms() const
 {
     return { RewardTerm::Kill, RewardTerm::Clear, RewardTerm::Survived, RewardTerm::InterruptLanded,
-        RewardTerm::Rejoin, RewardTerm::Death, RewardTerm::TeammateDeath, RewardTerm::Hurt, RewardTerm::FireHurt,
+        RewardTerm::Away, RewardTerm::Death, RewardTerm::TeammateDeath, RewardTerm::Hurt, RewardTerm::FireHurt,
         RewardTerm::PullExtra, RewardTerm::StepCost, RewardTerm::DamageDealt };
 }
 
@@ -87,10 +83,16 @@ void Animus::Curriculum::CombatEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     table.Add("extra_pulls", of([](EnvCombat const& c) { return c.ExtraPulls; }));
     table.Add("interrupts", of([](EnvCombat const& c) { return c.Interrupts; }));
     table.Add("deaths", of([](EnvCombat const& c) { return c.Deaths; }));
-    table.Add("respawns", of([](EnvCombat const& c) { return c.Respawns; }));
-    table.Add("rejoins", of([](EnvCombat const& c) { return c.Rejoins; }));
-    // Per rejoin (PER_EVENT on rejoins): seconds from the respawn at the entrance to back at the fight.
-    table.Add("rejoin_seconds", of([](EnvCombat const& c) { return c.RejoinSeconds; }));
+    // I4's measures, as the party follow reports them (RespawnClock): rises at the entrance, rejoins, the mean seconds
+    // from a rise to back at the fight (PER_EVENT on rejoins), the share of rises that came back (PER_EVENT on rises),
+    // the seconds dead; and the seconds charged Away (dead, walking back, or off from the fighting pull).
+    table.Add("respawns", of([](EnvCombat const& c) { return c.Clock.Rises; }));
+    table.Add("rises", of([](EnvCombat const& c) { return c.Clock.Rises; }));
+    table.Add("rejoins", of([](EnvCombat const& c) { return c.Clock.Rejoins; }));
+    table.Add("rejoin_seconds", of([](EnvCombat const& c) { return c.Clock.RejoinSeconds(); }));
+    table.Add("rejoined", of([](EnvCombat const& c) { return c.Clock.Rises ? c.Clock.RejoinedShare() : 0.0f; }));
+    table.Add("dead_seconds", of([](EnvCombat const& c) { return float(c.Clock.OutMsTotal) / 1000.0f; }));
+    table.Add("away_seconds", of([](EnvCombat const& c) { return c.AwaySeconds; }));
     // Per kill (PER_EVENT on kills): seconds from a creature's engage to its death, C1's.
     table.Add("kill_seconds", of([](EnvCombat const& c) { return c.KillSeconds; }));
     table.Add("ally_deaths", of([](EnvCombat const& c) { return c.AllyDeaths; }));
@@ -389,26 +391,21 @@ void Animus::Curriculum::CombatEncounter::Update(Env& env)
     if (!bot || !map)
         return;
 
-    // A death (I4): out for the delay, then alive at the entrance to walk back.
-    if (!bot->IsAlive())
+    // A death (I4, EntranceRespawn): out for the delay, then alive at the entrance to walk back to the fight.
+    CurriculumTuning::RespawnTuning const& respawn = _scenario.Tuning().Respawn;
+    if (!bot->IsAlive() && !combat.Clock.Out)
+        combat.FellAt = Position(*bot);
+    float const fightYards = bot->IsAlive() ? bot->GetExactDist(FightPoint(env, bot)) : -1.0f;
+    RespawnClock::Step const step = combat.Clock.Note(env.EpisodeElapsedMs, bot->IsAlive(), fightYards,
+        respawn.DelayMs, respawn.RejoinYards);
+    if (step == RespawnClock::Step::Rise && _scenario.Arena(env).RespawnAtEntrance)
     {
-        if (!combat.DeadSinceMs)
-        {
-            combat.DeadSinceMs = std::max<uint32>(1, env.EpisodeElapsedMs);
-            combat.FellAt = PointOf(*bot);
-        }
-        if (_scenario.Arena(env).RespawnAtEntrance
-            && Draw::RespawnDue(combat.DeadSinceMs, env.EpisodeElapsedMs, _scenario.Tuning().Combat.RespawnDelayMs)
-            && _scenario.RespawnAtEntrance(env, 0))
-        {
-            combat.DeadSinceMs = 0;
-            combat.DeathPaid = false;
-            combat.RejoinPending = true;
-            combat.RespawnedAtMs = env.EpisodeElapsedMs;
-            ++combat.Respawns;
-        }
-        return;
+        RiseAtEntrance(bot, _scenario.Data(env).Seats[0], _scenario.SpawnPointFor(env), env.EpisodeElapsedMs);
+        combat.Clock.Risen(env.EpisodeElapsedMs);
+        combat.DeathPaid = false;
     }
+    if (!bot->IsAlive())
+        return;
 
     // C1: the next creature, once the last is down and its moment has come.
     if (combat.NextFightMs && env.EpisodeElapsedMs >= combat.NextFightMs)
@@ -456,6 +453,20 @@ void Animus::Curriculum::CombatEncounter::View(Env const& env, uint32 /*seat*/, 
         view.ElitePull = front.Elite;
         view.PullTime = std::min(1.0f, float(env.EpisodeElapsedMs - front.EngageMs) / 60000.0f);
     }
+}
+
+Position Animus::Curriculum::CombatEncounter::FightPoint(Env const& env, Player const* bot) const
+{
+    EnvCombat const& combat = _envs[env.Index];
+    if (combat.Packs.empty())
+        return combat.FellAt;
+    Pack const& front = combat.Packs.front();
+    Creature const* nearest = nullptr;
+    for (ObjectGuid const& guid : front.Members)
+        if (Creature* member = Member(env, guid); member && member->IsAlive()
+            && (!nearest || bot->GetExactDist(member) < bot->GetExactDist(nearest)))
+            nearest = member;
+    return nearest ? Position(*nearest) : front.Spot;
 }
 
 bool Animus::Curriculum::CombatEncounter::FrontFighting(Env const& env) const
@@ -620,15 +631,12 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         ledger.Add(RewardTerm::Death, -tuning.Death / w);
     }
 
-    // Back at the fight after a respawn.
-    if (combat.RejoinPending && bot->IsAlive()
-        && Draw::Rejoined(PointOf(*bot), combat.FellAt, tuning.RejoinYards))
+    // Dead, or away from the fight: charged by the second (never a reward for coming back, which would pay dying).
+    float const fightYards = bot->IsAlive() ? bot->GetExactDist(FightPoint(env, bot)) : 0.0f;
+    if (Draw::AwayCharged(bot->IsAlive(), combat.Clock.Rejoining, FrontFighting(env), fightYards, tuning.AwayYards))
     {
-        combat.RejoinPending = false;
-        ++combat.Rejoins;
-        combat.RejoinSeconds += float(env.EpisodeElapsedMs - combat.RespawnedAtMs) / 1000.0f;
-        if (drill == CombatDrill::Survive)
-            ledger.Add(RewardTerm::Rejoin, tuning.Rejoin);
+        combat.AwaySeconds += decision;
+        ledger.Add(RewardTerm::Away, -tuning.Away * decision);
     }
 
     // What the seat did with its view, measured.

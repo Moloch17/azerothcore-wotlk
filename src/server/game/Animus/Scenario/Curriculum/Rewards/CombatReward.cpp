@@ -149,7 +149,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Blocking:              return "blocking";
         case RewardTerm::Survived:              return "survived";
         case RewardTerm::InterruptLanded:       return "interrupt_landed";
-        case RewardTerm::Rejoin:                return "rejoin";
+        case RewardTerm::Away:                  return "away";
         case RewardTerm::Hurt:                  return "hurt";
         case RewardTerm::FireHurt:              return "fire_hurt";
         case RewardTerm::Count:                 break;

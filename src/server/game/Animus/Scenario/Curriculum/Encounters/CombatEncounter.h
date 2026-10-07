@@ -22,6 +22,7 @@
 #include "CombatDraw.h"
 #include "DifficultyLadder.h"
 #include "Encounter.h"
+#include "EntranceRespawn.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include <mutex>
@@ -52,15 +53,17 @@ namespace Animus::Curriculum
     ///   it before this one is down is an extra pull (ExtraPull, a Cost). Paid: Clear, InterruptLanded.
     /// - **Survive (C3)**: packs that can kill, the next waiting until the seat goes for it: food and drink are
     ///   stocked (the gauntlet block's rest), so resting between pulls is the seat's own choice. Paid: Clear,
-    ///   InterruptLanded, Survived, Rejoin.
+    ///   InterruptLanded, Survived; priced: every second dead or away from the fight (Away).
     ///
     /// **Death** (dungeon-curriculum I4, ArenaDefinition::RespawnAtEntrance): never the end of the episode. The seat is
-    /// out Combat.RespawnDelayMs, then alive at the dungeon's entrance (StageScenario::RespawnAtEntrance, the seam I4
-    /// replaces) and walks back on the controller, by its own map and memory; the pull it died to goes home. It is
-    /// back once within Combat.RejoinYards of where it fell (Rejoin). The episode ends on its clock alone.
+    /// out Respawn.DelayMs, then alive at the dungeon's entrance (EntranceRespawn's RespawnClock and RiseAtEntrance,
+    /// I4's one implementation) and walks back on the controller, by its own map and memory; the pull it died to goes
+    /// home. It is back once within Respawn.RejoinYards of the fight (measured, never paid); every second dead, and
+    /// every second of the walk back beyond Combat.AwayYards of the fight, is charged (Away). The episode ends on its
+    /// clock alone.
     ///
-    /// **Outcome** (times the tier's w): Kill, Clear, Survived; InterruptLanded and Rejoin. **Cost**, at full price
-    /// from the first step: Death and AllyDeath (over w), Hurt, FireHurt, ExtraPull, Clock (StepCost: per second a
+    /// **Outcome** (times the tier's w): Kill, Clear, Survived; InterruptLanded. **Cost**, at full price from the
+    /// first step: Away, Death and AllyDeath (over w), Hurt, FireHurt, ExtraPull, Clock (StepCost: per second a
     /// pull's creature lives engaged). **Shaping**: DamageDealt (Combat.Damage), faded.
     class CombatEncounter final : public Encounter
     {
@@ -130,9 +133,7 @@ namespace Animus::Curriculum
             uint32 ExtraPulls = 0;
             uint32 Interrupts = 0;
             uint32 Deaths = 0;
-            uint32 Respawns = 0;
-            uint32 Rejoins = 0;
-            float RejoinSeconds = 0.0f;
+            float AwaySeconds = 0.0f;
             uint32 AllyDeaths = 0;
             uint32 HazardPulls = 0;
             uint32 LinkedPulls = 0;
@@ -147,10 +148,8 @@ namespace Animus::Curriculum
 
             // Death and the way back.
             bool DeathPaid = false;
-            uint32 DeadSinceMs = 0;
-            bool RejoinPending = false;
-            uint32 RespawnedAtMs = 0;
-            CombatDraw::Point FellAt;
+            RespawnClock Clock;                 // I4: out, risen at the entrance, back at the fight
+            Position FellAt;
         };
 
         [[nodiscard]] CombatDrill Drill(Env const& env) const;
@@ -163,6 +162,9 @@ namespace Animus::Curriculum
         [[nodiscard]] Creature* Member(Env const& env, ObjectGuid guid) const;
         /// A creature of the pull in front is alive and in a fight (the kill clock's, and the gauntlet's pull time).
         [[nodiscard]] bool FrontFighting(Env const& env) const;
+        /// Where the fight is: the nearest living creature of the pull in front to `bot`, else where the pull stands,
+        /// else where the seat fell.
+        [[nodiscard]] Position FightPoint(Env const& env, Player const* bot) const;
         void Despawn(Env& env);
 
         std::vector<EnvCombat> _envs;

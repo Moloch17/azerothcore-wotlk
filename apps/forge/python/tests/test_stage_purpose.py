@@ -34,10 +34,10 @@ PURPOSE = {
     "move4_follow": ("FollowKept", "Regroup", "Death"),
     # The combat stages (dungeon-curriculum C1-C3, CombatEncounter, 2026-10-06): C1's kills and surviving, its damage
     # taken and the time a kill takes; C2's packs cleared and interrupts landed, its extra pulls and fire damage; C3's
-    # surviving, packs cleared and rejoining after a death.
+    # surviving and packs cleared, and every second dead or away from the fight (never a reward for coming back).
     "combat1_fight": ("Kill", "Survived", "Hurt", "StepCost"),
     "combat2_packs": ("Clear", "InterruptLanded", "PullExtra", "FireHurt"),
-    "combat3_survive": ("Survived", "Clear", "Rejoin"),
+    "combat3_survive": ("Survived", "Clear", "Away"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this

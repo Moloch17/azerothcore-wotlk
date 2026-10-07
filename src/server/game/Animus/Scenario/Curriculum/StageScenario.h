@@ -36,8 +36,6 @@
 #include <memory>
 #include <optional>
 
-struct AreaTriggerTeleport;
-
 namespace Animus::Curriculum
 {
     class DirectorEncounter;
@@ -346,15 +344,6 @@ namespace Animus::Curriculum
         /// Whether seat `seat` is dead with no resurrection of its own left to wait for (Tuning().Resurrection).
         [[nodiscard]] bool DeadForGood(Env const& env, uint32 seat) const;
 
-        /// **A death brings the seat back alive at the instance's entrance** (dungeon-curriculum I4; the user, 2026-10-06:
-        /// no graveyard, ghost or corpse run): resurrect seat `seat` with full health and mana at the map's entrance
-        /// (its areatrigger's target; the episode's spawn without one), out of combat, its controller restarted there;
-        /// the encounters are told it stood up (NotifyRecovered). It walks back by itself. False when it is not dead or
-        /// could not be moved. The seam the I4 work replaces: CombatEncounter calls it after Combat.RespawnDelayMs for
-        /// an arena with RespawnAtEntrance.
-        bool RespawnAtEntrance(Env& env, uint32 seat);
-        /// The place a seat comes back at: `entrance`'s target (a map's entrance areatrigger), else `fallback`.
-        [[nodiscard]] static Position EntranceOf(AreaTriggerTeleport const* entrance, Position const& fallback);
         /// Whether seat `seat`'s bot is alive and knows a resurrection spell it could cast on an ally.
         [[nodiscard]] bool SeatCanResurrect(Env const& env, uint32 seat) const;
 

@@ -126,18 +126,15 @@ namespace Animus::Curriculum::CombatDraw
         return kept;
     }
 
-    /// A respawned seat is back at the fight: within `yards` of where it fell, on its floor (`rise` yards up or down).
-    [[nodiscard]] inline bool Rejoined(Point const& at, Point const& fight, float yards, float rise = 6.0f)
+    /// **Away from the fight** (Combat.Away, a Cost per second): dead; or alive and further than `awayYards` from the
+    /// fight while walking back from the entrance (`rejoining`) or while the pull fights (`fighting`). Standing back
+    /// before a pull is engaged is free (choosing when to fight), and walking back is never paid: a reward for coming
+    /// back would be a reward for having died.
+    [[nodiscard]] inline bool AwayCharged(bool alive, bool rejoining, bool fighting, float fightYards, float awayYards)
     {
-        float const dx = at.X - fight.X;
-        float const dy = at.Y - fight.Y;
-        return dx * dx + dy * dy <= yards * yards && std::fabs(at.Z - fight.Z) <= rise;
-    }
-
-    /// A dead seat's moment to come back at the entrance (dungeon-curriculum I4): `delayMs` after it fell.
-    [[nodiscard]] inline bool RespawnDue(uint32 deadSinceMs, uint32 nowMs, uint32 delayMs)
-    {
-        return deadSinceMs && nowMs >= deadSinceMs + delayMs;
+        if (!alive)
+            return true;
+        return (rejoining || fighting) && fightYards > awayYards;
     }
 
     /// An episode won, for the rung's window (DifficultyLadder::Record): it took something down and nothing took it

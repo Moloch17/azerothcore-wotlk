@@ -84,6 +84,16 @@ def test_the_seed_chain_runs_from_m2():
     assert [Path(path).parent.name for path in chain] == ["move2_seek", "move1_controls"]
 
 
+def test_survive_is_paid_for_staying_alive_and_never_for_coming_back():
+    """C3's purpose is Survived; the walk back after a death is priced (Away), never paid (a Rejoin outcome would pay
+    dying and coming back)."""
+    config = TrainConfig.load(CONFIGS / "combat3_survive.yaml")
+    assert config.convergence.measure == "survived" and config.status.headline[0] == "survived"
+    assert "reward_away" in config.eval.report and "reward_rejoin" not in config.eval.report
+    assert {"rejoined", "dead_seconds", "away_seconds"} <= set(config.status.headline)
+    assert "Rejoin" not in (CURRICULUM / "Rewards" / "RewardLedger.h").read_text().split("enum class RewardCategory")[0]
+
+
 def test_the_per_event_measures():
     assert PER_EVENT["rejoin_seconds"] == "rejoins"
     assert PER_EVENT["kill_seconds"] == "kills"

@@ -418,8 +418,8 @@ namespace Animus::Curriculum
         CombatDrill Combat = CombatDrill::None;
         bool Ally = false;
         /// **A death brings the seat back alive at the instance's entrance** (dungeon-curriculum I4; the user,
-        /// 2026-10-06: no graveyard, ghost or corpse run): out for Combat.RespawnDelayMs, then alive with full health
-        /// and mana at the map's entrance (its areatrigger's target), to walk back on the controller. The episode goes
+        /// 2026-10-06: no graveyard, ghost or corpse run): out for Respawn.DelayMs, then alive with full health
+        /// and power at the entrance (EntranceRespawn's RespawnClock and RiseAtEntrance), to walk back on the controller. The episode goes
         /// on (StageScenario::DeadForGood is never true). An instanced arena's, never with DeathRuns.
         bool RespawnAtEntrance = false;
 

@@ -1325,9 +1325,9 @@ namespace Animus::Curriculum
         /// **Outcome**, each multiplied by the difficulty tier's w = 1 + Difficulty.TierScale x tier: Kill for each
         /// creature of C1 killed, Clear for each pack of C2 and C3 cleared, Survived at the episode's end with no death
         /// in it (Survived, or SurviveSurvived in C3, where staying alive is the lesson); InterruptLanded for an
-        /// interrupt that stopped a cast (C2 and C3), and Rejoin for walking back within RejoinYards of the fight after
-        /// a respawn at the entrance (C3), neither scaled. **Cost**, at a fixed price from the first step: Death
-        /// (divided by w), AllyDeath (the guard arena's friend, divided by w), Hurt per maximum health taken (small),
+        /// interrupt that stopped a cast (C2 and C3), unscaled. **Cost**, at a fixed price from the first step: Away per
+        /// second dead or away from the fight (walking back from the entrance, or beyond AwayYards of the pull while it
+        /// fights; never a reward for walking back, which would pay dying), Death (divided by w), AllyDeath (the guard arena's friend, divided by w), Hurt per maximum health taken (small),
         /// FireHurt per maximum health taken from ground effects, ExtraPull for a second pack drawn into a fight before
         /// the first is cleared, and Clock per second a creature of the current pull is alive and engaged (the time a
         /// kill takes). **Shaping** (faded): Damage per share of a creature's health the seat (or its pet) took off it.
@@ -1342,7 +1342,8 @@ namespace Animus::Curriculum
         /// within CorridorWalk yards' walk of the entrance and CorridorSpacing apart; a creature or pack stands
         /// FightNearest to FightFurthest yards from the seat, in its line of sight; the next pack NextNearest to
         /// NextFurthest on from the current one, further from the seat. C1's next creature comes NextFightMs after a
-        /// kill. **Death** (I4): RespawnDelayMs out, then alive at the entrance (ArenaDefinition::RespawnAtEntrance).
+        /// kill. **Death** (I4, EntranceRespawn): Respawn.DelayMs out, then alive at the entrance; back once within
+        /// Respawn.RejoinYards of the fight (ArenaDefinition::RespawnAtEntrance).
         struct CombatTuning
         {
             float Kill = 1.0f;
@@ -1350,7 +1351,8 @@ namespace Animus::Curriculum
             float Survived = 1.0f;
             float SurviveSurvived = 2.0f;
             float InterruptLanded = 0.25f;
-            float Rejoin = 1.0f;
+            float Away = 0.02f;                 // per second dead or away from the fight
+            float AwayYards = 30.0f;
             float Death = 2.0f;
             float AllyDeath = 1.0f;
             float Hurt = 0.2f;
@@ -1374,8 +1376,6 @@ namespace Animus::Curriculum
             uint32 NextFightMs = 2000;
             float CorridorWalk = 220.0f;
             float CorridorSpacing = 8.0f;
-            uint32 RespawnDelayMs = 10000;
-            float RejoinYards = 30.0f;
         } Combat;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -2071,7 +2071,8 @@ namespace Animus::Curriculum
             f("Combat.Survived", tuning.Combat.Survived);
             f("Combat.SurviveSurvived", tuning.Combat.SurviveSurvived);
             f("Combat.InterruptLanded", tuning.Combat.InterruptLanded);
-            f("Combat.Rejoin", tuning.Combat.Rejoin);
+            f("Combat.Away", tuning.Combat.Away);
+            f("Combat.AwayYards", tuning.Combat.AwayYards);
             f("Combat.Death", tuning.Combat.Death);
             f("Combat.AllyDeath", tuning.Combat.AllyDeath);
             f("Combat.Hurt", tuning.Combat.Hurt);
@@ -2095,8 +2096,6 @@ namespace Animus::Curriculum
             f("Combat.NextFightMs", tuning.Combat.NextFightMs);
             f("Combat.CorridorWalk", tuning.Combat.CorridorWalk);
             f("Combat.CorridorSpacing", tuning.Combat.CorridorSpacing);
-            f("Combat.RespawnDelayMs", tuning.Combat.RespawnDelayMs);
-            f("Combat.RejoinYards", tuning.Combat.RejoinYards);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

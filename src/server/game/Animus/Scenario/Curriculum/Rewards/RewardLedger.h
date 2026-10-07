@@ -182,13 +182,14 @@ namespace Animus::Curriculum
         Blocking,
         /// The combat stages (CombatEncounter, dungeon-curriculum C1-C3): what each is for, paid as Outcome so the fade
         /// never takes it -- an episode ended with no death (Combat.Survived), an interrupt that stopped a cast
-        /// (Combat.InterruptLanded), and walking back to the fight after a respawn at the entrance (Combat.Rejoin) --
-        /// and what it costs, at a fixed price from the first step: the seat's health taken (Combat.Hurt, small) and
-        /// what ground fire took (Combat.FireHurt). DamageTaken, Interrupt and Hazard stay the Shaping they were for
-        /// the archived stages.
+        /// (Combat.InterruptLanded) -- and what it costs, at a fixed price from the first step: the seat's health taken
+        /// (Combat.Hurt, small), what ground fire took (Combat.FireHurt), and every second dead or away from the fight
+        /// (Combat.Away: dead, walking back from the entrance, or beyond Combat.AwayYards of the pull while it fights).
+        /// Walking back is never paid (a reward for it would pay dying). DamageTaken, Interrupt and Hazard stay the
+        /// Shaping they were for the archived stages.
         Survived,
         InterruptLanded,
-        Rejoin,
+        Away,
         Hurt,
         FireHurt,
         Count
@@ -243,10 +244,9 @@ namespace Animus::Curriculum
             case RewardTerm::FollowKept:
             // The party follow's regroup at the leader's stops (2026-10-06).
             case RewardTerm::Regroup:
-            // The combat stages' own (2026-10-06): surviving, interrupts landed, rejoining after a respawn.
+            // The combat stages' own (2026-10-06): surviving, interrupts landed.
             case RewardTerm::Survived:
             case RewardTerm::InterruptLanded:
-            case RewardTerm::Rejoin:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -277,7 +277,8 @@ namespace Animus::Curriculum
             case RewardTerm::Lost:
             case RewardTerm::Aggro:
             case RewardTerm::Blocking:
-            // The combat stages' prices: health taken, and what ground fire took.
+            // The combat stages' prices: time dead or away from the fight, health taken, what ground fire took.
+            case RewardTerm::Away:
             case RewardTerm::Hurt:
             case RewardTerm::FireHurt:
                 return RewardCategory::Cost;

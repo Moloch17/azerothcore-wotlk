@@ -3085,36 +3085,6 @@ bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatI
     return !canResurrect || env.EpisodeElapsedMs >= tally.DeathMs + _tuning.Resurrection.GraceMs;
 }
 
-Position Animus::Curriculum::StageScenario::EntranceOf(AreaTriggerTeleport const* entrance, Position const& fallback)
-{
-    // Where the map's areatrigger puts a player who walks in; the episode's spawn without one.
-    return entrance ? Position(entrance->target_X, entrance->target_Y, entrance->target_Z, entrance->target_Orientation)
-        : fallback;
-}
-
-bool Animus::Curriculum::StageScenario::RespawnAtEntrance(Env& env, uint32 seatIndex)
-{
-    Player* bot = SeatBot(env, seatIndex);
-    if (!bot || !bot->IsInWorld() || bot->IsAlive() || seatIndex >= Data(env).Seats.size())
-        return false;
-
-    Position const where = EntranceOf(sObjectMgr->GetMapEntranceTrigger(bot->GetMapId()), SpawnPointFor(env));
-
-    // Alive, whole, out of every fight, there: nothing about it is a teleport to the party, which it walks back to.
-    bot->ResurrectPlayer(1.0f);
-    bot->SetFullHealth();
-    if (uint32 const mana = bot->GetMaxPower(POWER_MANA))
-        bot->SetPower(POWER_MANA, mana);
-    bot->CombatStop(true);
-    if (!BotFactory::TeleportWithinMap(bot, where))
-        return false;
-    SeatState& seat = Data(env).Seats[seatIndex];
-    seat.Facing = bot->GetOrientation();
-    StartMover(seat, bot, env.EpisodeElapsedMs);
-    NotifyRecovered(env, int32(seatIndex));
-    return true;
-}
-
 bool Animus::Curriculum::StageScenario::SeatCanResurrect(Env const& env, uint32 seatIndex) const
 {
     SeatState const& seat = Data(env).Seats[seatIndex];
@@ -3691,7 +3661,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
         // A sight stage's enemies are what the seat saw (dungeon-curriculum I3): the last frame's visible living
         // hostiles in its slot order, never the encounter's spawn list -- nothing behind a wall, nothing round a
         // corner. Its selection's place is the frame's too: out of it, where the seat last saw it.
-        if (bot && bot->IsInWorld())
+        // Alive only: a dead seat sees nothing, and a risen one nothing until its camera casts a frame again
+        // (RiseAtEntrance clears the list), so no pre-death frame leaks into its first decision at the entrance.
+        if (bot && bot->IsInWorld() && bot->IsAlive())
         {
             Player* const seer = bot;
             view.EnemyCount = CombatBlock::VisibleEnemies(seat.Seen, [seer](uint64 guid) -> Unit*
