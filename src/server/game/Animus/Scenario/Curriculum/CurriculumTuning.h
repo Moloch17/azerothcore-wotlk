@@ -1199,6 +1199,42 @@ namespace Animus::Curriculum
             float Clearance = 0.8f;
         } Seek;
 
+        /// **M1 controls, redesigned** (Opposition::Sight, SightEncounter; perception-goals REDESIGN §1): a real object
+        /// along the Stockades' hallways, Nearest to Furthest yards (straight) from a random hallway spawn, in sight of
+        /// the seat's eye -- or, from CornerFrom on the fade's ladder (1 - the shaping scale), with CornerShare of the
+        /// episodes, just round a corner: out of sight of the spawn, in sight of a hallway point within CornerStep
+        /// yards of it. Arrive, StepCost, Death, Progress, Facing, StopMoved, StopNear and ArriveRise are Markers.*.
+        ///
+        /// Arriving is stopping with the feet within the object's bounding radius plus ArriveTolerance of its centre
+        /// (straight, on its floor). The body cannot stand inside the object (the controller meets its collision
+        /// model; the body's own radius is 0.389 yd), so 1 yd of tolerance leaves at most about 0.6 yd of air between
+        /// the body and the object's widest side: touching distance, M1's "within a yard of the mark" for a thing.
+        ///
+        /// The compass is withheld for the episode (its presence column and every value 0) with Withhold<i> at the
+        /// fade's rung i (scales 1, 0.5, 0.25, 0; SightDraw::WithholdChance): an absent input, never a mask.
+        ///
+        /// Wall and Stuck are charged at their own fixed price from the first step -- off the cost ladder
+        /// (RewardLedger::AddFixed), unlike the ground course's -- and small beside Arrive 3: pinned to a wall for a
+        /// whole second costs Wall + Stuck = 0.04, the step cost's own 0.04 a second again; ten seconds of it 0.4, an
+        /// eighth of an arrival. To be set from M1's first evaluation (REDESIGN amendment 8).
+        struct ControlsTuning
+        {
+            float Nearest = 10.0f;
+            float Furthest = 120.0f;
+            float ArriveTolerance = 1.0f;
+            float CornerShare = 0.25f;
+            float CornerFrom = 0.75f;           // 1 - the shaping scale: rung 2 (x0.25) on
+            float CornerStep = 8.0f;
+            uint32 Attempts = 64;
+            float Withhold0 = 0.0f;
+            float Withhold1 = 0.25f;
+            float Withhold2 = 0.6f;
+            float Withhold3 = 0.9f;
+            float Stuck = 0.02f;                // per second, fixed price
+            float Wall = 0.02f;                 // per second at no movement, fixed price, scaled as WallSlide says
+            float WallSlide = 0.5f;
+        } Controls;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1828,6 +1864,20 @@ namespace Animus::Curriculum
             f("Seek.Attempts", tuning.Seek.Attempts);
             f("Seek.FloorTolerance", tuning.Seek.FloorTolerance);
             f("Seek.Clearance", tuning.Seek.Clearance);
+            f("Controls.Nearest", tuning.Controls.Nearest);
+            f("Controls.Furthest", tuning.Controls.Furthest);
+            f("Controls.ArriveTolerance", tuning.Controls.ArriveTolerance);
+            f("Controls.CornerShare", tuning.Controls.CornerShare);
+            f("Controls.CornerFrom", tuning.Controls.CornerFrom);
+            f("Controls.CornerStep", tuning.Controls.CornerStep);
+            f("Controls.Attempts", tuning.Controls.Attempts);
+            f("Controls.Withhold0", tuning.Controls.Withhold0);
+            f("Controls.Withhold1", tuning.Controls.Withhold1);
+            f("Controls.Withhold2", tuning.Controls.Withhold2);
+            f("Controls.Withhold3", tuning.Controls.Withhold3);
+            f("Controls.Stuck", tuning.Controls.Stuck);
+            f("Controls.Wall", tuning.Controls.Wall);
+            f("Controls.WallSlide", tuning.Controls.WallSlide);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

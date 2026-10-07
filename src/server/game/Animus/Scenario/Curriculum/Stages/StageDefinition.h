@@ -66,6 +66,10 @@ namespace Animus::Curriculum
         /// Nothing to fight: one real object in one of a dungeon's rooms, found by sight and stopped beside
         /// (SeekEncounter, ArenaDefinition::Rooms and Objects) -- M2 seek.
         Seek,
+        /// Nothing to fight: one real object along a dungeon's hallways, in sight of the spawn (or just round a
+        /// corner), stopped beside, with a compass the ladder withholds more and more often (SightEncounter,
+        /// ArenaDefinition::Objects and SightPairs) -- M1 controls, redesigned.
+        Sight,
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -105,6 +109,17 @@ namespace Animus::Curriculum
         std::string Kind;
         float Height = 1.0f;
         float Radius = 0.5f;
+    };
+
+    /// **One of the sight stage's evaluation episodes** (ArenaDefinition::SightPairs): the seat spawns at
+    /// SpawnPoints[Spawn] and the object stands at SpawnPoints[Object] (the arena's hallway points are both its spawns
+    /// and the object's places). Corner: the object is not in sight of the spawn, only of a point a few yards' walk
+    /// from it.
+    struct SightPair
+    {
+        uint16 Spawn = 0;
+        uint16 Object = 0;
+        bool Corner = false;
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
@@ -373,6 +388,9 @@ namespace Animus::Curriculum
         std::vector<SeekRoom> Rooms{};
         std::vector<SeekObject> Objects{};
         float SeekRadius = 3.0f;
+        /// Opposition::Sight: the evaluation's fixed (spawn, object) pairs, indexes into SpawnPoints, each played with
+        /// and without the compass (SightDraw::EvaluationPick). Objects is the pool the object is drawn from.
+        std::vector<SightPair> SightPairs{};
 
         [[nodiscard]] uint32 SeatCount() const;
     };

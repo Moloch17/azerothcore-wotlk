@@ -24,6 +24,15 @@ PER_EVENT = {
     "sight_seconds": "sighted",
     "sight_to_arrival": "found_sighted",
     "revisit_rate": "room_entries",
+    # M1 redesigned (SightEncounter): the arrival rate in the episodes that withheld the compass, and in those that
+    # showed it.
+    "arrived_no_compass": "compass_withheld",
+    "arrived_with_compass": "compass_present",
+    # ... and its time and time ratio by where the object stood: in sight of the spawn, or round a corner.
+    "arrive_seconds_sight": "markers_sight",
+    "time_ratio_sight": "markers_sight",
+    "arrive_seconds_corner": "markers_corner",
+    "time_ratio_corner": "markers_corner",
 }
 
 

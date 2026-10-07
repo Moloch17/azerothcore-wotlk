@@ -1,22 +1,32 @@
-# M1 -- controls (the user's design, 2026-10-05): stopping exactly on a marker. An empty instance of the Stockades;
-# the seat spawns at the entrance (backing into the portal leaves nothing: only a client's area-trigger packet uses it,
-# and the player controller never sends one), and the objective is one fixed point at the end of the entrance
-# hallway, about 116 yd off. Reach it as fast as possible and stop within a yard of it: the straight line with no
-# stops or detours is the fastest way, and the time cost (Markers.StepCost, paid each decision until the stop) is the
-# price of everything else. Arrive is paid once, on the stop (Stages.cpp, MarkerEncounter's fixed Objective).
+# M1 -- controls, seen through the camera (the user's design, 2026-10-05; redesigned 2026-10-06, perception-goals
+# REDESIGN section 1): straight lines and stopping on a point, taught on what the camera sees so M2 starts with a camera
+# that works. An empty instance of the Stockades; each episode the seat spawns at a random hallway point (the entrance
+# among them), facing a random way, and one real object of M2's pool (chest, crate, barrel, sack, strongbox) stands at
+# another, 10 to 120 yd off, in sight of the seat's eye -- later rungs put a quarter of them just round a corner. Reach
+# it as fast as possible and stop beside it (within its bounding radius and a yard of its centre): the time cost
+# (Markers.StepCost, each decision until the stop) is the price of everything else, Arrive is paid once, on the stop
+# (Stages.cpp move1_controls, SightEncounter).
+#
+# The compass fades out by rung: each episode it is withheld (its presence and values 0, an absent input, never a mask)
+# with the chance the shaping fade's rung asks -- 0, 0.25, 0.6, 0.9 at x1, x0.5, x0.25, x0 (Controls.Withhold0..3). By
+# the top rung the seat goes to what it sees. Wall and Stuck are charged from the first step at a small fixed price
+# (Controls.Wall/Stuck, 0.02 a second each), off the cost ladder.
 #
 # Every class and race, at level 1 (death knights at 55): one policy, one layout per class (its own adapter and head
 # around a shared trunk), so every class learns the movement from the start, with a kit too small to matter.
 #
-# The first movement curriculum (move1_controls ... move7_follow) is archived: configs/archive/movement-v1/, the
-# definitions on the git tag curriculum-movement-v1. The hyperparameters here are its M1's, so a later movement stage
-# can seed from this one (every movement stage uses the same network widths).
+# Seeded from the current M1 (its latest.pt, through finetune_from below): the move and compass blocks carry by name
+# (the compass split's remap), the camera trains on M1's dense reward. The first movement curriculum (move1_controls
+# ... move7_follow) is archived: configs/archive/movement-v1/, the definitions on the git tag curriculum-movement-v1.
 
 run_name: move1_controls
 socket: /tmp/animus-forge.sock
 seed: 1
 
-# The first stage: nothing to seed from.
+# The first stage: nothing to extend. The redesign starts from the current M1's checkpoint (amendment 5) through
+# finetune_from (its default, runs/_finetune/move1_controls/best.pt): copy the old run's latest.pt there before
+# `forge start move1_controls` archives it. The move and compass blocks carry by name (bootstrap's remap; the old run is
+# move revision 4, the compass inside it); a block the redesign changed starts fresh.
 init_from: auto
 
 # A ceiling, not a target: convergence ends the stage.
@@ -91,9 +101,11 @@ mappo:
   # 1024 chunks it to 0.94 GiB for ~1.7x the encoder's time (the forward is run twice), for a shared card.
   vision_chunk_rows: 0
 
-# Seeded evaluation of the task itself: one place and one objective, so there is no held-out ground and no ladder;
-# the evaluation spreads over every class and race. Every third evaluation also plays sampled actions on the same
-# seeds: the jitter a sampled policy shows, an argmax one can hide.
+# Seeded evaluation: a fixed set of 32 (spawn, object) pairs over the hallways, 8 of them round a corner
+# (Stages.cpp StockadeSightPairs), each played with the compass and without (SightDraw::EvaluationPick: the seeds go
+# round the castings, every casting meets each of its pairs both ways). 512 episodes spread over every class and race.
+# Every third evaluation also plays sampled actions on the same seeds: the jitter a sampled policy shows, an argmax one
+# can hide.
 eval:
   every_env_steps: 5000000
   at_start: true
@@ -102,21 +114,29 @@ eval:
   deterministic: true
   sampled_every: 3
   trace_episodes: 64
-  report: [arrived, arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, distance_travelled,
-           course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds, movement_casts, died, timed_out,
-           reward_arrive, reward_step_cost, reward_progress, reward_facing, reward_jitter, reward_effort,
-           reward_repeat]
+  report: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, compass_withhold_chance, compass_rung,
+           arrive_seconds, time_ratio, arrive_seconds_sight, time_ratio_sight, arrive_seconds_corner,
+           time_ratio_corner, markers_sight, markers_corner, stop_distance, overshoot, stops_near, distance_travelled,
+           objective_distance,
+           objective_corner, objective_visible, course_kinks, control_changes_per_minute, wall_seconds, stuck_seconds,
+           movement_casts, died, timed_out, reward_arrive, reward_step_cost, reward_progress, reward_facing,
+           reward_wall, reward_stuck, reward_jitter, reward_effort, reward_repeat]
 
-# forge status for this stage (the user, 2026-10-05): did it stop on the mark, how fast, how precisely, and how
-# cleanly it got there. The optimum run is about 16.6 s (116 yd at run speed, time_ratio 1); targets are a readout,
-# never a gate.
+# forge status for this stage (the user, 2026-10-05; REDESIGN 2026-10-06): did it stop beside the object, with the
+# compass and without, how fast, how precisely, and how cleanly it got there. compass_withheld is the share of the
+# episodes that withheld it (training: the rung's chance). Watch arrived_no_compass against it (amendment 5): near 0 at
+# the 0.6 rung means the camera is not being learned. stop_distance is the air between the body and the object's widest
+# side. The time and its ratio are read in sight of the spawn (_sight): round a corner (_corner) the optimum is still
+# the straight line through the wall, so its ratio reads high by the corner, not by slowness; the evaluation's tables
+# also split every measure by placement (category objective_corner). Targets are a readout, never a gate.
 status:
-  headline: [arrived, arrive_seconds, time_ratio, stop_distance, overshoot, stops_near, course_kinks,
+  headline: [arrived, arrived_no_compass, arrived_with_compass, compass_withheld, arrive_seconds_sight,
+             time_ratio_sight, time_ratio_corner, stop_distance, overshoot, stops_near, course_kinks,
              control_changes_per_minute, wall_seconds, timed_out, died]
   targets:
     arrived: ">= 0.95"
-    arrive_seconds: "<= 18"
-    time_ratio: "<= 1.1"
+    arrive_seconds_sight: "<= 18"
+    time_ratio_sight: "<= 1.1"
     stop_distance: "<= 0.5"
     overshoot: "<= 0.5"
     stops_near: "<= 1.2"
@@ -126,7 +146,8 @@ status:
     died: "<= 0.01"
 
 convergence:
-  # Converged on the stage's own measure, the share of runs stopped on the mark. The score alone is not the readout.
+  # Converged on the stage's own measure, the share of runs stopped beside the object (the evaluation's, half of it
+  # without the compass). The score alone is not the readout; the shaping fade settled is a convergence signal too.
   measure: arrived
   patience: 3
   window: 4
@@ -138,23 +159,28 @@ convergence:
   hold_share: 0.02
   lr_hold_until_plateau: true
 
-# The shaping (Progress on the straight-line distance, Facing on the objective's bearing) is a start, not the lesson:
-# it fades once 80% of runs stop on the mark, never on a plateau before.
+# The fade is two ladders in one: the shaping (Progress on the straight distance, Facing on the object's bearing) fades,
+# and the compass is withheld more often each rung (SightEncounter reads the rung off the shaping scale). It steps on
+# the existing rules -- the window, the plateau, the regression back -- gated on arrived_at_rung: the evaluation's
+# arrival at the rung's own withholding mix (animus.evaluation), never the 50/50 evaluation's plain arrival, which a
+# policy at the first rung (never shown an absent compass) could not bring to the gate (amendment 7). A curriculum
+# ladder, not a pass gate: the stage still ends on convergence.
 fade:
   enabled: true
   rungs: [1.0, 0.5, 0.25, 0.0]
   window: 3
   regress_z: 2.0
   give_up: 2
-  gate_metric: arrived
+  gate_metric: arrived_at_rung
   gate_value: 0.8
 
-# The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until 80% of runs stop on the mark, then in to full
-# price. The time cost is not on this ladder: it is paid in full from the first step.
+# The noise prices (Repeat, Jitter, Aimless, Effort, Fidget): free until 80% of runs stop beside the object at the
+# rung's mix, then in to full price. Wall and Stuck are not on this ladder (a fixed price from the first step), and
+# neither is the time cost.
 costs:
   enabled: true
   rungs: [0.0, 0.25, 0.5, 1.0]
-  gate_metric: arrived
+  gate_metric: arrived_at_rung
   gate_value: 0.8
 
 entropy_floor:
@@ -162,8 +188,8 @@ entropy_floor:
   max_boost: 4.0
   rate: 0.05
 
-# More episodes for the classes stopping on the mark least often, and a fifth of training resets replay an evaluation
-# episode that missed it.
+# More episodes for the classes stopping beside the object least often, and a fifth of training resets replay an
+# evaluation episode that missed it (its pair; its compass is the rung's draw).
 layout_sampling:
   enabled: true
   strength: 1.0

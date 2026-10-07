@@ -369,6 +369,19 @@ namespace Animus::Curriculum
             _episode[std::size_t(term)] += value;
             return value;
         }
+        /// A noise price paid at its own fixed price, off the cost ladder (M1 controls' Wall and Stuck,
+        /// perception-goals REDESIGN §1: on from the first step, never free): as Add, but the cost scale (SetCosts) is
+        /// not put on it. Any other term is paid exactly as Add pays it.
+        float AddFixed(RewardTerm term, float value)
+        {
+            if (ScoresOutcome(term))
+                _score += value;
+            value *= _scale[std::size_t(term)] * (PricesNoise(term) ? 1.0f : Shaped(term));
+            _step += value;
+            _episode[std::size_t(term)] += value;
+            return value;
+        }
+
         /// What this seat is paid of a term, whichever encounter adds it: 0 for a party healer's damage, a share
         /// for a party tank's. 1 unless set.
         void Scale(RewardTerm term, float factor) { _scale[std::size_t(term)] = factor; }

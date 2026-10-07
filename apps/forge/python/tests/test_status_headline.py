@@ -27,7 +27,9 @@ def test_targets_flatten_for_the_sim_and_bad_ones_are_refused_at_load():
 
 def test_m1_reads_its_runs_by_arrival_time_and_precision():
     config = TrainConfig.load(CONFIGS / "move1_controls.yaml")
-    assert config.status.headline[:3] == ("arrived", "arrive_seconds", "time_ratio")
+    # Arrival first, then by compass (the redesign's withholding ladder), then the time and the stop's precision.
+    assert config.status.headline[:3] == ("arrived", "arrived_no_compass", "arrived_with_compass")
+    assert {"arrive_seconds_sight", "time_ratio_sight", "stop_distance"} <= set(config.status.headline)
     assert config.status.targets["arrived"] == ">= 0.95"
     assert config.convergence.measure == "arrived"
 

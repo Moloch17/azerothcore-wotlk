@@ -65,11 +65,94 @@ namespace
         return { 54.23f, 0.28f, -18.34f, 6.26f };
     }
 
-    /// The end of the entrance hallway, on its centre line, two yards short of the end wall: about 116 yards from the
-    /// entrance, some sixteen seconds at run speed.
-    Position StockadeHallwayEnd()
+    /// **The Stockades' hallways** (M1, perception-goals REDESIGN §1): where the seat may spawn and where its object
+    /// may stand -- the entrance (StockadeEntrance, first), then every point of a 3-yd grid over the hallways: the
+    /// entrance hallway with its crossing and ramps, the two wing corridors down to their hubs' doors, and the
+    /// hallway's end past the crossing (M2's hall_end), x 54 on (the ramp's top behind the entrance, up to the portal,
+    /// is left out). The facing is drawn each episode, so the table's is 0.
+    ///
+    /// **How they were authored** (offline, 2026-10-06): the M2 room table's scan (StockadeRoomsDataTest's
+    /// AuthoringScan: the navmesh read only to author, never a bot input), its walkable cells eroded by a yard and a
+    /// half (.agents/plans/perception-goals/tools/rooms.py), the hallway region (region 0) and hall_end (r32) kept,
+    /// and their eroded cores sampled every 3 yd (tools/hallway.py), each point at the vmap floor the scan read there
+    /// and only where the navmesh's floor agrees within a yard: so every point is a yard and a half or more off any
+    /// wall, on the floor a body stands on.
+    ///
+    /// **Validated** by StockadeHallwaysDataTest against the map's floors (the vmaps, with FORGE_VISION_DATA): every
+    /// point has a vmap floor within a quarter yard of its height, and a knee-height ray of Seek.Clearance yards along
+    /// each axis meets nothing, so an object stands there clear of the walls.
+    std::vector<Position> StockadeHallways()
     {
-        return { 170.0f, 1.0f, -25.61f, 0.0f };
+        return {
+            { 54.23f, 0.28f, -18.34f, 6.26f }, { 54.0f, 0.0f, -18.26f, 0.0f }, { 54.0f, 3.0f, -18.26f, 0.0f },
+            { 57.0f, 0.0f, -19.40f, 0.0f }, { 57.0f, 3.0f, -19.40f, 0.0f }, { 60.0f, 0.0f, -20.53f, 0.0f },
+            { 60.0f, 3.0f, -20.53f, 0.0f }, { 63.0f, 0.0f, -21.65f, 0.0f }, { 63.0f, 3.0f, -21.65f, 0.0f },
+            { 66.0f, 0.0f, -22.75f, 0.0f }, { 66.0f, 3.0f, -22.75f, 0.0f }, { 69.0f, 0.0f, -23.92f, 0.0f },
+            { 69.0f, 3.0f, -23.92f, 0.0f }, { 72.0f, 0.0f, -25.03f, 0.0f }, { 72.0f, 3.0f, -25.03f, 0.0f },
+            { 75.0f, 0.0f, -25.61f, 0.0f }, { 75.0f, 3.0f, -25.61f, 0.0f }, { 78.0f, 0.0f, -25.61f, 0.0f },
+            { 78.0f, 3.0f, -25.61f, 0.0f }, { 81.0f, 0.0f, -25.61f, 0.0f }, { 81.0f, 3.0f, -25.61f, 0.0f },
+            { 84.0f, 0.0f, -25.61f, 0.0f }, { 84.0f, 3.0f, -25.61f, 0.0f }, { 87.0f, 0.0f, -25.61f, 0.0f },
+            { 87.0f, 3.0f, -25.61f, 0.0f }, { 90.0f, 0.0f, -25.61f, 0.0f }, { 90.0f, 3.0f, -25.61f, 0.0f },
+            { 93.0f, 0.0f, -25.61f, 0.0f }, { 93.0f, 3.0f, -25.61f, 0.0f }, { 96.0f, 0.0f, -25.61f, 0.0f },
+            { 96.0f, 3.0f, -25.61f, 0.0f }, { 99.0f, 0.0f, -25.61f, 0.0f }, { 99.0f, 3.0f, -25.61f, 0.0f },
+            { 102.0f, 0.0f, -25.61f, 0.0f }, { 102.0f, 3.0f, -25.61f, 0.0f }, { 105.0f, 0.0f, -25.61f, 0.0f },
+            { 105.0f, 3.0f, -25.61f, 0.0f }, { 108.0f, 0.0f, -25.61f, 0.0f }, { 108.0f, 3.0f, -25.61f, 0.0f },
+            { 111.0f, 0.0f, -25.61f, 0.0f }, { 111.0f, 3.0f, -25.61f, 0.0f }, { 114.0f, -87.0f, -33.94f, 0.0f },
+            { 114.0f, -84.0f, -33.94f, 0.0f }, { 114.0f, 0.0f, -25.61f, 0.0f }, { 114.0f, 3.0f, -25.61f, 0.0f },
+            { 117.0f, -87.0f, -33.94f, 0.0f }, { 117.0f, -84.0f, -33.94f, 0.0f }, { 117.0f, -81.0f, -33.94f, 0.0f },
+            { 117.0f, -78.0f, -33.94f, 0.0f }, { 117.0f, 0.0f, -25.61f, 0.0f }, { 117.0f, 3.0f, -25.61f, 0.0f },
+            { 120.0f, -81.0f, -33.94f, 0.0f }, { 120.0f, -78.0f, -33.94f, 0.0f }, { 120.0f, -75.0f, -33.94f, 0.0f },
+            { 120.0f, -72.0f, -33.94f, 0.0f }, { 120.0f, -69.0f, -33.94f, 0.0f }, { 120.0f, 0.0f, -25.61f, 0.0f },
+            { 120.0f, 3.0f, -25.61f, 0.0f }, { 123.0f, -75.0f, -33.94f, 0.0f }, { 123.0f, -72.0f, -33.94f, 0.0f },
+            { 123.0f, -69.0f, -33.94f, 0.0f }, { 123.0f, -66.0f, -33.94f, 0.0f }, { 123.0f, -63.0f, -33.94f, 0.0f },
+            { 123.0f, -60.0f, -33.94f, 0.0f }, { 123.0f, -57.0f, -33.94f, 0.0f }, { 123.0f, 0.0f, -25.61f, 0.0f },
+            { 123.0f, 3.0f, -25.61f, 0.0f }, { 126.0f, -66.0f, -33.94f, 0.0f }, { 126.0f, -63.0f, -33.94f, 0.0f },
+            { 126.0f, -60.0f, -33.94f, 0.0f }, { 126.0f, -57.0f, -33.94f, 0.0f }, { 126.0f, -54.0f, -33.94f, 0.0f },
+            { 126.0f, -51.0f, -33.94f, 0.0f }, { 126.0f, -48.0f, -33.94f, 0.0f }, { 126.0f, -45.0f, -33.94f, 0.0f },
+            { 126.0f, -42.0f, -33.94f, 0.0f }, { 126.0f, -33.0f, -33.94f, 0.0f }, { 126.0f, -30.0f, -33.00f, 0.0f },
+            { 126.0f, -24.0f, -30.70f, 0.0f }, { 126.0f, -21.0f, -29.60f, 0.0f }, { 126.0f, -12.0f, -26.21f, 0.0f },
+            { 126.0f, 0.0f, -25.61f, 0.0f }, { 126.0f, 3.0f, -25.61f, 0.0f }, { 126.0f, 9.0f, -25.61f, 0.0f },
+            { 126.0f, 12.0f, -25.66f, 0.0f }, { 126.0f, 24.0f, -30.15f, 0.0f }, { 126.0f, 33.0f, -33.51f, 0.0f },
+            { 126.0f, 36.0f, -33.94f, 0.0f }, { 129.0f, -57.0f, -33.94f, 0.0f }, { 129.0f, -54.0f, -33.94f, 0.0f },
+            { 129.0f, -51.0f, -33.94f, 0.0f }, { 129.0f, -48.0f, -33.94f, 0.0f }, { 129.0f, -45.0f, -33.94f, 0.0f },
+            { 129.0f, -42.0f, -33.94f, 0.0f }, { 129.0f, -39.0f, -33.94f, 0.0f }, { 129.0f, -36.0f, -33.94f, 0.0f },
+            { 129.0f, -33.0f, -33.94f, 0.0f }, { 129.0f, -30.0f, -32.98f, 0.0f }, { 129.0f, -27.0f, -31.84f, 0.0f },
+            { 129.0f, -24.0f, -30.70f, 0.0f }, { 129.0f, -21.0f, -29.60f, 0.0f }, { 129.0f, -18.0f, -28.48f, 0.0f },
+            { 129.0f, -15.0f, -27.32f, 0.0f }, { 129.0f, -12.0f, -26.21f, 0.0f }, { 129.0f, -9.0f, -25.61f, 0.0f },
+            { 129.0f, -6.0f, -25.61f, 0.0f }, { 129.0f, -3.0f, -25.61f, 0.0f }, { 129.0f, 0.0f, -25.61f, 0.0f },
+            { 129.0f, 3.0f, -25.61f, 0.0f }, { 129.0f, 6.0f, -25.61f, 0.0f }, { 129.0f, 9.0f, -25.61f, 0.0f },
+            { 129.0f, 12.0f, -25.66f, 0.0f }, { 129.0f, 15.0f, -26.77f, 0.0f }, { 129.0f, 18.0f, -27.92f, 0.0f },
+            { 129.0f, 21.0f, -29.04f, 0.0f }, { 129.0f, 24.0f, -30.15f, 0.0f }, { 129.0f, 27.0f, -31.26f, 0.0f },
+            { 129.0f, 30.0f, -32.43f, 0.0f }, { 129.0f, 33.0f, -33.54f, 0.0f }, { 129.0f, 36.0f, -33.94f, 0.0f },
+            { 129.0f, 39.0f, -33.94f, 0.0f }, { 129.0f, 42.0f, -33.94f, 0.0f }, { 129.0f, 45.0f, -33.94f, 0.0f },
+            { 129.0f, 48.0f, -33.94f, 0.0f }, { 129.0f, 51.0f, -33.94f, 0.0f }, { 129.0f, 54.0f, -33.94f, 0.0f },
+            { 132.0f, -24.0f, -30.70f, 0.0f }, { 132.0f, -21.0f, -29.60f, 0.0f }, { 132.0f, -12.0f, -26.21f, 0.0f },
+            { 132.0f, -9.0f, -25.61f, 0.0f }, { 132.0f, 0.0f, -25.61f, 0.0f }, { 132.0f, 3.0f, -25.61f, 0.0f },
+            { 132.0f, 12.0f, -25.66f, 0.0f }, { 132.0f, 21.0f, -29.04f, 0.0f }, { 132.0f, 24.0f, -30.15f, 0.0f },
+            { 132.0f, 33.0f, -33.57f, 0.0f }, { 132.0f, 36.0f, -33.94f, 0.0f }, { 132.0f, 42.0f, -33.94f, 0.0f },
+            { 132.0f, 45.0f, -33.94f, 0.0f }, { 132.0f, 48.0f, -33.94f, 0.0f }, { 132.0f, 51.0f, -33.94f, 0.0f },
+            { 132.0f, 54.0f, -33.94f, 0.0f }, { 132.0f, 57.0f, -33.94f, 0.0f }, { 132.0f, 60.0f, -33.94f, 0.0f },
+            { 132.0f, 63.0f, -33.94f, 0.0f }, { 132.0f, 66.0f, -33.94f, 0.0f }, { 135.0f, 0.0f, -25.61f, 0.0f },
+            { 135.0f, 3.0f, -25.61f, 0.0f }, { 135.0f, 57.0f, -33.94f, 0.0f }, { 135.0f, 60.0f, -33.94f, 0.0f },
+            { 135.0f, 63.0f, -33.94f, 0.0f }, { 135.0f, 66.0f, -33.94f, 0.0f }, { 135.0f, 69.0f, -33.94f, 0.0f },
+            { 135.0f, 72.0f, -33.94f, 0.0f }, { 135.0f, 75.0f, -33.94f, 0.0f }, { 138.0f, 0.0f, -25.61f, 0.0f },
+            { 138.0f, 3.0f, -25.61f, 0.0f }, { 138.0f, 72.0f, -33.94f, 0.0f }, { 138.0f, 75.0f, -33.94f, 0.0f },
+            { 138.0f, 78.0f, -33.94f, 0.0f }, { 138.0f, 81.0f, -33.94f, 0.0f }, { 141.0f, 0.0f, -25.61f, 0.0f },
+            { 141.0f, 3.0f, -25.61f, 0.0f }, { 141.0f, 78.0f, -33.94f, 0.0f }, { 141.0f, 81.0f, -33.94f, 0.0f },
+            { 141.0f, 84.0f, -33.94f, 0.0f }, { 141.0f, 87.0f, -33.94f, 0.0f }, { 141.0f, 90.0f, -33.94f, 0.0f },
+            { 144.0f, 84.0f, -33.94f, 0.0f }, { 144.0f, 87.0f, -33.94f, 0.0f }, { 150.0f, -3.0f, -25.61f, 0.0f },
+            { 150.0f, 0.0f, -25.61f, 0.0f }, { 150.0f, 3.0f, -25.61f, 0.0f }, { 150.0f, 6.0f, -25.61f, 0.0f },
+            { 153.0f, -3.0f, -25.61f, 0.0f }, { 153.0f, 0.0f, -25.61f, 0.0f }, { 153.0f, 3.0f, -25.61f, 0.0f },
+            { 153.0f, 6.0f, -25.61f, 0.0f }, { 156.0f, -3.0f, -25.61f, 0.0f }, { 156.0f, 0.0f, -25.61f, 0.0f },
+            { 156.0f, 3.0f, -25.61f, 0.0f }, { 156.0f, 6.0f, -25.61f, 0.0f }, { 159.0f, -3.0f, -25.61f, 0.0f },
+            { 159.0f, 0.0f, -25.61f, 0.0f }, { 159.0f, 3.0f, -25.61f, 0.0f }, { 159.0f, 6.0f, -25.61f, 0.0f },
+            { 162.0f, -3.0f, -25.61f, 0.0f }, { 162.0f, 0.0f, -25.61f, 0.0f }, { 162.0f, 3.0f, -25.61f, 0.0f },
+            { 162.0f, 6.0f, -25.61f, 0.0f }, { 165.0f, -3.0f, -25.61f, 0.0f }, { 165.0f, 0.0f, -25.61f, 0.0f },
+            { 165.0f, 3.0f, -25.61f, 0.0f }, { 165.0f, 6.0f, -25.61f, 0.0f }, { 168.0f, -3.0f, -25.61f, 0.0f },
+            { 168.0f, 0.0f, -25.61f, 0.0f }, { 168.0f, 3.0f, -25.61f, 0.0f }, { 168.0f, 6.0f, -25.61f, 0.0f },
+            { 171.0f, -3.0f, -25.61f, 0.0f }, { 171.0f, 0.0f, -25.61f, 0.0f }, { 171.0f, 3.0f, -25.61f, 0.0f },
+            { 171.0f, 6.0f, -25.61f, 0.0f }
+        };
     }
 
     /// **The Stockades' rooms** (M2 seek): every room off the hallways, 39 of them -- the eight cells along the
@@ -271,6 +354,53 @@ namespace
         };
     }
 
+    /// **M1's evaluation** (perception-goals REDESIGN §1): a fixed set of (spawn, object) pairs over the hallways,
+    /// indexes into StockadeHallways(), each played with the compass and without (SightDraw::EvaluationPick); the
+    /// object of pair i is the pool's object i mod 5. Twenty-four in sight of the spawn and eight just round a corner
+    /// (a doorframe, the crossing into a wing): a quarter, the training's CornerShare at the top rungs.
+    ///
+    /// **Authored** (offline, 2026-10-06) by StockadeHallwaysDataTest's AuthoringPairs: the spawns spread over the
+    /// table (the entrance first, then a stride of 97 points), each object drawn as SightDraw::Place draws it, over
+    /// the map's vmaps cast as the camera casts. **Validated** there too (EveryEvaluationPairIsWhatItSays): each pair
+    /// is what it says from a small body's eye and a tall one's (1 and 2.4 yd), for every object of the pool.
+    std::vector<SightPair> StockadeSightPairs()
+    {
+        return {
+            { 0, 27, false },       // (54.2 0.3) -> (93 0), 38.8 yd: the entrance, down the ramp
+            { 97, 41, false },      // (129 -30) -> (114 -87), 58.9 yd
+            { 194, 170, false },    // (168 -3) -> (150 -3), 18.0 yd
+            { 89, 58, false },      // (129 -54) -> (123 -75), 21.8 yd
+            { 186, 109, false },    // (162 -3) -> (129 6), 34.2 yd
+            { 81, 161, false },     // (126 0) -> (141 0), 15.0 yd
+            { 178, 162, false },    // (156 -3) -> (141 3), 16.2 yd
+            { 73, 129, false },     // (126 -48) -> (132 -9), 39.5 yd
+            { 170, 194, false },    // (150 -3) -> (168 -3), 18.0 yd
+            { 65, 5, false },       // (123 0) -> (60 0), 63.0 yd
+            { 162, 7, false },      // (141 3) -> (63 0), 78.1 yd
+            { 57, 11, false },      // (120 3) -> (69 0), 51.1 yd
+            { 154, 138, false },    // (135 75) -> (132 45), 30.1 yd
+            { 49, 35, false },      // (117 0) -> (105 0), 12.0 yd
+            { 146, 13, false },     // (135 0) -> (72 0), 63.0 yd
+            { 41, 75, false },      // (114 -87) -> (126 -42), 46.6 yd
+            { 138, 151, false },    // (132 45) -> (135 66), 21.2 yd
+            { 33, 187, false },     // (102 0) -> (162 0), 60.0 yd
+            { 130, 179, false },    // (132 0) -> (156 0), 24.0 yd
+            { 25, 34, false },      // (90 0) -> (102 3), 12.4 yd
+            { 122, 117, false },    // (129 45) -> (129 30), 15.0 yd
+            { 17, 179, false },     // (78 0) -> (156 0), 78.0 yd
+            { 114, 119, false },    // (129 21) -> (129 36), 15.0 yd
+            { 9, 0, false },        // (66 0) -> (54.2 0.3), 11.8 yd: back up the ramp to the entrance
+            { 106, 97, true },      // (129 -3) -> (129 -30), 27.0 yd
+            { 195, 162, true },     // (168 0) -> (141 3), 27.2 yd
+            { 187, 109, true },     // (162 0) -> (129 6), 33.5 yd
+            { 179, 162, true },     // (156 0) -> (141 3), 15.3 yd
+            { 171, 106, true },     // (150 0) -> (129 -3), 21.2 yd
+            { 66, 180, true },      // (123 3) -> (156 3), 33.0 yd
+            { 163, 133, true },     // (141 78) -> (132 21), 57.7 yd
+            { 42, 77, true },       // (114 -84) -> (126 -30), 55.3 yd
+        };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -278,31 +408,36 @@ namespace
 
         std::vector<StageDefinition> stages;
 
-        // M1 -- controls (the user's design, 2026-10-05): stopping exactly on a marker. An empty Stockades, the seat at
-        // the entrance, and one objective that never changes, at the end of the entrance hallway: reach it as fast
-        // as possible and stop on it, within a yard. The straight line is the way, so a stop, a detour or a turn
-        // there and back is time lost: the time cost (Markers.StepCost each decision until the stop) is the price of
-        // all of them, and Arrive is paid once, on the stop.
+        // M1 -- controls, seen through the camera (the user's design, 2026-10-05; redesigned 2026-10-06, perception-
+        // goals REDESIGN §1): straight lines and stopping on a point, at every race and class at level 1 (a death
+        // knight at its 55: a level 1 kit is one or two spells, so the lesson is the movement alone), on the camera,
+        // so M2 begins with a camera that already works.
         //
-        // Every class and race, at level 1 (a death knight at its 55): a level 1 kit is one or two spells, so the
-        // lesson is the movement alone, and every class's layout learns it from the start.
+        // The same empty Stockades. Each episode the seat stands at a random point of the hallways (StockadeHallways,
+        // the entrance among them), facing a random way, and one real object of M2's pool (SeekObjects: the class and
+        // flag M2 shows) stands at another, 10 to 120 yd off, in sight of the seat's eye; later rungs put some of them
+        // just round a corner (SightEncounter). Reach it as fast as possible and stop beside it: the straight line is
+        // the way, the time cost (Markers.StepCost each decision until the stop) the price of anything else, and
+        // Arrive is paid once, on the stop.
         //
-        // Core and the goal block stay as the layout's frame (the character and its kit, the goal head the learner
-        // sizes from the goal block); Move is the whole lesson, and the compass (perception-goals P1: the objective's
-        // bearing and distance, split from the move block) says where the mark is. Nothing to fight, so no duel
-        // block. One place and one objective: there is no held-out ground, and the evaluation is the training task
-        // itself.
+        // The compass (perception-goals P1: the objective's bearing and distance) is there at the first rung, and is
+        // withheld for more and more of the episodes as the shaping fade steps (0, 0.25, 0.6, 0.9): by the top rung
+        // the seat goes to what it sees. Wall and Stuck are charged from the first step, at a small fixed price.
+        //
+        // Core and the goal block are the layout's frame; Move the lesson, the compass and the camera its two ways of
+        // knowing where. Nothing to fight, so no duel block. The evaluation plays a fixed set of (spawn, object) pairs
+        // over the hallways (StockadeSightPairs), each with the compass and without.
         stages.push_back({
             .Name = "move1_controls",
             .Suffix = "_controls",
             .Extends = "",
-            .Summary = "an empty Stockades: from the entrance to the end of the hallway as fast as possible, and stop "
-                "within a yard of the mark",
+            .Summary = "an empty Stockades: from a random hallway point to a real object in sight, as fast as "
+                "possible, and stop beside it; the compass withheld more often each rung",
             .Blocks = { Core, Move, Compass, Vision, Goal },
             .Arenas = {
-                { .Name = "hallway", .Weight = 1, .Against = Opposition::Markers, .EpisodeSeconds = 60,
-                    .SpawnPoints = { StockadeEntrance() }, .MapId = MAP_STORMWIND_STOCKADE,
-                    .Objective = StockadeHallwayEnd(), .ObjectiveRadius = 1.0f },
+                { .Name = "hallway", .Weight = 1, .Against = Opposition::Sight, .EpisodeSeconds = 60,
+                    .SpawnPoints = StockadeHallways(), .MapId = MAP_STORMWIND_STOCKADE, .Objects = SeekObjects(),
+                    .SightPairs = StockadeSightPairs() },
             },
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { StockadeEntrance() },
@@ -564,8 +699,27 @@ namespace
             return "a seek arena's object is found by sight: the compass would point at it";
         if (seek && (arena.Rooms.empty() || arena.Objects.empty() || arena.SeekRadius <= 0.0f))
             return "a seek arena needs rooms to hide its object in, objects to hide and a radius to find one within";
-        if (!seek && (!arena.Rooms.empty() || !arena.Objects.empty()))
-            return "only a seek arena has rooms and objects";
+        // M1's object in the hallways: one seat, on foot and dry, an object of the pool put down at one of the arena's
+        // hallway points (its SpawnPoints, which it spawns at too); walked to with the move block, pointed at by the
+        // compass (withheld more often each rung) and seen with the camera.
+        bool const sight = arena.Against == Opposition::Sight;
+        if (sight && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
+            || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
+            return "a sight arena is one seat on its own, on foot and dry, with no marker or room of its own";
+        if (sight && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Vision)))
+            return "a sight arena is walked with the move block, pointed at by the compass and seen with the camera";
+        if (sight && (arena.Objects.empty() || arena.SpawnPoints.size() < 2))
+            return "a sight arena needs objects to put down and hallway points to spawn at and put them on";
+        for (SightPair const& pair : arena.SightPairs)
+            if (!sight || pair.Spawn >= arena.SpawnPoints.size() || pair.Object >= arena.SpawnPoints.size()
+                || pair.Spawn == pair.Object)
+                return "a sight pair is a sight arena's: two different points of its SpawnPoints";
+
+        if (!seek && !arena.Rooms.empty())
+            return "only a seek arena has rooms";
+        if (!seek && !sight && !arena.Objects.empty())
+            return "only a seek or a sight arena has objects";
         for (SeekRoom const& room : arena.Rooms)
             if (room.Floor.size() < 3 || room.Name.empty())
                 return "a seek room is named and its floor is a polygon";
@@ -630,7 +784,7 @@ namespace
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
             return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow
-                && arena.Against != Opposition::Seek;
+                && arena.Against != Opposition::Seek && arena.Against != Opposition::Sight;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";

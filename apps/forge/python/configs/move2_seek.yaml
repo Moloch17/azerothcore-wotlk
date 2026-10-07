@@ -55,6 +55,8 @@ status:
     arrived: null
     arrive_seconds: null
     time_ratio: null
+    arrive_seconds_sight: null
+    time_ratio_sight: null
     stop_distance: null
     overshoot: null
     stops_near: null

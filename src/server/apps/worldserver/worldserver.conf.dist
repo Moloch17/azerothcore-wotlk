@@ -6980,6 +6980,33 @@ AnimusForge.Curriculum.Seek.FloorTolerance = 2.0
 AnimusForge.Curriculum.Seek.Clearance = 0.8
 
 #
+#    AnimusForge.Curriculum.Controls.*
+#        M1 controls, redesigned (move1_controls, SightEncounter): a real object (the seek stage's pool) at a hallway
+#        point of the Stockades Nearest to Furthest yards (straight) from a random hallway spawn, in sight of the seat's
+#        eye; from CornerFrom on the fade's ladder (1 - the shaping scale), CornerShare of the episodes put it just
+#        round a corner instead (out of sight of the spawn, in sight of a hallway point within CornerStep yards of it).
+#        Attempts candidates are tested at most. Arriving is stopping within the object's bounding radius plus
+#        ArriveTolerance yards of its centre. The compass is withheld for an episode with Withhold0..3 at the fade's
+#        rungs x1, x0.5, x0.25 and x0 (linear between): its presence and values read 0, an absent input, never a mask.
+#        Stuck and Wall (per second; Wall at no movement, scaled by WallSlide as MarkerGround's) are charged at this
+#        fixed price from the first step, off the cost ladder: small beside Arrive 3, set from M1's first evaluation.
+#        Arrive, StepCost, Death, Progress, Facing and the stop's settings are Markers.*.
+AnimusForge.Curriculum.Controls.Nearest = 10.0
+AnimusForge.Curriculum.Controls.Furthest = 120.0
+AnimusForge.Curriculum.Controls.ArriveTolerance = 1.0
+AnimusForge.Curriculum.Controls.CornerShare = 0.25
+AnimusForge.Curriculum.Controls.CornerFrom = 0.75
+AnimusForge.Curriculum.Controls.CornerStep = 8.0
+AnimusForge.Curriculum.Controls.Attempts = 64
+AnimusForge.Curriculum.Controls.Withhold0 = 0.0
+AnimusForge.Curriculum.Controls.Withhold1 = 0.25
+AnimusForge.Curriculum.Controls.Withhold2 = 0.6
+AnimusForge.Curriculum.Controls.Withhold3 = 0.9
+AnimusForge.Curriculum.Controls.Stuck = 0.02
+AnimusForge.Curriculum.Controls.Wall = 0.02
+AnimusForge.Curriculum.Controls.WallSlide = 0.5
+
+#
 #    AnimusForge.Curriculum.Owner.*
 #        The scripted owner of the companion and party stages.
 
