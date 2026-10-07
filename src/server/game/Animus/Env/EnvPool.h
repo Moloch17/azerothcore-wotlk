@@ -247,6 +247,13 @@ namespace Animus
         /// range (ACT refuses any other). Vision::FreeLook::NEUTRAL until one arrives; empty without a camera.
         std::vector<int32> Look;
 
+        /// Agent `agent` of env `e`'s place in its party (Scenario::FilmedRole): 1 tank, 2 healer, 3 damage, 0 none.
+        /// For the world thread between map updates (the evaluation videos).
+        [[nodiscard]] uint32 FilmedRole(uint32 e, uint32 agent) const
+        {
+            return _scenario.FilmedRole(_envs[e], agent);
+        }
+
         /// The size agent `agent` of env `e`'s camera casts at this episode (Scenario::CameraRenderSize): 0 x 0 for
         /// none. For the world thread between map updates (the camera audit).
         [[nodiscard]] std::pair<uint32, uint32> CameraRenderSize(uint32 e, uint32 agent) const

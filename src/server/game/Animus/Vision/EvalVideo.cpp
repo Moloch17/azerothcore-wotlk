@@ -110,6 +110,42 @@ std::vector<uint32_t> Vi::EvalVideoSeeds(uint32_t first, uint32_t end, uint32_t 
     return seeds;
 }
 
+char const* Vi::EvalVideoRoleName(uint32_t role)
+{
+    switch (role)
+    {
+        case 1: return "tank";
+        case 2: return "healer";
+        case 3: return "damage";
+        default: return "";
+    }
+}
+
+uint32_t Vi::EvalVideoAgent(uint32_t pick, std::vector<EvalVideoCandidate> candidates)
+{
+    if (candidates.empty())
+        return 0;
+    std::sort(candidates.begin(), candidates.end(), [](EvalVideoCandidate const& a, EvalVideoCandidate const& b)
+    {
+        return a.Class != b.Class ? a.Class < b.Class : a.Agent < b.Agent;
+    });
+    constexpr uint32_t PLACES = 3;
+    bool const placed = std::any_of(candidates.begin(), candidates.end(),
+        [](EvalVideoCandidate const& candidate) { return candidate.Role >= 1 && candidate.Role <= PLACES; });
+    if (placed)
+        for (uint32_t step = 0; step < PLACES; ++step)
+        {
+            uint32_t const role = (pick + step) % PLACES + 1;
+            std::vector<uint32_t> agents;
+            for (EvalVideoCandidate const& candidate : candidates)
+                if (candidate.Role == role)
+                    agents.push_back(candidate.Agent);
+            if (!agents.empty())
+                return agents[(pick / PLACES) % agents.size()];
+        }
+    return candidates[pick % candidates.size()].Agent;
+}
+
 std::string Vi::EvalVideoOutcome(std::vector<std::string> const& names, float const* row)
 {
     if (!row)
@@ -179,6 +215,15 @@ void Vi::EvalVideoRecorder::End()
 bool Vi::EvalVideoRecorder::Wanted(uint32_t seed) const
 {
     return _evaluation && std::find(_wanted.begin(), _wanted.end(), seed) != _wanted.end();
+}
+
+uint32_t Vi::EvalVideoRecorder::PickOf(uint32_t seed) const
+{
+    if (!_evaluation)
+        return 0;
+    std::vector<uint32_t> const& seeds = _evaluation->Seeds;
+    auto const at = std::find(seeds.begin(), seeds.end(), seed);
+    return at == seeds.end() ? 0 : uint32_t(at - seeds.begin());
 }
 
 uint32_t Vi::EvalVideoRecorder::Seed(uint32_t env) const
@@ -365,6 +410,7 @@ void Vi::EvalVideoRecorder::WriteVideo(Job const& job)
     sidecar["class"] = episode.Class;
     sidecar["race"] = episode.Race;
     sidecar["level"] = episode.Level;
+    sidecar["role"] = EvalVideoRoleName(episode.Role);
     int32_t const rung = EvalVideoRungColumn(names);
     if (ended && rung >= 0)
         sidecar["rung"] = job.Info[rung];
@@ -430,8 +476,11 @@ void Vi::EvalVideoRecorder::WriteIndex(Evaluation& evaluation)
     {
         boost::json::object const& row = video.as_object();
         std::string const file = std::string(row.at("file").as_string());
+        std::string const role = row.contains("role") && row.at("role").is_string()
+            ? std::string(row.at("role").as_string()) : std::string();
         html += "<figure><img src=\"" + HtmlEscape(file) + "\"><figcaption>" + HtmlEscape(Acore::StringFormat(
-            "seed {} {} -- {} ({} frames)", row.at("seed").to_number<uint64_t>(), std::string(row.at("layout").as_string()),
+            "seed {} {}{} -- {} ({} frames)", row.at("seed").to_number<uint64_t>(),
+            std::string(row.at("layout").as_string()), role.empty() ? role : " " + role,
             std::string(row.at("outcome").as_string()), row.at("frames").to_number<uint64_t>())) + "</figcaption></figure>\n";
     }
     if (!WriteFile(options.Dir / "index.html", html))

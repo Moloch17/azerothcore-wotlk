@@ -151,6 +151,37 @@ namespace
     };
 }
 
+std::vector<Animus::Curriculum::WingBoss> const& Animus::Curriculum::WingBosses()
+{
+    static std::vector<WingBoss> const bosses = {
+        // Ragefire Chasm (389): its four, in route order.
+        { 389, 11517, "oggleflint" },
+        { 389, 11520, "taragaman" },
+        { 389, 11518, "jergosh" },
+        { 389, 11519, "bazzalan" },
+        // The Deadmines (36): Sneed in his Shredder, then out of it; Cookie the ship's side boss. Miner Johnson is a
+        // rare spawn, and is no measure of a run.
+        { 36, 644, "rhahkzor" },
+        { 36, 642, "sneed_shredder" },
+        { 36, 643, "sneed" },
+        { 36, 1763, "gilnid" },
+        { 36, 646, "smite" },
+        { 36, 647, "greenskin" },
+        { 36, 645, "cookie" },
+        { 36, 639, "vancleef" },
+        // Wailing Caverns (43, held out): the route's to Lord Serpentis. Mutanus comes only with the Naralex escort,
+        // and the Deviate Faerie Dragon is a rare.
+        { 43, 3671, "anacondra" },
+        { 43, 3669, "cobrahn" },
+        { 43, 3653, "kresh" },
+        { 43, 3670, "pythas" },
+        { 43, 3674, "skum" },
+        { 43, 5775, "verdan" },
+        { 43, 3673, "serpentis" },
+    };
+    return bosses;
+}
+
 std::vector<Animus::Curriculum::BossRow> const& Animus::Curriculum::InstanceLadderRows(InstanceLadder ladder)
 {
     switch (ladder)

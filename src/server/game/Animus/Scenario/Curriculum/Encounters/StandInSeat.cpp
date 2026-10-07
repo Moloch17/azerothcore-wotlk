@@ -144,6 +144,18 @@ void Animus::Curriculum::StageScenario::SetEvaluationStandIn(bool standIn)
             standIn ? "with the human stand-in in every party" : "all-bot parties");
 }
 
+int32 Animus::Curriculum::StageScenario::StandInShare(uint32 arena) const
+{
+    // The arena's own (ArenaDefinition::StandInShare and its conf key: the party stages from G2 on), else a roles
+    // arena's Roles.StandInShare (G1), else StandIn.Share.
+    int32 const own = arena < _arenaStandInShare.size() ? _arenaStandInShare[arena] : -1;
+    if (own >= 0)
+        return own;
+    if (arena < _stage.Arenas.size() && _stage.Arenas[arena].Against == Opposition::Roles)
+        return _tuning.Roles.StandInShare;
+    return _tuning.StandIn.Share;
+}
+
 void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
 {
     EnvState& data = Data(env);
@@ -159,7 +171,7 @@ void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
     // that wants the stand-in has it without the others having it too. Evaluation: every episode of the stand-in arm,
     // none otherwise.
     StandIn::Tuning const& tuning = _tuning.StandIn;
-    int32 const share = arena.Against == Opposition::Roles ? _tuning.Roles.StandInShare : tuning.Share;
+    int32 const share = StandInShare(data.Arena);
     bool const plays = env.Evaluating ? _evaluationStandIn.load(std::memory_order_relaxed)
         : share > 0 && roll_chance_i(share);
     if (!plays)

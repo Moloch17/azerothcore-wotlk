@@ -56,6 +56,19 @@ namespace Animus::Curriculum
 
     /// The ladder an arena's `Instance` names, in rung order.
     [[nodiscard]] std::vector<BossRow> const& InstanceLadderRows(InstanceLadder ladder);
+
+    /// **A dungeon's bosses, by name** (dungeon-curriculum D2, D3: "per boss"): every boss a whole dungeon's route
+    /// passes -- side bosses included, the rares and an escort's boss left out -- with the short name its episode info
+    /// column has (InstanceEncounter's boss_<name>: killed this run). Data from the world database's creature_template
+    /// (looked up 2026-10-07; MySQL is sealed after startup).
+    struct WingBoss
+    {
+        uint32 MapId = 0;
+        uint32 Entry = 0;
+        char const* Name = "";
+    };
+
+    [[nodiscard]] std::vector<WingBoss> const& WingBosses();
 }
 
 #endif

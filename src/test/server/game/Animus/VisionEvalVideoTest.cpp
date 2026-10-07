@@ -370,6 +370,11 @@ TEST(VisionEvalVideoTest, RecorderWritesVideosSidecarsAndIndex)
         EXPECT_FALSE(recorder.Active());
         recorder.Begin(options, { 7, 40, 99 });
         ASSERT_TRUE(recorder.Active());
+        // Each seed's place among the evaluation's: the filmed seat's pick (EvalVideoAgent).
+        EXPECT_EQ(recorder.PickOf(7), 0u);
+        EXPECT_EQ(recorder.PickOf(40), 1u);
+        EXPECT_EQ(recorder.PickOf(99), 2u);
+        EXPECT_EQ(recorder.PickOf(41), 0u);
         EXPECT_TRUE(recorder.Wanted(40));
         EXPECT_FALSE(recorder.Wanted(41));
 
@@ -384,6 +389,7 @@ TEST(VisionEvalVideoTest, RecorderWritesVideosSidecarsAndIndex)
             episode.Level = 1;
             episode.RenderWidth = 48;
             episode.RenderHeight = 24;
+            episode.Role = layout == "Mage" ? 3 : 0;
             recorder.Start(episode);
         };
         film(0, 7, "Rogue");
@@ -457,6 +463,8 @@ TEST(VisionEvalVideoTest, RecorderWritesVideosSidecarsAndIndex)
     boost::json::object const mageSidecar = boost::json::parse(Slurp(options.Dir / "40-mage-failure.json"))
         .as_object();
     EXPECT_EQ(mageSidecar.at("frames").to_number<uint64_t>(), 120u);
+    EXPECT_EQ(mageSidecar.at("role").as_string(), "damage");
+    EXPECT_EQ(sidecar.at("role").as_string(), "");
     EXPECT_FALSE(mageSidecar.at("truncated").as_bool());
     boost::json::object const priestSidecar = boost::json::parse(Slurp(options.Dir / "99-priest-unfinished.json"))
         .as_object();
@@ -489,4 +497,45 @@ TEST(VisionEvalVideoTest, NothingWithoutAnEvaluation)
     recorder.End();
     recorder.Drain();
     EXPECT_EQ(recorder.Recorded(), 0u);
+}
+
+// **Whom a party's episode films** (I0 for multi-seat envs): the picks go round the party's places -- tank, healer,
+// damage -- and through each place's classes; the same pick of the same party films the same seat, however the
+// candidates are listed; a party missing a place passes to the next; a solo env films its one seat.
+TEST(VisionEvalVideoTest, AFilmedSeatSpreadsOverThePartysPlacesAndClasses)
+{
+    // A party of five: a warrior tank (agent 2), a priest healer (4), and a mage, a rogue and a hunter dealing damage.
+    std::vector<Vi::EvalVideoCandidate> const party = { { 0, 3, 8 }, { 1, 3, 4 }, { 2, 1, 1 }, { 3, 3, 3 },
+        { 4, 2, 5 } };
+    EXPECT_EQ(Vi::EvalVideoAgent(0, party), 2u) << "pick 0: the tank";
+    EXPECT_EQ(Vi::EvalVideoAgent(1, party), 4u) << "pick 1: the healer";
+    std::set<uint32_t> damage;
+    std::set<uint32_t> seats;
+    for (uint32_t pick = 0; pick < 9; ++pick)
+    {
+        uint32_t const agent = Vi::EvalVideoAgent(pick, party);
+        seats.insert(agent);
+        if (pick % 3 == 2)
+            damage.insert(agent);
+        // Deterministic, and whatever order the env lists its seats in.
+        std::vector<Vi::EvalVideoCandidate> reversed(party.rbegin(), party.rend());
+        EXPECT_EQ(Vi::EvalVideoAgent(pick, reversed), agent) << pick;
+        EXPECT_EQ(Vi::EvalVideoAgent(pick, party), agent) << pick;
+    }
+    EXPECT_EQ(damage, (std::set<uint32_t>{ 0, 1, 3 })) << "every damage dealer's class in turn";
+    EXPECT_EQ(seats.size(), 5u) << "nine picks film every seat of the party";
+
+    // No healer drawn: the healer's turn passes to damage.
+    std::vector<Vi::EvalVideoCandidate> const noHealer = { { 0, 1, 1 }, { 1, 3, 4 }, { 2, 3, 8 } };
+    uint32_t const passed = Vi::EvalVideoAgent(1, noHealer);
+    EXPECT_TRUE(passed == 1u || passed == 2u) << passed;
+
+    // A solo env, or seats with no place: taken in turn, class order then agent.
+    EXPECT_EQ(Vi::EvalVideoAgent(5, { { 0, 0, 4 } }), 0u);
+    std::vector<Vi::EvalVideoCandidate> const unplaced = { { 3, 0, 9 }, { 1, 0, 2 } };
+    EXPECT_EQ(Vi::EvalVideoAgent(0, unplaced), 1u);
+    EXPECT_EQ(Vi::EvalVideoAgent(1, unplaced), 3u);
+    EXPECT_EQ(Vi::EvalVideoAgent(3, {}), 0u);
+    EXPECT_STREQ(Vi::EvalVideoRoleName(1), "tank");
+    EXPECT_STREQ(Vi::EvalVideoRoleName(0), "");
 }

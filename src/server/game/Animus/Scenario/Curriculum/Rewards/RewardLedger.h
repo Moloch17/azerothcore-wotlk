@@ -197,6 +197,14 @@ namespace Animus::Curriculum
         Away,
         Hurt,
         FireHurt,
+        /// The party stages (InstanceEncounter, dungeon-curriculum G2-D3): a pull started with every living member
+        /// ready -- at Instance.WingReadyShare of its health and mana -- paid to every seat (Instance.ReadyPull,
+        /// Outcome:
+        /// the rest discipline G2 is for; at most once a route pack); and every second of a dungeon run with nothing
+        /// killed, no step along the route and nothing fighting the party, past the grace (Instance.WingStall, Cost:
+        /// standing about, which was Stall's Shaping and faded).
+        ReadyPull,
+        Idle,
         Count
     };
 
@@ -254,6 +262,8 @@ namespace Animus::Curriculum
             // The combat stages' own (2026-10-06): surviving, interrupts landed.
             case RewardTerm::Survived:
             case RewardTerm::InterruptLanded:
+            // The party stages' rest discipline: a pull started with the party ready (2026-10-07).
+            case RewardTerm::ReadyPull:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -290,6 +300,8 @@ namespace Animus::Curriculum
             case RewardTerm::Away:
             case RewardTerm::Hurt:
             case RewardTerm::FireHurt:
+            // A dungeon run standing about (2026-10-07).
+            case RewardTerm::Idle:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

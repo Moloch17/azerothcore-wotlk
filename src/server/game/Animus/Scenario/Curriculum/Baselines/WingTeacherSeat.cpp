@@ -326,6 +326,9 @@ Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::Teache
     if (view.Crowd.HasStep)
         facts.Step = PlaceAt(bot, view.Crowd.Step.GetPositionX(), view.Crowd.Step.GetPositionY(),
             view.Crowd.Step.GetPositionZ());
+    else if (view.Crowd.HasObjective)
+        facts.Step = PlaceAt(bot, view.Crowd.Objective.GetPositionX(), view.Crowd.Objective.GetPositionY(),
+            view.Crowd.Objective.GetPositionZ());
     else if (view.HasObjective)
         facts.Step = PlaceAt(bot, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
             view.Objective.GetPositionZ());

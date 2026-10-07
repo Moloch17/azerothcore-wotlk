@@ -184,6 +184,10 @@ namespace Animus
         /// i mod this, rung i / this): the evaluation videos (Vision::EvalVideoSeeds) spread their picks by it.
         [[nodiscard]] virtual uint32 EvaluationPairs() const { return 1; }
 
+        /// A seat's place in its party, for the evaluation videos' choice of whom to film in a party (Vision::
+        /// EvalVideoAgent): 1 tank, 2 healer, 3 damage, read off its build; 0 for none (no party, or no place drawn).
+        [[nodiscard]] virtual uint32 FilmedRole(Env const& /*env*/, uint32 /*agent*/) const { return 0; }
+
         /// Scripted baseline for local policies other than "random" (the forge's AnimusForge.Policy, the stage viewer's
         /// policy), for one agent of `layout` (obs and mask are its row). Returns false if the scenario does not know
         /// the policy.

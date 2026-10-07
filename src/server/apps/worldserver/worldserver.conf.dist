@@ -5055,6 +5055,15 @@ AnimusForge.OutputDir = ""
 #                       party     "group1_roles" (a party of five on the cleared Ragefire Chasm drilling one role an
 #                                 episode: hold every enemy, keep everyone up within mana, kill the tank's target
 #                                 without pulling it, pull one pack at a time)
+#                                 "group2_corridor" (Ragefire and the Deadmines: four of a wing's real packs in
+#                                 route order -- pull, fight, rest, ready, next; the dungeon teacher hinting and
+#                                 tapering; the human stand-in in a fifth of the runs)
+#                     The dungeon stages (dungeon-curriculum D1-D3), real dungeons at their level bands:
+#                       dungeon   "dungeon1_pulls" (Ragefire, one pack a run on its own ground: a clean pull)
+#                                 "dungeon2_ragefire" (Ragefire from the door to Bazzalan, a full clear, the
+#                                 teacher tapering to none; Wailing Caverns held out, evaluated only)
+#                                 "dungeon3_deadmines" (the Deadmines from the door to VanCleef at 17-20, doors,
+#                                 levers and the cannon by real presses; the bar: 70% clears, at most one wipe)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
 #                     on the git tag curriculum-movement-v1, learner configs in
 #                     apps/forge/python/configs/archive/movement-v1/.
@@ -5205,6 +5214,11 @@ AnimusForge.Stage.group1_roles.TicksPerDecision = 5
 #   the dungeon teacher's checks drive every seat on the player controller: the same 50 ms world ticks
 AnimusForge.Stage.teacher_ragefire.TicksPerDecision = 5
 AnimusForge.Stage.teacher_deadmines.TicksPerDecision = 5
+#   the corridor and the dungeons (G2, D1-D3), on the player controller too
+AnimusForge.Stage.group2_corridor.TicksPerDecision = 5
+AnimusForge.Stage.dungeon1_pulls.TicksPerDecision = 5
+AnimusForge.Stage.dungeon2_ragefire.TicksPerDecision = 5
+AnimusForge.Stage.dungeon3_deadmines.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6311,8 +6325,11 @@ AnimusForge.Curriculum.Instance.Timeout = 10.0
 AnimusForge.Curriculum.Instance.Stall = 0.08
 AnimusForge.Curriculum.Instance.StallGraceMs = 15000
 #   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
-#   (x the rung), each seat's death and each wipe (/ the rung); WingWipes wipes end the episode (1: a wipe ends it,
-#   and the next run starts in a fresh instance with the dungeon reset); the route's points are WingWaypointYards apart along the door-to-boss path
+#   (x the rung), each seat's death and each wipe (/ the rung); the WingWipes-th wipe ends the episode (2: the first is
+#   scored and the party rises at the entrance, the second ends the run -- no stage ends at the first death, and the
+#   Deadmines' bar is at most one wipe; the next run starts in a fresh instance with the dungeon reset); the route's
+#   points are WingWaypointYards apart along the door-to-boss path. In a wing the rung's tier is the support ladder's
+#   (WING_RUNGS: rung / 3, 0 at the most support to 4 at the evaluation's own conditions)
 AnimusForge.Curriculum.Instance.WingTrashKill = 1.0
 AnimusForge.Curriculum.Instance.WingWaypoint = 0.5
 AnimusForge.Curriculum.Instance.WingBoss = 25.0
@@ -6322,19 +6339,27 @@ AnimusForge.Curriculum.Instance.WingMidBoss = 8.0
 AnimusForge.Curriculum.Instance.WingProgress = 60.0
 AnimusForge.Curriculum.Instance.WingDeath = 3.0
 AnimusForge.Curriculum.Instance.WingWipe = 5.0
-AnimusForge.Curriculum.Instance.WingWipes = 1
-#   per second once WingStallGraceMs (ms) pass with no kill, no route step and nothing fighting the party; and the
-#   clock's cost for the share of the route left (over the tier scale)
+AnimusForge.Curriculum.Instance.WingWipes = 2
+#   per second once WingStallGraceMs (ms) pass with no kill, no route step and nothing fighting the party (Idle, a Cost
+#   at its full price from the first step); and the clock's cost for the share of the route left (over the tier scale)
 AnimusForge.Curriculum.Instance.WingStall = 0.1
 AnimusForge.Curriculum.Instance.WingStallGraceMs = 60000
 #   whole dungeons: the stall charge on every seat but the tank, as a share of the tank's (the tank decides when to
 #   move on)
 AnimusForge.Curriculum.Instance.WingStallOthers = 0.2
-#   whole dungeons: paid to the tank for each fight started with every living seat at WingReadyShare of its health
-#   and mana
+#   whole dungeons: paid to every seat for each fight started with every living seat at WingReadyShare of its health
+#   and mana (ReadyPull, an Outcome: the party's rest discipline), at most once a route pack, x the tier scale
 AnimusForge.Curriculum.Instance.WingEngage = 1.0
 AnimusForge.Curriculum.Instance.WingReadyShare = 0.8
 AnimusForge.Curriculum.Instance.WingTimeout = 30.0
+#   the dungeon curriculum's party stages (G2, D1-D3): a run that killed every creature of its full clear and the last
+#   boss (Clear, x the tier scale); each pack of a corridor (ArenaDefinition::CorridorPacks, G2) cleared in route order
+#   (Clear, x the tier scale); each pack drawn into a fight another pack started -- a chain pull (PullExtra, a Cost
+#   over the tier scale); every second of a run (StepCost, the clock)
+AnimusForge.Curriculum.Instance.WingClear = 25.0
+AnimusForge.Curriculum.Instance.CorridorPack = 4.0
+AnimusForge.Curriculum.Instance.WingChainPull = 3.0
+AnimusForge.Curriculum.Instance.WingClock = 0.002
 AnimusForge.Curriculum.Instance.WingWaypointYards = 30
 #   the support ladder: each rung fixes the dungeon script's share of seats, the level lift, the wipes to spare and the
 #   hint weight; WingProbe of training runs are probes (no script, no hints) and only they measure the policy: once
@@ -6354,7 +6379,9 @@ AnimusForge.Curriculum.Instance.WingHintOffRung = -1
 #   there -- what the rung's probes must beat for hint imitation to end; never evaluated, never on the ladder
 AnimusForge.Curriculum.Instance.WingReferenceShare = 0.07
 #   the dungeon script's seats and hints on the ladder's rungs: a support, off by default (0), switched on (1) when a
-#   rung has not stepped for a long stretch. Off, the rungs lift the level and spare wipes only
+#   rung has not stepped for a long stretch. Off, the rungs lift the level and spare wipes only. A taught arena
+#   (ArenaDefinition::Taught: group2_corridor, dungeon2_ragefire, dungeon3_deadmines) has the teacher's support
+#   whatever this says: hints and the rung's scripted seats, tapering to none down the ladder
 AnimusForge.Curriculum.Instance.WingSupport = 0
 #   food and drink each seat brings into a whole dungeon
 AnimusForge.Curriculum.Instance.WingSupplies = 60
@@ -6366,10 +6393,19 @@ AnimusForge.Curriculum.Instance.WingTrace = 1
 AnimusForge.Curriculum.Instance.WingCrowd = 0.15
 AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 #   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
-#   other than the tank is further than WingStrayYards from it, WingStray
+#   other than the tank is further than WingStrayYards from it, WingStray (Lost, a Cost: stay with the leader)
 AnimusForge.Curriculum.Instance.WingFullClear = 1
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
+#   per second a seat is dead or walking back from the entrance after a rise (Away, a Cost, as C3's Combat.Away); a seat
+#   walking back is never also charged WingStray, and the leader it keeps with is the stand-in when it leads, else the
+#   tank
+AnimusForge.Curriculum.Instance.WingAway = 0.02
+#   a sight stage's goal places in a dungeon (SeenPlaces) are what a player knows: the hostiles the seat saw (where it
+#   last saw them), its mental map's frontier, the dungeon map's layout nodes (ground only: no pack, boss or order)
+#   and its leader -- never a live pack's or boss's position or the route's order, which stay the teacher's. A stage
+#   switches the layout off with AnimusForge.Curriculum.Stage.<name>.GoalPlaces (0 seen and layout, the default; 1
+#   seen only)
 #   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it
 #   cleared; a clean pull pays PullClean, a second pack joining ends the run at PullExtra, the clock running out with
 #   the pack alive costs PullTimeout (the tank in full, the others PullOthers of each); standing about costs WingStall
@@ -7464,7 +7500,9 @@ AnimusForge.Curriculum.ScriptedPlayers.BreakBelow = 0.6
 #        style is drawn per episode from a seed (an evaluation's from its seed index). Its row is no sample.
 
 #   percent of a party or raid arena's training episodes with a stand-in (0 = never). Evaluations have one only in
-#   the learner's "with the human stand-in" arm (eval.arms.with_human), in every episode of it
+#   the learner's "with the human stand-in" arm (eval.arms.with_human), in every episode of it. An arena may set its
+#   own (ArenaDefinition::StandInShare: the dungeon stages from group2_corridor on, 20), and the conf may set that per
+#   arena: AnimusForge.Curriculum.Arena.<stage>.<arena>.StandInShare
 AnimusForge.Curriculum.StandIn.Share = 0
 #   percent of styles that lead (only where the party has no owner; a leader sits in seat 0, the group's leader)
 AnimusForge.Curriculum.StandIn.LeadChance = 50

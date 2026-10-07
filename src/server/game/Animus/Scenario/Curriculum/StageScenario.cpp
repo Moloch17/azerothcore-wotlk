@@ -638,12 +638,22 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _arenaMaxRung.push_back(sConfigMgr->GetOption<int32>(
             Acore::StringFormat("{}Arena.{}.{}.MaxRung", settings.TuningPrefix, _stage.Name, arena.Name),
             arena.MaxRung, false));
+        // The "human" stand-in's share of the arena's training episodes (I7): its own, else StandIn.Share's (-1).
+        _arenaStandInShare.push_back(std::clamp(sConfigMgr->GetOption<int32>(
+            Acore::StringFormat("{}Arena.{}.{}.StandInShare", settings.TuningPrefix, _stage.Name, arena.Name),
+            arena.StandInShare, false), -1, 100));
 
         uint32 const episodeMs = (arena.EpisodeSeconds ? arena.EpisodeSeconds : settings.EpisodeSeconds)
             * IN_MILLISECONDS;
         _arenaEpisodeMs.push_back(episodeMs);
         longestMs = std::max(longestMs, episodeMs);
     }
+
+    // Where a sight stage's goal places come from in a dungeon: the stage's, or the conf's (0 seen and layout, 1 seen
+    // only).
+    _goalPlaces = sConfigMgr->GetOption<int32>(Acore::StringFormat("{}Stage.{}.GoalPlaces", settings.TuningPrefix,
+        _stage.Name), int32(_stage.GoalPlaces), false) == int32(SeenPlaces::Source::SeenOnly)
+        ? SeenPlaces::Source::SeenOnly : SeenPlaces::Source::SeenAndLayout;
 
     if (std::all_of(_arenaWeightsFinal.begin(), _arenaWeightsFinal.end(), [](uint32 weight) { return weight == 0; }))
         _arenaWeightsFinal = _arenaWeights;
@@ -892,24 +902,25 @@ uint32 Animus::Curriculum::StageScenario::DrawArena(bool evaluating) const
     // An evaluation pinned to one arena (the learner's eval.heldout) plays only it.
     if (uint32 const pinned = _evaluationArena.load(std::memory_order_relaxed); evaluating && pinned)
         return pinned - 1;
-    if (_arenaWeights.size() == 1)
+    if (_arenaWeights.size() == 1 && !_stage.Arenas.front().EvalOnly)
         return 0;
 
     // Linear from Weight to WeightFinal over the stage's budget; an evaluation draws by the final weights, so it
-    // measures what the stage is heading for.
-    float const progress = evaluating ? 1.0f : _stageProgress.load(std::memory_order_relaxed);
-    std::vector<uint32> weights(_arenaWeights.size());
+    // measures what the stage is heading for. A held-out arena never (ArenaDrawWeights), and a pull drill in an
+    // evaluation only in a stage of drills.
+    std::vector<uint32> const weights = ArenaDrawWeights(_stage.Arenas, _arenaWeights, _arenaWeightsFinal, evaluating,
+        _stageProgress.load(std::memory_order_relaxed));
     uint32 total = 0;
-    for (uint32 arena = 0; arena < _arenaWeights.size(); ++arena)
-    {
-        float const from = float(_arenaWeights[arena]);
-        float const to = float(_arenaWeightsFinal[arena]);
-        weights[arena] = (evaluating && _stage.Arenas[arena].PullDrill) || _stage.Arenas[arena].EvalOnly ? 0
-            : uint32(std::lround(100.0f * (from + (to - from) * progress)));
-        total += weights[arena];
-    }
+    for (uint32 weight : weights)
+        total += weight;
+    // Nothing to draw (every weight set to 0 by hand): the first arena the stage trains on -- never a held-out one.
     if (!total)
+    {
+        for (uint32 arena = 0; arena < _stage.Arenas.size(); ++arena)
+            if (!_stage.Arenas[arena].EvalOnly)
+                return arena;
         return 0;
+    }
 
     uint32 roll = urand(0, total - 1);
     for (uint32 arena = 0; arena < weights.size(); ++arena)
@@ -1636,6 +1647,12 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
         entry["directed"] = definition.Directed;
         entry["eval_only"] = definition.EvalOnly;
+        // The party stages' arenas (G2, D1-D3): a pull drill, a corridor's length, whether the teacher hints its
+        // training runs, and the stand-in's share of them.
+        entry["pull_drill"] = definition.PullDrill;
+        entry["corridor_packs"] = definition.CorridorPacks;
+        entry["taught"] = definition.Taught;
+        entry["stand_in_share"] = StandInShare(uint32(arena));
         // The seat a drill is about (ArenaDefinition::DrillRole: seat 0), which the learner's co-op partners never
         // play (animus.partners); -1 for an arena that drills no one.
         entry["drill_seat"] = definition.DrillRole ? 0 : -1;
@@ -1779,6 +1796,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     // Episode info columns that index a list of names (the seek stage's room and object): the learner's evaluation
     // tables split by them (animus.evaluation, EvalResult.categories).
     boost::json::object& categories = stageFile["episode_categories"].emplace_object();
+    // A pull drill's pack (drill_pack): the route's packs, pack_1 first, as many as a route's cells can name.
+    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.PullDrill; }))
+    {
+        boost::json::array packs;
+        for (uint32 pack = 1; pack <= InstanceEncounter::EXPLORE_PACKS; ++pack)
+            packs.emplace_back(Acore::StringFormat("pack_{}", pack));
+        categories["drill_pack"] = std::move(packs);
+    }
     for (ArenaDefinition const& arena : _stage.Arenas)
         if (arena.Against == Opposition::Seek)
         {
