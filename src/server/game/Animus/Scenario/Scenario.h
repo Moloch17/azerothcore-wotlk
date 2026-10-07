@@ -180,6 +180,10 @@ namespace Animus
         /// One name per EpisodeInfo column; sent to the learner in SPEC and used in local reports.
         [[nodiscard]] virtual std::vector<std::string> EpisodeInfoNames() const = 0;
 
+        /// How many seeds an evaluation's placements cycle through before the next rung starts (seed i plays pair
+        /// i mod this, rung i / this): the evaluation videos (Vision::EvalVideoSeeds) spread their picks by it.
+        [[nodiscard]] virtual uint32 EvaluationPairs() const { return 1; }
+
         /// Scripted baseline for local policies other than "random" (the forge's AnimusForge.Policy, the stage viewer's
         /// policy), for one agent of `layout` (obs and mask are its row). Returns false if the scenario does not know
         /// the policy.

@@ -29,6 +29,7 @@
 #include "StageDefinition.h"
 #include "StageSettings.h"
 #include "StageState.h"
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <mutex>
@@ -292,6 +293,7 @@ namespace Animus::Curriculum
         /// How many (class, role) pairs the run can field, which is what an evaluation spreads its seeds over.
         /// The difficulty ladder divides by the same number, so every pair meets every rung.
         [[nodiscard]] uint32 CastingCount() const { return uint32(Castings(AptitudeDemand::Anything()).size()); }
+        [[nodiscard]] uint32 EvaluationPairs() const override { return std::max<uint32>(1, CastingCount()); }
 
         [[nodiscard]] EnvState& Data(Env const& env);
         [[nodiscard]] EnvState const& Data(Env const& env) const;
