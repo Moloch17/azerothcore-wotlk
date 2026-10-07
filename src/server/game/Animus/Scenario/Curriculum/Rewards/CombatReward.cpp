@@ -154,6 +154,8 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Away:                  return "away";
         case RewardTerm::Hurt:                  return "hurt";
         case RewardTerm::FireHurt:              return "fire_hurt";
+        case RewardTerm::ReadyPull:             return "ready_pull";
+        case RewardTerm::Idle:                  return "idle";
         case RewardTerm::Count:                 break;
     }
 

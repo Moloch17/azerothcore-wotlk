@@ -37,6 +37,7 @@
 #include "SeatView.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
+#include "WingRun.h"
 #include <unordered_set>
 #include <atomic>
 #include <deque>
@@ -651,7 +652,13 @@ namespace Animus::Curriculum
             /// then alive at the entrance and walking back, rejoined within Respawn.RejoinYards of the party.
             RespawnClock Clock;
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
-            uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (the tank)
+            uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (ReadyPull, every seat)
+            /// The party stages' terms paid so far (2026-10-07): a corridor's packs cleared in route order, the chain
+            /// pulls, the full clear; and the seat's deaths this run (by role: deaths_tank, ...).
+            uint32 ClearsPaid = 0;
+            uint32 ChainPaid = 0;
+            bool FullClearPaid = false;
+            uint32 Deaths = 0;
             mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
             /// Off the route out of a fight -- fallen into a cavern, kited away -- its own field way back to it,
             /// planned at DetourMs and again every DETOUR_REPLAN_MS.
@@ -802,6 +809,21 @@ namespace Animus::Curriculum
                 bool Resolved = false;
             };
             std::vector<RoutePack> RoutePacks;
+            /// Each route pack's members' spawn ids -> the pack (its RoutePacks index): what a creature fighting the
+            /// party belongs to, for the chain pull.
+            std::unordered_map<ObjectGuid::LowType, uint32> PackOf;
+            /// A corridor run (ArenaDefinition::CorridorPacks, G2): its packs and which were cleared in route order.
+            bool CorridorRun = false;
+            WingRun::Corridor Corridor;
+            /// The route packs the fight under way has drawn in, and the chain pulls of the run: a pack drawn into a
+            /// fight another pack started (Instance.WingChainPull).
+            WingRun::FightPacks Drawn;
+            uint32 ChainPulls = 0;
+            /// The fights started ready (ReadyEngages) the party is paid for: at most one a route pack.
+            uint32 ReadyPaidCap = 0;
+            /// The dungeon bosses killed on the way, by entry (the per-boss measures, boss_<name>); the last boss is
+            /// BossDead.
+            std::vector<uint32> BossesKilled;
             std::array<SeatInstance, MAX_SEATS> Seats;
             /// Go-Explore (the learner's EXPLORE_STARTS): a training run started from a cell instead of the door --
             /// its packs cleared and the party's yard / EXPLORE_YARD_BUCKET -- and the cells the run reached, a mark
@@ -880,6 +902,16 @@ namespace Animus::Curriculum
         void MarkCell(Env const& env, EnvInstance& fight);
         /// The drill's pack dead with the fight over, or another creature fighting the party.
         void UpdateDrill(Env& env, EnvInstance& fight);
+        /// A corridor run (G2): the packs before its first cleared and the party set down short of it, as a cell's
+        /// start (StartAt); its packs to clear in route order. False, nothing changed, when the route has no packs.
+        bool StartCorridor(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
+        /// The route packs fighting the party this decision, for the chain pull (EnvInstance::Drawn).
+        void UpdateDrawnPacks(Env& env, EnvInstance& fight);
+        /// Whether a whole dungeon's run is a full clear: the last boss dead and every creature the clear counts.
+        [[nodiscard]] static bool FullClear(EnvInstance const& fight);
+        /// The run's success as the stage counts it: a drill's pack pulled and killed alone, a corridor cleared, a
+        /// whole dungeon's last boss dead (the `cleared` column, the stand-in split's and the videos' outcome).
+        [[nodiscard]] static bool Succeeded(EnvInstance const& fight);
         void NoteDrill(uint32 rung, bool clean);
         void RewardWing(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
         /// Instance.WingTrace: follow the fight under way, and log what a wipe ended.

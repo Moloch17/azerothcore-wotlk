@@ -220,6 +220,8 @@ namespace Animus::Curriculum
         /// The seat the "human" stand-in plays this episode (StandIn.h), or -1 for an all-bot party. A leading
         /// stand-in is seat 0, the group's leader: what a party follow reads as the leader to keep up with.
         [[nodiscard]] int32 StandInSeat(Env const& env) const;
+        /// The stand-in's share of `arena`'s training episodes, percent: the arena's own, else StandIn.Share.
+        [[nodiscard]] int32 StandInShare(uint32 arena) const;
         [[nodiscard]] bool StandInLeads(Env const& env) const;
         /// Build the owner as a seat in the owner's agent slot: a class and build of the run meeting `demand`,
         /// at `level`, placed at `start`; null when nothing could be built. The caller sets its faction and
@@ -331,6 +333,12 @@ namespace Animus::Curriculum
         /// The difficulty ladder divides by the same number, so every pair meets every rung.
         [[nodiscard]] uint32 CastingCount() const { return uint32(Castings(AptitudeDemand::Anything()).size()); }
         [[nodiscard]] uint32 EvaluationPairs() const override { return std::max<uint32>(1, CastingCount()); }
+        /// A seat's place in a whole dungeon's party (SeatState::DungeonRole: 1 tank, 2 healer, 3 damage), read off
+        /// its build; 0 for a seat with none, or past the seats.
+        [[nodiscard]] uint32 FilmedRole(Env const& env, uint32 agent) const override
+        {
+            return agent < _seatCount && agent < MAX_SEATS ? uint32(Data(env).Seats[agent].DungeonRole) : 0;
+        }
 
         [[nodiscard]] EnvState& Data(Env const& env);
         [[nodiscard]] EnvState const& Data(Env const& env) const;
@@ -616,6 +624,10 @@ namespace Animus::Curriculum
         uint32 _wingTallyRung = 0;
         std::vector<uint32> _arenaEpisodeMs;
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
+        /// Per arena: the stand-in's share of its training episodes, percent (ArenaDefinition::StandInShare and its
+        /// conf
+        /// key); -1: StandIn.Share's.
+        std::vector<int32> _arenaStandInShare;
         OwnerEncounter* _owner = nullptr;
         FollowEncounter* _follow = nullptr;     // the follow stage's leader, in the owner's slot
         PartyFollowEncounter* _partyFollow = nullptr;   // the party follow's leader, in the owner's slot too

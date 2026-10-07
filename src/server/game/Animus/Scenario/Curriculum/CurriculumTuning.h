@@ -293,19 +293,35 @@ namespace Animus::Curriculum
             float WingProgress = 60.0f;
             float WingDeath = 3.0f;
             float WingWipe = 5.0f;
-            uint32 WingWipes = 1;
+            /// The wipe that ends the run (2 since 2026-10-07, the dungeon curriculum's rule: no stage ends at the
+            /// first
+            /// death, and the Deadmines' bar is at most one wipe -- the first is scored and the party rises at the
+            /// entrance; the second ends it). The ladder's rungs spare more (WingRung::ExtraWipes).
+            uint32 WingWipes = 2;
             /// Per second once WingStallGraceMs pass with no kill, no step along the route and nothing fighting the
             /// party; and the clock's cost for the share of the route left (over the tier scale). Standing at the
-            /// door has to cost more than fighting through the dungeon badly.
+            /// door has to cost more than fighting through the dungeon badly. Paid as Idle (a Cost, at its full price
+            /// from the first step) since 2026-10-07: as Stall it was Shaping, and the fade took it away.
             float WingStall = 0.1f;
             uint32 WingStallGraceMs = 60000;
             /// The stall charge on every seat but the tank, as a share of the tank's: the tank decides when to move on.
             float WingStallOthers = 0.2f;
-            /// Paid to the tank for each fight started with every living seat at WingReadyShare of its health and
-            /// mana: pulling when the party is ready, not standing in front of the pack.
+            /// Paid to every seat for each fight started with every living seat at WingReadyShare of its health and
+            /// mana -- the rest discipline of a party (pull, fight, rest, ready, next) -- at most once a route pack,
+            /// times the tier scale: ReadyPull, an Outcome since 2026-10-07 (it was the tank's Threat, Shaping).
             float WingEngage = 1.0f;
             float WingReadyShare = 0.8f;
             float WingTimeout = 30.0f;
+            /// The dungeon curriculum's party stages (2026-10-07): a run that killed every creature its full clear
+            /// counts and the last boss (Clear, times the tier scale: D2's and D3's full clear); each of a corridor's
+            /// packs cleared in route order (Clear, times the tier scale: G2); each pack drawn into a fight another
+            /// pack
+            /// started (PullExtra, a Cost over the tier scale: the chain pull); every second of a run (StepCost: the
+            /// clock, at its full price).
+            float WingClear = 25.0f;
+            float CorridorPack = 4.0f;
+            float WingChainPull = 3.0f;
+            float WingClock = 0.002f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
             /// The support ladder (StageScenario::WING_RUNGS): each rung fixes the dungeon script's share of seats,
             /// the level lift, the wipes to spare and the hint weight. WingProbe of training runs are probes -- no
@@ -343,7 +359,7 @@ namespace Animus::Curriculum
             /// 1: the route visits every pack in the instance, side bosses and all, before the last boss.
             uint32 WingFullClear = 1;
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
-            /// leader.
+            /// leader. Paid as Lost (a Cost) since 2026-10-07: as Approach it was Shaping, and the fade took it away.
             float WingStray = 0.02f;
             float WingStrayYards = 25.0f;
             /// The pull drill (ArenaDefinition::PullDrill): one pack of the dungeon a run, the party started
@@ -1788,6 +1804,10 @@ namespace Animus::Curriculum
             f("Instance.WingReadyShare", tuning.Instance.WingReadyShare);
             f("Instance.WingStallGraceMs", tuning.Instance.WingStallGraceMs);
             f("Instance.WingTimeout", tuning.Instance.WingTimeout);
+            f("Instance.WingClear", tuning.Instance.WingClear);
+            f("Instance.CorridorPack", tuning.Instance.CorridorPack);
+            f("Instance.WingChainPull", tuning.Instance.WingChainPull);
+            f("Instance.WingClock", tuning.Instance.WingClock);
             f("Instance.WingWaypointYards", tuning.Instance.WingWaypointYards);
             f("Instance.WingProbe", tuning.Instance.WingProbe);
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);

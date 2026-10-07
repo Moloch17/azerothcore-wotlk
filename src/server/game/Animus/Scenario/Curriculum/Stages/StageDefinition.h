@@ -249,7 +249,8 @@ namespace Animus::Curriculum
         int8 InstanceRow = -1;
         /// InstanceLadder::Wing: one pull a run instead of the whole dungeon -- the party a little way back along the
         /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
-        /// joins (Instance.Pull*). Training only: an evaluation never draws it.
+        /// joins (Instance.Pull*). Training only, unless the stage is all drills (EvaluatesDrills: dungeon1_pulls,
+        /// whose evaluation drills the pack its seed names).
         bool PullDrill = false;
         /// InstanceLadder::Wing: the dungeon teacher (WingTeacher) plays every seat of every run, whatever the ladder's
         /// rung and the support say, for checking the teacher (`forge run teacher_ragefire dungeon 96`); never in an
@@ -465,9 +466,40 @@ namespace Animus::Curriculum
         /// power at the entrance (EntranceRespawn's RespawnClock and RiseAtEntrance), to walk back on the controller.
         /// The episode goes on (StageScenario::DeadForGood is never true). An instanced arena's, never with DeathRuns.
         bool RespawnAtEntrance = false;
+        /// InstanceLadder::Wing: **the dungeon teacher hints and tapers** on this arena's training runs (dungeon-
+        /// curriculum G2, D2, D3): the script's share of seats and the hint weight of the ladder's rung
+        /// (StageScenario::WING_RUNGS), off from the per-rung cutoff (Instance.WingHintOffRung), whatever
+        /// Instance.WingSupport says. Never in a probe, a reference run's measure or an evaluation.
+        bool Taught = false;
+        /// InstanceLadder::Wing: **a corridor** (dungeon-curriculum G2): a run is this many of the route's packs in
+        /// route order -- the packs before the first cleared as a party that came from the door left them, the
+        /// party set down short of the first, the run won when every one of them is cleared. Pull, fight, rest, ready,
+        /// next. The first pack is drawn each training run and taken from the seed in an evaluation. 0: the whole
+        /// dungeon.
+        uint32 CorridorPacks = 0;
+        /// A party arena's share of training episodes with the "human" stand-in in one seat (I7), percent; -1 keeps
+        /// StandIn.Share. Overridden by `<TuningPrefix>Arena.<stage>.<arena>.StandInShare`. Evaluations play it only
+        /// in the learner's with_human arm, as before.
+        int32 StandInShare = -1;
+        /// InstanceLadder::Wing: the levels its runs are drawn in before the ladder's lift (the bar's band: the
+        /// Deadmines at 17-20), in place of the dungeon finder's range. 0: the dungeon finder's.
+        uint8 LevelFirst = 0;
+        uint8 LevelLast = 0;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
+
+    /// Whether a stage's evaluations play its pull drills (ArenaDefinition::PullDrill): a stage whose every trained
+    /// arena is a drill (dungeon1_pulls) is measured on its drills, where a stage that also runs the whole dungeon is
+    /// measured on that and keeps its drills for training.
+    [[nodiscard]] bool EvaluatesDrills(std::vector<ArenaDefinition> const& arenas);
+
+    /// **The arena draw's weights** (StageScenario::DrawArena): each arena's share, linear from its weight to its final
+    /// weight over the budget (`progress`; an evaluation draws by the final ones). A held-out arena
+    /// (ArenaDefinition::EvalOnly: Wailing Caverns) is never drawn this way, in training or evaluation -- only an
+    /// evaluation pinned to it plays it -- and a pull drill only in a stage that EvaluatesDrills.
+    [[nodiscard]] std::vector<uint32> ArenaDrawWeights(std::vector<ArenaDefinition> const& arenas,
+        std::vector<uint32> const& weights, std::vector<uint32> const& finals, bool evaluating, float progress);
 
     /// One curriculum stage: its own scenario (`stage1_duel`, ...), its blocks and the arenas its episodes are.
     ///
