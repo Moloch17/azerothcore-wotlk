@@ -71,6 +71,29 @@ def test_a_regression_steps_back_up_on_the_window_mean_waits_and_is_held_after_g
     assert _play(off, [5] * 6 + [0] * 3) == [1] * 9 and off.settled
 
 
+def test_a_gated_difficulty_ladder_never_steps_back_on_the_score_and_a_carried_hold_does_not_pin_it():
+    """require_plateau off: the rungs are difficulty, and the outcome score falls at a harder rung by design. Read
+    against the easier rung's score, every step up looked like a regression: M2 fell back from the doorway twice and was
+    held at the hallway for good (2026-10-07). A gated ladder keeps its rung however the score drops, and falls a
+    checkpoint carries from before hold nothing."""
+    fade = _fade(gate_metric="found", gate_value=0.8, require_plateau=False)
+    fade.see_gate({"found": 0.99})
+    assert fade.observe(3.0, 0.1, 0) is not None and fade.rung == 1
+    for env_steps in range(1, 8):                       # far below the step's score, the gate unmet
+        fade.see_gate({"found": 0.35})
+        assert fade.observe(-0.5, 0.1, env_steps) is None
+    assert fade.rung == 1 and not fade.held and not fade.regresses
+
+    stuck = _fade(gate_metric="found", gate_value=0.8, require_plateau=False)
+    stuck.falls = {0: 2}                                # held at the first rung under the old rule
+    assert not stuck.held and not stuck.settled
+    stuck.see_gate({"found": 1.0})
+    assert stuck.observe(3.0, 0.1, 0) is not None and stuck.rung == 1
+
+    scored = _fade()                                    # a plateau ladder still regresses and holds
+    assert scored.regresses
+
+
 def test_state_round_trips_mid_wait_and_survives_resumes_across_configs():
     fade = _fade()
     _play(fade, [5, 5, 5, 5, 4.0, 5])                               # down, back up, one evaluation into the wait

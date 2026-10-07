@@ -16,6 +16,7 @@
  */
 
 #include "EntityMemory.h"
+#include "SeenPlaces.h"
 #include "gtest/gtest.h"
 #include <cmath>
 
@@ -88,6 +89,34 @@ TEST(EntityMemoryTest, OnlyWhatTheFrameShowsIsWritten)
     EXPECT_EQ(memory.Count(), 2u);
     EXPECT_EQ(memory.Find(3), nullptr);
     EXPECT_EQ(memory.IdOf(3), 0u);
+}
+
+// A pack killed out of the seat's sight stays among its goal places, where it last saw it alive, until a frame shows
+// its corpse (overseer, G2/D review): the places read the memory's last-seen state, never the server's.
+TEST(EntityMemoryTest, AKillOutOfSightStaysAPlaceUntilTheCorpseIsSeen)
+{
+    namespace Sp = Animus::Curriculum::SeenPlaces;
+    Vi::EntityMemory memory;
+    memory.Write(Frame({ Entity(5, { 30.0f, 0.0f, 0.0f }) }));
+    memory.Write(Frame({}));    // out of sight; the server has since killed it
+
+    auto const places = [&memory]
+    {
+        Sp::Input in;
+        for (Vi::Remembered const& entry : memory.Entries())
+            if (entry.Guid)
+                in.Memory.push_back({ { entry.Position.X, entry.Position.Y, entry.Position.Z }, entry.Reaction < 0,
+                    entry.Dead, entry.GameObject });
+        Sp::Choice const choice = Sp::Choose(in);
+        return choice.Present[0] && std::fabs(choice.Where[0].X - 30.0f) < 0.01f;
+    };
+    EXPECT_FALSE(memory.Find(5)->Dead);
+    EXPECT_TRUE(places()) << "unseen, it is still where it was last seen alive";
+
+    Vi::EntityInfo corpse = Entity(5, { 30.0f, 0.0f, 0.0f }, Vi::Class::Corpse, 0.0f);
+    corpse.Dead = true;
+    memory.Write(Frame({ corpse }));
+    EXPECT_FALSE(places()) << "seen dead, it is no place to go and fight";
 }
 
 // A write with nothing in view leaves nothing "visible now", and every sighting ages by the clock.

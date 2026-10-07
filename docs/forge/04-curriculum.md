@@ -116,10 +116,11 @@
 > pull), Idle (standing about), Lost (straying from the leader), Death (deaths and wipes; the second wipe ends a run),
 > StepCost (the clock). A run's outcome scales with the ladder's rung (`WingRun::TierOfRung`), not the pinned row.
 > **What a seat knows of the dungeon** (2026-10-07): its goal places and its objective are a player's knowledge --
-> the hostiles it saw (entity memory: where it last saw them, alive), its own mental map's frontier, the dungeon map's
-> layout nodes (ground sampled along the walkable way, unordered, no creature on them) and its leader -- never a live
-> pack's or boss's position nor the route's pack order (SeenPlaces; `StageDefinition::GoalPlaces`, switched to seen
-> only by `AnimusForge.Curriculum.Stage.<name>.GoalPlaces = 1`). The route stays the teacher's, a script's.
+> what it discovered: the hostiles it saw (entity memory: where it last saw them, alive as last seen), its own mental
+> map's frontier and its leader -- never a live pack's or boss's position nor the route's pack order (SeenPlaces;
+> `StageDefinition::GoalPlaces`, seen only by default, the user's choice 2026-10-07). The dungeon map's layout nodes
+> can be added by `AnimusForge.Curriculum.Stage.<name>.GoalPlaces = 0`, but today they are sampled along the boss
+> route, so they stay off until a whole-instance layout exists. The route stays the teacher's, a script's.
 > Evaluation videos film one seat a party, spread over the tank, healer and damage places and their classes
 > (`Vision::EvalVideoAgent`); `apps/forge/tools/collect-videos.sh <stage>` brings the workers' videos home.
 >

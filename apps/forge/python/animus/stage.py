@@ -176,9 +176,18 @@ class ShapingFade:
         return self.rungs[self.rung] if self.enabled else 1.0
 
     @property
+    def regresses(self) -> bool:
+        """Whether the ladder steps back on its outcome score. A gate-stepped ladder (require_plateau off) never does: its
+        rungs are difficulty (M2's placements, the drills, the dungeon rungs), where the outcome score falls at a harder
+        rung by design, so a score held against the easier rung's read every step up as a regression -- M2 fell back
+        twice from the doorway and was then held at the hallway for good (2026-10-07)."""
+        return self.require_plateau
+
+    @property
     def held(self) -> bool:
-        """Fallen back to this rung often enough that the ladder stays."""
-        return self.falls.get(self.rung, 0) >= self.give_up
+        """Fallen back to this rung often enough that the ladder stays (a regressing ladder only: falls a checkpoint
+        carries from before a ladder stopped regressing hold nothing)."""
+        return self.regresses and self.falls.get(self.rung, 0) >= self.give_up
 
     @property
     def settled(self) -> bool:
@@ -202,7 +211,7 @@ class ShapingFade:
         # regress_z 2 is a ~2% false alarm, which over a rung of dozens of evaluations would hold the ladder short of
         # the outcome alone after give_up falls; and the first evaluations after a step carry the dip the step
         # causes, which the policy has not yet had time to adapt to.
-        if self.step_score is not None and self.rung > 0 and waited >= self.window:
+        if self.regresses and self.step_score is not None and self.rung > 0 and waited >= self.window:
             recent = self.tracker.history[-self.window:]
             mean = sum(point[1] for point in recent) / len(recent)
             mean_stderr = sum(point[2] ** 2 for point in recent) ** 0.5 / len(recent)

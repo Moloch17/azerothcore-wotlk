@@ -630,7 +630,7 @@ namespace Animus::Curriculum
         /// conf
         /// key); -1: StandIn.Share's.
         std::vector<int32> _arenaStandInShare;
-        SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenAndLayout;
+        SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenOnly;
         OwnerEncounter* _owner = nullptr;
         FollowEncounter* _follow = nullptr;     // the follow stage's leader, in the owner's slot
         PartyFollowEncounter* _partyFollow = nullptr;   // the party follow's leader, in the owner's slot too

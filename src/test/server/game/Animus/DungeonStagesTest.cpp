@@ -704,7 +704,7 @@ TEST(DungeonStagesTest, TheFrontierIsOpenGroundBesideTheUnseen)
         EXPECT_TRUE(at.X >= 29.0f || at.X <= -9.0f) << at.X << " " << at.Y << " is inside the seen corridor";
     EXPECT_TRUE(Sp::Frontier({ 0.0f, 0.0f, 0.0f }, 40.0f, 2.0f, 6,
         [](float, float) { return Sp::Ground::Open; }).empty());
-    // The party stages default to the seen places and the layout, which a conf key switches to seen only.
+    // The party stages default to what the seat discovered alone (the user, 2026-10-07); a conf key adds the layout.
     for (char const* name : PARTY_STAGES)
-        EXPECT_EQ(Stage(name).GoalPlaces, Sp::Source::SeenAndLayout) << name;
+        EXPECT_EQ(Stage(name).GoalPlaces, Sp::Source::SeenOnly) << name;
 }
