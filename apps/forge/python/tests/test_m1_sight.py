@@ -24,8 +24,10 @@ from animus.stages import block_spans
 
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 CURRICULUM = Path(__file__).resolve().parents[4] / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum"
+# The OLD M1 (move block revision 4, the compass inside it), kept where the redesigned M1 seeded from: the live run's
+# latest.pt is the redesigned M1 itself, which already has the compass block.
 CHECKPOINT = Path(os.environ.get("FORGE_M1_CHECKPOINT",
-                                 "/azerothcore/var/animus-forge/shared/runs/move1_controls/latest.pt"))
+                                 "/azerothcore/var/animus-forge/shared/runs/_finetune/move1_controls/best.pt"))
 
 COMPASS = ["objective", "objective_bearing_sin", "objective_bearing_cos", "objective_distance", "objective_near",
            "detour"]
@@ -64,7 +66,10 @@ def test_the_stage_config_reads_its_measures_and_gates_on_the_rungs_arrival():
     # The convergence is the stage's own measure; the ladders step on the arrival at the rung's own mix.
     assert config.convergence.measure == "arrived"
     assert config.fade.enabled and config.fade.gate_metric == "arrived_at_rung"
-    assert config.fade.rungs == (1.0, 0.5, 0.25, 0.0)
+    # The rungs are the sim's withholding scales, ending at x0 (the run was cut short of the full ladder by the user's
+    # word: [0.5, 0.25, 0], [0.25, 0], [0]).
+    assert config.fade.rungs and config.fade.rungs[-1] == 0.0
+    assert set(config.fade.rungs) <= {1.0, 0.5, 0.25, 0.0}
     assert config.costs.gate_metric == "arrived_at_rung"
     # The evaluation: whole passes over the 32 pairs, each with and without the compass.
     assert config.eval.episodes % 64 == 0
@@ -75,8 +80,9 @@ def test_the_fades_scales_are_the_sims_withholding_rungs():
     """SightDraw::FADE_SCALES is what the fade sends: a rung the sim does not know would withhold by interpolation."""
     draw = (CURRICULUM / "Encounters" / "SightDraw.h").read_text()
     scales = re.search(r"FADE_SCALES = \{ ([^}]*) \}", draw).group(1)
-    assert tuple(float(v.strip().rstrip("f")) for v in scales.split(",")) == \
-        TrainConfig.load(CONFIGS / "move1_controls.yaml").fade.rungs
+    known = tuple(float(v.strip().rstrip("f")) for v in scales.split(","))
+    assert known == (1.0, 0.5, 0.25, 0.0)
+    assert set(TrainConfig.load(CONFIGS / "move1_controls.yaml").fade.rungs) <= set(known)
 
 
 COLUMNS = ("arrived", "compass_withheld", "compass_present", "compass_withhold_chance", "arrived_no_compass",
