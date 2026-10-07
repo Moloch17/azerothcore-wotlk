@@ -1,7 +1,8 @@
 """The recurrent update's reported statistics, on a fixed seed, against what the update reported before its
 per-minibatch statistics were kept on the device and read once (peak-play E4, B2): the same numbers, only fewer
 synchronisations. The reference, update_stats_reference.json, was written by the update as it was before that change
-(write_reference below); regenerate it only for a change that is meant to move these numbers."""
+(write_reference below); regenerate it only for a change that is meant to move these numbers (last: 2026-10-07, the
+hint block and its imitation loss removed with the dungeon teacher)."""
 
 import json
 from pathlib import Path
@@ -17,24 +18,20 @@ REFERENCE = Path(__file__).with_name("update_stats_reference.json")
 KINDS, TARGETS, SLOTS = 3, 4, 4
 OWN = 40
 BLOCK = KINDS + TARGETS + 2 + 3 + 2 * (KINDS + TARGETS)
-HINT = OWN + BLOCK                    # the hint block: action + 1, weight, scripted
-OBS = HINT + 3
+OBS = OWN + BLOCK
 
 
 def scenario_stats(masked: bool | None = None) -> dict[str, float]:
-    """Goals with four slots and a slow loop, hindsight relabelling, hints with per-block owners and scripted rows,
-    over two epochs of two minibatches: every per-minibatch statistic the update keeps."""
+    """Goals with four slots and a slow loop and hindsight relabelling, over two epochs of two minibatches: every
+    per-minibatch statistic the update keeps."""
     torch.manual_seed(0)
     config = MappoConfig(hidden=(8, 8), recurrent_size=6, goal_count=KINDS, goal_targets=TARGETS,
                          goal_every_decisions=3, slow_goal_size=5, goal_slots=SLOTS, hindsight_coef=0.5,
-                         hint_coef=1.0, epochs=2, minibatches=2)
+                         epochs=2, minibatches=2)
     trainer = MappoTrainer([(OBS, 3)], 4, config)
     if masked is not None:
         trainer._masked_stats = masked
     trainer.actor.goal_head.set_space(np.ones((KINDS, TARGETS), bool), [OWN])
-    trainer.hint_at = torch.tensor([HINT])
-    trainer.hint_owner = torch.tensor([[0, 0, 1]])
-    trainer.hint_block_names = ["core", "move"]
     trainer._sync_rollout()
     steps, envs = 12, 4
     buffer = RolloutBuffer(steps, envs, 1, OBS, 4, 3, trainer.foresight_outputs, trainer.recurrent_size, True,
@@ -50,9 +47,6 @@ def scenario_stats(masked: bool | None = None) -> dict[str, float]:
         if step % 3 == 2:
             obs[:, 0, achieved_kind + 0] = 1.0
             obs[:, 0, achieved_kind + KINDS + 1 + step % 3] = 1.0
-        obs[:, 0, HINT] = rng.integers(0, 4, envs)              # 0 = no hint, else action + 1
-        obs[:, 0, HINT + 1] = rng.random(envs, dtype=np.float32)
-        obs[:, 0, HINT + 2] = (rng.random(envs) < 0.25).astype(np.float32)
         state = rng.random((envs, 4), dtype=np.float32)
         mask = np.ones((envs, 1, 3), bool)
         layout = np.zeros((envs, 1), np.int64)

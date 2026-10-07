@@ -11,7 +11,10 @@ from enum import IntEnum
 
 import numpy as np
 
-PROTOCOL_VERSION = 24
+PROTOCOL_VERSION = 25
+# 25: a STEP's present is 2 for the "human" stand-in's row (Step.stand_in), which the learner plays with a frozen
+# partner and never trains on (it was 0, the sim's script's); MODE_FLAG_STAND_IN in a training MODE says the learner
+# can field one. The messages' layout is protocol 24's.
 # 24: the mental map (perception-goals REDESIGN §3): SPEC ends with the map bytes per agent (0 without a map block),
 # and a stage with one ends each STEP with every agent's map crop and the ended envs' final crops, after the images.
 # The crops are always on the socket, even with device buffers. A stage without one sends protocol 23's STEP.
@@ -62,7 +65,10 @@ ACT_HEADER = struct.Struct("<II")
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
 MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; the learner the rest
-MODE_FLAG_STAND_IN = 2  # every party of the evaluation has the "human" stand-in in one seat (dungeon-curriculum I7)
+# The learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): an evaluation has it in
+# one seat of every party, training in its share of them; without the flag no party has one.
+MODE_FLAG_STAND_IN = 2
+PRESENT_STAND_IN = 2  # a STEP's present for the stand-in's row (protocol 25)
 WEIGHTS_COUNT = struct.Struct("<I")  # then that many float32 weights, one per layout in SPEC order
 REPLAY = struct.Struct("<IfI")  # seed base, share of training resets, count; then that many uint32 seed indexes
 MAX_REPLAY_SEEDS = 65536
@@ -219,6 +225,9 @@ class Step:
     # map block.
     map: np.ndarray | None = None
     final_map: np.ndarray | None = None
+    # [E, A] bool: the "human" stand-in's row (present 2 on the wire, protocol 25) -- present, played by a frozen
+    # partner, never a sample. None where nobody said (a step built by hand): no stand-in.
+    stand_in: np.ndarray | None = None
 
 
 def no_frame(shape: tuple[int, ...]) -> np.ndarray:
@@ -357,6 +366,8 @@ def encode_step(spec: Spec, step: Step) -> bytes:
         if array is None:
             full = (envs, *shape[1:])
             array = no_frame(full) if name in IMAGE_FIELDS else np.zeros(full if name in ENDED_ONLY else shape, dtype)
+        if name == "present" and step.stand_in is not None:
+            array = np.where(np.asarray(step.stand_in, dtype=bool), PRESENT_STAND_IN, np.asarray(array, dtype=dtype))
         if name in ENDED_ONLY:
             array = np.asarray(array)[done]
         parts.append(np.ascontiguousarray(array, dtype=dtype).reshape(shape).tobytes())
@@ -372,9 +383,10 @@ def _decode_layout(spec: Spec, envs: int, device: bool) -> list[tuple[str, np.dt
     key = (spec, envs, device)
     layout = _DECODE_LAYOUTS.get(key)
     if layout is None:
-        # The u1 flags (mask, present, done, terminated) read as bool; the images and the map crops are bytes.
+        # The u1 flags (mask, done, terminated) read as bool; the images, the map crops and present (0, 1 or 2) are
+        # bytes.
         layout = _DECODE_LAYOUTS[key] = [(name, dtype, shape, dtype == np.dtype("u1") and name not in IMAGE_FIELDS
-                                          and name not in MAP_FIELDS)
+                                          and name not in MAP_FIELDS and name != "present")
                                          for name, dtype, shape in spec.step_layout(envs, device=device)]
     return layout
 
@@ -408,6 +420,10 @@ def decode_step(spec: Spec, payload: bytes | bytearray | memoryview, device=None
         arrays[name] = array
     if offset != len(payload):
         raise ValueError(f"STEP of {len(payload)} bytes does not hold the {envs} envs it says")
+    # A seat with a character, and the stand-in's among them.
+    raw = arrays["present"]
+    arrays["present"] = raw > 0
+    arrays["stand_in"] = raw == PRESENT_STAND_IN
     if spec.map_bytes:
         # The camera's rows as the learner keeps them: each image with its map crop after it (Step.image).
         arrays["image"] = _with_map(arrays["image"], arrays["map"])
@@ -463,8 +479,9 @@ def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline:
                 opponents_only: bool = False, first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> bytes:
     """MODE payload. An evaluation plays seed indexes [first_seed, first_seed + episodes) of seed_base, so a
     cluster's sims can each play their own share of one evaluation's seeds (ClusterEnv). `arena` pins it to a held-out
-    arena (stage.json's index + 1; 0 = the stage's own draw, protocol 18). `stand_in` puts the "human" stand-in in one
-    seat of every party (MODE_FLAG_STAND_IN: the eval arm "with_human"); its row is not present, so never scored."""
+    arena (stage.json's index + 1; 0 = the stage's own draw, protocol 18). `stand_in` (MODE_FLAG_STAND_IN): the learner
+    plays the "human" stand-in's row with a frozen partner -- in an evaluation one seat of every party has it (the eval
+    arm "with_human"), in training its share of the parties; without it no party has one."""
     name = baseline.encode("ascii")
     if len(name) >= POLICY_NAME_SIZE:
         raise ValueError(f"baseline policy name '{baseline}' is too long")
@@ -484,7 +501,7 @@ def decode_mode_arena(payload: bytes) -> int:
 
 
 def decode_mode_stand_in(payload: bytes) -> bool:
-    """Whether a MODE's evaluation plays the human stand-in in every party."""
+    """Whether a MODE fields the human stand-in (every party of an evaluation, a share of training's)."""
     return bool(MODE.unpack(payload)[3] & MODE_FLAG_STAND_IN)
 
 

@@ -104,6 +104,11 @@ class ProgressWriter:
                                         if isinstance(base, (int, float)) and isinstance(value, (int, float))
                                         else None)
 
+    def note(self, key: str, text: str) -> None:
+        """A line of state forge status shows as it is (stand_in: whether the "human" stand-in is fielded, and why
+        not), kept until it changes."""
+        self.static[key] = text
+
     def training(self, row: dict) -> None:
         """An update's metrics row (train.py's metrics.csv row)."""
         self.metrics = dict(row)

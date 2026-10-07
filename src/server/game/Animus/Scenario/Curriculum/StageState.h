@@ -37,7 +37,6 @@
 #include "SeatCharacter.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
-#include "WingTeacher.h"
 #include <array>
 #include <vector>
 
@@ -396,22 +395,9 @@ namespace Animus::Curriculum
         /// A commanded arena's goal for this seat (ArenaDefinition::CommandedGoals), and when it was given.
         int32 Commanded = NO_GOAL;
         uint32 CommandedAtMs = 0;
-        /// A whole dungeon's instruction (Instance.WingInstruct): drawn once a run, while the support lasts; an
-        /// instructed seat's goal is its role's rule (StageScenario::InstructedGoal), unlearned.
-        bool Instructed = false;
-        bool InstructDrawn = false;
         /// A whole dungeon's party makeup (StageScenario::FitsDungeonRole): this seat's place in it.
         uint8 DungeonRole = 0;
-        /// Played by the dungeon script this run (Instance.WingScript), and the script's press for this decision.
-        bool Scripted = false;
-        bool ScriptDrawn = false;
-        int32 ScriptAction = -1;
-        int32 HintAction = -1;                  // the script's suggestion this decision, and what the seat pressed
-        int32 Pressed = -1;                     // (the "Wing stuck" log line)
-        std::string ScriptReason;               // why the dungeon teacher chose it (WingTeacher::Choice::Reason)
-        /// The "human" stand-in's view of its situation as the teacher reads one (StageScenario::TeacherFacts), kept
-        /// by ObserveSeat for DecideStandIn in a stage with the sight block: its hands act on it.
-        WingTeacher::Facts StandInSeen;
+        int32 Pressed = -1;                     // what the seat pressed this decision (the "Wing stuck" log line)
         std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
@@ -656,11 +642,6 @@ namespace Animus::Curriculum
             Achieved = NO_GOAL;
             Commanded = NO_GOAL;
             CommandedAtMs = 0;
-            Instructed = false;
-            InstructDrawn = false;
-            Scripted = false;
-            ScriptDrawn = false;
-            ScriptAction = -1;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;
@@ -785,14 +766,6 @@ namespace Animus::Curriculum
         uint32 EpisodeMapId = 0;            // read only when HasEpisodeMap: Eastern Kingdoms is map 0
         bool HasEpisodeMap = false;
         uint8 EpisodeLevel = 0;
-        /// A whole dungeon's run (InstanceEncounter::BeforeLevel, from the ladder's rung): the chance each seat is
-        /// played by the dungeon script, and the weight of the hints every seat imitates; both 0 in a probe and in
-        /// evaluation.
-        float WingScript = 0.0f;
-        float WingHint = 0.0f;
-        /// Hint imitation switched off for this run's rung (StageScenario::WingHintOff): the probes beat the script, so
-        /// neither a hint nor a scripted seat's own press is imitated.
-        bool WingHintOff = false;
         /// The side the episode wants its seats on (TeamId + 1; 0: any): a quest or a town belongs to one. The race
         /// draw honours it, and a kept character of the other side is rebuilt.
         uint8 EpisodeTeam = 0;
@@ -808,15 +781,13 @@ namespace Animus::Curriculum
         std::array<uint32, MAX_SEATS + 1> ResurrectBy{};
         std::array<uint64, MAX_SEATS + 1> ResurrectMs{};
 
-        /// The episode's "human" stand-in (StandIn.h, StageScenario::DrawStandIn): the seat it plays, or -1 for an
-        /// all-bot party; its style and its episode so far; where a wander set out from; the abilities it pressed.
+        /// The episode's "human" stand-in (StandIn.h, StageScenario::DrawStandIn): the seat a frozen partner plays, or
+        /// -1 for an all-bot party; its style (leads or follows, the role it wants) and the role its seat's build plays.
         struct StandInSeat
         {
             int32 Seat = -1;
-            StandIn::Behaviour Plays;
-            float WanderFromX = 0.0f;
-            float WanderFromY = 0.0f;
-            uint32 Presses = 0;
+            StandIn::Style Style;
+            StandIn::Role Role = StandIn::Role::Damage;
         } StandInPlay;
     };
 }

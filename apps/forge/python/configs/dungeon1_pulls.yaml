@@ -26,8 +26,6 @@ total_env_steps: 300000000
 mappo:
   # A drill is a minute or two.
   gamma: 0.998
-  # No teacher in the drill: nothing is hinted.
-  hint_coef: 0.0
 
 eval:
   every_env_steps: 10000000

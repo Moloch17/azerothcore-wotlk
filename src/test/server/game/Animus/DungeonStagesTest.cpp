@@ -27,7 +27,6 @@
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include "WingRun.h"
-#include "WingTeacher.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <set>
@@ -37,7 +36,6 @@
 namespace Cu = Animus::Curriculum;
 namespace Ea = Animus::Curriculum::EntityActions;
 namespace Wr = Animus::Curriculum::WingRun;
-namespace Wt = Animus::Curriculum::WingTeacher;
 namespace MC = Animus::Curriculum::MoveControls;
 
 /*
@@ -84,34 +82,12 @@ namespace
             finals.push_back(arena.WeightFinal >= 0 ? uint32(arena.WeightFinal) : arena.Weight);
         return finals;
     }
-
-    /// A layout's action space as a dungeon stage lays it out (WingTeacherTest's): the no-op, the move block, the sight
-    /// block, the duel block and the gauntlet block.
-    Wt::PressSpace Space()
-    {
-        Wt::PressSpace space;
-        space.Move = { 1, MC::ACTION_COUNT };
-        space.Sight = { space.Move.First + space.Move.Count, Cu::SightBlock::ACTION_COUNT };
-        space.Duel = { space.Sight.First + space.Sight.Count, 12 };
-        space.Gauntlet = { space.Duel.First + space.Duel.Count, 3 };
-        return space;
-    }
-
-    Wt::Place At(float yards, float bearing, int32 slot)
-    {
-        Wt::Place place;
-        place.Present = true;
-        place.Yards = yards;
-        place.Bearing = bearing;
-        place.Slot = slot;
-        return place;
-    }
 }
 
 // **The stages as defined**: the seed chain from G1, every one a party of five on a real dungeon's own ground
 // (InstanceEncounter, InstanceLadder::Wing, the party's group), G1's blocks (the party frames revision 2, the sight
 // list
-// with the combat block's columns) with the pack and hint blocks -- and no crowd block (its pack ahead and nearest
+// with the combat block's columns) with the pack block -- and no crowd block (its pack ahead and nearest
 // object
 // are radius reads through walls), no party or support block (the party frames are the members' one source).
 TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
@@ -134,7 +110,7 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
         EXPECT_TRUE(stage.InDefaultQueue) << name;
         EXPECT_EQ(stage.Blocks, blocks) << name << ": the party stages share one layout, so each seeds the next whole";
         for (Id block : { Id::Core, Id::Move, Id::Duel, Id::Pet, Id::Pack, Id::Gauntlet, Id::Vision, Id::Entities,
-            Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Hint, Id::Goal })
+            Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Goal })
             EXPECT_TRUE(stage.Has(block)) << name << " " << Cu::BlockName(block);
         // The party frames (revision 2) are the members' one source: no party or support block beside them.
         for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Travel, Id::Order, Id::Companion })
@@ -146,13 +122,13 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             EXPECT_EQ(arena.Instance, Cu::InstanceLadder::Wing) << name << " " << arena.Name;
             EXPECT_EQ(arena.Seats, Cu::SeatPlan::Party) << name << " " << arena.Name;
             EXPECT_TRUE(arena.PartyGroup) << name << " " << arena.Name;
-            EXPECT_FALSE(arena.Owner || arena.Directed || arena.Teacher || arena.DeathRuns) << name << " "
-                << arena.Name << ": no owner, no director, never the teacher's own runs, no corpse run";
+            EXPECT_FALSE(arena.Owner || arena.Directed || arena.DeathRuns) << name << " "
+                << arena.Name << ": no owner, no director, no corpse run";
             EXPECT_GE(arena.InstanceRow, 0) << name << " " << arena.Name;
         }
     }
 
-    // G2: a corridor of four packs in route order, in Ragefire and the Deadmines, taught.
+    // G2: a corridor of four packs in route order, in Ragefire and the Deadmines.
     Cu::StageDefinition const& g2 = Stage("group2_corridor");
     ASSERT_EQ(g2.Arenas.size(), 2u);
     EXPECT_EQ(g2.Arenas[0].InstanceRow, ROW_RAGEFIRE);
@@ -160,7 +136,6 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
     for (Cu::ArenaDefinition const& arena : g2.Arenas)
     {
         EXPECT_EQ(arena.CorridorPacks, 4u) << arena.Name;
-        EXPECT_TRUE(arena.Taught) << arena.Name;
         EXPECT_FALSE(arena.PullDrill || arena.EvalOnly) << arena.Name;
     }
     EXPECT_EQ(g2.Arenas[1].LevelFirst, 17);
@@ -171,10 +146,9 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
     ASSERT_EQ(d1.Arenas.size(), 1u);
     EXPECT_TRUE(d1.Arenas[0].PullDrill);
     EXPECT_EQ(d1.Arenas[0].InstanceRow, ROW_RAGEFIRE);
-    EXPECT_FALSE(d1.Arenas[0].Taught);
     EXPECT_TRUE(Cu::EvaluatesDrills(d1.Arenas));
 
-    // D2 and D3: the whole dungeon, taught, and Wailing Caverns held out.
+    // D2 and D3: the whole dungeon, and Wailing Caverns held out.
     for (auto const& [name, row] : { std::pair<char const*, int8>{ "dungeon2_ragefire", ROW_RAGEFIRE },
         std::pair<char const*, int8>{ "dungeon3_deadmines", ROW_DEADMINES } })
     {
@@ -183,13 +157,11 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
         Cu::ArenaDefinition const& dungeon = stage.Arenas[0];
         EXPECT_EQ(dungeon.Name, "dungeon");
         EXPECT_EQ(dungeon.InstanceRow, row) << name;
-        EXPECT_TRUE(dungeon.Taught) << name;
         EXPECT_FALSE(dungeon.PullDrill || dungeon.EvalOnly || dungeon.CorridorPacks) << name;
         Cu::ArenaDefinition const& heldout = stage.Arenas[1];
         EXPECT_EQ(heldout.Name, "heldout");
         EXPECT_EQ(heldout.InstanceRow, ROW_WAILING_CAVERNS) << name;
         EXPECT_TRUE(heldout.EvalOnly) << name;
-        EXPECT_FALSE(heldout.Taught) << name;
         EXPECT_FALSE(Cu::EvaluatesDrills(stage.Arenas)) << name;
     }
     // The Deadmines' bar is at 17-20.
@@ -240,7 +212,7 @@ TEST(DungeonStagesTest, WailingCavernsIsNeverDrawnInTraining)
             if (rows[std::size_t(arena.InstanceRow)].MapId != 43)
                 continue;
             EXPECT_TRUE(arena.EvalOnly) << stage.Name << " " << arena.Name << " trains on Wailing Caverns";
-            EXPECT_FALSE(arena.Taught || arena.CorridorPacks || arena.PullDrill) << stage.Name << " " << arena.Name;
+            EXPECT_FALSE(arena.CorridorPacks || arena.PullDrill) << stage.Name << " " << arena.Name;
             ++heldOut;
         }
     }
@@ -327,8 +299,8 @@ TEST(DungeonStagesTest, AChainPullIsAPackJoiningAnotherPacksFight)
     EXPECT_EQ(drawn.Note({ 6 }), 0u) << "a new fight";
 }
 
-// **Tier-scaled outcomes** (animus-tier-scaled-outcomes): a wing's tier is its support ladder's rung -- 0 at the most
-// support, rising to the evaluation's own conditions -- never the stage's pinned row, which is the same every run.
+// **Tier-scaled outcomes** (animus-tier-scaled-outcomes): a wing's tier is its difficulty ladder's rung -- 0 at the
+// easiest, rising to the evaluation's own conditions -- never the stage's pinned row, which is the same every run.
 TEST(DungeonStagesTest, AWingsTierIsItsLaddersRung)
 {
     constexpr uint32 LAST = uint32(Cu::StageScenario::WING_RUNGS.size()) - 1;
@@ -336,15 +308,19 @@ TEST(DungeonStagesTest, AWingsTierIsItsLaddersRung)
     EXPECT_EQ(Wr::TierOfRung(LAST), 4u);
     for (uint32 rung = 1; rung <= LAST; ++rung)
         EXPECT_GE(Wr::TierOfRung(rung), Wr::TierOfRung(rung - 1));
-    // The ladder's last rung is the evaluation's conditions: the dungeon's own levels, no help, no wipes spared.
+    // The ladder's last rung is the evaluation's conditions: the dungeon's own levels, no wipes spared. Every rung is
+    // a step of difficulty -- the levels or the spare wipes come down, never back up, and no two rungs are the same.
     Cu::StageScenario::WingRung const& last = Cu::StageScenario::WING_RUNGS.back();
     EXPECT_EQ(last.Lift, 0u);
     EXPECT_EQ(last.ExtraWipes, 0u);
-    EXPECT_FLOAT_EQ(last.Script, 0.0f);
-    EXPECT_FLOAT_EQ(last.Hint, 0.0f);
-    // The teacher hints from the first rung and tapers to none.
-    EXPECT_GT(Cu::StageScenario::WING_RUNGS.front().Hint, 0.0f);
-    EXPECT_GT(Cu::StageScenario::WING_RUNGS.front().Script, 0.0f);
+    for (uint32 rung = 1; rung <= LAST; ++rung)
+    {
+        Cu::StageScenario::WingRung const& before = Cu::StageScenario::WING_RUNGS[rung - 1];
+        Cu::StageScenario::WingRung const& now = Cu::StageScenario::WING_RUNGS[rung];
+        EXPECT_LE(now.Lift, before.Lift) << rung;
+        EXPECT_LE(now.ExtraWipes, before.ExtraWipes) << rung;
+        EXPECT_TRUE(now.Lift < before.Lift || now.ExtraWipes < before.ExtraWipes) << rung << " repeats " << rung - 1;
+    }
 
     // SeededPick: the same seed, the same pick; spread over the picks.
     std::set<uint32> picks;
@@ -391,8 +367,7 @@ TEST(DungeonStagesTest, TheStandInPlaysAShareOfEveryPartyStage)
             EXPECT_LE(arena.StandInShare, 100) << name << " " << arena.Name;
             EXPECT_TRUE(arena.Seats == Cu::SeatPlan::Party) << name << " " << arena.Name;
         }
-    for (char const* name : { "move4_follow", "combat3_survive", "group1_roles", "teacher_ragefire",
-        "teacher_deadmines" })
+    for (char const* name : { "move4_follow", "combat3_survive", "group1_roles" })
         for (Cu::ArenaDefinition const& arena : Stage(name).Arenas)
             EXPECT_EQ(arena.StandInShare, -1) << name << " " << arena.Name;
 }
@@ -427,7 +402,7 @@ TEST(DungeonStagesTest, EveryBossOfTheDungeonsIsMeasured)
 // **D3's doors, levers and the cannon through the client's handlers** (the user: "use the proper actions to activate
 // doors and cannons"; no auto doors): D3's layout acts on what its sight list names -- an interact (CMSG_GAMEOBJ_USE)
 // on each of the Deadmines' levers, the key item (the Defias Gunpowder, CMSG_USE_ITEM) on the cannon -- and the doors
-// the levers and the cannon open are shut to a hand. The teacher that hints D3's seats does the same.
+// the levers and the cannon open are shut to a hand.
 TEST(DungeonStagesTest, TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandlers)
 {
     Cu::StageDefinition const& d3 = Stage("dungeon3_deadmines");
@@ -436,23 +411,10 @@ TEST(DungeonStagesTest, TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandler
     EXPECT_EQ(Cu::SightBlock::PressOf(Cu::SightBlock::ACTION_INTERACT_FIRST), Ea::Press::Interact);
     EXPECT_EQ(Cu::SightBlock::PressOf(Cu::SightBlock::ACTION_USE_ITEM_FIRST), Ea::Press::UseItem);
 
-    // The Deadmines' levers (the Factory, Foundry and Mast Room doors') and the Iron Clad Door's cannon.
+    // The Deadmines' levers (the Factory, Foundry and Mast Room doors'): an interact through CMSG_GAMEOBJ_USE.
     constexpr uint32 LEVERS[] = { 101831, 101834, 101832 };
-    constexpr uint32 CANNON = 16398;
-    Wt::PressSpace const space = Space();
-    std::vector<uint8> const mask(1001, 1);
-    auto const none = [](Wt::Spell) { return -1; };
     for (uint32 lever : LEVERS)
     {
-        Wt::Facts facts;
-        facts.Is = Wt::Role::Tank;
-        facts.FoodLeft = facts.DrinkLeft = true;
-        facts.Object = At(3.0f, 0.1f, 9);
-        facts.ObjectReach = 5.0f;
-        Wt::Choice const choice = Wt::Decide(facts);
-        int32 const press = Wt::Press(choice, space, mask.data(), none);
-        ASSERT_EQ(press, int32(space.Sight.First + Cu::SightBlock::ACTION_INTERACT_FIRST + 9)) << lever << " "
-            << choice.Reason;
         ObjectGuid const guid = ObjectGuid::Create<HighGuid::GameObject>(lever, 9);
         WorldPacket packet = Ea::GameObjectUse(guid);
         EXPECT_EQ(packet.GetOpcode(), CMSG_GAMEOBJ_USE);
@@ -466,16 +428,7 @@ TEST(DungeonStagesTest, TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandler
         EXPECT_EQ(Ea::JudgeObjectUse(judged), Ea::Refusal::None) << lever;
     }
 
-    // The cannon: its key item used on it, never a hand.
-    Wt::Facts cannon;
-    cannon.Is = Wt::Role::Tank;
-    cannon.FoodLeft = cannon.DrinkLeft = true;
-    cannon.Object = At(3.0f, 0.1f, 4);
-    cannon.ObjectReach = 5.0f;
-    cannon.ObjectNeedsKey = true;
-    Wt::Choice const choice = Wt::Decide(cannon);
-    EXPECT_EQ(Wt::Press(choice, space, mask.data(), none),
-        int32(space.Sight.First + Cu::SightBlock::ACTION_USE_ITEM_FIRST + 4)) << CANNON << " " << choice.Reason;
+    // The Iron Clad Door's cannon: its key item (the gunpowder) used on it through CMSG_USE_ITEM, never a hand.
     SpellCastTargets targets;
     targets.SetGOTarget(nullptr);
     EXPECT_EQ(Ea::UseItem(255, 23, ObjectGuid::Empty, 6250, 1, targets).GetOpcode(), CMSG_USE_ITEM);
@@ -496,7 +449,7 @@ TEST(DungeonStagesTest, TheDeadminesDoorsLeversAndCannonAreUsedThroughTheHandler
 }
 
 // **M1 and M2 are unchanged** by the party stages (their layouts are pinned in SightBlockTest as well): their blocks,
-// one arena each of their own oppositions, no stand-in, nothing taught.
+// one arena each of their own oppositions, no stand-in.
 TEST(DungeonStagesTest, TheMovementStagesAreUnchanged)
 {
     using Id = Cu::BlockId;
@@ -508,7 +461,7 @@ TEST(DungeonStagesTest, TheMovementStagesAreUnchanged)
         for (Cu::ArenaDefinition const& arena : Stage(name).Arenas)
         {
             EXPECT_EQ(arena.StandInShare, -1) << name;
-            EXPECT_FALSE(arena.Taught || arena.CorridorPacks || arena.LevelFirst) << name;
+            EXPECT_FALSE(arena.CorridorPacks || arena.LevelFirst) << name;
             EXPECT_EQ(arena.Seats, Cu::SeatPlan::Solo) << name;
         }
     EXPECT_EQ(Stage("move1_controls").Arenas.front().Against, Cu::Opposition::Sight);
@@ -560,35 +513,16 @@ TEST(DungeonStagesTest, ARisenSeatWalkingBackIsAwayNotLost)
 }
 
 // **No learned seat reads the crowd block** (bots perceive only what a player perceives): its pack ahead, overflow and
-// nearest object are radius reads off the server's lists. Only the teacher's check stages carry it, and they never
-// train a policy (every arena is the teacher's); the startup check refuses it anywhere else.
-TEST(DungeonStagesTest, NoStageWithALearnedSeatDeclaresTheCrowdBlock)
+// nearest object are radius reads off the server's lists. Every stage trains a policy, so none carries it: the startup
+// check refuses it anywhere.
+TEST(DungeonStagesTest, NoStageDeclaresTheCrowdBlock)
 {
     EXPECT_TRUE(Cu::CurriculumProblems().empty());
-    uint32 teachers = 0;
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
-    {
-        if (Cu::TrainsAPolicy(stage))
-            EXPECT_FALSE(stage.Has(Cu::BlockId::Crowd)) << stage.Name << " trains a policy on the crowd block";
-        else
-        {
-            ++teachers;
-            EXPECT_FALSE(stage.InDefaultQueue) << stage.Name;
-        }
-    }
-    EXPECT_EQ(teachers, 2u) << "teacher_ragefire and teacher_deadmines";
-    EXPECT_FALSE(Cu::TrainsAPolicy(Stage("teacher_ragefire")));
-    EXPECT_FALSE(Cu::TrainsAPolicy(Stage("teacher_deadmines")));
-    for (char const* name : PARTY_STAGES)
-        EXPECT_TRUE(Cu::TrainsAPolicy(Stage(name))) << name;
-
-    // A stage with one learned arena beside a teacher's trains a policy.
-    Cu::StageDefinition mixed;
-    mixed.Arenas.resize(2);
-    mixed.Arenas[0].Teacher = true;
-    EXPECT_TRUE(Cu::TrainsAPolicy(mixed));
-    mixed.Arenas[1].Teacher = true;
-    EXPECT_FALSE(Cu::TrainsAPolicy(mixed));
+        EXPECT_FALSE(stage.Has(Cu::BlockId::Crowd)) << stage.Name << " trains a policy on the crowd block";
+    // Nor is any stage left without a learned seat: the teacher's check stages are gone.
+    for (char const* name : { "teacher_ragefire", "teacher_deadmines" })
+        EXPECT_EQ(Cu::FindStage(name), nullptr) << name;
 }
 
 namespace

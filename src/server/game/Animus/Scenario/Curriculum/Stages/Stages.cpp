@@ -605,17 +605,14 @@ namespace
     /// the sight list with the combat block's nameplate columns and the player, pet and target frames, the party frames
     /// (PartyFrames revision 2: the one source of the members' state, their minimap dots and targets), duel, pet and
     /// gauntlet (eat, drink, rest) -- and a whole dungeon's: the pack block (whose slots, in a sight stage, are what
-    /// the
-    /// seat saw: StageScenario::ViewSeat) and the hint block the teacher writes (blind to the networks). No crowd
-    /// block:
-    /// its pack ahead, its overflow and the nearest object are read off the server's lists within a radius, through
-    /// walls -- the sight list names what a player sees, and its interact and use-item presses open the doors and fire
-    /// the cannon. No party or support block: the party frames are the members' one source, and a heal goes as the
-    /// client sends it.
+    /// the seat saw: StageScenario::ViewSeat). No crowd block: its pack ahead, its overflow and the nearest object are
+    /// read off the server's lists within a radius, through walls -- the sight list names what a player sees, and its
+    /// interact and use-item presses open the doors and fire the cannon. No party or support block: the party frames
+    /// are the members' one source, and a heal goes as the client sends it.
     std::vector<BlockId> DungeonBlocks()
     {
         using enum BlockId;
-        return { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Hint, Goal };
+        return { Core, Move, Duel, Pet, Pack, Gauntlet, Vision, Entities, Map, Sight, PartyFrames, Combat, Goal };
     }
 
     /// The "human" stand-in's share of the dungeon stages' training episodes (I7, from G2 on), percent: a fifth of
@@ -919,54 +916,6 @@ namespace
             .FocusChance = 100,
         });
 
-        // **The dungeon teacher's check** (dungeon-curriculum I6): not training stages -- they are in no queue, and
-        // their arenas' runs are the teacher's (ArenaDefinition::Teacher). The teacher (WingTeacher) plays every seat
-        // of a whole dungeon, door to last boss with every pack and side boss on the way, on the player controller's
-        // keys and the sight block's presses: `forge run teacher_ragefire dungeon 96` reads its "Wing run" lines, the
-        // gate before any taper (the user's rule: consistent full clears of every pull and boss). The blocks are C3's
-        // (the camera, its entities, the map, the sight list with the combat block's nameplate columns, player, pet and
-        // target frames; duel, pet, gauntlet), the party frames (PartyFrames revision 2, G1: the one source of the
-        // members' state, in place of the party block's server list) and a whole dungeon's (pack, crowd), the hint
-        // block the teacher writes, and the goal block. No support block: a heal goes as the client sends it -- the
-        // focus, else a friendly selection, else the seat itself -- never to a server list's friend.
-        //
-        // **They never train a policy** (TrainsAPolicy false: every arena is the teacher's): the crowd block's columns
-        // are radius reads off the server's lists, through walls, which no learned seat may see -- only a script may
-        // (Problem refuses a crowd block in any stage with a learned seat). A learner pointed at one by mistake reads a
-        // row the teacher plays.
-        stages.push_back({
-            .Name = "teacher_ragefire",
-            .Suffix = "_teacher",
-            .Extends = "combat3_survive",
-            // The party frames as G1 has them: move4_follow's, merged by name.
-            .Merges = { "move4_follow" },
-            .Summary = "the dungeon teacher's check: it plays a party of five through Ragefire Chasm, door to Bazzalan, "
-                "every pack and side boss, on the controller and the sight presses (not for training)",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Crowd, Vision, Entities, Map, Sight, PartyFrames,
-                Combat, Hint, Goal },
-            .Arenas = {
-                { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .Teacher = true,
-                    .EpisodeSeconds = 7200 },
-            },
-            .InDefaultQueue = false,
-        });
-        stages.push_back({
-            .Name = "teacher_deadmines",
-            .Suffix = "_teacher",
-            .Extends = "teacher_ragefire",
-            .Summary = "the dungeon teacher's check: it plays a party of five through the Deadmines, door to VanCleef, "
-                "every pack and side boss, its doors and the cannon by real presses (not for training)",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Crowd, Vision, Entities, Map, Sight, PartyFrames,
-                Combat, Hint, Goal },
-            .Arenas = {
-                { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
-                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .Teacher = true,
-                    .EpisodeSeconds = 14400 },
-            },
-            .InDefaultQueue = false,
-        });
-
         // **The party stages** (dungeon-curriculum G2, D1-D3, 2026-10-07): five seats on a real dungeon's own ground,
         // its packs and patrols where the world database stands them (InstanceEncounter, InstanceLadder::Wing; a
         // fresh instance every run), every race and class at the dungeon's levels, seeing what a player sees (the
@@ -980,9 +929,8 @@ namespace
         // G2 -- corridor: a real dungeon wing's packs in route order, CorridorPacks of them a run, from a pack drawn
         // each run (the packs before it cleared, the party set down short of it, as a drill's); Ragefire Chasm and the
         // Deadmines. The loop is pull, fight, rest, ready, next; the party's leader is its tank, or the stand-in when
-        // it leads. The dungeon teacher (I6) hints every seat and plays the rung's share of them, tapered on the whole
-        // dungeon's ladder (StageScenario::WING_RUNGS, stepping on the probes alone), its imitation off from the rung
-        // the probes beat the script on. Outcome: each pack cleared in route order (Clear), each pull started with the
+        // it leads. The runs climb the whole dungeon's difficulty ladder (StageScenario::WING_RUNGS: levels above the
+        // band and spare wipes, stepping on the probes alone) with nothing scripted beside them. Outcome: each pack cleared in route order (Clear), each pull started with the
         // party ready (ReadyPull), the corridor's kills; Cost: a second pack drawn into a fight (PullExtra), standing
         // about (Idle), straying from the leader (Lost), deaths and wipes, the clock.
         stages.push_back({
@@ -990,15 +938,15 @@ namespace
             .Suffix = "_corridor",
             .Extends = "group1_roles",
             .Summary = "Ragefire Chasm and the Deadmines, a corridor of their real packs in route order: pull, fight, "
-                "rest, ready, next; the dungeon teacher hinting and tapering, the stand-in in a fifth of the runs",
+                "rest, ready, next; the stand-in in a fifth of the runs",
             .Blocks = DungeonBlocks(),
             .Arenas = {
                 { .Name = "ragefire", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .EpisodeSeconds = 900,
-                    .Taught = true, .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE },
+                    .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE },
                 { .Name = "deadmines", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .EpisodeSeconds = 1200,
-                    .Taught = true, .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE, .LevelFirst = 17,
+                    .CorridorPacks = 4, .StandInShare = DUNGEON_STAND_IN_SHARE, .LevelFirst = 17,
                     .LevelLast = 20 },
             },
         });
@@ -1024,7 +972,7 @@ namespace
         });
 
         // D2 -- Ragefire: the door to Bazzalan, a full clear -- every pull and side boss (Instance.WingFullClear's
-        // route), deaths and rejoins in play, the teacher tapering to none on the whole dungeon's ladder. Go-Explore
+        // route), deaths and rejoins in play, the levels and spare wipes stepping down the whole dungeon's ladder. Go-Explore
         // starts from cells earlier runs reached (the learner's explore). Outcome, tier-scaled by the ladder's rung:
         // the bosses (Kill: Instance.WingMidBoss, WingBoss), the full clear (Clear: Instance.WingClear), the kills,
         // pulls started ready; Cost: wipes (the second ends the run), deaths, chain pulls, standing about, straying,
@@ -1037,13 +985,13 @@ namespace
             .Name = "dungeon2_ragefire",
             .Suffix = "_ragefire",
             .Extends = "dungeon1_pulls",
-            .Summary = "Ragefire Chasm from the door to Bazzalan: a full clear, every pull and side boss, the teacher "
-                "tapering to none; Wailing Caverns held out",
+            .Summary = "Ragefire Chasm from the door to Bazzalan: a full clear, every pull and side boss, the ladder "
+                "stepping down to its own levels; Wailing Caverns held out",
             .Blocks = DungeonBlocks(),
             .Arenas = {
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 0, .EpisodeSeconds = 7200,
-                    .Taught = true, .StandInShare = DUNGEON_STAND_IN_SHARE },
+                    .StandInShare = DUNGEON_STAND_IN_SHARE },
                 { .Name = "heldout", .Weight = 0, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 2, .EvalOnly = true,
                     .EpisodeSeconds = 10800 },
@@ -1054,7 +1002,7 @@ namespace
         // and levers by a real interact and the Iron Clad Door by the cannon and the gunpowder carried from the door
         // (the sight block's presses, through the session's handlers; nothing opens by itself), every side boss. **The
         // bar: 70% or more of the evaluation's runs cleared with at most one wipe** (the second wipe ends a run), with
-        // no help (an evaluation is never taught). Measured per boss (boss_* columns) and by role (deaths_tank,
+        // no help (an evaluation is at the ladder's last rung). Measured per boss (boss_* columns) and by role (deaths_tank,
         // _healer, _damage: the seat's place in the party, read off its build). Wailing Caverns held out, as D2.
         stages.push_back({
             .Name = "dungeon3_deadmines",
@@ -1066,7 +1014,7 @@ namespace
             .Arenas = {
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .EpisodeSeconds = 14400,
-                    .Taught = true, .StandInShare = DUNGEON_STAND_IN_SHARE, .LevelFirst = 17, .LevelLast = 20 },
+                    .StandInShare = DUNGEON_STAND_IN_SHARE, .LevelFirst = 17, .LevelLast = 20 },
                 { .Name = "heldout", .Weight = 0, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 2, .EvalOnly = true,
                     .EpisodeSeconds = 10800 },
@@ -1140,23 +1088,15 @@ namespace
             return "pack health is a percentage of a pull's creatures' own";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
-        if (arena.Teacher && (arena.Instance != InstanceLadder::Wing || arena.PullDrill || arena.EvalOnly
-            || !stage.Has(BlockId::Sight)))
-            return "a teacher arena is a whole dungeon's run, played by the teacher on the sight block's presses";
         if (arena.EvalOnly && arena.PullDrill)
             return "a held-out arena is played by evaluations, which never play a pull drill";
-        // The dungeon curriculum's party stages (G2, D1-D3): the teacher's hints on a whole dungeon's or a corridor's
-        // training runs, a corridor of packs, the level band and the stand-in's share.
+        // The dungeon curriculum's party stages (G2, D1-D3): a corridor of packs, the level band and the stand-in's
+        // share.
         bool const wing = arena.Instance == InstanceLadder::Wing;
-        if ((arena.Taught || arena.CorridorPacks || arena.LevelFirst || arena.LevelLast) && !wing)
-            return "a taught arena, a corridor and a level band are a dungeon wing's (InstanceLadder::Wing)";
-        if (arena.Taught && (arena.EvalOnly || arena.Teacher || arena.PullDrill || !stage.Has(BlockId::Hint)
-            || !stage.Has(BlockId::Sight)))
-            return "a taught arena is a dungeon's (or a corridor's) training runs, the teacher on the sight block's "
-                "presses and its hints in the hint block";
-        if (arena.CorridorPacks && (arena.PullDrill || arena.EvalOnly || arena.Teacher))
-            return "a corridor is a run of packs the party trains and is measured on: no drill, teacher or held-out "
-                "run";
+        if ((arena.CorridorPacks || arena.LevelFirst || arena.LevelLast) && !wing)
+            return "a corridor and a level band are a dungeon wing's (InstanceLadder::Wing)";
+        if (arena.CorridorPacks && (arena.PullDrill || arena.EvalOnly))
+            return "a corridor is a run of packs the party trains and is measured on: no drill or held-out run";
         if (arena.LevelFirst > arena.LevelLast || (arena.LevelFirst == 0) != (arena.LevelLast == 0))
             return "a level band is its first and last level, in order";
         if (arena.StandInShare > 100 || (arena.StandInShare > 0 && arena.Seats != SeatPlan::Party
@@ -1470,10 +1410,10 @@ namespace
         // frames moved into it): never beside the party or the support block, whose teammate and friend slots would
         // show the same members' health and power a second time -- and from the server's list at that.
         // The crowd block's columns (the pack ahead, the overflow, the nearest object) are radius reads off the server's
-        // lists, through walls: a script's knowledge, never a learned seat's (bots perceive what a player perceives).
-        if (stage.Has(BlockId::Crowd) && TrainsAPolicy(stage))
-            return "the crowd block reads the server's lists through walls: only a stage no policy trains in (the "
-                "teacher's check) may carry it";
+        // lists, through walls: never a learned seat's (bots perceive what a player perceives), and every stage trains
+        // a policy.
+        if (stage.Has(BlockId::Crowd))
+            return "the crowd block reads the server's lists through walls: no stage a policy trains in may carry it";
         if (stage.Has(BlockId::PartyFrames) && (stage.Has(BlockId::Party) || stage.Has(BlockId::Support)))
             return "a party member's frame is the party frames block's alone: not beside the party or support block";
         // ... and a combat stage with a party reads its members there: the combat block keeps only the player frame and
@@ -1566,14 +1506,6 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
     }
 
     return 1;
-}
-
-bool Animus::Curriculum::TrainsAPolicy(StageDefinition const& stage)
-{
-    return std::any_of(stage.Arenas.begin(), stage.Arenas.end(), [](ArenaDefinition const& arena)
-    {
-        return !arena.Teacher;
-    });
 }
 
 bool Animus::Curriculum::EvaluatesDrills(std::vector<ArenaDefinition> const& arenas)

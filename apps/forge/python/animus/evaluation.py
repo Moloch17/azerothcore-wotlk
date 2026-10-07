@@ -534,7 +534,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
-                   collect_motion: bool = False, stand_in: bool = False,
+                   collect_motion: bool = False, stand_in: bool = False, training_stand_in: bool = False,
                    excluded: Callable[[int], np.ndarray] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
@@ -553,10 +553,12 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     `collect_motion` keeps the scored seats' kinematic samples, a track per seat and episode (EvalResult.motion_tracks;
     the sample the episode ended on is the next episode's, so a track stops one decision short of the end).
 
-    `stand_in` plays the "human" stand-in in one seat of every party (the eval arm "with_human"; the sim reports its
-    row as not present, so it is never scored). `excluded(env)` -> [A] bool names rows of env's episode that just ended
-    that are not the learner's to be scored (the eval arm "with_partners": the pool partners' seats); it is asked before
-    the chooser sees the next episode's first STEP.
+    `stand_in` puts the "human" stand-in in one seat of every party (the eval arm "with_human": its row is present 2,
+    which the chooser plays with a frozen partner, and its episode info's present column is 0, so it is never scored);
+    `training_stand_in` is the training MODE's after the evaluation (the learner can field one). `excluded(env)` -> [A]
+    bool names rows of env's episode that just ended that are not the learner's to be scored (the eval arms
+    "with_partners" and "with_human": the partners' seats); it is asked before the chooser sees the next episode's first
+    STEP.
 
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
@@ -699,7 +701,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         motion_tracks=motion_tracks,
     )
 
-    training_step = env.set_mode(False)
+    training_step = env.set_mode(False, stand_in=training_stand_in)
     return result, training_step
 
 

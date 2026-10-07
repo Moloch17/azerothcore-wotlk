@@ -128,12 +128,13 @@ class ForgeEnv:
                  opponents_only: bool = False, first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> p.Step:
         """Switch the sim between training and seeded evaluation (see protocol MODE). With `opponents_only` the
         baseline plays only the opponent seats of self-play episodes and the actions sent play the rest. `arena` pins
-        an evaluation to a held-out arena (index + 1). `stand_in` puts the human stand-in in every party.
+        an evaluation to a held-out arena (index + 1). `stand_in`: the learner fields the human stand-in (a frozen
+        partner in its row) -- in every party of an evaluation, in its share of training's.
 
         Every env resets; the returned STEP holds the fresh observations and, like the first one, no transition.
         """
         payload = p.encode_mode(evaluate, seed_base, episodes, baseline, opponents_only, first_seed, arena,
-                                stand_in=evaluate and stand_in)
+                                stand_in=stand_in)
         self.sock.sendall(p.encode_header(p.MsgType.MODE, len(payload)) + payload)
         self._pending = self._receive_decision()
         return self._pending

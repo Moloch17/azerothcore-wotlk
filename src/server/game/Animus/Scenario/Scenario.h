@@ -193,9 +193,6 @@ namespace Animus
         /// the policy.
         virtual bool ScriptedAction(std::string const& policy, float const* obs, uint8 const* mask, uint16 layout,
             int32& action) const = 0;
-        /// The local policy a run plays, before its first episode ("" for the learner): a scenario whose scripted
-        /// policy plays from the world rather than the row (StageScenario's dungeon teacher) needs to know.
-        virtual void SetLocalPolicy(std::string const& /*policy*/) { }
 
         /// How often training episodes should draw each layout of Spec().Layouts, in layout order (the learner's
         /// WEIGHTS message). Weights are relative, so all-ones is the even draw a scenario starts with; an empty
@@ -211,10 +208,11 @@ namespace Animus
         /// The arena the next evaluation plays (index + 1; 0 = the stage's own draw): a held-out arena only (MODE's
         /// arena, protocol 18). False, and nothing changes, for one the scenario does not hold out.
         virtual bool PinEvaluationArena(uint32 pin) { return pin == 0; }
-        /// Whether the next evaluation plays the "human" stand-in in every episode that has a party
-        /// (MODE_FLAG_STAND_IN: the learner's "with the human stand-in" arm); off, an evaluation's parties are all
-        /// bots. Scenarios without a stand-in ignore it.
-        virtual void SetEvaluationStandIn(bool /*standIn*/) { }
+        /// Whether the learner plays the "human" stand-in's row with a frozen partner (MODE_FLAG_STAND_IN): an
+        /// evaluation then has the stand-in in every episode that has a party (the learner's "with the human
+        /// stand-in" arm), training in its share of them; without it every party is all the learner's. Scenarios
+        /// without a stand-in ignore it.
+        virtual void SetStandIn(bool /*standIn*/) { }
         /// The cells training runs of a dungeon wing start from, `share` of the time (EXPLORE_STARTS); replaces the
         /// last table. Scenarios without wings ignore it.
         virtual void SetExploreStarts(float /*share*/, std::vector<ExploreStart> /*starts*/) { }
@@ -226,9 +224,6 @@ namespace Animus
         virtual void AddClusterTally(std::string const& /*tally*/) { }
         [[nodiscard]] virtual int32 ClusterRung() const { return -1; }
         virtual void FollowClusterRung(uint32 /*rung*/) { }
-        /// The ladder's hint cutoff ("RUNG <n> HINTOFF <r>"): the rung from which hint imitation is off, -1 none.
-        [[nodiscard]] virtual int32 ClusterHintOff() const { return -1; }
-        virtual void FollowClusterHintOff(int32 /*rung*/) { }
 
         /// Once at shutdown: remove bots (without saving) and targets.
         virtual void Teardown(Env& env) = 0;

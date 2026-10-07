@@ -6,11 +6,9 @@
 # or the "human" stand-in when it leads (a fifth of the runs have it in a seat: ArenaDefinition::StandInShare). Levels:
 # Ragefire at the dungeon finder's band, the Deadmines at 17-20, each lifted by the ladder's rung.
 #
-# The dungeon teacher (I6) hints every seat and plays the rung's share of them (ArenaDefinition::Taught), tapered on
-# the whole dungeon's ladder (StageScenario::WING_RUNGS: the levels above the band, the wipes spared, the script's share
-# and the hint weight come down a rung each time the probes -- the policy alone, a fifth of the runs -- clear 0.6 of
-# their corridor; Instance.WingRung*). Hint imitation is off from the rung the probes beat the teacher's own reference
-# runs on (Instance.WingHintOffRung, animus.hint_cutoff), and the teacher never plays in an evaluation.
+# Nothing scripted plays beside the party and nothing is hinted: the runs climb the whole dungeon's difficulty ladder
+# (StageScenario::WING_RUNGS: the levels above the band and the wipes spared come down a rung each time the probes, a
+# fifth of the runs, clear 0.6 of their corridor; Instance.WingRung*), and learn from their own rewards.
 #
 # Outcome (x the rung's tier scale, 1 + 0.25 x rung/3): each of the corridor's packs cleared in route order (Clear,
 # Instance.CorridorPack), each pull started with every member ready (ReadyPull: the rest discipline), the kills (Kill).
@@ -18,8 +16,8 @@
 # about (Idle), straying from the leader (Lost), deaths and wipes (Death; the second wipe ends a run), the clock
 # (StepCost, Timeout). Shaping (faded): the route walked (Approach), the crowd (Threat), damage dealt.
 #
-# Seeded from group1_roles (the seed chain: C3 -> G1 -> G2): every block carries but the pack and hint blocks, which
-# start fresh (the hint block is never read by the networks). G1's hyperparameters otherwise; what differs is below.
+# Seeded from group1_roles (the seed chain: C3 -> G1 -> G2): every block carries but the pack block, which starts
+# fresh. G1's hyperparameters otherwise; what differs is below.
 extends: group1_roles.yaml
 run_name: group2_corridor
 
@@ -29,9 +27,7 @@ total_env_steps: 500000000
 mappo:
   # A corridor of four pulls takes 10-15 minutes: the longer horizon.
   gamma: 0.999
-  # Imitate the teacher's press where the sim hints one (a taught arena's training runs, below the cutoff rung; the
-  # hint_cutoff holds it at 0 from the cutoff on). Never self-imitation: it keeps no camera images.
-  hint_coef: 1.0
+  # Never self-imitation: it keeps no camera images.
   sil_coef: 0.0
   # The goal head keeps exploring through the party stages (the archived stage6's lesson: its choices locked in early).
   goal_entropy_final_fraction: 0.5
@@ -42,7 +38,7 @@ explore:
 
 # Fixed seeds: seed i plays its party (seat 0's class and build pair i mod pairs) in the corridor its seed names
 # (WingRun::CorridorFirst), in Ragefire or the Deadmines by the arenas' final weights, at the evaluation's conditions
-# (the ladder's last rung: the band's own levels, no help). 128 runs; the eval videos (I0) film a sample of them, one
+# (the ladder's last rung: the band's own levels). 128 runs; the eval videos (I0) film a sample of them, one
 # seat a party spread over the places and classes, their rung read off wing_rung and their outcome off cleared.
 eval:
   every_env_steps: 10000000
@@ -51,12 +47,13 @@ eval:
   deterministic: true
   report: [cleared, corridor_share, corridor_in_order, corridor_cleared, corridor_packs, corridor_first, chain_pulls,
            ready_pulls, wing_wipes, wing_rises, wing_rejoins, wing_rejoin_seconds, wing_trash_kills, wing_boss_kills,
-           wing_rung, at_top_rung, wing_level, wing_probe, wing_scripted, with_stand_in, without_stand_in,
+           wing_rung, at_top_rung, wing_level, wing_probe, with_stand_in, without_stand_in,
            clear_standin, clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage,
            seat_deaths, died, reward_clear, reward_ready_pull, reward_kill, reward_pull_extra, reward_idle, reward_lost,
            reward_death, reward_step_cost, reward_timeout, reward_approach, reward_threat, reward_damage_dealt,
            reward_repeat, reward_aimless, reward_effort, reward_jitter]
-  # H: the party with the "human" stand-in in a seat, on the same seeds, beside the all-bot party.
+  # H: the party with the "human" stand-in (a frozen partner, G1's) in a seat, on the same seeds, beside the all-bot
+  # party.
   arms:
     with_human: 64
     with_partners: 64

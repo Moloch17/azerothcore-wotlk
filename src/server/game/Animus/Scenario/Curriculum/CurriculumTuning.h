@@ -323,33 +323,18 @@ namespace Animus::Curriculum
             float WingChainPull = 3.0f;
             float WingClock = 0.002f;
             uint32 WingWaypointYards = 30;      // the route's points are this far apart along the door-to-boss path
-            /// The support ladder (StageScenario::WING_RUNGS): each rung fixes the dungeon script's share of seats,
-            /// the level lift, the wipes to spare and the hint weight. WingProbe of training runs are probes -- no
-            /// script, no hints, no instruction, at the rung's level and wipes -- and only they measure the policy:
-            /// once WingRungRuns probes at a rung have made, on average, WingRungTarget of the dungeon (the share of its
-            /// creatures killed, 1 for a clear), the ladder steps down; if the probes on a rung fall below
-            /// WingRungFallback of what they made when it was stepped onto, it steps back up. Nothing on a clock. In a
-            /// cluster the host's ladder decides for every machine, from all their runs.
+            /// The difficulty ladder (StageScenario::WING_RUNGS): each rung fixes the level lift and the wipes to
+            /// spare. WingProbe of training runs are probes, and only they measure the policy (a run started from a
+            /// Go-Explore cell is never one): once WingRungRuns probes at a rung have made, on average, WingRungTarget
+            /// of the dungeon (the share of its creatures killed, 1 for a clear), the ladder steps down; if the probes
+            /// on a rung fall below WingRungFallback of what they made when it was stepped onto, it steps back up.
+            /// Nothing on a clock. In a cluster the host's ladder decides for every machine, from all their runs.
             float WingProbe = 0.2f;
             uint32 WingRungRuns = 40;
             float WingRungTarget = 0.6f;
             float WingRungFallback = 0.5f;
             uint32 WingRungStart = 0;           // the rung a run starts on (a resumed run names the one it reached)
-            /// The rung from which hint imitation is off (StageScenario::WingHintOffRung), as a resumed run reached it:
-            /// the probes beat the script's clear share there. -1: not yet, the ladder decides.
-            int32 WingHintOffRung = -1;
-            /// The share of training runs of a whole dungeon at each rung that are reference runs while the support is on
-            /// and the rung's imitation is not yet off: the teacher plays every seat at the rung's levels and wipes, its
-            /// presses are hints like any scripted seat's, and the run measures the script's clear share at that rung
-            /// for the cutoff (StageScenario::WingHintOffRung). Training only: never an evaluation, nor the ladder.
-            float WingReferenceShare = 0.07f;
-            /// The dungeon script's seats and hints on the ladder's rungs (WingRung::Script, ::Hint): a support, off by
-            /// default, switched on when a rung has not stepped for a long stretch. Off, the rungs lift the level and
-            /// spare wipes only, and every run learns from its own rewards.
-            uint32 WingSupport = 0;
             uint32 WingSupplies = 60;           // food and drink each seat brings into a whole dungeon
-            /// The instructed healer protects whoever is below this health share.
-            float WingInstructHeal = 70.0f;
             /// Log a line for each wipe: where, what was fighting the party, and who died in what order.
             uint32 WingTrace = 1;
             /// Per second, for each hostile creature on the party past WingCrowdFree (a pack): the pull that ran into
@@ -1474,7 +1459,8 @@ namespace Animus::Curriculum
         /// the tank holding WinHold of the enemy-decisions; no party member dead; the damage dealer's damage WinFocus on
         /// the tank's target with at most WinPulledSeconds of enemies taken off it; no second pack in a fight.
         /// **Death** (I4): Respawn.DelayMs out, then alive at the entrance, walking back. StandInShare percent of the
-        /// training episodes put the "human" stand-in (StandIn.*) in one seat other than the drilled one.
+        /// training episodes put the "human" stand-in (StandIn.*: a frozen learned partner) in one seat other than the
+        /// drilled one.
         struct RolesTuning
         {
             float Clear = 1.0f;
@@ -1697,8 +1683,8 @@ namespace Animus::Curriculum
             float BreakBelow = 0.6f;            // ... breaks crowd control when its health is under this
         } ScriptedPlayers;
 
-        /// The "human" stand-in seat of the party stages (StandIn.h: its styles, and what each value does). Off
-        /// unless StandIn.Share is set.
+        /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
+        /// leading or following, in the role it wants). Off unless StandIn.Share (or an arena's own share) is set.
         StandIn::Tuning StandIn;
 
         /// Calls f(key, value) for every value, key relative to the tuning prefix (AnimusForge.Curriculum., ...).
@@ -1816,12 +1802,8 @@ namespace Animus::Curriculum
             f("Instance.WingRungRuns", tuning.Instance.WingRungRuns);
             f("Instance.WingRungTarget", tuning.Instance.WingRungTarget);
             f("Instance.WingRungStart", tuning.Instance.WingRungStart);
-            f("Instance.WingHintOffRung", tuning.Instance.WingHintOffRung);
-            f("Instance.WingReferenceShare", tuning.Instance.WingReferenceShare);
-            f("Instance.WingSupport", tuning.Instance.WingSupport);
             f("Instance.WingSupplies", tuning.Instance.WingSupplies);
             f("Instance.WingRungFallback", tuning.Instance.WingRungFallback);
-            f("Instance.WingInstructHeal", tuning.Instance.WingInstructHeal);
             f("Instance.WingTrace", tuning.Instance.WingTrace);
             f("Instance.WingCrowd", tuning.Instance.WingCrowd);
             f("Instance.WingCrowdFree", tuning.Instance.WingCrowdFree);
@@ -2417,39 +2399,6 @@ namespace Animus::Curriculum
             f("StandIn.LeadChance", tuning.StandIn.LeadChance);
             f("StandIn.TankChance", tuning.StandIn.TankChance);
             f("StandIn.HealerChance", tuning.StandIn.HealerChance);
-            f("StandIn.SlowChance", tuning.StandIn.SlowChance);
-            f("StandIn.PullEarlyChance", tuning.StandIn.PullEarlyChance);
-            f("StandIn.PullEarlyPerMinute", tuning.StandIn.PullEarlyPerMinute);
-            f("StandIn.PullEarlyMinMs", tuning.StandIn.PullEarlyMinMs);
-            f("StandIn.PullEarlyMaxMs", tuning.StandIn.PullEarlyMaxMs);
-            f("StandIn.WanderChance", tuning.StandIn.WanderChance);
-            f("StandIn.WanderPerMinute", tuning.StandIn.WanderPerMinute);
-            f("StandIn.WanderMinMs", tuning.StandIn.WanderMinMs);
-            f("StandIn.WanderMaxMs", tuning.StandIn.WanderMaxMs);
-            f("StandIn.RestChance", tuning.StandIn.RestChance);
-            f("StandIn.RestPerMinute", tuning.StandIn.RestPerMinute);
-            f("StandIn.RestMinMs", tuning.StandIn.RestMinMs);
-            f("StandIn.RestMaxMs", tuning.StandIn.RestMaxMs);
-            f("StandIn.LagChance", tuning.StandIn.LagChance);
-            f("StandIn.LagPerMinute", tuning.StandIn.LagPerMinute);
-            f("StandIn.LagMinMs", tuning.StandIn.LagMinMs);
-            f("StandIn.LagMaxMs", tuning.StandIn.LagMaxMs);
-            f("StandIn.AfkChance", tuning.StandIn.AfkChance);
-            f("StandIn.AfkPerMinute", tuning.StandIn.AfkPerMinute);
-            f("StandIn.AfkMinMs", tuning.StandIn.AfkMinMs);
-            f("StandIn.AfkMaxMs", tuning.StandIn.AfkMaxMs);
-            f("StandIn.RestBelow", tuning.StandIn.RestBelow);
-            f("StandIn.FollowYards", tuning.StandIn.FollowYards);
-            f("StandIn.LagYards", tuning.StandIn.LagYards);
-            f("StandIn.WanderMinYards", tuning.StandIn.WanderMinYards);
-            f("StandIn.WanderMaxYards", tuning.StandIn.WanderMaxYards);
-            f("StandIn.MeleeYards", tuning.StandIn.MeleeYards);
-            f("StandIn.RangedYards", tuning.StandIn.RangedYards);
-            f("StandIn.HealerYards", tuning.StandIn.HealerYards);
-            f("StandIn.FastWaitMs", tuning.StandIn.FastWaitMs);
-            f("StandIn.SlowWaitMs", tuning.StandIn.SlowWaitMs);
-            f("StandIn.FastReactMs", tuning.StandIn.FastReactMs);
-            f("StandIn.SlowReactMs", tuning.StandIn.SlowReactMs);
         }
 
         /// The values of the config keys <prefix><key>, each defaulting to the value above; min/max pairs are

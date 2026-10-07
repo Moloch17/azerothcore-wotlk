@@ -886,12 +886,11 @@ def _attach_director(network: nn.Module, director, head_width: int = 0) -> None:
     weight.register_hook(lambda grad: grad * network.director_keep)
 
 
-def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag: str = "blind") -> None:
+def attach_blind_columns(network: nn.Module, columns: dict[int, list[int]], tag: str) -> None:
     """Keep layout adapters blind to some of their observation columns (layout index -> columns): the weights start at
     zero and their gradient is masked, so they stay zero through every update and the rollout copies' folding. For
-    columns the learner reads and the policy must not (the hint block: a suggestion imitated, never copied), and the
-    seat sets' slot columns (tag "set": read through EntitySets instead). Once per network and tag; a later call only
-    zeroes again."""
+    columns the policy must not read directly: the seat sets' slot columns (tag "set": read through EntitySets
+    instead) and the camera's. Once per network and tag; a later call only zeroes again."""
     for index, cols in columns.items():
         if not cols or index >= len(network.adapters):
             continue
@@ -2027,14 +2026,14 @@ class GoalEmbedding(nn.Module):
 _GOAL_SCALE_KEYS = ("goal_embedding.kind_scale.weight", "goal_embedding.target_scale.weight")
 
 
-#: The blind-column masks' buffer names (attach_blind_columns' tags): the hint block's, the seat sets', the camera's.
+#: The blind-column masks' buffer names (attach_blind_columns' tags): "blind_keep_" (a checkpoint from before the hint
+#: block went still carries it, and it is dropped on load), the seat sets', the camera's.
 BLIND_KEEP_PREFIXES = ("blind_keep_", "set_keep_", "vision_keep_")
 
 
 def without_blind_columns(state: dict) -> dict:
     """A saved network's state without its blind-column masks (attach_blind_columns): they are made again from the
-    stage's layouts after loading (MappoTrainer.set_hint_space, the seat sets), and a network not yet given them
-    refused them."""
+    stage's layouts after loading (the seat sets, the camera), and a network not yet given them refused them."""
     return {key: value for key, value in state.items()
             if not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)}
 
@@ -2043,7 +2042,7 @@ def load_actor_state(actor: nn.Module, state: dict) -> None:
     """actor.load_state_dict(state), except that an actor saved before the goal scale existed loads with it at zero."""
     missing, unexpected = actor.load_state_dict(without_blind_columns(state), strict=False)
     # The blind-column masks are never taken from a checkpoint: an actor built with seat sets has its own already (the
-    # stage's), which a resume keeps; the hint block's are made after loading.
+    # stage's), which a resume keeps.
     wrong = [key for key in missing
              if key not in _GOAL_SCALE_KEYS and not key.split(".")[-1].startswith(BLIND_KEEP_PREFIXES)]
     if wrong or unexpected:

@@ -99,7 +99,6 @@ namespace
         46584,  // Raise Dead
         31687,  // Summon Water Elemental
     };
-    constexpr uint32 CALL_PET = 883;    // a hunter's Call Pet (its first stable beast)
 
     /// A pet class's pet: call a hunter's first stable beast or cast the best summon when no living pet is out (out
     /// of combat only: a demon takes seconds to summon), then send the pet at the target.
@@ -826,133 +825,9 @@ namespace
     }
 }
 
-namespace
-{
-    /// What a catalog spell does in a party's fight, read off the spell: a taunt, an interrupt, threat on many at
-    /// once, or crowd control that holds an extra enemy out of the fight (Polymorph, Sap, Shackle, Hibernate -- not a
-    /// fear, which sends it running into the next pack).
-    SpellInfo const* SpellOf(ActionCatalog::Action const& action)
-    {
-        return action.Type == ActionCatalog::Kind::Spell ? sSpellMgr->GetSpellInfo(action.FirstRank) : nullptr;
-    }
-
-    bool IsTaunt(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        return info && (info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_MOD_TAUNT));
-    }
-
-    bool IsInterrupt(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        return info && info->HasEffect(SPELL_EFFECT_INTERRUPT_CAST);
-    }
-
-    bool IsAreaThreat(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        return info && !info->IsPositive() && info->IsAffectingArea() && !info->HasAura(SPELL_AURA_MOD_FEAR)
-            && !info->HasAura(SPELL_AURA_MOD_CONFUSE);
-    }
-
-    /// Threat the spell adds beyond its damage (the server's spell_threat table: Sunder Armor, Revenge, Holy Shield,
-    /// Maul, Lacerate and the rest).
-    bool IsHighThreat(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        if (!info || info->IsPositive())
-            return false;
-        SpellThreatEntry const* threat = sSpellMgr->GetSpellThreatEntry(info->GetFirstRankSpell()->Id);
-        return threat && (threat->flatMod > 0 || threat->pctMod > 1.0f || threat->apPctMod > 0.0f);
-    }
-
-    bool IsCrowdControl(ActionCatalog::Action const& action);
-
-    /// Something to pull with from range: a hostile spell or shot that reaches 20 yd or more and is cast quickly.
-    bool IsRangedPull(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        if (!info || info->IsPositive() || info->IsAffectingArea() || info->GetMaxRange(false) < 20.0f
-            || info->CalcCastTime() > 2000 || IsCrowdControl(action) || info->HasAura(SPELL_AURA_MOD_FEAR))
-            return false;
-        return info->HasEffect(SPELL_EFFECT_SCHOOL_DAMAGE) || info->HasEffect(SPELL_EFFECT_WEAPON_DAMAGE)
-            || info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_PERIODIC_DAMAGE)
-            || info->DmgClass == SPELL_DAMAGE_CLASS_RANGED;
-    }
-
-    bool IsCrowdControl(ActionCatalog::Action const& action)
-    {
-        SpellInfo const* info = SpellOf(action);
-        if (!info || info->IsPositive() || info->IsAffectingArea() || info->HasAura(SPELL_AURA_MOD_FEAR))
-            return false;
-        return info->HasAura(SPELL_AURA_MOD_CONFUSE) || info->HasAura(SPELL_AURA_TRANSFORM)
-            || (info->HasAura(SPELL_AURA_MOD_STUN) && info->GetMaxDuration() >= 8000);
-    }
-}
-
-std::optional<int32> Animus::Curriculum::Baselines::SpellFor(WingTeacher::Spell spell, Layout const& layout,
-    float const* obs, uint8 const* mask)
-{
-    using Spell = WingTeacher::Spell;
-    if (!layout.Has(BlockId::Core))
-        return std::nullopt;
-    Row const row(layout, obs, mask);
-    switch (spell)
-    {
-        case Spell::Damage:
-            return DamageSpell(row, layout);
-        case Spell::Taunt:
-            return FirstSpell(row, layout, IsTaunt);
-        case Spell::AreaThreat:
-            return FirstSpell(row, layout, IsAreaThreat);
-        case Spell::HighThreat:
-            return FirstSpell(row, layout, IsHighThreat);
-        case Spell::RangedPull:
-            return FirstSpell(row, layout, IsRangedPull);
-        case Spell::Interrupt:
-            return FirstSpell(row, layout, IsInterrupt);
-        case Spell::Heal:
-            // A plain heal first; a heal over time or a shield where that is all it has.
-            if (std::optional<int32> heal = FirstSpell(row, layout,
-                [](ActionCatalog::Action const& action) { return action.DirectHeal; }))
-                return heal;
-            return FirstSpell(row, layout, [](ActionCatalog::Action const& action) { return action.Healing; });
-        case Spell::Defensive:
-            return FirstSpell(row, layout, [](ActionCatalog::Action const& action) { return action.Defensive; });
-        case Spell::Buff:
-            if (std::optional<int32> shift = SpecFormSpell(row, layout))
-                return shift;
-            return BuffSpell(row, layout);
-        case Spell::Summon:
-        {
-            // A dead pet revived (Revive Pet), else the best summon it knows, as `fight` picks it; a hunter's Call Pet.
-            if (std::optional<int32> revive = FirstSpell(row, layout, [](ActionCatalog::Action const& action)
-                {
-                    SpellInfo const* info = SpellOf(action);
-                    return info && info->HasEffect(SPELL_EFFECT_RESURRECT_PET);
-                }))
-                return revive;
-            std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
-            for (uint32 summon : PET_SUMMONS)
-                for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
-                    if (actions[action].Type == ActionCatalog::Kind::Spell && actions[action].FirstRank == summon)
-                        if (std::optional<int32> cast = row.Allowed(BlockId::Core, action))
-                            return cast;
-            return FirstSpell(row, layout, [](ActionCatalog::Action const& action)
-            {
-                return action.Type == ActionCatalog::Kind::Spell && action.FirstRank == CALL_PET;
-            });
-        }
-        case Spell::None:
-            break;
-    }
-    return std::nullopt;
-}
-
 bool Animus::Curriculum::Baselines::Supports(std::string const& policy, Layout const& layout)
 {
     return policy == "greedy" || (policy == "fight" && layout.Has(BlockId::Duel))
-        || (policy == "dungeon" && layout.Has(BlockId::Duel) && layout.Has(BlockId::Sight))
         || (policy == "life" && layout.Has(BlockId::World) && layout.Has(BlockId::Duel));
 }
 
@@ -981,11 +856,6 @@ int32 Animus::Curriculum::Baselines::Choose(std::string const& policy, Layout co
             return *go;
         return 0;
     }
-
-    // The dungeon teacher plays from the world, not the row (WingTeacher; StageScenario::TeachSeat): its presses
-    // reach a seat through the seat's script action, and the row alone has nothing to say.
-    if (policy == "dungeon")
-        return 0;
 
     if (policy == "fight" && layout.Has(BlockId::Duel))
     {

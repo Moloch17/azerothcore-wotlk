@@ -87,8 +87,8 @@ namespace Animus::Curriculum
         std::array<Position, 6> Path{};
         uint32 PathPoints = 0;
         bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
-        /// The seat's place on the dungeon's route (the next route point, or the tank), a script's knowledge -- the
-        /// teacher's, never an observation: in a sight stage SeatView::Objective is not set from it (SeenPlaces).
+        /// The seat's place on the dungeon's route (the next route point, or the tank), the encounter's bookkeeping,
+        /// never an observation: in a sight stage SeatView::Objective is not set from it (SeenPlaces).
         bool HasObjective = false;
         Position Objective;
     };

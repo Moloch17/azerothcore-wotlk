@@ -33,8 +33,8 @@
 /// - the dungeon map's **layout** (a 3.3.5 player has the dungeon map): ground nodes with no creature on them, no
 ///   order and no markers -- only in SeenAndLayout;
 /// - the party's **leader** (its frame and its dot on the map).
-/// Never a live pack's or boss's position, never the route's "next pack" order: those stay the dungeon teacher's own
-/// (a script may know them), in SeatView::Crowd.
+/// Never a live pack's or boss's position, never the route's "next pack" order: those stay the encounter's own
+/// bookkeeping, in SeatView::Crowd.
 ///
 /// Pure: its inputs are positions and flags, so the tests feed it by hand (DungeonStagesTest).
 namespace Animus::Curriculum::SeenPlaces

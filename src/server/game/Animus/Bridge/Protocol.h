@@ -44,7 +44,10 @@
  *                                                     it fills only that layout's first obs dim features
  *                                                     and action count mask entries; constant per episode
  *                              u8  present[E*A]       1 = the agent has a character this episode; 0 = an
- *                                                     empty seat (only the no-op, reward 0): not a sample
+ *                                                     empty seat (only the no-op, reward 0): not a sample;
+ *                                                     2 = the "human" stand-in's seat (MODE_FLAG_STAND_IN),
+ *                                                     a real row the learner plays with a frozen partner and
+ *                                                     never trains on
  *                              f32 reward[E*A]        reward for the transition that just ended
  *                              u8  done[E]            1 = episode ended on this transition
  *                              u8  terminated[E]      1 = it ended in a terminal state (no
@@ -173,7 +176,9 @@ namespace AnimusForge
     // 24: the mental map (perception-goals REDESIGN §3): SPEC ends with MapBytes, and a stage with a map block ends each
     // STEP with every agent's crop and the ended envs' final crops, after the images. A stage without one has protocol
     // 23's STEP; every SPEC is four bytes longer.
-    constexpr uint32 PROTOCOL_VERSION = 24;
+    // 25: present 2 is the "human" stand-in's row, which the learner plays with a frozen partner (it was 0, the sim's
+    // script), and MODE_FLAG_STAND_IN in a training MODE says the learner can field one.
+    constexpr uint32 PROTOCOL_VERSION = 25;
     constexpr uint32 SCENARIO_NAME_SIZE = 32;
     constexpr uint32 POLICY_NAME_SIZE = 32;
     constexpr uint32 LAYOUT_NAME_SIZE = 48;
@@ -265,9 +270,10 @@ namespace AnimusForge
     /// ModeMsg::Flags. SCRIPTED_OPPONENTS: the Baseline policy plays only the scenario's opponent seats (the other
     /// side of a self-play episode, see Scenario::IsOpponentSeat) and the learner's ACT actions play the rest.
     constexpr uint32 MODE_FLAG_SCRIPTED_OPPONENTS = 1;
-    /// STAND_IN: every party of the evaluation has the "human" stand-in in one seat (dungeon-curriculum I7, the
-    /// learner's "with the human stand-in" arm); without it an evaluation's parties are all bots. Training draws its
-    /// own share (StandIn.Share) whatever this says.
+    /// STAND_IN: the learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): every
+    /// party of an evaluation has the stand-in in one seat (the learner's "with the human stand-in" arm), and training
+    /// draws it in its share of the parties (StandIn.Share and the arenas' own). Without it no party has one: a
+    /// learner with no partner to field sends training MODE without it. The stand-in's row reads present 2.
     constexpr uint32 MODE_FLAG_STAND_IN = 2;
 
     struct ModeMsg

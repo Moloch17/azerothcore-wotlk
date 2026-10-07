@@ -642,6 +642,10 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
             table.AddRow({ "  excluded " + entry.substr(0, at), "-",
                 at == std::string::npos ? std::string("by design") : "by design: " + entry.substr(at + 1) });
         }
+        // The "human" stand-in (a frozen partner in one seat of a party): fielded, or why not yet -- a stage with no
+        // partner checkpoint has none, which is a state, not a failure.
+        if (std::string const standIn = progress->Text("stand_in"); !standIn.empty())
+            table.AddRow({ "  stand-in", "-", standIn });
     }
 
     std::optional<double> const reward = progress->Number("reward_per_decision");

@@ -91,14 +91,8 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     ClampPercent(prefix, "ScriptedPlayers.TacticsChance", tuning.ScriptedPlayers.TacticsChance);
     ClampPercent(prefix, "StandIn.Share", tuning.StandIn.Share);
     ClampPercent(prefix, "StandIn.LeadChance", tuning.StandIn.LeadChance);
-    ClampPercent(prefix, "StandIn.SlowChance", tuning.StandIn.SlowChance);
     ClampRolePair(prefix, "StandIn.TankChance", tuning.StandIn.TankChance, "StandIn.HealerChance",
         tuning.StandIn.HealerChance);
-    ClampPercent(prefix, "StandIn.PullEarlyChance", tuning.StandIn.PullEarlyChance);
-    ClampPercent(prefix, "StandIn.WanderChance", tuning.StandIn.WanderChance);
-    ClampPercent(prefix, "StandIn.RestChance", tuning.StandIn.RestChance);
-    ClampPercent(prefix, "StandIn.LagChance", tuning.StandIn.LagChance);
-    ClampPercent(prefix, "StandIn.AfkChance", tuning.StandIn.AfkChance);
     ClampRolePair(prefix, "Owner.TankChance", tuning.Owner.TankChance, "Owner.HealerChance", tuning.Owner.HealerChance);
     ClampRolePair(prefix, "Opponent.TankChance", tuning.Opponent.TankChance, "Opponent.HealerChance",
         tuning.Opponent.HealerChance);
@@ -117,11 +111,6 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     order(tuning.ScriptedPlayers.HealMinMs, tuning.ScriptedPlayers.HealMaxMs);
     order(tuning.ScriptedPlayers.WanderMinMs, tuning.ScriptedPlayers.WanderMaxMs);
     order(tuning.ScriptedPlayers.ControlMinMs, tuning.ScriptedPlayers.ControlMaxMs);
-    order(tuning.StandIn.PullEarlyMinMs, tuning.StandIn.PullEarlyMaxMs);
-    order(tuning.StandIn.WanderMinMs, tuning.StandIn.WanderMaxMs);
-    order(tuning.StandIn.RestMinMs, tuning.StandIn.RestMaxMs);
-    order(tuning.StandIn.LagMinMs, tuning.StandIn.LagMaxMs);
-    order(tuning.StandIn.AfkMinMs, tuning.StandIn.AfkMaxMs);
 
     auto const orderYards = [](float& low, float& high)
     {
@@ -132,7 +121,6 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     };
     orderYards(tuning.Travel.ObjectiveMin, tuning.Travel.ObjectiveMax);
     orderYards(tuning.ScriptedPlayers.RunMinYards, tuning.ScriptedPlayers.RunMaxYards);
-    orderYards(tuning.StandIn.WanderMinYards, tuning.StandIn.WanderMaxYards);
     orderYards(tuning.Travel.FlyingMin, tuning.Travel.FlyingMax);
     orderYards(tuning.Flag.BaseMin, tuning.Flag.BaseMax);
     tuning.Flag.CapturesToWin = std::max<uint32>(1, tuning.Flag.CapturesToWin);

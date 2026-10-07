@@ -127,7 +127,7 @@ namespace Animus
         void SetShapingScale(float scale) { _scenario.SetShapingScale(scale); }
         void SetCostScale(float scale) { _scenario.SetCostScale(scale); }
         bool PinEvaluationArena(uint32 pin) { return _scenario.PinEvaluationArena(pin); }
-        void SetEvaluationStandIn(bool standIn) { _scenario.SetEvaluationStandIn(standIn); }
+        void SetStandIn(bool standIn) { _scenario.SetStandIn(standIn); }
         void SetExploreStarts(float share, std::vector<ExploreStart> starts)
         {
             _scenario.SetExploreStarts(share, std::move(starts));
