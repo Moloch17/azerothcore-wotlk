@@ -27,6 +27,7 @@
 #include "WorldActions.h"
 #include "SeatView.h"
 #include "EncoderSupport.h"
+#include "EntityActions.h"
 #include <boost/json/object.hpp>
 #include <algorithm>
 #include <cmath>
@@ -158,7 +159,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
     }
 }
 
-void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
+void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
     if (!bot || !bot->IsAlive())
@@ -177,17 +178,26 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
     // is opened here.
     if (object->GetGoType() == GAMEOBJECT_TYPE_CHEST)
         return;
+    // Sent as the client sends them, through the session's handlers (the user's "real object actions"): the key's
+    // use as CMSG_USE_ITEM at the object, a right-click as CMSG_GAMEOBJ_USE -- the handler judges reach and state.
+    EntityActions::ClientPort& port = view.Port ? *view.Port : EntityActions::SessionPort();
     if (uint32 const key = KeyOf(object))
     {
         if (Item* carried = bot->GetItemByEntry(key))
         {
             SpellCastTargets targets;
             targets.SetGOTarget(object);
-            bot->CastItemUseSpell(carried, targets, 1, 0);
+            if (EntityActions::UseItemThroughClient(bot, carried, Encoding::UseSpell(key), targets, port).Sent)
+            {
+                ++result.ItemUses;
+                ++result.Interactions;
+            }
         }
         return;
     }
-    object->Use(bot);
+    WorldPacket packet = EntityActions::GameObjectUse(object->GetGUID());
+    port.Send(bot, packet);
+    ++result.Interactions;
 }
 
 std::string Animus::Curriculum::CrowdBlock::ActionName(Layout const& /*layout*/, uint32 local) const
