@@ -1447,7 +1447,6 @@ Animus::Curriculum::InstanceEncounter::WingPlan Animus::Curriculum::InstanceEnco
         return points;
     };
 
-
     // Then every pack in the instance -- trash, side bosses and all (Instance.WingFullClear) -- each where the boss
     // route passes nearest it, so the clear goes the way the dungeon opens up. Only the bosses, the route passed the
     // packs by and the parties never cleared a room (2026-10-01: "clear every pull and every boss, even side ones");

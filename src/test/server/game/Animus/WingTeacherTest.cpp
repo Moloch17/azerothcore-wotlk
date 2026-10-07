@@ -456,9 +456,54 @@ TEST(WingTeacherTest, TheReadyCheckHoldsThePullWhileAMemberIsLow)
     EXPECT_TRUE(Has(choice, Wt::Do::Select, 30)) << choice.Reason;
     EXPECT_NE(choice.Reason.find("waited out"), std::string::npos) << choice.Reason;
 
+    // ... but nothing waives a member who is not back: a dead one rising at the entrance, one walking back.
+    for (Wt::Facts behind : { dead, far })
+    {
+        behind.StillSeconds = Wt::WAIT_SECONDS * 5.0f;
+        Wt::Choice const waits = Wt::Decide(behind);
+        EXPECT_TRUE(waits.Waiting) << waits.Reason;
+        EXPECT_FALSE(Has(waits, Wt::Do::Select)) << "pulled without a member: " << waits.Reason;
+    }
+
     std::string why;
-    EXPECT_TRUE(Wt::Ready(ready, why)) << why;
-    EXPECT_FALSE(Wt::Ready(low, why));
+    bool hard = false;
+    EXPECT_TRUE(Wt::Ready(ready, why, hard)) << why;
+    EXPECT_FALSE(Wt::Ready(low, why, hard));
+    EXPECT_FALSE(hard) << "health is waivable";
+    EXPECT_FALSE(Wt::Ready(dead, why, hard));
+    EXPECT_TRUE(hard) << "a dead member is not";
+}
+
+// **An unseen pack is never walked at**: a pack ahead the tank's sight list does not name (a ledge, the lava, round a
+// corner) is turned to at most, then the route goes on -- it passes every pack, and brings it into view from where it
+// can be reached. The same for a door or lever not yet seen.
+TEST(WingTeacherTest, AnUnseenPackIsNeverWalkedAt)
+{
+    Wt::PressSpace const space = Space();
+    std::vector<uint8> const mask = AllAllowed();
+    Wt::Facts facts = Rested(Wt::Role::Tank);
+    facts.Step = At(10.0f, 0.0f);
+    facts.Pull = At(15.0f, 2.0f, -1);
+    Wt::Choice choice = Wt::Decide(facts);
+    int32 press = Wt::Press(choice, space, mask.data(), [](Wt::Spell) { return -1; });
+    ASSERT_GT(press, 0);
+    EXPECT_TRUE(MC::IsTurn(uint32(press) - space.Move.First)) << "turned to look: " << choice.Reason;
+    // Facing it and still not seeing it: on along the route, not at the pack.
+    facts.Pull.Bearing = 0.3f;
+    facts.Step = At(10.0f, -1.0f);
+    choice = Wt::Decide(facts);
+    EXPECT_NE(choice.Reason.find("advances"), std::string::npos) << choice.Reason;
+    press = Wt::Press(choice, space, mask.data(), [](Wt::Spell) { return -1; });
+    ASSERT_GT(press, 0);
+    uint32 const key = uint32(press) - space.Move.First;
+    ASSERT_TRUE(MC::IsTurn(key));
+    EXPECT_LT(MC::TURN_RATES_DEG[key - MC::ACTION_TURN_FIRST], 0.0f) << "toward the route step (right), not the pack";
+
+    facts.Pull = Wt::Place();
+    facts.Object = At(6.0f, 0.1f, -1);
+    choice = Wt::Decide(facts);
+    EXPECT_FALSE(Has(choice, Wt::Do::Interact)) << choice.Reason;
+    EXPECT_NE(choice.Reason.find("advances"), std::string::npos) << choice.Reason;
 }
 
 // **A hint is never the no-op while waiting**: waiting for the party, for a cast, for food, for the tank to take the

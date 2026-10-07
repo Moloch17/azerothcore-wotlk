@@ -5181,6 +5181,9 @@ AnimusForge.TicksPerDecision = 1
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_seek.TicksPerDecision = 5
 AnimusForge.Stage.move4_follow.TicksPerDecision = 5
+#   the dungeon teacher's checks drive every seat on the player controller: the same 50 ms world ticks
+AnimusForge.Stage.teacher_ragefire.TicksPerDecision = 5
+AnimusForge.Stage.teacher_deadmines.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch

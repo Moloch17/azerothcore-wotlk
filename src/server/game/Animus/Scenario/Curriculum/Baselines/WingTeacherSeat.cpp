@@ -94,6 +94,16 @@ namespace
             || (seat.DungeonRole == DUNGEON_ANY && AptitudeDemand::KeepsThemUp().MetBy(seat.Apt));
     }
 
+    /// The share of its mana a seat has, for a seat whose power is mana now; -1 for one that has none or fights on
+    /// another (a druid in bear or cat form drinks for nothing).
+    float ManaShare(Player const* bot)
+    {
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        if (!maxMana || bot->getPowerType() != POWER_MANA)
+            return -1.0f;
+        return float(bot->GetPower(POWER_MANA)) / float(maxMana);
+    }
+
     /// Casting something an interrupt stops.
     bool Interruptible(Unit const* unit)
     {
@@ -160,15 +170,22 @@ Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::Teache
 
     facts.Alive = bot->IsAlive();
     facts.Health = bot->GetMaxHealth() ? float(bot->GetHealth()) / float(bot->GetMaxHealth()) : 1.0f;
-    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-    facts.Mana = maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : -1.0f;
+    facts.Mana = ManaShare(bot);
     // An auto shot or a wand repeating is no cast to wait out.
     facts.Casting = bot->IsNonMeleeSpellCast(false, false, true);
     facts.Swinging = bot->GetVictim() != nullptr;
     facts.Eating = bot->HasAuraType(SPELL_AURA_MOD_REGEN);
     facts.Drinking = bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
-    facts.FoodLeft = view.FoodItem && bot->HasItemCount(view.FoodItem, 1);
-    facts.DrinkLeft = view.DrinkItem && bot->HasItemCount(view.DrinkItem, 1);
+    // Food and drink it can eat and drink now: carried, and the gauntlet block's press allowed (a druid in a form, a
+    // seat still flagged in combat, cannot) -- else the teacher would sit before a press it cannot make.
+    auto const pressable = [&seat, mask](uint32 local)
+    {
+        return mask && seat.L && seat.L->Has(BlockId::Gauntlet) && local < seat.L->Slice(BlockId::Gauntlet).ActionCount
+            && mask[seat.L->Slice(BlockId::Gauntlet).ActionFirst + local];
+    };
+    facts.FoodLeft = view.FoodItem && bot->HasItemCount(view.FoodItem, 1) && pressable(GauntletBlock::ACTION_EAT);
+    facts.DrinkLeft = view.DrinkItem && bot->HasItemCount(view.DrinkItem, 1)
+        && pressable(GauntletBlock::ACTION_DRINK);
     facts.Ranged = seat.L && seat.L->Profile && seat.Spec < seat.L->Profile->Specs.size()
         && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee;
     facts.FightSeconds = seat.InCombat
@@ -219,8 +236,7 @@ Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::Teache
         row.At = PlaceOf(bot, seat, member);
         row.Alive = member->IsAlive();
         row.Health = member->GetMaxHealth() ? float(member->GetHealth()) / float(member->GetMaxHealth()) : 1.0f;
-        uint32 const memberMana = member->GetMaxPower(POWER_MANA);
-        row.Mana = memberMana ? float(member->GetPower(POWER_MANA)) / float(memberMana) : -1.0f;
+        row.Mana = ManaShare(member);
         row.Tank = member == tank;
         row.Healer = member == healer;
         row.Focused = focus == member;
@@ -229,9 +245,16 @@ Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::Teache
         != party.begin() + partyCount;
     if (tank && tank != bot && tank->IsAlive())
         facts.Tank = PlaceOf(bot, seat, tank);
+    // A member, or a member's pet or guardian: a hunter's pet holding a pack is the party's fight too.
     auto const inParty = [&party, partyCount](Unit const* unit)
     {
-        return unit && std::find(party.begin(), party.begin() + partyCount, unit) != party.begin() + partyCount;
+        if (!unit)
+            return false;
+        ObjectGuid const owner = unit->GetOwnerGUID();
+        for (uint32 i = 0; i < partyCount; ++i)
+            if (party[i] == unit || (!owner.IsEmpty() && party[i]->GetGUID() == owner))
+                return true;
+        return false;
     };
 
     // The enemies: what the encounter keeps in the fight's slots and past them, as the script knows them.

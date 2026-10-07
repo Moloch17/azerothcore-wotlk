@@ -284,11 +284,13 @@ namespace
         if (Rest(facts, choice))
             return;
 
-        // The ready check: every member, the dead included (they rise at the entrance and walk back).
+        // The ready check: every member, the dead included (they rise at the entrance and walk back). A minute with
+        // nothing gained waives health and mana; nothing waives a member who is not back.
         std::string why;
-        if (!Wt::Ready(facts, why))
+        bool hard = false;
+        if (!Wt::Ready(facts, why, hard))
         {
-            if (facts.StillSeconds < Wt::WAIT_SECONDS)
+            if (hard || facts.StillSeconds < Wt::WAIT_SECONDS)
             {
                 choice.Waiting = true;
                 choice.Reason = "the tank waits:" + why;
@@ -298,15 +300,18 @@ namespace
             choice.Reason = "waited out:" + why + " ";
         }
 
-        // What opens the way on, seen near: walk to it and use it with a real press.
-        if (facts.Object.Present && facts.Object.Yards <= Wt::PULL_YARDS)
+        // What opens the way on, seen near: walk to it and use it with a real press. One the seat does not see yet is
+        // turned to, at most: the route goes on, and brings it into view.
+        if (facts.Object.Present && facts.Object.Yards <= Wt::PULL_YARDS && facts.Object.Slot < 0
+            && Wt::Face(facts, facts.Object.Bearing, key))
+        {
+            choice.Reason += "the tank looks for the way on";
+            AddKey(choice, true, key);
+            return;
+        }
+        if (facts.Object.Present && facts.Object.Yards <= Wt::PULL_YARDS && facts.Object.Slot >= 0)
         {
             choice.Reason += facts.ObjectNeedsKey ? "the tank uses its key on the way on" : "the tank opens the way on";
-            if (facts.Object.Slot < 0)
-            {
-                TurnToSee(facts, choice, facts.Object);
-                return;
-            }
             // Out of reach: walk to it (nothing to press while already walking there).
             if (facts.Object.Yards > facts.ObjectReach - 1.0f)
             {
@@ -319,17 +324,23 @@ namespace
             return;
         }
 
-        // Ready: its buffs up, then the pack ahead if it is close; else on along the route.
+        // Ready: its buffs up, then the pack ahead if it is close and seen; else on along the route. A pack the seat
+        // does not see (on a ledge, across the lava, round a corner) is turned to at most, never walked at: the route
+        // passes every pack, and brings it into view from where it can be reached.
         AddCast(choice, Wt::Spell::Buff);
-        if (facts.Pull.Present && facts.Pull.Yards <= Wt::PULL_YARDS)
+        if (facts.Pull.Present && facts.Pull.Yards <= Wt::PULL_YARDS && !facts.PullSelected && facts.Pull.Slot < 0
+            && Wt::Face(facts, facts.Pull.Bearing, key))
+        {
+            choice.Reason += "the tank looks at the pack ahead";
+            AddKey(choice, true, key);
+            return;
+        }
+        if (facts.Pull.Present && facts.Pull.Yards <= Wt::PULL_YARDS && (facts.PullSelected || facts.Pull.Slot >= 0))
         {
             choice.Reason += "the tank pulls";
             if (!facts.PullSelected)
             {
-                if (facts.Pull.Slot >= 0)
-                    AddPress(choice, Wt::Do::Select, facts.Pull.Slot);
-                else
-                    TurnToSee(facts, choice, facts.Pull);
+                AddPress(choice, Wt::Do::Select, facts.Pull.Slot);
                 return;
             }
             // From range when it can: one pack brought back to the party, rather than the tank walking into it.
@@ -530,9 +541,10 @@ bool Animus::Curriculum::WingTeacher::Steer(Facts const& facts, float bearing, f
     return false;
 }
 
-bool Animus::Curriculum::WingTeacher::Ready(Facts const& facts, std::string& why)
+bool Animus::Curriculum::WingTeacher::Ready(Facts const& facts, std::string& why, bool& hard)
 {
     why.clear();
+    hard = false;
     if (facts.Health < READY_HEALTH)
         why += " its own health;";
     if (facts.Mana >= 0.0f && facts.Mana < READY_MANA)
@@ -540,14 +552,16 @@ bool Animus::Curriculum::WingTeacher::Ready(Facts const& facts, std::string& why
     for (uint32 i = 0; i < facts.PartyCount; ++i)
     {
         Member const& member = facts.Party[i];
-        if (!member.Alive)
-            why += Acore::StringFormat(" member {} dead;", i);
+        if (!member.Alive || !member.At.Present || member.At.Yards > GATHER_YARDS)
+        {
+            hard = true;
+            why += !member.Alive ? Acore::StringFormat(" member {} dead;", i)
+                : Acore::StringFormat(" member {} {:.0f} yd;", i, member.At.Yards);
+        }
         else if (member.Health < READY_HEALTH)
             why += Acore::StringFormat(" member {} health {:.0f}%;", i, member.Health * 100.0f);
         else if (member.Mana >= 0.0f && member.Mana < READY_MANA)
             why += Acore::StringFormat(" member {} mana {:.0f}%;", i, member.Mana * 100.0f);
-        else if (!member.At.Present || member.At.Yards > GATHER_YARDS)
-            why += Acore::StringFormat(" member {} {:.0f} yd;", i, member.At.Yards);
     }
     return why.empty();
 }

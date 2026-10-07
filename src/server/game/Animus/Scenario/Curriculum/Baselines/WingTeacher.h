@@ -195,7 +195,7 @@ namespace Animus::Curriculum::WingTeacher
     constexpr float READY_HEALTH = 0.7f;        // ... once every member has this much health
     constexpr float READY_MANA = 0.7f;          // ... and every member with mana this much mana
     constexpr float GATHER_YARDS = 20.0f;       // ... and is this near
-    constexpr float WAIT_SECONDS = 60.0f;       // a minute with nothing gained: the ready check pulls as it is
+    constexpr float WAIT_SECONDS = 60.0f;       // a minute with nothing gained: health and mana are waived
     constexpr float FOLLOW_YARDS = 7.0f;        // out of a fight the others keep this close to the tank
     constexpr float FOLLOW_STOP_YARDS = 4.0f;   // ... stopping this close
     constexpr float LEASH_YARDS = 30.0f;        // in a fight they come back past this
@@ -260,8 +260,10 @@ namespace Animus::Curriculum::WingTeacher
     [[nodiscard]] Choice Hands(Facts const& facts);
 
     /// Whether a ready check passes: every member alive, rested to READY_HEALTH and READY_MANA, and within
-    /// GATHER_YARDS; the tank itself too. `why` says what it waits for.
-    [[nodiscard]] bool Ready(Facts const& facts, std::string& why);
+    /// GATHER_YARDS; the tank itself too. `why` says what it waits for; `hard` whether any of it is a member dead,
+    /// out of sight of the party or beyond GATHER_YARDS -- which no wait waives (the dead rejoin), where health and
+    /// mana are waived after WAIT_SECONDS with nothing gained (no drinks left, a caster that never drank).
+    [[nodiscard]] bool Ready(Facts const& facts, std::string& why, bool& hard);
 }
 
 #endif
