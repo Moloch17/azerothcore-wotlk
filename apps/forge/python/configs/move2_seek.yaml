@@ -34,6 +34,9 @@ mappo:
   epochs: 2
   # As M1: a tenth of movement's, so the camera is not pushed to uniform (overseer, 2026-10-06).
   look_entropy_coef: 0.001
+  # Fresh learning at the usual rate: M1's were halved for its last stretch and M2 extends M1.
+  actor_lr: 0.0003
+  critic_lr: 0.0003
   # The camera's update in chunks (overseer, P2 review): the cluster's 8 GB and 16 GB cards need it, and the bench
   # ran out of memory at 192 envs unchunked (live M1 fit at 16 of 21.5 GB without it; the difference is unexplained).
   vision_chunk_rows: 2048
