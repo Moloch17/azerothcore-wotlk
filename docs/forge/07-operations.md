@@ -242,7 +242,10 @@ rung overwrites it (the best of the rung left is kept as `best_rung<k>.pt`). `se
 policy it ended with, and its `best.pt` only when it has no `latest.pt`. A finished stage's `latest.pt` is its
 top-rung policy (a gate-stepped stage converges only at its last rung); its `best.pt` is the best of whichever rung the
 last evaluation overwrote, and one saved before the re-baseline fix can be the policy from step 0. A `paths` entry is
-taken as given, for a deliberate `best_rung<k>.pt` or `best.pt`.
+taken as given, for a deliberate `best_rung<k>.pt` or `best.pt`. To ask for a stage's best on purpose, write
+`<stage>:best` (or `<stage>:latest`) in `stages` or `eval_partners`: that file exactly, even where the bare name would
+have picked the other; a missing file is skipped with a line saying so, and any other word after the colon is a config
+error.
 
 | `<OutputDir>/runs/<stage>/stage.jsonl` | Restart, advance and halt decisions with their gates |
 | `forge scenarios` | Every stage's run: finished and why, checkpoints, steps, best score |

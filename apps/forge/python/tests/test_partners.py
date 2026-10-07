@@ -337,3 +337,28 @@ def test_a_stage_named_as_a_partner_is_the_policy_it_ended_with_not_its_best_at_
     assert config.members(runs, "r") == [
         f"{done}/latest.pt", f"{only_best}/best.pt", f"{neither}/best.pt", f"{done}/best.pt", f"{done}/best_rung1.pt"]
     assert config.eval_members(runs, "r") == [f"{done}/latest.pt"]
+
+
+def test_a_stage_name_can_ask_for_its_best_or_its_latest_on_purpose(tmp_path):
+    done = tmp_path / "done"
+    done.mkdir()
+    (done / "best.pt").write_text("b")
+    (done / "latest.pt").write_text("l")
+    config = PartnerConfig(stages=("done:best", "done:latest", "done"), eval_partners=("done:best",))
+    runs = str(tmp_path)
+    assert config.members(runs, "r") == [f"{done}/best.pt", f"{done}/latest.pt", f"{done}/latest.pt"]
+    assert config.eval_members(runs, "r") == [f"{done}/best.pt"]
+    # An explicit form is that file even where the bare name would fall back to the other one.
+    only_best = tmp_path / "only_best"
+    only_best.mkdir()
+    (only_best / "best.pt").write_text("b")
+    assert PartnerConfig(stages=("only_best:latest",)).members(runs, "r") == [f"{only_best}/latest.pt"]
+    # A path entry stays as given, colon or not.
+    assert PartnerConfig(paths=("{runs_dir}/done/best.pt",)).members(runs, "r") == [f"{done}/best.pt"]
+
+
+def test_an_unknown_checkpoint_after_the_colon_is_an_error():
+    with pytest.raises(ValueError, match="after the colon"):
+        PartnerConfig(stages=("done:newest",))
+    with pytest.raises(ValueError, match="after the colon"):
+        PartnerConfig(eval_partners=("done:",))

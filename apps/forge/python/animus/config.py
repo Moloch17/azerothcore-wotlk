@@ -22,6 +22,9 @@ from .stages import merges, seed_chain
 EXTENDS_KEY = "extends"
 AUTO = "auto"
 
+#: The checkpoints a partner stage name can ask for after a colon (cast.partners.stages: "stage:best").
+PARTNER_CHECKPOINTS = ("best", "latest")
+
 REPORT_COLUMNS = (
     "dps", "died", "timed_out", "deaths", "kills", "pulls_cleared", "wipes",
     "owner_deaths", "owner_healing", "consumables_used", "self_resurrections", "revives",
@@ -388,8 +391,8 @@ class PartnerConfig:
     # Earlier stages by name, each as the policy the stage ended with ({runs_dir}/<name>/latest.pt, else its best.pt:
     # best.pt is only the best at the stage's *current* rung, which a gate-stepped ladder's first evaluation at each
     # new rung overwrites, and one saved under the old convergence bug can be the policy from step 0), and any
-    # checkpoint by path ({runs_dir}, {run_name} filled in; a path is taken as given, best_rung<k>.pt included). A
-    # missing one is skipped with a line saying so.
+    # checkpoint by path ({runs_dir}, {run_name} filled in; a path is taken as given, best_rung<k>.pt included). "name:best"
+    # and "name:latest" ask for that file of the stage on purpose. A missing one is skipped with a line saying so.
     stages: tuple[str, ...] = ()
     paths: tuple[str, ...] = ()
     # This run's own snapshots join the pool (<run_dir>/partners/) on this clock of latest.pt and on every improved
@@ -420,6 +423,12 @@ class PartnerConfig:
         if not 0.0 <= self.share <= 1.0 or not 0.0 <= self.newest_share <= 1.0:
             raise ValueError(f"cast.partners: share and newest_share are shares (0 to 1), got {self.share!r} and "
                              f"{self.newest_share!r}")
+        for name in (*self.stages, *self.eval_partners):
+            text = str(name)
+            if "/" not in text and not text.endswith(".pt") and ":" in text and \
+                    text.partition(":")[2] not in PARTNER_CHECKPOINTS:
+                raise ValueError(f"cast.partners: {text!r}: after the colon expected one of {PARTNER_CHECKPOINTS} "
+                                 "(<stage>:best, <stage>:latest)")
         if self.max_partners < 1:
             raise ValueError(f"cast.partners.max_partners: at least 1, got {self.max_partners!r}")
         # Below the partners one decision plays, members would be moved to the host and back within every decision.
@@ -433,15 +442,20 @@ class PartnerConfig:
 
     def resolve(self, names, runs_dir: str, run_name: str) -> list[str]:
         """Stage names and paths as checkpoint paths: a bare name is the stage's latest.pt (what it ended with, a
-        competent policy for a finished stage), its best.pt when it has no latest.pt; a path is taken as given."""
+        competent policy for a finished stage), its best.pt when it has no latest.pt; "<stage>:best" and "<stage>:latest"
+        ask for that file on purpose; a path is taken as given."""
         out = []
         for name in names:
             text = str(name).format(runs_dir=runs_dir, run_name=run_name)
             if "/" in text or text.endswith(".pt"):
                 out.append(text)
                 continue
-            folder = Path(runs_dir) / text
-            out.append(str(folder / ("latest.pt" if (folder / "latest.pt").exists() else "best.pt")))
+            stage, _, which = text.partition(":")
+            folder = Path(runs_dir) / stage
+            if which:   # "<stage>:best" or "<stage>:latest": that file, on purpose (a missing one is skipped later)
+                out.append(str(folder / f"{which}.pt"))
+            else:
+                out.append(str(folder / ("latest.pt" if (folder / "latest.pt").exists() else "best.pt")))
         return out
 
     def members(self, runs_dir: str, run_name: str) -> list[str]:
