@@ -119,6 +119,11 @@ first is still going it stops with that machine's `FAILED` line (the lock file h
 nothing. The kernel releases the lock if the holder dies. The lock only covers forgectl runs on the same computer: a
 person typing in `docker attach` by hand, or forgectl on another computer, is not excluded.
 
+**One operator at a time.** The lock is per computer: it stops two forgectl runs on *this* machine from interleaving,
+nothing more. It does not cover `docker attach` by hand, or another person's (or your own, from a second computer)
+forgectl. While a deploy or a stage change is under way, one person drives the cluster; say so in the channel the
+cluster is discussed in before you start.
+
 **Signals.** Python does not run `finally` blocks when the default SIGTERM handler ends the process, which would
 leave a `docker attach` client dangling on the worldserver's console. So during a send forgectl handles SIGTERM and
 SIGHUP itself: it raises, the `finally` sends Ctrl-P Ctrl-Q and waits for the client to leave, and only then does
@@ -185,6 +190,13 @@ replaces the differing values, appends missing keys under a comment, removes key
 writes the result (see below), reads it back and checks the counts and values match. Nothing else in the worker's
 file is touched (its own role, threads, envs). A worker reads its conf at start: restart it (a build does) for the
 change to count. Phase 3 of the human-operable plan removes the need for this command.
+
+**After any conf write, check the line count before anything restarts.** A conf that is empty, or that lost most of
+its lines, is read at the next start as "no keys set": the worldserver runs on defaults (or refuses to start) and
+nothing says the conf was the cause. So after `conf-sync` (or a hand edit, a `conf_prune`, a restore) run
+`ssh <machine> wc -l '~/animus-forge/env/dist/etc/modules/mod_animus_forge.conf'` on every machine written, and
+proceed only when the count is greater than zero (and about what it was: `conf-sync` prints the key count it
+verified). Restart nothing until it is.
 
 **How a conf is written** (here, and for the roles in `move-host`): the text goes to a temporary file in the conf's
 own directory (`mod_animus_forge.conf.forgectl-new.<pid>`, owner and mode copied from the conf), its checksum is

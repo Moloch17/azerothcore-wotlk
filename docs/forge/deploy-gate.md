@@ -490,7 +490,10 @@ ssh <m> 'cd ~/animus-forge/env/dist/etc/modules && \
 (one `Stage.<stage>.TicksPerDecision = 5` line for each stage that lacks it; the template,
 `src/server/apps/worldserver/worldserver.conf.dist` lines `AnimusForge.Stage.*.TicksPerDecision` and
 `AnimusForge.Vision.*`, is the reference). The key is read at the worldserver's start, so it takes effect at step 7's
-restart; `forgectl conf-sync` does not do it.
+restart; `forgectl conf-sync` does not do it. **Then, on every machine whose conf was written** (this append, a prune,
+a restore), check the line count before anything restarts: `ssh <m> wc -l '~/animus-forge/env/dist/etc/modules/mod_animus_forge.conf'`
+must print a number greater than zero (and about the count before the write, plus the lines appended). An empty conf
+reads as "no keys set" at the next start, and nothing says so.
 
 Last, the keys that remain must be the same on every machine (the fingerprint hashes their effective values;
 `forgectl conf-sync --check` is this loop's read-only equivalent):
@@ -643,6 +646,41 @@ whether that matters.
 When the machines are back on `forge` afterwards, `git checkout forge` before the next `cluster-pull.sh` (it pulls
 fast-forward only and a detached checkout cannot). On the dev machine the merged `forge` is not undone by a cluster
 rollback: do not push anything more to `forge` until the owner decides.
+
+## What changes at the deploy
+
+Numbers that read differently on the new build than on the old one, so a first reading is not mistaken for a
+regression:
+
+- **`engaged`.** The dungeon stages used to have two `engaged` columns: the core's (never written, first by name) and
+  InstanceEncounter's. The stage.json now has one, InstanceEncounter's real value. No live yaml reads it (checked
+  against every key that names metrics: gates, convergence, headline, targets, report, episode_means, fade and costs
+  `gate_metric`, `layout_sampling`), so no gate or headline changes meaning; only `eval_episodes.jsonl` rows carry it.
+- **Episode columns the C++ trim removed** (`killed`, `time_to_kill`, `casts_cancelled`, ...) and the derived
+  `livelocked` and `clean_kill` are gone from the report and the logs; nothing live gated on them.
+- **The stall warning** now fires after 4 evaluations (`fade.stall_evals`, was 6) without a new best at a rung.
+
+## Before the dungeon stages train (not before the deploy)
+
+None of these blocks the deploy; each must be done before the stage it concerns trains.
+
+- **(a) A stall alarm for the wing ladder, built from reads.** The ladder has the collapse alarm (the gate under a
+  floor); a wing ladder that sits flat needs the stall alarm too, written from the evaluation reads the way the collapse
+  alarm is: warn when six reads in a row at a rung bring no new best read and none reaches the target.
+- **(b) The wing rung-0 alarm** exists already; check that it fires on a real G2 first read (it has only been tested
+  on synthetic reads).
+- **(c) G3: `GpuVision::Renderer::Forget` has no production caller.** With the GPU renderer on, a scene is built for each
+  instance and never freed, so scenes leak every time an instance unloads. The instance-unload path must call `Forget`
+  before `Gpu.Observe` is switched on.
+
+## What can wait
+
+- A local `forgectl build` (no `--cluster`) has no running-stage check: it recreates the container under a running
+  stage. Cancel the stage first by hand.
+- The goal block's always-zero order columns come out at the next goal-block revision (a revision bump, so seeding
+  by name carries on).
+- `CombatReward.cpp`'s file name no longer fits `RewardTermName` (the one-on-one reward is gone); rename it with the
+  next change that touches the file.
 
 ## The failure table
 
