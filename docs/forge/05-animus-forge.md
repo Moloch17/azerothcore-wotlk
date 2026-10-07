@@ -604,7 +604,7 @@ A new best score saves `best.pt`.
 - **A gate-stepped ladder raises two warnings and acts on neither** (`ShapingFade._watch_collapse`, `_watch_stall`):
   *collapsed* (the gate metric under a floor for 3 evaluations; `ladder_collapsed` in progress.json) and *stalled*
   (the gate metric at the rung has not beaten its own best at the rung by more than its standard error for
-  `fade.stall_evals` = 6 evaluations running and `fade.stall_env_steps` = 20M env steps; `ladder_stalled`, the rung or
+  `fade.stall_evals` = 4 evaluations running and `fade.stall_env_steps` = 20M env steps; `ladder_stalled`, the rung or
   -1). A flat rung is not a collapse: M2's doorway sat at ~35% for 30M steps and raised nothing. The standard error is
   the summary's `<metric>_stderr` if it has one, else the binomial estimate over the summary's episode count, else
   0.02. One line in the learner's log, one row in `forge status`, cleared when the best improves; the last rung is not

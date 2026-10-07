@@ -285,6 +285,25 @@ def test_a_flat_rung_raises_the_stall_warning_once_after_its_evaluations_and_its
     assert not any(_read(evals_short, 0.35, 10_000_000 * (k + 1)) for k in range(5))
 
 
+def test_noise_inside_the_standard_error_is_no_improvement_and_a_dip_does_not_reset_the_count():
+    """64 episodes at 0.35: stderr 0.060. Reads that wobble up by less than that, and a dip far below the best, all
+    count as evaluations without a new best; none of them restarts the count."""
+    fade = _gated_fade()
+    reads = [0.35, 0.40, 0.10, 0.39, 0.30, 0.41, 0.05, 0.33]   # +0.06 is not "more than" the error; dips are dips
+    raised = [_read(fade, value, 5_000_000 * (k + 1)) for k, value in enumerate(reads)]
+    assert fade.gate_best == pytest.approx(0.35) and fade.evals_since_gate_best == len(reads) - 1
+    assert raised == [False] * 6 + [True, False]       # six after the best, 30M on: the dips never reset it
+    # One read clearly past the error is the only thing that does.
+    assert not _read(fade, 0.50, 45_000_000) and fade.evals_since_gate_best == 0 and not fade.stalled
+
+
+def test_the_stall_default_is_four_evaluations():
+    fade = _fade(gate_metric="found", gate_value=0.99, require_plateau=False, stall_env_steps=0)
+    assert fade.stall_evals == 4
+    raised = [_read(fade, 0.35, 10_000_000 * (k + 1)) for k in range(8)]
+    assert raised == [False] * 4 + [True] + [False] * 3
+
+
 def test_a_rising_rung_never_stalls_and_a_stall_clears_when_the_best_improves():
     rising = _gated_fade()
     assert not any(_read(rising, 0.3 + 0.05 * k, 5_000_000 * (k + 1)) for k in range(12))
@@ -342,7 +361,7 @@ def test_the_gate_standard_error_is_the_summarys_then_binomial_then_fixed():
 
 
 def test_the_stall_settings_are_validated_and_set_per_stage():
-    assert FadeConfig().stall_evals == 6 and FadeConfig().stall_env_steps == 20_000_000
+    assert FadeConfig().stall_evals == 4 and FadeConfig().stall_env_steps == 20_000_000
     assert FadeConfig(stall_evals=3, stall_env_steps=0).stall_evals == 3
     with pytest.raises(ValueError, match="stall_evals"):
         FadeConfig(stall_evals=0)

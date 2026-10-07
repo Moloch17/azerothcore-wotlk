@@ -171,7 +171,7 @@ class ShapingFade:
         self.alarm: str | None = None
         # The stall warning (likewise a warning only): the best gate reading at this rung, its standard error, the
         # evaluations since it was beaten, and the env steps when it was set.
-        self.stall_evals = max(1, int(getattr(fade, "stall_evals", 6)))
+        self.stall_evals = max(1, int(getattr(fade, "stall_evals", 4)))
         self.stall_env_steps = max(0, int(getattr(fade, "stall_env_steps", 20_000_000)))
         self.gate_stderr = STALL_FALLBACK_STDERR
         self.gate_best: float | None = None

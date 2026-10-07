@@ -201,7 +201,7 @@ class FadeConfig:
     # The stall warning (gate-stepped ladders only; a warning, never an action): a rung whose gate metric has not beaten
     # its own best by more than its standard error for this many evaluations running AND this many env steps (M2's
     # doorway sat at ~35% for 30M steps, which is a stall and not a collapse). 0 steps = the evaluations alone.
-    stall_evals: int = 6
+    stall_evals: int = 4
     stall_env_steps: int = 20_000_000
 
     def __post_init__(self) -> None:
