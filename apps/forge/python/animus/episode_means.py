@@ -24,6 +24,10 @@ PER_EVENT = {
     "sight_seconds": "sighted",
     "sight_to_arrival": "found_sighted",
     "revisit_rate": "room_entries",
+    # M1 redesigned (SightEncounter): the arrival rate in the episodes that withheld the compass, and in those that
+    # showed it.
+    "arrived_no_compass": "compass_withheld",
+    "arrived_with_compass": "compass_present",
 }
 
 

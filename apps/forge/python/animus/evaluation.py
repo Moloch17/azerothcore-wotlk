@@ -58,7 +58,7 @@ LIVELOCK_CANCELS = 20
 # 1 for a seat that walked exactly the path and 0 for one that did not arrive.
 DERIVED_METRICS = ("livelocked", "clean_kill", "lost", "wedged", "spl")
 # Ratios of sums over an evaluation's episodes (EvalResult.summary), on the movement stages that report the columns.
-RATIO_METRICS = ("arrived_narrow", "fallback_share")
+RATIO_METRICS = ("arrived_narrow", "fallback_share", "arrived_at_rung")
 LOST_ABOVE = 3.0
 WEDGED_BELOW = 0.5
 
@@ -272,9 +272,30 @@ class EvalResult:
         # fell back to an ordinary marker over every narrow leg asked for (MarkerEncounter).
         narrow, narrow_arrived, fallbacks = (self.column("narrow_legs"), self.column("narrow_arrived"),
                                              self.column("fallback_legs"))
+        # M1's withholding ladder (SightEncounter, perception-goals REDESIGN amendment 7): an evaluation plays every
+        # pair with the compass and without, half and half, whatever the rung, so its plain arrival rate is not the
+        # rung's. arrived_at_rung is the arrival at the training rung's own mix -- the chance it withholds the
+        # compass (compass_withhold_chance, the rung's even in an evaluation) times the arrival without it, the rest
+        # times the arrival with it -- and is what the shaping fade and the cost ladder are gated on.
+        withheld, compass_shown, arrived_no, arrived_with, chance = (
+            self.column("compass_withheld"), self.column("compass_present"), self.column("arrived_no_compass"),
+            self.column("arrived_with_compass"), self.column("compass_withhold_chance"))
 
         def ratios(rows: np.ndarray) -> dict:
             out = {}
+            if all(column is not None for column in (withheld, compass_shown, arrived_no, arrived_with, chance)) \
+                    and rows.any():
+                p = float(chance[rows].mean())
+                without = float(withheld[rows].sum())
+                shown = float(compass_shown[rows].sum())
+                rate_no = float(arrived_no[rows].sum()) / without if without > 0 else None
+                rate_with = float(arrived_with[rows].sum()) / shown if shown > 0 else None
+                if rate_with is not None and (rate_no is not None or p <= 0.0):
+                    out["arrived_at_rung"] = p * (rate_no or 0.0) + (1.0 - p) * rate_with
+                elif rate_no is not None and p >= 1.0:
+                    out["arrived_at_rung"] = rate_no
+                else:
+                    out["arrived_at_rung"] = None
             if narrow is not None and narrow_arrived is not None:
                 placed = float(narrow[rows].sum())
                 out["arrived_narrow"] = float(narrow_arrived[rows].sum()) / placed if placed > 0 else None
