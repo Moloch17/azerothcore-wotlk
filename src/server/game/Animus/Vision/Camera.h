@@ -142,6 +142,10 @@ namespace Animus::Vision
         QuestObject = 20,       // a game object this seat's quests use (the client's glow)
         UsableObject = 21,      // any other game object the seat can use (the cog cursor)
         OtherObject = 22,       // any other game object
+        /// A hostile ground effect: an area spell's persistent area (a fire pool, a poison cloud, a consecration that
+        /// is not the seat's side's), drawn as the client draws its visual -- a disc on the ground at the area's
+        /// position and radius (HazardDisc). Never a unit or a game object: nothing to select, only to stay out of.
+        GroundHazard = 23,
         Count
     };
 
@@ -154,7 +158,7 @@ namespace Animus::Vision
     constexpr char const* CLASS_NAMES[CLASSES] = { "sky", "terrain", "model", "door", "water", "deadly",
         "hostile_creature", "neutral_creature", "friendly_creature", "hostile_player", "friendly_player",
         "quest_giver", "vendor", "trainer", "lootable_corpse", "corpse", "chest", "herb", "ore", "mailbox",
-        "quest_object", "usable_object", "other_object" };
+        "quest_object", "usable_object", "other_object", "ground_hazard" };
 
     /// Revision 4's coarse kinds, which follow from the class (KindOf): the caster's own tests (a ray hit something
     /// or is sky) and the GPU diff's edge rule read them.
@@ -179,7 +183,8 @@ namespace Animus::Vision
             case Class::Terrain:            return Kind::Terrain;
             case Class::Model:              return Kind::Model;
             case Class::Water:              return Kind::Water;
-            case Class::Deadly:             return Kind::Deadly;
+            case Class::Deadly:
+            case Class::GroundHazard:       return Kind::Deadly;
             case Class::HostileCreature:
             case Class::HostilePlayer:      return Kind::Hostile;
             case Class::NeutralCreature:

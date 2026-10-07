@@ -31,6 +31,7 @@
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <boost/json/string.hpp>
+#include <cmath>
 
 namespace
 {
@@ -39,10 +40,10 @@ namespace
     constexpr char const* FRAME_NAMES[Combat::FRAME_FEATURES] = { "present", "alive", "health", "power", "mana_user",
         "in_range", "in_combat", "debuffs", "dispellable", "aggro", "selected", "focused" };
     constexpr char const* TARGET_NAMES[Combat::TARGET_FEATURES] = { "present", "hostile", "friendly", "in_view",
-        "dead", "threat", "threat_pct", "tot_self", "tot_pet", "tot_party", "tot_other" };
+        "dead", "threat", "threat_pct", "tot_self", "tot_pet", "tot_party", "tot_other", "debuffs" };
     constexpr char const* SLOT_NAMES[Combat::COMBAT_SLOT_FEATURES] = { "casting", "cast_left", "interruptible",
         "cast_heal", "cast_area", "cast_at_me", "controlled", "elite", "in_combat", "attacks_me", "attacks_party",
-        "threat" };
+        "threat", "debuffs" };
 
     std::string FrameName(uint32 frame)
     {
@@ -115,7 +116,23 @@ std::array<Unit*, Animus::Curriculum::CombatBlock::PARTY_FRAMES> Animus::Curricu
     return units;
 }
 
-void Animus::Curriculum::CombatBlock::WriteSlot(Unit const* unit, Player const* bot, float* out)
+Animus::Curriculum::Encoding::Debuffs Animus::Curriculum::CombatBlock::ShownDebuffs(Unit const* unit,
+    Player const* bot, Vision::SeenList const* seen, ObjectGuid focus)
+{
+    if (!unit || !bot)
+        return {};
+    return DebuffsShown(unit->GetGUID().GetRawValue(), bot->GetTarget().GetRawValue(), focus.GetRawValue(), seen)
+        ? Encoding::IncomingDebuffs(unit) : Encoding::Debuffs();
+}
+
+bool Animus::Curriculum::CombatBlock::DebuffsShown(uint64 guid, uint64 selection, uint64 focus,
+    Vision::SeenList const* seen)
+{
+    return guid && (guid == selection || guid == focus || (seen && InView(*seen, guid)));
+}
+
+void Animus::Curriculum::CombatBlock::WriteSlot(Unit const* unit, Player const* bot, Vision::SeenList const* seen,
+    ObjectGuid focus, float* out)
 {
     std::fill(out, out + COMBAT_SLOT_FEATURES, 0.0f);
     if (!unit || !bot || !unit->IsAlive())
@@ -140,6 +157,7 @@ void Animus::Curriculum::CombatBlock::WriteSlot(Unit const* unit, Player const* 
     out[SLOT_ATTACKS_ME] = victim == bot ? 1.0f : 0.0f;
     out[SLOT_ATTACKS_PARTY] = IsPartyOf(bot, victim) ? 1.0f : 0.0f;
     out[SLOT_THREAT] = float(ThreatStatusOf(unit, bot)) / 3.0f;
+    out[SLOT_DEBUFFS] = std::min(1.0f, float(ShownDebuffs(unit, bot, seen, focus).Count) / 5.0f);
 }
 
 uint32 Animus::Curriculum::CombatBlock::VisibleEnemies(Vision::SeenList const& seen, UnitResolver const& resolve,
@@ -168,6 +186,47 @@ bool Animus::Curriculum::CombatBlock::InView(Vision::SeenList const& seen, uint6
         if (seen.Info[slot].Guid == guid)
             return true;
     return false;
+}
+
+Animus::Curriculum::CombatBlock::SeenHazards Animus::Curriculum::CombatBlock::ReadHazards(
+    Vision::SeenList const& seen, float x, float y, float facing)
+{
+    SeenHazards out;
+    float deepestLeft = -1.0f;
+    float nearestEdge = 0.0f;
+    uint32 const listed = std::min<uint32>(seen.Count, Vision::ENTITY_SLOTS);
+    for (uint32 slot = 0; slot < listed; ++slot)
+    {
+        Vision::EntityInfo const& info = seen.Info[slot];
+        if (info.Id.What != Vision::Class::GroundHazard || info.Radius <= 0.0f)
+            continue;
+        float const dx = info.Centre.X - x;
+        float const dy = info.Centre.Y - y;
+        float const distance = std::sqrt(dx * dx + dy * dy);
+        float const bearing = std::remainder(std::atan2(dy, dx) - facing, 2.0f * float(M_PI));
+        Hazard hazard;
+        hazard.Present = true;
+        hazard.Distance = distance;
+        hazard.Radius = info.Radius;
+        hazard.Bearing = bearing;
+        hazard.Centre.Relocate(info.Centre.X, info.Centre.Y, info.Centre.Z);
+        if (distance <= info.Radius)
+        {
+            ++out.Standing;
+            float const left = info.Radius - distance;
+            if (left > deepestLeft)
+            {
+                deepestLeft = left;
+                out.Deepest = hazard;
+            }
+        }
+        else if (!out.Nearest.Present || distance - info.Radius < nearestEdge)
+        {
+            nearestEdge = distance - info.Radius;
+            out.Nearest = hazard;
+        }
+    }
+    return out;
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CombatBlock::Size(Layout const& /*layout*/) const
@@ -249,6 +308,7 @@ void Animus::Curriculum::CombatBlock::Observe(SeatView const& view, float* obs, 
     out[TARGET_IN_VIEW] = view.Seen && InView(*view.Seen, selected.GetRawValue()) ? 1.0f : 0.0f;
     out[TARGET_DEAD] = target->IsAlive() ? 0.0f : 1.0f;
     out[TARGET_THREAT] = float(ThreatStatusOf(target, bot)) / 3.0f;
+    out[TARGET_DEBUFFS] = std::min(1.0f, float(ShownDebuffs(target, bot, view.Seen, focus).Count) / 5.0f);
     if (target->IsAlive())
     {
         ThreatManager const& threat = target->GetThreatMgr();

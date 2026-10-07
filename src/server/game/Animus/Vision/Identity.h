@@ -112,6 +112,9 @@ namespace Animus::Vision
         bool Dead = false;
         bool Open = false;
         bool Used = false;
+        /// A ground hazard's radius, as its disc is drawn (0 for anything else): how far its edge is, as a player reads
+        /// it off the visual.
+        float Radius = 0.0f;
     };
 
     /// **A seat's entity list for this decision** (perception-goals 1b): what its last frame saw, in slot order --

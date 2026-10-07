@@ -232,7 +232,8 @@ void Animus::Curriculum::SightBlock::Observe(SeatView const& view, float* obs, u
                 continue;
             if (Unit* unit = Encoding::UnitThrough(*bot, ObjectGuid(guid)); unit && unit->IsInWorld()
                 && unit->GetMap() == bot->GetMap())
-                CombatBlock::WriteSlot(unit, bot, out + SIGHT_FEATURES);
+                CombatBlock::WriteSlot(unit, bot, view.Seen, view.Focus ? *view.Focus : ObjectGuid::Empty,
+                    out + SIGHT_FEATURES);
         }
     if (!mask)
         return;

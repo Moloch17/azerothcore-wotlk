@@ -576,6 +576,9 @@ TEST(VisionGpuTest, EmulatedFramesMatchRender)
     EXPECT_EQ(diff.EmulatedTally.OffEdgeIdentity, 0u);
     EXPECT_EQ(diff.EmulatedTally.SlotTablesExact, diff.Frames);
     EXPECT_GT(diff.EmulatedTally.Listed, 0u);
+    // Ground hazards (dungeon-curriculum I3: fire is seen): the random frames lay discs round the seat, and the device
+    // draws them as the CPU does.
+    EXPECT_GT(diff.EmulatedTally.CpuClasses[uint32_t(Vi::Class::GroundHazard)], 0u);
 }
 
 TEST(VisionGpuTest, InstancesShareTerrainUntilTheLastLetsGo)

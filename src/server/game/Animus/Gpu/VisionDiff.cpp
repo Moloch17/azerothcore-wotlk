@@ -176,6 +176,20 @@ std::vector<Animus::GpuVision::DiffFrame> Animus::GpuVision::RandomFrames(Vision
             frame.Units.push_back(unit);
         }
 
+        // Ground hazards (Class::GroundHazard): flat discs of a fire pool's to a cloud's radius on the ground
+        // round the seat, sometimes under its feet, drawn by both casters as the units are.
+        uint32_t const hazards = urand(0, 1);
+        for (uint32_t h = 0; h < hazards; ++h)
+        {
+            float const at = frand(0.0f, 2.0f * Vi::PI);
+            float const away = frand(0.0f, 12.0f);
+            float const hx = frame.Pose.X + away * std::cos(at);
+            float const hy = frame.Pose.Y + away * std::sin(at);
+            float const ground = world.FloorBelow(hx, hy, frame.Pose.Z + 2.0f, 6.0f);
+            frame.Units.push_back(Vi::HazardDisc(hx, hy, ground > Animus::Movement::INVALID_FLOOR + 1.0f ? ground
+                : frame.Pose.Z, frand(1.5f, 5.0f)));
+        }
+
         // Colliderless game objects: boxes of a chest's to a cart's size, turned about z at random.
         uint32_t const objects = urand(0, boxes);
         for (uint32_t b = 0; b < objects; ++b)

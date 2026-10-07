@@ -3782,6 +3782,17 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
+    // A sight stage's ground fire is what the camera shows (I3): the visible hazards, never the server's areas.
+    if (_stage.Has(BlockId::Sight))
+    {
+        CombatBlock::SeenHazards const seen = bot && bot->IsAlive()
+            ? CombatBlock::ReadHazards(seat.Seen, bot->GetPositionX(), bot->GetPositionY(), bot->GetOrientation())
+            : CombatBlock::SeenHazards();
+        view.HazardsSeen = true;
+        view.StandingSeen = seen.Standing;
+        view.DeepestSeen = seen.Deepest;
+        view.NearestHazard = seen.Nearest;
+    }
     view.Option = &seat.Option;
     SeatActionResult result;
     SeatOptionSet const started = seat.Option;
@@ -4179,6 +4190,17 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     }
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
+    // A sight stage's ground fire is what the camera shows (I3): the visible hazards, never the server's areas.
+    if (_stage.Has(BlockId::Sight))
+    {
+        CombatBlock::SeenHazards const seen = bot && bot->IsAlive()
+            ? CombatBlock::ReadHazards(seat.Seen, bot->GetPositionX(), bot->GetPositionY(), bot->GetOrientation())
+            : CombatBlock::SeenHazards();
+        view.HazardsSeen = true;
+        view.StandingSeen = seen.Standing;
+        view.DeepestSeen = seen.Deepest;
+        view.NearestHazard = seen.Nearest;
+    }
     if (_stage.Has(BlockId::Map))
     {
         view.Hits = &seat.Hits;

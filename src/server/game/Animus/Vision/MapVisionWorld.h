@@ -24,6 +24,8 @@
 #include "VisionCaster.h"
 #include <vector>
 
+class DynamicObject;
+
 class GameObject;
 class Map;
 class Player;
@@ -86,6 +88,10 @@ namespace Animus::Vision
     /// - numbered nearest the head first (NumberNearest), MAX_SEEN of them at most, each number's EntityInfo kept.
     /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
     void GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out);
+
+    /// A ground effect this seat's camera draws as a hazard (Class::GroundHazard): an area spell's persistent area,
+    /// harmful, its caster (when there is one) not friendly to the seat.
+    [[nodiscard]] bool HostileGround(Player* seat, DynamicObject const* area);
 
     /// The facts this seat's client shows of a unit or a game object (the UI rule, perception-goals amendment 7).
     /// `killTargets`: the creature entries the seat's incomplete quests still need killed (KillTargets).

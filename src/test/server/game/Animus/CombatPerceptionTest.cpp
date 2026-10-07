@@ -20,6 +20,7 @@
 /// movement stages left as they were.
 
 #include "IntegrationTestFixture.h"
+#include "MapVisionWorld.h"
 #include "Block.h"
 #include "CombatBlock.h"
 #include "CombatDraw.h"
@@ -434,7 +435,7 @@ TEST(CombatBlockLayoutTest, TheSightListCarriesTheCombatColumns)
     boost::json::array const& names = described.at("features").as_array();
     ASSERT_EQ(names.size(), std::size_t(Sight::Width(combat)));
     EXPECT_EQ(std::string(names[Sight::SIGHT_FEATURES].as_string()), "combat_casting");
-    EXPECT_EQ(std::string(names.back().as_string()), "combat_threat");
+    EXPECT_EQ(std::string(names.back().as_string()), "combat_debuffs");
 
     Cu::Block const& block = Cu::GetBlock(Cu::BlockId::Combat);
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::Combat), "combat");
@@ -454,17 +455,17 @@ TEST_F(CombatPerceptionTest, ASlotsCombatColumnsAreItsNameplates)
     TestCreature* mob = CreateTestCreature(121, 90121, TEST_FACTION_HOSTILE_TO_ALL);
     std::array<float, Combat::COMBAT_SLOT_FEATURES> out{};
     out.fill(7.0f);
-    Combat::WriteSlot(mob, _bot, out.data());
+    Combat::WriteSlot(mob, _bot, nullptr, ObjectGuid::Empty, out.data());
     EXPECT_FLOAT_EQ(out[Combat::SLOT_CASTING], 0.0f);
     EXPECT_FLOAT_EQ(out[Combat::SLOT_ATTACKS_ME], 0.0f);
     EXPECT_FLOAT_EQ(out[Combat::SLOT_THREAT], 0.0f);
     mob->SetAlive(false);
     out.fill(7.0f);
-    Combat::WriteSlot(mob, _bot, out.data());
+    Combat::WriteSlot(mob, _bot, nullptr, ObjectGuid::Empty, out.data());
     for (float value : out)
         EXPECT_FLOAT_EQ(value, 0.0f);
     out.fill(7.0f);
-    Combat::WriteSlot(nullptr, _bot, out.data());
+    Combat::WriteSlot(nullptr, _bot, nullptr, ObjectGuid::Empty, out.data());
     EXPECT_FLOAT_EQ(out[0], 0.0f);
     EXPECT_FALSE(Combat::IsPartyOf(_bot, mob));
     EXPECT_FALSE(Combat::IsPartyOf(_bot, _bot));
@@ -564,8 +565,8 @@ TEST(CombatRespawnTest, TheClockRisesAfterTheDelayAndRejoinsAtTheFight)
     EXPECT_FLOAT_EQ(clock.RejoinSeconds(), 30.0f);
 }
 
-// No server-side leak after a rise: the seat's last frame is forgotten, so the enemy list -- the frame's visible hostiles
-// -- is empty until its camera casts a frame at the entrance, however many it saw where it died.
+// No server-side leak after a rise: the seat's last frame is forgotten, so the enemy list -- the frame's visible
+// hostiles -- is empty until its camera casts a frame at the entrance, however many it saw where it died.
 TEST_F(CombatPerceptionTest, ARisenSeatSeesNoEnemyUntilAFrameIsCast)
 {
     TestCreature* mob = CreateTestCreature(131, 90131, TEST_FACTION_HOSTILE_TO_ALL);
@@ -665,4 +666,86 @@ TEST(CombatStagesTest, TheStagesLayouts)
             EXPECT_EQ(arena.Combat, Cu::CombatDrill::None) << name;
         }
     }
+}
+
+// Ground fire is seen (I3): a hazard is drawn as a flat disc of its class at its radius by the CPU caster (the device
+// draws the same shape: VisionGpuTest's emulated frames), listed as an entity of the frame, and one behind a wall is
+// not; the duel block's fire columns are read off the visible ones alone.
+TEST_F(CombatPerceptionTest, GroundFireIsSeenAndReadFromTheFrame)
+{
+    WalledVision world;
+    world.Walls.push_back({ X0 + 20.0f, X0 + 21.0f, Y0 - 10.0f, Y0 + 10.0f, -1.0f, 12.0f });
+    std::vector<Vi::UnitShape> units = { Vi::HazardDisc(X0 + 8.0f, Y0, 0.0f, 3.0f, 1),
+        Vi::HazardDisc(X0 + 30.0f, Y0, 0.0f, 3.0f, 2) };
+    EXPECT_EQ(units[0].What, Vi::Class::GroundHazard);
+    EXPECT_FLOAT_EQ(units[0].Height, Vi::HAZARD_THICKNESS);
+    Vi::Sight const sight(units);
+    Vi::Settings const settings;
+    Vi::Pose pose;
+    pose.X = X0;
+    pose.Y = Y0;
+    Vi::CameraState camera;
+    camera.Zoom = 0.0f;
+    camera.Pitch = -20.0f * Vi::DEGREES;
+    std::vector<uint8_t> image(Vi::ImageBytes(settings));
+    std::array<float, Vi::SCALARS> scalars{};
+    Vi::FrameSlots slots;
+    Vi::Render(settings, pose, camera, world, sight, nullptr, image.data(), scalars.data(), nullptr,
+        Vi::OBJECTIVE_RADIUS, &slots);
+    uint32 hazardPixels = 0;
+    for (std::size_t pixel = 0; pixel < image.size() / Vi::BYTES_PER_PIXEL; ++pixel)
+        hazardPixels += Vi::ClassOfByte(image[pixel * Vi::BYTES_PER_PIXEL + Vi::CLASS_BYTE]) == Vi::Class::GroundHazard;
+    EXPECT_GT(hazardPixels, 0u);
+    ASSERT_EQ(slots.Count, 1u) << "the disc behind the wall is not in the frame";
+    EXPECT_EQ(slots.Slots[0].Entity, 1u);
+    EXPECT_EQ(Vi::KindOf(Vi::Class::GroundHazard), Vi::Kind::Deadly);
+    EXPECT_STREQ(Vi::CLASS_NAMES[uint32(Vi::Class::GroundHazard)], "ground_hazard");
+
+    // The frame's list, as GatherSight fills it: a hazard is an object (never selected), hostile, with its radius.
+    Vi::SeenList seen;
+    seen.Count = 1;
+    seen.Info[0].Id.What = Vi::Class::GroundHazard;
+    seen.Info[0].GameObject = true;
+    seen.Info[0].Reaction = -1;
+    seen.Info[0].Guid = 4242;
+    seen.Info[0].Radius = 3.0f;
+    seen.Info[0].Centre = { X0 + 8.0f, Y0, 0.1f };
+    std::array<Unit*, Cu::PACK_SLOTS> enemies{};
+    EXPECT_EQ(Combat::VisibleEnemies(seen, Knowing({}), enemies.data(), Cu::PACK_SLOTS), 0u);
+
+    // Standing outside it, facing it: the nearest, 5 yd to its edge, dead ahead; not standing in any.
+    Combat::SeenHazards outside = Combat::ReadHazards(seen, X0, Y0, 0.0f);
+    EXPECT_EQ(outside.Standing, 0u);
+    ASSERT_TRUE(outside.Nearest.Present);
+    EXPECT_NEAR(outside.Nearest.Distance - outside.Nearest.Radius, 5.0f, 1e-4f);
+    EXPECT_NEAR(outside.Nearest.Bearing, 0.0f, 1e-4f);
+
+    // Inside it, facing away: standing in one, the way out 2 yd, its centre behind.
+    Combat::SeenHazards inside = Combat::ReadHazards(seen, X0 + 9.0f, Y0, 0.0f);
+    EXPECT_EQ(inside.Standing, 1u);
+    ASSERT_TRUE(inside.Deepest.Present);
+    EXPECT_NEAR(inside.Deepest.Radius - inside.Deepest.Distance, 2.0f, 1e-4f);
+    EXPECT_NEAR(std::fabs(inside.Deepest.Bearing), float(M_PI), 1e-4f);
+    EXPECT_FALSE(inside.Nearest.Present);
+
+    // Nothing seen, nothing known: the server's areas never reach it.
+    Combat::SeenHazards const none = Combat::ReadHazards(Vi::SeenList(), X0 + 9.0f, Y0, 0.0f);
+    EXPECT_EQ(none.Standing, 0u);
+    EXPECT_FALSE(none.Nearest.Present);
+    EXPECT_FALSE(Vi::HostileGround(nullptr, nullptr));
+}
+
+// Debuffs on an enemy are shown only as a player is shown them: the selection (target frame), the focus (focus frame)
+// or one in the camera's frame (its nameplate); never every enemy's from the server.
+TEST(CombatDebuffsTest, ShownOnlyForTheSelectionTheFocusOrTheVisible)
+{
+    Vi::SeenList seen;
+    seen.Count = 1;
+    seen.Info[0] = Listed(31, -1);
+    EXPECT_TRUE(Combat::DebuffsShown(31, 0, 0, &seen));     // in view
+    EXPECT_TRUE(Combat::DebuffsShown(32, 32, 0, &seen));    // the selection
+    EXPECT_TRUE(Combat::DebuffsShown(33, 0, 33, &seen));    // the focus
+    EXPECT_FALSE(Combat::DebuffsShown(34, 32, 33, &seen));  // a remembered or unseen enemy
+    EXPECT_FALSE(Combat::DebuffsShown(34, 0, 0, nullptr));
+    EXPECT_FALSE(Combat::DebuffsShown(0, 0, 0, &seen));
 }

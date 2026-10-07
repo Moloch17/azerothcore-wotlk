@@ -50,6 +50,7 @@ namespace Animus::Vision
         { 255, 255, 140 },  // quest object
         { 0, 255, 255 },    // usable object
         { 120, 90, 60 },    // other object
+        { 255, 40, 220 },   // ground hazard
     };
 }
 

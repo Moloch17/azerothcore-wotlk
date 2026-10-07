@@ -186,8 +186,9 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
 
     // The ground it is standing on, whether or not it has a target: free, since a ground effect applies an aura to
     // whoever stands in it and the aura knows the object.
-    Hazard hazard;
-    if (uint32 const hazards = Encoding::StandingInHazards(bot, &hazard))
+    // In a sight stage only what the camera shows (the visible hazards, CombatBlock::ReadHazards), never the auras.
+    Hazard hazard = view.HazardsSeen ? view.DeepestSeen : Hazard();
+    if (uint32 const hazards = view.HazardsSeen ? view.StandingSeen : Encoding::StandingInHazards(bot, &hazard))
     {
         obs[OBS_HAZARDS_STANDING_IN] = std::min(1.0f, float(hazards) / 3.0f);
         if (hazard.Present)

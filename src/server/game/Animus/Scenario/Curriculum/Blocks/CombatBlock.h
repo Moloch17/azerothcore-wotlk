@@ -20,7 +20,9 @@
 #define ANIMUS_LIB_CURRICULUM_COMBAT_BLOCK_H
 
 #include "Block.h"
+#include "EncoderSupport.h"
 #include "Identity.h"
+#include "SeatView.h"
 #include "ObjectGuid.h"
 #include <array>
 #include <functional>
@@ -96,7 +98,8 @@ namespace Animus::Curriculum
             TARGET_TOT_PET      = 8,    // ... its pet ...
             TARGET_TOT_PARTY    = 9,    // ... a member of its group ...
             TARGET_TOT_OTHER    = 10,   // ... anyone else
-            TARGET_FEATURES     = 11
+            TARGET_DEBUFFS      = 11,   // harmful auras on it / 5, as the target frame shows them (ShownDebuffs)
+            TARGET_FEATURES     = 12
         };
 
         enum Obs : uint32
@@ -121,7 +124,8 @@ namespace Animus::Curriculum
             SLOT_ATTACKS_ME     = 9,    // its victim is the seat
             SLOT_ATTACKS_PARTY  = 10,   // ... the seat's pet or a member of its group
             SLOT_THREAT         = 11,   // the seat's threat status on it / 3 (the nameplate's colouring)
-            COMBAT_SLOT_FEATURES = 12
+            SLOT_DEBUFFS        = 12,   // harmful auras on it / 5, as its nameplate shows them (ShownDebuffs)
+            COMBAT_SLOT_FEATURES = 13
         };
 
         enum Action : uint32
@@ -153,8 +157,19 @@ namespace Animus::Curriculum
         /// The party frames' units, in frame order (null for an empty frame): the seat, its pet, its group's members.
         [[nodiscard]] static std::array<Unit*, PARTY_FRAMES> FrameUnits(Player* bot);
 
-        /// One sight slot's combat columns for a visible unit, from `bot`'s point of view.
-        static void WriteSlot(Unit const* unit, Player const* bot, float* out);
+        /// One sight slot's combat columns for a visible unit, from `bot`'s point of view; `seen` the frame and `focus`
+        /// the seat's focus (what ShownDebuffs allows).
+        static void WriteSlot(Unit const* unit, Player const* bot, Vision::SeenList const* seen, ObjectGuid focus,
+            float* out);
+
+        /// **The debuffs a player is shown on `unit`**: its harmful auras when it is the seat's selection (the target
+        /// frame), its focus (the focus frame) or in the camera's frame (its nameplate), else none -- never every
+        /// enemy's from the server.
+        [[nodiscard]] static Encoding::Debuffs ShownDebuffs(Unit const* unit, Player const* bot,
+            Vision::SeenList const* seen, ObjectGuid focus);
+        /// Whether a player is shown `guid`'s debuffs: it is the selection, the focus, or in the frame.
+        [[nodiscard]] static bool DebuffsShown(uint64 guid, uint64 selection, uint64 focus,
+            Vision::SeenList const* seen);
 
         /// **The enemies a player could be fighting**: the frame's visible living hostile units, in slot order, at
         /// most `cap`, resolved by `resolve` (null: gone); never a remembered one (its live state would leak) and never
@@ -164,6 +179,17 @@ namespace Animus::Curriculum
 
         /// Whether `guid` is among the frame's visible entities.
         [[nodiscard]] static bool InView(Vision::SeenList const& seen, uint64 guid);
+
+        /// **Ground fire, as seen** (dungeon-curriculum I3): the hazards a frame shows (Vision::Class::GroundHazard,
+        /// each a disc of its radius), read for a seat standing at (x, y) facing `facing`. Nothing the frame did not
+        /// show is in it -- the server's auras and area searches never reach the observation of a sight stage.
+        struct SeenHazards
+        {
+            uint32 Standing = 0;        // the visible hazards the seat stands inside
+            Hazard Deepest;             // ... the one with the furthest to walk out of
+            Hazard Nearest;             // the nearest visible one it is not inside
+        };
+        [[nodiscard]] static SeenHazards ReadHazards(Vision::SeenList const& seen, float x, float y, float facing);
     };
 }
 

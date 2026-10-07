@@ -290,6 +290,12 @@ namespace Animus::Curriculum
         /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
         /// avoiding one possible rather than only leaving one.
         Hazard NearestHazard;
+        /// A sight stage's ground fire is what its camera shows (dungeon-curriculum I3, CombatBlock::ReadHazards):
+        /// the visible hazards it stands in and the deepest of them; NearestHazard is then the nearest visible one too.
+        /// The duel block reads these in place of the seat's auras.
+        bool HazardsSeen = false;
+        uint32 StandingSeen = 0;
+        Hazard DeepestSeen;
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
