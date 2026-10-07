@@ -141,7 +141,7 @@ pass.
 3. **Train.** The module starts `python -m animus.train`. The learner connects over the socket, reads the stage
    description, seeds its networks from the closest trained ancestor stage, and runs rollouts and PPO updates.
 4. **Evaluate.** At regular intervals the learner switches the sim to seeded evaluation: the same characters and
-   opponents every time, with argmax actions. It compares the score with a scripted baseline on the same seeds. A new
+   opponents every time, with argmax actions. Its own convergence rule reads the scores; there is no scripted baseline. A new
    best score saves `best.pt`.
 5. **Decide.** A class has converged when, over the last few evaluations, its score has plateaued, its policy has
    stopped moving (approx KL against the learning rate in force), its entropy has settled and its ladder rung has

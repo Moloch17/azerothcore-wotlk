@@ -69,7 +69,7 @@ class EvalConfig:
     episodes: int = 1024
     seed: int = 1000  # seed base: which characters and opponents
     deterministic: bool = True  # argmax actions instead of sampling
-    baseline: str = ""  # sim scripted policy scored once per run on the same seeds ("greedy", "fight")
+    baseline: str = ""  # the sim policy scored once per run on the same seeds: "random", the only one, or "" (none)
     report: tuple[str, ...] = REPORT_COLUMNS  # episode info columns printed per level band, when present
     # Decision by decision, for the episodes with the first this many seed indexes: what the policy did and what goal
     # it said it was pursuing, written to eval_trace.jsonl (one object per decision per agent). A summary averages a
@@ -84,7 +84,7 @@ class EvalConfig:
     # Actions the evaluation may not take, by name, resolved per layout (the same name is a different index in
     # every class): an evaluation-only mask, for measuring what an action carried -- re-scoring a checkpoint with
     # follow_route and face_objective forbidden says how much of its arrival rate was the pathfinder's. A name no
-    # layout has is refused at startup. Training and the scripted baseline are untouched.
+    # layout has is refused at startup. Training and the baseline are untouched.
     mask_actions: tuple[str, ...] = ()
     # Curriculum phases by arena (a phase's name -> the stage's arenas in it): the summary adds a row per phase. The
     # ship stage sets it, since its gate is each phase within noise of its own stage. An arena the stage does not have
@@ -475,8 +475,8 @@ class PartnerConfig:
 @dataclass
 class CastConfig:
     """Frozen checkpoints in the seats a script used to play (animus.cast): the far side of self-play arenas and
-    any agent the stage declares cast (stage.json `cast`). The evaluation never runs them; the sim's `fight`
-    baseline stays the yardstick there."""
+    any agent the stage declares cast (stage.json `cast`). The evaluation never runs them: the far side of a seeded
+    evaluation is the learner's own."""
 
     # Who plays the opponent seats in training: "" = the live policy (plain self-play); "auto" = the seed chain's
     # parent best.pt; "league" = the parent plus this run's own snapshots (<run_dir>/league/); or a checkpoint path

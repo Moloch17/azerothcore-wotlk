@@ -577,7 +577,7 @@ without them, on the binary that still has them -- and a name no layout has is r
 cannot be left set across a build that removed the action. `python -m animus.evaluate --mask-actions` is the same
 mask by hand.
 
-**The baseline** (`eval.baseline`, `fight` for the curriculum) is scored once per run on the same seeds. It is cached in
+**The baseline** (`eval.baseline`: `random`, the only policy the sim has, and unset in every live config) is scored once per run on the same seeds. It is cached in
 `eval_baseline.json` under a key of policy, seed, episodes, arenas and the stage tuning, and in
 `eval_baseline_<seed>_<episodes>.json` for confirmation seeds.
 
@@ -799,7 +799,7 @@ dim, action count or layouts changed. The env count, decision interval and episo
 
 `tests/test_export.py` checks that an exported network reproduces the torch actor's greedy actions.
 
-`python -m animus.evaluate --checkpoint <pt> --episodes N --seed S --baseline fight [--opponent-baseline]
+`python -m animus.evaluate --checkpoint <pt> --episodes N --seed S [--baseline random]
 [--mask-actions NAME ...]` scores a checkpoint by hand against a running sim. `--mask-actions` forbids actions by
 name while scoring, resolved per layout as `eval.mask_actions` is: what a checkpoint arrives at without the actions
 it leaned on. A name no layout of the checkpoint's stage has is refused, so a mask written for one build cannot

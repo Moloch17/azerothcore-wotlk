@@ -1,7 +1,7 @@
 """Seeded evaluation and convergence detection.
 
 An evaluation switches the sim to seeded episodes (protocol MODE): episode seed index i builds the same
-characters and opponents every time, so two checkpoints -- or a checkpoint and a scripted baseline -- are
+characters and opponents every time, so two checkpoints -- or a checkpoint and the random baseline -- are
 scored on exactly the same situations. Combat rolls (crits, misses, creature choices during the fight) stay
 random, so the scores are averages over the seeds, not replays.
 
@@ -75,7 +75,7 @@ class EvalResult:
     seconds: float = 0.0
     decisions: int = 0
     # [n, num_actions] how often each row's agent took each action during its episode (the learner's choices; empty
-    # for a scripted baseline, whose actions the sim picks), and per layout the actions' names (stage.json
+    # for a baseline, whose actions the sim picks), and per layout the actions' names (stage.json
     # "action_names"), for the per-episode log.
     action_counts: np.ndarray | None = None
     # [n, num_actions] how many of the same decisions allowed each action (the mask), so an action the policy never
@@ -447,7 +447,7 @@ def casting_weights(summary: dict, baseline: dict | None, strength: float, max_r
     than one of a pair that is already clear of it. Per pair and not per model: one model is a whole class now, and
     weighting a paladin that heals badly by its average would send it more tanking episodes it did not need. The
     baseline gap alone misses a pair that beats a weak baseline yet fails an absolute gate -- stage4_duel's mage
-    beat the scripted mage while killing 68% of the time -- so the shortfall on the gated metric counts as well,
+    beat the old scripted mage while killing 68% of the time -- so the shortfall on the gated metric counts as well,
     whichever of the two is larger. Each is measured in its own standard deviations, so the weights do not depend
     on the size of the scenario's rewards, and the spread is capped: the heaviest pair draws at most `max_ratio`
     times the lightest, whatever the scores are. Weights average 1 (the even draw).
@@ -537,7 +537,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     choose_actions(step) -> [E, A] actions, or (actions, goals) from a policy with a goal head (the goals go to the
     sim, which scores and reports them), or (actions, goals or None, look) from one with the free look (protocol 22;
-    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a scripted policy. `arenas` are the stage's arena names, for the per-arena summary.
+    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a policy ("random"). `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
     decision of the episodes with the first seed indexes, in EvalResult.trace.
 

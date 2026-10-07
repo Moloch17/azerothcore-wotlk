@@ -1,10 +1,10 @@
 """Evaluate a checkpoint against a running Animus Forge sim, on seeded episodes.
 
-    python -m animus.evaluate --checkpoint runs/<name>/best.pt [--episodes 128] [--seed 1000] [--baseline fight]
+    python -m animus.evaluate --checkpoint runs/<name>/best.pt [--episodes 128] [--seed 1000] [--baseline random]
                               [--mask-actions NAME ...]
 
 Uses the same seeded evaluation as training (animus.evaluation): with the same --seed and --episodes the
-characters and opponents match the ones training scored. --baseline also scores a scripted sim policy on
+characters and opponents match the ones training scored. --baseline also scores the random sim policy on
 those seeds. The sim must run the checkpoint's scenario with AnimusForge.Policy = "remote" and no learner of
 its own attached (AnimusForge.Learner.AutoStart = 0).
 
@@ -40,7 +40,8 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--episodes", type=int, default=128)
     parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument("--baseline", default="", help="also score this scripted sim policy on the same seeds")
+    parser.add_argument("--baseline", default="",
+                        help="also score the random policy (the only sim policy) on the same seeds")
     parser.add_argument("--socket", help="override the socket stored in the checkpoint config")
     parser.add_argument("--stochastic", action="store_true", help="sample actions instead of taking the argmax")
     parser.add_argument("--episodes-file", metavar="PATH",

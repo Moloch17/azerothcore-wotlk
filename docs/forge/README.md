@@ -6,8 +6,8 @@ simulator that runs faster than real time, together with a Python MAPPO learner 
 
 The sim runs many environments in parallel, each its own dungeon instance, and turns every seat into a new character
 each episode. It trades observations for actions with the learner over a Unix socket, one decision at a time. The
-learner trains one policy for all ten classes through a curriculum of stages, scores it against a scripted
-baseline, decides when a stage is good enough to move on, and exports one small `.amdl` model per class.
+learner trains one policy for all ten classes through a curriculum of stages, scores it on seeded
+evaluations, decides when a stage is good enough to move on, and exports one small `.amdl` model per class.
 [mod-animus](https://github.com/Moloch17/animus) plays those models on an ordinary realm.
 
 **The detail is in [the Animus manual](docs/manual/README.md).** This page is the map.

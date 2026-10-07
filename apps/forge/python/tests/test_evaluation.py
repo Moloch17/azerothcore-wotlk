@@ -363,12 +363,12 @@ def test_convergence_segment_reset_keeps_best():
 
 def test_config_overrides(tmp_path):
     path = tmp_path / "c.yaml"
-    path.write_text("total_env_steps: 100\neval:\n  every_env_steps: 10\n  baseline: greedy\n")
+    path.write_text("total_env_steps: 100\neval:\n  every_env_steps: 10\n  baseline: random\n")
     config = TrainConfig.load(path, ["total_env_steps=5", "eval.episodes=16", "convergence.patience=3",
                                      "eval.report=[dps,died]", "convergence.kl=0.01",
                                      "convergence.hold_share=0.1"])
     assert config.total_env_steps == 5
-    assert config.eval.every_env_steps == 10 and config.eval.episodes == 16 and config.eval.baseline == "greedy"
+    assert config.eval.every_env_steps == 10 and config.eval.episodes == 16 and config.eval.baseline == "random"
     assert config.eval.report == ("dps", "died")
     assert config.convergence.patience == 3
     assert config.convergence.kl == 0.01 and config.convergence.hold_share == 0.1
@@ -379,13 +379,13 @@ def test_config_overrides(tmp_path):
 
 def test_config_extends_merges_sections(tmp_path):
     (tmp_path / "base.yaml").write_text("run_name: base\ntotal_env_steps: 100\nmappo:\n  hidden: [8, 8]\n"
-                                        "  gamma: 0.9\neval:\n  baseline: greedy\n")
+                                        "  gamma: 0.9\neval:\n  baseline: random\n")
     (tmp_path / "stage.yaml").write_text("extends: base.yaml\nrun_name: stage\nmappo:\n  gamma: 0.99\n")
 
     config = TrainConfig.load(tmp_path / "stage.yaml")
     assert config.run_name == "stage" and config.total_env_steps == 100
     assert tuple(config.mappo.hidden) == (8, 8) and config.mappo.gamma == 0.99
-    assert config.eval.baseline == "greedy"
+    assert config.eval.baseline == "random"
 
     (tmp_path / "loop.yaml").write_text("extends: loop.yaml\n")
     with pytest.raises(ValueError):
@@ -394,14 +394,14 @@ def test_config_extends_merges_sections(tmp_path):
 
 def test_config_overlay_merges_over_extends_before_overrides(tmp_path):
     (tmp_path / "base.yaml").write_text("run_name: base\ntotal_env_steps: 100\neval:\n  episodes: 128\n"
-                                        "  baseline: fight\nconvergence:\n  window: 6\n")
+                                        "  baseline: random\nconvergence:\n  window: 6\n")
     (tmp_path / "stage.yaml").write_text("extends: base.yaml\nrun_name: stage\ntotal_env_steps: 200\n")
     (tmp_path / "fast.yaml").write_text("total_env_steps: 10\neval:\n  episodes: 16\n"
                                         "convergence:\n  window: 2\n")
 
     config = TrainConfig.load(tmp_path / "stage.yaml", ["eval.episodes=8"], [tmp_path / "fast.yaml"])
     assert config.run_name == "stage" and config.total_env_steps == 10
-    assert config.eval.episodes == 8 and config.eval.baseline == "fight"
+    assert config.eval.episodes == 8 and config.eval.baseline == "random"
     assert config.convergence.window == 2
 
 

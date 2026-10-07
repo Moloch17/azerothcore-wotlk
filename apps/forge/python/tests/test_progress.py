@@ -38,13 +38,13 @@ def test_writer_keeps_metrics_and_evaluation_between_writes(tmp_path):
     assert row["patience"] == 3 and row["eval_every"] == 100 and row["window"] == 4
     assert row["evals"] == 2 and row["last_eval_score"] == 10.01 and row["baseline_score"] == 7.5
     assert row["best_score"] == 10.0 and row["best_env_steps"] == 500 and row["evals_since_best"] == 1
-    assert row["baseline"] == "fight" and row["finish_reason"] == ""
+    assert row["baseline"] == "random" and row["finish_reason"] == ""
 
 
 def _config() -> TrainConfig:
     config = TrainConfig(run_name="test_stage", total_env_steps=1000)
     config.eval.every_env_steps = 100
-    config.eval.baseline = "fight"
+    config.eval.baseline = "random"
     config.convergence.patience = 3
     config.convergence.window = 4
     return config
