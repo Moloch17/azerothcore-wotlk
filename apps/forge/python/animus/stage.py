@@ -388,17 +388,29 @@ def restore_evaluation_state(tracker: ConvergenceTracker, controller: "Convergen
     `score_kind` is the episode info column the run scores on ("" = the return; EvalResult.score_column). A checkpoint
     from before the outcome score (peak-play W0) carries none and was scored on the return. When the kinds differ the
     tracker and the controller's score-based state start over -- best.pt stays on disk, but the next evaluation is
-    the new best -- and the reason is returned for the run to print; None when nothing had to be dropped.
+    the new best -- and the reason is returned for the run to print; None when nothing had to be dropped. A
+    gate-stepped ladder's checkpoint saved before the convergence state was re-baselined per rung is dropped alike.
     """
     tracker.load_state_dict(checkpoint.get("convergence"))
     controller.load_state_dict(checkpoint.get("controller"))
+    dropped = []
+    if controller.stale_ladder:
+        # A gate-stepped ladder above its first rung, saved before the stage-level convergence state was re-baselined
+        # at each rung (M2, 2026-10-07): its best and plateau are an easier rung's. The controller dropped its own.
+        tracker.forget_scores()
+        controller.tracker.forget_scores()
+        controller.stale_ladder = False
+        dropped.append("the checkpoint's convergence state is from a gate-stepped ladder's easier rungs, which scored "
+                       "differently: the overall best, the plateau and the classes' convergence start over at this "
+                       "rung (best.pt is kept)")
     saved = checkpoint.get("score_kind", "")
-    if saved == score_kind:
-        return None
-    tracker.forget_scores()
-    controller.forget_scores()
-    return (f"the checkpoint's evaluations were scored on {saved or 'the return'} and this run scores on "
-            f"{score_kind or 'the return'}: the best score and the convergence history start over (best.pt is kept)")
+    if saved != score_kind:
+        tracker.forget_scores()
+        controller.forget_scores()
+        dropped.append(f"the checkpoint's evaluations were scored on {saved or 'the return'} and this run scores on "
+                       f"{score_kind or 'the return'}: the best score and the convergence history start over (best.pt "
+                       f"is kept)")
+    return "; ".join(dropped) or None
 
 
 class ConvergenceController:
@@ -426,6 +438,10 @@ class ConvergenceController:
         # The cost ladder (CostLadderConfig), likewise.
         self.costs = CostLadder(config)
         self.costs_message: str | None = None
+        # The rung of each gate-stepped ladder the stage-level convergence state (the overall tracker, the classes',
+        # the plateau) was last re-baselined at, saved with it; a loaded state from above its rung is stale.
+        self.baselined = {"fade": 0, "costs": 0}
+        self.stale_ladder = False
 
     def _tracker(self, patience: int) -> ConvergenceTracker:
         c = self.config.convergence
@@ -503,13 +519,17 @@ class ConvergenceController:
     def observe(self, summary: dict, env_steps: int) -> bool:
         """Record a learner evaluation; True if its networks are the new best (save them to best.pt)."""
         self.evals += 1
+        before_rungs = self._gate_rungs()
         stderr = summary.get("stderr", 0.0)
         improved = self.tracker.observe(summary["score"], env_steps, stderr)
         if improved:
             self.best_summary = summary
         # The cost ladder climbs first; the anneal waits until it has been at full price for its window.
         costs_ready = self.costs.ready
-        if self.plateau_env_steps is None and costs_ready and self.tracker.converged(env_steps, 0):
+        # A gate-stepped fade (difficulty rungs) is climbing until its last rung: no plateau, and no class converged, on
+        # an intermediate one (its score falls at each step by design; a class held out of the draw cannot meet the gate).
+        anneal_ready = costs_ready and (self.fade.require_plateau or self.fade.settled)
+        if self.plateau_env_steps is None and anneal_ready and self.tracker.converged(env_steps, 0):
             self.plateau_env_steps = env_steps
         # Read before this evaluation's rungs join the classes' lists below: the ladder as it stood over the window.
         anneal_starting = self.plateau_env_steps == env_steps
@@ -569,11 +589,44 @@ class ConvergenceController:
                     state.scores, state.kl, state.entropy = [score], [interval_kl], [interval_entropy]
                     state.rung, state.league, state.top = [rung], [state.league_latest], [interval_top]
                     state.fallbacks = [state.fallbacks[-1]] if state.fallbacks else []
-            elif costs_ready and not state.missing(self.config, self.config.convergence.window):
+            elif anneal_ready and not state.missing(self.config, self.config.convergence.window):
                 state.converged = True
                 state.converged_score = score
                 state.converged_margin = state.tracker.margin(stderr)
+        if self._gate_stepped(before_rungs):
+            self.rebaseline()
         return improved
+
+    def _gate_rungs(self) -> dict[str, int]:
+        """The rung of each gate-stepped ladder (require_plateau off); a plateau-stepped one stays at 0, so it is never
+        re-baselined."""
+        return {"fade": 0 if self.fade.require_plateau else self.fade.rung,
+                "costs": 0 if self.costs.require_plateau else self.costs.rung}
+
+    def _gate_stepped(self, before: dict[str, int]) -> bool:
+        """A gate-stepped ladder moved on a rung at this evaluation (they never step back)."""
+        return any(now > before[name] for name, now in self._gate_rungs().items())
+
+    def rebaseline(self) -> None:
+        """Start the stage-level convergence over at a gate-stepped ladder's new rung.
+
+        A rung is harder by design, so its score and measure fall, and read against the best ever seen (the easy
+        rung's) they judged a plateau at every step (M2, 2026-10-07: the learning rate annealed to 0.41 by the doorway
+        rung) and could call a class converged as soon as the top rung was reached. The overall tracker (in place: the
+        trainer holds it), each class's tracker, scores, convergence, margin and re-entries, the plateau the learning
+        rate anneals from and the best summary start over. What has no score in it (KL, entropy, rungs, league, the
+        entropy floor, which classes were played) is kept, as ShapingFade keeps them across a step."""
+        self.tracker.forget_scores()
+        self.best_summary = None
+        self.plateau_env_steps = None
+        for state in self.layouts.values():
+            state.tracker = self._tracker(self.config.convergence.window)
+            state.scores = []
+            state.converged = False
+            state.converged_score = None
+            state.converged_margin = 0.0
+            state.reentries = 0
+        self.baselined = self._gate_rungs()
 
     def _judged_score(self, row: dict) -> tuple[float, float]:
         """A class's convergence score from its evaluation row: the stage's own measure when convergence.measure
@@ -678,6 +731,7 @@ class ConvergenceController:
             "best_summary": self.best_summary,
             "baseline_summary": self.baseline_summary,
             "plateau_env_steps": self.plateau_env_steps,
+            "baselined": dict(self.baselined),
             "evals": self.evals,
             "fade": self.fade.state_dict(),
             "costs": self.costs.state_dict(),
@@ -713,6 +767,22 @@ class ConvergenceController:
             layout.converged_margin = float(saved.get("converged_margin", 0.0))
             layout.reentries = int(saved.get("reentries", 0))
             layout.played = bool(saved.get("played", False))
+        # A gate-stepped ladder above its first rung whose state was not re-baselined there (a checkpoint from before
+        # this carries no `baselined`): the best, plateau and convergence are an easier rung's. Drop them.
+        saved_at = state.get("baselined") or {}
+        self.baselined = {name: int(saved_at.get(name, 0)) for name in ("fade", "costs")}
+        if any(rung > self.baselined[name] for name, rung in self._gate_rungs().items()):
+            self.rebaseline()
+            self.stale_ladder = True
+        elif "baselined" not in state and not (self.fade.require_plateau or self.fade.settled):
+            # Still at the first rung of a gate-stepped fade, but the old code let it plateau and converge classes
+            # there (M2's 2026-10-07 snapshot: plateau at 30M, rates at 0.56 at the doorway): neither may before the
+            # last rung. The rung's own tracker is the first rung's and stays.
+            self.plateau_env_steps = None
+            for layout in self.layouts.values():
+                layout.converged = False
+                layout.converged_score = None
+                layout.converged_margin = 0.0
         if self.costs.reshaped:
             # The ladder was cut short under a resumed run (stage1_move's fade-out, 2026-10-04: the habits did not
             # stick without the price): the classes converged at another price, and the learning rate annealed from
