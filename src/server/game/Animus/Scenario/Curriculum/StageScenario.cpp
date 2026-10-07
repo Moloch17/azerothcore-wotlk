@@ -1302,9 +1302,11 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         return float(seat(env, index).AimlessPresses);
     });
     // The aimless presses by cause (AimlessCause), and the mode changes: what each price is charging.
+    // A sight stage's refused presses only where there is a sight block: the other stages' tables are as they were.
     for (size_t cause = 0; cause < AIMLESS_CAUSES; ++cause)
-        _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
-            uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
+        if (AimlessCause(cause) != AimlessCause::ActRefused || _stage.Has(BlockId::Sight))
+            _info.Add(std::string("aimless_") + AimlessCauseName(AimlessCause(cause)), [seat, cause](Env const& env,
+                uint32 index) { return float(seat(env, index).AimlessBy[cause]); });
     // A sight stage's refused presses by why (EntityActions::Refusal): what the act_refused price is charging.
     if (_stage.Has(BlockId::Sight))
         for (uint32 refusal = 1; refusal < EntityActions::REFUSALS; ++refusal)
