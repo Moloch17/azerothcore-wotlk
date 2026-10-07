@@ -105,7 +105,8 @@ def test_every_stage_name_written_down_exists(path):
 # The movement curriculum's stages that are planned (approved 2026-10-05, plan §2) but not yet defined, by number, so
 # the docs and the conf template can name them before they land. A reserved number is filled by a stage of exactly
 # this name; delete the entry when it lands.
-RESERVED: dict[int, str] = {}
+# M3 interact (dungeon-curriculum Part 2) is planned between M2 seek and M4 follow, which landed first (2026-10-06).
+RESERVED: dict[int, str] = {3: "move3_interact"}
 
 
 def test_movement_numbers_are_contiguous_and_reserved_names_are_kept():

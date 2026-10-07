@@ -39,6 +39,12 @@ PER_EVENT = {
     "time_ratio_sight": "markers_sight",
     "arrive_seconds_corner": "markers_corner",
     "time_ratio_corner": "markers_corner",
+    # M4 follow (PartyFollowEncounter): the regroups over the leader's stops each follower was counted for, their time
+    # over the regroups; the rejoins after a rise at the entrance (I4) over the rises, their time over the rejoins.
+    "regroup_share": "regroup_stops",
+    "regroup_seconds": "regroups",
+    "rejoined": "rises",
+    "rejoin_seconds": "rejoins",
 }
 
 

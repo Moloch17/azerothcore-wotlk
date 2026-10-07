@@ -41,6 +41,7 @@ namespace Animus::Curriculum
     class DirectorEncounter;
     class OwnerEncounter;
     class FollowEncounter;
+    class PartyFollowEncounter;
     class PartyEncounter;
 
     /// One curriculum stage (see StageDefinition) for every class of StageSettings::Classes, as layouts of one
@@ -565,6 +566,7 @@ namespace Animus::Curriculum
         std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         OwnerEncounter* _owner = nullptr;
         FollowEncounter* _follow = nullptr;     // the follow stage's leader, in the owner's slot
+        PartyFollowEncounter* _partyFollow = nullptr;   // the party follow's leader, in the owner's slot too
         PartyEncounter* _party = nullptr;
     };
 }
