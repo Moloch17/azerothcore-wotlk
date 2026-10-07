@@ -6,7 +6,9 @@ Also here: editing a machine's AnimusForge.Cluster.Role / Host (used by move-hos
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import shlex
 import time
 from dataclasses import dataclass, field
 
@@ -102,16 +104,69 @@ def read_conf(config: Config, machine: Machine) -> str:
     return result.out
 
 
-def upload(config: Config, machine: Machine, text: str, stamp: str) -> str:
-    path = remote.sh_path(config.path_of(machine, "conf"))
-    backup = remote.sh_path(f"{config.path_of(machine, 'conf')}.bak-{stamp}")
-    marker = "FORGECTL_CONF_EOF"
-    if marker in text:
+WRITE_MARKER = "FORGECTL_WRITE="
+HEREDOC = "FORGECTL_CONF_EOF"
+WRITE_TEMPLATE = """set -e
+conf=@CONF@
+cp -p "$conf" @BACKUP@
+tmp="$conf.forgectl-new.$$"
+cp -p "$conf" "$tmp"
+cat > "$tmp" <<'@HEREDOC@'
+@TEXT@@HEREDOC@
+if [ "$(sha256sum < "$tmp" | cut -d' ' -f1)" != @DIGEST@ ]; then
+  rm -f "$tmp"
+  echo 'the temporary file does not hold the new conf; the conf was not touched' >&2
+  exit 3
+fi
+how=mv
+if docker inspect -f '{{range .Mounts}}{{println .Source}}{{end}}' @CONTAINER@ 2>/dev/null \\
+    | grep -qxF "$(readlink -f "$conf")"; then
+  how=in-place-bind
+fi
+if [ "$how" = mv ] && ! mv -f "$tmp" "$conf"; then
+  how=in-place-mv-failed
+fi
+if [ "$how" != mv ]; then
+  cat "$tmp" > "$conf"
+  rm -f "$tmp"
+fi
+echo @MARKER@$how
+"""
+
+
+def write_script(config: Config, machine: Machine, text: str, stamp: str) -> str:
+    """The shell script that replaces the machine's conf with `text`: back it up, write the new text to a temporary
+    file in the same directory (copied from the conf first, so owner and mode are kept), check the file holds the
+    bytes meant, then `mv` it over the conf. A rename is atomic: a dropped ssh leaves the old conf or the new one,
+    never a truncated one. If the conf is a file bind-mounted into the worldserver container (a rename would leave the
+    container looking at the old file) or the `mv` fails, the verified temporary file is written over the conf in
+    place instead. The last line says which: FORGECTL_WRITE=mv, in-place-bind or in-place-mv-failed."""
+    if HEREDOC in text:
         raise Failure("the conf text contains the heredoc marker; refusing to write it")
-    script = f"set -e\ncp -p {path} {backup}\ncat > {path} <<'{marker}'\n{text}{marker}\n"
-    result = remote.on(machine, script, timeout=60)
+    values = {"CONF": remote.sh_path(config.path_of(machine, "conf")),
+              "BACKUP": remote.sh_path(f"{config.path_of(machine, 'conf')}.bak-{stamp}"),
+              "DIGEST": hashlib.sha256(text.encode()).hexdigest(), "CONTAINER": shlex.quote(config.worldserver),
+              "HEREDOC": HEREDOC, "MARKER": WRITE_MARKER}
+    script = WRITE_TEMPLATE
+    for key, value in values.items():
+        script = script.replace(f"@{key}@", value)
+    return script.replace("@TEXT@", text)
+
+
+def upload(config: Config, machine: Machine, text: str, stamp: str) -> str:
+    """Replace the machine's conf with `text` (see write_script) and say how it was written. Returns the backup."""
+    result = remote.on(machine, write_script(config, machine, text, stamp), timeout=60)
     if not result.ok:
-        raise Failure(f"{machine.name}: writing the conf failed ({result.reason()})")
+        raise Failure(f"{machine.name}: writing the conf failed ({result.reason()}); the conf is as it was")
+    how = next((line.split("=", 1)[1] for line in result.out.splitlines() if line.startswith(WRITE_MARKER)), "")
+    if not how:
+        raise Failure(f"{machine.name}: the conf write did not report how it went; check the file and its backup")
+    if how == "in-place-bind":
+        say(f"  {machine.name}: the conf is a bind-mounted file, so a rename would leave the container on the old "
+            "one: wrote it in place, after checking the temporary copy")
+    elif how != "mv":
+        say(f"  {machine.name}: mv over the conf failed (bind-mounted file?): wrote it in place instead, after "
+            "checking the temporary copy")
     return config.path_of(machine, "conf") + f".bak-{stamp}"
 
 

@@ -547,7 +547,7 @@ class ConfStore:
             self.backups.append((address, [l for l in script.splitlines() if l.startswith("cp -p")][0]))
             self.writes.append(address)
             self.texts[address] = body
-            return Result(0)
+            return Result(0, "FORGECTL_WRITE=mv\n")
         return Result(0)
 
 
@@ -592,7 +592,7 @@ def test_sync_fails_when_the_verification_still_differs(cfg, fake, capsys):
 
     def lossy(argv, input):  # the write "succeeds" but the file does not change
         if "cat >" in (input or ""):
-            return Result(0)
+            return Result(0, "FORGECTL_WRITE=mv\n")
         return original(argv, input)
     fake.rules.insert(0, (lambda argv, input: True, lossy))
     assert confsync.run(cfg, check_only=False, yes=True) == 1
@@ -1428,3 +1428,119 @@ def test_a_stage_command_reports_a_busy_console_as_that_machines_failure(cfg, mo
     monkeypatch.setattr(console, "send", busy)
     assert stage.run(cfg, "cancel", [], yes=True) == 1
     assert "FAILED another forgectl is typing into sarah's console" in capsys.readouterr().out
+
+
+# ---- conf writes: temporary file, then mv ----------------------------------------------------------------------------
+
+@pytest.fixture
+def conf_box(tmp_path, cfg):
+    """A conf file on this computer, a config whose sarah is local and has it as its conf, and a place for fake
+    docker/mv programs in front of the real ones."""
+    checkout = tmp_path / "checkout"
+    conf = checkout / "env/dist/etc/modules/mod_animus_forge.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text("old line\n")
+    conf.chmod(0o640)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    machine = dataclasses.replace(cfg.host, path=str(checkout), local=True)
+    return types_namespace(conf=conf, bin=bin_dir, machine=machine, dir=conf.parent)
+
+
+def types_namespace(**kwargs):
+    import types
+    return types.SimpleNamespace(**kwargs)
+
+
+def run_write(cfg, box, text, stamp="20261007-120000"):
+    script = confsync.write_script(cfg, box.machine, text, stamp)
+    env = {**os.environ, "PATH": f"{box.bin}:{os.environ['PATH']}"}
+    import subprocess
+    return subprocess.run(["bash", "-s"], input=script, capture_output=True, text=True, env=env)
+
+
+def fake_program(box, name, body):
+    path = box.bin / name
+    path.write_text("#!/bin/bash\n" + body + "\n")
+    path.chmod(0o755)
+
+
+def test_the_conf_is_written_to_a_temporary_file_and_moved_into_place(cfg, conf_box):
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\nsecond\n")
+    assert done.returncode == 0 and done.stdout.strip().splitlines()[-1] == "FORGECTL_WRITE=mv"
+    assert conf_box.conf.read_text() == "new line\nsecond\n"
+    assert conf_box.conf.stat().st_ino != inode_before            # a rename, not a rewrite of the live file
+    assert oct(conf_box.conf.stat().st_mode & 0o777) == "0o640"    # the mode survived
+    assert (conf_box.dir / "mod_animus_forge.conf.bak-20261007-120000").read_text() == "old line\n"
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []  # no temporary file left
+
+
+def test_the_live_conf_is_never_opened_for_writing_before_the_rename(cfg, conf_box):
+    # the connection drops after the temporary file is written and before the rename: the live conf is the old one
+    script = confsync.write_script(cfg, conf_box.machine, "new line\n", "s1")
+    before_mv = script.split('if [ "$how" = mv ] && ! mv')[0] + "exit 0\n"   # everything up to the rename
+    import subprocess
+    subprocess.run(["bash", "-s"], input=before_mv, capture_output=True, text=True)
+    assert conf_box.conf.read_text() == "old line\n"
+    assert any("forgectl-new" in p.name and p.read_text() == "new line\n" for p in conf_box.dir.iterdir())
+
+
+def test_a_temporary_file_that_does_not_hold_the_new_text_is_never_moved_in(cfg, conf_box):
+    script = confsync.write_script(cfg, conf_box.machine, "new line\n", "s1")
+    tampered = script.replace(confsync.hashlib.sha256(b"new line\n").hexdigest(), "0" * 64)
+    import subprocess
+    done = subprocess.run(["bash", "-s"], input=tampered, capture_output=True, text=True)
+    assert done.returncode == 3 and "was not touched" in done.stderr
+    assert conf_box.conf.read_text() == "old line\n"
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []
+
+
+def test_a_failing_mv_falls_back_to_writing_in_place_after_the_temporary_file_was_checked(cfg, conf_box, capsys):
+    fake_program(conf_box, "mv", "echo 'mv: Device or resource busy' >&2; exit 1")
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\n")
+    assert done.returncode == 0 and "FORGECTL_WRITE=in-place-mv-failed" in done.stdout
+    assert conf_box.conf.read_text() == "new line\n" and conf_box.conf.stat().st_ino == inode_before
+    assert [p.name for p in conf_box.dir.iterdir() if "forgectl-new" in p.name] == []
+
+
+def test_a_bind_mounted_conf_file_is_written_in_place_so_the_container_sees_it(cfg, conf_box):
+    fake_program(conf_box, "docker", f'echo "{conf_box.conf.resolve()}"')   # `docker inspect` lists the mounted file
+    fake_program(conf_box, "mv", "echo 'mv must not be used' >&2; exit 9")
+    inode_before = conf_box.conf.stat().st_ino
+    done = run_write(cfg, conf_box, "new line\n")
+    assert done.returncode == 0 and "FORGECTL_WRITE=in-place-bind" in done.stdout
+    assert conf_box.conf.read_text() == "new line\n" and conf_box.conf.stat().st_ino == inode_before
+
+
+def test_a_directory_mount_is_not_mistaken_for_a_file_mount(cfg, conf_box):
+    fake_program(conf_box, "docker", f'echo "{conf_box.dir.parent}"')
+    assert "FORGECTL_WRITE=mv" in run_write(cfg, conf_box, "new line\n").stdout
+
+
+def test_the_output_says_when_the_write_was_in_place(cfg, fake, capsys):
+    for how, words in (("in-place-mv-failed", "mv over the conf failed"), ("in-place-bind", "bind-mounted file"),
+                       ("mv", "")):
+        fake.rules.clear()
+        fake.when(lambda argv, input: True, Result(0, f"FORGECTL_WRITE={how}\n"))
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+        out = capsys.readouterr().out
+        assert (words in out) if words else out == ""
+        if words:
+            assert "wrote it in place" in out and "spencer" in out
+
+
+def test_a_write_that_does_not_report_or_fails_is_an_error_that_says_the_conf_is_as_it_was(cfg, fake):
+    fake.when(lambda argv, input: True, Result(0, "no marker\n"))
+    with pytest.raises(ui.Failure, match="did not report how it went"):
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(3, "", "the temporary file does not hold the new conf"))
+    with pytest.raises(ui.Failure, match="the conf is as it was"):
+        confsync.upload(cfg, cfg.machine("spencer"), "x\n", "s1")
+
+
+def test_the_conf_text_cannot_carry_the_heredoc_marker(cfg):
+    with pytest.raises(ui.Failure, match="heredoc marker"):
+        confsync.write_script(cfg, cfg.machine("spencer"), "a\nFORGECTL_CONF_EOF\n", "s1")

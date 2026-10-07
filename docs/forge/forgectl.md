@@ -177,10 +177,23 @@ All workers match the host.
 
 `--check` only compares (exit 1 if any worker differs, and it lists the first differing, missing and extra keys).
 Without it, for each worker that differs it asks, then backs the conf up as `mod_animus_forge.conf.bak-<timestamp>`,
-replaces the differing values in place, appends missing keys under a comment, removes keys the host does not have,
-writes it over the same file, reads it back and checks the counts and values match. Nothing else in the worker's
+replaces the differing values, appends missing keys under a comment, removes keys the host does not have, and
+writes the result (see below), reads it back and checks the counts and values match. Nothing else in the worker's
 file is touched (its own role, threads, envs). A worker reads its conf at start: restart it (a build does) for the
 change to count. Phase 3 of the human-operable plan removes the need for this command.
+
+**How a conf is written** (here, and for the roles in `move-host`): the text goes to a temporary file in the conf's
+own directory (`mod_animus_forge.conf.forgectl-new.<pid>`, owner and mode copied from the conf), its checksum is
+compared with the text forgectl meant to write, and only then is it `mv`d over the conf. A rename is atomic, so a
+dropped ssh leaves the old conf or the new one, never a truncated one (a failed check leaves the conf untouched and
+removes the temporary file). **The conf may be a single file bind-mounted into the worldserver container** (the
+first-time checklist's inode check is about this): a rename would then give the host a new file while the container
+keeps looking at the old inode. So forgectl asks `docker inspect` whether the conf file itself is a mount, and if it is,
+or if the `mv` fails for any reason (a bind-mounted file is "busy" to a rename from inside the container's view), it
+writes the checked temporary file over the conf in place (the same inode) and **says so in the output**: `spencer: mv
+over the conf failed (bind-mounted file?): wrote it in place instead, after checking the temporary copy`. A directory
+mount is not a problem: the rename is seen. The in-place fallback is the old behaviour, so a dropped ssh in that
+moment can still truncate the conf: the timestamped backup is the way back.
 
 ## `forgectl cluster move-host <machine> [<stage>]`
 
