@@ -211,6 +211,11 @@ class FadeConfig:
     # waiting for the score to plateau -- the dungeon plan's rule that every ladder steps at once on its gate (M1, 2026-10-06:
     # the fade sat at x1 for ~20M steps on a rising score with the gate long met). Needs a gate_metric.
     require_plateau: bool = True
+    # The stall warning (gate-stepped ladders only; a warning, never an action): a rung whose gate metric has not beaten
+    # its own best by more than its standard error for this many evaluations running AND this many env steps (M2's
+    # doorway sat at ~35% for 30M steps, which is a stall and not a collapse). 0 steps = the evaluations alone.
+    stall_evals: int = 6
+    stall_env_steps: int = 20_000_000
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)
@@ -225,6 +230,10 @@ class FadeConfig:
             raise ValueError(f"fade.give_up: expected at least 1 fall, got {self.give_up!r}")
         if self.moving_classes < 0:
             raise ValueError(f"fade.moving_classes: expected 0 or more, got {self.moving_classes!r}")
+        if self.stall_evals < 1:
+            raise ValueError(f"fade.stall_evals: expected at least 1 evaluation, got {self.stall_evals!r}")
+        if self.stall_env_steps < 0:
+            raise ValueError(f"fade.stall_env_steps: expected 0 or more env steps, got {self.stall_env_steps!r}")
         self.rungs = rungs
 
 

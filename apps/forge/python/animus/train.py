@@ -831,7 +831,7 @@ class TrainingRun:
             "policy_loss", "value_loss", "entropy", "entropy_coef", "clip_frac", "approx_kl",
             "explained_variance", "actor_grad_norm", "critic_grad_norm", "epochs_run", "allowed_actions",
             "approx_kl_move", "epochs_done", "minibatches_done",
-            "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
+            "lr_scale", "shaping_scale", "cost_scale", "ladder_collapsed", "ladder_stalled", "frozen_layouts", "cast_rows", "cast_fallback_rows", "cast_members", "cast_hardest_win_rate",
             "partner_rows", "partner_fallback_rows", "partner_members", "partner_episodes", "stand_in_episodes",
             "stand_in_unfielded",
             "elapsed_seconds", "update_compute_seconds", "distill_coef", "distill_kl", "distill_rows",
@@ -1443,6 +1443,8 @@ class TrainingRun:
                 print(f"{config.run_name}: {controller.fade_message}", flush=True)
             if controller.fade.alarm:
                 print(f"{config.run_name}: {controller.fade.alarm}", flush=True)
+            if controller.fade.stall_alarm:
+                print(f"{config.run_name}: {controller.fade.stall_alarm}", flush=True)
 
             if improved:
                 self._save(self.best_path)
@@ -2255,6 +2257,8 @@ class TrainingRun:
             "cost_scale": self.cost_scale_now,
             # The collapse alarm: the shaping ladder's rung while its gate has collapsed there, else -1 (forge status).
             "ladder_collapsed": float(self.controller.fade.rung) if self.controller.fade.collapsed else -1.0,
+            # The stall warning likewise: the rung whose gate metric has sat flat, else -1.
+            "ladder_stalled": float(self.controller.fade.rung) if self.controller.fade.stalled else -1.0,
             "frozen_layouts": len(self.frozen),
             **(self.cast.stats() if self.cast is not None else {"cast_rows": 0.0, "cast_fallback_rows": 0.0}),
             **(self.partners.stats() if self.partners is not None else {}),

@@ -255,3 +255,100 @@ def test_no_gate_stepped_stage_can_settle_below_its_top_rung():
         fade.rung = len(fade.rungs) - 1
         assert fade.settled, path.name
     assert gated >= 10
+
+
+def _gated_fade(**fade) -> ShapingFade:
+    return _fade(gate_metric="found", gate_value=0.99, require_plateau=False, stall_evals=6,
+                 stall_env_steps=20_000_000, **fade)
+
+
+def _read(fade: ShapingFade, found: float, env_steps: int, episodes: int = 64) -> bool:
+    """One evaluation's gate reading; whether it raised the stall line."""
+    fade.see_gate({"found": found, "episodes": episodes})
+    fade.observe(-1.0, 0.1, env_steps, ladders_settled=False)   # settled off: the rung holds
+    return fade.stall_alarm is not None
+
+
+def test_a_flat_rung_raises_the_stall_warning_once_after_its_evaluations_and_its_steps():
+    """Flat at 0.35 within its standard error: no warning before K evaluations AND N env steps, one line then, and the
+    ladder takes no action."""
+    fade = _gated_fade()
+    raised = [_read(fade, 0.35 + 0.001 * (k % 2), 4_000_000 * (k + 1)) for k in range(12)]
+    # The best (0.35) is set at the first read, 4M steps; the sixth evaluation after it is at 28M (24M later).
+    assert raised == [False] * 6 + [True] + [False] * 5
+    assert fade.stalled and fade.rung == 0 and fade.report()["stalled"]
+
+    steps_short = _gated_fade()   # K evaluations in a hurry: the steps have not passed
+    assert not any(_read(steps_short, 0.35, 1_000_000 * (k + 1)) for k in range(12))
+    assert not steps_short.stalled
+    evals_short = _gated_fade()   # N steps with too few evaluations
+    assert not any(_read(evals_short, 0.35, 10_000_000 * (k + 1)) for k in range(5))
+
+
+def test_a_rising_rung_never_stalls_and_a_stall_clears_when_the_best_improves():
+    rising = _gated_fade()
+    assert not any(_read(rising, 0.3 + 0.05 * k, 5_000_000 * (k + 1)) for k in range(12))
+    assert not rising.stalled
+
+    fade = _gated_fade()
+    for k in range(8):
+        _read(fade, 0.35, 5_000_000 * (k + 1))
+    assert fade.stalled
+    # 64 episodes at 0.35: stderr 0.060, so +0.05 does not clear it; +0.07 does.
+    assert not _read(fade, 0.40, 45_000_000) and fade.stalled
+    assert not _read(fade, 0.43, 50_000_000) and not fade.stalled and fade.gate_best == pytest.approx(0.43)
+    again = [_read(fade, 0.43, 50_000_000 + 5_000_000 * (k + 1)) for k in range(8)]
+    assert again.count(True) == 1 and fade.stalled     # a new episode of it warns once more
+
+
+def test_the_stall_survives_a_resume_and_a_step_starts_the_rung_over():
+    fade = _gated_fade()
+    for k in range(8):
+        _read(fade, 0.35, 5_000_000 * (k + 1))
+    resumed = _gated_fade()
+    resumed.load_state_dict(fade.state_dict())
+    assert resumed.stalled and resumed.gate_best == fade.gate_best and resumed.stall_alarm is None
+    assert not _read(resumed, 0.35, 45_000_000) and resumed.stalled     # still stalled, not warned again
+    # An old checkpoint without the keys loads as a fresh watch.
+    old = fade.state_dict()
+    for key in ("gate_best", "gate_best_steps", "evals_since_gate_best", "stalled"):
+        old.pop(key)
+    legacy = _gated_fade()
+    legacy.load_state_dict(old)
+    assert legacy.gate_best is None and not legacy.stalled
+
+    stepped = _gated_fade()
+    for k in range(8):
+        _read(stepped, 0.35, 5_000_000 * (k + 1))
+    stepped.see_gate({"found": 1.0, "episodes": 64})
+    stepped.observe(-1.0, 0.1, 45_000_000)       # gate met: the rung steps
+    assert stepped.rung == 1 and not stepped.stalled and stepped.gate_best is None
+
+
+def test_the_stall_warning_ignores_plateau_stepped_ladders_and_the_last_rung():
+    plateau = _fade(gate_metric="found", gate_value=0.99, stall_evals=1, stall_env_steps=0)   # require_plateau on
+    assert not any(_read(plateau, 0.35, 5_000_000 * (k + 1)) for k in range(10))
+    last = _gated_fade()
+    last.rung = len(last.rungs) - 1
+    assert not any(_read(last, 0.35, 5_000_000 * (k + 1)) for k in range(10))
+
+
+def test_the_gate_standard_error_is_the_summarys_then_binomial_then_fixed():
+    from animus.stage import gate_stderr
+    assert gate_stderr({"found_stderr": 0.03, "episodes": 64}, "found", 0.5) == pytest.approx(0.03)
+    assert gate_stderr({"episodes": 100}, "found", 0.35) == pytest.approx((0.35 * 0.65 / 100) ** 0.5)
+    assert gate_stderr({}, "found", 0.35) == pytest.approx(0.02)
+    assert gate_stderr({"episodes": 64}, "arrive_seconds", 12.0) == pytest.approx(0.02)   # not a share
+
+
+def test_the_stall_settings_are_validated_and_set_per_stage():
+    assert FadeConfig().stall_evals == 6 and FadeConfig().stall_env_steps == 20_000_000
+    assert FadeConfig(stall_evals=3, stall_env_steps=0).stall_evals == 3
+    with pytest.raises(ValueError, match="stall_evals"):
+        FadeConfig(stall_evals=0)
+    with pytest.raises(ValueError, match="stall_env_steps"):
+        FadeConfig(stall_env_steps=-1)
+    config = TrainConfig()
+    config.fade = FadeConfig(enabled=True, rungs=(1.0, 0.0), gate_metric="found", gate_value=0.9, require_plateau=False,
+                             stall_evals=2, stall_env_steps=1)
+    assert ShapingFade(config).stall_evals == 2
