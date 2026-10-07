@@ -3,7 +3,7 @@
 ## The goal
 
 Animus aims to fill every group role in World of Warcraft 3.3.5a with bots that play well enough for a single human to
-run dungeons, group quests and PvP with them. The design document (`core/design-doc.md`) describes a hybrid:
+run dungeons, group quests and PvP with them. The design is a hybrid:
 
 - **In combat, a neural network decides**: when and where to move, which target to pick, which ability (and which
   rank) to use and when, and which trinkets and consumables to use.

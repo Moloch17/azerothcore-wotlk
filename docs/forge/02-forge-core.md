@@ -336,7 +336,7 @@ examples are in `docker-compose.yml`), a ROCm `ANIMUS_TORCH_INDEX_URL`, and
 | Sim sessions and groups | WorldSession, Group, InstanceSaveMgr | New flags, guarded writes |
 | Seeding | `common/Utilities/RandomSeed.h`, `Random.cpp`, `SFMTRand.{h,cpp}` | New API |
 | Scripts | TaskScheduler, boss_jeklik, zone_howling_fjord, boss_xt002, spell_paladin | Clock fixes |
-| Ops | `docker-compose.yml`, `forge.sh`, `apps/docker/forge-worldserver.sh`, `apps/docker/animus-venv.sh`, `Dockerfile.dev-server`, `.devcontainer/devcontainer.json`, `design-doc.md` | New or rewritten |
+| Ops | `docker-compose.yml`, `forge.sh`, `apps/docker/forge-worldserver.sh`, `apps/docker/animus-venv.sh`, `Dockerfile.dev-server`, `.devcontainer/devcontainer.json` | New or rewritten |
 
 ## 2.12 Maintaining the fork
 
