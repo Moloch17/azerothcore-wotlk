@@ -270,6 +270,82 @@ def test_an_unreachable_machine_is_an_error_not_an_empty_conf(tmp_path, repo):
                runner=lambda command, input_text: (255, "", "Permission denied (publickey)"))
 
 
+# ------------------------------------------------------------------------------------------ restore, list-backups
+
+def test_restore_puts_the_named_backup_back_and_keeps_the_conf_it_replaced(tmp_path, repo):
+    conf = tmp_path / "mod_animus_forge.conf"
+    conf.write_text(CONF)
+    out = io.StringIO()
+    cp.run(cp.parse(args_for(tmp_path, repo, "--prune", conf)), out=out)
+    stamp = cp.BACKUP.search(str(next(tmp_path.glob("mod_animus_forge.conf.bak-*")))).group(1)
+    assert f"to undo: conf_prune.py --restore {stamp}" in out.getvalue()
+    assert conf.read_text() != CONF
+    listed = io.StringIO()
+    assert cp.run(cp.parse(["--list-backups", str(conf)]), out=listed) == 0
+    assert listed.getvalue().splitlines() == [stamp, "1 backup(s) of " + str(conf)]
+    pruned = conf.read_text()
+    assert cp.run(cp.parse(["--restore", stamp, str(conf)]), out=io.StringIO()) == 0
+    assert conf.read_text() == CONF
+    assert [item.read_text() for item in tmp_path.glob("mod_animus_forge.conf.pre-restore-*")] == [pruned]
+
+
+def test_restore_refuses_a_stamp_that_is_not_a_backup_and_changes_nothing(tmp_path):
+    conf = tmp_path / "a.conf"
+    conf.write_text("x\n")
+    for stamp in ("20260101-000000", "../etc", "latest"):
+        with pytest.raises(SystemExit):
+            cp.run(cp.parse(["--restore", stamp, str(conf)]), out=io.StringIO())
+    assert conf.read_text() == "x\n" and list(tmp_path.glob("a.conf.*")) == []
+
+
+class RestoreMachine:
+    """A machine for the ssh restore and listing: files by path; understands ls, the restore script and the prune."""
+
+    def __init__(self, files: dict):
+        self.files = dict(files)
+        self.commands: list[str] = []
+
+    def __call__(self, command, input_text):
+        remote = command[-1]
+        self.commands.append(remote)
+        assert command[:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
+        paths = re.findall(r"'([^']+)'", remote)
+        if remote.startswith("ls -1"):
+            prefix = paths[0] + ".bak-"
+            return 0, "".join(f"{name}\n" for name in sorted(self.files) if name.startswith(prefix)), ""
+        if remote.startswith("set -e; test -f"):
+            backup, path, kept, new = paths[0], paths[1], paths[2], paths[3]
+            if backup not in self.files:
+                return 1, "", "test failed"
+            self.files[kept] = self.files[path]
+            self.files[path] = self.files[backup]
+            return 0, "", ""
+        raise AssertionError(remote)
+
+
+def test_ssh_list_and_restore(tmp_path):
+    path = "/home/u/animus-forge/mod_animus_forge.conf"
+    machine = RestoreMachine({path: "pruned\n", path + ".bak-20261007-101010": "first\n",
+                              path + ".bak-20261007-111111": "second\n"})
+    base = ["--ssh", f"u@10.0.0.9:{path}"]
+    out = io.StringIO()
+    assert cp.run(cp.parse(["--list-backups", *base]), runner=machine, out=out) == 0
+    assert out.getvalue().splitlines()[:2] == ["20261007-101010", "20261007-111111"]
+    assert cp.run(cp.parse(["--restore", "20261007-101010", *base]), runner=machine, out=io.StringIO()) == 0
+    assert machine.files[path] == "first\n"
+    assert [text for name, text in machine.files.items() if ".pre-restore-" in name] == ["pruned\n"]
+    with pytest.raises(SystemExit, match="could not restore"):
+        cp.run(cp.parse(["--restore", "20250101-000000", *base]), runner=machine, out=io.StringIO())
+    assert machine.files[path] == "first\n"
+
+
+def test_the_cli_takes_one_mode(tmp_path):
+    for bad in (["--list-backups", "--check", "x.conf"], ["--restore", "20260101-000000", "--prune", "x.conf"],
+                ["--list-backups"], ["--removed", "a", "b", "--restore", "20260101-000000"]):
+        with pytest.raises(SystemExit):
+            cp.parse(bad)
+
+
 # ---------------------------------------------------------------------- the conf.dist diff is the Visit diff
 
 def tuning_keys(text: str) -> set[str]:
