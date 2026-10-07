@@ -95,19 +95,14 @@ void Animus::Curriculum::StageScenario::DrawStandIn(Env& env)
     EnvState& data = Data(env);
     data.StandInPlay = EnvState::StandInSeat();
 
-    // Only a party or a raid of the stage's own seats, and one with someone beside it.
+    // Only a party or a raid of the stage's own seats, with someone beside it, and only while the learner has a frozen
+    // partner to play the seat (MODE_FLAG_STAND_IN). Training: the arena's share of the episodes -- a roles arena's own
+    // share, Roles.StandInShare (G1), so the stage that wants the stand-in has it without the others having it too.
+    // Evaluation: every episode of the stand-in arm, none otherwise (StandIn::Fields).
     ArenaDefinition const& arena = Arena(env);
-    if ((arena.Seats != SeatPlan::Party && arena.Seats != SeatPlan::Raid) || data.ActiveSeats < 2)
-        return;
-
-    // Only while the learner has a frozen partner to play the seat (MODE_FLAG_STAND_IN). Training: the arena's share
-    // of the episodes (no random number is drawn while it is off, so a stage without the stand-in builds exactly the
-    // episodes it did) -- a roles arena's own share, Roles.StandInShare (G1), so the stage that wants the stand-in has
-    // it without the others having it too. Evaluation: every episode of the stand-in arm, none otherwise.
-    if (!_standIn.load(std::memory_order_relaxed))
-        return;
-    int32 const share = StandInShare(data.Arena);
-    if (!env.Evaluating && (share <= 0 || !roll_chance_i(share)))
+    if (!StandIn::Fields(_standIn.load(std::memory_order_relaxed),
+        arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid, data.ActiveSeats, env.Evaluating,
+        StandInShare(data.Arena), [](int32 percent) { return roll_chance_i(percent); }))
         return;
 
     // Its own seed: an evaluation's from the seed index, so the same index meets the same person in every evaluation.

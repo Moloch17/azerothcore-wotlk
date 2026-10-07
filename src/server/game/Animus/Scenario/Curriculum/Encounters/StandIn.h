@@ -61,6 +61,21 @@ namespace Animus::Curriculum::StandIn
         return !hasCharacter ? PRESENT_NONE : standIn ? PRESENT_STAND_IN : PRESENT_LEARNER;
     }
 
+    /// Whether an episode fields a stand-in at all. Only a party or a raid with someone beside the seat, and only while
+    /// the learner has a frozen partner to play it (`modeAllows`: the MODE's MODE_FLAG_STAND_IN) -- without the flag no
+    /// episode has one, an evaluation's included. Then an evaluation of the stand-in arm has one in every episode, and
+    /// training in `share` percent of them: `roll(share)` is asked only then, so a stage without the stand-in draws no
+    /// random number and builds exactly the episodes it did.
+    template <typename Roll>
+    [[nodiscard]] bool Fields(bool modeAllows, bool partyOrRaid, uint32_t activeSeats, bool evaluating, int32_t share,
+        Roll&& roll)
+    {
+        if (!partyOrRaid || activeSeats < 2 || !modeAllows)
+            return false;
+
+        return evaluating || (share > 0 && roll(share));
+    }
+
     /// How often the stand-in plays, and how its styles are drawn (CurriculumTuning StandIn.*). Off by default
     /// (Share 0): a stage turns it on.
     struct Tuning

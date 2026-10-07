@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Protocol.h"
 #include "StandIn.h"
 #include "gtest/gtest.h"
 #include <set>
@@ -91,4 +92,41 @@ TEST(StandInTest, TheStandInsRowIsPresentTwo)
     EXPECT_EQ(SI::Presence(false, false), SI::PRESENT_NONE);
     EXPECT_EQ(SI::PRESENT_LEARNER, 1);
     EXPECT_EQ(SI::PRESENT_STAND_IN, 2);
+}
+
+TEST(StandInTest, NoEpisodeHasAStandInWithoutTheModeFlag)
+{
+    // A training MODE without MODE_FLAG_STAND_IN (a learner with no partner to field) leaves every party without one,
+    // whatever the arena's share, and draws no random number for it.
+    uint32_t rolls = 0;
+    auto const roll = [&rolls](int32_t) { ++rolls; return true; };
+    for (bool evaluating : { false, true })
+        for (int32_t share : { 0, 1, 50, 100 })
+            EXPECT_FALSE(SI::Fields(false, true, 5, evaluating, share, roll)) << evaluating << " " << share;
+    EXPECT_EQ(rolls, 0u);
+
+    // The flag itself: bit 2 (bit 1 is unused), and a MODE with no flags set does not carry it.
+    EXPECT_EQ(AnimusForge::MODE_FLAG_STAND_IN, 2u);
+    EXPECT_FALSE((0u & AnimusForge::MODE_FLAG_STAND_IN) != 0);
+}
+
+TEST(StandInTest, WithTheFlagAnEvaluationHasOneAndTrainingRollsItsShare)
+{
+    uint32_t rolls = 0;
+    bool answer = false;
+    auto const roll = [&](int32_t) { ++rolls; return answer; };
+
+    // Evaluation: every party episode, no roll.
+    EXPECT_TRUE(SI::Fields(true, true, 5, true, 0, roll));
+    EXPECT_EQ(rolls, 0u);
+    // Training: no share, no roll, no stand-in; a share rolls, and the roll decides.
+    EXPECT_FALSE(SI::Fields(true, true, 5, false, 0, roll));
+    EXPECT_EQ(rolls, 0u);
+    EXPECT_FALSE(SI::Fields(true, true, 5, false, 30, roll));
+    answer = true;
+    EXPECT_TRUE(SI::Fields(true, true, 5, false, 30, roll));
+    EXPECT_EQ(rolls, 2u);
+    // Never alone, never outside a party or a raid.
+    EXPECT_FALSE(SI::Fields(true, true, 1, true, 100, roll));
+    EXPECT_FALSE(SI::Fields(true, false, 5, true, 100, roll));
 }
