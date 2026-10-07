@@ -22,7 +22,6 @@
 #include "MapWorldQuery.h"
 #include "SeatEncoder.h"
 #include "SeatView.h"
-#include "TravelBlock.h"
 #include "UnitBody.h"
 #include "Map.h"
 #include "MapDefines.h"

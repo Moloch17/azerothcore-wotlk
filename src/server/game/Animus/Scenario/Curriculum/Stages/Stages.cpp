@@ -1109,50 +1109,10 @@ namespace
             return "team seats share a zone questing";
         if (arena.Seats == SeatPlan::Teams && (arena.TeamSeats < 1 || arena.TeamSeats > TEAM_SEATS))
             return "a side is between one seat and TEAM_SEATS";
-        if (arena.OnFoot && arena.Against != Opposition::Travel)
-            return "only a travel arena can be made on foot: there is nothing else a mount would be barred from";
-        if (arena.OnFoot && arena.Flying)
-            return "an arena is on foot or it flies, not both";
-        if (arena.AirOnly && !arena.Flying)
-            return "an air-only arena flies: AirOnly needs Flying";
-        bool const travel = arena.Against == Opposition::Travel;
-        // A marker arena takes some of the travel arena's kinds of ground (ledges, rooms, water, lakebeds, chains,
-        // flight), each by its own course; which course may have which is the marker rules' further down.
-        bool const markerGround = arena.Against == Opposition::Markers;
-        bool const placed = travel || markerGround;
-        if (travel && !stage.Has(BlockId::Travel))
-            return "travel needs the travel block";
-        if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner))
-            return "travel is one seat on its own";
-        bool const mountedMarkers = arena.Against == Opposition::Markers && arena.Course == MarkerCourse::Mounted;
-        if (arena.Flying && !travel && !mountedMarkers)
-            return "only a travel arena flies";
-        if (arena.Indoors && !placed)
-            return "only a travel or marker arena can be indoors: being inside changes where an objective may be put "
-                "and what reaching it means, and nothing else asks either question";
-        if (arena.Indoors && arena.Flying)
-            return "an arena is indoors or it flies, not both";
-        if (arena.Indoors && arena.Water)
-            return "an interior arena has no crossing to offer: water wants an objective across a lake";
-        if (arena.Ledges && !placed)
-            return "only a travel or marker arena has ledges: an objective below a drop is a place to get to";
-        if (arena.Ledges && (arena.Flying || arena.Indoors || arena.Water))
-            return "a ledge arena is on foot outdoors: the drop is the shortcut and the ramp is the way round, which "
-                "wings, a roof or a lake would each make a different question";
-        if (arena.Water && !placed && arena.Against != Opposition::Creature)
-            return "water is a travel arena's crossing or a creature arena's lake; nothing else reads it";
-        if (arena.Underwater && !placed)
-            return "only a travel or marker arena dives: an objective on a lakebed is a place to get to";
-        if (arena.Underwater && (arena.Flying || arena.Indoors || arena.Ledges || arena.Water))
-            return "a dive arena is its own trip: the objective is on the bed, not across the lake, and neither "
-                "wings, a roof nor a ledge belong to it";
-        if (arena.Checkpoints && !(placed && arena.Underwater))
-            return "only a dive arena chains: the next lakebed is drawn the way the first was, and no other kind of "
-                "objective has a next one yet";
         bool const life = arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
             || arena.Against == Opposition::Town;
-        if (life && (!stage.Has(BlockId::World) || !stage.Has(BlockId::Travel) || !stage.Has(BlockId::Pack)))
-            return "life outside the fight needs the world, travel and pack blocks";
+        if (life && (!stage.Has(BlockId::World) || !stage.Has(BlockId::Pack)))
+            return "life outside the fight needs the world and pack blocks";
         // A quest may be a group's (world_group, world_shared); gathering and a town are one seat on its own.
         if (life && ((arena.Seats != SeatPlan::Solo && !worldGroup) || arena.Owner
             || arena.Schedule != PullSchedule::None))
@@ -1166,53 +1126,11 @@ namespace
             }))
             return "the world block wants a life arena to be read in";
 
-        // The movement stages' markers: one seat on its own with nothing else in the episode, on the stage's ground.
-        // The travel arena's kinds of ground (water, rooms, ledges, lakebeds, the air) are not markers' yet: each
-        // comes with the stage that asks for it.
-        bool const markers = arena.Against == Opposition::Markers;
-        if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None))
-            return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
-        if (markers && arena.OnFoot)
-            return "a marker arena is on foot unless it is the mounted course's: OnFoot is the travel arena's";
-        if (markers && (arena.Flying || arena.AirOnly) && arena.Course != MarkerCourse::Mounted)
-            return "flying and air-only markers are the mounted course's";
-        if (markers && arena.Course == MarkerCourse::Mounted && !stage.Has(BlockId::Travel))
-            return "the mounted course mounts with the travel block";
-        if (markers && (arena.Water || arena.Underwater || arena.Checkpoints) && arena.Course != MarkerCourse::Water)
-            return "water, lakebeds and their chains are the water course's ground";
-        if (markers && arena.Course == MarkerCourse::Water && arena.Water == arena.Underwater)
-            return "a water marker arena is a crossing (Water) or lakebeds (Underwater)";
-        if (markers && arena.Checkpoints && !arena.Underwater)
-            return "a chain of markers is a chain of lakebeds";
-        if (markers && (arena.Ledges || arena.Indoors) && arena.Course != MarkerCourse::Vertical)
-            return "ledges and rooms are the vertical course's ground";
-        if (markers && arena.Ledges && arena.Indoors)
-            return "a marker arena is ledges or rooms, not both";
-        if (markers && !stage.Has(BlockId::Move))
-            return "markers are walked to with the move block";
-        if (markers && !stage.Has(BlockId::Compass))
-            return "a marker is found by its bearing and distance: the compass block";
-        if (!markers && arena.Course != MarkerCourse::Open)
-            return "only a marker arena has a course";
-
-        // The follow stage: one seat, a leader in the owner's slot, nothing to fight and none of the travel arena's
-        // kinds of ground.
-        bool const follow = arena.Against == Opposition::Follow;
-        if (follow && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.OnFoot || arena.Flying || arena.AirOnly
-            || arena.Water || arena.Indoors || arena.Ledges || arena.Underwater || arena.Checkpoints))
-            return "a follow arena is one seat and a leader, with nothing to fight";
-        if (follow && !stage.Has(BlockId::Move))
-            return "a leader is followed with the move block";
-
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;
-        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.Flying || arena.Water
-            || arena.Underwater || arena.Checkpoints || arena.Objective))
-            return "a seek arena is one seat on its own, on foot and dry, with no marker of its own";
+        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Schedule != PullSchedule::None))
+            return "a seek arena is one seat on its own";
         if (seek && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)))
             return "a seek arena is walked with the move block and searched with the camera (the vision block)";
         if (seek && stage.Has(BlockId::Compass))
@@ -1224,9 +1142,8 @@ namespace
         // compass (withheld more often each rung) and seen with the camera.
         bool const sight = arena.Against == Opposition::Sight;
         if (sight && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.Flying || arena.Water
-            || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
-            return "a sight arena is one seat on its own, on foot and dry, with no marker or room of its own";
+            || arena.Schedule != PullSchedule::None || !arena.Rooms.empty()))
+            return "a sight arena is one seat on its own, with no room of its own";
         if (sight && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Compass) || !stage.Has(BlockId::Vision)))
             return "a sight arena is walked with the move block, pointed at by the compass and seen with the camera";
         if (sight && (arena.Objects.empty() || arena.SpawnPoints.size() < 2))
@@ -1240,9 +1157,8 @@ namespace
         // names what it is after, so nothing points at it -- no compass, no marker of its own.
         bool const interact = arena.Against == Opposition::Interact;
         if (interact && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.Flying || arena.Water
-            || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
-            return "an interact arena is one seat on its own, on foot and dry, with no marker or room of its own";
+            || arena.Schedule != PullSchedule::None || !arena.Rooms.empty()))
+            return "an interact arena is one seat on its own, with no room of its own";
         if (interact && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)))
             return "an interact arena is walked with the move block, seen with the camera and acted on with the sight "
                 "block";
@@ -1268,7 +1184,7 @@ namespace
         bool const partyFollow = arena.Against == Opposition::PartyFollow;
         if (partyFollow && (arena.Seats != SeatPlan::Party || !arena.PartySize || arena.PartySize > GROUP_MEMBERS
             || arena.Owner || arena.PartyGroup
-            || arena.Schedule != PullSchedule::None || arena.Objective || !arena.MapId))
+            || arena.Schedule != PullSchedule::None || !arena.MapId))
             return "a party follow is a party of 1 to GROUP_MEMBERS followers and its leader, on a dungeon's map, "
                 "with nothing to fight";
         if (partyFollow && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision)
@@ -1302,7 +1218,7 @@ namespace
         if (combat != (arena.Combat != CombatDrill::None))
             return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";
         if (combat && (arena.Seats != SeatPlan::Solo || arena.Owner
-            || arena.Schedule != PullSchedule::None || arena.DeathRuns || arena.Objective))
+            || arena.Schedule != PullSchedule::None || arena.DeathRuns))
             return "a combat arena is one seat on its own, with no pull schedule, owner or corpse run";
         if (combat && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
             || !stage.Has(BlockId::Combat)))
@@ -1412,10 +1328,8 @@ namespace
         // A stage with nothing to fight carries no duel block (the movement stages); one that fights needs it.
         bool const fights = stage.AnyArena([](ArenaDefinition const& arena)
         {
-            return arena.Against != Opposition::Markers && arena.Against != Opposition::Follow
-                && arena.Against != Opposition::Seek && arena.Against != Opposition::Sight
-                && arena.Against != Opposition::Interact
-                && arena.Against != Opposition::PartyFollow;
+            return arena.Against != Opposition::Seek && arena.Against != Opposition::Sight
+                && arena.Against != Opposition::Interact && arena.Against != Opposition::PartyFollow;
         });
         if (fights && !stage.Has(BlockId::Duel))
             return "a stage that fights something needs the duel block";

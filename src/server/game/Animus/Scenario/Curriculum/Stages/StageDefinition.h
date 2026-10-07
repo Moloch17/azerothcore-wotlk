@@ -46,19 +46,12 @@ namespace Animus::Curriculum
     {
         Creature,       // one same-level creature spawned out of aggro range
         Pulls,          // packs of creatures (see PullSchedule)
-        Travel,         // a place to get to (ArenaDefinition::Flying for one best reached in the air)
         Hazards,        // nothing to fight: ground to get off (HazardEncounter)
         Instance,       // a real dungeon or raid boss in its own instance (InstanceEncounter, ArenaDefinition::Instance)
         Quest,          // a quest of the level band, giver to turn-in, in the world's own zone (QuestEncounter)
         Gather,         // a field of the band's herb and ore nodes, with the zone's creatures (GatherEncounter)
         Town,           // a town's traders: sell, repair, restock, dress (TownEncounter)
         Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
-        /// Nothing to fight: places to stop on, one after another (MarkerEncounter) -- the movement stages.
-        Markers,
-        /// Nothing to fight: a leader to keep up with (FollowEncounter) -- the last movement stage. The leader is an
-        /// agent in the owner's slot, moved by the player controller: a script's keys (Movement::Seek) or a frozen
-        /// checkpoint's (stage.json cast "leader").
-        Follow,
         /// Nothing to fight: one real object in one of a dungeon's rooms, found by sight and stopped beside
         /// (SeekEncounter, ArenaDefinition::Rooms and Objects) -- M2 seek.
         Seek,
@@ -100,17 +93,6 @@ namespace Animus::Curriculum
         Keep,           // heal_keep: the healer keeps everyone up through fights longer than its mana bar
         Focus,          // damage_discipline: a damage dealer kills the tank's target without taking an enemy off it
         Pull,           // pull: the tank pulls one pack of a camp at a time
-    };
-
-    /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
-    enum class MarkerCourse : uint8
-    {
-        Open,           // M1: open flat ground, the straight line is the way (Markers.*)
-        Ground,         // M2: broken ground, something in the way; the route is the way (MarkerGround.*)
-        Vertical,       // M3: above, below, another storey; steps, jumps and drops (MarkerVertical.*)
-        Water,          // M4: across water, on a lakebed, a chain of lakebeds; breath (MarkerWater.*)
-        Routes,         // M5: one long trip, the way not visible from the start (MarkerRoutes.*)
-        Mounted,        // M6: a ride (or a flight, Flying/AirOnly) worth mounting for (MarkerMounted.*)
     };
 
     /// **A room of the seek stage** (ArenaDefinition::Rooms): a floor area the object may be put on, written once in
@@ -273,8 +255,6 @@ namespace Animus::Curriculum
         /// questing alone -- a group of its own with its own quest, no director and no teammates. The solo player a
         /// group meets in the world, and the commonest claim to share a place with. Ignored by every other arena.
         uint32 LoneSeats = 0;
-        /// Opposition::Markers: the kind of ground the markers are on, and with it the ladder and the costs.
-        MarkerCourse Course = MarkerCourse::Open;
         /// Opposition::Dummy: what the dummy does. Ignored by every other arena.
         DummyDrill Drill = DummyDrill::Still;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
@@ -305,52 +285,8 @@ namespace Animus::Curriculum
         /// already, the seat starting within reach of that objective -- a kill, a collection from creatures, an
         /// object used, a place reached -- so the doing is practised without the walk. -1: not a drill.
         int8 QuestDrill = -1;
-        /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
-        bool Flying = false;
-        /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn
-        /// is what a player does before it can ride: the speed cooldowns (Sprint, Dash, Travel Form, Aspect of
-        /// the Cheetah), not stopping, and not wandering off the path. Mounting is masked, not merely unpaid,
-        /// because a masked action cannot be explored into and the lesson stays clean.
-        bool OnFoot = false;
-        /// Travel: the objective may sit across water, and is chosen so that the way round is longer than the way
-        /// through. On a creature arena instead (stage8_duel's `lake`): the opponent stands in the water, so the
-        /// fight is a swimming one for whoever goes in after it.
-        /// Travel: the objective may sit across water, and is chosen so that the way round is longer than the way
-        /// through. Every other travel arena refuses an objective anywhere near water, which is why nothing in the
-        /// curriculum had ever had to swim.
-        ///
-        /// Water is the one piece of ground that asks a question before it asks for a skill: swimming is about
-        /// 4.7 yards a second against 7 running, so crossing pays only when the straight line saves more than
-        /// about a third of the distance -- and what a build can do in water (a druid's Aquatic Form, a shaman's
-        /// Water Walking) changes the answer.
-        bool Water = false;
-        /// Where this arena's envs start, when its ground is not the stage's. An arena is drawn per episode but
-        /// the stage's list cannot give an arena that needs particular ground -- water, most of all -- what it
-        /// needs. These are used in place of the stage's when the episode is this arena's; empty means the stage's.
-        /// **The episode happens inside a building.** Everything that has to change about placing an objective
-        /// and calling it reached, in one flag.
-        ///
-        /// Outdoors, an objective is found by probing sixty yards above the seat and searching a hundred and
-        /// twenty down, because ground a long way up or down is still ground and the broken arena's ridges span
-        /// seventy yards of relief. Inside a two-storey inn the same probe returns the roof. And arrival is
-        /// two-dimensional, which is right on a slope and wrong under a staircase: a seat on the ground floor
-        /// stands six yards from an objective on the floor above and has arrived at nothing.
-        ///
-        /// So an interior arena probes from the seat's own height, keeps the objective on a floor it could stand
-        /// on, and adds a storey's worth of vertical tolerance to arriving. None of it touches an arena that
-        /// leaves this false.
-        bool Indoors = false;
-        /// Travel, flying: the place can only be reached by air. FindPlace refuses a candidate the ground route
-        /// reaches within Travel.AirDetour of the straight line, the ground mount is masked, and arriving means
-        /// standing within Travel.AirArriveRise yards of the objective's own height. A spawn point with no such
-        /// place in reach builds an ordinary flight instead and reports air_only 0, as a water arena that finds no
-        /// crossing reports crossing 0: the shortfall is the ground's, and the gate can name it.
-        ///
-        /// Without this a flying arena never needs its wings. A flight objective is placed anywhere on dry
-        /// ground the height probe finds, which in Nagrand is nearly always walkable, and 700 yards at run speed
-        /// is 100 s of a 180 s clock: a ground ride arrives often enough that flying stays optional, and nine of
-        /// ten class heads never found the flying mount. Only a Flying arena may set this.
-        bool AirOnly = false;
+        /// Where this arena's envs start, when its ground is not the stage's: used in place of the stage's when the
+        /// episode is this arena's; empty means the stage's.
         std::vector<Position> SpawnPoints{};
         /// The map this arena's episodes are on, when it is not the stage's (0 = the stage's). A stage can then mix
         /// ground on several maps -- Kalimdor and Outland, a PvP drill's instance and the world -- which is what
@@ -362,48 +298,6 @@ namespace Animus::Curriculum
         /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether
         /// the policy learned to read terrain or merely learned these particular banks.
         std::vector<Position> HeldOutSpawnPoints{};
-        /// Yards of validated random offset applied to each seat's start, with a random facing to go with it.
-        /// 0 leaves the seat exactly on the spawn point facing due east, which is what every arena did and what
-        /// every arena that leaves this alone keeps doing.
-        ///
-        /// A spawn point is one pose, not one place. Drawing the objective at a uniform bearing varies the task
-        /// but not the view the episode opens on, so a policy sees as many opening views as the stage has points
-        /// -- seven in stage2_indoor's training, two in the evaluation that actually runs. "Read the walls from
-        /// this spot" is a smaller thing to learn than "read the walls", and the gap between them is the whole
-        /// claim an indoor drill makes.
-        ///
-        /// The offset goes through TravelEncounter::FindPlace, so it is on the mesh, reachable, and inside the
-        /// building when the arena is Indoors. A room too tight to hold one keeps the spawn point and still
-        /// takes the facing: the scatter is an improvement where it fits, never a reason to lose an episode.
-        float SpawnScatter = 0.0f;
-        /// Travel, on foot: the objective is below a ledge. FindPlace puts it Travel.LedgeDropMin to LedgeDropMax
-        /// yards under the seat, where the ground route round is complete but at least Travel.LedgeDetour times
-        /// the straight line and the straight line itself crosses one edge the seat can drop off, so the jump is
-        /// the shortcut and the ramp is the safe way (TravelEncounter::LedgeOnLine). A spawn point with no such
-        /// place in reach builds an ordinary trip and reports `ledge` 0, as a water arena reports `crossing` 0.
-        /// Arriving means the objective's own floor (ARRIVE_SAME_FLOOR), or the lip above it would count.
-        bool Ledges = false;
-        /// Travel, on foot: the objective is on the bed of a lake, under Travel.DiveDepthMin to DiveDepthMax yards
-        /// of water, Travel.DiveMin to DiveMax yards away. Arriving is standing on the bed beside it, which means
-        /// swimming down, and the deep ones cannot be reached on one breath: the core's breath timer and its
-        /// drowning damage (a fifth of the seat's health a second once the breath is spent) are the price, and
-        /// what the seat learns. A spawn point with no water that deep in reach builds an ordinary trip and
-        /// reports `dive` 0, as a water arena reports `crossing` 0.
-        bool Underwater = false;
-        /// Travel: the objective is a chain. Reaching one draws the next from where the seat stands, Travel.ChainMin
-        /// to ChainMax yards on, of the same kind as the arena's (a dive arena chains lakebeds), and the episode
-        /// runs to its clock rather than ending on arrival: what is measured is how many were reached and whether
-        /// the seat is alive at the end. Built for the breath: a chain of lakebeds keeps a seat under water for
-        /// longer than one breath lasts, so that coming up for air, or making the breath free with a spell, is a
-        /// decision with a price on both sides. A leg no place can be found for leaves the seat with nothing more
-        /// to reach for the rest of the clock (chain_broken).
-        bool Checkpoints = false;
-        /// Opposition::Markers: one place, the same every episode, instead of a marker drawn by the course's ladder
-        /// (the user's M1, 2026-10-05: the end of the Stockades' entrance hallway). One marker an episode, stopped on
-        /// inside ObjectiveRadius; the arena has a single rung, so every episode is its top rung.
-        std::optional<Position> Objective{};
-        /// The radius a fixed Objective is stopped on inside, yards.
-        float ObjectiveRadius = 1.0f;
         /// Opposition::Seek: the rooms an object may be hidden in (one drawn an episode, by the room ladder), the
         /// objects (one drawn an episode, uniformly), and how near the object a stop finds it, yards (interaction
         /// range).

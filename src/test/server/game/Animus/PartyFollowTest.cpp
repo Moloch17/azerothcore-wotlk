@@ -21,7 +21,7 @@
 #include "CurriculumTuning.h"
 #include "EntranceRespawn.h"
 #include "Encounters.h"
-#include "FollowEncounter.h"
+#include "Standing.h"
 #include "Layout.h"
 #include "PartyFollowEncounter.h"
 #include "PartyFramesBlock.h"
@@ -136,7 +136,7 @@ TEST(PartyFollowTest, FollowSpacing)
     Cu::CurriculumTuning::PartyFollowTuning const tuning;
     auto const band = [&](float yards)
     {
-        return Cu::FollowEncounter::Band(yards, tuning.BandMin, tuning.BandMax, tuning.LostYards);
+        return Cu::Standing::Band(yards, tuning.BandMin, tuning.BandMax, tuning.LostYards);
     };
     EXPECT_EQ(band(1.0f), 0u);
     EXPECT_EQ(band(2.9f), 0u);

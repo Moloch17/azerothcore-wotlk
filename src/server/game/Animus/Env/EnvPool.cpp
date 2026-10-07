@@ -307,7 +307,6 @@ void Animus::EnvPool::FinishEnv(Env& env, CollectTiming& timing)
     timing.ResetConfigureNs += CurrentReset.ConfigureNs;
     timing.ResetDestroyNs += CurrentReset.DestroyNs;
     timing.ResetEncounterNs += CurrentReset.EncounterNs;
-    timing.ResetScatterNs += CurrentReset.ScatterNs;
     timing.ResetStockNs += CurrentReset.StockNs;
     timing.ResetPrepareNs += CurrentReset.PrepareNs;
     timing.ResetSeatsNs += CurrentReset.SeatsNs;
@@ -457,7 +456,6 @@ void Animus::EnvPool::FinishCollect(uint32 group)
         _collect.ResetConfigureNs += timing.ResetConfigureNs;
         _collect.ResetDestroyNs += timing.ResetDestroyNs;
         _collect.ResetEncounterNs += timing.ResetEncounterNs;
-        _collect.ResetScatterNs += timing.ResetScatterNs;
         _collect.ResetStockNs += timing.ResetStockNs;
         _collect.ResetPrepareNs += timing.ResetPrepareNs;
         _collect.ResetSeatsNs += timing.ResetSeatsNs;

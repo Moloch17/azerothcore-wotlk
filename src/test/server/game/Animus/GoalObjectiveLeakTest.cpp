@@ -64,11 +64,11 @@ namespace
 TEST_F(GoalObjectiveLeakTest, AWithheldCompassLeavesTravelToUnreached)
 {
     // The compass shown: reached at 5 yd, as before.
-    auto const shown = TravelFiveYardsOff(Cu::GoalBlock::ObjectivePlaceKnown(true, false, false));
+    auto const shown = TravelFiveYardsOff(Cu::GoalBlock::ObjectivePlaceKnown(true, false));
     EXPECT_TRUE(shown.first);
     EXPECT_TRUE(shown.second);
     // Withheld: the observed reached bit stays 0 -- and the goal is still possible, so it is held, not ended.
-    auto const withheld = TravelFiveYardsOff(Cu::GoalBlock::ObjectivePlaceKnown(true, true, false));
+    auto const withheld = TravelFiveYardsOff(Cu::GoalBlock::ObjectivePlaceKnown(true, true));
     EXPECT_FALSE(withheld.first);
     EXPECT_TRUE(withheld.second);
     // And it has no place to read a distance from.
@@ -83,14 +83,12 @@ TEST_F(GoalObjectiveLeakTest, AStageWithoutACompassNeverKnowsThePlace)
 {
     Cu::StageDefinition const* seek = Cu::FindStage("move2_seek");
     ASSERT_NE(seek, nullptr);
-    bool const known = Cu::GoalBlock::ObjectivePlaceKnown(seek->Has(Cu::BlockId::Compass), false,
-        seek->Has(Cu::BlockId::Travel));
+    bool const known = Cu::GoalBlock::ObjectivePlaceKnown(seek->Has(Cu::BlockId::Compass), false);
     EXPECT_FALSE(known);
     EXPECT_FALSE(TravelFiveYardsOff(known).first);
-    // M1 knows it while its compass is shown; a travel block's own bearing knows it too.
+    // M1 knows it while its compass is shown.
     Cu::StageDefinition const* controls = Cu::FindStage("move1_controls");
     ASSERT_NE(controls, nullptr);
-    EXPECT_TRUE(Cu::GoalBlock::ObjectivePlaceKnown(controls->Has(Cu::BlockId::Compass), false, false));
-    EXPECT_FALSE(Cu::GoalBlock::ObjectivePlaceKnown(controls->Has(Cu::BlockId::Compass), true, false));
-    EXPECT_TRUE(Cu::GoalBlock::ObjectivePlaceKnown(false, false, true));
+    EXPECT_TRUE(Cu::GoalBlock::ObjectivePlaceKnown(controls->Has(Cu::BlockId::Compass), false));
+    EXPECT_FALSE(Cu::GoalBlock::ObjectivePlaceKnown(controls->Has(Cu::BlockId::Compass), true));
 }

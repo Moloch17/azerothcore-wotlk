@@ -178,7 +178,6 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Context:   return "context";
         case BlockId::Hostiles:  return "hostiles";
         case BlockId::Pet:       return "pet";
-        case BlockId::Travel:    return "travel";
         case BlockId::Support:   return "support";
         case BlockId::World:     return "world";
         case BlockId::Forecast:  return "forecast";

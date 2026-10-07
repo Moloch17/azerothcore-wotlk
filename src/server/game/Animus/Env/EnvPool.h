@@ -188,7 +188,6 @@ namespace Animus
             uint64 ResetConfigureNs = 0;    // ... talents, kit, gear
             uint64 ResetDestroyNs = 0;      // ... destroying the previous seats
             uint64 ResetEncounterNs = 0;    // ... building the encounters (opponents, objectives)
-            uint64 ResetScatterNs = 0;      // ... spreading the seats
             uint64 ResetStockNs = 0;        // ... supplies and pets
             uint64 ResetPrepareNs = 0;      // ... the draws and the encounters' episode resets
             uint64 ResetDespawnNs = 0;      // ... the previous episode's targets despawned

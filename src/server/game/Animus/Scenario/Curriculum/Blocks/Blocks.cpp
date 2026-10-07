@@ -42,7 +42,6 @@
 #include "PetBlock.h"
 #include "SightBlock.h"
 #include "SupportBlock.h"
-#include "TravelBlock.h"
 #include "VisionBlock.h"
 #include "WorldBlock.h"
 #include <boost/json/array.hpp>
@@ -121,7 +120,6 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static ContextBlock const context;
     static HostilesBlock const hostiles;
     static PetBlock const pet;
-    static TravelBlock const travel;
     static SupportBlock const support;
     static WorldBlock const world;
     static ForecastBlock const forecast;
@@ -150,7 +148,6 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
         table[std::size_t(BlockId::Context)] = &context;
         table[std::size_t(BlockId::Hostiles)] = &hostiles;
         table[std::size_t(BlockId::Pet)] = &pet;
-        table[std::size_t(BlockId::Travel)] = &travel;
         table[std::size_t(BlockId::Support)] = &support;
         table[std::size_t(BlockId::World)] = &world;
         table[std::size_t(BlockId::Forecast)] = &forecast;

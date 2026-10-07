@@ -27,7 +27,7 @@
 #include "Log.h"
 #include "Map.h"
 #include "MapVisionWorld.h"
-#include "MarkerEncounter.h"
+#include "Standing.h"
 #include "ModelIgnoreFlags.h"
 #include "ObjectPool.h"
 #include "Player.h"
@@ -489,7 +489,7 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
         float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
-        float const charge = MarkerEncounter::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
+        float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
             tuning.WallSlide);
         if (charge > 0.0f)
             ledger.AddFixed(RewardTerm::Wall, -charge);
@@ -539,10 +539,10 @@ void Animus::Curriculum::SeekEncounter::Reward(Env& env, uint32 seatIndex, Playe
     }
     seek.LastRoom = room;
 
-    // Found: stopped (MarkerEncounter::Stopped, the server's applied state) beside the object, on its floor.
+    // Found: stopped (Standing::Stopped, the server's applied state) beside the object, on its floor.
     float const distance = bot->GetExactDist2d(&seek.Spot);
     bool const beside = distance <= arena.SeekRadius && std::fabs(z - seek.Spot.GetPositionZ()) <= tuning.ArriveRise;
-    bool const stopped = !firstLook && MarkerEncounter::Stopped(bot->GetUnitMovementFlags(), moved,
+    bool const stopped = !firstLook && Standing::Stopped(bot->GetUnitMovementFlags(), moved,
         _scenario.Tuning().Markers.StopMoved);
     if (!beside || !stopped)
         return;

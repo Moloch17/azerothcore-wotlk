@@ -47,31 +47,3 @@ def test_the_conf_template_invents_no_keys():
     extra = sorted(conf_keys() - tuning_keys())
     assert not extra, (f"{len(extra)} keys in {CONF.name} are not read by CurriculumTuning::Visit, so setting "
                        f"them does nothing: {', '.join(extra)}")
-
-
-FORGE_CONFIG = ROOT / "src" / "server" / "game" / "Animus" / "ForgeConfig.cpp"
-
-
-def human_keys_read() -> set[str]:
-    """The AnimusForge.Human.* keys ForgeConfig::Load reads (human play: trip pools and hard starts)."""
-    return set(re.findall(r'"(AnimusForge\.Human\.[A-Za-z0-9.]+)"', FORGE_CONFIG.read_text()))
-
-
-def human_keys_documented() -> set[str]:
-    return set(re.findall(r"^\s*(AnimusForge\.Human\.[A-Za-z0-9.]+)\s*=", CONF.read_text(), re.M))
-
-
-def test_every_human_play_key_is_in_the_conf_template_and_no_more():
-    read = human_keys_read()
-    documented = human_keys_documented()
-    assert {"AnimusForge.Human.Trips", "AnimusForge.Human.TripShare", "AnimusForge.Human.HardSpots",
-            "AnimusForge.Human.HardSpotShare"} <= read
-    assert not read - documented, (f"human play keys the sim reads but {CONF.name} does not document: "
-                                   f"{read - documented}")
-    assert not documented - read, f"human play keys in {CONF.name} the sim never reads: {documented - read}"
-
-
-def test_human_play_is_off_by_default_in_the_conf_template():
-    text = CONF.read_text()
-    for key, off in (("Trips", '""'), ("TripShare", "0"), ("HardSpots", '""'), ("HardSpotShare", "0")):
-        assert re.search(rf"^AnimusForge\.Human\.{key}\s*=\s*{re.escape(off)}\s*$", text, re.M), key

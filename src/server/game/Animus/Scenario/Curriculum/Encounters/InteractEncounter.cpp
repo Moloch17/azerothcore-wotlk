@@ -34,7 +34,7 @@
 #include "Log.h"
 #include "Map.h"
 #include "MapVisionWorld.h"
-#include "MarkerEncounter.h"
+#include "Standing.h"
 #include "ObjectPool.h"
 #include "Player.h"
 #include "Random.h"
@@ -605,7 +605,7 @@ void Animus::Curriculum::InteractEncounter::Reward(Env& env, uint32 seatIndex, P
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
         float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
-        float const charge = MarkerEncounter::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
+        float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, tuning.Wall,
             tuning.WallSlide);
         if (charge > 0.0f)
             ledger.AddFixed(RewardTerm::Wall, -charge);
@@ -648,8 +648,8 @@ void Animus::Curriculum::InteractEncounter::Reward(Env& env, uint32 seatIndex, P
         return;
     }
 
-    // Stopped beside an object (MarkerEncounter::Stopped), on its floor: the nearest within reach is the one reached.
-    bool const stopped = !firstLook && MarkerEncounter::Stopped(bot->GetUnitMovementFlags(), moved,
+    // Stopped beside an object (Standing::Stopped), on its floor: the nearest within reach is the one reached.
+    bool const stopped = !firstLook && Standing::Stopped(bot->GetUnitMovementFlags(), moved,
         _scenario.Tuning().Markers.StopMoved);
     if (!stopped)
         return;

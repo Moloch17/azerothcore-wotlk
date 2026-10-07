@@ -325,15 +325,6 @@ void AnimusForge::ForgeConfig::Load()
             1.0f, float(Animus::Vision::MEMORY_CAP_LIMIT)));
     }
 
-    // Human play (human-play-data plan 2.6): off unless a file is named and its share is above 0.
-    fs::path const humanTrips = sConfigMgr->GetOption<std::string>("AnimusForge.Human.Trips", "");
-    HumanTrips = humanTrips.empty() ? std::string() : Resolve(humanTrips, configDir).string();
-    HumanTripShare = std::clamp(sConfigMgr->GetOption<float>("AnimusForge.Human.TripShare", 0.0f), 0.0f, 1.0f);
-    fs::path const hardSpots = sConfigMgr->GetOption<std::string>("AnimusForge.Human.HardSpots", "");
-    HumanHardSpots = hardSpots.empty() ? std::string() : Resolve(hardSpots, configDir).string();
-    HumanHardSpotShare = std::clamp(sConfigMgr->GetOption<float>("AnimusForge.Human.HardSpotShare", 0.0f), 0.0f,
-        1.0f);
-
     LearnerPython = sConfigMgr->GetOption<std::string>("AnimusForge.Learner.Python", "");
     if (LearnerPython.empty())
     {
@@ -678,10 +669,6 @@ Animus::StageSettings AnimusForge::ForgeConfig::Stage(std::string const& scenari
     stage.ContinentReplicas = ContinentReplicas;
     stage.TuningPrefix = "AnimusForge.Curriculum.";
     stage.LayoutsDir = LayoutsDir().string();
-    stage.HumanTrips = HumanTrips;
-    stage.HumanTripShare = HumanTripShare;
-    stage.HumanHardSpots = HumanHardSpots;
-    stage.HumanHardSpotShare = HumanHardSpotShare;
     return stage;
 }
 

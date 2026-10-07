@@ -101,10 +101,7 @@ bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*le
         data.OpponentEntry = pool.Random(level);
     }
 
-    // A lake arena (ArenaDefinition::Water on a creature arena) puts the opponent in the water, so the fight is a
-    // swimming one for whoever goes in after the other; a spawn point with no water in reach fights on land.
-    Position const where = _scenario.Arena(env).Water ? Opponents::FindSpawnPointInWater(bot, map)
-        : Opponents::FindSpawnPoint(bot, map);
+    Position const where = Opponents::FindSpawnPoint(bot, map);
     Creature* opponent = data.OpponentEntry
         ? Opponents::SummonOpponent(bot, map, data.OpponentEntry, where, level) : nullptr;
     if (!opponent)

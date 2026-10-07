@@ -484,9 +484,9 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
         SimPartsNote(sim.Collect) });
     table.AddRow({ "reset parts", Acore::StringFormat("{:.2f} ms create", sim.Collect.ResetCreate),
         Acore::StringFormat("place {:.2f} ms, configure {:.2f} ms, destroy {:.2f} ms, encounters {:.2f} ms, "
-            "scatter {:.2f} ms, stock {:.2f} ms; prepare {:.2f} ms, seats {:.2f} ms in all, despawn {:.2f} ms; "
+            "stock {:.2f} ms; prepare {:.2f} ms, seats {:.2f} ms in all, despawn {:.2f} ms; "
             "scenario reset {:.2f} ms (per decision)", sim.Collect.ResetPlace, sim.Collect.ResetConfigure,
-            sim.Collect.ResetDestroy, sim.Collect.ResetEncounter, sim.Collect.ResetScatter, sim.Collect.ResetStock,
+            sim.Collect.ResetDestroy, sim.Collect.ResetEncounter, sim.Collect.ResetStock,
             sim.Collect.ResetPrepare, sim.Collect.ResetSeats, sim.Collect.ResetDespawn, sim.Collect.ResetScenario) });
     table.AddRow({ "world parts", Acore::StringFormat("{:.2f} ms objects", sim.World.Objects),
         Acore::StringFormat("sessions {:.2f}, players {:.2f}, scripts {:.2f}, relocation {:.2f}, visibility {:.2f}, "
@@ -723,9 +723,9 @@ void AnimusForge::ProgressMonitor::ReportLocal(SimSnapshot const& sim, LineSink 
         SimPartsNote(sim.Collect) });
     table.AddRow({ "reset parts", Acore::StringFormat("{:.2f} ms create", sim.Collect.ResetCreate),
         Acore::StringFormat("place {:.2f} ms, configure {:.2f} ms, destroy {:.2f} ms, encounters {:.2f} ms, "
-            "scatter {:.2f} ms, stock {:.2f} ms; prepare {:.2f} ms, seats {:.2f} ms in all, despawn {:.2f} ms; "
+            "stock {:.2f} ms; prepare {:.2f} ms, seats {:.2f} ms in all, despawn {:.2f} ms; "
             "scenario reset {:.2f} ms (per decision)", sim.Collect.ResetPlace, sim.Collect.ResetConfigure,
-            sim.Collect.ResetDestroy, sim.Collect.ResetEncounter, sim.Collect.ResetScatter, sim.Collect.ResetStock,
+            sim.Collect.ResetDestroy, sim.Collect.ResetEncounter, sim.Collect.ResetStock,
             sim.Collect.ResetPrepare, sim.Collect.ResetSeats, sim.Collect.ResetDespawn, sim.Collect.ResetScenario) });
     table.AddRow({ "world parts", Acore::StringFormat("{:.2f} ms objects", sim.World.Objects),
         Acore::StringFormat("sessions {:.2f}, players {:.2f}, scripts {:.2f}, relocation {:.2f}, visibility {:.2f}, "

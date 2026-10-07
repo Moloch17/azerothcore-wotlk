@@ -113,7 +113,7 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Goal })
             EXPECT_TRUE(stage.Has(block)) << name << " " << Cu::BlockName(block);
         // The party frames (revision 2) are the members' one source: no party or support block beside them.
-        for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Travel, Id::Companion })
+        for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Companion })
             EXPECT_FALSE(stage.Has(block)) << name << " " << Cu::BlockName(block);
         EXPECT_EQ(stage.SeatCount(), Cu::GROUP_SEATS) << name;
         for (Cu::ArenaDefinition const& arena : stage.Arenas)

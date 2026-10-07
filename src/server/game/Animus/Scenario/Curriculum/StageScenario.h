@@ -39,7 +39,6 @@
 namespace Animus::Curriculum
 {
     class OwnerEncounter;
-    class FollowEncounter;
     class PartyFollowEncounter;
     class PartyEncounter;
 
@@ -187,12 +186,6 @@ namespace Animus::Curriculum
         /// control ground instead when the episode is being scored (StageDefinition::HeldOutSpawnPoints).
         [[nodiscard]] std::vector<Position> const& SpawnGroundFor(Env const& env) const;
         [[nodiscard]] Position const& SpawnPointFor(Env const& env) const;
-        /// Move each seat off the spawn point by up to ArenaDefinition::SpawnScatter yards and turn it a random
-        /// way. Does nothing at all for an arena that leaves SpawnScatter at 0, which is every arena that has
-        /// not asked for it. Called once the seats are in the world and again whenever a failed build moves them
-        /// to another point, always before the encounters build: the objective is placed from where the seat
-        /// ends up, so scattering afterwards would measure the trip from somewhere the seat is not.
-        void ScatterSeats(Env const& env, Map* map) const;
         /// Phase bits a map has to give an env: all but phase 1, which is the world's own.
         static constexpr uint32 ENV_PHASE_BITS = 31;
 
@@ -529,8 +522,10 @@ namespace Animus::Curriculum
         std::vector<int32> _arenaStandInShare;
         SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenOnly;
         OwnerEncounter* _owner = nullptr;
-        FollowEncounter* _follow = nullptr;     // the follow stage's leader, in the owner's slot
-        PartyFollowEncounter* _partyFollow = nullptr;   // the party follow's leader, in the owner's slot too
+        /// The party follow's leader (M4), in the owner's slot: PartyFollowEncounter builds it there (OwnerAgent),
+        /// CastOwnerActive says when a frozen checkpoint plays its row, and the controller moves it as a seat's.
+        /// Not dead code: the owner's slot and these two uses are what the leader stands on.
+        PartyFollowEncounter* _partyFollow = nullptr;
         PartyEncounter* _party = nullptr;
     };
 }

@@ -42,14 +42,12 @@
 #include "EncoderSupport.h"
 #include "GoalBlock.h"
 #include "Encounters.h"
-#include "MarkerEncounter.h"
 #include "SeekEncounter.h"
 #include "SightEncounter.h"
 #include "InteractEncounter.h"
 #include "CombatEncounter.h"
 #include "RolesEncounter.h"
 #include "CombatBlock.h"
-#include "FollowEncounter.h"
 #include "PartyFollowEncounter.h"
 #include "BuildRetry.h"
 #include "SpellMgr.h"
@@ -77,7 +75,6 @@
 #include <numeric>
 #include "StringFormat.h"
 #include "Supplies.h"
-#include "TravelBlock.h"
 #include "MoveSpline.h"
 #include "MapWorldQuery.h"
 #include "PlayerLink.h"
@@ -105,9 +102,6 @@ namespace
     static_assert(PARTY_MEMBERS == GROUP_MEMBERS + SPOTLIGHT_SLOTS, "teammate slots are the group and the spotlights");
 
     constexpr float PARTY_SPACING = 3.0f;
-    /// The shortest scatter worth asking for. Under a yard PathGenerator builds a spline with no length, which
-    /// is the zero-length-jump fault again: Validate() checks a path's size and its velocity, never its length.
-    constexpr float SCATTER_MIN = 1.0f;
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
@@ -416,12 +410,12 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             ClassAssets::For(profile);
 
     // The owner's own row, after the seats, where an arena plays it from a frozen checkpoint.
-    // ... or a leader to follow (Opposition::Follow): the same slot, moved by the controller, played by a frozen
-    // checkpoint in the episodes that cast it and by the seek helper's keys in the rest.
+    // ... or the party follow's leader (Opposition::PartyFollow): the same slot, moved by the controller, played by a
+    // frozen checkpoint in the episodes that cast it and by the encounter's own keys in the rest. The leader is no
+    // dead code: PartyFollowEncounter builds it in this slot (OwnerAgent) and CastOwnerActive plays it.
     _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
     {
-        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::Follow
-            || arena.Against == Opposition::PartyFollow;
+        return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::PartyFollow;
     });
     _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
@@ -446,7 +440,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     uint32 const envs = settings.Envs;
     PullsEncounter* pulls = nullptr;
     CreatureEncounter* creature = nullptr;
-    TravelEncounter* travel = nullptr;
     InstanceEncounter* instance = nullptr;
 
     auto const add = [this](auto encounter)
@@ -459,14 +452,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasPulls = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Pulls; };
     auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
     auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
-    auto const hasTravel = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Travel; };
     auto const hasInstance = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Instance; };
     auto const hasQuest = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Quest; };
     auto const hasGather = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Gather; };
     auto const hasTown = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Town; };
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
-    auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
-    auto const hasFollow = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Follow; };
     auto const hasPartyFollow = [](ArenaDefinition const& arena)
     {
         return arena.Against == Opposition::PartyFollow;
@@ -508,16 +498,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* hazards = nullptr;
     if (_stage.AnyArena(hasHazards))
         hazards = add(std::make_unique<HazardEncounter>(*this, envs));
-    if (_stage.AnyArena(hasTravel))
-        travel = add(std::make_unique<TravelEncounter>(*this, envs, settings));
-    // The movement stages' markers: nothing to fight, nothing else to order against.
-    Encounter* markers = nullptr;
-    if (_stage.AnyArena(hasMarkers))
-        markers = add(std::make_unique<MarkerEncounter>(*this, envs));
-    // The follow stage's leader: built in the owner's slot, nothing else to order against.
-    if (_stage.AnyArena(hasFollow))
-        _follow = add(std::make_unique<FollowEncounter>(*this, envs));
-    // The party follow's leader: in the owner's slot as the follow stage's, nothing else to order against.
+    // The party follow's leader: built in the owner's slot, nothing else to order against.
     if (_stage.AnyArena(hasPartyFollow))
         _partyFollow = add(std::make_unique<PartyFollowEncounter>(*this, envs));
     // The seek stage's hidden object: nothing to fight, nothing else to order against.
@@ -545,7 +526,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, travel, markers, _follow, _partyFollow, seek, sight,
+        town, hazards, _owner, _party, _partyFollow, seek, sight,
         interact, combat, roles })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -559,12 +540,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             return (encounter == _owner && arena.Owner)
                 || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
                 || (encounter == creature && hasCreature(arena))
-                || (encounter == travel && hasTravel(arena))
                 || (encounter == hazards && hasHazards(arena))
                 || (encounter == instance && hasInstance(arena))
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
-                || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
@@ -742,41 +721,6 @@ Position const& Animus::Curriculum::StageScenario::SpawnPointFor(Env const& env)
         return _spawnPoint;
 
     return ground[std::min<std::size_t>(Data(env).Spawn, ground.size() - 1)];
-}
-
-void Animus::Curriculum::StageScenario::ScatterSeats(Env const& env, Map* map) const
-{
-    ArenaDefinition const& arena = Arena(env);
-    if (arena.SpawnScatter < SCATTER_MIN || !map)
-        return;
-
-    EnvState const& data = Data(env);
-    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-    {
-        Player* bot = SeatBot(env, seat);
-        if (!bot)
-            continue;
-
-        // The facing costs nothing and needs no ground to be true, so it is taken whether the offset is found or
-        // not: a seat that cannot be moved in a tight room can still open the episode looking somewhere else.
-        Position where(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            frand(0.0f, 2.0f * float(M_PI)));
-
-        // FindPlace is the same validation the objective gets -- on the mesh, reachable, and inside the building
-        // when the arena is -- which is the reason to spend a pathfind here rather than offset blindly into a
-        // wall. A room that has no room for one keeps the spawn point; Relocate leaves the facing alone.
-        // A place with no height, or off the spawn's own level (the dry check: a seat scattered off a Nagrand plateau's
-        // edge into the valley 230 yd below, and the next scatter from there asked for z -200000) is no place: the
-        // seat keeps its own.
-        constexpr float SCATTER_LEVEL_MAX = 20.0f;
-        Position place;
-        if (TravelEncounter::FindPlace(bot, map, SCATTER_MIN, arena.SpawnScatter, false, place, 0.0f, nullptr,
-            false, nullptr, arena.Indoors) && place.GetPositionZ() > INVALID_HEIGHT
-            && std::fabs(place.GetPositionZ() - bot->GetPositionZ()) <= SCATTER_LEVEL_MAX)
-            where.Relocate(place.GetPositionX(), place.GetPositionY(), place.GetPositionZ());
-
-        BotFactory::TeleportWithinMap(bot, where);
-    }
 }
 
 uint32 Animus::Curriculum::StageScenario::ReplicaOf(Env const& env) const
@@ -1556,7 +1500,6 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["weight"] = _arenaWeights[arena];
         entry["seats"] = definition.SeatCount();
         entry["episode_seconds"] = _arenaEpisodeMs[arena] / IN_MILLISECONDS;
-        entry["checkpoints"] = definition.Checkpoints;
         // The seat plan, so the learner can tell a party's arena from a solo seat's.
         entry["plan"] = definition.Seats == SeatPlan::Solo ? "solo" : "party";
         entry["eval_only"] = definition.EvalOnly;
@@ -1576,8 +1519,8 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     {
         boost::json::object& entry = cast.emplace_back(boost::json::object()).get_object();
         entry["agent"] = OwnerAgent();
-        // The learner's cast.agents names it: the follow stage's leader, or the owner.
-        entry["name"] = _follow || _partyFollow ? "leader" : "owner";
+        // The learner's cast.agents names it: the party follow's leader, or the owner.
+        entry["name"] = _partyFollow ? "leader" : "owner";
     }
 
     // The stages a run seeds from, closest first: the learner takes the first one that has been trained.
@@ -1822,13 +1765,11 @@ bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
 {
     if (!_castOwner)
         return false;
-    // An owner is always its own row, an evaluation's too; the follow stages' leaders keep their script in one.
+    // An owner is always its own row, an evaluation's too; the party follow's leader keeps its script in one.
     ArenaDefinition const& arena = Arena(env);
     if (arena.OwnerCast && _owner && _owner->IsCast(env))
         return true;
-    return !env.Evaluating
-        && ((arena.Against == Opposition::Follow && _follow && _follow->IsCast(env))
-            || (arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env)));
+    return !env.Evaluating && arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env);
 }
 
 Player* Animus::Curriculum::StageScenario::BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start,
@@ -2582,7 +2523,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     Player* lead = SeatBot(env, 0);
     // A continent's own creatures are in another phase than the env's, and belong to every env.
-    // An instance used as empty ground (a marker arena: M1's Stockades) is cleared whole, its far grids loaded first,
+    // An instance used as empty ground (M1 and M2's Stockades) is cleared whole, its far grids loaded first,
     // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
     // The party follow (M4) moves between dungeons from episode to episode, so each new instance it opens is emptied
     // when it opens, not only the env's first.
@@ -2590,8 +2531,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     bool const newInstance = env.MapId != map->GetId() || env.InstanceId != map->GetInstanceId();
     if ((firstBuild || (partyFollow && newInstance)) && map->Instanceable())
     {
-        if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
-            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
+        if (Arena(env).Against == Opposition::Seek || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat
             || Arena(env).Against == Opposition::Roles || partyFollow)
             SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
         // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
@@ -2613,14 +2553,11 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         env.Bots.push_back(ObjectGuid::Empty);
     env.Targets.clear();
 
-    auto partMark = std::chrono::steady_clock::now();
-    ScatterSeats(env, map);
-    CurrentReset.ScatterNs += ResetSinceNs(partMark);
-
     // A spawn point no objective can be found from used to take the whole run down with it: the plan stops when
     // its first scenario fails to start, so one bad patch in a list of twenty-six was a dead run. The ground is
     // drawn per episode now, so the answer is to draw again -- move the seats to another point and build there.
     // Only a stage whose every spawn point is bad fails now, which is a stage that deserves to.
+    auto partMark = std::chrono::steady_clock::now();
     constexpr uint32 SPAWN_ATTEMPTS = 4;
     std::vector<Position> const& ground = SpawnGroundFor(env);
     bool built = false;
@@ -2643,8 +2580,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             if (Player* bot = SeatBot(env, seat))
                 BotFactory::TeleportWithinMap(bot, retry);
-
-        ScatterSeats(env, map);
     }
 
     if (!built)
@@ -2660,7 +2595,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     // Where each seat is looking, and its body, start as where the world put it. ResetEpisode cleared them, which
     // would aim every seat due east; this is the first point at which the bots have stopped being teleported about.
-    // The owner's slot too, when it holds someone this episode (a cast owner, the follow stage's leader): its client
+    // The owner's slot too, when it holds someone this episode (a cast owner, the party follow's leader): its client
     // is kept across episodes like a seat's, and would otherwise set out from where the last episode left its body.
     if (_castOwner)
         if (Player* bot = SeatBot(env, OwnerAgent()); bot && Data(env).Seats[OwnerAgent()].L)
@@ -3215,9 +3150,9 @@ void Animus::Curriculum::StageScenario::SubTick(Env& env, uint32 diffMs, bool /*
     };
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         tick(seat);
-    // The owner's slot when it is played through its row, or when it holds the follow stage's leader, whose
+    // The owner's slot when it is played through its row, or when it holds the party follow's leader, whose
     // scripted keys the controller moves as it moves a seat's.
-    if (CastOwnerActive(env) || (_follow && Arena(env).Against == Opposition::Follow && _follow->HasLeader(env))
+    if (CastOwnerActive(env)
         || (_partyFollow && Arena(env).Against == Opposition::PartyFollow && _partyFollow->HasLeader(env)))
         tick(OwnerAgent());
     if (seatTicks)
@@ -3565,11 +3500,10 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
 
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->View(env, seatIndex, view);
-    // Where a trip's objective is, the seat knows only through a compass it is shown (or the travel block's own
-    // bearing): without one -- a stage with no compass block, or an episode that withholds it -- the goal block has
-    // no place for it, so its TravelTo cannot read "within 20 yd" through walls (GoalBlock::PlaceOf).
-    view.ObjectivePlaceKnown = GoalBlock::ObjectivePlaceKnown(_stage.Has(BlockId::Compass), view.CompassWithheld,
-        _stage.Has(BlockId::Travel));
+    // Where a trip's objective is, the seat knows only through a compass it is shown: without one -- a stage with no
+    // compass block, or an episode that withholds it -- the goal block has no place for it, so its TravelTo cannot
+    // read "within 20 yd" through walls (GoalBlock::PlaceOf).
+    view.ObjectivePlaceKnown = GoalBlock::ObjectivePlaceKnown(_stage.Has(BlockId::Compass), view.CompassWithheld);
 
     // What a player could not know. The critic's state keeps everything.
     if (bot && bot->IsAlive())
@@ -3867,13 +3801,11 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         }
 
         // Airborne is a jump or fall spline on its way (Unit::IsFalling reads MOVEMENTFLAG_FALLING, which no client
-        // ever clears on a seat); water is the unit's own test, as MoveBlock reads it; flight is a flying mount off
-        // the ground -- TravelBlock flags a seat flying from the moment it mounts one.
+        // ever clears on a seat); water is the unit's own test, as MoveBlock reads it. No seat flies: the first
+        // curriculum's mounts and flight were deleted with it.
         bool const spline = bot->movespline->Initialized() && !bot->movespline->Finalized();
         bool const jumping = spline && (bot->movespline->isFalling() || bot->movespline->isParabolic());
         bool const inWater = bot->Unit::IsInWater();
-        bool const flyingMount = bot->IsMounted() && bot->CanFly();
-        bool const aloft = flyingMount && TravelBlock::HeightAboveGround(bot) > 2.0f;
 
         K::Body body;
         body.X = bot->GetPositionX();
@@ -3881,7 +3813,7 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         body.Z = bot->GetPositionZ();
         body.Yaw = bot->GetOrientation();
         body.Pitch = data.Seats[agent].Mover.Body.Pitch;
-        body.Motion = K::ModeOf(jumping, inWater, aloft);
+        body.Motion = K::ModeOf(jumping, inWater, false);
         body.Mounted = bot->IsMounted();
         // The speed the body actually moves under, which is what its steps are measured in: a seat flagged flying
         // launches every spline at flight speed, on the ground too (TravelBlock::Apply), and one in water swims.

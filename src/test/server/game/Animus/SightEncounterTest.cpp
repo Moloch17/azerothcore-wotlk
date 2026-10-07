@@ -20,7 +20,7 @@
 #include "CompassBlock.h"
 #include "CurriculumTuning.h"
 #include "Layout.h"
-#include "MarkerEncounter.h"
+#include "Standing.h"
 #include "RewardLedger.h"
 #include "SeatView.h"
 #include "SeekDraw.h"
@@ -164,7 +164,6 @@ TEST(SightEncounterTest, TheStageIsDefined)
     EXPECT_EQ(arena.Against, Cu::Opposition::Sight);
     EXPECT_EQ(arena.EpisodeSeconds, 60u);
     EXPECT_EQ(arena.MapId, 34u);
-    EXPECT_FALSE(arena.Objective);
     ASSERT_GE(arena.SpawnPoints.size(), 150u);
     EXPECT_NEAR(arena.SpawnPoints[0].GetPositionX(), 54.23f, 0.01f);
     EXPECT_NEAR(arena.SpawnPoints[0].GetPositionY(), 0.28f, 0.01f);
@@ -403,10 +402,10 @@ TEST(SightEncounterTest, WallAndStuckArePaidOffTheCostLadder)
     EXPECT_GT(controls.Wall, 0.0f);
     EXPECT_GT(controls.Stuck, 0.0f);
     EXPECT_LT((controls.Wall + controls.Stuck) * 60.0f, markers.Arrive);
-    // The wall's charge is MarkerEncounter's: nothing for a slide that keeps half its ground, all of it at none.
-    EXPECT_FLOAT_EQ(Cu::MarkerEncounter::WallCharge(1.0f, 0.0f, 1.75f, controls.Wall, controls.WallSlide),
+    // The wall's charge is Standing's: nothing for a slide that keeps half its ground, all of it at none.
+    EXPECT_FLOAT_EQ(Cu::Standing::WallCharge(1.0f, 0.0f, 1.75f, controls.Wall, controls.WallSlide),
         controls.Wall);
-    EXPECT_FLOAT_EQ(Cu::MarkerEncounter::WallCharge(1.0f, 1.0f, 1.75f, controls.Wall, controls.WallSlide), 0.0f);
+    EXPECT_FLOAT_EQ(Cu::Standing::WallCharge(1.0f, 1.0f, 1.75f, controls.Wall, controls.WallSlide), 0.0f);
 }
 
 // The stop radius is the object's bounding radius and the tolerance, and the stop's precision is the air between the

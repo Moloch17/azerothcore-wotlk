@@ -94,7 +94,6 @@ namespace AnimusForge
             double ResetConfigure = 0.0;    // ... talents, kit, gear
             double ResetDestroy = 0.0;      // ... destroying the previous seats
             double ResetEncounter = 0.0;    // ... building the encounters
-            double ResetScatter = 0.0;      // ... spreading the seats
             double ResetStock = 0.0;        // ... supplies and pets
             double ResetPrepare = 0.0;      // ... the draws and the encounters' episode resets
             double ResetScenario = 0.0;     // ... Scenario::Reset as a whole

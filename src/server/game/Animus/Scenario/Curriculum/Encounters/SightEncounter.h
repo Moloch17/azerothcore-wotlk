@@ -45,7 +45,7 @@ namespace Animus::Curriculum
     /// camera still flags the object, and the critic's state still has it (WriteState). By the top rung the seat
     /// goes to what it sees.
     ///
-    /// Arriving is M1's: stopped (MarkerEncounter::Stopped) with the feet within the object's bounding radius plus
+    /// Arriving is M1's: stopped (Standing::Stopped) with the feet within the object's bounding radius plus
     /// Controls.ArriveTolerance of its centre, on its floor. Paid: Arrive once (Outcome); StepCost and Death (Cost);
     /// Wall and Stuck at their own fixed price from the first step, off the cost ladder (RewardLedger::AddFixed);
     /// Progress on the straight distance and Facing on the object's bearing (Shaping, faded). Measured as M1 was:

@@ -17,7 +17,6 @@
  */
 
 #include "AnimusForge.h"
-#include "MarkerEncounter.h"
 #include "GpuRuntime.h"
 #include "LayeredField.h"
 #include "MoveBlock.h"
@@ -508,7 +507,6 @@ void AnimusForge::Forge::OnUpdate(uint32 diff)
             _collect.ResetConfigureNs += collect.ResetConfigureNs;
             _collect.ResetDestroyNs += collect.ResetDestroyNs;
             _collect.ResetEncounterNs += collect.ResetEncounterNs;
-            _collect.ResetScatterNs += collect.ResetScatterNs;
             _collect.ResetStockNs += collect.ResetStockNs;
             _collect.ResetPrepareNs += collect.ResetPrepareNs;
             _collect.ResetSeatsNs += collect.ResetSeatsNs;
@@ -2214,7 +2212,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
             _collectMs.ResetConfigure = since(_collect.ResetConfigureNs, _rateCollect.ResetConfigureNs) / perTick;
             _collectMs.ResetDestroy = since(_collect.ResetDestroyNs, _rateCollect.ResetDestroyNs) / perTick;
             _collectMs.ResetEncounter = since(_collect.ResetEncounterNs, _rateCollect.ResetEncounterNs) / perTick;
-            _collectMs.ResetScatter = since(_collect.ResetScatterNs, _rateCollect.ResetScatterNs) / perTick;
             _collectMs.ResetStock = since(_collect.ResetStockNs, _rateCollect.ResetStockNs) / perTick;
             _collectMs.ResetPrepare = since(_collect.ResetPrepareNs, _rateCollect.ResetPrepareNs) / perTick;
             _collectMs.ResetSeats = since(_collect.ResetSeatsNs, _rateCollect.ResetSeatsNs) / perTick;
@@ -2327,35 +2324,6 @@ AnimusForge::SimSnapshot AnimusForge::Forge::Snapshot(bool advanceRates)
 
     sim.TicksPerSecond = _ticksPerSecond;
     sim.ObserveBlocks = _observeBlockMs;
-    {
-        using Travel = Animus::Curriculum::TravelEncounter;
-        uint64 const plans = Travel::WayPlans.load(std::memory_order_relaxed);
-        if (plans)
-            sim.ProbeNote += Acore::StringFormat("route plans {} ({:.2f} ms each, {} failed, {} partial); ", plans,
-                double(Travel::WayPlanNs.load(std::memory_order_relaxed)) / double(plans) / 1e6,
-                Travel::WayPlansFailed.load(std::memory_order_relaxed),
-                Travel::WayPlansPartial.load(std::memory_order_relaxed));
-        uint64 const searches = Travel::PlaceSearches.load(std::memory_order_relaxed);
-        if (searches)
-            sim.ProbeNote += Acore::StringFormat("objective searches {} ({:.2f} ms, {:.1f} tries and {:.1f} paths "
-                "each, {} found nothing); ", searches,
-                double(Travel::PlaceNs.load(std::memory_order_relaxed)) / double(searches) / 1e6,
-                double(Travel::PlaceAttempts.load(std::memory_order_relaxed)) / double(searches),
-                double(Travel::PlacePaths.load(std::memory_order_relaxed)) / double(searches),
-                Travel::PlaceFailed.load(std::memory_order_relaxed));
-        // The movement stages' spawn points whose narrow legs keep falling back (MarkerEncounter::NoteNarrow).
-        for (std::string const& point : Animus::Curriculum::MarkerEncounter::NamedFallbackPoints())
-            sim.ProbeNote += "fallback point " + point + "; ";
-        // Human play (AnimusForge.Human.*): what the travel arenas were handed, and what held up.
-        uint64 const humanTrips = Travel::HumanTripsDrawn.load(std::memory_order_relaxed);
-        uint64 const hardStarts = Travel::HardStartsDrawn.load(std::memory_order_relaxed);
-        if (humanTrips || hardStarts)
-            sim.ProbeNote += Acore::StringFormat("human trips {} ({} used, {} fell back), hard starts {} ({} used, {} "
-                "fell back); ", humanTrips, Travel::HumanTripsUsed.load(std::memory_order_relaxed),
-                Travel::HumanTripsFellBack.load(std::memory_order_relaxed), hardStarts,
-                Travel::HardStartsUsed.load(std::memory_order_relaxed),
-                Travel::HardStartsFellBack.load(std::memory_order_relaxed));
-    }
     {
         // The layered fields the routes hold.
         namespace Store = Animus::Curriculum::LayeredField::Store;

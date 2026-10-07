@@ -21,11 +21,10 @@
 #include "EncoderSupport.h"
 #include "Encounters.h"
 #include "EpisodeInfoTable.h"
-#include "FollowEncounter.h"
 #include "InstanceBosses.h"
 #include "Log.h"
 #include "Map.h"
-#include "MarkerEncounter.h"
+#include "Standing.h"
 #include "ObjectMgr.h"
 #include "ObjectPool.h"
 #include "PartyFramesBlock.h"
@@ -652,7 +651,7 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
         Movement::ControlState const& held = seat.Controls.Held;
         UnitMoveType const kind = held.Walk ? MOVE_WALK : held.Forward < 0 && !held.Strafe ? MOVE_RUN_BACK : MOVE_RUN;
         float const asked = bot->GetSpeed(kind) * float(_scenario.DecisionMs()) / 1000.0f;
-        float const charge = MarkerEncounter::WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall,
+        float const charge = Standing::WallCharge(float(wallMs) / 1000.0f, moved, asked, costs.Wall,
             costs.WallSlide);
         if (charge > 0.0f)
             ledger.AddFixed(RewardTerm::Wall, -charge);
@@ -665,7 +664,7 @@ void Animus::Curriculum::PartyFollowEncounter::Reward(Env& env, uint32 seatIndex
     float const distance = bot->GetExactDist(leader);
     follow.DistanceSum += distance;
     ++follow.Samples;
-    uint32 const band = FollowEncounter::Band(distance, tuning.BandMin, tuning.BandMax, tuning.LostYards);
+    uint32 const band = Standing::Band(distance, tuning.BandMin, tuning.BandMax, tuning.LostYards);
     if (band == 1)
     {
         follow.InBandMs += stepMs;
