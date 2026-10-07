@@ -436,7 +436,7 @@ def test_both_losses_train_the_shared_camera_once_per_minibatch(two_clock):
         st = np.random.default_rng(step).standard_normal((envs, 4)).astype(np.float32)
         mask = np.ones((envs, 2, 5), bool)
         memory = acting.memory.copy()
-        chosen, log_probs, values, _, goals, _ = trainer.act_and_value(o, mask, l, st, state=acting, image=im)
+        chosen, log_probs, values, _, goals = trainer.act_and_value(o, mask, l, st, state=acting, image=im)
         buffer.add_decision(o, st, mask, l, chosen, log_probs, values, None, None, memory, goals, image=im)
         np.testing.assert_array_equal(buffer.image[step], im)
         buffer.add_outcome(np.ones((envs, 2), np.float32), np.zeros(envs, bool), np.zeros(envs, bool),

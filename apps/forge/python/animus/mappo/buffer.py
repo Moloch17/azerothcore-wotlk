@@ -81,30 +81,26 @@ def compute_foresight(
 
 
 def compute_span_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray, terminated: np.ndarray,
-                     chosen: np.ndarray, gamma: float, gae_lambda: float, final_values: np.ndarray | None = None,
-                     last_values: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                     chosen: np.ndarray, gamma: float, gae_lambda: float
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """GAE over the decisions where `chosen`, for every agent at once (vectorised over [E, A]): one transition runs
     from a decision the agent took to the next it takes, or to its episode's end, and carries every reward in
-    between; discounting is per decision taken, so gamma is a horizon on the agent's own clock. The one slow-clock
-    GAE: the director's turns and the two-clock seat's goals both use it.
+    between; discounting is per decision taken, so gamma is a horizon on the agent's own clock. The slow-clock GAE of
+    the two-clock seat's goals.
 
-    A span cut short -- by the rollout's end, or by a truncated episode -- is bootstrapped on the value of the state
-    it was cut in: `last_values` [E, A] and `final_values` [T, E, A], when the caller has them (the director's
-    critic values every state). When it does not (the slow goal value exists only where a goal was chosen), such a
-    span has no honest bootstrap, and it is left out: the third result says which chosen decisions have a target
-    (bootstrapping it on the value it began at instead would pull its advantage to nothing)."""
+    A span cut short -- by the rollout's end, or by a truncated episode -- has no honest bootstrap (the slow goal value
+    exists only where a goal was chosen), and it is left out: the third result says which chosen decisions have a
+    target (bootstrapping it on the value it began at instead would pull its advantage to nothing)."""
     steps = rewards.shape[0]
     shape = values.shape[1:]
     advantages = np.zeros_like(rewards, dtype=np.float32)
     returns = np.zeros_like(rewards, dtype=np.float32)
     valid = np.zeros(rewards.shape, dtype=bool)
-    known_final = final_values is not None
-    known_last = last_values is not None
 
     tail = np.zeros(shape, dtype=np.float32)
-    boot = last_values.astype(np.float32).copy() if known_last else np.zeros(shape, dtype=np.float32)
+    boot = np.zeros(shape, dtype=np.float32)
     flows = np.ones(shape, dtype=bool)
-    target = np.full(shape, known_last)          # the open span has an honest bootstrap
+    target = np.zeros(shape, dtype=bool)         # the open span has no honest bootstrap
     following = np.zeros(shape, dtype=np.float32)
     following_valid = np.zeros(shape, dtype=bool)
     for t in reversed(range(steps)):
@@ -119,13 +115,12 @@ def compute_span_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray,
             flows = np.where(cut, True, flows)
             target = np.where(cut, True, target)
         ends = np.broadcast_to(terminated[t][:, None], shape)
-        final = np.where(ends, 0.0, final_values[t] if known_final else 0.0)
         tail = np.where(done, rewards[t], rewards[t] + tail)
-        boot = np.where(done, final, boot)
+        boot = np.where(done, 0.0, boot)
         flows = np.where(done, False, flows)
         following = np.where(done, 0.0, following)
         following_valid = np.where(done, True, following_valid)
-        target = np.where(done, ends | known_final, target)
+        target = np.where(done, ends, target)
         delta = tail + gamma * boot - values[t]
         # The trace only through a following span that has a target of its own.
         gae = delta + np.where(flows & following_valid, gamma * gae_lambda * following, 0.0)
@@ -189,10 +184,6 @@ class RolloutBuffer:
         self.mask = np.zeros((*shape, num_actions), dtype=bool)
         self.layout = np.zeros(shape, dtype=np.int64)
         self.valid = np.ones(shape, dtype=bool)  # False for a seat without a character: not a sample
-        # False for a decision a slow layout did not actually take (its previous call still standing). The
-        # agent was there and the env moved on, so the recurrence has to replay it -- but it chose nothing, so
-        # it is not a sample: `samples` is what the loss and the advantages are drawn from.
-        self.chosen = np.ones(shape, dtype=bool)
         self.actions = np.zeros(shape, dtype=np.int64)
         # The free look's choices (protocol 22, LookHead), one a head -- yaw rate, pitch rate, zoom -- as sent; 0 for a
         # row without the camera. `log_probs` is the joint one: the action's plus the look's.
@@ -232,10 +223,10 @@ class RolloutBuffer:
     @property
     def samples(self) -> np.ndarray:
         """The rows the loss is drawn from: an agent that had a character and made a decision of its own."""
-        return self.valid & self.chosen
+        return self.valid
 
     def add_decision(self, obs, state, mask, layout, actions, log_probs, values, present=None,
-                     foresight=None, memory=None, goals=None, critic_memory=None, chosen=None, image=None,
+                     foresight=None, memory=None, goals=None, critic_memory=None, image=None,
                      look=None, look_log_prob=None) -> None:
         """Record what the policy saw and did at step `cursor`; `present` [E, A] marks the agents with a character
         (default: all); `image` [E, A, I] uint8 the camera's bytes, with a camera; `look` [E, A, H] the free look's
@@ -246,7 +237,6 @@ class RolloutBuffer:
                 self._store(name, t, value)
         self.layout[t] = layout
         self.valid[t] = True if present is None else present
-        self.chosen[t] = True if chosen is None else chosen
         self.actions[t] = actions
         if self.look_heads and look is not None:
             self.look[t] = look
@@ -310,7 +300,6 @@ class RolloutBuffer:
 
     def finish(self, last_values: np.ndarray, gamma: float, gae_lambda: float, last_foresight=None,
                foresight_gammas: tuple[float, ...] = (), time_scale_decisions: float = 0.0,
-               slow_layout: int = -1, slow_gamma: float = 0.0, slow_gae_lambda: float = 0.0,
                slow_goal: tuple[float, float] | None = None, obs_targets=None) -> None:
         self.advantages, self.returns = compute_gae(
             self.rewards,
@@ -323,26 +312,10 @@ class RolloutBuffer:
             gae_lambda,
         )
 
-        # A slow layout's own clock, over its own decisions: the per-decision advantages above are meaningless
-        # for it, because nine decisions in ten it did nothing and the tenth is credited with 250 ms of
-        # consequences rather than the 2.5 s its call actually governed.
-        if slow_layout >= 0:
-            slow = self.layout == slow_layout
-            if slow.any():
-                # The one slow-clock GAE (compute_span_gae), as the two-clock seat's goals use: over the decisions
-                # the agent actually took -- its turns, where the sim decides them.
-                advantages, returns, _ = compute_span_gae(
-                    self.rewards, self.values, self.dones, self.terminated, self.chosen & slow, slow_gamma,
-                    slow_gae_lambda, self.final_values, last_values)
-                self.advantages = np.where(slow, advantages, self.advantages)
-                self.returns = np.where(slow, returns, self.returns)
-
-        # The two-clock seat's goals, on their own clock: every seat that chose a goal (not a slow layout's agent,
-        # whose goal means nothing), over the decisions that chose one.
+        # The two-clock seat's goals, on their own clock: every seat that chose a goal, over the decisions that chose
+        # one.
         if slow_goal is not None and self.slow_goal:
             chosen = self.goal_chosen & self.valid
-            if slow_layout >= 0:
-                chosen = chosen & (self.layout != slow_layout)
             self.slow_advantages, self.slow_returns, self.slow_valid = compute_span_gae(
                 self.rewards, self.slow_values, self.dones, self.terminated, chosen, slow_goal[0], slow_goal[1])
             self.goal_chosen = chosen

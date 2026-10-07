@@ -238,7 +238,7 @@ def test_partner_rows_are_never_samples(tmp_path):
     acting = SimpleNamespace(memory=None, critic_memory=None, look=None, look_log_prob=None)
     trainer = SimpleNamespace(
         rollout_stream=None,
-        act_and_value=lambda *a, **k: (np.zeros((2, 3), np.int64), None, None, None, None, None),
+        act_and_value=lambda *a, **k: (np.zeros((2, 3), np.int64), None, None, None, None),
         wire_look=lambda look: None, wire_goals=lambda goals: None)
     run = SimpleNamespace(trainer=trainer, acting=SimpleNamespace(take=lambda rows: acting, put=lambda rows, a: None),
                           frozen=np.zeros(0, np.int64), cast=None, exploit=None, partners=partners,

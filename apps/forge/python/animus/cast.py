@@ -269,7 +269,7 @@ class CastActor:
             if self.goal_count:
                 ages = flat_age[picked]
                 # The same decision as the learner's own (LayoutActor.decide_goals): the queue, the clock, the
-                # goal block's ended and event, and the director's primary.
+                # goal block's ended and event, and the primary an order set.
                 goal_features = features
                 if self.slow_size:
                     slow = torch.as_tensor(flat_slow[picked], device=self.device)

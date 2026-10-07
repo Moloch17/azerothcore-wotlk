@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from .bootstrap import DIRECTOR_LAYOUT
 from .config import REPORT_COLUMNS, TrainConfig
 from .env import ForgeEnv
 from .evaluation import action_mask_table, format_summary, run_evaluation
@@ -54,7 +53,10 @@ def main() -> None:
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     saved = checkpoint["config"]
-    mappo = MappoConfig(**{**saved["mappo"], "hidden": tuple(saved["mappo"]["hidden"])})
+    # The keys this build's MappoConfig has: a checkpoint saved by an older build carries options since removed.
+    known = {field.name for field in fields(MappoConfig)}
+    mappo = MappoConfig(**{**{key: value for key, value in saved["mappo"].items() if key in known},
+                           "hidden": tuple(saved["mappo"]["hidden"])})
     socket_path = args.socket or saved.get("socket", TrainConfig.socket)
 
     env = ForgeEnv(socket_path)
@@ -67,14 +69,12 @@ def main() -> None:
         raise SystemExit(f"the checkpoint's {', '.join(mismatch)} do not match the sim's (AnimusForge.ClassRoles?)")
     layouts = [(layout.obs_dim, layout.num_actions) for layout in spec.layouts]
 
-    # The checkpoint's own director and seat sets (its stage.json), or its weights do not load.
+    # The checkpoint's own seat sets and camera (its stage.json), or its weights do not load.
     stage = checkpoint.get("stage")
     # And the layouts it was trained on are the sim's, block by block (a block re-laid at the same width included).
     if changes := layout_changes(stage, load_stage(saved.get("layouts_dir", TrainConfig.layouts_dir), spec.scenario)):
         raise SystemExit(f"the checkpoint's layouts are not the sim's -- {' | '.join(changes)}")
     names = [layout.name for layout in spec.layouts]
-    director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
-                if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)
     seat_sets = seat_sets_of(stage, names) if mappo.seat_sets else None
     vision = vision_of(stage, names)
     try:
@@ -83,7 +83,7 @@ def main() -> None:
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
     vision = with_map_vin(vision, mappo.map_vin)
-    trainer = MappoTrainer(layouts, spec.state_dim, mappo, director=director, seat_sets=seat_sets, vision=vision)
+    trainer = MappoTrainer(layouts, spec.state_dim, mappo, seat_sets=seat_sets, vision=vision)
     trainer.load_state_dict(checkpoint["trainer"], load_optimizers=False)
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)

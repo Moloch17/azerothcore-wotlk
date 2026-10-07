@@ -85,19 +85,6 @@ def test_a_restricted_stage_is_overlaid_on_the_seed_without_its_trunk():
             torch.testing.assert_close(tensor, before[key])       # trunk and mage: untouched
 
 
-def test_the_director_is_the_one_layout_allowed_to_be_missing():
-    """It is an agent a stage adds, not a class the run plays, so the first directed stage in a chain
-    necessarily seeds from one without it."""
-    config = MappoConfig(hidden=(8,))
-    old_layouts = [Layout("rogue", 6, 3)]
-    new_layouts = [Layout("rogue", 6, 3), Layout("director", 6, 3)]
-    old = MappoTrainer([(6, 3)], 4, config)
-    new = MappoTrainer([(6, 3), (6, 3)], 4, config)
-    checkpoint = {"trainer": old.state_dict(), "spec": checkpoint_spec(old_layouts)}
-
-    assert seed_trainer(new, checkpoint, spec(new_layouts, 4)) == ["rogue"]
-
-
 def test_critic_state_encoder_and_head_are_not_copied():
     torch.manual_seed(0)
     config = MappoConfig(hidden=(8,))

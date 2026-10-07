@@ -62,14 +62,7 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
         if goal_targets > 1:                                head reads: features x (1 + scale) + embedding (FiLM),
             f32  target_scale[goal_targets * feature_width] the secondary's through the gate as its embedding is
     (goal_width: slow_size when there is one, else feature_width)
-    u8       director_sets                  the director's members and enemies as sets (DirectorSets), else 0
-    if director_sets:
-        u32  embed
-        per set (members, then enemies): u32 first, slots, width, present;
-            f32 w1[embed * width], b1[embed], w2[embed * embed], b2[embed]     encoder: tanh after each
-        f32  pool_weight[adapter_out * 4 * embed], pool_bias[adapter_out]  added to the first layer before its tanh
-        u32  pointer_count; per pointer: u32 first_action, u32 set (0 members, 1 enemies),
-            f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query
+    u8       director_sets                  (a director's members and enemies as sets; no longer written: 0)
     u8       seat_sets                      (version 8) this layout's entities as sets (EntitySets), else 0
     if seat_sets:
         u32  embed, u32 set_count
@@ -92,8 +85,7 @@ The .amdl format (little-endian); a reader must follow it exactly, and a change 
                                             and max of each set's present slots (attended), in set order, then the
                                             own token (attended); added to the first layer before its tanh
         u32  pointer_count; per pointer: u32 first_action, u32 set (its index above),
-            f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query, after
-                                            the director's
+            f32 query_weight[embed * feature_width], query_bias[embed]   its actions' logits are slot . query
 
 Every layer but the last is followed by tanh. With a memory, the last layer (the action head) reads the GRU's state
 instead of the trunk's output: the trunk feeds the GRU, whose state is carried from decision to decision and cleared
@@ -126,7 +118,7 @@ from .stages import STAGE_FILE, model_names
 
 AMDL_MAGIC = b"AMDL"
 # 6: two goals held and a queue (goal_slots, the slot parameters, the embedding's gate), a twelfth goal kind, and
-# the goal block's next-run columns (the secondary ending, the event, the director's primary, what was achieved).
+# the goal block's next-run columns (the secondary ending, the event, an order's primary, what was achieved).
 # 7: the goal also scales the action head's features (kind_scale, target_scale), so it can change what the seat does
 # in a situation rather than only shift each action's logit.
 # 8: a seat layout's entities as sets (seat_sets, mappo.seat_sets: EntitySets). A reader of 8 reads 7 too: a 7 file
@@ -206,7 +198,6 @@ def write_amdl(
     goal_every: int = 0,
     feedback: dict[str, np.ndarray] | None = None,
     slow: dict[str, np.ndarray] | None = None,
-    sets: dict | None = None,
     seat_sets: dict | None = None,
 ) -> None:
     if layers[0][0].shape[1] != obs_dim + num_agents:
@@ -273,21 +264,7 @@ def write_amdl(
             if targets > 1:
                 out.write(np.ascontiguousarray(goals["target_scale"], dtype="<f4").tobytes())
 
-        out.write(struct.pack("<B", 1 if sets else 0))
-        if sets:
-            out.write(struct.pack("<I", int(sets["embed"])))
-            for part in ("seats", "enemies"):
-                spec = sets[part]
-                out.write(struct.pack("<IIII", spec["first"], spec["slots"], spec["width"], spec["present"]))
-                for name in ("w1", "b1", "w2", "b2"):
-                    out.write(np.ascontiguousarray(spec[name], dtype="<f4").tobytes())
-            out.write(np.ascontiguousarray(sets["pool_weight"], dtype="<f4").tobytes())
-            out.write(np.ascontiguousarray(sets["pool_bias"], dtype="<f4").tobytes())
-            out.write(struct.pack("<I", len(sets["pointers"])))
-            for pointer in sets["pointers"]:
-                out.write(struct.pack("<II", pointer["first"], 0 if pointer["over"] == "seats" else 1))
-                out.write(np.ascontiguousarray(pointer["weight"], dtype="<f4").tobytes())
-                out.write(np.ascontiguousarray(pointer["bias"], dtype="<f4").tobytes())
+        out.write(struct.pack("<B", 0))      # director_sets: the section is never written (see the format above)
 
         out.write(struct.pack("<B", 1 if seat_sets else 0))
         if seat_sets:
@@ -365,28 +342,6 @@ def goal_weights(actor_state: dict[str, torch.Tensor], layout: int = 0) -> dict[
                                  if "goal_embedding.target_scale.weight" in actor_state
                                  else np.zeros_like(goals["target_embedding"]))
     return goals
-
-
-def director_sets(actor_state: dict[str, torch.Tensor], descriptor: dict | None) -> dict | None:
-    """The director's set encoder, pooling and pointer heads (DirectorSets), or None without them."""
-    if descriptor is None or "director_sets.pool.weight" not in actor_state:
-        return None
-
-    def array(key: str) -> np.ndarray:
-        return actor_state[f"director_sets.{key}"].detach().cpu().numpy().astype("<f4")
-
-    sets = {"embed": int(actor_state["director_sets.seats_encoder.0.weight"].shape[0]),
-            "pool_weight": array("pool.weight"), "pool_bias": array("pool.bias"), "pointers": []}
-    for part in ("seats", "enemies"):
-        spec = descriptor[part]
-        sets[part] = {"first": int(spec["first"]), "slots": int(spec["slots"]), "width": int(spec["width"]),
-                      "present": int(spec.get("present", 0)),
-                      "w1": array(f"{part}_encoder.0.weight"), "b1": array(f"{part}_encoder.0.bias"),
-                      "w2": array(f"{part}_encoder.2.weight"), "b2": array(f"{part}_encoder.2.bias")}
-    for index, pointer in enumerate(descriptor.get("pointers", ())):
-        sets["pointers"].append({"first": int(pointer["first"]), "over": pointer["over"],
-                                 "weight": array(f"queries.{index}.weight"), "bias": array(f"queries.{index}.bias")})
-    return sets
 
 
 #: The attention layer's arrays, in the order they are written (.amdl 9) and their EntitySets keys.
@@ -502,15 +457,9 @@ def export_layouts(
         target = out_dir / f"{name}.amdl"
         partial = out_dir / f".{target.name}.partial"
         try:
-            # The director's sets travel with its model only; a director without them would read nothing of its
-            # members (its adapter is blind to their columns), so refuse it rather than write it.
-            sets = director_sets(actor_state, stage.get("director")) if layout["name"] == "director" else None
-            if layout["name"] == "director" and sets is None:
-                raise ValueError(f"{name}: a director needs its set encoder, and this checkpoint or its stage.json "
-                                 f"has none")
             seats = seat_set_weights(actor_state, stage, [entry["name"] for entry in layouts], index)
             write_amdl(partial, name, layout["obs_dim"], 1, layout["num_actions"], layers, memory, goals,
-                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), sets, seats)
+                       goal_every, feedback_weights(actor_state), slow_weights(actor_state), seats)
             os.replace(partial, target)
         except OSError:
             partial.unlink(missing_ok=True)
@@ -629,27 +578,8 @@ def read_amdl(path: str | Path) -> dict:
 
     (has_sets,) = struct.unpack_from("<B", data, offset)
     offset += 1
-    sets = None
     if has_sets:
-        (embed,) = struct.unpack_from("<I", data, offset)
-        offset += 4
-        sets = {"embed": embed, "pointers": []}
-        for part in ("seats", "enemies"):
-            first, slots, per, present = struct.unpack_from("<IIII", data, offset)
-            offset += 16
-            sets[part] = {"first": first, "slots": slots, "width": per, "present": present,
-                          "w1": floats(embed * per, embed, per), "b1": floats(embed, embed),
-                          "w2": floats(embed * embed, embed, embed), "b2": floats(embed, embed)}
-        adapter_out = layers[0][0].shape[0]
-        sets["pool_weight"] = floats(adapter_out * 4 * embed, adapter_out, 4 * embed)
-        sets["pool_bias"] = floats(adapter_out, adapter_out)
-        (count,) = struct.unpack_from("<I", data, offset)
-        offset += 4
-        for _ in range(count):
-            first, over = struct.unpack_from("<II", data, offset)
-            offset += 8
-            sets["pointers"].append({"first": first, "over": "seats" if over == 0 else "enemies",
-                                     "weight": floats(embed * width, embed, width), "bias": floats(embed, embed)})
+        raise ValueError(f"{path}: a director's set section (no longer written or read here)")
 
     seat_sets = None
     if version >= 8:
@@ -711,7 +641,6 @@ def read_amdl(path: str | Path) -> dict:
         "goal_every": goal_every,
         "feedback": feedback,
         "slow": slow,
-        "sets": sets,
         "seat_sets": seat_sets,
     }
 
@@ -725,23 +654,7 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     """
     x = np.concatenate([obs.astype(np.float32), np.eye(model["num_agents"], dtype=np.float32)[agent]])
     layers = model["layers"]
-    sets = model.get("sets")
-    encoded = {}
-    if sets is not None:
-        # The director's members and enemies, each slot through the shared encoder, pooled onto the first layer.
-        pooled = []
-        for part in ("seats", "enemies"):
-            spec = sets[part]
-            raw = obs[spec["first"] : spec["first"] + spec["slots"] * spec["width"]].reshape(spec["slots"], spec["width"])
-            hidden = np.tanh(np.tanh(raw @ spec["w1"].T + spec["b1"]) @ spec["w2"].T + spec["b2"])
-            present = raw[:, spec["present"]] > 0.5
-            encoded[part] = hidden
-            count = max(1.0, float(present.sum()))
-            pooled.append((hidden * present[:, None]).sum(axis=0) / count)
-            pooled.append(np.where(present[:, None], hidden, -1.0).max(axis=0))
-        extra = sets["pool_weight"] @ np.concatenate(pooled) + sets["pool_bias"]
-    else:
-        extra = 0.0
+    extra = 0.0
     # A seat layout's entities (version 8): each slot gathered from its segments through its set's encoder, pooled.
     seats = model.get("seat_sets")
     seat_codes = []
@@ -796,11 +709,7 @@ def reference_decide(model: dict, obs: np.ndarray, mask: np.ndarray, agent: int 
     weight, bias = layers[-1]
     features = x
     x = weight @ x + bias
-    # The director's per-slot actions: each slot's encoding against a query from the features.
-    for pointer in (sets["pointers"] if sets is not None else ()):
-        scores = encoded[pointer["over"]] @ (pointer["weight"] @ features + pointer["bias"])
-        x[pointer["first"] : pointer["first"] + len(scores)] = scores
-    # A seat layout's slot-naming actions, the same way, after the director's.
+    # A seat layout's slot-naming actions: each slot's encoding against a query from the features.
     for pointer in (seats["pointers"] if seats is not None else ()):
         scores = seat_codes[pointer["set"]] @ (pointer["weight"] @ features + pointer["bias"])
         x[pointer["first"] : pointer["first"] + len(scores)] = scores
@@ -862,7 +771,7 @@ def _reference_goals(model: dict, goals: dict, obs: np.ndarray, raw: np.ndarray,
     ended = secondary_ended = event = from_order = False
     order_goal = 0
     if at < 0 and targets > 1:
-        allowed[:] = False              # no goal block (the director): only the first goal, which means none
+        allowed[:] = False              # no goal block: only the first goal, which means none
     if at >= 0 and targets > 1:
         width = base + 2 + (3 + 2 * base if slots > 1 else 0)
         block = obs[at : at + width] > 0.5

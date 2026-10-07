@@ -35,7 +35,7 @@ import numpy as np
 import torch
 import yaml
 
-from .bootstrap import DIRECTOR_LAYOUT, seed_merges, seed_trainer
+from .bootstrap import seed_merges, seed_trainer
 from .cast import EXPLOITER_MEMBER, LEAGUE, LEAGUE_DIR, Cast, league_snapshot
 from .partners import PARTNERS_DIR, Partners, partner_snapshot, with_partners_chooser
 from .config import TrainConfig
@@ -408,7 +408,7 @@ class DecisionRows:
     rollout buffer whole."""
 
     FIELDS = ("obs", "state", "mask", "layout", "actions", "log_probs", "values", "present", "foresight", "memory",
-              "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory", "chosen",
+              "goal", "goal_log_prob", "goal_chosen", "slow_before", "slow_value", "critic_memory",
               "goal_slots", "image", "look", "look_log_prob")
 
     #: A field store_inputs wrote into the rollout buffer itself.
@@ -476,7 +476,7 @@ class DecisionRows:
         goals = ((a["goal"], a["goal_log_prob"], a["goal_chosen"], a.get("slow_before"), a.get("slow_value"),
                   a.get("goal_slots")) if a.get("goal") is not None else None)
         return (a["obs"], a["state"], a["mask"], a["layout"], a["actions"], a["log_probs"], a["values"], a["present"],
-                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("chosen"), a.get("image"),
+                a.get("foresight"), a.get("memory"), goals, a.get("critic_memory"), a.get("image"),
                 a.get("look"), a.get("look_log_prob"))
 
 
@@ -494,11 +494,9 @@ class RolloutOutcome:
 
 @dataclass
 class TrainerInputs:
-    """What the networks of a stage are built from besides the layouts' widths: the slow-clock layout, the director's
-    sets, the seat sets and the camera (stage.json's blocks). TrainingRun builds them, and so does resume_check."""
+    """What the networks of a stage are built from besides the layouts' widths: the seat sets and the camera
+    (stage.json's blocks). TrainingRun builds them, and so does resume_check."""
 
-    slow_layout: int
-    director: tuple | None
     seat_sets: object | None
     vision: list | None
 
@@ -507,12 +505,6 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
     """The networks' stage-dependent inputs, read the way a run reads them (SystemExit on a camera the sim and
     stage.json disagree about)."""
     names = [layout.name for layout in spec.layouts]
-    # The layout that decides on a slow clock, by name: its index moves with the stage, and a stage without one
-    # simply has no agents of it.
-    slow_layout = names.index(config.mappo.slow_layout) if config.mappo.slow_layout in names else -1
-    # The director's members and enemies are sets (stage.json "director"): its layout index and descriptor.
-    director = ((names.index(DIRECTOR_LAYOUT), stage["director"])
-                if stage and "director" in stage and DIRECTOR_LAYOUT in names else None)
     # Every seat layout's entities as sets (mappo.seat_sets, stage.json layouts.<name>.sets): off, None.
     seat_sets = seat_sets_of(stage, names) if config.mappo.seat_sets else None
     # The camera (stage.json's vision block): on in every network wherever the stage has it, no switch. The sim's SPEC
@@ -523,11 +515,11 @@ def trainer_inputs(config: TrainConfig, spec, stage: dict | None) -> TrainerInpu
         check_look_heads(vision, spec.look_heads)
     except ValueError as error:
         raise SystemExit(f"vision: {error}") from None
-    return TrainerInputs(slow_layout, director, seat_sets, with_map_vin(vision, config.mappo.map_vin))
+    return TrainerInputs(seat_sets, with_map_vin(vision, config.mappo.map_vin))
 
 
 def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, device=None) -> MappoTrainer:
-    """The stage's MappoTrainer. The exploiter's (animus.exploit) is built by this too: the same layouts, director and
+    """The stage's MappoTrainer. The exploiter's (animus.exploit) is built by this too: the same layouts and
     seat sets, the same ranks -- its update is data-parallel like the main's. `device` overrides both devices."""
     return MappoTrainer(
         [(layout.obs_dim, layout.num_actions) for layout in spec.layouts],
@@ -535,9 +527,7 @@ def make_trainer(config: TrainConfig, spec, inputs: TrainerInputs, ranks=None, d
         config.mappo,
         train_device=device or config.resolved_train_device(),
         rollout_device=device or config.resolved_rollout_device(),
-        slow_layout=inputs.slow_layout,
         ranks=ranks,
-        director=inputs.director,
         seat_sets=inputs.seat_sets,
         vision=inputs.vision,
     )
@@ -660,10 +650,6 @@ class TrainingRun:
 
         names = [layout.name for layout in spec.layouts]
         inputs = trainer_inputs(config, spec, self.stage)
-        self.slow_layout = inputs.slow_layout
-        if config.mappo.slow_layout and self.slow_layout < 0:
-            print(f"No layout named {config.mappo.slow_layout!r} in this stage: nothing decides on a slow clock",
-                  flush=True)
         if config.mappo.seat_sets and inputs.seat_sets is None:
             print("mappo.seat_sets is on, but no layout of this stage has a seat set: the networks have none here",
                   flush=True)
@@ -717,18 +703,6 @@ class TrainingRun:
             f"{config.rollout_length * spec.decision_ms / 1000.0:.1f} s",
             flush=True,
         )
-        if self.trainer.slow_layout >= 0:
-            every = max(1, config.mappo.slow_every_decisions)
-            step_ms = every * spec.decision_ms
-            slow_gamma = config.mappo.slow_gamma
-            slow_trace = slow_gamma * config.mappo.slow_gae_lambda
-            print(
-                f"Per {step_ms / 1000.0:.1f} s {config.mappo.slow_layout} decision ({every} of them): gamma "
-                f"{slow_gamma:.5f} (horizon {horizon_seconds(slow_gamma, step_ms):.0f} s), GAE trace "
-                f"{slow_trace:.5f} (credit {horizon_seconds(slow_trace, step_ms):.0f} s), rollout "
-                f"{config.rollout_length / every:.1f} of its decisions",
-                flush=True,
-            )
 
         self.evaluating = config.eval.every_env_steps > 0
         if config.mappo.recurrent_size <= 0:
@@ -771,13 +745,13 @@ class TrainingRun:
         # After the seed and any resume, which bring a parent's goal block positions with its weights: the goal
         # head is masked by this stage's own (stage.json "goals" and the layouts' blocks).
         self.trainer.set_goal_space(self.stage, [layout.name for layout in self.spec.layouts])
-        # A seed brings the parent's director adapter whole: its slot columns are made blind (DirectorSets). A resumed
+        # A seed brings the parent's adapters whole: their seat set and camera columns are made blind. A resumed
         # run's must already be -- their gradient is masked -- and anything else is a checkpoint to stop on, not fix.
         if self.resume_path:
             if not self.trainer.director_columns_clear():
-                raise SystemExit(f"{self.resume_path}: the director adapter learned its slot columns; not resuming")
+                raise SystemExit(f"{self.resume_path}: an adapter learned its blind columns; not resuming")
         else:
-            self.trainer.clear_director_columns()
+            self.trainer.clear_blind_columns()
         # Every rank carries on from the leader's counters (a learner on another machine resumed nothing), so they
         # stop, evaluate and schedule together.
         self.update, self.env_steps = self.ranks.broadcast((self.update, self.env_steps))
@@ -1180,8 +1154,7 @@ class TrainingRun:
             checkpoint = load_parent(path)
             if auto:
                 names = {layout["name"] for layout in checkpoint["spec"].get("layouts", ())}
-                missing = [layout.name for layout in spec.layouts
-                           if layout.name not in names and layout.name != DIRECTOR_LAYOUT]
+                missing = [layout.name for layout in spec.layouts if layout.name not in names]
                 if missing:
                     print(f"Not seeding from {path}: it has no {', '.join(missing)} (a restricted stage's checkpoint); "
                           f"trying the next stage down the chain, and merging its layouts in after", flush=True)
@@ -1206,9 +1179,9 @@ class TrainingRun:
         names = [layout.name for layout in spec.layouts]
 
         def prepare(trainer) -> None:
-            # As the main's: the stage's goal space, blind director columns, every rank the leader's.
+            # As the main's: the stage's goal space, blind columns, every rank the leader's.
             trainer.set_goal_space(self.stage, names)
-            trainer.clear_director_columns()
+            trainer.clear_blind_columns()
             for module in (trainer.actor, trainer.critic, trainer.value_norm):
                 if module is not None:
                     self.ranks.broadcast_module(module)
@@ -1911,9 +1884,6 @@ class TrainingRun:
                                                           getattr(self.step, "image", None)),
                       foresight_gammas=self.foresight_discounts,
                       time_scale_decisions=self.foresight_time_decisions,
-                      slow_layout=self.slow_layout,
-                      slow_gamma=self.config.mappo.slow_gamma,
-                      slow_gae_lambda=self.config.mappo.slow_gae_lambda,
                       slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
                       if trainer.slow_goal_size else None,
                       obs_targets=trainer.foresight_obs_columns())
@@ -1930,9 +1900,6 @@ class TrainingRun:
                                                                   getattr(self.step, "image", None)),
                             foresight_gammas=self.foresight_discounts,
                             time_scale_decisions=self.foresight_time_decisions,
-                            slow_layout=self.slow_layout,
-                            slow_gamma=self.config.mappo.slow_gamma,
-                            slow_gae_lambda=self.config.mappo.slow_gae_lambda,
                             slow_goal=(self.config.mappo.slow_goal_gamma, self.config.mappo.slow_goal_lambda)
                             if exploiter.slow_goal_size else None,
                             obs_targets=exploiter.foresight_obs_columns())
@@ -2058,7 +2025,7 @@ class TrainingRun:
                 f"{len(bad)} non-finite observation(s) from the sim at step {self.env_steps}: {where}"
                 + ("" if len(bad) <= 8 else f" (and {len(bad) - 8} more)"))
 
-        actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(
             part.obs, part.mask, part.layout, part.state, state=acting, image=getattr(part, "image", None))
         self.acting.put(rows, acting)
         # The free look the decision chose (protocol 22), sent with the actions and kept with them.
@@ -2126,7 +2093,7 @@ class TrainingRun:
         decision.set(rows, layout=part.layout, actions=actions, log_probs=log_probs, values=values, present=present,
                      foresight=foresight, memory=memory, goal=goal, goal_log_prob=goal_log_prob,
                      goal_chosen=goal_chosen, slow_before=slow_before, slow_value=slow_value,
-                     critic_memory=critic_memory, chosen=chosen, goal_slots=goal_slots, look=look,
+                     critic_memory=critic_memory, goal_slots=goal_slots, look=look,
                      look_log_prob=look_log_prob)
         send(rows.start, rows.stop - rows.start, actions, trainer.wire_goals(goals[0]) if goals is not None else None,
              look)

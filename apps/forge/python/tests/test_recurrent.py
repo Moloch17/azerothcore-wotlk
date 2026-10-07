@@ -19,7 +19,7 @@ def fill(trainer, buffer, steps, envs, agents, obs_dim, state_dim, actions, done
         layout = np.zeros((envs, agents), np.int64)
         memory = acting.memory.copy() if acting.memory is not None else None
         critic_memory = acting.critic_memory.copy() if acting.critic_memory is not None else None
-        chosen, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        chosen, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                            state=acting)
         buffer.add_decision(obs, state, mask, layout, chosen, log_probs, values, None, foresight, memory, goals,
                             critic_memory)
@@ -137,7 +137,7 @@ def test_a_rollout_replays_from_the_memory_it_started_with():
         mask = np.ones((envs, 1, 2), bool)
         layout = np.zeros((envs, 1), np.int64)
         memory = acting.memory.copy()
-        chosen, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        chosen, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                            state=acting)
         buffer.add_decision(obs, state, mask, layout, chosen, log_probs, values, None, foresight, memory, goals)
         dones = np.zeros(envs, bool)

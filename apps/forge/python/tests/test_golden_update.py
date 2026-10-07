@@ -120,11 +120,11 @@ def run_case(name: str) -> dict:
                  if spec.camera_bytes else None)
         memory = acting.memory.copy() if acting.memory is not None else None
         critic_memory = acting.critic_memory.copy() if acting.critic_memory is not None else None
-        actions, log_probs, values, foresight, goals, chosen = trainer.act_and_value(
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(
             obs, mask, layout, state, state=acting, image=image)
         look = trainer.wire_look(acting.look)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals,
-                            critic_memory, chosen, image, look, acting.look_log_prob)
+                            critic_memory, image, look, acting.look_log_prob)
         rewards = rng.standard_normal((ENVS, agents)).astype(np.float32)
         done = np.zeros(ENVS, bool)
         done[step % ENVS] = step % 3 == 2

@@ -51,7 +51,7 @@ def scenario_stats(masked: bool | None = None) -> dict[str, float]:
         mask = np.ones((envs, 1, 3), bool)
         layout = np.zeros((envs, 1), np.int64)
         memory = acting.memory.copy()
-        actions, log_probs, values, foresight, goals, _ = trainer.act_and_value(obs, mask, layout, state,
+        actions, log_probs, values, foresight, goals = trainer.act_and_value(obs, mask, layout, state,
                                                                                  state=acting)
         buffer.add_decision(obs, state, mask, layout, actions, log_probs, values, None, foresight, memory, goals)
         buffer.add_outcome(rng.random((envs, 1), dtype=np.float32), np.zeros(envs, bool), np.zeros(envs, bool),

@@ -700,15 +700,6 @@ each class, whether it converged, and which signals it was missing.
   the curriculum from stage 1 and rebuilds every model. Distillation replays a teacher's own memory through the same
   decisions (`animus.distill`), so stage 8 works with it; a plain per-minibatch auxiliary loss is refused, because it
   cannot carry that memory. **On from stage4_duel (128).**
-- `slow_layout`, `slow_every_decisions`, `slow_gamma`, `slow_gae_lambda`: a layout that decides on a slower
-  clock than the seats and is credited on it -- the director (`""` = none, and a stage without a layout of
-  that name simply has no agents of it). Its agents choose every `slow_every_decisions` and their call stands
-  in between, as the goal head keeps a goal. A held decision is replayed by the recurrence, because the env
-  moved on, but it is **not a sample**: the agent chose nothing there, so it never reaches the loss or the
-  advantages. Its transitions run from one decision it took to the next, carrying every reward in between, so
-  `slow_gamma` and `slow_gae_lambda` are per *its* decision -- at ten decisions a call and 250 ms a decision,
-  0.996 is a ten minute horizon against the seats' hundred seconds. Rewards inside one span are summed rather
-  than discounted: a span is seconds and the horizon is minutes.
 - `goal_count` and `goal_every_decisions`: a goal head (0 = off). The actor chooses one of `goal_count` goals every
   `goal_every_decisions` decisions and keeps it in between, and its action head reads the goal's embedding added to
   the features. The chooser decides on a clock that many times slower than the actions, so its own horizon is that

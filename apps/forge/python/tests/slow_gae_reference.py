@@ -1,4 +1,4 @@
-"""The per-agent loop the director's slow-clock GAE was, kept as the reference compute_span_gae is tested against."""
+"""The per-agent loop the slow-clock GAE was, kept as the reference compute_span_gae is tested against."""
 
 import numpy as np
 
