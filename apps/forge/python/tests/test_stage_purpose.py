@@ -28,6 +28,10 @@ PURPOSE = {
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
     "move2_seek": ("Arrive", "StepCost"),
+    # M4 follow (dungeon-curriculum I5, 2026-10-06): keep with the leader through the dungeon -- FollowKept per second
+    # in the band, Regroup on coming back to it after each of the leader's stops -- and Death, each one a price the
+    # episode goes on past (I4).
+    "move4_follow": ("FollowKept", "Regroup", "Death"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -46,6 +50,7 @@ ENCOUNTER = {
     "Follow": "Encounters/FollowEncounter.cpp",
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
+    "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",
