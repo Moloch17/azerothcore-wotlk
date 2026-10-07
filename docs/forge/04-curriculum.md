@@ -46,15 +46,36 @@
 > | `combat1_fight` | 300M | 10M | 240 |
 > | `combat2_packs` | 300M | 10M | 240 |
 > | `combat3_survive` | 300M | 10M | 240 |
+> | `group1_roles` | 400M | 10M | 384 |
 >
 > **The combat stages** (dungeon-curriculum C1-C3, 2026-10-06; `CombatEncounter`, `Opposition::Combat`) extend
 > `move3_interact` on a cleared Ragefire Chasm (map 389) at its level band, 13-18: `combat1_fight` one creature at a time
 > (and a passive friend to taunt off and heal), `combat2_packs` packs of 2-4 (casters, linked, fire underfoot, the next
 > pack further on), `combat3_survive` packs that can kill, with food and drink. The seat perceives what a player does
-> (I3): the sight list (what it sees and remembers) with each visible unit's nameplate combat columns, the party frames
-> and the target frame's threat (`BlockId::Combat`); it selects by sight and casts as the client does. A death never
-> ends an episode: the seat is back alive at the dungeon's entrance after 10 s and walks back (I4's
-> EntranceRespawn, `ArenaDefinition::RespawnAtEntrance`); every second dead or away from the fight is a Cost. Every ladder steps on its gate alone and every price is full from the start.
+> (I3): the sight list (what it sees and remembers) with each visible unit's nameplate combat columns, the player and
+> pet frames and the target frame's threat (`BlockId::Combat`, revision 1); it selects by sight and casts as the
+> client does. A death never ends an episode: the seat is back alive at the dungeon's entrance after 10 s and walks
+> back (I4's EntranceRespawn, `ArenaDefinition::RespawnAtEntrance`); every second dead or away from the fight is a
+> Cost. Every ladder steps on its gate alone and every price is full from the start.
+>
+> **The party frames, revision 2** (G1, 2026-10-07): `BlockId::PartyFrames` is the one source of party-member state --
+> each member's frame (alive, health, power and whether it is mana, in combat, the leader, in the frame's 40 yd range,
+> its debuffs and the dispellable ones, aggro, selected, focused), its minimap dot within 60 yd, and its target (has
+> one, hostile, the seat's own, in the camera's frame), with select, focus and assist presses on each frame. The
+> combat block (revision 1) keeps only the player frame, the pet frame and the target frame. Both name their columns,
+> so a checkpoint of either old revision seeds them by name; the startup check refuses the party frames beside the
+> party or support block, and a combat stage with a party but no party frames.
+>
+> **`group1_roles`** (dungeon-curriculum G1, 2026-10-07; `RolesEncounter`, `Opposition::Roles`) extends
+> `combat3_survive` and merges `move4_follow` (its party frames carried by name, `bootstrap.seed_merges`): a party of
+> five on the same cleared Ragefire Chasm at 13-18, drilling one role an episode in seat 0 -- `tank_hold` (hold every
+> enemy), `heal_keep` (keep everyone up through packs of twice their health, within mana), `damage_discipline` (kill
+> the tank's target without pulling it), `pull` (pull one pack of a camp at a time, the packs closer each rung). The
+> drilled role's class and build are drawn among those whose spec plays it; the rest is a proper party in a core group,
+> with co-op partners (I7, never the drilled seat) and the "human" stand-in in a share of the episodes. Each drill's
+> lesson is the drilled seat's own Outcome (DrillHold, DrillKeep, DrillFocus, PullClean), tier-scaled, its misses a
+> Cost; Clear and Survived every seat's. Pack after pack for the episode's clock; a death rises at the entrance and
+> walks back to the party.
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

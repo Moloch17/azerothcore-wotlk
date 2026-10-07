@@ -764,7 +764,8 @@ namespace
         //
         // **What it perceives** (I3) is what a player does: the camera, the entities it shows and the ones it remembers
         // (the vision, entities, map and sight blocks), each visible one's cast bar, crowd control and threat (the
-        // combat block's per-target columns on the sight list), the party frames, and the target frame's threat. **What
+        // combat block's per-target columns on the sight list), the player and pet frames, and the target frame's
+        // threat (the combat block, revision 1; a party's members are the party frames block's). **What
         // it does**: the move block's keys and mouse (controller-only), selecting by sight (the sight block's presses)
         // and casting at the selection as the client does; nothing situational masked. A death is never the end: it
         // comes back alive at the entrance after a short delay and walks back (I4, ArenaDefinition::RespawnAtEntrance).
