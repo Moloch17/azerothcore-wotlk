@@ -367,6 +367,7 @@ class FakeConsole:
 def sent(monkeypatch):
     recorder = FakeConsole()
     monkeypatch.setattr(console, "send", recorder)
+    monkeypatch.setattr(stage, "existing_run", lambda config, name: stage.ExistingRun(name, False))
     return recorder
 
 
@@ -1130,3 +1131,103 @@ def test_the_cli_passes_stop_running_and_logs_the_cancel(cfg, fake, deployable, 
     refused, done = audit_lines(forgectl_home)
     assert "outcome=failed" in refused and "confirm=not-reached" in refused and "a stage is running" in refused
     assert "outcome=done" in done and "stopped the running stage first" in done
+
+
+# ---- stage start shows what it archives ------------------------------------------------------------------------------
+
+def run_at(steps, exists=True, why=""):
+    return lambda config, name: stage.ExistingRun(name, exists, steps, why)
+
+
+def test_start_plan_names_the_run_it_archives_with_its_step_count(cfg, sent, monkeypatch, capsys):
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(ui, "ask", lambda prompt: "y")
+    assert stage.run(cfg, "start", ["move2_seek"], yes=False) == 0  # a person at the prompt needs no flag
+    assert "move2_seek has a run at 178M steps; start archives it" in capsys.readouterr().out
+
+
+def test_yes_will_not_archive_a_big_run_without_archive_ok_and_says_what_it_would_have_archived(
+        cfg, sent, monkeypatch, capsys, forgectl_home):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    assert cli.main(["stage", "start", "move2_seek", "--yes"]) == 1
+    captured = capsys.readouterr()
+    assert "move2_seek has a run at 178M steps; start archives it" in captured.out
+    assert "--archive-ok" in captured.err and sent.sent == []
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=failed" in line and "move2_seek has a run at 178M steps; start archives it" in line
+
+
+def test_yes_with_archive_ok_archives_and_the_line_is_in_output_and_audit_log(cfg, sent, monkeypatch, capsys,
+                                                                             forgectl_home):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+    monkeypatch.setattr(stage, "existing_run", run_at(178_000_000))
+    assert cli.main(["stage", "start", "move2_seek", "--yes", "--archive-ok"]) == 0
+    assert "move2_seek has a run at 178M steps; start archives it" in capsys.readouterr().out
+    (line,) = audit_lines(forgectl_home)
+    assert "outcome=done" in line and "confirm=--yes" in line and "178M steps; start archives it" in line
+    assert sent.sent == [("sarah", "forge start move2_seek")]
+
+
+@pytest.mark.parametrize("steps,needs_flag", [(0, False), (999_999, False), (1_000_000, False), (1_000_001, True),
+                                              (None, True)])
+def test_the_threshold_is_more_than_one_million_steps_and_an_unreadable_count_counts_as_big(cfg, sent, monkeypatch,
+                                                                                         steps, needs_flag):
+    monkeypatch.setattr(stage, "existing_run", run_at(steps, why="no env_steps in its metrics.csv"))
+    if needs_flag:
+        with pytest.raises(ui.Failure, match="--archive-ok"):
+            stage.run(cfg, "start", ["move2_seek"], yes=True)
+        assert sent.sent == []
+    else:
+        assert stage.run(cfg, "start", ["move2_seek"], yes=True) == 0
+
+
+def test_no_run_to_archive_needs_no_flag_and_resume_never_looks(cfg, sent, monkeypatch, capsys):
+    monkeypatch.setattr(stage, "existing_run", run_at(None, exists=False))
+    assert stage.run(cfg, "start", ["move2_seek"], yes=True) == 0
+    assert "has no run on sarah; nothing is archived" in capsys.readouterr().out
+    monkeypatch.setattr(stage, "existing_run", lambda config, name: pytest.fail("resume reads no run"))
+    assert stage.run(cfg, "resume", ["move2_seek"], yes=True) == 0
+
+
+def test_an_unreadable_runs_directory_is_treated_as_possibly_big(cfg, fake, monkeypatch):
+    monkeypatch.setattr(console, "send", FakeConsole())
+    fake.when(lambda argv, input: True, Result(255, "", "ssh: No route to host"))
+    with pytest.raises(ui.Failure, match="could not be read"):
+        stage.run(cfg, "start", ["move2_seek"], yes=True)
+
+
+def test_existing_run_reads_the_hosts_runs_directory(cfg, fake):
+    fake.when(on_target("192.168.0.68", "metrics.csv"), Result(0, "exists=1\nsteps=177946624\n"))
+    run = stage.existing_run(cfg, "move2_seek")
+    assert (run.exists, run.steps) == (True, 177_946_624)
+    script = fake.calls[0][1]
+    assert '"$HOME"/animus-forge/var/animus-forge/shared/runs/move2_seek' in script
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(0, "exists=0\n"))
+    assert stage.existing_run(cfg, "move2_seek").exists is False
+    fake.rules.clear()
+    fake.when(lambda argv, input: True, Result(0, "exists=1\nsteps=\n"))
+    assert stage.existing_run(cfg, "move2_seek").steps is None
+
+
+def test_the_run_script_reads_env_steps_by_column_name_on_a_real_shell(tmp_path):
+    runs = tmp_path / "runs"
+    (runs / "full").mkdir(parents=True)
+    (runs / "full" / "metrics.csv").write_text("update,reward,env_steps,x\n1,0.1,100,1\n2,0.2,178000000,2\n")
+    (runs / "headeronly").mkdir()
+    (runs / "headeronly" / "metrics.csv").write_text("update,env_steps\n")
+    (runs / "empty").mkdir()
+    (runs / "nometrics").mkdir()
+    (runs / "nometrics" / "latest.pt").write_text("x")
+
+    def info(name):
+        done = remote.execute(["bash", "-s"], input=stage.run_info_script(str(runs), name))
+        return dict(line.split("=", 1) for line in done.out.splitlines())
+    assert info("full") == {"exists": "1", "steps": "178000000"}
+    assert info("empty") == {"exists": "0"} and info("missing") == {"exists": "0"}  # nothing to archive
+    assert info("headeronly")["steps"] != "0" and not info("headeronly")["steps"].isdigit()
+    assert info("nometrics") == {"exists": "1", "steps": ""}

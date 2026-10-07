@@ -81,12 +81,20 @@ entropy and score. If the console does not answer, it prints that and still show
 ## `forgectl stage status|start|resume|pause|cancel [<stage> ...]`
 
 ```
-forgectl stage start move2_seek       fresh run (the previous run of that stage is archived)
+forgectl stage start move2_seek       fresh run (the previous run of that stage is archived; the plan shows its step count)
 forgectl stage resume move2_seek      continue from latest.pt (resume with no name: unpause, or continue where the plan stopped)
 forgectl stage pause                  freeze after the current decision
 forgectl stage cancel                 stop; the learner saves latest.pt, so a cancelled run resumes where it left off
 forgectl stage status                 same as forgectl status without the learner line
 ```
+
+**`start` shows what it archives.** A fresh start moves the stage's existing run (`runs/<stage>/`, if it holds
+anything) to `archive/`. Before it asks, forgectl reads that directory on the host (the last `env_steps` in its
+`metrics.csv`) and puts it in the plan: `move2_seek has a run at 178M steps; start archives it` (or "has no run ...;
+nothing is archived", or "could not be read" if the host or the file does not answer). The same line goes in the audit
+log. A person at the prompt sees it and answers. **`--yes` cannot be asked, so it refuses to archive a run of more
+than 1,000,000 steps (or one whose size could not be read) unless you also pass `--archive-ok`**; the refusal prints
+the line and the audit record carries it. Example: `forgectl stage start move2_seek --yes --archive-ok`.
 
 `start` and `resume` go to the host. **`pause` and `cancel` go to the host and then to every worker's console over
 ssh**, because the host's pause does not reach the workers today. The plan lists each machine before it asks. Each machine's

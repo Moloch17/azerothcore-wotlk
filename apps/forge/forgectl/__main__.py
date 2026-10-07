@@ -55,6 +55,9 @@ def parser() -> argparse.ArgumentParser:
     sg.add_argument("stages", nargs="*", metavar="stage", help="stage name(s); start needs one; pause and cancel take "
                                                               "none (they act on the whole plan)")
     sg.add_argument("--yes", action="store_true", help="do not ask")
+    sg.add_argument("--archive-ok", action="store_true",
+                    help="start: with --yes, allow archiving an existing run of more than 1M steps (or one whose "
+                         "size cannot be read); without --yes the prompt shows the run and you answer it")
 
     lg = add("logs", "the worldserver and learner logs of a machine, errors and warnings first",
              "forgectl logs thomas --errors")
@@ -104,7 +107,8 @@ def dispatch(args, config) -> int:
     if args.command == "status":
         return stage.status(config)
     if args.command == "stage":
-        return stage.run(config, args.action, args.stages, getattr(args, "yes", False))
+        return stage.run(config, args.action, args.stages, getattr(args, "yes", False),
+                          getattr(args, "archive_ok", False))
     if args.command == "logs":
         return logs.run(config, args.machine, args.errors, args.lines, args.wide)
     if args.command == "build":
