@@ -98,8 +98,13 @@ convergence:
 # moves on once its own found rate (the evaluation plays the training rung) has plateaued at 80% or more, with the
 # fade's window and regress rules -- a curriculum ladder, not a pass gate: the stage still ends on convergence.
 fade:
+  # Its own rungs (hallway, doorway, front room, deep): M2 extends M1, whose fade was cut to [0.0] while it finished,
+  # and would otherwise start M2 at the deep rung.
+  rungs: [1.0, 0.5, 0.25, 0.0]
   gate_metric: found
   gate_value: 0.8
+  # Steps on the gate alone (the dungeon plan's rule; M1 waited ~20M steps on a plateau with the gate long met).
+  require_plateau: false
 
 # Stuck and Wall are charged from the first step at their own small fixed price (Seek.Stuck, Seek.Wall: off this
 # ladder). The other noise prices (jitter, effort, repeats) keep M1's cost ladder, gated on the found rate.

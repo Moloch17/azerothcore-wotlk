@@ -170,3 +170,25 @@ def test_a_gated_fade_waits_for_the_stage_measure_then_steps_on_plateaus():
     held = _fade(gate_metric="dummy_output", gate_value=4.0)
     held.see_gate({})
     assert _play(held, [5] * 6) == [1.0] * 6
+
+
+def test_without_require_plateau_a_gated_fade_steps_on_the_gate_alone_while_the_score_still_rises():
+    """require_plateau off (the dungeon plan's rule): each rung steps at the first evaluation that meets the gate, even
+    on a score still climbing every evaluation; under the gate it holds; with no gate the option is ignored."""
+    fade = _fade(gate_metric="found", gate_value=0.8, require_plateau=False)
+    steps = []
+    for env_steps, (score, found) in enumerate([(1.0, 0.5), (2.0, 0.85), (3.0, 0.9), (4.0, 0.7), (5.0, 0.95)]):
+        fade.see_gate({"found": found})
+        steps.append(fade.observe(score, 0.01, env_steps) is not None)
+    assert steps == [False, True, True, False, False]   # the last rung reached after two gated steps
+    assert fade.scale == 0.0
+
+    plateau = _fade(gate_metric="found", gate_value=0.8)  # the default still waits for the plateau
+    moved = []
+    for env_steps, score in enumerate([1.0, 2.0, 3.0]):
+        plateau.see_gate({"found": 0.95})
+        moved.append(plateau.observe(score, 0.01, env_steps) is not None)
+    assert moved == [False, False, False]
+
+    ungated = _fade(require_plateau=False)
+    assert ungated.require_plateau   # no gate: plateau as before

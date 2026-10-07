@@ -190,6 +190,10 @@ class FadeConfig:
     # 2026-10-05: faded to 0 at output ~5 a dummy, then output fell to 1.1). "" = the plateau alone.
     gate_metric: str = ""
     gate_value: float = 0.0
+    # Off: a rung steps as soon as the gate is met at an evaluation (at least one evaluation at the rung), without
+    # waiting for the score to plateau -- the dungeon plan's rule that every ladder steps at once on its gate (M1, 2026-10-06:
+    # the fade sat at x1 for ~20M steps on a rising score with the gate long met). Needs a gate_metric.
+    require_plateau: bool = True
 
     def __post_init__(self) -> None:
         rungs = tuple(float(scale) for scale in self.rungs)
