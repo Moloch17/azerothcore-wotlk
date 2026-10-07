@@ -1632,14 +1632,24 @@ void AnimusForge::Forge::CaptureEvalVideos(uint32 group)
                     maps ? &_pool->MapCrop[seat * spec.MapBytes] : nullptr);
         }
 
-        // A chosen seed's episode starting: filmed from its first frame, the env's first seat with a character.
+        // A chosen seed's episode starting: filmed from its first frame. Whom: of the seats the learner plays (the
+        // "human" stand-in's and a director's are not present), the one the seed's place among the videos comes to
+        // -- spread over the party's places and classes (Vision::EvalVideoAgent); a solo env's one seat.
         Animus::Env const& env = _pool->EnvAt(e);
         if (_evalVideos.Recording(e) || !env.Evaluating || env.EpisodeSeedIndex == Animus::NO_EPISODE_SEED
             || !_evalVideos.Wanted(env.EpisodeSeedIndex))
             continue;
+        std::vector<Vi::EvalVideoCandidate> candidates;
+        for (uint32 present = 0; present < agents; ++present)
+            if (_pool->Present[std::size_t(e) * agents + present])
+                if (Player const* bot = env.FindBot(present))
+                    candidates.push_back({ present, _pool->FilmedRole(e, present), uint32(bot->getClass()) });
         uint32 agent = 0;
-        while (agent + 1 < agents && !_pool->Present[std::size_t(e) * agents + agent])
-            ++agent;
+        if (!candidates.empty())
+            agent = Vi::EvalVideoAgent(_evalVideos.PickOf(env.EpisodeSeedIndex), std::move(candidates));
+        else
+            while (agent + 1 < agents && !_pool->Present[std::size_t(e) * agents + agent])
+                ++agent;
         std::size_t const seat = std::size_t(e) * agents + agent;
         Vi::EvalVideoEpisode episode;
         episode.Seed = env.EpisodeSeedIndex;
@@ -1653,6 +1663,7 @@ void AnimusForge::Forge::CaptureEvalVideos(uint32 group)
             episode.Race = bot->getRace();
             episode.Level = bot->GetLevel();
         }
+        episode.Role = _pool->FilmedRole(e, agent);
         std::tie(episode.RenderWidth, episode.RenderHeight) = _pool->CameraRenderSize(e, agent);
         _evalVideos.Start(std::move(episode));
         _evalVideos.Frame(e, &_pool->Image[seat * spec.ImageBytes], maps ? &_pool->MapCrop[seat * spec.MapBytes]

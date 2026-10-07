@@ -59,6 +59,27 @@ namespace Animus::Vision
     /// a flag); -1 for none.
     [[nodiscard]] int32_t EvalVideoRungColumn(std::vector<std::string> const& names);
 
+    /// One seat an evaluation episode could film: its agent (the learner plays it: the "human" stand-in's and a
+    /// director's are not candidates), its place in the party (Scenario::FilmedRole: 1 tank, 2 healer, 3 damage, 0
+    /// none) and its class.
+    struct EvalVideoCandidate
+    {
+        uint32_t Agent = 0;
+        uint32_t Role = 0;
+        uint32_t Class = 0;
+    };
+
+    /// The role names a sidecar writes (EvalVideoEpisode::Role): "" for none.
+    [[nodiscard]] char const* EvalVideoRoleName(uint32_t role);
+
+    /// **Whom a party's episode films** (I0 for multi-seat envs): an evaluation's video `pick` (its seed's place among
+    /// the evaluation's EvalVideoSeeds) films the place it comes to in turn -- tank, healer, damage, pick mod 3, the
+    /// next one along where the party has nobody in that place -- and of the seats in that place the (pick / 3)-th in
+    /// class order (then agent), so an evaluation's videos spread over the party's places and its classes. A seed's
+    /// party is drawn from the seed, so the same seed films the same seat every evaluation. Candidates with no place
+    /// at all (a solo stage, a party with none drawn) are taken in turn, class order then agent. 0 for none.
+    [[nodiscard]] uint32_t EvalVideoAgent(uint32_t pick, std::vector<EvalVideoCandidate> candidates);
+
     /// Who an episode filmed: written into its sidecar. Taken when the recording starts (after the episode ends, the
     /// env's seat is already the next episode's character).
     struct EvalVideoEpisode
@@ -70,6 +91,7 @@ namespace Animus::Vision
         uint32_t Class = 0;
         uint32_t Race = 0;
         uint32_t Level = 0;
+        uint32_t Role = 0;                  // its place in the party (EvalVideoCandidate::Role), 0 for none
         uint32_t RenderWidth = 0;           // the size the camera cast at this episode (RenderSizes), 0 for none known
         uint32_t RenderHeight = 0;
     };
@@ -111,6 +133,8 @@ namespace Animus::Vision
         [[nodiscard]] bool Active() const { return _evaluation != nullptr; }
         /// `seed` is one to film and no env has started it yet.
         [[nodiscard]] bool Wanted(uint32_t seed) const;
+        /// `seed`'s place among the evaluation's seeds to film (EvalVideoAgent's pick); 0 for one not among them.
+        [[nodiscard]] uint32_t PickOf(uint32_t seed) const;
         [[nodiscard]] bool Recording(uint32_t env) const { return _open.count(env) != 0; }
         /// The open recording's seed and seat (Recording(env) first).
         [[nodiscard]] uint32_t Seed(uint32_t env) const;
