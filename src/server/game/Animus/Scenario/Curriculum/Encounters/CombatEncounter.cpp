@@ -93,6 +93,13 @@ void Animus::Curriculum::CombatEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     table.Add("rejoined", of([](EnvCombat const& c) { return c.Clock.Rises ? c.Clock.RejoinedShare() : 0.0f; }));
     table.Add("dead_seconds", of([](EnvCombat const& c) { return float(c.Clock.OutMsTotal) / 1000.0f; }));
     table.Add("away_seconds", of([](EnvCombat const& c) { return c.AwaySeconds; }));
+    // The watch on InterruptLanded's scale (C2): what interrupts earned over what kills and clears earned. Per event on
+    // outcome_paid, so the evaluation's mean is the ratio of the sums; to be scaled down if it reads above ~0.3.
+    table.Add("outcome_paid", of([](EnvCombat const& c) { return c.OutcomePaid; }));
+    table.Add("interrupt_earnings", of([](EnvCombat const& c)
+    {
+        return c.OutcomePaid > 0.0f ? c.InterruptPaid / c.OutcomePaid : 0.0f;
+    }));
     // Per kill (PER_EVENT on kills): seconds from a creature's engage to its death, C1's.
     table.Add("kill_seconds", of([](EnvCombat const& c) { return c.KillSeconds; }));
     table.Add("ally_deaths", of([](EnvCombat const& c) { return c.AllyDeaths; }));
@@ -568,9 +575,15 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
 
     // Outcome: what was taken down.
     if (combat.NewKills)
+    {
         ledger.Add(RewardTerm::Kill, tuning.Kill * w * float(combat.NewKills));
+        combat.OutcomePaid += tuning.Kill * w * float(combat.NewKills);
+    }
     if (combat.NewClears)
+    {
         ledger.Add(RewardTerm::Clear, tuning.Clear * w * float(combat.NewClears));
+        combat.OutcomePaid += tuning.Clear * w * float(combat.NewClears);
+    }
 
     // An interrupt that stopped the cast it was aimed at.
     if (!combat.PendingInterrupt.IsEmpty())
@@ -581,7 +594,10 @@ void Animus::Curriculum::CombatEncounter::Reward(Env& env, uint32 seatIndex, Pla
         {
             ++combat.Interrupts;
             if (drill != CombatDrill::Fight)
+            {
                 ledger.Add(RewardTerm::InterruptLanded, tuning.InterruptLanded);
+                combat.InterruptPaid += tuning.InterruptLanded;
+            }
         }
         combat.PendingInterrupt.Clear();
     }

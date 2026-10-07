@@ -134,6 +134,8 @@ namespace Animus::Curriculum
             uint32 Interrupts = 0;
             uint32 Deaths = 0;
             float AwaySeconds = 0.0f;
+            float InterruptPaid = 0.0f;         // InterruptLanded paid this episode ...
+            float OutcomePaid = 0.0f;           // ... against Kill and Clear paid (the watch on its scale)
             uint32 AllyDeaths = 0;
             uint32 HazardPulls = 0;
             uint32 LinkedPulls = 0;

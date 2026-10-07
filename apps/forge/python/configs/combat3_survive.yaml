@@ -31,6 +31,7 @@ status:
              extra_pulls, hurt_share, combat_rung]
   targets:
     interrupts: null
+    interrupt_earnings: null
     fire_share: null
     target_in_view: null
     won: ">= 0.8"

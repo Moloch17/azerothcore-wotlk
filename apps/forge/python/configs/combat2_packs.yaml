@@ -20,14 +20,16 @@ mappo:
 eval:
   report: [won, survived, packs_cleared, extra_pulls, interrupts, fire_share, hurt_share, deaths, rejoin_seconds,
            combat_rung, difficulty, at_top_rung, target_in_view, selected_share, pulls, hazard_pulls, linked_pulls,
-           caster_pulls, died, reward_clear, reward_survived, reward_interrupt_landed, reward_pull_extra,
-           reward_fire_hurt, reward_hurt, reward_death, reward_step_cost, reward_damage_dealt, reward_repeat,
-           reward_aimless, reward_effort, reward_jitter]
+           caster_pulls, interrupt_earnings, outcome_paid, died, reward_clear, reward_survived,
+           reward_interrupt_landed, reward_pull_extra, reward_fire_hurt, reward_hurt, reward_death, reward_step_cost,
+           reward_damage_dealt, reward_repeat, reward_aimless, reward_effort, reward_jitter]
 
-# forge status: packs cleared and the stage's habits -- one pack at a time, interrupts landed, out of the fire.
+# forge status: packs cleared and the stage's habits -- one pack at a time, interrupts landed, out of the fire -- and
+# the watch on InterruptLanded's scale: interrupt_earnings, what interrupts earned over what kills and clears earned
+# (scale Combat.InterruptLanded down if it reads above ~0.3).
 status:
-  headline: [won, survived, packs_cleared, extra_pulls, interrupts, fire_share, hurt_share, deaths, rejoin_seconds,
-             combat_rung, target_in_view]
+  headline: [won, survived, packs_cleared, extra_pulls, interrupts, interrupt_earnings, fire_share, hurt_share, deaths,
+             rejoin_seconds, combat_rung, target_in_view]
   targets:
     # C1's measures are not C2's (null drops an inherited key).
     kills: null
@@ -41,6 +43,7 @@ status:
     fire_share: "<= 0.1"
     hurt_share: "<= 1.5"
     target_in_view: ">= 0.8"
+    interrupt_earnings: "<= 0.3"
 
 # As C1: on the gate alone, no plateau, no waiting on the classes' rungs; costs off (full price from the start).
 fade:

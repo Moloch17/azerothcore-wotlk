@@ -47,6 +47,8 @@ PER_EVENT = {
     "rejoin_seconds": "rejoins",
     # The combat stages (CombatEncounter): a C1 creature's engage-to-death over the kills.
     "kill_seconds": "kills",
+    # ... and C2's watch: InterruptLanded's earnings over Kill and Clear's (a ratio of the sums).
+    "interrupt_earnings": "outcome_paid",
 }
 
 

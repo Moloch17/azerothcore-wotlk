@@ -97,6 +97,21 @@ def test_survive_is_paid_for_staying_alive_and_never_for_coming_back():
 def test_the_per_event_measures():
     assert PER_EVENT["rejoin_seconds"] == "rejoins"
     assert PER_EVENT["kill_seconds"] == "kills"
+    assert PER_EVENT["interrupt_earnings"] == "outcome_paid"
+
+
+def test_c2_watches_the_interrupts_earnings():
+    """InterruptLanded against Kill and Clear, read as the ratio of the sums (each episode's ratio weighted by what its
+    kills and clears earned), in C2's evaluation and headline, its readout at 0.3."""
+    config = TrainConfig.load(CONFIGS / "combat2_packs.yaml")
+    assert {"interrupt_earnings", "outcome_paid"} <= set(config.eval.report)
+    assert "interrupt_earnings" in config.status.headline
+    assert config.status.targets["interrupt_earnings"] == "<= 0.3"
+    import numpy as np
+    from animus.episode_means import means
+    names = ["interrupt_earnings", "outcome_paid"]
+    rows = np.array([[0.5, 2.0], [0.0, 6.0], [0.0, 0.0]])
+    assert means(rows, names)[0] == pytest.approx(1.0 / 8.0)
 
 
 # ------------------------------------------------------------------ the sight list, widened by the combat columns
