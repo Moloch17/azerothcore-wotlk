@@ -281,3 +281,50 @@ def test_undefined_is_empty_when_every_column_has_events_or_there_are_no_episode
     names = ["found", "found_room", "rung_room"]
     assert undefined(np.array([[1.0, 1.0, 1.0]]), names) == set()
     assert undefined(np.zeros((0, 3)), names) == set()
+
+
+def test_each_rung_left_keeps_its_best_before_the_next_rungs_first_evaluation_overwrites_best_pt(tmp_path):
+    """The trainer's order at an evaluation (train.py): observe, save best.pt when improved, archive the rungs left.
+    best_rung<k>.pt is the best of rung k, this evaluation's included, and best.pt is then the new rung's."""
+    from animus.runs import archive_rung_best
+    controller = ConvergenceController(_config(), CLASSES)
+    best = tmp_path / "best.pt"
+    steps = []
+    for index in range(12):
+        score = (10.0, 8.0, 6.0)[index // 4] + 1.0 * (index % 4)       # rising within each rung, past the margin
+        improved, _ = _eval(controller, index, score, 0.9 if index % 4 == 3 else 0.5)
+        if improved:
+            best.write_text(f"eval{index}")
+        for ladder, rung in controller.rung_exits:
+            steps.append((index, ladder, rung))
+            archive_rung_best(tmp_path, ladder, rung, best)
+    assert steps == [(3, "fade", 0), (7, "fade", 1), (11, "fade", 2)]
+    # The stepping evaluation itself was the rung's best, and is in its archive.
+    assert [(tmp_path / f"best_rung{k}.pt").read_text() for k in range(3)] == ["eval3", "eval7", "eval11"]
+    # The first evaluation at the new rung is a new best of its own (the tracker was re-baselined).
+    controller2 = ConvergenceController(_config(), CLASSES)
+    for index in range(4):
+        _eval(controller2, index, 10.0, 0.9 if index == 3 else 0.5)
+    assert controller2.rung_exits == [("fade", 0)]
+    improved, _ = _eval(controller2, 4, 5.0, 0.5)
+    assert improved and controller2.rung_exits == []
+
+
+def test_a_plateau_stepped_ladder_exits_no_rung():
+    config = _config(rungs=(1.0, 0.5, 0.0), gate_metric="found", require_plateau=True)
+    controller = ConvergenceController(config, CLASSES)
+    stepped, highest = [], 0
+    for index, score in enumerate([2, 4, 6, 8] + [8.0] * 16):
+        _eval(controller, index, float(score), 0.9)
+        stepped += controller.rung_exits
+        highest = max(highest, controller.fade.rung)
+    assert highest > 0 and stepped == []     # it did step down, and exited nothing
+
+
+def test_the_trainer_archives_straight_after_the_best_save_in_the_evaluation():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "animus" / "train.py").read_text()
+    observed = source.index("improved = controller.observe(summary, self.env_steps)")
+    best_save = source.index("self._save(self.best_path)", observed)
+    archive = source.index("archive_rung_best(self.run_dir", best_save)
+    assert archive - best_save < 800 and "_save(" not in source[best_save + 10:archive]

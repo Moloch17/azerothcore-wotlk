@@ -502,6 +502,9 @@ class ConvergenceController:
         # The rung of each gate-stepped ladder the stage-level convergence state (the overall tracker, the classes',
         # the plateau) was last re-baselined at, saved with it; a loaded state from above its rung is stale.
         self.baselined = {"fade": 0, "costs": 0}
+        # The gate-stepped ladders (name, rung) that stepped on from a rung at the latest evaluation: the trainer
+        # archives the best checkpoint of each rung left (animus.runs.archive_rung_best) before anything overwrites it.
+        self.rung_exits: list[tuple[str, int]] = []
         self.stale_ladder = False
 
     def _tracker(self, patience: int) -> ConvergenceTracker:
@@ -654,7 +657,9 @@ class ConvergenceController:
                 state.converged = True
                 state.converged_score = score
                 state.converged_margin = state.tracker.margin(stderr)
-        if self._gate_stepped(before_rungs):
+        self.rung_exits = [(name, before_rungs[name]) for name, now in self._gate_rungs().items()
+                           if now > before_rungs[name]]
+        if self.rung_exits:
             self.rebaseline()
         return improved
 
@@ -663,10 +668,6 @@ class ConvergenceController:
         re-baselined."""
         return {"fade": 0 if self.fade.require_plateau else self.fade.rung,
                 "costs": 0 if self.costs.require_plateau else self.costs.rung}
-
-    def _gate_stepped(self, before: dict[str, int]) -> bool:
-        """A gate-stepped ladder moved on a rung at this evaluation (they never step back)."""
-        return any(now > before[name] for name, now in self._gate_rungs().items())
 
     def rebaseline(self) -> None:
         """Start the stage-level convergence over at a gate-stepped ladder's new rung.

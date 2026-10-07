@@ -608,7 +608,11 @@ A new best score saves `best.pt`.
   -1). A flat rung is not a collapse: M2's doorway sat at ~35% for 30M steps and raised nothing. The standard error is
   the summary's `<metric>_stderr` if it has one, else the binomial estimate over the summary's episode count, else
   0.02. One line in the learner's log, one row in `forge status`, cleared when the best improves; the last rung is not
-  watched. The sim-side wing ladder has the collapse alarm only: its reads are probe counts, with no env-step clock to
+  watched. **Recovery is a restore, so each rung's best is kept:** when a gate-stepped ladder leaves rung k, the
+  trainer copies `best.pt` (the best of the rung being left, the stepping evaluation's save included) to
+  `best_rung<k>.pt` in the run directory, before the new rung's first evaluation can overwrite `best.pt` and before
+  `latest.pt` records the step. The file is outside the `keep_checkpoints` rotation; a resume needs none of them.
+  `best.pt` itself stays "the best at the current rung". The sim-side wing ladder has the collapse alarm only: its reads are probe counts, with no env-step clock to
   hold a stall against.
 
 ### The convergence rule (`stage.py`)
