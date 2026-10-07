@@ -40,7 +40,6 @@ namespace Animus::Curriculum
     class EpisodeInfoTable;
     struct SeatActionResult;
     struct SeatView;
-    namespace DirectorLayout { struct DirectorView; }
 
     /// Who stood up again after a pull (see Encounter::OnRecovered).
     constexpr int32 RECOVERED_OWNER = -1;
@@ -96,11 +95,6 @@ namespace Animus::Curriculum
 
         /// Fill the parts of a seat's view this encounter knows.
         virtual void View(Env const& /*env*/, uint32 /*seat*/, SeatView& /*view*/) const { }
-
-        /// Fill the parts of a side's director view this encounter knows -- the objective, mostly: a flag match
-        /// knows the score and who carries what, and nothing else does.
-        virtual void ViewDirector(Env const& /*env*/, uint32 /*side*/,
-            DirectorLayout::DirectorView& /*view*/) const { }
 
         /// Each decision: before the seats are rewarded, each seat's reward terms, after every seat was rewarded.
         virtual void BeforeRewards(Env& /*env*/) { }

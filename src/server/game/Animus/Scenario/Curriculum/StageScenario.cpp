@@ -338,11 +338,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     // A reset stays on its env's own continent replica unless an arena sends the episode elsewhere (an instance, a
     // battleground, a quest giver's, a node's or an inn's map) or builds what every map shares and nothing locks: a
-    // core group (an owner, a party), the director's orders over the others. Only then is it safe to run on the map
+    // core group (an owner, a party). Only then is it safe to run on the map
     // thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
     _resetsStayOnMap = _continent && !stage.AnyArena([this](ArenaDefinition const& arena)
     {
-        return arena.Owner || arena.PartyGroup || arena.Directed || arena.Against == Opposition::Instance
+        return arena.Owner || arena.PartyGroup || arena.Against == Opposition::Instance
             || (arena.MapId && arena.MapId != _spawnMapId)
             || arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
             || arena.Against == Opposition::Town || arena.Against == Opposition::Flag;
@@ -416,17 +416,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         for (ClassProfile const& profile : ClassProfiles())
             ClassAssets::For(profile);
 
-    // A stage with any learned-directed arena carries the two director agents in every episode: the spec is
-    // fixed for the run, so the undirected episodes mark them absent instead (AgentPresence).
-    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Directed && arena.DirectorLearned; }))
-    {
-        Layout director = Layout::BuildDirector(_stage);
-        director.Index = uint16(_layouts.size());
-        _directorLayout = director.Index;
-        _layouts.push_back(std::move(director));
-    }
-
-    // The owner's own row, after the seats and the directors, where an arena plays it from a frozen checkpoint.
+    // The owner's own row, after the seats, where an arena plays it from a frozen checkpoint.
     // ... or a leader to follow (Opposition::Follow): the same slot, moved by the controller, played by a frozen
     // checkpoint in the episodes that cast it and by the seek helper's keys in the rest.
     _castOwner = _stage.AnyArena([](ArenaDefinition const& arena)
@@ -434,12 +424,12 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         return (arena.Owner && arena.OwnerCast) || arena.Against == Opposition::Follow
             || arena.Against == Opposition::PartyFollow;
     });
-    _spec.AgentsPerEnv = _seatCount + (HasDirectors() ? TEAM_COUNT : 0) + (_castOwner ? 1 : 0);
+    _spec.AgentsPerEnv = _seatCount + (_castOwner ? 1 : 0);
     for (Layout const& layout : _layouts)
     {
         _spec.ObsDim = std::max(_spec.ObsDim, layout.ObsDim);
         _spec.NumActions = std::max(_spec.NumActions, layout.NumActions);
-        _spec.Layouts.push_back(LayoutSpec{ layout.Director ? DirectorLayout::Name() : layout.Profile->Name,
+        _spec.Layouts.push_back(LayoutSpec{ layout.Profile->Name,
             layout.ObsDim, layout.NumActions });
     }
 
@@ -494,7 +484,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasInteract = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Interact; };
     auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
     auto const hasRoles = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Roles; };
-    auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
     // it); both check it. Rewards do not depend on each other's order: what several read (a seat's damage taken, the
@@ -564,22 +553,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
-    // Last: its orders are read from what every other encounter has already set up.
-    Encounter* director = nullptr;
-    if (_stage.AnyArena(directed))
-    {
-        auto owned = std::make_unique<DirectorEncounter>(*this, envs);
-        _director = owned.get();
-        director = add(std::move(owned));
-    }
 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
         town, hazards, _owner, _party, opponent, travel, markers, _follow, _partyFollow, seek, sight,
-        interact, combat, roles, flag,
-        director })
+        interact, combat, roles, flag })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -601,7 +581,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
-                || (encounter == roles && hasRoles(arena)) || (encounter == director && directed(arena));
+                || (encounter == roles && hasRoles(arena));
         };
 
         std::vector<Encounter*>& build = _arenaEncounters.emplace_back();
@@ -703,38 +683,14 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             return float(Data(env).Seats[seat].Look.Render.Width);
         });
 
-    if (HasDirectors())
-        _info.Add("reward_" + std::string(RewardTermName(RewardTerm::OrderChurn)), [this](Env const& env, uint32 agent)
-        {
-            for (uint32 side = 0; side < TEAM_COUNT; ++side)
-                if (DirectorAgent(side) == agent)
-                    return Data(env).DirectorRewards[side].Episode(RewardTerm::OrderChurn);
-            return 0.0f;
-        });
-
     // The episode's score (RewardLedger::Score): its Outcome and Cost terms as tuned, before the rung's tier and the
     // role's scale. Evaluation, best.pt and the league are judged on it rather than on the return, so shaping can be
-    // turned down without the yardstick moving with it. A director's is its side's mean, as its reward is.
+    // turned down without the yardstick moving with it.
     _info.Add("score_outcome", [this](Env const& env, uint32 agent)
     {
         if (agent < _seatCount)
             return Data(env).Seats[agent].Rewards.Score();
 
-        for (uint32 side = 0; side < TEAM_COUNT; ++side)
-        {
-            if (DirectorAgent(side) != agent)
-                continue;
-
-            float total = 0.0f;
-            uint32 seats = 0;
-            for (uint32 seat = 0; seat < _seatCount; ++seat)
-                if (OnSide(env, seat, side) && Data(env).Seats[seat].L)
-                {
-                    total += Data(env).Seats[seat].Rewards.Score();
-                    ++seats;
-                }
-            return seats ? total / float(seats) : 0.0f;
-        }
         return 0.0f;
     });
 
@@ -1630,7 +1586,6 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["team_seats"] = definition.Seats == SeatPlan::Teams ? definition.TeamSeats
             : definition.Seats == SeatPlan::Mirror ? 1u : 0u;
         entry["lone_seats"] = definition.Seats == SeatPlan::Teams ? definition.LoneSeats : 0u;
-        entry["directed"] = definition.Directed;
         entry["eval_only"] = definition.EvalOnly;
         // The party stages' arenas (G2, D1-D3): a pull drill, a corridor's length, and the stand-in's share of the
         // training runs.
@@ -1642,16 +1597,6 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["drill_seat"] = definition.DrillRole ? 0 : -1;
     }
 
-    // Agents beyond the seats: a directed arena's two directors (one a side, after the seats). The learner never
-    // casts a director's row.
-    boost::json::array& directorAgents = stageFile["director_agents"].emplace_array();
-    if (HasDirectors())
-    {
-        for (uint32 side = 0; side < TEAM_COUNT; ++side)
-            directorAgents.push_back(_seatCount + side);
-        // The director's sets and per-slot actions, for the learner's set encoder (DirectorLayout::SetDescriptor).
-        stageFile["director"] = DirectorLayout::SetDescriptor();
-    }
     // Agents the sim declares for a frozen checkpoint to play: the owner, where an arena casts it.
     boost::json::array& cast = stageFile["cast"].emplace_array();
     if (_castOwner)
@@ -1677,11 +1622,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
     state["arena_first"] = uint32(STATE_ARENA_FIRST);
     state["arena_count"] = MAX_ARENAS;
 
-    // Keyed by layout name, which for the director is "director": it has no class/role to be named after.
-    auto const layoutName = [](Layout const& layout)
-    {
-        return layout.Director ? std::string(DirectorLayout::Name()) : layout.Profile->Name;
-    };
+    auto const layoutName = [](Layout const& layout) { return layout.Profile->Name; };
 
     boost::json::object& models = stageFile["models"].emplace_object();
     for (Layout const& layout : _layouts)
@@ -1702,14 +1643,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         // The class's builds, in the order the episode info column "spec" indexes them, so the learner can group
         // and gate by build (target.spec_metrics) without having to know the classes.
         boost::json::array& specNames = entry["spec_names"].emplace_array();
-        if (!layout.Director && layout.Profile)
+        if (layout.Profile)
             for (SpecProfile const& spec : layout.Profile->Specs)
                 specNames.push_back(boost::json::string(spec.Name));
         // And the role each is drawn into a party's seat for (FitsDungeonRole: what it is geared for), so the learner
         // can grade a build against the others of its role -- a healer on keeping its group up, not on its party's
         // score, which a holy paladin casting two heals a fight shared with the seats that carried it (2026-10-04).
         boost::json::array& specRoles = entry["spec_roles"].emplace_array();
-        if (!layout.Director && layout.Profile)
+        if (layout.Profile)
             for (SpecProfile const& spec : layout.Profile->Specs)
                 specRoles.push_back(boost::json::string(spec.Stats == StatProfile::Tank ? "tank"
                     : spec.Stats == StatProfile::Healer ? "healer" : "damage"));
@@ -1858,7 +1799,7 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         goals["targets"] = GOAL_TARGETS;
         goals["block"] = "goal";
         // Where the next-run columns sit in the block, from its first column: the secondary ending, the event, the
-        // director's primary (a flag, then kind and target one-hots) and what was achieved (kind and target), and
+        // commanded primary (a flag, then kind and target one-hots) and what was achieved (kind and target), and
         // how many goals ACT carries a seat.
         boost::json::object columns;
         columns["secondary_ended"] = uint32(GoalBlock::OBS_SECONDARY_ENDED);
@@ -1976,9 +1917,6 @@ std::vector<Animus::Curriculum::StageScenario::Casting> Animus::Curriculum::Stag
     if (demand.Any())
         for (Layout const& layout : _layouts)
         {
-            if (layout.Director)
-                continue;
-
             for (uint8 spec : ClassAssets::For(*layout.Profile).SpecsMeeting(demand))
                 castings.push_back({ &layout, spec });
         }
@@ -1988,9 +1926,6 @@ std::vector<Animus::Curriculum::StageScenario::Casting> Animus::Curriculum::Stag
     if (castings.empty())
         for (Layout const& layout : _layouts)
         {
-            if (layout.Director)
-                continue;
-
             for (uint8 spec = 0; spec < uint8(layout.Profile->Specs.size()); ++spec)
                 castings.push_back({ &layout, spec });
         }
@@ -2210,7 +2145,7 @@ bool Animus::Curriculum::StageScenario::IsTerminal(Env const& env) const
 
 uint32 Animus::Curriculum::StageScenario::SideOf(Env const& env, uint32 seat) const
 {
-    // A party and a raid are one side, whatever their size: the director commands all of it.
+    // A party and a raid are one side, whatever their size.
     SeatPlan const plan = Arena(env).Seats;
     if (plan == SeatPlan::Party || plan == SeatPlan::Raid)
         return 0;
@@ -2227,11 +2162,6 @@ bool Animus::Curriculum::StageScenario::IsLoneSeat(Env const& env, uint32 seat) 
 
 bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 agent) const
 {
-    // The director of the far side is that side, as much as its seats are: a scripted-opponent evaluation has to
-    // replace both or the learner is still commanding the team it is being scored against.
-    if (HasDirectors() && agent >= _seatCount)
-        return agent == _seatCount + 1;
-
     // Self-play: the far side of the match is the opponent. One seat a side in a Mirror, TEAM_SEATS of them in
     // a Teams arena. Two groups sharing a zone are not opponents.
     if (Arena(env).Against == Opposition::Quest)
@@ -2343,8 +2273,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             seat.MapAgeOffset = seat.MapKeep ? frand(0.0f, std::max(0.0f, maps.AgeOffsetSeconds)) : 0.0f;
         }
     }
-    for (RewardLedger& director : data.DirectorRewards)
-        director.ResetEpisode();
     // No resurrection offer is in flight into a new episode, and the clock it was taken on has restarted.
     data.ResurrectBy.fill(NO_SEAT);
     data.ResurrectMs.fill(0);
@@ -2739,13 +2667,11 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     env.MapId = map->GetId();
     env.InstanceId = map->GetInstanceId();
-    // One agent slot per agent, seats first; an empty seat's slot holds no bot, and neither does a director's --
-    // it commands a side rather than playing a character. EnvPool wants one slot per agent either way.
+    // One agent slot per agent, seats first; an empty seat's slot holds no bot. EnvPool wants one slot per agent
+    // either way.
     env.Bots.clear();
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         env.Bots.push_back(seat < data.ActiveSeats ? SeatBot(env, seat)->GetGUID() : ObjectGuid::Empty);
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-        env.Bots.push_back(ObjectGuid::Empty);
     // The owner's slot: OwnerEncounter::Build fills it where the episode plays the owner through its row.
     if (_castOwner)
         env.Bots.push_back(ObjectGuid::Empty);
@@ -3139,12 +3065,11 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
     for (uint32 seat = 0; seat < _seatCount; ++seat)
     {
         SeatState& state = data.Seats[seat];
-        // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). Under a learned director the member's standing order
-        // is its primary, whatever it chose: one planner per group (OrderGoals.h). The secondary is the seat's own,
-        // and none when it would repeat the primary.
+        // Primary then secondary (GOAL_SLOTS_ON_WIRE a seat). The secondary is the seat's own, and none when it
+        // would repeat the primary.
         // A commanded arena's goal is given the same way (ArenaDefinition::CommandedGoals).
-        int32 ordered = _director ? _director->MemberGoal(env, seat) : NO_GOAL;
-        if (ordered == NO_GOAL && Arena(env).CommandedGoals)
+        int32 ordered = NO_GOAL;
+        if (Arena(env).CommandedGoals)
             ordered = state.Commanded;
         int32 const primary = ordered != NO_GOAL ? ordered : valid(goals[seat * GOAL_SLOTS_ON_WIRE]);
         int32 secondary = valid(goals[seat * GOAL_SLOTS_ON_WIRE + 1]);
@@ -3159,7 +3084,7 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
             int32 const goal = next[slot];
             // Any change of a goal still in progress -- its kind or its target -- is a plan abandoned, charged
             // (Goals.Switch); a goal that ended (reached, or no longer possible: the next enemy after this one died)
-            // is replaced free, and so is one the director's order set or replaced, which is not the seat's doing.
+            // is replaced free, and so is one a commanded goal set or replaced, which is not the seat's doing.
             if (goal != hold.Goal && hold.Goal != NO_GOAL && goal != NO_GOAL)
             {
                 ++state.GoalChanges;
@@ -3191,7 +3116,7 @@ void Animus::Curriculum::StageScenario::ApplyLook(Env& env, int32 const* look)
     EnvState& data = Data(env);
     Vision::Settings const& settings = Vision::Current();
     // The seats with a character this episode, and the cast owner while it is played through its row: the rows with
-    // a camera. A director's row, an empty seat's and an unplayed owner's are placeholders, never applied (R5).
+    // a camera. An empty seat's and an unplayed owner's rows are placeholders, never applied (R5).
     auto const take = [&](uint32 agent)
     {
         SeatState& seat = data.Seats[agent];
@@ -3308,11 +3233,6 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
         Data(env).Seats[OwnerAgent()].DecisionTargetKnown = false;
 
     AcceptResurrections(env);
-
-    // The directors speak first: a call made this decision is one the seats can already read when they act on it.
-    if (_director && DirectorsActive(env))
-        for (uint32 side = 0; side < TEAM_COUNT; ++side)
-            _director->Call(env, side, actions[_seatCount + side]);
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         ApplySeatAction(env, seat, actions[seat]);
@@ -3752,18 +3672,6 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
                 view.Enemies[slot] = nullptr;
 
         view.OpponentHidden = hidden(view.Opponent);
-
-        // The order's focus was the one thing here the filter never covered, so a seat observed a called
-        // target's distance, bearing and health through a wall. It now says only that it was told, which is
-        // what a player in that position knows.
-        if (hidden(view.Order.Focus))
-        {
-            view.Order.FocusUnseen = true;
-            view.Order.Focus = nullptr;
-        }
-        // And the seat's own order's enemy, the same way (a friend it is told to heal is not an enemy to hide).
-        if (view.Order.Kind != OrderKind::Heal && hidden(view.Order.Target))
-            view.Order.Target = nullptr;
     }
 
     return view;
@@ -3969,17 +3877,6 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
     // The seats have paid the goals they reached into this decision's reward; the row is the pool's again.
     Data(env).StepReward = nullptr;
 
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-    {
-        ObserveDirector(env, side, obs + (_seatCount + side) * _spec.ObsDim,
-            mask ? mask + (_seatCount + side) * _spec.NumActions : nullptr);
-        // A director has no camera, and no map.
-        if (uint8* row = imageRow(_seatCount + side))
-            Vision::FillNoFrame(row, _spec.ImageBytes);
-        if (uint8* row = mapRow(_seatCount + side))
-            std::fill(row, row + _spec.MapBytes, uint8(0));
-    }
-
     // The owner's row: a seat's observation when it is played through it, else an empty row that allows only
     // the no-op (the learner marks it absent, AgentPresence).
     if (_castOwner)
@@ -4007,35 +3904,11 @@ void Animus::Curriculum::StageScenario::Observe(Env& env, float* obs, float* sta
     WriteState(env, state);
 }
 
-void Animus::Curriculum::StageScenario::ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask)
-{
-    // The row is padded to the widest layout's, so clear all of it and let the director's own part fill the front.
-    std::fill(obs, obs + _spec.ObsDim, 0.0f);
-    if (mask)
-    {
-        std::fill(mask, mask + _spec.NumActions, uint8(0));
-        mask[DirectorLayout::ACTION_HOLD] = 1;
-    }
-
-    DirectorLayout::DirectorView view;
-    if (_director && DirectorsActive(env))
-    {
-        // Whether this decision is the director's turn to speak, before it sees that it is.
-        _director->PrepareTurn(env, side);
-        _director->ViewSide(env, side, view);
-    }
-
-    DirectorLayout::Observe(view, obs, mask);
-}
-
 void Animus::Curriculum::StageScenario::AgentLayouts(Env const& env, uint16* layout) const
 {
     EnvState const& data = Data(env);
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         layout[seat] = data.Seats[seat].L ? data.Seats[seat].L->Index : 0;
-
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-        layout[_seatCount + side] = uint16(_directorLayout);
 
     if (_castOwner)
         layout[OwnerAgent()] = data.Seats[OwnerAgent()].L ? data.Seats[OwnerAgent()].L->Index : 0;
@@ -4048,18 +3921,6 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
     // never trains on (protocol 25).
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         present[seat] = StandIn::Presence(data.Seats[seat].L != nullptr, data.StandInPlay.Seat == int32(seat));
-
-    // A director is an agent only in the episodes that have one; elsewhere it has nothing to say and earns
-    // nothing, so the learner should not train on its row.
-    // And only for a side it has seats to command: against creatures the far side has none.
-    bool const directing = DirectorsActive(env);
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-    {
-        bool commands = false;
-        for (uint32 seat = 0; seat < _seatCount && !commands; ++seat)
-            commands = OnSide(env, seat, side) && data.Seats[seat].L;
-        present[_seatCount + side] = directing && commands ? 1 : 0;
-    }
 
     // The owner is an agent only in the episodes that play it through its row (a follow stage's evaluation keeps its
     // scripted leader: the learner neither runs the cast actor nor trains on the row).
@@ -4076,7 +3937,7 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
     for (uint32 agent = 0; agent < agents; ++agent)
     {
         float* out = kinematics + std::size_t(agent) * K::SAMPLE_DIM;
-        // A seat's body, or the owner's when an arena plays it through its row; a director has none.
+        // A seat's body, or the owner's when an arena plays it through its row.
         bool const seat = agent < _seatCount || (_castOwner && agent == OwnerAgent());
         Player const* bot = seat && data.Seats[agent].L ? SeatBotInWorld(env, agent) : nullptr;
         if (!bot)
@@ -4110,12 +3971,6 @@ void Animus::Curriculum::StageScenario::AgentKinematics(Env const& env, float* k
         body.InCombat = bot->IsInCombat();
         K::Write(seconds, body, out);
     }
-}
-
-bool Animus::Curriculum::StageScenario::DirectorsActive(Env const& env) const
-{
-    ArenaDefinition const& arena = Arena(env);
-    return HasDirectors() && arena.Directed && arena.DirectorLearned;
 }
 
 bool Animus::Curriculum::StageScenario::SideCanSee(Env const& env, uint32 side, Unit const* unit) const
@@ -5395,34 +5250,6 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         reward[seat] = SeatReward(env, seat);
 
-    // A director is paid exactly what its side is paid, averaged: it has no body to score, and a team-level
-    // action is only worth what it did for the team. Any other reward would teach it to look busy.
-    //
-    // Less the compliance shaping its own orders earned those seats (RewardTerm::OrderMatch), which is the one
-    // part of their reward it can move without the fight going any better: a director that kept it would learn
-    // to call whoever its seats were already fighting. The seats are paid to follow; the director is paid only
-    // for what following achieved.
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-    {
-        float total = 0.0f;
-        uint32 seats = 0;
-        for (uint32 seat = 0; seat < _seatCount && DirectorsActive(env); ++seat)
-            if (OnSide(env, seat, side) && Data(env).Seats[seat].L)
-            {
-                total += reward[seat] - (_director ? _director->ShapingPaid(env, seat) : 0.0f);
-                ++seats;
-            }
-
-        // Its own charge for changing orders is shaping like any other, paid through its own ledger at the same
-        // scale, so it fades with the seats' and has a column.
-        RewardLedger& own = Data(env).DirectorRewards[side];
-        own.SetShaping(shaping);
-        float const churn = _director && DirectorsActive(env)
-            ? own.Add(RewardTerm::OrderChurn, -_director->OrderCost(env, side)) : 0.0f;
-        own.TakeStep();
-        reward[_seatCount + side] = (seats ? total / float(seats) : 0.0f) + churn;
-    }
-
     // The owner's row is observed and acted on but never paid: it is a frozen checkpoint's, not a learner's.
     // Its own bookkeeping still runs, so what it observes of itself next decision is not stale.
     if (_castOwner)
@@ -5755,8 +5582,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // ranged seat held SeatGoal::Position by standing at its range, and paying that every decision made keeping
     // away from the fight the second largest earner in the stage (2026-09-17: +0.93 an episode). Closing on it is
     // paid here, potential-based: what moving toward it earns, moving away gives back.
-    // The secondary at Goals.SecondaryShare, and charged Goals.Secondary for being held at all. A primary the
-    // director's order set is shaping for following the order: taken off the director's reward with the rest.
+    // The secondary at Goals.SecondaryShare, and charged Goals.Secondary for being held at all.
     for (uint32 slot = 0; slot < GOAL_SLOTS; ++slot)
     {
         GoalHold& hold = seat.Holds[slot];
@@ -5767,10 +5593,8 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         bool const unpaid = GroupHealer(env, seat) && SeatGoal(GoalKindOf(hold.Goal)) == SeatGoal::Fight;
         float const paid = unpaid ? 0.0f : _tuning.Goals.Progress * (slot ? _tuning.Goals.SecondaryShare : 1.0f)
             * (_tuning.Goals.ProgressGamma * potential - hold.Potential);
-        float const added = seat.Rewards.Add(RewardTerm::GoalProgress, paid);
+        seat.Rewards.Add(RewardTerm::GoalProgress, paid);
         hold.Potential = potential;
-        if (hold.FromOrder && _director)
-            _director->AddShaping(env, seatIndex, added);
     }
     if (seat.Holds[1].Goal != NO_GOAL)
     {
@@ -5915,15 +5739,6 @@ void Animus::Curriculum::StageScenario::EpisodeInfo(Env const& env, float* info)
 {
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         _info.Write(env, seat, info + seat * _spec.EpisodeInfoDim);
-
-    // A director has no character, so none of the per-seat columns mean anything for it. Its row is left zero,
-    // and `present` being one of those zeros is what keeps it out of the episode metrics; what the director did
-    // is reported by its side's seats (order_changes and the rest).
-    for (uint32 side = 0; side < TEAM_COUNT && HasDirectors(); ++side)
-    {
-        float* row = info + (_seatCount + side) * _spec.EpisodeInfoDim;
-        std::fill(row, row + _spec.EpisodeInfoDim, 0.0f);
-    }
 
     // The owner's row likewise: what happened to the owner is the seats' columns (owner_deaths and the rest),
     // and a zero `present` keeps the row out of every per-seat metric.

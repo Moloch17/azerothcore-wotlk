@@ -270,19 +270,6 @@ namespace Animus::Curriculum
         uint8 DrillRole = 0;
         /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
         uint32 PackHealthPct = 100;
-        /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
-        /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
-        /// would pay for an agent with nothing to say.
-        bool Directed = false;
-        /// The director is an agent that learns rather than the scripted one (DirectorEncounter). Costs
-        /// TEAM_COUNT more agents an env across the whole stage -- the spec is fixed, so a stage with one
-        /// learned-directed arena carries the pair in every episode and marks them absent where they are not
-        /// used. Ignored unless Directed.
-        bool DirectorLearned = false;
-        /// The director may name a place to go to (PlaceAnchor, PlaceOffset, PlaceRing). Off by default: the
-        /// thirteen actions stay masked in an arena with nowhere worth sending anyone, so no stage pays
-        /// exploration for a vocabulary it cannot use. Ignored unless Directed.
-        bool Places = false;
         /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
         /// every other seat plan.
         uint32 TeamSeats = TEAM_SEATS;

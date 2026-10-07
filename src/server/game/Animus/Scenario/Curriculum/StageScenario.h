@@ -20,7 +20,6 @@
 #define ANIMUS_LIB_CURRICULUM_STAGE_SCENARIO_H
 
 #include "CurriculumTuning.h"
-#include "DirectorLayout.h"
 #include "Encounter.h"
 #include "EpisodeInfoTable.h"
 #include "Layout.h"
@@ -39,7 +38,6 @@
 
 namespace Animus::Curriculum
 {
-    class DirectorEncounter;
     class OwnerEncounter;
     class FollowEncounter;
     class PartyFollowEncounter;
@@ -131,7 +129,7 @@ namespace Animus::Curriculum
 
         [[nodiscard]] char const* Name() const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
-        /// The far side of a self-play arena: its seats, and the director commanding them.
+        /// The far side of a self-play arena: its seats.
         [[nodiscard]] bool IsOpponentSeat(Env const& env, uint32 agent) const override;
         [[nodiscard]] ScenarioSpec Spec() const override { return _spec; }
 
@@ -213,7 +211,7 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 EpisodeMapId(Env const& env) const;
         [[nodiscard]] uint32 SeatCount() const { return _seatCount; }
         /// The owner's agent index (valid when a cast owner plays).
-        [[nodiscard]] uint32 OwnerAgent() const { return _seatCount + (HasDirectors() ? TEAM_COUNT : 0); }
+        [[nodiscard]] uint32 OwnerAgent() const { return _seatCount; }
         /// Whether this episode's owner is played through its row: a cast-owner arena's always, a follow stage's
         /// leader outside an evaluation.
         [[nodiscard]] bool CastOwnerActive(Env const& env) const;
@@ -230,15 +228,6 @@ namespace Animus::Curriculum
         Player* BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start, AptitudeDemand demand);
         /// Release the owner's seat: its character goes and its slot reads empty.
         void ReleaseOwnerSeat(Env& env);
-        /// Whether the run carries the two director agents at all (some arena of the stage has a learned
-        /// director), and whether the env's current episode is actually using them.
-        [[nodiscard]] bool HasDirectors() const { return _directorLayout != NO_LAYOUT; }
-        [[nodiscard]] bool DirectorsActive(Env const& env) const;
-        /// The agent index that commands `side`, or NO_SEAT when the run has no directors.
-        [[nodiscard]] uint32 DirectorAgent(uint32 side) const
-        {
-            return HasDirectors() ? _seatCount + side : NO_SEAT;
-        }
         /// The seats of `side`, in seat order, and how many there are (at most TEAM_SEATS).
         uint32 SideSeats(Env const& env, uint32 side, std::array<uint32, TEAM_SEATS>& out) const;
         /// Whether a side can see `unit` at all: any one of its living seats can.
@@ -458,9 +447,6 @@ namespace Animus::Curriculum
         void DrawStandIn(Env& env);
         /// The stand-in's episode info columns (with_stand_in and its style), in a stage with a party or raid arena.
         void AddStandInEpisodeInfo();
-        /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
-        /// and which calls it may make (DirectorLayout).
-        void ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask);
         [[nodiscard]] float SeatReward(Env& env, uint32 seat);
         /// Whether the seat's decision matched the goal it is pursuing (SeatGoal): damage for Fight, an enemy other
         /// than its target held for Control, healing or resting itself for Recover, healing or shielding the owner or
@@ -506,13 +492,7 @@ namespace Animus::Curriculum
         float _decisionScale = 1.0f;
         uint32 _decisionMs = 0;
 
-        /// The director encounter, or null when no arena of the stage has one. Owned by _encounters.
-        DirectorEncounter* _director = nullptr;
-
         std::vector<Layout> _layouts;
-        /// The director layout's index in _layouts, or NO_LAYOUT when no arena of the stage has a learned
-        /// director. The two director agents follow the seats: agent _seatCount + side commands side `side`.
-        uint32 _directorLayout = NO_LAYOUT;
 
         /// Per layout, how often a training episode draws it (the learner's WEIGHTS message); empty = evenly.
         std::vector<float> _layoutWeights;

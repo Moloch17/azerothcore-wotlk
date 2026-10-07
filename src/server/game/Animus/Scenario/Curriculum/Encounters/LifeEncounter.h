@@ -21,7 +21,6 @@
 
 #include "Block.h"
 #include "DifficultyLadder.h"
-#include "DirectorLayout.h"
 #include "Encounter.h"
 #include "LifeWorld.h"
 #include "WorldCoordinator.h"
@@ -181,8 +180,6 @@ namespace Animus::Curriculum
         void RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot, RewardLedger& ledger) override;
         [[nodiscard]] bool Finished(Env const& env, EnvLife const& life) const override;
         void AddMoreEpisodeInfo(EpisodeInfoTable& table) override;
-        /// The quest's undone objectives, as places a director can send members to.
-        void ViewDirector(Env const& env, uint32 side, DirectorLayout::DirectorView& view) const override;
 
     private:
         struct EnvQuest

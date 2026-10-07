@@ -773,22 +773,6 @@ void Animus::Curriculum::QuestEncounter::Sensed(Env const& env, EnvLife const& l
     }
 }
 
-void Animus::Curriculum::QuestEncounter::ViewDirector(Env const& env, uint32 side,
-    DirectorLayout::DirectorView& view) const
-{
-    EnvQuest const& quest = _quests[env.Index].Groups[std::min<uint32>(side, TEAM_COUNT - 1)];
-    LifeWorld::QuestCandidate const* current = quest.Quest();
-    Player* bot = nullptr;
-    for (uint32 seat = 0; seat < _scenario.Data(env).ActiveSeats && !bot; ++seat)
-        if (GroupOf(env, seat) == side)
-            bot = _scenario.SeatBot(env, seat);
-    if (!current || !bot || !quest.Accepted)
-        return;
-    view.HasObjective = true;
-    for (uint32 i = 0; i < current->Plan->Objectives.size() && i < view.Objectives.size(); ++i)
-        view.Objectives[i] = QuestPlanner::Progress(bot, *current->Plan, i) < 1.0f;
-}
-
 void Animus::Curriculum::QuestEncounter::RewardMore(Env& env, EnvLife& life, uint32 seat, Player* bot,
     RewardLedger& ledger)
 {

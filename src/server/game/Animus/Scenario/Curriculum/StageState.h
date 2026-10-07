@@ -730,9 +730,6 @@ namespace Animus::Curriculum
     /// EnvState::Arena before the env's first episode.
     constexpr uint32 NO_ARENA = ~uint32(0);
 
-    /// A layout index that names none: StageScenario::_directorLayout when no arena has a learned director.
-    constexpr uint32 NO_LAYOUT = ~uint32(0);
-
     struct EnvState
     {
         uint32 Arena = NO_ARENA;                // index into the stage's arenas: what this episode is
@@ -746,9 +743,6 @@ namespace Animus::Curriculum
         /// while reading as three. The episode columns `spawn_drawn` and `spawn_point` are these two fields.
         uint32 SpawnDrawn = 0;
         std::array<SeatState, MAX_SEATS> Seats;
-        /// Each side's director's own charges (RewardTerm::OrderChurn), apart from Seats: a director is agent
-        /// _seatCount + side, past MAX_SEATS in a forty-seat raid.
-        std::array<RewardLedger, TEAM_COUNT> DirectorRewards;
         /// This decision's reward row while the observation that follows it runs (Reward sets it, Observe clears
         /// it): a goal reached is paid into the decision that reached it, so the goal's own span carries it.
         float* StepReward = nullptr;

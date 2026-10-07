@@ -113,7 +113,7 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             Id::Map, Id::Sight, Id::PartyFrames, Id::Combat, Id::Goal })
             EXPECT_TRUE(stage.Has(block)) << name << " " << Cu::BlockName(block);
         // The party frames (revision 2) are the members' one source: no party or support block beside them.
-        for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Travel, Id::Order, Id::Companion })
+        for (Id block : { Id::Crowd, Id::Party, Id::Support, Id::Compass, Id::Travel, Id::Companion })
             EXPECT_FALSE(stage.Has(block)) << name << " " << Cu::BlockName(block);
         EXPECT_EQ(stage.SeatCount(), Cu::GROUP_SEATS) << name;
         for (Cu::ArenaDefinition const& arena : stage.Arenas)
@@ -122,8 +122,8 @@ TEST(DungeonStagesTest, TheStagesLayoutsAndEncounters)
             EXPECT_EQ(arena.Instance, Cu::InstanceLadder::Wing) << name << " " << arena.Name;
             EXPECT_EQ(arena.Seats, Cu::SeatPlan::Party) << name << " " << arena.Name;
             EXPECT_TRUE(arena.PartyGroup) << name << " " << arena.Name;
-            EXPECT_FALSE(arena.Owner || arena.Directed || arena.DeathRuns) << name << " "
-                << arena.Name << ": no owner, no director, no corpse run";
+            EXPECT_FALSE(arena.Owner || arena.DeathRuns) << name << " "
+                << arena.Name << ": no owner, no corpse run";
             EXPECT_GE(arena.InstanceRow, 0) << name << " " << arena.Name;
         }
     }

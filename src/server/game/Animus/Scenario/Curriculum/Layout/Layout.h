@@ -44,10 +44,6 @@ namespace Animus::Curriculum
         ClassAssets const* Assets = nullptr;
         uint32 ObsDim = 0;
         uint32 NumActions = 0;
-        /// The side's commander rather than a character: no class, no role, no catalog, and its own fixed
-        /// observation row and action space (DirectorLayout). One of these exists per run that has a directed
-        /// arena, shared by both sides and seeded down the stage chain like any other layout.
-        bool Director = false;
         std::vector<BlockId> Blocks;                // the stage's blocks, in layout order
         std::array<BlockSlice, BLOCK_COUNT> Slices{};
         std::vector<ActionCatalog::Action> AllyRevives; // resurrections and the soulstone (Catalog().Revives())
@@ -60,10 +56,6 @@ namespace Animus::Curriculum
 
         /// The layout of `profile` at `stage` (Index 0). Builds the profile's assets on first use.
         [[nodiscard]] static Layout Build(ClassProfile const& profile, StageDefinition const& stage);
-
-        /// The director's layout at `stage` (Index 0). Carries no blocks: what a director sees and says is one
-        /// fixed thing in every scenario, which is the whole point of having one network for all of them.
-        [[nodiscard]] static Layout BuildDirector(StageDefinition const& stage);
 
         [[nodiscard]] bool Has(BlockId block) const { return (_blockMask >> uint32(block)) & 1; }
         [[nodiscard]] BlockSlice const& Slice(BlockId block) const { return Slices[std::size_t(block)]; }

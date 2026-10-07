@@ -554,31 +554,6 @@ namespace Animus::Curriculum
         /// Life outside the fight (WorldBlock). Inactive in every arena that has no life encounter.
         WorldView World;
 
-        /// What the side's director asked of this seat. Advice, not a lever: the seat reads it and still chooses
-        /// its own actions. Inactive in an arena with no director, where every field below is ignored.
-        struct TeamOrder
-        {
-            bool Active = false;
-            TeamPosture Posture = TeamPosture::Attack;
-            TeamRally Rally = TeamRally::None;
-            Position RallyPlace;                    // where Rally resolved to, when it names a place
-            bool HasRallyPlace = false;
-            Unit* Focus = nullptr;                  // the enemy the side concentrates on, when one is called
-            /// A focus was called and this seat cannot see it. Without this, "no call" and "a call I cannot
-            /// see" are the same all-zero observation, and a seat told to kill someone it has lost would read
-            /// it as having been told nothing.
-            bool FocusUnseen = false;
-            bool IsDuty = false;                    // this seat owes an interrupt or a control (its own order)
-            /// The order to this seat alone (Component E): its kind, what it is about -- an enemy or a friend
-            /// (Target), a journal objective (Objective) or the called place (GoTo, RallyPlace) -- who it came
-            /// from, and how old it is. None when the seat holds only the side's order.
-            OrderKind Kind = OrderKind::None;
-            Unit* Target = nullptr;
-            uint32 Objective = 0;
-            OrderSource Source = OrderSource::Side;
-            float Age = 0.0f;                       // decisions since it was given / 40, clamped
-        } Order;
-
         // PvP: the enemy player.
         Player* Opponent = nullptr;
         bool OpponentHidden = false;                // the bot can neither see nor detect it

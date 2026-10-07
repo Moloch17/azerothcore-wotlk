@@ -33,7 +33,6 @@
 #include "FlagBlock.h"
 #include "ForecastBlock.h"
 #include "GoalBlock.h"
-#include "OrderBlock.h"
 #include "GauntletBlock.h"
 #include "HostilesBlock.h"
 #include "Layout.h"
@@ -53,9 +52,6 @@
 
 void Animus::Curriculum::DescribeSeatSets(Layout const& layout, boost::json::array& sets)
 {
-    if (layout.Director)
-        return;
-
     auto const segment = [](uint32 first, uint32 stride)
     {
         boost::json::object part;
@@ -131,7 +127,6 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static TravelBlock const travel;
     static FlagBlock const flag;
     static SupportBlock const support;
-    static OrderBlock const order;
     static WorldBlock const world;
     static ForecastBlock const forecast;
     static CrowdBlock const crowd;
@@ -144,13 +139,39 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static CombatBlock const combat;
     static GoalBlock const goal;
 
-    // In BlockId order.
-    static std::array<Block const*, BLOCK_COUNT> const blocks =
+    // Keyed by id: the ids have gaps (the deleted blocks' numbers are not reused).
+    static std::array<Block const*, BLOCK_COUNT> const blocks = [&]
     {
-        &core, &move, &compass, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet,
-        &travel, &flag, &support, &order, &world, &forecast, &crowd, &death, &vision, &entities, &map,
-        &sight, &partyFrames, &combat, &goal
-    };
+        std::array<Block const*, BLOCK_COUNT> table{};
+        table[std::size_t(BlockId::Core)] = &core;
+        table[std::size_t(BlockId::Move)] = &move;
+        table[std::size_t(BlockId::Compass)] = &compass;
+        table[std::size_t(BlockId::Duel)] = &duel;
+        table[std::size_t(BlockId::Pack)] = &pack;
+        table[std::size_t(BlockId::Gauntlet)] = &gauntlet;
+        table[std::size_t(BlockId::Companion)] = &companion;
+        table[std::size_t(BlockId::Party)] = &party;
+        table[std::size_t(BlockId::Pvp)] = &pvp;
+        table[std::size_t(BlockId::Context)] = &context;
+        table[std::size_t(BlockId::Hostiles)] = &hostiles;
+        table[std::size_t(BlockId::Pet)] = &pet;
+        table[std::size_t(BlockId::Travel)] = &travel;
+        table[std::size_t(BlockId::Flag)] = &flag;
+        table[std::size_t(BlockId::Support)] = &support;
+        table[std::size_t(BlockId::World)] = &world;
+        table[std::size_t(BlockId::Forecast)] = &forecast;
+        table[std::size_t(BlockId::Crowd)] = &crowd;
+        table[std::size_t(BlockId::Death)] = &death;
+        table[std::size_t(BlockId::Vision)] = &vision;
+        table[std::size_t(BlockId::Entities)] = &entities;
+        table[std::size_t(BlockId::Map)] = &map;
+        table[std::size_t(BlockId::Sight)] = &sight;
+        table[std::size_t(BlockId::PartyFrames)] = &partyFrames;
+        table[std::size_t(BlockId::Combat)] = &combat;
+        table[std::size_t(BlockId::Goal)] = &goal;
+        return table;
+    }();
 
+    ASSERT(std::size_t(id) < BLOCK_COUNT && blocks[std::size_t(id)], "No block has id {}", uint32(id));
     return *blocks[std::size_t(id)];
 }

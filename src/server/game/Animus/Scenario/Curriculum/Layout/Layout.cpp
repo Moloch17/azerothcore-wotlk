@@ -18,7 +18,6 @@
 
 #include "Layout.h"
 #include "ClassAssets.h"
-#include "DirectorLayout.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StageDefinition.h"
@@ -164,83 +163,6 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
     return false;
 }
 
-std::string_view Animus::Curriculum::PostureName(TeamPosture posture)
-{
-    switch (posture)
-    {
-        case TeamPosture::Attack:  return "attack";
-        case TeamPosture::Defend:  return "defend";
-        case TeamPosture::Protect: return "protect";
-        case TeamPosture::Recover: return "recover";
-        case TeamPosture::Regroup: return "regroup";
-        case TeamPosture::Hold:    return "hold";
-        case TeamPosture::Count:   break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::RallyName(TeamRally rally)
-{
-    switch (rally)
-    {
-        case TeamRally::None:      return "none";
-        case TeamRally::OwnBase:   return "own_base";
-        case TeamRally::EnemyBase: return "enemy_base";
-        case TeamRally::Carrier:   return "carrier";
-        case TeamRally::Focus:     return "focus";
-        case TeamRally::Spread:    return "spread";
-        case TeamRally::Stack:     return "stack";
-        case TeamRally::Point:     return "point";
-        case TeamRally::Count:     break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::AnchorName(PlaceAnchor anchor)
-{
-    switch (anchor)
-    {
-        case PlaceAnchor::TeamCentre:    return "team";
-        case PlaceAnchor::Focus:         return "focus";
-        case PlaceAnchor::LastSeenEnemy: return "last_seen";
-        case PlaceAnchor::Objective:     return "objective";
-        case PlaceAnchor::OwnBase:       return "own_base";
-        case PlaceAnchor::EnemyBase:     return "enemy_base";
-        case PlaceAnchor::Count:         break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::OffsetName(PlaceOffset offset)
-{
-    switch (offset)
-    {
-        case PlaceOffset::At:     return "at";
-        case PlaceOffset::Toward: return "toward";
-        case PlaceOffset::Away:   return "away";
-        case PlaceOffset::Left:   return "left";
-        case PlaceOffset::Right:  return "right";
-        case PlaceOffset::Count:  break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::RingName(PlaceRing ring)
-{
-    switch (ring)
-    {
-        case PlaceRing::Near:  return "near";
-        case PlaceRing::Far:   return "far";
-        case PlaceRing::Count: break;
-    }
-
-    return "unknown";
-}
-
 std::string_view Animus::Curriculum::BlockName(BlockId id)
 {
     switch (id)
@@ -259,7 +181,6 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Pet:       return "pet";
         case BlockId::Travel:    return "travel";
         case BlockId::Flag:      return "flag";
-        case BlockId::Order:     return "order";
         case BlockId::Support:   return "support";
         case BlockId::World:     return "world";
         case BlockId::Forecast:  return "forecast";
@@ -315,17 +236,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
     return layout;
 }
 
-Animus::Curriculum::Layout Animus::Curriculum::Layout::BuildDirector(StageDefinition const& stage)
-{
-    Layout layout;
-    layout.Stage = &stage;
-    layout.Director = true;
-    layout.ObsDim = DirectorLayout::OBS_COUNT;
-    layout.NumActions = DirectorLayout::ACTION_COUNT;
-    layout.ModeGroups.assign(layout.NumActions, 0);
-    return layout;
-}
-
 std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAction(uint32 action) const
 {
     for (BlockId id : Blocks)
@@ -352,14 +262,11 @@ boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)
 
 std::string Animus::Curriculum::Layout::ModelName() const
 {
-    return (Director ? DirectorLayout::Name() : Profile->Name) + Stage->Suffix;
+    return Profile->Name + Stage->Suffix;
 }
 
 std::vector<std::string> Animus::Curriculum::Layout::ActionNames() const
 {
-    if (Director)
-        return DirectorLayout::ActionNames();
-
     std::vector<std::string> names(NumActions);
     for (BlockId id : Blocks)
     {
@@ -381,8 +288,8 @@ std::string Animus::Curriculum::Layout::Manifest() const
     manifest["format"] = MANIFEST_FORMAT;
     manifest["model"] = ModelName();
     manifest["stage"] = Stage->Name;
-    manifest["class_name"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
-    manifest["class"] = Director ? 0 : Profile->Class;
+    manifest["class_name"] = Profile->Name.c_str();
+    manifest["class"] = Profile->Class;
     manifest["obs_dim"] = ObsDim;
     manifest["num_actions"] = NumActions;
 
@@ -393,7 +300,6 @@ std::string Animus::Curriculum::Layout::Manifest() const
     // Every build the class can have, because one model plays all of them, and what each one can do -- there is
     // no role to name, and the aptitude is the thing a reader of the manifest actually wants.
     boost::json::array& specs = manifest["specs"].emplace_array();
-    if (!Director)
     {
         ClassAssets const& assets = ClassAssets::For(*Profile);
         for (uint8 index = 0; index < uint8(Profile->Specs.size()); ++index)
