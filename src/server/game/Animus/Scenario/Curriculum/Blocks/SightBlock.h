@@ -43,7 +43,10 @@ namespace Animus::Curriculum
     /// focus -- each naming a slot, sent as the client sends them through the session's handlers. A slot with no
     /// entity cannot be pressed, and a game object cannot be selected, assisted or focused (the client cannot target
     /// one): the only masks. Anything else -- a remembered entity out of reach, out of sight or gone, a door too far,
-    /// a hostile to talk to -- is a legal press the world refuses, priced (Actions.Aimless.ActRefused).
+    /// a hostile to talk to -- is a legal press the world refuses, priced (Actions.Aimless.ActRefused). After the
+    /// slots' groups, one more press: **clear focus** (the client's /clearfocus, client-side, no packet; an action
+    /// added at the end, the columns unchanged), so a seat that focused a friend can cast its beneficial spells on
+    /// itself again. Never masked.
     ///
     /// **Spells in a stage with this block** go as the client sends them, CMSG_CAST_SPELL through the handler
     /// (EntityActions::CastThroughClient): a harmful one at the selection, a beneficial one at the focus when it is a
@@ -78,7 +81,8 @@ namespace Animus::Curriculum
             ACTION_USE_ITEM_FIRST   = 2 * SIGHT_SLOTS,
             ACTION_ASSIST_FIRST     = 3 * SIGHT_SLOTS,
             ACTION_FOCUS_FIRST      = 4 * SIGHT_SLOTS,
-            ACTION_COUNT            = 5 * SIGHT_SLOTS
+            ACTION_CLEAR_FOCUS      = 5 * SIGHT_SLOTS,
+            ACTION_COUNT            = 5 * SIGHT_SLOTS + 1
         };
         /// **The named row** (revision 2, M3 interact): after the slots, what the goal names (SeatView::NamedTask) as
         /// the entity list writes an entity -- present, class, type (the template entry) and game object, the rest of

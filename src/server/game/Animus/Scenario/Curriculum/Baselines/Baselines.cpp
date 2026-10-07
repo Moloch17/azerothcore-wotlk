@@ -99,6 +99,7 @@ namespace
         46584,  // Raise Dead
         31687,  // Summon Water Elemental
     };
+    constexpr uint32 CALL_PET = 883;    // a hunter's Call Pet (its first stable beast)
 
     /// A pet class's pet: call a hunter's first stable beast or cast the best summon when no living pet is out (out
     /// of combat only: a demon takes seconds to summon), then send the pet at the target.
@@ -922,6 +923,20 @@ std::optional<int32> Animus::Curriculum::Baselines::SpellFor(WingTeacher::Spell 
             if (std::optional<int32> shift = SpecFormSpell(row, layout))
                 return shift;
             return BuffSpell(row, layout);
+        case Spell::Summon:
+        {
+            // The best summon it knows, as `fight` picks it; a hunter's Call Pet.
+            std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+            for (uint32 summon : PET_SUMMONS)
+                for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
+                    if (actions[action].Type == ActionCatalog::Kind::Spell && actions[action].FirstRank == summon)
+                        if (std::optional<int32> cast = row.Allowed(BlockId::Core, action))
+                            return cast;
+            return FirstSpell(row, layout, [](ActionCatalog::Action const& action)
+            {
+                return action.Type == ActionCatalog::Kind::Spell && action.FirstRank == CALL_PET;
+            });
+        }
         case Spell::None:
             break;
     }

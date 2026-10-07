@@ -163,6 +163,10 @@ namespace Animus::Curriculum::EntityActions
     /// CMSG_ATTACKSWING at `target` through the seat's session's handler: the auto attack, started as the client
     /// starts it. False when there was nothing to send it through.
     bool StartAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port = SessionPort());
+    /// The pet bar's Attack (CMSG_PET_ACTION, COMMAND_ATTACK) at `target` for the seat's pet, through the session's
+    /// handler -- which takes it for the first controlled unit only, as the client's pet bar is. False with no pet.
+    bool PetAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port = SessionPort());
+    [[nodiscard]] WorldPacket PetAction(ObjectGuid pet, uint32 data, ObjectGuid target);
 
     /// **A press** on the entity `guid` (raw): judged as above, then sent. `focus` is the seat's client focus (Focus
     /// sets it). Result: Interactions, Selections and ItemUses for what was sent, ActRefused for a refusal; ActedOn

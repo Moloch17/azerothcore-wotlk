@@ -27,6 +27,7 @@
 #include "Player.h"
 #include "SeatView.h"
 #include "Spell.h"
+#include "CharmInfo.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "WorldSession.h"
@@ -53,6 +54,7 @@ namespace
                 case CMSG_GOSSIP_HELLO:  session->HandleGossipHelloOpcode(packet); break;
                 case CMSG_USE_ITEM:      session->HandleUseItemOpcode(packet); break;
                 case CMSG_CAST_SPELL:    session->HandleCastSpellOpcode(packet); break;
+                case CMSG_PET_ACTION:    session->HandlePetAction(packet); break;
                 default:                 break;
             }
         }
@@ -296,6 +298,24 @@ Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions
     }
     outcome.Sent = true;
     return outcome;
+}
+
+WorldPacket Animus::Curriculum::EntityActions::PetAction(ObjectGuid pet, uint32 data, ObjectGuid target)
+{
+    // HandlePetAction: the pet, the action button (action | type << 24), the target.
+    WorldPacket packet(CMSG_PET_ACTION, 8 + 4 + 8);
+    packet << pet << data << target;
+    return packet;
+}
+
+bool Animus::Curriculum::EntityActions::PetAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)
+{
+    Unit* pet = bot ? bot->GetFirstControlled() : nullptr;
+    if (!pet || target.IsEmpty() || !bot->GetSession())
+        return false;
+    WorldPacket packet = PetAction(pet->GetGUID(), MAKE_UNIT_ACTION_BUTTON(COMMAND_ATTACK, ACT_COMMAND), target);
+    port.Send(bot, packet);
+    return true;
 }
 
 bool Animus::Curriculum::EntityActions::StartAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)

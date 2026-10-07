@@ -105,6 +105,9 @@ namespace Animus::Curriculum::WingTeacher
         bool Ranged = false;            // the spec fights from range
         bool HasRangedPull = false;     // a pull from range is castable now (the adapter asks the layout)
         bool FocusOnFriend = false;     // the focus is a living friend: a beneficial spell goes there, not to the seat
+        bool PetClass = false;          // its class fights with a pet (a hunter's beast, a warlock's demon, ...)
+        bool PetOut = false;            // ... and a living one is out
+        bool PetOnTarget = false;       // ... attacking the seat's selection
         float FightSeconds = 0.0f;      // since the seat entered its current combat
 
         /// The keys held (the controller's ControlState).
@@ -148,6 +151,7 @@ namespace Animus::Curriculum::WingTeacher
         Heal,
         Defensive,
         Buff,
+        Summon,         // the pet's summon (a warlock's demon, a hunter's Call Pet, a ghoul, a water elemental)
     };
 
     enum class Do : uint8
@@ -158,8 +162,11 @@ namespace Animus::Curriculum::WingTeacher
         UseItem,
         Assist,
         Focus,
+        ClearFocus,     // the sight block's clear-focus press (the client's /clearfocus)
         Cast,           // a spell of Option::Cast
         StartAttack,
+        PetAttack,      // the pet bar's Attack at the selection (CMSG_PET_ACTION in a sight stage)
+        CallPet,        // a hunter's stable slot 0 (the duel block's call)
         Eat,
         Drink,
     };
@@ -237,10 +244,13 @@ namespace Animus::Curriculum::WingTeacher
             uint32 Count = 0;
         };
         Range Move;                 // MoveControls' actions
-        Range Sight;                // five pointer groups (select, interact, use item, assist, focus), a slot each
+        Range Sight;                // five pointer groups (select, interact, use item, assist, focus), a slot
+                                    // each, then clear focus
         Range Duel;
         Range Gauntlet;
-        uint32 StartAttack = 0;     // DuelBlock::ACTION_START_ATTACK
+        uint32 StartAttack = 0;     // DuelBlock::ACTION_START_ATTACK, ACTION_PET_ATTACK, ACTION_CALL_BEAST_FIRST
+        uint32 PetAttack = 1;
+        uint32 CallPet = 10;
         uint32 Eat = 0;             // GauntletBlock::ACTION_EAT, ACTION_DRINK
         uint32 Drink = 1;
     };

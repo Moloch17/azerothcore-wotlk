@@ -66,6 +66,10 @@ namespace Animus::Curriculum::Encoding
 
     /// Where the seat's positive single-target spells go: the support block's selected friend while it is alive
     /// (null otherwise), or the bot itself for a layout without the block.
+    /// Where a client sends a beneficial spell: the focus when it is a living friend, else the selection when it is
+    /// one, else the seat itself (the self-cast) -- a sight stage's rule. /clearfocus (SightBlock::ACTION_CLEAR_FOCUS)
+    /// is how a seat that focused a friend heals itself.
+    [[nodiscard]] Unit* BeneficialTarget(Player* bot, Unit* focus, Unit* selection);
     [[nodiscard]] Unit* SupportTarget(SeatView const& view);
 
     /// A positive spell that takes a unit target (a heal, shield, blessing or Hand), cast on a friend.

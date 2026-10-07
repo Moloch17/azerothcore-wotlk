@@ -19,7 +19,9 @@
 #include "Baselines.h"
 #include "CurriculumTuning.h"
 #include "EntityActions.h"
+#include "EncoderSupport.h"
 #include "EntranceRespawn.h"
+#include "CharmInfo.h"
 #include "HintBlock.h"
 #include "MoveControls.h"
 #include "SightBlock.h"
@@ -54,7 +56,7 @@ namespace
         Wt::PressSpace space;
         space.Move = { 1, MC::ACTION_COUNT };
         space.Sight = { space.Move.First + space.Move.Count, Cu::SightBlock::ACTION_COUNT };
-        space.Duel = { space.Sight.First + space.Sight.Count, 10 };
+        space.Duel = { space.Sight.First + space.Sight.Count, 12 };
         space.Gauntlet = { space.Duel.First + space.Duel.Count, 3 };
         return space;
     }
@@ -250,7 +252,8 @@ TEST(WingTeacherTest, ItMovesOnlyByHeldKeys)
         uint32 const action = uint32(press);
         bool const move = action >= space.Move.First && action < space.Move.First + space.Move.Count;
         bool const sight = action >= space.Sight.First && action < space.Sight.First + space.Sight.Count;
-        bool const swing = action == space.Duel.First + space.StartAttack;
+        bool const swing = action == space.Duel.First + space.StartAttack || action == space.Duel.First + space.PetAttack
+            || action == space.Duel.First + space.CallPet;
         bool const rest = action == space.Gauntlet.First + space.Eat || action == space.Gauntlet.First + space.Drink;
         bool const spell = action >= SPELL_ACTION - 20 && action <= SPELL_ACTION;
         EXPECT_TRUE(move || sight || swing || rest || spell) << action << " (" << choice.Reason << ")";
@@ -635,6 +638,7 @@ TEST(WingTeacherTest, TheRiseAtTheEntranceReplacesTheTeleportRejoin)
     EXPECT_FALSE(keys.contains("Instance.WingRiseMs")) << "the old rejoin's clock is gone";
     EXPECT_FALSE(keys.contains("Instance.WingAutoDoors")) << "no door opens by itself";
     EXPECT_TRUE(keys.contains("Instance.WingHintOffRung"));
+    EXPECT_TRUE(keys.contains("Instance.WingReferenceShare"));
 
     constexpr uint32 DECISION = 250;
     uint32 const delay = tuning.Respawn.DelayMs;
@@ -750,8 +754,13 @@ TEST(WingTeacherTest, TheTeacherStagesAreDefined)
         ASSERT_NE(stage, nullptr) << name << " was left out";
         EXPECT_FALSE(stage->InDefaultQueue) << name;
         for (Cu::BlockId block : { Cu::BlockId::Move, Cu::BlockId::Vision, Cu::BlockId::Entities, Cu::BlockId::Sight,
-            Cu::BlockId::Duel, Cu::BlockId::Gauntlet, Cu::BlockId::Pack, Cu::BlockId::Party, Cu::BlockId::Hint })
+            Cu::BlockId::Combat, Cu::BlockId::Duel, Cu::BlockId::Gauntlet, Cu::BlockId::Pack, Cu::BlockId::Party,
+            Cu::BlockId::Hint })
             EXPECT_TRUE(stage->Has(block)) << name << " " << Cu::BlockName(block);
+        // A heal goes as the client sends it (focus, friendly selection, self), never to a server list's friend; and
+        // the party frames are the combat block's.
+        EXPECT_FALSE(stage->Has(Cu::BlockId::Support)) << name;
+        EXPECT_FALSE(stage->Has(Cu::BlockId::PartyFrames)) << name;
         ASSERT_EQ(stage->Arenas.size(), 1u);
         Cu::ArenaDefinition const& arena = stage->Arenas.front();
         EXPECT_TRUE(arena.Teacher) << name;
@@ -763,4 +772,103 @@ TEST(WingTeacherTest, TheTeacherStagesAreDefined)
     EXPECT_EQ(Cu::FindStage("teacher_deadmines")->Arenas.front().InstanceRow, 1);
     for (std::string const& problem : Cu::CurriculumProblems())
         ADD_FAILURE() << problem;
+}
+
+// **A focused healer heals itself** after the sight block's clear-focus press (the client's /clearfocus): a beneficial
+// spell goes to the focus while it is a living friend, else a friendly selection, else the seat -- so the teacher's
+// healer clears its focus first, then heals, and the policy has the same press.
+TEST_F(WingTeacherHandlerTest, AFocusedHealerHealsItselfAfterClearingTheFocus)
+{
+    TestCreature* tank = CreateTestCreature(311, 90311, TEST_FACTION_HOSTILE_TO_MONSTERS);
+    std::array<uint64, Cu::SIGHT_SLOTS> guids{};
+    guids[3] = tank->GetGUID().GetRawValue();
+    ObjectGuid focus = tank->GetGUID();
+    Cu::SeatView view;
+    view.Bot = _bot;
+    view.SightGuids = &guids;
+    view.Focus = &focus;
+    if (tank->IsInWorld() && tank->GetMap() == _bot->GetMap() && _bot->IsFriendlyTo(tank))
+        EXPECT_EQ(Cu::Encoding::BeneficialTarget(_bot, tank, nullptr), tank) << "focused: the heal goes to the friend";
+
+    Cu::SeatActionResult result;
+    Cu::GetBlock(Cu::BlockId::Sight).Apply(view, Cu::SightBlock::ACTION_CLEAR_FOCUS, result);
+    EXPECT_TRUE(focus.IsEmpty()) << "/clearfocus forgets the focus";
+    EXPECT_EQ(Cu::Encoding::BeneficialTarget(_bot, nullptr, nullptr), _bot) << "no focus: the heal is the seat's own";
+
+    // The teacher's healer, hurt itself with a friend focused: clear the focus first, then heal.
+    Wt::PressSpace const space = Space();
+    std::vector<uint8> const mask = AllAllowed();
+    Wt::Facts facts = Rested(Wt::Role::Healer);
+    facts.Health = 0.4f;
+    facts.FocusOnFriend = true;
+    facts.Party[0].Focused = true;
+    Wt::Choice choice = Wt::Decide(facts);
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell),
+        int32(space.Sight.First + Cu::SightBlock::ACTION_CLEAR_FOCUS)) << choice.Reason;
+    facts.FocusOnFriend = false;
+    facts.Party[0].Focused = false;
+    choice = Wt::Decide(facts);
+    EXPECT_TRUE(Casts(choice, Wt::Spell::Heal)) << choice.Reason;
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell), AnySpell(Wt::Spell::Heal));
+}
+
+// **Pets** (owed before G2's warlock and hunter tanks): out of a fight with no pet out, a pet class calls or summons
+// it, standing; in a fight the pet is sent at the seat's selection (the pet bar's Attack, CMSG_PET_ACTION in a sight
+// stage) before the seat's own presses, while it is not on it already.
+TEST(WingTeacherTest, PetsAreSummonedAndSentAtTheTarget)
+{
+    Wt::PressSpace const space = Space();
+    std::vector<uint8> const mask = AllAllowed();
+    Wt::Facts facts = Rested(Wt::Role::Damage);
+    facts.PetClass = true;
+    Wt::Choice choice = Wt::Decide(facts);
+    EXPECT_TRUE(Has(choice, Wt::Do::CallPet)) << choice.Reason;
+    EXPECT_TRUE(Casts(choice, Wt::Spell::Summon)) << choice.Reason;
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell), int32(space.Duel.First + space.CallPet));
+    std::vector<uint8> noCall = mask;
+    noCall[space.Duel.First + space.CallPet] = 0;
+    EXPECT_EQ(Wt::Press(choice, space, noCall.data(), AnySpell), AnySpell(Wt::Spell::Summon)) << "a warlock's demon";
+    facts.Forward = 1;
+    EXPECT_FALSE(Has(Wt::Decide(facts), Wt::Do::CallPet)) << "a summon is cast standing";
+    facts.Forward = 0;
+
+    facts.PetOut = true;
+    EXPECT_FALSE(Has(Wt::Decide(facts), Wt::Do::CallPet));
+    Wt::Enemy target = Fighting(3.0f, 0.0f, 6);
+    target.Selected = true;
+    target.TankTarget = true;
+    target.OnTank = true;
+    AddEnemy(facts, target);
+    facts.FightSeconds = 5.0f;
+    choice = Wt::Decide(facts);
+    EXPECT_EQ(Wt::Press(choice, space, mask.data(), AnySpell), int32(space.Duel.First + space.PetAttack))
+        << choice.Reason;
+    facts.PetOnTarget = true;
+    EXPECT_FALSE(Has(Wt::Decide(facts), Wt::Do::PetAttack));
+
+    // The tank's pet (a voidwalker, a hunter's beast) on what the tank holds.
+    Wt::Facts tank = Rested(Wt::Role::Tank);
+    tank.PetClass = true;
+    tank.PetOut = true;
+    Wt::Enemy held = Fighting(2.0f, 0.0f, 9);
+    held.Selected = true;
+    held.OnTank = true;
+    AddEnemy(tank, held);
+    tank.Swinging = true;
+    EXPECT_TRUE(Has(Wt::Decide(tank), Wt::Do::PetAttack));
+
+    // The order's packet, as the client's pet bar sends it.
+    ObjectGuid const pet = ObjectGuid::Create<HighGuid::Pet>(416, 5);
+    ObjectGuid const mob = ObjectGuid::Create<HighGuid::Unit>(1234, 6);
+    WorldPacket packet = Ea::PetAction(pet, MAKE_UNIT_ACTION_BUTTON(COMMAND_ATTACK, ACT_COMMAND), mob);
+    EXPECT_EQ(packet.GetOpcode(), CMSG_PET_ACTION);
+    packet.rpos(0);
+    ObjectGuid readPet;
+    uint32 data = 0;
+    ObjectGuid readTarget;
+    packet >> readPet >> data >> readTarget;
+    EXPECT_EQ(readPet, pet);
+    EXPECT_EQ(UNIT_ACTION_BUTTON_ACTION(data), uint32(COMMAND_ATTACK));
+    EXPECT_EQ(UNIT_ACTION_BUTTON_TYPE(data), uint32(ACT_COMMAND));
+    EXPECT_EQ(readTarget, mob);
 }

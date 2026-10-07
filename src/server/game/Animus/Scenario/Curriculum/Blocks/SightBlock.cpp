@@ -264,6 +264,8 @@ void Animus::Curriculum::SightBlock::Observe(SeatView const& view, float* obs, u
     if (!mask)
         return;
 
+    // Clearing the focus is always a press the client can make.
+    mask[ACTION_CLEAR_FOCUS] = 1;
     // A slot with nothing in it cannot be pressed, and a game object cannot be targeted; nothing else is masked.
     for (uint32 slot = 0; slot < SIGHT_SLOTS; ++slot)
     {
@@ -282,6 +284,14 @@ void Animus::Curriculum::SightBlock::Apply(SeatView& view, uint32 local, SeatAct
 {
     if (local >= ACTION_COUNT || !view.SightGuids || !view.Bot)
         return;
+    // /clearfocus: the client forgets its focus; a beneficial spell goes to the selection or the seat again.
+    if (local == ACTION_CLEAR_FOCUS)
+    {
+        if (view.Focus)
+            view.Focus->Clear();
+        ++result.Selections;
+        return;
+    }
     uint64 const guid = (*view.SightGuids)[SlotOf(local)];
     if (!guid)
         return;
@@ -295,5 +305,7 @@ std::string Animus::Curriculum::SightBlock::ActionName(Layout const& /*layout*/,
 {
     if (local >= ACTION_COUNT)
         return {};
+    if (local == ACTION_CLEAR_FOCUS)
+        return "clear_focus";
     return Acore::StringFormat("{}_{}", PRESS_NAMES[local / SIGHT_SLOTS], SlotOf(local));
 }

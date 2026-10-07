@@ -132,7 +132,8 @@ TEST(SightBlockLayoutTest, TheListAndItsPointers)
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::Sight), "sight");
     EXPECT_EQ(Cu::SIGHT_SLOTS, 64u);
     EXPECT_EQ(block.Size(layout).Obs, Sight::OBS_COUNT);
-    EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS);
+    EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS + 1) << "five pointer groups, then clear focus";
+    EXPECT_EQ(block.ActionName(layout, Sight::ACTION_CLEAR_FOCUS), "clear_focus");
     EXPECT_EQ(uint32(Sight::SIGHT_VISIBLE), uint32(Cu::EntitiesBlock::ENTITY_FEATURES));
 
     boost::json::object entry;

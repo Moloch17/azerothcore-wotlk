@@ -430,6 +430,18 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
                 bot->Attack(target, true);
             return;
         case ACTION_PET_ATTACK:
+            // A sight stage orders its pet as the client does: the pet bar's Attack, CMSG_PET_ACTION through the
+            // session's handler.
+            if (view.L && view.L->Has(BlockId::Sight))
+            {
+                if (EntityActions::PetAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort()))
+                {
+                    ++result.PetOrders;
+                    result.PetOrderGiven = PetOrder::Attack;
+                }
+                return;
+            }
             if (Encoding::PetAttack(bot, target))
             {
                 ++result.PetOrders;

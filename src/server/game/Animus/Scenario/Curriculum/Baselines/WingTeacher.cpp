@@ -139,6 +139,22 @@ namespace
             TurnToSee(facts, choice, enemy.At);
     }
 
+    /// The pet sent at the seat's target, while it is not on it already: first of the fight's presses.
+    void SendPet(Wt::Facts const& facts, Wt::Choice& choice)
+    {
+        if (facts.PetClass && facts.PetOut && !facts.PetOnTarget)
+            choice.Add({ Wt::Do::PetAttack, 0, -1, Wt::Spell::None });
+    }
+
+    /// Out of a fight with no pet out: summon it, standing (a demon's summon is a cast), the hunter's call first.
+    void Summon(Wt::Facts const& facts, Wt::Choice& choice)
+    {
+        if (!facts.PetClass || facts.PetOut || facts.Forward != 0)
+            return;
+        choice.Add({ Wt::Do::CallPet, 0, -1, Wt::Spell::None });
+        AddCast(choice, Wt::Spell::Summon);
+    }
+
     /// Eating and drinking between pulls: sit until full, stop first, then eat and drink. True when it has a say.
     bool Rest(Wt::Facts const& facts, Wt::Choice& choice)
     {
@@ -202,6 +218,7 @@ namespace
     void Engage(Wt::Facts const& facts, Wt::Choice& choice, Wt::Enemy const& enemy)
     {
         uint32 key = 0;
+        SendPet(facts, choice);
         float const beyond = facts.Ranged ? Wt::CAST_BEYOND_YARDS : Wt::MELEE_YARDS;
         float const stop = facts.Ranged ? Wt::CAST_STOP_YARDS : Wt::MELEE_STOP_YARDS;
         if (enemy.At.Yards > beyond)
@@ -239,6 +256,7 @@ namespace
         // The loose one: taunt it, from where it stands.
         if (target.OnOther)
             AddCast(choice, Wt::Spell::Taunt);
+        SendPet(facts, choice);
         if (target.At.Yards > Wt::MELEE_YARDS)
         {
             // Pulled from range: let it come to the party rather than run into the next pack.
@@ -324,6 +342,7 @@ namespace
             return;
         }
 
+        Summon(facts, choice);
         // Ready: its buffs up, then the pack ahead if it is close and seen; else on along the route. A pack the seat
         // does not see (on a ledge, across the lava, round a corner) is turned to at most, never walked at: the route
         // passes every pack, and brings it into view from where it can be reached.
@@ -376,7 +395,7 @@ namespace
     {
         float const below = fight ? Wt::HEAL_FIGHT : Wt::HEAL_REST;
         int32 lowest = -1;
-        float lowestHealth = facts.Health < below && !facts.FocusOnFriend ? facts.Health : below;
+        float lowestHealth = facts.Health < below ? facts.Health : below;
         for (uint32 i = 0; i < facts.PartyCount; ++i)
         {
             Wt::Member const& member = facts.Party[i];
@@ -389,9 +408,16 @@ namespace
         uint32 key = 0;
         if (lowest < 0)
         {
-            if (facts.Health >= below || facts.FocusOnFriend)
+            if (facts.Health >= below)
                 return false;
-            // Itself, with no friend focused: a beneficial spell then goes to the seat.
+            // Itself: a beneficial spell goes to the focus while it is a living friend, so the focus is let go of
+            // first (/clearfocus), then the heal goes to the seat.
+            if (facts.FocusOnFriend)
+            {
+                choice.Reason = "the healer clears its focus to heal itself";
+                choice.Add({ Wt::Do::ClearFocus, 0, -1, Wt::Spell::None });
+                return true;
+            }
             choice.Reason = "the healer heals itself";
             AddKey(choice, Wt::Halt(facts, key), key);
             AddCast(choice, Wt::Spell::Heal);
@@ -443,6 +469,7 @@ namespace
         }
         if (Rest(facts, choice))
             return;
+        Summon(facts, choice);
         AddCast(choice, Wt::Spell::Buff);
         Follow(facts, choice);
     }
@@ -454,6 +481,7 @@ namespace
         {
             if (Rest(facts, choice))
                 return;
+            Summon(facts, choice);
             AddCast(choice, Wt::Spell::Buff);
             Follow(facts, choice);
             return;
@@ -625,8 +653,11 @@ int32 Animus::Curriculum::WingTeacher::Press(Choice const& choice, PressSpace co
             case Do::UseItem:       action = press(2, option.Slot); break;
             case Do::Assist:        action = press(3, option.Slot); break;
             case Do::Focus:         action = press(4, option.Slot); break;
+            case Do::ClearFocus:    action = slots ? allowed(space.Sight, 5 * slots) : -1; break;
             case Do::Cast:          action = spells ? spells(option.Cast) : -1; break;
             case Do::StartAttack:   action = allowed(space.Duel, space.StartAttack); break;
+            case Do::PetAttack:     action = allowed(space.Duel, space.PetAttack); break;
+            case Do::CallPet:       action = allowed(space.Duel, space.CallPet); break;
             case Do::Eat:           action = allowed(space.Gauntlet, space.Eat); break;
             case Do::Drink:         action = allowed(space.Gauntlet, space.Drink); break;
         }

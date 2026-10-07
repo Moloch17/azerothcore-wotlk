@@ -26,6 +26,7 @@
 #include "HintBlock.h"
 #include "MoveControls.h"
 #include "ObjectAccessor.h"
+#include "PetBlock.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "SightBlock.h"
@@ -120,7 +121,8 @@ int32 Animus::Curriculum::Baselines::TeacherPress(WingTeacher::Choice const& cho
 {
     static_assert(SightBlock::ACTION_INTERACT_FIRST == SIGHT_SLOTS && SightBlock::ACTION_USE_ITEM_FIRST == 2 * SIGHT_SLOTS
         && SightBlock::ACTION_ASSIST_FIRST == 3 * SIGHT_SLOTS && SightBlock::ACTION_FOCUS_FIRST == 4 * SIGHT_SLOTS
-        && SightBlock::ACTION_COUNT == 5 * SIGHT_SLOTS, "WingTeacher::Press reads the sight block's five groups");
+        && SightBlock::ACTION_CLEAR_FOCUS == 5 * SIGHT_SLOTS && SightBlock::ACTION_COUNT == 5 * SIGHT_SLOTS + 1,
+        "WingTeacher::Press reads the sight block's five groups and its clear-focus press");
     auto const range = [&layout](BlockId block)
     {
         Wt::PressSpace::Range out;
@@ -137,6 +139,8 @@ int32 Animus::Curriculum::Baselines::TeacherPress(WingTeacher::Choice const& cho
     space.Duel = range(BlockId::Duel);
     space.Gauntlet = range(BlockId::Gauntlet);
     space.StartAttack = DuelBlock::ACTION_START_ATTACK;
+    space.PetAttack = DuelBlock::ACTION_PET_ATTACK;
+    space.CallPet = DuelBlock::ACTION_CALL_BEAST_FIRST;
     space.Eat = GauntletBlock::ACTION_EAT;
     space.Drink = GauntletBlock::ACTION_DRINK;
     return Wt::Press(choice, space, mask, [&layout, obs, mask](Wt::Spell spell)
@@ -190,6 +194,13 @@ Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::Teache
         && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee;
     facts.FightSeconds = seat.InCombat
         ? float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, seat.CombatStartMs)) / 1000.0f : 0.0f;
+    // Its pet, as its pet bar and frame show it.
+    facts.PetClass = seat.L && seat.L->Profile && PetBlock::HasPet(seat.L->Profile->Class);
+    if (Unit* pet = bot->GetFirstControlled(); pet && pet->IsAlive() && pet->IsInWorld())
+    {
+        facts.PetOut = true;
+        facts.PetOnTarget = pet->GetVictim() && pet->GetVictim()->GetGUID() == bot->GetTarget();
+    }
     facts.Forward = seat.Controls.Held.Forward;
     facts.Strafe = seat.Controls.Held.Strafe;
     facts.TurnRate = seat.Controls.Held.TurnRate;
