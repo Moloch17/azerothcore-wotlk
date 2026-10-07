@@ -379,9 +379,6 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
     }
     seek.Rung = uint32(placed);
     seek.Carried = placed != ladder;
-    // The episode's clock is its placement rung's: short early episodes make the reward come often.
-    env.EpisodeLengthMs = (seek.Sweep ? std::max<uint32>(1, arena.EpisodeSeconds)
-        : Draw::RungSeconds(placed, RungSeconds(tuning))) * IN_MILLISECONDS;
 
     // Facing a random way where the scenario put the seat (a random hallway point, the entrance among them). The
     // scenario reads the seat's facing from the bot after the encounters are built.
@@ -401,10 +398,13 @@ bool Animus::Curriculum::SeekEncounter::Build(Env& env, Map* map, uint8 /*level*
             if (!front.empty())
                 seek.Room = int32(front[urand(0, uint32(front.size()) - 1)]);
             seek.Rung = uint32(Draw::Rung::Doorway);
-            seek.Fallback = true;
         }
         built = Place(env, seek, map, arena, bot->GetPhaseMask());
     }
+    // The episode's clock is its placement rung's (as placed: a hallway with nothing in sight is a doorway's): short
+    // early episodes make the reward come often.
+    env.EpisodeLengthMs = (seek.Sweep ? std::max<uint32>(1, arena.EpisodeSeconds)
+        : Draw::RungSeconds(Draw::Rung(seek.Rung), RungSeconds(tuning))) * IN_MILLISECONDS;
     if (seek.Room >= 0 && uint32(seek.Room) < arena.Rooms.size())
     {
         seek.Depth = Draw::Depths(arena.Rooms)[uint32(seek.Room)];
