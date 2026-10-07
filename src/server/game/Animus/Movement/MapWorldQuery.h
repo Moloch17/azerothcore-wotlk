@@ -48,11 +48,6 @@ namespace Animus::Movement
         [[nodiscard]] bool InTerrain(float x, float y, float z) const override;
         [[nodiscard]] float TerrainHeight(float x, float y) const override;
 
-        /// How far along the segment the first solid of the static tree (models), or of the dynamic tree (game
-        /// objects: doors), is, or -1 when there is none. The camera casts the two apart to tell a door from a model.
-        [[nodiscard]] float StaticHit(float x0, float y0, float z0, float x1, float y1, float z1) const;
-        [[nodiscard]] float DynamicHit(float x0, float y0, float z0, float x1, float y1, float z1) const;
-
         /// Collision rays cast and height queries made (for the cost line, C8).
         static inline std::atomic<uint64> Rays{ 0 };
         static inline std::atomic<uint64> Heights{ 0 };

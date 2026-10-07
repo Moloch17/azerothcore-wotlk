@@ -293,9 +293,6 @@ namespace Animus::Curriculum
         /// Get a seat's bot ready to fight something that fights back: no XP, a hunter's stable, a warrior's stance.
         void PrepareFighter(Player* bot, SeatState& seat) const;
 
-        /// Every seat, and the owner, stood up again after a pull: tell every encounter (see Encounter::OnRecovered).
-        void NotifyRecovered(Env& env, int32 who);
-
         /// Whether seat `seat` is dead with no resurrection of its own left to wait for (Tuning().Resurrection).
         [[nodiscard]] bool DeadForGood(Env const& env, uint32 seat) const;
 

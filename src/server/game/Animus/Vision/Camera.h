@@ -199,12 +199,6 @@ namespace Animus::Vision
         }
     }
 
-    /// Whether a class is a unit's (a cylinder) rather than a game object's or the world's.
-    [[nodiscard]] constexpr bool IsUnitClass(Class value)
-    {
-        return value >= Class::HostileCreature && value <= Class::Corpse;
-    }
-
     /// The decoded image channels the learner's encoder reads (the slot is not one of them: perception-goals
     /// amendment 10), and the scalars.
     constexpr uint32_t CHANNELS = 5;

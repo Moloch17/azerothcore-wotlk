@@ -347,25 +347,6 @@ namespace Animus::Client
         return 0;
     }
 
-    /// The flag acks (HandleMoveFlagChangeOpcode) end with a uint32 "is applied", except the gravity ones.
-    [[nodiscard]] constexpr bool AckCarriesApplied(OrderKind kind)
-    {
-        switch (kind)
-        {
-            case OrderKind::CanFly:
-            case OrderKind::UnsetCanFly:
-            case OrderKind::WaterWalk:
-            case OrderKind::LandWalk:
-            case OrderKind::FeatherFall:
-            case OrderKind::NormalFall:
-            case OrderKind::Hover:
-            case OrderKind::UnsetHover:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     [[nodiscard]] constexpr bool Applies(OrderKind kind)
     {
         return kind == OrderKind::CanFly || kind == OrderKind::WaterWalk || kind == OrderKind::FeatherFall

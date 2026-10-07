@@ -150,7 +150,6 @@ namespace Animus::Movement
         [[nodiscard]] bool Started() const { return _started; }
         [[nodiscard]] bool Rooted() const { return _rooted; }
         [[nodiscard]] uint32_t Granted() const { return _granted; }
-        [[nodiscard]] uint32_t LastReportMs() const { return _lastSendMs; }
         /// The flags the client reports for the body under `control` now.
         [[nodiscard]] uint32_t FlagsOf(ControlState const& control, Speeds const& speeds) const;
 

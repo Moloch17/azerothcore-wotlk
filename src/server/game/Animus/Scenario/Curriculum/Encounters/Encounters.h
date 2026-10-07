@@ -56,11 +56,6 @@ class WorldObject;
  */
 namespace Animus::Curriculum
 {
-    /// What stopping a cast was worth, as a multiple of the stage's own Interrupt weight: a heal undoes damage
-    /// already dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output
-    /// (IncomingSpell::Prevented). Never below 1 -- the flat term is how a class finds interrupting at all. Shared
-    /// so the duel and the pack price the same prevented cast the same way.
-    [[nodiscard]] float PreventedScale(float heal, float area, float longCast, uint8 prevented);
 
     /// How much an enemy matters to a party, for the order of the enemy slots (PACK_SLOTS, the first
     /// NAMED_ENEMY_SLOTS of them named by the other blocks): the tank's target, then what is on a player, what else
@@ -95,7 +90,6 @@ namespace Animus::Curriculum
         bool Build(Env& env, Map* map, uint8 level) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
-        void OnRecovered(Env& env, int32 who) override;
         void Teardown(Env& env) override;
 
     private:

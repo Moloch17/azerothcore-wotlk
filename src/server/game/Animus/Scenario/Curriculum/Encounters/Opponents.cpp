@@ -144,7 +144,6 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
     // something on the ground: a persistent area aura to walk out of.
     std::unordered_set<uint32> castTimeSmart;
     std::unordered_set<uint32> hazardSmart;
-    std::unordered_map<uint32, uint32> hazardSpellOf;       // creature entry -> the ground it lays
     if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
         "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
     {
@@ -159,10 +158,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
             if (spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
                 castTimeSmart.insert(entry);
             if (spell->HasEffect(SPELL_EFFECT_PERSISTENT_AREA_AURA) || spell->HasAreaAuraEffect())
-            {
                 hazardSmart.insert(entry);
-                hazardSpellOf.emplace(entry, spell->Id);
-            }
         } while (result->NextRow());
     }
 
@@ -205,11 +201,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
                 if (caster)
                     _castersByLevel[level].push_back(entry);
                 if (hazard)
-                {
                     _hazardCastersByLevel[level].push_back(entry);
-                    if (auto const spell = hazardSpellOf.find(entry); spell != hazardSpellOf.end())
-                        _hazardSpellsByLevel[level].push_back(spell->second);
-                }
             }
 
             opponents += defaultAI ? 1 : 0;
@@ -274,16 +266,6 @@ uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardCaster(uint8 lev
     return PickNear(_hazardCastersByLevel, level);
 }
 
-uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardSpell(uint8 level) const
-{
-    return PickNear(_hazardSpellsByLevel, level);
-}
-
-Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map)
-{
-    return FindSpawnPoint(bot, map, SPAWN_DISTANCE_MIN, SPAWN_DISTANCE_MAX);
-}
-
 Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map, float minDistance, float maxDistance)
 {
     // A random bearing and distance; retry bearings for a spot in line of sight on roughly level ground that the bot
@@ -344,35 +326,6 @@ std::optional<Position> Animus::Curriculum::Opponents::FindSpawnPointFrom(Player
     return std::nullopt;
 }
 
-Position Animus::Curriculum::Opponents::FindSpawnPointInWater(Player* bot, Map* map)
-{
-    constexpr float BODY_HEIGHT = 2.0f;
-    for (uint32 attempt = 0; attempt < SPAWN_ATTEMPTS * 2; ++attempt)
-    {
-        float const bearing = frand(0.0f, 2.0f * float(M_PI));
-        float const distance = frand(SPAWN_DISTANCE_MIN, SPAWN_DISTANCE_MAX);
-        float const x = bot->GetPositionX() + distance * std::cos(bearing);
-        float const y = bot->GetPositionY() + distance * std::sin(bearing);
-        map->LoadGrid(x, y);
-
-        // The bed under the spot, and the water over it: Map::GetHeight is blind to liquid.
-        float const bed = map->GetHeight(bot->GetPhaseMask(), x, y, bot->GetPositionZ() + 60.0f, true, 120.0f);
-        if (bed <= INVALID_HEIGHT)
-            continue;
-        LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), x, y, bed, bot->GetCollisionHeight(), {});
-        if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT
-            || (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) == 0
-            || liquid.Level - bed < BODY_HEIGHT)
-            continue;
-
-        Position pos(x, y, liquid.Level - bot->GetCollisionHeight() * 0.5f, frand(0.0f, 2.0f * float(M_PI)));
-        if (bot->IsWithinLOS(pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ() + 2.0f))
-            return pos;
-    }
-
-    return FindSpawnPoint(bot, map);
-}
-
 Creature* Animus::Curriculum::Opponents::SummonOpponent(Player* bot, Map* map, uint32 entry, Position const& pos,
     uint8 level)
 {
@@ -402,12 +355,6 @@ Creature* Animus::Curriculum::Opponents::SummonOpponent(Player* bot, Map* map, u
     opponent->SetRegeneratingHealth(false);
 
     return opponent;
-}
-
-std::vector<Creature*> Animus::Curriculum::Opponents::SpawnPack(Player* bot, Map* map,
-    std::vector<uint32> const& entries, uint8 level)
-{
-    return SpawnPack(bot, map, entries, level, FindSpawnPoint(bot, map));
 }
 
 std::vector<Creature*> Animus::Curriculum::Opponents::SpawnPack(Player* bot, Map* map,

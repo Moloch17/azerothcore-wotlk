@@ -109,48 +109,6 @@ namespace
     }
 }
 
-float Animus::Curriculum::Route::RemainingFrom(float x, float y, float /*z*/) const
-{
-    if (!Valid || Count == 0)
-        return -1.0f;
-
-    if (Count == 1)
-        return Flat(x, y, X[0], Y[0]);
-
-    // The seat's closest point on the route, and the arc length from there -- not "distance to the next corner
-    // plus the total from it".
-    //
-    // The difference is not pedantry, it is a reward exploit. Distance-to-the-next-corner steps down every time
-    // a corner is passed: a seat five yards short of a turn is five yards plus the rest, and the instant the
-    // corner is counted as reached the five yards vanish, because the leg to the *following* corner is measured
-    // from the turn rather than from the seat. Potential shaping pays for that drop. It is free, it is worth
-    // about five yards a corner, and it repeats -- the first measurement of it had failing episodes earning
-    // 0.687 of progress reward against arrivals' 0.386, which is to say wandering paid better than arriving.
-    //
-    // Projecting removes it: the value is continuous everywhere, including across a corner, so the only way to
-    // make it fall is to actually get closer to the objective.
-    float best = -1.0f;
-    for (uint32 i = 0; i + 1 < Count; ++i)
-    {
-        float const sx = X[i];
-        float const sy = Y[i];
-        float const dx = X[i + 1] - sx;
-        float const dy = Y[i + 1] - sy;
-        float const span = dx * dx + dy * dy;
-
-        float t = span > 0.0f ? ((x - sx) * dx + (y - sy) * dy) / span : 0.0f;
-        t = std::clamp(t, 0.0f, 1.0f);
-
-        float const px = sx + t * dx;
-        float const py = sy + t * dy;
-        float const total = Flat(x, y, px, py) + Flat(px, py, X[i + 1], Y[i + 1]) + Remaining[i + 1];
-        if (best < 0.0f || total < best)
-            best = total;
-    }
-
-    return best;
-}
-
 void Animus::Curriculum::Route::Advance(float x, float y, float /*z*/, float reachedWithin)
 {
     if (!Valid)

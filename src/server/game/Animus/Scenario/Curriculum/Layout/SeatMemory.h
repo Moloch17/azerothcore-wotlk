@@ -71,11 +71,6 @@ namespace Animus::Curriculum
         [[nodiscard]] float SinceModeChange(uint64 nowMs) const;                // / 10 s; 1 = never
         [[nodiscard]] float SelfHealthTrend() const { return _selfTrend; }      // health now - its average
         [[nodiscard]] float TargetHealthTrend() const { return _targetTrend; }
-        /// Forecasts (Component P): seconds until the target dies at the rate its health has been falling, and until
-        /// the seat's mana runs out at the rate it has been spending it -- each / 60 s, 1 for a minute or more or when
-        /// nothing is falling.
-        [[nodiscard]] float TargetSecondsLeft() const;
-        [[nodiscard]] float ManaSecondsLeft() const;
 
     private:
         std::vector<uint64> _readyMs;               // per action: when it may be pressed again

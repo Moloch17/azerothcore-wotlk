@@ -69,11 +69,6 @@ namespace Animus::Curriculum::LayeredField
         /// The navmesh polygons' flags on this floor; 0 where the floor is not on the mesh (a roof, a treetop,
         /// terrain the mesh left out).
         [[nodiscard]] uint8 NavFlags() const { return Flags & NAV_MASK; }
-        /// Whether what is above the floor is known to be open air: a navmesh floor, the terrain, the topmost
-        /// surface. The rest of a column's surfaces are what a downward scan hit, and the geometry is two-sided, so
-        /// some of them are the inner faces of something solid -- a canopy, a roof slab -- which a march must
-        /// still see (the core's height query finds them too) but a flight sense must not fly through.
-        [[nodiscard]] bool OpenAbove() const { return (Flags & OPEN_ABOVE) != 0; }
     };
     static_assert(sizeof(Interval) == 8);
 

@@ -119,27 +119,6 @@ float Animus::Movement::MapWorldQuery::RayFree(float x0, float y0, float z0, flo
     return free;
 }
 
-float Animus::Movement::MapWorldQuery::StaticHit(float x0, float y0, float z0, float x1, float y1, float z1) const
-{
-    if (_counted)
-        Rays.fetch_add(1, std::memory_order_relaxed);
-    float rx = 0.0f, ry = 0.0f, rz = 0.0f;
-    if (!_map->GetMapCollisionData().GetStaticTree().GetObjectHitPos(x0, y0, z0, x1, y1, z1, rx, ry, rz, 0.0f))
-        return -1.0f;
-    return std::sqrt((rx - x0) * (rx - x0) + (ry - y0) * (ry - y0) + (rz - z0) * (rz - z0));
-}
-
-float Animus::Movement::MapWorldQuery::DynamicHit(float x0, float y0, float z0, float x1, float y1, float z1) const
-{
-    if (_counted)
-        Rays.fetch_add(1, std::memory_order_relaxed);
-    float rx = 0.0f, ry = 0.0f, rz = 0.0f;
-    if (!_map->GetMapCollisionData().GetDynamicTree().GetObjectHitPos(_phaseMask, x0, y0, z0, x1, y1, z1, rx, ry, rz,
-        0.0f))
-        return -1.0f;
-    return std::sqrt((rx - x0) * (rx - x0) + (ry - y0) * (ry - y0) + (rz - z0) * (rz - z0));
-}
-
 float Animus::Movement::MapWorldQuery::Sweep(float x0, float y0, float z0, float x1, float y1, float z1,
     Body const& body) const
 {

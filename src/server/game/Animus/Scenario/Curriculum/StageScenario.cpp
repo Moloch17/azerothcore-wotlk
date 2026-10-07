@@ -2272,8 +2272,6 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The new bots go on idle sessions and into the map before the old ones leave, so the instance always has a
     // bound player.
     Player* firstNew = nullptr;
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->BeforeSeats(env, level);
     CurrentReset.PrepareNs += ResetSinceNs(prepareMark);
 
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
@@ -2687,15 +2685,6 @@ bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatI
 
     bool const canResurrect = bot && bot->GetUInt32Value(PLAYER_SELF_RES_SPELL);
     return !canResurrect || env.EpisodeElapsedMs >= tally.DeathMs + _tuning.Resurrection.GraceMs;
-}
-
-void Animus::Curriculum::StageScenario::NotifyRecovered(Env& env, int32 who)
-{
-    if (who >= 0)
-        Data(env).Seats[who].Combat.DeathCounted = false;
-
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->OnRecovered(env, who);
 }
 
 void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
@@ -4783,9 +4772,6 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         if (CastOwnerActive(env))
             TrackSeatStep(env, OwnerAgent(), env.FindBot(OwnerAgent()));
     }
-
-    for (Encounter* encounter : ActiveRewardOrder(env))
-        encounter->AfterRewards(env);
 }
 
 Unit* Animus::Curriculum::StageScenario::TrackSeatStep(Env& env, uint32 seatIndex, Player* bot)

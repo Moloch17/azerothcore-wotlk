@@ -90,12 +90,6 @@ namespace AnimusForge
         /// would need (every position final, no observation written). A measurement switch: what that barrier costs.
         bool ObserveAfterJoin = false;
         [[nodiscard]] bool HalvesTick() const { return HalfBatch && TicksPerDecision == 1; }
-        /// The world tick, and what the module expects OnUpdate's diff to be: TickMs, or half of it in half-batch,
-        /// where each half's maps tick every other world tick with the time of both.
-        [[nodiscard]] uint32 WorldTickMs() const
-        {
-            return HalvesTick() ? std::max<uint32>(1, TickMs() / 2) : TickMs();
-        }
         uint32 EpisodeSeconds = 60;
 
         std::string Policy;

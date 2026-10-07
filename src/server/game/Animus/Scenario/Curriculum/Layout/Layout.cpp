@@ -163,16 +163,6 @@ std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAc
     return std::nullopt;
 }
 
-boost::json::array Animus::Curriculum::SpellList(std::vector<ActionCatalog::Action> const& actions)
-{
-    boost::json::array list;
-    list.reserve(actions.size());
-    for (ActionCatalog::Action const& action : actions)
-        list.push_back(action.FirstRank);
-
-    return list;
-}
-
 boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)
 {
     return { first, count };

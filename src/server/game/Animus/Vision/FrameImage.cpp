@@ -373,7 +373,6 @@ bool Vi::ApngWriter::Add(RgbImage const& frame)
     std::string packed = Deflate(raw);
     if (packed.empty())
         return false;
-    _packedBytes += packed.size();
     _packed.push_back(std::move(packed));
     return true;
 }

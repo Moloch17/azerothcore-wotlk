@@ -73,9 +73,6 @@ namespace Animus::Curriculum
         uint32 _blockMask = 0;
     };
 
-    /// A manifest spell list: the first rank of every action.
-    [[nodiscard]] boost::json::array SpellList(std::vector<ActionCatalog::Action> const& actions);
-
     /// A manifest span of a row: [first, count].
     [[nodiscard]] boost::json::array Span(uint32 first, uint32 count);
 }
