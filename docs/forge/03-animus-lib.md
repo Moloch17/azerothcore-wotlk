@@ -23,10 +23,9 @@ This chapter covers the machinery: scenarios, env pools, bots, core seams, layou
 | `.../Stages/` | `StageDefinition`, `ArenaDefinition`, the stage list (`Stages.cpp`) and its validation |
 | `.../Layout/` | `Block` (interface), `Layout` (block placement, manifests), `SeatView`, `SeatEncoder`, `EncoderSupport` |
 | `.../Blocks/` | One class per block: `CoreBlock`, `MoveBlock`, `DuelBlock`, `PetBlock`, `PackBlock`, `GauntletBlock`, `CompanionBlock`, `PartyBlock`, `PvpBlock`, `ContextBlock`, `HostilesBlock`, `TravelBlock`, `FlagBlock`; `Blocks.cpp` (`GetBlock`) |
-| `.../Encounters/` | `Encounter` (interface), creature, pulls, owner, party, opponent, ambush, travel and flag encounters, `ScriptedPlayer`, `EnemyPlayers` (building scripted enemy players), `Opponents` (creature pools and spawn points), `EpisodeInfoTable` |
+| `.../Encounters/` | `Encounter` (interface), creature, pulls, owner, party, opponent, ambush, travel and flag encounters, `Opponents` (creature pools and spawn points), `EpisodeInfoTable` |
 | `.../Character/` | `ClassProfile` (the 10 classes and their 31 specs), `ClassAssets`, `ClassKit`, `TalentBuilder`, `SpecBuilds` (generated), `ActionCatalog`, `GearBuilder`, `GearStats`, `GearEnhancements`, `PetTalents`, `Supplies`, `WorldCreatures`, `SeatCharacter` |
 | `.../Rewards/` | `RewardLedger`, `CombatReward` (the shared one-on-one and pull reward terms) |
-| `.../Baselines/` | The scripted `greedy` and `fight` policies |
 | `src/Env/` | `Env`, `EnvPool`, `PoolRegistry` |
 | `src/Bot/` | `BotFactory`, `BotSlot`, `BotAccounts` |
 | `src/Core/` | `CoreHooks` |
@@ -71,7 +70,6 @@ A `Scenario` (`src/Scenario/Scenario.h`) defines one MDP. Every call runs on the
 | `IsTerminal(env)` | Each decision | True for a terminal state. The time limit ends an episode as a truncation otherwise |
 | `IsOpponentSeat(env, agent)` | Evaluation | Whether the agent is the other side of a self-play episode |
 | `EpisodeInfo(env, info)`, `EpisodeInfoNames()` | When an episode ends | Per-agent totals, one named column each |
-| `ScriptedAction(policy, obs, mask, layout, action)` | Local policies | A scripted baseline's action for one agent's row. False if the policy isn't known |
 | `SetLayoutWeights(weights)` | After each evaluation | How often training episodes draw each layout (the learner's `WEIGHTS`). Evaluation episodes ignore it. Optional |
 | `Teardown(env)` | Once | Remove bots (without saving) and targets |
 
@@ -170,13 +168,12 @@ pool.Teardown();
 So after `Collect`, `Obs` always describes an episode that is running. The done flags and final arrays describe the
 episode that just ended. This is the auto-reset convention the learner's GAE expects.
 
-`ChooseLocalActions(policy, opponentsOnly)` fills `Actions` without a learner. `random` picks uniformly among allowed
-actions. Any other name goes to `Scenario::ScriptedAction`. With `opponentsOnly`, only the opponent seats are
-overwritten. `SetLayoutWeights(weights)` passes the learner's per-layout draw weights to the scenario.
+`ChooseLocalActions(policy)` fills `Actions` without a learner. `random` picks uniformly among allowed actions and is
+the only policy; any other name returns false. `SetLayoutWeights(weights)` passes the learner's per-layout draw weights to the scenario.
 
 ### Seeded resets
 
-`SetEvaluation(enabled, seedBase, episodes, baseline, opponentsOnly)` switches the pool into evaluation. From the next
+`SetEvaluation(enabled, seedBase, episodes, baseline)` switches the pool into evaluation. From the next
 reset on, envs take seed indexes `0..episodes-1` in the order they reset. `ResetEnv` then:
 
 1. computes `seed = (seedBase + 1) * 2654435761 ^ (index + 1) * 2246822519` (never 0),

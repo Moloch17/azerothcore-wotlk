@@ -64,7 +64,7 @@ STEP_HEADER = struct.Struct("<QII")  # decision counter, first env, env count
 ACT_HEADER = struct.Struct("<II")
 # mode, seed base, episodes, flags, first seed, held-out arena (index + 1, 0 = the stage's own; 18), baseline policy
 MODE = struct.Struct(f"<IIIIII{POLICY_NAME_SIZE}s")
-MODE_FLAG_SCRIPTED_OPPONENTS = 1  # the baseline plays only the opponent seats; the learner the rest
+MODE_FLAG_SCRIPTED_OPPONENTS = 1  # unused since the scripted baselines went; the sim ignores it; goes at the next protocol change
 # The learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): an evaluation has it in
 # one seat of every party, training in its share of them; without the flag no party has one.
 MODE_FLAG_STAND_IN = 2
@@ -476,7 +476,7 @@ def decode_act(payload: bytes | bytearray | memoryview, agents: int, goals: bool
 
 
 def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline: str = "",
-                opponents_only: bool = False, first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> bytes:
+                first_seed: int = 0, arena: int = 0, stand_in: bool = False) -> bytes:
     """MODE payload. An evaluation plays seed indexes [first_seed, first_seed + episodes) of seed_base, so a
     cluster's sims can each play their own share of one evaluation's seeds (ClusterEnv). `arena` pins it to a held-out
     arena (stage.json's index + 1; 0 = the stage's own draw, protocol 18). `stand_in` (MODE_FLAG_STAND_IN): the learner
@@ -485,14 +485,13 @@ def encode_mode(evaluate: bool, seed_base: int = 0, episodes: int = 0, baseline:
     name = baseline.encode("ascii")
     if len(name) >= POLICY_NAME_SIZE:
         raise ValueError(f"baseline policy name '{baseline}' is too long")
-    flags = (MODE_FLAG_SCRIPTED_OPPONENTS if opponents_only else 0) | (MODE_FLAG_STAND_IN if stand_in else 0)
+    flags = MODE_FLAG_STAND_IN if stand_in else 0
     return MODE.pack(int(evaluate), seed_base, episodes, flags, first_seed, arena, name)
 
 
-def decode_mode(payload: bytes) -> tuple[bool, int, int, str, bool]:
-    mode, seed_base, episodes, flags, _first_seed, _arena, name = MODE.unpack(payload)
-    return (bool(mode), seed_base, episodes, name.split(b"\0", 1)[0].decode("ascii"),
-            bool(flags & MODE_FLAG_SCRIPTED_OPPONENTS))
+def decode_mode(payload: bytes) -> tuple[bool, int, int, str]:
+    mode, seed_base, episodes, _flags, _first_seed, _arena, name = MODE.unpack(payload)
+    return bool(mode), seed_base, episodes, name.split(b"\0", 1)[0].decode("ascii")
 
 
 def decode_mode_arena(payload: bytes) -> int:

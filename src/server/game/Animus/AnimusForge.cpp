@@ -1542,9 +1542,9 @@ void AnimusForge::Forge::BeginEvalVideos(std::vector<ModeMsg> const& modes)
     ForgeConfig const& run = RunConfig();
     ModeMsg const& mode = modes.front();
     Animus::ScenarioSpec const& spec = _pool->Spec();
-    // The learner's play only (against a scripted opponent too): a scripted baseline's evaluation is not filmed.
+    // The learner's play only: a baseline's evaluation is not filmed.
     if (mode.Mode != 1 || !run.VisionEvalVideos || !spec.ImageBytes || _pool->Image.empty()
-        || (!_pool->EvalBaseline().empty() && !_pool->EvalOpponentsOnly()))
+        || !_pool->EvalBaseline().empty())
         return;
 
     // The seeds this sim plays: every data-parallel learner's run of them.
@@ -2452,7 +2452,7 @@ void AnimusForge::Forge::LocalDecision(uint32 group)
     }
 
     auto const [begin, count] = _pool->GroupRange(group);
-    if (!_pool->ChooseLocalActions(_plan.Policy, false, begin, count))
+    if (!_pool->ChooseLocalActions(_plan.Policy, begin, count))
     {
         LOG_ERROR("module.animus", "Scenario {} could not choose actions with policy '{}'", _current, _plan.Policy);
         FinishCurrent(Outcome::Failed);
@@ -2757,11 +2757,9 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
     }
     _awaitingAnswer[target] = false;
 
-    // Scoring a scripted baseline on the evaluation seeds: its actions replace the learner's (only the opponent
-    // seats' when the learner plays against it).
+    // Scoring the random baseline on the evaluation seeds: its actions replace the learner's.
     auto const [begin, count] = _pool->GroupRange(target);
-    if (!_pool->EvalBaseline().empty()
-        && !_pool->ChooseLocalActions(_pool->EvalBaseline(), _pool->EvalOpponentsOnly(), begin, count))
+    if (!_pool->EvalBaseline().empty() && !_pool->ChooseLocalActions(_pool->EvalBaseline(), begin, count))
     {
         LOG_ERROR("module.animus", "Scenario {} could not run baseline '{}'; dropping the learner", _current,
             _pool->EvalBaseline());
@@ -2776,20 +2774,7 @@ void AnimusForge::Forge::RemoteDecision(uint32 group)
 
 bool AnimusForge::Forge::KnowsPolicy(std::string const& policy) const
 {
-    if (policy == "random")
-        return true;
-
-    // Only a built scenario can answer, and `forge bench` asks while the forge is idle, where there is none:
-    // say yes rather than crash on it. A trial that turns out not to know the policy reports as failed.
-    if (!_scenario)
-        return true;
-
-    // ScriptedAction answers whether the scenario has the policy; a blank row is enough to ask.
-    Animus::ScenarioSpec const spec = _scenario->Spec();
-    std::vector<float> obs(spec.ObsDim, 0.0f);
-    std::vector<uint8> mask(spec.NumActions, 0);
-    int32 action = 0;
-    return _scenario->ScriptedAction(policy, obs.data(), mask.data(), 0, action);
+    return policy == "random";
 }
 
 bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
@@ -2813,14 +2798,13 @@ bool AnimusForge::Forge::ApplyMode(ModeMsg const& mode)
     if (!_pool->PinEvaluationArena(mode.Mode == 1 ? mode.Arena : 0))
         return false;
 
-    bool const opponentsOnly = (mode.Flags & MODE_FLAG_SCRIPTED_OPPONENTS) != 0;
     // The "with the human stand-in" arm: set before the evaluation's first episodes are built, cleared by training.
     _pool->SetStandIn((mode.Flags & MODE_FLAG_STAND_IN) != 0);
-    _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, opponentsOnly, mode.FirstSeed);
+    _pool->SetEvaluation(mode.Mode == 1, mode.SeedBase, mode.Episodes, baseline, mode.FirstSeed);
 
     if (mode.Mode == 1)
         LOG_DEBUG("module.animus", "Evaluation: {} seeded episodes from seed {}, policy {}", mode.Episodes,
-            mode.SeedBase, baseline.empty() ? "learner" : opponentsOnly ? "learner against " + baseline : baseline);
+            mode.SeedBase, baseline.empty() ? "learner" : baseline);
     else
         LOG_DEBUG("module.animus", "Evaluation finished; training");
 

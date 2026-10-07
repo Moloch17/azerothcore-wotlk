@@ -910,9 +910,9 @@ bool AnimusForge::Forge::CommandBench(std::string const& scenario, LineSink cons
     if (!ValidScenario(benchScenario, out))
         return false;
 
-    if (!KnowsPolicy(_config.Bench.Policy) && _config.Bench.Policy != "random")
-        out(Acore::StringFormat("  AnimusForge.Bench.Policy '{}' may not exist for {}; a trial that cannot run it is "
-            "reported as failed.", _config.Bench.Policy, benchScenario));
+    if (!KnowsPolicy(_config.Bench.Policy))
+        out(Acore::StringFormat("  AnimusForge.Bench.Policy '{}' is not a local policy (only \"random\"); a trial that "
+            "cannot run it is reported as failed.", _config.Bench.Policy));
 
     // Every thread count against every env count, smaller envs first: a memory-heavy trial then only skips the
     // bigger ones of its thread count.

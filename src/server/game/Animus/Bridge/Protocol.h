@@ -117,9 +117,8 @@
  * they reset, and the scenario builds each one right after reseeding the world thread's random numbers from
  * (SeedBase, index) -- the same characters and opponents every evaluation, whatever the env count. Envs that
  * reset once every index is handed out run unseeded episodes (NO_EPISODE_SEED). With a Baseline policy name
- * the sim ignores the ACT actions and runs that scripted policy instead, so the learner can score it on the
- * same seeds; with MODE_FLAG_SCRIPTED_OPPONENTS as well, the policy plays only the opponent seats of self-play
- * episodes and the learner's actions the rest (learner against a scripted opponent); with MODE_FLAG_STAND_IN, every
+ * ("random") the sim ignores the ACT actions and runs that policy instead, so the learner can score it on the
+ * same seeds; with MODE_FLAG_STAND_IN, every
  * party has the "human" stand-in in one seat, a row the learner neither plays nor scores. MODE with Mode = 0 returns to
  * unseeded training episodes. Every new session (HELLO) starts in training mode, whatever mode the previous learner
  * left the sim in. Evaluation episodes always draw layouts evenly, whatever WEIGHTS asked for: seeded episode index
@@ -267,9 +266,7 @@ namespace AnimusForge
         char Name[LAYOUT_NAME_SIZE];
     };
 
-    /// ModeMsg::Flags. SCRIPTED_OPPONENTS: the Baseline policy plays only the scenario's opponent seats (the other
-    /// side of a self-play episode, see Scenario::IsOpponentSeat) and the learner's ACT actions play the rest.
-    constexpr uint32 MODE_FLAG_SCRIPTED_OPPONENTS = 1;
+    /// ModeMsg::Flags. Bit 1 is unused (it was SCRIPTED_OPPONENTS) and goes at the next protocol change.
     /// STAND_IN: the learner plays the "human" stand-in's row with a frozen partner (dungeon-curriculum I7): every
     /// party of an evaluation has the stand-in in one seat (the learner's "with the human stand-in" arm), and training
     /// draws it in its share of the parties (StandIn.Share and the arenas' own). Without it no party has one: a
@@ -284,7 +281,7 @@ namespace AnimusForge
         uint32 Flags;                       // MODE_FLAG_*
         uint32 FirstSeed;                   // the evaluation plays seed indexes [FirstSeed, FirstSeed + Episodes)
         uint32 Arena;                       // a held-out arena to play, its index + 1; 0 = the stage's own (18)
-        char Baseline[POLICY_NAME_SIZE];    // scripted policy to run instead of the learner's; empty = learner
+        char Baseline[POLICY_NAME_SIZE];    // policy to run instead of the learner's ("random"); empty = learner
     };
 
     /// WEIGHTS payload: Count, then that many float weights -- one per (class, spec), layout-major in the SPEC's

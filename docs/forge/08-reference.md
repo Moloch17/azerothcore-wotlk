@@ -21,7 +21,7 @@ Every key can also be set from the environment: `AC_` plus the key in upper snak
 | `AnimusForge.EpisodeSeconds` | `60` | Episode length for arenas without their own |
 | `AnimusForge.SpawnPoint.MapId` | `560` | Instanceable map every env starts in (Old Hillsbrad Foothills) |
 | `AnimusForge.SpawnPoint.X/Y/Z/O` | `2741.9`, `1315.2`, `14.0`, `2.96` | Spawn position |
-| `AnimusForge.Policy` | `"remote"` | `remote` (learner), `random`, `greedy`, `fight` |
+| `AnimusForge.Policy` | `"remote"` | `remote` (learner) or `random` |
 | `AnimusForge.ReportEpisodes` | `256` | Episode info means are taken over this many episodes |
 | `AnimusForge.Socket` | `"/tmp/animus-forge.sock"` | Learner socket |
 | `AnimusForge.Learner.AutoStart` | `1` | Start the learner as a child process |
@@ -32,7 +32,7 @@ Every key can also be set from the environment: `AC_` plus the key in upper snak
 | `AnimusForge.Learner.TorchThreads` | `0` | CPU threads for the learner's torch (`--set torch_threads`); 0 = torch's default |
 | `AnimusForge.Learner.LogFile` | `""` = `<LogsDir>/animus-learner.log` | Learner output |
 | `AnimusForge.Bench.Scenario` | `"stage4_duel"` | What `forge bench` times without a name |
-| `AnimusForge.Bench.Policy` | `"fight"` | Local policy the sim-only trials play |
+| `AnimusForge.Bench.Policy` | `"random"` | Local policy the sim-only trials play (the only one) |
 | `AnimusForge.Bench.Threads` | `"4, 8, 12, 16"` | `MapUpdate.Threads` values tried |
 | `AnimusForge.Bench.Envs` | `"64, 128, 192"` | `AnimusForge.Envs` values tried |
 | `AnimusForge.Bench.MaxEnvs` | `256` | Never try more envs than this |
@@ -342,8 +342,8 @@ LayoutMsg { u32 ObsDim, NumActions; char Name[48]; }
 ModeMsg   { u32 Mode;          // 0 training, 1 evaluation
             u32 SeedBase;
             u32 Episodes;      // seeded evaluation episodes
-            u32 Flags;         // 1 = MODE_FLAG_SCRIPTED_OPPONENTS
-            char Baseline[32]; // scripted policy to run instead of the learner; empty = learner
+            u32 Flags;         // 2 = MODE_FLAG_STAND_IN (1 is unused)
+            char Baseline[32]; // policy to run instead of the learner ("random"); empty = learner
           }
 ```
 
@@ -513,7 +513,7 @@ Other locations:
 | Term | Meaning |
 |---|---|
 | **Arena** | One situation a stage's episodes can be, drawn by weight each episode |
-| **Baseline** | A scripted policy (`greedy`, `fight`) scored on the evaluation seeds as a reference |
+| **Baseline** | The random policy scored on the evaluation seeds as a reference (no scripted baselines) |
 | **Block** | A group of observation features and actions (`core`, `move`, `duel`, ...) placed into layouts. `core` and `move` are in every layout |
 | **Class/role** | One trained model: a class in one role, over the specs that play it (`druid_tank`) |
 | **Confirmation** | Re-scoring `best.pt` on held-out seeds before a stage advances |

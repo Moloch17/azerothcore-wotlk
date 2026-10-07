@@ -100,9 +100,9 @@ def test_the_stand_in_flag_rides_on_mode():
     payload = p.encode_mode(True, 1000, 64, stand_in=True)
     assert p.decode_mode_stand_in(payload) and p.MODE.unpack(payload)[3] == p.MODE_FLAG_STAND_IN
     assert not p.decode_mode_stand_in(p.encode_mode(True, 1000, 64))
-    both = p.encode_mode(True, 1, 2, "fight", opponents_only=True, stand_in=True)
-    assert p.MODE.unpack(both)[3] == p.MODE_FLAG_SCRIPTED_OPPONENTS | p.MODE_FLAG_STAND_IN
-    assert p.decode_mode(both)[4]
+    both = p.encode_mode(True, 1, 2, "random", stand_in=True)
+    assert p.MODE.unpack(both)[3] == p.MODE_FLAG_STAND_IN
+    assert p.decode_mode(both)[3] == "random"
 
 
 # ------------------------------------------------------------------ the pool
@@ -276,7 +276,7 @@ class PartyEnv:
                       final_obs=np.zeros((2, 3, 3), np.float32), final_state=np.zeros((2, 4), np.float32),
                       episode_info=info, episode_seed=seeds)
 
-    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", opponents_only=False, **options):
+    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", **options):
         self.modes.append((evaluate, options.get("stand_in", False)))
         self.next_seed = 0
         return self._step(False)

@@ -316,14 +316,14 @@ def heldout_arenas(heldout: dict, stage: dict | None) -> dict[str, tuple[int, in
     return out
 
 
-def baseline_cache_key(policy: str, seed: int, episodes: int, opponents: str, arenas, tuning,
+def baseline_cache_key(policy: str, seed: int, episodes: int, arenas, tuning,
                        score_kind: str, shaping_scale: float = 1.0) -> dict:
-    """What a cached eval_baseline*.json summary is only good for: the scripted policy, the seeds, the opponents, the
+    """What a cached eval_baseline*.json summary is only good for: the policy, the seeds, the
     arenas, the tuning that prices the reward terms, and the kind of score it was summarised on ("" = the return).
     A summary on the return read against outcome scores would skew every per-class gap the training draw weights
     by (casting_weights). And the shaping scale it was played at: its outcome score should not move with it, but its
     return does, and the summary carries both."""
-    return {"policy": policy, "seed": seed, "episodes": episodes, "opponents": opponents, "arenas": list(arenas),
+    return {"policy": policy, "seed": seed, "episodes": episodes, "arenas": list(arenas),
             "tuning": tuning, "score": score_kind, "shaping": round(float(shaping_scale), 6)}
 
 
@@ -887,8 +887,6 @@ class TrainingRun:
         self.eval_log = EvalLog(self.run_dir, self.logger.tb,
                                 realism.columns(self.realism_reference) if self.realism_reference else ()) \
             if leader else Silent()
-        # Self-play arenas scored against the baseline as their opponent (eval.opponent_baseline).
-        self.opponents = config.eval.baseline if config.eval.opponent_baseline else ""
         self.baselines: dict[tuple[int, int], dict] = {}
         self.best_path = self.run_dir / "best.pt"
 
@@ -1323,7 +1321,7 @@ class TrainingRun:
         is_eval_seeds = (seed, episodes) == (config.eval.seed, config.eval.episodes)
         baseline_path = self.run_dir / ("eval_baseline.json" if is_eval_seeds
                                         else f"eval_baseline_{seed}_{episodes}.json")
-        key = baseline_cache_key(config.eval.baseline, seed, episodes, self.opponents, self.arena_names,
+        key = baseline_cache_key(config.eval.baseline, seed, episodes, self.arena_names,
                                  (self.stage or {}).get("tuning"), self.score_kind, self.controller.fade.scale)
         cached = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
         # The leader's cache decides for every rank: they all play the baseline, or none does.
@@ -1333,7 +1331,7 @@ class TrainingRun:
             summary = cached["summary"] if self.ranks.leader else None
         else:
             result = self._evaluate_share(self.learner_actions(), episodes, seed, baseline=config.eval.baseline,
-                                          opponents=self.opponents, arenas=self.arena_names,
+                                          arenas=self.arena_names,
                                           action_names=self.action_names)
             if self.ranks.leader:
                 summary = result.summary(self.report, self.phases)
@@ -1408,7 +1406,7 @@ class TrainingRun:
 
         self.progress.write("evaluating", self.update, self.env_steps)
         result = self._evaluate_share(self.learner_actions(), config.eval.episodes, config.eval.seed,
-                                      opponents=self.opponents, arenas=self.arena_names,
+                                      arenas=self.arena_names,
                                       action_names=self.action_names, trace_episodes=config.eval.trace_episodes,
                                       collect_motion=self.spec.kinematics_dim == motion.SAMPLE_DIM)
         if self.cast is not None or self.partners is not None:
@@ -1539,7 +1537,7 @@ class TrainingRun:
         """Score sampled actions on the evaluation seeds, next to the argmax evaluation that just ran."""
         config = self.config
         result = self._evaluate_share(self._acting(False), config.eval.episodes, config.eval.seed,
-                                      opponents=self.opponents, arenas=self.arena_names,
+                                      arenas=self.arena_names,
                                       action_names=self.action_names)
         if self.cast is not None or self.partners is not None:
             self._reset_far_side()

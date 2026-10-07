@@ -70,9 +70,6 @@ class EvalConfig:
     seed: int = 1000  # seed base: which characters and opponents
     deterministic: bool = True  # argmax actions instead of sampling
     baseline: str = ""  # sim scripted policy scored once per run on the same seeds ("greedy", "fight")
-    # Self-play arenas: the baseline also plays the other side of every self-play episode when the learner is scored
-    # (and against itself when the baseline is), so the score is the learner against a fixed opponent.
-    opponent_baseline: bool = False
     report: tuple[str, ...] = REPORT_COLUMNS  # episode info columns printed per level band, when present
     # Decision by decision, for the episodes with the first this many seed indexes: what the policy did and what goal
     # it said it was pursuing, written to eval_trace.jsonl (one object per decision per agent). A summary averages a

@@ -5259,10 +5259,6 @@ AnimusForge.SpawnPoint.O     = 2.96
 #        Description: Who chooses actions.
 #        Values:      "remote"          - lock-step with the Python learner over AnimusForge.Socket
 #                     "random"          - uniform over unmasked actions
-#                     "greedy"          - (curriculum stages) first usable spell or trinket
-#                     "fight"           - (curriculum stages with the duel block) start attacking, run
-#                                         to the target, first usable spell; eat and drink between
-#                                         gauntlet pulls; heal a hurt owner or teammate
 #        Default:     "remote"
 
 AnimusForge.Policy = "remote"
@@ -5873,11 +5869,11 @@ AnimusForge.Bench.Scenario = ""
 
 #
 #    AnimusForge.Bench.Policy
-#        Description: Local policy the sim-only trials play ("fight", "greedy", "random"). It decides how
-#                     much work a decision is, so keep the one closest to a trained policy.
-#        Default:     "fight"
+#        Description: Local policy the sim-only trials play ("random", the only one: there are no scripted
+#                     policies). The learner's own round trip is timed afterwards by the fastest trials.
+#        Default:     "random"
 
-AnimusForge.Bench.Policy = "fight"
+AnimusForge.Bench.Policy = "random"
 
 #
 #    AnimusForge.Bench.Threads

@@ -152,8 +152,6 @@ namespace Animus::Curriculum
         void Reward(Env& env, float* reward) override;
         void EpisodeInfo(Env const& env, float* info) const override;
         [[nodiscard]] std::vector<std::string> EpisodeInfoNames() const override { return _info.Names(); }
-        bool ScriptedAction(std::string const& policy, float const* obs, uint8 const* mask, uint16 layout,
-            int32& action) const override;
         void SetLayoutWeights(std::vector<float> const& weights) override;
         void Teardown(Env& env) override;
 

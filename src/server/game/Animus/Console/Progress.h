@@ -63,7 +63,7 @@ namespace AnimusForge
     struct SimSnapshot
     {
         std::string Scenario;
-        std::string State;                  // "training", "paused", "running greedy", ...
+        std::string State;                  // "training", "paused", "running random", ...
         uint32 PlanPosition = 0;            // 1-based
         uint32 PlanSize = 0;
         bool Remote = true;

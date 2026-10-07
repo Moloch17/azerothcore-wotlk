@@ -87,10 +87,9 @@ def test_mode_matches_cpp_layout():
     # 32-byte policy name, packed.
     assert p.MODE.size == 6 * 4 + 32
     assert p.decode_mode_first_seed(p.encode_mode(True, 1000, 64, "", first_seed=64)) == 64
-    assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight")) == (True, 1000, 128, "fight", False)
-    assert p.decode_mode(p.encode_mode(True, 1000, 128, "fight", opponents_only=True)) == (
-        True, 1000, 128, "fight", True)
-    assert p.MODE.unpack(p.encode_mode(True, 1, 2, "fight", opponents_only=True))[3] == p.MODE_FLAG_SCRIPTED_OPPONENTS
+    assert p.decode_mode(p.encode_mode(True, 1000, 128, "random")) == (True, 1000, 128, "random")
+    # Bit 1 is unused (the scripted opponents' flag): nothing sets it.
+    assert p.MODE.unpack(p.encode_mode(True, 1, 2, "random"))[3] == 0
 
 
 def test_weights_round_trip():

@@ -95,11 +95,11 @@ def test_eval_motion_npz_has_the_human_windows_layout(tmp_path):
 
 
 class WalkingEnv:
-    """One env, two agents (seat 1 the opponent), 5-decision episodes; agent a walks along x at a + 1 yd a decision."""
+    """One env, two agents, 5-decision episodes; each agent walks along x at 1 yd a decision."""
 
     SPEC = p.Spec(version=p.PROTOCOL_VERSION, num_envs=1, agents_per_env=2, obs_dim=1, state_dim=1, num_actions=1,
                   episode_info_dim=1, goal_count=0, tick_ms=50, decision_ticks=5, episode_seconds=2,
-                  scenario="fake", layouts=(p.Layout("warrior_dps", 1, 1),), episode_info_names=("opponent_seat",),
+                  scenario="fake", layouts=(p.Layout("warrior_dps", 1, 1),), episode_info_names=("level",),
                   kinematics_dim=motion.SAMPLE_DIM)
 
     def __init__(self):
@@ -109,7 +109,7 @@ class WalkingEnv:
     def _step(self, done: bool, seed: int) -> p.Step:
         kinematics = np.zeros((1, 2, motion.SAMPLE_DIM), np.float32)
         kinematics[0, :, motion.T] = self.t * 0.25
-        kinematics[0, :, motion.X] = self.t * np.array([1.0, 2.0])
+        kinematics[0, :, motion.X] = self.t * np.array([1.0, 1.0])
         kinematics[0, :, motion.SPEED] = 7.0
         return p.Step(decision=0, obs=np.zeros((1, 2, 1), np.float32), state=np.zeros((1, 1), np.float32),
                       mask=np.ones((1, 2, 1), bool), layout=np.zeros((1, 2), np.uint16),
@@ -119,7 +119,7 @@ class WalkingEnv:
                       episode_info=np.array([[[0.0], [1.0]]], np.float32),
                       episode_seed=np.array([seed if done else p.NO_EPISODE_SEED], np.uint32), kinematics=kinematics)
 
-    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", opponents_only=False, **_):
+    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", **_):
         self.t = 0
         self.seed = 0
         return self._step(False, 0)
@@ -136,14 +136,14 @@ class WalkingEnv:
 def test_an_evaluation_keeps_the_scored_seats_tracks():
     env = WalkingEnv()
     result, _ = run_evaluation(env, WalkingEnv.SPEC, lambda step: np.zeros((1, 2), np.int32), episodes=3, seed=1,
-                               opponents="fight", collect_motion=True)
-    # Three episodes, the opponent seat left out; each track is the episode's first five samples (the sample it ended
-    # on is the next episode's first).
-    assert len(result.motion_tracks) == 3
+                               collect_motion=True)
+    # Three episodes of two seats; each track is the episode's first five samples (the sample it ended on is the next
+    # episode's first).
+    assert len(result.motion_tracks) == 6
     for track in result.motion_tracks:
         np.testing.assert_array_equal(track[:, motion.X], np.arange(5) * 1.0)
     merged = EvalResult.merged([result, result])
-    assert len(merged.motion_tracks) == 6
+    assert len(merged.motion_tracks) == 12
     plain, _ = run_evaluation(env, WalkingEnv.SPEC, lambda step: np.zeros((1, 2), np.int32), episodes=3, seed=1)
     assert plain.motion_tracks == []
     feats, contexts, *_ = realism.tracks_features(result.motion_tracks)

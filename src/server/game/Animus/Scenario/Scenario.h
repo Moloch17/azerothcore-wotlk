@@ -166,8 +166,7 @@ namespace Animus
         /// reward: [AgentsPerEnv], from env.StepStats (cleared by EnvPool afterwards).
         virtual void Reward(Env& env, float* reward) = 0;
 
-        /// Whether `agent` is the other side of a self-play episode: evaluation can have a scripted policy play it
-        /// (MODE_FLAG_SCRIPTED_OPPONENTS) to score the learner against a fixed opponent.
+        /// Whether `agent` is the other side of a self-play episode (the learner's opponent_seat column).
         [[nodiscard]] virtual bool IsOpponentSeat(Env const& /*env*/, uint32 /*agent*/) const { return false; }
 
         /// True if the episode reached a terminal state (e.g. every agent died). Checked at each
@@ -187,12 +186,6 @@ namespace Animus
         /// A seat's place in its party, for the evaluation videos' choice of whom to film in a party (Vision::
         /// EvalVideoAgent): 1 tank, 2 healer, 3 damage, read off its build; 0 for none (no party, or no place drawn).
         [[nodiscard]] virtual uint32 FilmedRole(Env const& /*env*/, uint32 /*agent*/) const { return 0; }
-
-        /// Scripted baseline for local policies other than "random" (the forge's AnimusForge.Policy, the stage viewer's
-        /// policy), for one agent of `layout` (obs and mask are its row). Returns false if the scenario does not know
-        /// the policy.
-        virtual bool ScriptedAction(std::string const& policy, float const* obs, uint8 const* mask, uint16 layout,
-            int32& action) const = 0;
 
         /// How often training episodes should draw each layout of Spec().Layouts, in layout order (the learner's
         /// WEIGHTS message). Weights are relative, so all-ones is the even draw a scenario starts with; an empty

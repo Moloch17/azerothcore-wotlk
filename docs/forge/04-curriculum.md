@@ -1334,56 +1334,11 @@ taking the other's flag +1, returning its own +1, killing the carrier of its own
 and potential-based shaping toward the seat's current objective (+0.5 per 100 yd), started over whenever the
 objective changes, so a flag changing hands pays nothing by itself.
 
-## 4.7 Scripted baselines
+## 4.7 No scripted baselines
 
-`Baselines::Choose` reads a seat's row through its layout, so the baselines follow layout changes automatically.
-
-- **`greedy`**: the first allowed spell or trinket in catalog order. Every layout supports it.
-- **`fight`** (layouts with the duel block), first match wins:
-  1. with the travel block and an objective: dismount at it; far from it and not mounted, a flying mount where one
-     flies, else a ground mount; on a flying mount climb to 20 yd, land at the objective; otherwise **steer** for it
-     (and wait while moving, rather than cast something that would dismount). Steering weighs each bearing's aim at
-     the objective against what the ground probe says lies that way (`Baselines::Steer`, `GROUND_OVER_AIM`), so a
-     bearing onto ground the seat can cross beats one pointed straight into a cliff. It used to hold
-     `BEARING_FORWARD`, which is why it arrived in 8% of its episodes against a trained policy's 99%, a yardstick
-     anything cleared on the four movement stages. The bearing already being walked
-     is left alone rather than swapped for the second best, which would set the seat zig-zagging whenever the
-     objective sat between two bearings,
-  2. with the gauntlet block and no target: eat when health is low, drink when mana is low,
-  3. support: below 30% health, the first allowed defensive; the most hurt living friend below 60% (the bot itself
-     without the support block) selected, then its first allowed heal (a healer cancels a form first if needed); a
-     healer selects the owner or a tank teammate under attack without its HoT or shield and casts a kept-up heal,
-  4. (the masks keep it from healing a friend at full health or re-casting what is still up),
-  5. with the pet block and a pet class: out of combat with no living pet, call a stable beast or cast the best summon
-     (Felguard, Voidwalker, Felhunter, Succubus, Imp; Raise Dead; Water Elemental); with a pet out, send it at the
-     target,
-  6. a spec of the ranged band (hunters, casters, healers) holds range: more than 28 yd from a living target, move
-     to casting range (24 yd); with the target out of line of sight, move toward it; a hunter the target is hitting
-     in melee reach while its pet attacks the target backs off 10 yd (its shots can't be used there) and lets the
-     pet hold it; auto-attack only once the target is in melee reach (a hunter with no pet yet, or one still held),
-  7. a melee spec starts auto-attack,
-  8. and moves to a living target beyond melee reach while not already moving,
-  9. while its pet attacks the target, the pet's first allowed damaging ability (pets don't autocast, and an Imp or a
-     Water Elemental can't melee, so this is all they do),
-  10. otherwise its rotation (not `greedy`), first match wins:
-     - in no form, the spec's own: Moonkin Form (balance), Cat Form (feral cat), Dire Bear or Bear Form (feral bear),
-       Shadowform (shadow). Other forms and stances are never cast; `SeatCharacter::PrepareFighter` puts a warrior in
-       its stance,
-     - the first allowed damaging spell in catalog order: school or weapon damage, a leech, or a melee or ranged
-       weapon attack. A spell that only ticks is cast while its aura isn't on the target, and crowd control that
-       damage breaks (confuse, fear, transform) never,
-     - out of combat, a buff that isn't on the bot: an aura with no cooldown of its own, not speed, stealth,
-       invisibility or feigning death, and at most one of each exclusive kind (a seal, a paladin aura, an armor, an
-       aspect),
-     - otherwise nothing.
-
-     A cast resets the caster's swing timer (`Spell::cast`), and the first spell in catalog order is often a buff that
-     can be cast again forever. `greedy` presses one every decision the pacing allows, so a paladin with a slow
-     two-hander never lands a swing, and a caster holding range casts Lightning Shield or Inner Fire instead of ever
-     starting the fight.
-
-They are the reference numbers a trained policy has to beat (evaluation baseline) and a mechanics smoke test
-(`forge run <stage> fight`).
+There are none (principle 14): the `greedy` and `fight` policies, the `Baselines/` code and `forge run <stage> fight N`
+are gone. Smoke tests use the learner (`forge fast <stage>`); `forge run` and `forge bench` use the random policy,
+uniform over the unmasked actions.
 
 ## 4.8 The critic state
 
@@ -1734,9 +1689,8 @@ The PvP branch. It extends the endurance run and keeps only core, move, duel and
 gauntlet, companion and party blocks are not in its layouts, so the PvP line trains straight off the PvE one.
 Self-play: two learned seats of random classes and builds at one level, both played by the policy, so every fight
 is training data for both sides. The far side is the live policy or a frozen earlier checkpoint from the learner's
-cast league, never a script. A policy's score against itself does not track progress, so evaluation uses
-`eval.opponent_baseline`: the `fight` baseline plays seat 2, the score is seat 1 against it, and the baseline score
-is `fight` against `fight` on the same seeds. Config: gamma 0.999 and lambda 0.995, as a fight turns on what
+cast league, never a script. A policy's score against itself does not track progress, so progress is read
+off the league's win rates (`cast_members`, `cast_hardest_win_rate`). Config: gamma 0.999 and lambda 0.995, as a fight turns on what
 happened tens of seconds before (a stealthy approach, a trinket baited out). Budget 60M.
 
 ### `stage13_escape`: the `evade` arena

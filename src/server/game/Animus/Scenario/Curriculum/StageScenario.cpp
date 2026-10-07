@@ -23,7 +23,6 @@
 #include <span>
 #include "ResetTiming.h"
 #include "ControllerCost.h"
-#include "Baselines.h"
 #include "CharmInfo.h"
 #include "Battleground.h"
 #include "BotAccounts.h"
@@ -5946,24 +5945,6 @@ void Animus::Curriculum::StageScenario::EpisodeInfo(Env const& env, float* info)
         float* row = info + OwnerAgent() * _spec.EpisodeInfoDim;
         std::fill(row, row + _spec.EpisodeInfoDim, 0.0f);
     }
-}
-
-bool Animus::Curriculum::StageScenario::ScriptedAction(std::string const& policy, float const* obs,
-    uint8 const* mask, uint16 layoutIndex, int32& action) const
-{
-    if (_layouts.empty() || !Baselines::Supports(policy, _layouts.front()))
-        return false;
-
-    // A director has no scripted baseline to fall back on: its layout carries no catalog for one to reason
-    // about, and what a baseline director would say is nothing at all, which is the hold action.
-    if (layoutIndex < _layouts.size() && _layouts[layoutIndex].Director)
-    {
-        action = int32(DirectorLayout::ACTION_HOLD);
-        return true;
-    }
-
-    action = layoutIndex < _layouts.size() ? Baselines::Choose(policy, _layouts[layoutIndex], obs, mask) : 0;
-    return true;
 }
 
 void Animus::Curriculum::StageScenario::Teardown(Env& env)

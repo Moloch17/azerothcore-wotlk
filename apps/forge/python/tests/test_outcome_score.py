@@ -108,10 +108,10 @@ def test_a_checkpoint_of_the_same_kind_resumes_as_it_was():
 def test_a_changed_score_kind_misses_the_baseline_cache():
     """A baseline summarised on the return must be scored again for a run that scores outcomes: its per-class gaps
     weight the training draw."""
-    old = baseline_cache_key("fight", 1000, 64, "", ("solo",), {"Kill": 5.0}, "")
-    new = baseline_cache_key("fight", 1000, 64, "", ("solo",), {"Kill": 5.0}, "score_outcome")
+    old = baseline_cache_key("random", 1000, 64, ("solo",), {"Kill": 5.0}, "")
+    new = baseline_cache_key("random", 1000, 64, ("solo",), {"Kill": 5.0}, "score_outcome")
     assert old != new
-    assert new == baseline_cache_key("fight", 1000, 64, "", ["solo"], {"Kill": 5.0}, "score_outcome")
+    assert new == baseline_cache_key("random", 1000, 64, ["solo"], {"Kill": 5.0}, "score_outcome")
 
 
 def test_outcome_terms_come_from_the_sim():

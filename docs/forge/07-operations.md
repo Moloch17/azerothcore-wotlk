@@ -75,20 +75,20 @@ yourself (`python3 -m venv modules/mod-animus-forge/python/.venv` and
 `.conf`, and run `worldserver` in a terminal. Without `AnimusForge.OutputDir`, runs go into the module's `python/`
 directory.
 
-## 7.2 Smoke test with a scripted policy (no Python)
+## 7.2 Smoke test with the random policy (no Python)
 
 ```
-forge run stage4_duel fight 256
+forge run <stage> random 256
 forge status
 ```
 
-`forge run` builds the scenario and plays the `fight` baseline for 256 episodes. `forge status` shows the episode means:
-`killed`, `died`, `dps`, `casts_completed` and so on. This checks that characters build, opponents spawn and the
-mechanics behave, without any learner involved. Compare `random`, `greedy` and `fight`. Those numbers are what a
-trained policy must beat.
+`forge run` builds the scenario and plays uniformly random unmasked actions for 256 episodes. `forge status` shows the
+episode means. This checks that characters build, the arena spawns and the sim steps, without any learner involved. It
+says nothing about whether the stage can be learned: there are no scripted baselines (principle 14), so a smoke test of
+the behaviour is a short run with the learner (`forge fast <stage>`).
 
-To baseline every queued scenario, set `AnimusForge.Policy = "fight"` and `AnimusForge.Queue.LocalEpisodes = 1024`,
-then `forge start`.
+To run every queued scenario at random, set `AnimusForge.Policy = "random"` and `AnimusForge.Queue.LocalEpisodes =
+1024`, then `forge start`.
 
 ## 7.3 Fast test run
 
@@ -314,7 +314,7 @@ A stage never halts the plan: it advances when every class has converged, or at 
 1. Read `runs/<stage>/finished.json`: per class, whether it converged and which of `score`, `kl`, `entropy` and
    `ladder` it was still missing. `progress.json` carried the same while it ran (`weakest_layout`,
    `weakest_missing`), as does `forge status`.
-2. Read `eval.jsonl` for per class, per-band and per-arena scores next to the `fight` baseline, and `layouts.csv`
+2. Read `eval.jsonl` for per class, per-band and per-arena scores, and `layouts.csv`
    for each class's `entropy` and `approx_kl` over the run.
 3. Decide:
    - **It was still learning.** A class missing `score` or `kl` at the budget wanted more steps: raise
@@ -367,8 +367,8 @@ On a stock realm with mod-animus and the models (`.animus stage open` turns GM m
 
 To see exactly the training conditions, copy the run's `stage.json` `"tuning"` values into `Animus.Curriculum.*`, and
 match `Animus.Stage.DecisionMs`, `EpisodeSeconds`, `Level` and `SpawnPoint.*` to the forge settings. To look at one
-situation of stage 8: `.animus stage open stage21_ship model ambush`. To compare with the baseline:
-`.animus stage open stage9_deadmines fight`.
+situation of stage 8: `.animus stage open stage21_ship model ambush`. To watch the random policy:
+`.animus stage open stage9_deadmines random`.
 
 ## 7.8 Running the learner by hand
 
@@ -396,8 +396,7 @@ docker compose exec -w /azerothcore/apps/forge/python ac-dev-server .venv/bin/py
 **Standalone evaluation of a checkpoint** (the sim must be running the same scenario with no other learner attached):
 
 ```bash
-python -m animus.evaluate --checkpoint runs/stage4_duel/best.pt --episodes 128 --seed 1000 --baseline fight
-python -m animus.evaluate --checkpoint runs/stage12_duel_pvp/best.pt --baseline fight --opponent-baseline
+python -m animus.evaluate --checkpoint runs/<run>/best.pt --episodes 128 --seed 1000
 ```
 
 ## 7.9 Extending the curriculum
@@ -434,8 +433,7 @@ restart before the stage starts. The value is recorded in the run's `stage.json`
    lists.
 2. If it needs something the world can't provide directly, add a field to `SeatView` and fill it in the encounter's
    `View` (and in mod-animus's `CompanionParty::View` for companions).
-3. Update `Baselines.cpp` if it reads a moved index.
-4. Retrain every stage that has the block. Seeding treats a block whose size changed as incompatible, so retrain from
+3. Retrain every stage that has the block. Seeding treats a block whose size changed as incompatible, so retrain from
    the first stage that has it.
 
 ### Add a block
@@ -465,7 +463,7 @@ restart before the stage starts. The value is recorded in the run's `stage.json`
 2. Write `python/configs/<name>.yaml` with `extends: <parent>.yaml` and only what differs: `run_name`, budget, gamma,
    evaluation report, convergence, target, and `distill:` for a merge stage.
 3. Leave `InDefaultQueue` true to add it to `forge start`, or false to train it only by name.
-4. Check it: `forge run <name> fight 64`, then `forge fast <name>`.
+4. Check it: `forge run <name> random 64`, then `forge fast <name>`.
 5. For mod-animus, nothing else is needed. `.animus stage list` shows it and companions can use its models.
 
 ### Add a standalone scenario

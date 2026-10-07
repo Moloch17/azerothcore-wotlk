@@ -242,7 +242,7 @@ namespace
             table.AddRow({ "forge pause", "freeze the sim and the learner after the current decision" });
             table.AddRow({ "forge cancel", "stop the plan; the learner saves latest.pt first" });
             table.AddRow({ "forge skip", "end the current scenario and start the next one" });
-            table.AddRow({ "forge run <scenario> <policy> [episodes]", "run a scripted or random policy, no learner" });
+            table.AddRow({ "forge run <scenario> <policy> [episodes]", "run the random policy, no learner" });
             table.AddRow({ "forge controller record <player> <file> | stop", "record a Playtest player's movement packets (the human-capture format's Move and Speeds) until stopped, then write them" });
             table.AddRow({ "forge controller replay <file> [player]", "replay a recording (or a realm capture's move file) through the player controller: drift at 1/2/5/10 s, jumps, steps and slopes, and each client constant against what the recording measured (idle only)" });
             table.AddRow({ "forge controller probe <map> <x> <y> <z> [facing]", "the player controller's view of the world at a point (MapWorldQuery): the floor, its slope, the liquid, the free run along eight headings at the knee and the chest, the ceiling, and whether it is inside the terrain" });

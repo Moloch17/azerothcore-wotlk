@@ -110,7 +110,7 @@ namespace AnimusForge
         {
             Idle,
             Training,       // remote policy: lock-step with the learner
-            Running,        // local policy: scripted or random actions
+            Running,        // local policy: random actions
             Paused,
         };
 
@@ -342,7 +342,7 @@ namespace AnimusForge
         bool SendEveryGroup();
         bool ApplyMode(ModeMsg const& mode);
 
-        /// Whether the running scenario has the local policy `policy` ("random" or one of its scripted policies).
+        /// Whether `policy` is a local policy: "random", the only one.
         [[nodiscard]] bool KnowsPolicy(std::string const& policy) const;
 
         [[nodiscard]] SimSnapshot Snapshot(bool advanceRates);

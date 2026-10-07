@@ -41,8 +41,6 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=128)
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--baseline", default="", help="also score this scripted sim policy on the same seeds")
-    parser.add_argument("--opponent-baseline", action="store_true",
-                        help="self-play arenas: the baseline plays the other side (needs --baseline)")
     parser.add_argument("--socket", help="override the socket stored in the checkpoint config")
     parser.add_argument("--stochastic", action="store_true", help="sample actions instead of taking the argmax")
     parser.add_argument("--episodes-file", metavar="PATH",
@@ -89,9 +87,6 @@ def main() -> None:
 
     acting = trainer.acting_state(spec.num_envs, spec.agents_per_env)
 
-    if args.opponent_baseline and not args.baseline:
-        raise SystemExit("--opponent-baseline needs --baseline")
-    opponents = args.baseline if args.opponent_baseline else ""
     stage = checkpoint.get("stage") or {}
     if not stage and (stage_path := Path(args.checkpoint).parent / STAGE_FILE).is_file():
         # An older checkpoint carries no stage; the run directory's stage.json is the one it was trained on.
@@ -120,9 +115,9 @@ def main() -> None:
         baseline_result = None
         if args.baseline:
             baseline_result, _ = run_evaluation(env, spec, actions, args.episodes, args.seed, baseline=args.baseline,
-                                                opponents=opponents, arenas=arenas)
+                                                arenas=arenas)
             baseline = baseline_result.summary(REPORT_COLUMNS)
-        result, _ = run_evaluation(env, spec, actions, args.episodes, args.seed, opponents=opponents, arenas=arenas,
+        result, _ = run_evaluation(env, spec, actions, args.episodes, args.seed, arenas=arenas,
                                    action_names=action_names)
     finally:
         env.close()

@@ -12,10 +12,6 @@ for a stage that
 mixes arenas, by arena, each with the standard error of its score: combat rolls make two evaluations of the same
 networks differ, and the convergence test only counts an improvement that stands out from that noise.
 
-Self-play arenas can be scored against a scripted opponent: with `opponents` the sim plays the other side of each
-self-play episode with that policy (protocol MODE_FLAG_SCRIPTED_OPPONENTS), and the opponent seats' rows (episode
-info opponent_seat) are left out of the result -- of the learner's evaluation and of the baseline's, which then is the
-baseline against itself.
 """
 
 from __future__ import annotations
@@ -526,7 +522,7 @@ def standard_error(values: np.ndarray, groups: np.ndarray | None = None) -> floa
 
 
 def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline: str = "",
-                   max_decisions: int | None = None, opponents: str = "",
+                   max_decisions: int | None = None,
                    arenas: tuple[str, ...] = (),
                    action_names: dict[str, list[str]] | None = None,
                    spec_names: dict[str, list[str]] | None = None,
@@ -541,9 +537,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
 
     choose_actions(step) -> [E, A] actions, or (actions, goals) from a policy with a goal head (the goals go to the
     sim, which scores and reports them), or (actions, goals or None, look) from one with the free look (protocol 22;
-    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a scripted policy. `opponents`
-    names a scripted policy for the opponent seats of self-play episodes (the learner plays the rest, or `baseline`
-    everything); their rows are left out. `arenas` are the stage's arena names, for the per-arena summary.
+    a baseline's evaluation sends the hold look); ignored by the sim when `baseline` names a scripted policy. `arenas` are the stage's arena names, for the per-arena summary.
     `action_names` names each layout's actions in the per-episode log's action counts. `trace_episodes` records every
     decision of the episodes with the first seed indexes, in EvalResult.trace.
 
@@ -578,10 +572,7 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
         share["arena"] = arena
     if stand_in:
         share["stand_in"] = True
-    if baseline:
-        step = env.set_mode(True, seed, episodes, baseline, **share)
-    else:
-        step = env.set_mode(True, seed, episodes, opponents, opponents_only=bool(opponents), **share)
+    step = env.set_mode(True, seed, episodes, baseline, **share)
     # Decisions of the envs that might be tracing, kept until their episode ends and its seed is known.
     tracing: dict[int, list[dict]] = {env: [] for env in range(envs)} if trace_episodes else {}
     trace: list[dict] = []
@@ -593,8 +584,6 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     info_names = list(spec.episode_info_names)
     # A party seat left empty for an episode reports present = 0: it is not an episode of any class.
     present = info_names.index("present") if "present" in info_names else None
-    # Against a scripted opponent its seats are not the learner's (nor, for the baseline, the seat being scored).
-    opponent_seat = info_names.index("opponent_seat") if opponents and "opponent_seat" in info_names else None
     decisions = 0
     # Per env, its episode's samples so far ([A, SAMPLE_DIM] a decision), for the realism score.
     collect_motion = collect_motion and getattr(step, "kinematics", None) is not None \
@@ -647,7 +636,6 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                     motion_tracks.extend(
                         track[a] for a in range(agents)
                         if (present is None or step.episode_info[e, a, present] > 0.0)
-                        and (opponent_seat is None or step.episode_info[e, a, opponent_seat] <= 0.0)
                         and len(track[a]) > 1)
                 moving[e] = [np.array(step.kinematics[e])]
             if counted:
@@ -657,7 +645,6 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                      allowed[e, a].copy())
                     for a in range(agents)
                     if (present is None or step.episode_info[e, a, present] > 0.0)
-                    and (opponent_seat is None or step.episode_info[e, a, opponent_seat] <= 0.0)
                     and not dropped[a]
                 ]
             if tracing:

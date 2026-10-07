@@ -32,7 +32,7 @@ def test_mode_carries_the_pin_and_matches_the_sims_layout():
     assert p.MODE.size == 6 * 4 + 32
     payload = p.encode_mode(True, 1000, 16, first_seed=8, arena=3)
     assert p.decode_mode_arena(payload) == 3 and p.decode_mode_first_seed(payload) == 8
-    assert p.decode_mode(payload) == (True, 1000, 16, "", False)
+    assert p.decode_mode(payload) == (True, 1000, 16, "")
     assert p.decode_mode_arena(p.encode_mode(False)) == 0
 
 

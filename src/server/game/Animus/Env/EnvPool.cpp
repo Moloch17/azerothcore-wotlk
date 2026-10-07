@@ -478,60 +478,54 @@ void Animus::EnvPool::DescribeAgents(Env const& env)
     _scenario.AgentKinematics(env, &KinematicSamples[std::size_t(first) * Kinematics::SAMPLE_DIM]);
 }
 
-bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, bool opponentsOnly, uint32 begin, uint32 count)
+bool Animus::EnvPool::ChooseLocalActions(std::string const& policy, uint32 begin, uint32 count)
 {
+    // The one local policy there is: the learner plays everything that is not random.
+    if (policy != "random")
+        return false;
+
     uint32 const end = std::min<uint32>(NumEnvs(), count == UINT32_MAX ? NumEnvs() : begin + count);
     uint32 const agents = end * _spec.AgentsPerEnv;
     uint32 const numActions = _spec.NumActions;
-    bool const random = policy == "random";
 
     for (uint32 i = begin * _spec.AgentsPerEnv; i < agents; ++i)
     {
-        if (opponentsOnly && !_scenario.IsOpponentSeat(_envs[i / _spec.AgentsPerEnv], i % _spec.AgentsPerEnv))
-            continue;
-
-        float const* obs = &Obs[i * _spec.ObsDim];
         uint8 const* mask = &Mask[i * numActions];
         // A local policy does not look: the camera's rates let go and its zoom held (it eases back in follow mode).
         if (!Look.empty())
             std::copy(Vision::FreeLook::NEUTRAL.begin(), Vision::FreeLook::NEUTRAL.end(),
                 Look.begin() + std::size_t(i) * _spec.LookHeads);
 
-        if (random)
+        uint32 allowed = 0;
+        for (uint32 a = 0; a < numActions; ++a)
+            allowed += mask[a];
+
+        // Uniform over unmasked actions; action 0 if the scenario masked everything.
+        int32 chosen = 0;
+        if (allowed)
         {
-            uint32 allowed = 0;
+            uint32 pick = urand(0, allowed - 1);
             for (uint32 a = 0; a < numActions; ++a)
-                allowed += mask[a];
-
-            // Uniform over unmasked actions; action 0 if the scenario masked everything.
-            int32 chosen = 0;
-            if (allowed)
             {
-                uint32 pick = urand(0, allowed - 1);
-                for (uint32 a = 0; a < numActions; ++a)
-                {
-                    if (!mask[a])
-                        continue;
+                if (!mask[a])
+                    continue;
 
-                    if (pick-- == 0)
-                    {
-                        chosen = static_cast<int32>(a);
-                        break;
-                    }
+                if (pick-- == 0)
+                {
+                    chosen = static_cast<int32>(a);
+                    break;
                 }
             }
-
-            Actions[i] = chosen;
         }
-        else if (!_scenario.ScriptedAction(policy, obs, mask, Layout[i], Actions[i]))
-            return false;
+
+        Actions[i] = chosen;
     }
 
     return true;
 }
 
 void Animus::EnvPool::SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
-    bool opponentsOnly, uint32 firstSeed)
+    uint32 firstSeed)
 {
     _evaluating = enabled;
     _evalSeedBase = seedBase;
@@ -539,7 +533,6 @@ void Animus::EnvPool::SetEvaluation(bool enabled, uint32 seedBase, uint32 episod
     _evalEpisodes = enabled ? firstSeed + episodes : 0;
     _evalNextSeed = enabled ? firstSeed : 0;
     _evalBaseline = enabled ? baseline : std::string();
-    _evalOpponentsOnly = enabled && !_evalBaseline.empty() && opponentsOnly;
     _evalRuns.clear();
     _evalRunOfEnv.clear();
 }

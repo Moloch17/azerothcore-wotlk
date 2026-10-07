@@ -133,7 +133,7 @@ def fake_sim(listener: socket.socket, modes: list, replays: list, spec: p.Spec =
                     return  # the machine went down: the connection closes mid-run
                 step = blank()
                 if msg_type == p.MsgType.MODE:
-                    evaluating, _, episodes, baseline, _ = p.decode_mode(body)
+                    evaluating, _, episodes, baseline = p.decode_mode(body)
                     modes.append((evaluating, episodes, baseline))
                     if marks is not None:
                         marks.append(decision)

@@ -13,8 +13,8 @@ member, so the ones the policy still loses to are met most and none is forgotten
 ``retire_above`` for a full window is retired, the newest ``keep_newest`` never are. The live policy plays the far
 side of the remaining ``1 - opponent_share`` episodes, so on those the opponent is exactly as good as the policy.
 
-The evaluation never runs a cast actor: the sim's ``fight`` baseline stays the fixed yardstick on the far side
-(``eval.opponent_baseline``), so scores stay comparable across runs.
+The evaluation never runs a cast actor: the far side of an evaluation is the learner's own, so scores stay
+comparable across runs.
 
 Nothing on the wire changes. Which rows are opponents follows from stage.json (each arena's ``plan`` and
 ``team_seats``, the episode's arena from the critic state one-hot, as animus.distill reads it), and which rows a

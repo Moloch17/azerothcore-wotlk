@@ -261,7 +261,7 @@ namespace AnimusForge
         struct BenchSettings
         {
             std::string Scenario;                   // the scenario every trial runs (none: name one)
-            std::string Policy = "fight";           // the local policy of the sim-only trials
+            std::string Policy = "random";          // the local policy of the sim-only trials
             std::vector<uint32> Threads;            // MapUpdate.Threads values to try
             std::vector<uint32> Envs;               // AnimusForge.Envs values to try
             uint32 MaxEnvs = 256;                   // never try more envs than this

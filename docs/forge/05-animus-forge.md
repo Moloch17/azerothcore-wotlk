@@ -158,7 +158,7 @@ loop:
     MODE               → SetEvaluation(...), ResetAll(), SendStep(), continue
     CLOSE / bad input  → DropClient, return (the next decision waits for a new learner)
 if evaluating with a baseline:
-    ChooseLocalActions(baseline, opponentsOnly)   overwrite the learner's actions (all, or opponent seats)
+    ChooseLocalActions(baseline)   overwrite the learner's actions
 ApplyActions()
 ```
 
@@ -224,7 +224,7 @@ from an in-game administrator's chat.
 | `forge pause` | Freeze after the current decision |
 | `forge cancel` | End the plan. The learner saves `latest.pt` first |
 | `forge skip` | End the current scenario (the learner saves) and start the next |
-| `forge run <scenario> <policy> [episodes]` | A local plan: `random`, `greedy` or `fight`, for N episodes or until cancelled. `forge run <s> remote` is refused (use `start`) |
+| `forge run <scenario> <policy> [episodes]` | A local plan: `random` (the only local policy), for N episodes or until cancelled. `forge run <s> remote` is refused (use `start`) |
 | `forge rays <map> <x> <y> <z> [facing]` | What the movement block's navmesh senses read standing there, with no seat, policy or run: reach and shore along each of the sixteen rays (the eight bearings and the rays half way between them), the burning edge, clearance and the way out, whether the point is inside a building, and the floor under it. Every one of those is a Detour query on `{y, z, x}` axes, where a wrong swizzle returns plausible numbers about the wrong place and nothing downstream can catch it — so the report measures one wall three independent ways and prints whether they agree. Also the way to vet a spawn point before a stage trains on it |
 | `forge talents <class_role> [spec] [points] [plan]` | Print the talent build the curriculum would give that class (which talents, in which tree, at how many ranks). `points` defaults to a level 80 character's, `plan` is `standard`, `noisy` or `random` |
 | `forge bench [scenario]` | Time the sim at every `AnimusForge.Bench.Threads` x `Envs` pair, then the fastest few with the learner; `forge bench apply` writes the winner into the configs |
@@ -544,9 +544,9 @@ coef(env_steps) x mean KL(teacher || policy)        coef = max(min_coef, coef0 x
 
 ### Seeded evaluation (`evaluation.py`)
 
-`run_evaluation(env, spec, act, episodes, seed, baseline, opponents, arenas)`:
+`run_evaluation(env, spec, act, episodes, seed, baseline, arenas)`:
 
-1. `env.set_mode(True, seed, episodes, baseline, opponents_only)` sends MODE. Every env resets, and seeds
+1. `env.set_mode(True, seed, episodes, baseline)` sends MODE. Every env resets, and seeds
    `0..episodes-1` are handed out as envs reset (see [3.4](03-animus-lib.md#seeded-resets)).
 2. Step with argmax actions (`eval.deterministic`) until every seeded episode has ended, collecting each ended
    episode's return, info and layout by its seed index. A safety cap of `(ceil(episodes / envs) + 2)` episode lengths
@@ -578,10 +578,8 @@ cannot be left set across a build that removed the action. `python -m animus.eva
 mask by hand.
 
 **The baseline** (`eval.baseline`, `fight` for the curriculum) is scored once per run on the same seeds. It is cached in
-`eval_baseline.json` under a key of policy, seed, episodes, opponents, arenas and the stage tuning, and in
-`eval_baseline_<seed>_<episodes>.json` for confirmation seeds. With `opponent_baseline`, the sim plays the opponent
-seats of self-play episodes with the baseline policy (`MODE_FLAG_SCRIPTED_OPPONENTS`) during both the learner's
-evaluation and the baseline's own, so the baseline plays against itself.
+`eval_baseline.json` under a key of policy, seed, episodes, arenas and the stage tuning, and in
+`eval_baseline_<seed>_<episodes>.json` for confirmation seeds.
 
 A new best score saves `best.pt`.
 
@@ -767,8 +765,8 @@ the checkpoint lacked), `cast_members` and `cast_hardest_win_rate` -- the live p
 hardest member, which climbing toward 1 says the pool has gone stale and the clock is too slow. The convergence
 rule reads it too: on a league stage a class's ladder signal is that this rate has settled.
 
-**The evaluation never runs a cast actor.** The sim's `fight` baseline plays the far side of a seeded evaluation
-(`eval.opponent_baseline`), so the yardstick is fixed across runs; the league is a training-time device.
+**The evaluation never runs a cast actor.** The far side of a seeded evaluation is the learner's own, so scores stay
+comparable across runs; the league is a training-time device.
 
 **The owner as a cast seat** (`ArenaDefinition::OwnerCast`, the companion, party, tanking, triage and crossroads
 arenas): the sim builds the owner as a seat in an agent slot of its own after the seats and the directors, declares

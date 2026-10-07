@@ -133,7 +133,7 @@ def test_run_evaluation_collects_each_seed_once(tmp_path):
                 decision += 1
                 step = blank_step(decision)
                 if msg_type == p.MsgType.MODE:
-                    evaluating, seed, episodes, baseline, _ = p.decode_mode(body)
+                    evaluating, seed, episodes, baseline = p.decode_mode(body)
                     modes.append((evaluating, seed, episodes, baseline))
                     next_seed = 0
                     for e in range(SPEC.num_envs):
@@ -175,14 +175,14 @@ def test_run_evaluation_collects_each_seed_once(tmp_path):
     assert not training_step.done.any()
 
 
-class ScriptedOpponentEnv:
-    """In-process fake sim for opponent seats: one env, two agents, 1-decision episodes. Seat 1 is the opponent seat
-    (episode info opponent_seat = 1); agent a earns 1 + a per decision. Records every set_mode call."""
+class TwoSeatEnv:
+    """In-process fake sim: one env, two agents, 1-decision episodes; agent a earns 1 + a per decision. Records every
+    set_mode call."""
 
     SPEC = p.Spec(
         version=p.PROTOCOL_VERSION, num_envs=1, agents_per_env=2, obs_dim=1, state_dim=1, num_actions=1,
         episode_info_dim=3, goal_count=0, tick_ms=50, decision_ticks=1, episode_seconds=1, scenario="fake",
-        layouts=(p.Layout("warrior_dps", 1, 1),), episode_info_names=("level", "arena", "opponent_seat"),
+        layouts=(p.Layout("warrior_dps", 1, 1),), episode_info_names=("level", "arena", "seat"),
     )
 
     def __init__(self):
@@ -206,8 +206,8 @@ class ScriptedOpponentEnv:
             episode_seed=np.array([seed if done else p.NO_EPISODE_SEED], np.uint32),
         )
 
-    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", opponents_only=False, stand_in=False):
-        self.modes.append((evaluate, baseline, opponents_only))
+    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", stand_in=False):
+        self.modes.append((evaluate, baseline))
         self.next_seed = 0
         return self._step(False, p.NO_EPISODE_SEED)
 
@@ -217,32 +217,29 @@ class ScriptedOpponentEnv:
         return self._step(True, seed)
 
 
-def test_opponent_seats_are_scripted_and_left_out():
-    env = ScriptedOpponentEnv()
-    spec = ScriptedOpponentEnv.SPEC
+def test_every_seat_is_scored_and_the_arenas_summarised():
+    env = TwoSeatEnv()
+    spec = TwoSeatEnv.SPEC
     result, _ = run_evaluation(env, spec, lambda step: np.zeros((1, 2), np.int32), episodes=4, seed=1,
-                               opponents="fight", arenas=("duel", "arena_1v1"))
-    assert env.modes == [(True, "fight", True), (False, "", False)]
-    assert result.episodes == 4 and np.all(result.returns == 1.0)  # only seat 0's rows
+                               arenas=("duel", "arena_1v1"))
+    assert env.modes == [(True, ""), (False, "")]
+    assert result.episodes == 8 and sorted(set(result.returns)) == [1.0, 2.0]  # both seats of every episode
 
-    baseline, _ = run_evaluation(env, spec, None, episodes=4, seed=1, baseline="fight", opponents="fight")
-    assert env.modes[2] == (True, "fight", False)  # the baseline plays every seat
-    assert baseline.episodes == 4
-
-    everyone, _ = run_evaluation(env, spec, lambda step: np.zeros((1, 2), np.int32), episodes=4, seed=1)
-    assert everyone.episodes == 8  # without opponents every seat counts
+    baseline, _ = run_evaluation(env, spec, None, episodes=4, seed=1, baseline="random")
+    assert env.modes[2] == (True, "random")  # the sim plays every seat
+    assert baseline.episodes == 8
 
     summary = result.summary(())
     assert set(summary["arenas"]) == {"duel", "arena_1v1"}
-    assert summary["arenas"]["duel"]["episodes"] == 2 and summary["arenas"]["arena_1v1"]["episodes"] == 2
+    assert summary["arenas"]["duel"]["episodes"] == 4 and summary["arenas"]["arena_1v1"]["episodes"] == 4
     assert baseline.action_counts is None and "actions" not in baseline.episodes_log()[0]
     assert baseline.allowed_counts is None and "allowed" not in baseline.episodes_log()[0]
 
 
 def test_episode_log_counts_actions_by_name():
     """Each episode counts the learner's actions from its first decision to its done, the no-op left out."""
-    env = ScriptedOpponentEnv()
-    spec = dataclasses.replace(ScriptedOpponentEnv.SPEC, num_actions=3,
+    env = TwoSeatEnv()
+    spec = dataclasses.replace(TwoSeatEnv.SPEC, num_actions=3,
                                layouts=(p.Layout("warrior_dps", 1, 3),))
     result, _ = run_evaluation(env, spec, lambda step: np.array([[2, 0]], np.int32), episodes=2, seed=1,
                                action_names={"warrior_dps": ["noop", "charge_100", "hamstring_1715"]})
@@ -593,8 +590,8 @@ def test_failed_seeds_are_the_episodes_short_on_the_metric():
 def test_a_trace_records_every_decision_of_the_first_seeds():
     """eval.trace_episodes records what the policy did and what goal it said it was pursuing, decision by decision,
     for the episodes with the first seed indexes, and nothing for the others."""
-    env = ScriptedOpponentEnv()
-    spec = dataclasses.replace(ScriptedOpponentEnv.SPEC, num_actions=3,
+    env = TwoSeatEnv()
+    spec = dataclasses.replace(TwoSeatEnv.SPEC, num_actions=3,
                                layouts=(p.Layout("warrior_dps", 1, 3),))
 
     def choose(step):

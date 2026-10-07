@@ -102,19 +102,17 @@ namespace Animus
         /// Close whichever decisions are open.
         void FinishCollect();
 
-        /// Fill Actions from a local policy ("random" or a scenario scripted policy): every agent's, or only the
-        /// opponent seats' (Scenario::IsOpponentSeat), keeping the other actions. Only envs [begin, begin + count).
-        bool ChooseLocalActions(std::string const& policy, bool opponentsOnly = false, uint32 begin = 0,
-            uint32 count = UINT32_MAX);
+        /// Fill Actions from a local policy -- "random", the only one: uniform over the unmasked actions -- for envs
+        /// [begin, begin + count). False for any other name.
+        bool ChooseLocalActions(std::string const& policy, uint32 begin = 0, uint32 count = UINT32_MAX);
 
         /// Evaluation (the forge's MODE message): hand seed indexes firstSeed..firstSeed+episodes-1 to envs as they
         /// reset (a cluster's sims each play their own run of one evaluation's seeds), each env
         /// rebuilt right after reseeding the world thread's random numbers from (seedBase, index)
-        /// (CoreHooks::SeedRandom). With a baseline policy name, EvalBaseline() tells the caller to run it
-        /// instead of the learner's actions -- only on the opponent seats when EvalOpponentsOnly(). Takes effect at
-        /// the next reset; call ResetAll to start every env on it.
+        /// (CoreHooks::SeedRandom). With a baseline policy name ("random"), EvalBaseline() tells the caller to
+        /// run it instead of the learner's actions. Takes effect at the next reset; call ResetAll to start every env on it.
         void SetEvaluation(bool enabled, uint32 seedBase, uint32 episodes, std::string const& baseline,
-            bool opponentsOnly = false, uint32 firstSeed = 0);
+            uint32 firstSeed = 0);
         /// Data-parallel learners each play their own run of an evaluation's seeds on their own envs: after
         /// SetEvaluation, `runs[r]` = (first seed index, episodes) for the envs whose `rangeOfEnv` entry is r.
         void SetEvaluationRuns(std::vector<std::pair<uint32, uint32>> const& runs, std::vector<uint32> rangeOfEnv);
@@ -141,7 +139,6 @@ namespace Animus
         void SetReplay(uint32 seedBase, float fraction, std::vector<uint32> seeds);
 
         [[nodiscard]] std::string const& EvalBaseline() const { return _evalBaseline; }
-        [[nodiscard]] bool EvalOpponentsOnly() const { return _evalOpponentsOnly; }
 
         /// Damage hook, called from map worker threads. Only touches the stats of the env whose
         /// instance the calling thread is updating. `spell` is the spell that dealt it, when the hook knows (null for
@@ -380,7 +377,6 @@ namespace Animus
         std::vector<uint32> _evalRunOfEnv;
         uint32 _evalNextSeed = 0;
         std::string _evalBaseline;
-        bool _evalOpponentsOnly = false;
         std::vector<uint32> _envSeed;           // per env: seed index of the running episode
 
         uint32 _replaySeedBase = 0;
