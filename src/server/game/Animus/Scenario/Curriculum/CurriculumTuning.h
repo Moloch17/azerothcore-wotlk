@@ -1225,6 +1225,48 @@ namespace Animus::Curriculum
             float DoorwaySpread = 1.0f;
         } Seek;
 
+        /// **M3 interact** (Opposition::Interact, InteractEncounter; dungeon-curriculum M3): in an empty Deadmines, the
+        /// object the goal names (by its kind, never its place) among DecoysMin to DecoysMax decoys of other kinds,
+        /// behind a door whose lever opens it, or the lock its key item opens (the cannon and the gunpowder the seat
+        /// carries from the start). Arrive (Outcome) is paid once, on the right object reached -- stopped within the
+        /// arena's SeekRadius of it, on its floor (ArriveRise) -- or, for a lock, its key item used on it; DoorOpened
+        /// (Outcome) once, the switch rung's door opened by the seat's own press on its lever. WrongObject (Cost) is
+        /// charged once a decoy, stopped beside or pressed; a press the world refuses is the sight block's own price
+        /// (Actions.Aimless.ActRefused): a locked door pressed, a press out of reach, the key on the wrong thing.
+        /// StepCost (per 50 ms), Death, and Stuck, Wall and WallSlide (the ground course's, at their own fixed price
+        /// from the first step) as the seek stage's. Sighting (Shaping, faded) once, on the first frame that lists
+        /// the named object.
+        ///
+        /// **The ladder** (InteractDraw::Rung, the shaping fade's rungs 1, 0.5, 0): distinguish, switch, key; each rung
+        /// keeps CarryShare of the one below, its episodes RungSeconds0 to 2 long. The distinguish rung's objects stand
+        /// SightNearest to SightFurthest yards from the seat in sight of its eye, Spacing yards apart at least; up to
+        /// Attempts draws. The cannon's script summons two pirates when it fires: every summoned creature within
+        /// SummonSweep yards of a site's opener is sent away at each reset.
+        struct InteractTuning
+        {
+            float Arrive = 3.0f;
+            float DoorOpened = 1.0f;
+            float WrongObject = 0.5f;
+            float StepCost = 0.0005f;
+            float Death = 6.0f;
+            float ArriveRise = 2.0f;
+            float Sighting = 0.5f;
+            float Stuck = 0.02f;                // per second, fixed price
+            float Wall = 0.02f;                 // per second at no movement, fixed price, scaled as WallSlide says
+            float WallSlide = 0.5f;
+            float CarryShare = 0.1f;
+            uint32 RungSeconds0 = 60;
+            uint32 RungSeconds1 = 120;
+            uint32 RungSeconds2 = 90;
+            uint32 DecoysMin = 2;
+            uint32 DecoysMax = 4;
+            float Spacing = 2.5f;
+            float SightNearest = 4.0f;
+            float SightFurthest = 30.0f;
+            uint32 Attempts = 64;
+            float SummonSweep = 80.0f;
+        } Interact;
+
         /// **M1 controls, redesigned** (Opposition::Sight, SightEncounter; perception-goals REDESIGN §1): a real object
         /// along the Stockades' hallways, Nearest to Furthest yards (straight) from a random hallway spawn, in sight of
         /// the seat's eye -- or, from CornerFrom on the fade's ladder (1 - the shaping scale), with CornerShare of the
@@ -1903,6 +1945,27 @@ namespace Animus::Curriculum
             f("Seek.DoorwayInside", tuning.Seek.DoorwayInside);
             f("Seek.DoorwayDeeper", tuning.Seek.DoorwayDeeper);
             f("Seek.DoorwaySpread", tuning.Seek.DoorwaySpread);
+            f("Interact.Arrive", tuning.Interact.Arrive);
+            f("Interact.DoorOpened", tuning.Interact.DoorOpened);
+            f("Interact.WrongObject", tuning.Interact.WrongObject);
+            f("Interact.StepCost", tuning.Interact.StepCost);
+            f("Interact.Death", tuning.Interact.Death);
+            f("Interact.ArriveRise", tuning.Interact.ArriveRise);
+            f("Interact.Sighting", tuning.Interact.Sighting);
+            f("Interact.Stuck", tuning.Interact.Stuck);
+            f("Interact.Wall", tuning.Interact.Wall);
+            f("Interact.WallSlide", tuning.Interact.WallSlide);
+            f("Interact.CarryShare", tuning.Interact.CarryShare);
+            f("Interact.RungSeconds0", tuning.Interact.RungSeconds0);
+            f("Interact.RungSeconds1", tuning.Interact.RungSeconds1);
+            f("Interact.RungSeconds2", tuning.Interact.RungSeconds2);
+            f("Interact.DecoysMin", tuning.Interact.DecoysMin);
+            f("Interact.DecoysMax", tuning.Interact.DecoysMax);
+            f("Interact.Spacing", tuning.Interact.Spacing);
+            f("Interact.SightNearest", tuning.Interact.SightNearest);
+            f("Interact.SightFurthest", tuning.Interact.SightFurthest);
+            f("Interact.Attempts", tuning.Interact.Attempts);
+            f("Interact.SummonSweep", tuning.Interact.SummonSweep);
             f("Controls.Nearest", tuning.Controls.Nearest);
             f("Controls.Furthest", tuning.Controls.Furthest);
             f("Controls.ArriveTolerance", tuning.Controls.ArriveTolerance);

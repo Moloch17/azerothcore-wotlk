@@ -175,6 +175,11 @@ namespace Animus::Curriculum
         /// show a room's floor (Seek.RoomSeen), by the episode's own bookkeeping, never the remembered map's
         /// (amendment 6). Shaping, as the other two.
         RoomSeen,
+        /// The interact stage (M3, InteractEncounter): its switch rung's door opened, by the seat's own press on the
+        /// lever that opens it (Interact.DoorOpened, Outcome: half of what the rung is for), and a decoy taken for
+        /// the object the goal names -- stopped beside or pressed, each decoy once (Interact.WrongObject, Cost).
+        DoorOpened,
+        WrongObject,
         Count
     };
 
@@ -225,6 +230,8 @@ namespace Animus::Curriculum
             case RewardTerm::PullClean:
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:
+            // The interact stage's door opened by its lever (M3).
+            case RewardTerm::DoorOpened:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -254,6 +261,8 @@ namespace Animus::Curriculum
             case RewardTerm::Drowning:
             case RewardTerm::Lost:
             case RewardTerm::Aggro:
+            // A decoy taken for the named object (M3).
+            case RewardTerm::WrongObject:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

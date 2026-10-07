@@ -70,6 +70,10 @@ namespace Animus::Curriculum
         /// corner), stopped beside, with a compass the ladder withholds more and more often (SightEncounter,
         /// ArenaDefinition::Objects and SightPairs) -- M1 controls, redesigned.
         Sight,
+        /// Nothing to fight: the object the goal names, among decoys, behind a door its lever opens, or the lock its
+        /// key item opens, in an empty dungeon (InteractEncounter, ArenaDefinition::Sites and Objects) -- M3
+        /// interact.
+        Interact,
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -123,6 +127,22 @@ namespace Animus::Curriculum
         uint16 Spawn = 0;
         uint16 Object = 0;
         bool Corner = false;
+    };
+
+    /// **A site of the interact stage** (ArenaDefinition::Sites, M3): one of the map's own doors and what opens it --
+    /// a lever beside it (a button whose use the map's script links to the door), or a lock that takes a key item
+    /// (the Deadmines' cannon and its gunpowder, which blows the Iron Clad Door) -- and the floor either side of it:
+    /// Near, the opener's side, where the seat stands and the distinguish rung's objects go; Far, behind the shut
+    /// door, where the switch rung's object goes. Written once from the map (an authoring scan of the navmesh and the
+    /// vmaps, offline) and checked against the map's data by a GTest (DeadminesSitesDataTest).
+    struct InteractSite
+    {
+        std::string Name;
+        uint32 Door = 0;                    // the door's gameobject entry (one of the map's own spawns)
+        uint32 Opener = 0;                  // what opens it: a lever's (button's) or the lock's (goober's) entry
+        uint32 Key = 0;                     // the item the opener's lock takes; 0 for a lever
+        std::vector<Position> Near{};
+        std::vector<Position> Far{};
     };
 
     /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
@@ -394,6 +414,9 @@ namespace Animus::Curriculum
         /// Opposition::Sight: the evaluation's fixed (spawn, object) pairs, indexes into SpawnPoints, each played with
         /// and without the compass (SightDraw::EvaluationPick). Objects is the pool the object is drawn from.
         std::vector<SightPair> SightPairs{};
+        /// Opposition::Interact: the map's doors with what opens them and the floor either side (InteractSite).
+        /// Objects is the pool the named object and its decoys are drawn from, SeekRadius how near reaching one is.
+        std::vector<InteractSite> Sites{};
 
         [[nodiscard]] uint32 SeatCount() const;
     };
