@@ -109,7 +109,7 @@ def test_steps_with_five_byte_images_round_trip():
                   episode_info_dim=1, goal_count=0, tick_ms=50, decision_ticks=1, episode_seconds=60,
                   scenario="identity", layouts=(p.Layout("warrior", 3, 2),), episode_info_names=("x",),
                   kinematics_dim=10, image_bytes=H * W * 5, look_heads=3)
-    assert p.PROTOCOL_VERSION == 24 and len(p.NO_FRAME_PIXEL) == 5
+    assert p.PROTOCOL_VERSION == 25 and len(p.NO_FRAME_PIXEL) == 5
     assert p.decode_spec(p.encode_spec(spec)) == spec
     rng = np.random.default_rng(3)
     image = rng.integers(0, 256, (2, 1, spec.image_bytes), dtype=np.uint8)

@@ -37,19 +37,6 @@
 > entrance after `Respawn.DelayMs` and walks back (EntranceRespawn); no episode ends on a death. Its ladder (the fade's
 > rungs: walking, running, sudden stops, steps back) steps on the kept share alone; no cost ladder.
 >
-> `teacher_ragefire` and `teacher_deadmines` (dungeon-curriculum I6, 2026-10-06) are not training stages: in no
-> queue, their one arena a whole dungeon (`InstanceLadder::Wing`, Ragefire door to Bazzalan, the Deadmines door to
-> VanCleef) whose every seat the dungeon teacher plays (`ArenaDefinition::Teacher`; WingTeacher). The teacher drives
-> each seat on the player controller's keys and acts through the sight block's presses -- select, interact, use an
-> item, assist, focus -- and spells through the client's handler: the tank leads and pulls one pack at a time after a
-> ready check on every member, the healer heals within its mana, damage assists the tank's target, everyone eats and
-> drinks between pulls, doors and levers are opened with an interact and the Deadmines' cannon with its gunpowder
-> (carried from the door; nothing is looted). A death rises at the entrance after `Respawn.DelayMs` and the teacher
-> walks it back. `forge run teacher_ragefire dungeon 96` is the teacher's gate (every pull and side boss cleared,
-> before any taper): read its "Wing run" lines. In a training stage the same teacher hints every seat and plays the
-> rung's share of them (`Instance.WingSupport`, or always on a taught arena), and hint imitation ends for good once
-> the probes beat the script (`Instance.WingHintOffRung`; the learner's `animus.hint_cutoff`).
->
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
@@ -60,8 +47,6 @@
 > | `combat2_packs` | 300M | 10M | 240 |
 > | `combat3_survive` | 300M | 10M | 240 |
 > | `group1_roles` | 400M | 10M | 384 |
-> | `teacher_ragefire` | 100M | 1M | 8 |
-> | `teacher_deadmines` | 100M | 1M | 8 |
 > | `group2_corridor` | 500M | 10M | 128 |
 > | `dungeon1_pulls` | 300M | 10M | 192 |
 > | `dungeon2_ragefire` | 1500M | 20M | 64 |
@@ -99,17 +84,20 @@
 > **The dungeon stages** (dungeon-curriculum G2, D1-D3, 2026-10-07; `InstanceEncounter`, `InstanceLadder::Wing`):
 > a party of five on a real dungeon's own ground -- a fresh instance a run, every pack and patrol where the world
 > database stands it -- with G1's blocks (the party frames revision 2, the sight list and the combat block's frames)
-> and the pack and hint blocks; no crowd block (its pack ahead and nearest object were radius reads through walls) and
+> and the pack block; no crowd block (its pack ahead and nearest object were radius reads through walls) and
 > no party or support block. `group2_corridor` extends `group1_roles`: four of a wing's packs in route order a run
 > (`ArenaDefinition::CorridorPacks`), in Ragefire and the Deadmines -- pull, fight, rest, ready, next. `dungeon1_pulls`
 > drills one Ragefire pack a run on its own ground (the pull drill, evaluated as a drill: `EvaluatesDrills`).
 > `dungeon2_ragefire` is the door to Bazzalan, a full clear; `dungeon3_deadmines` the door to VanCleef at 17-20
 > (`LevelFirst`/`LevelLast`), its doors and levers by an interact and the cannon by its gunpowder -- the bar is 70% of
 > the evaluation's runs cleared with at most one wipe (`bar_clear`), read per boss (`boss_*`) and by role
-> (`deaths_tank`, ...). The dungeon teacher hints and tapers on G2, D2 and D3 (`ArenaDefinition::Taught`, whatever
-> `Instance.WingSupport` says) down the whole dungeon's ladder, its imitation off from the cutoff rung. **Wailing
+> (`deaths_tank`, ...). G2, D2 and D3 learn from their own rewards on the whole dungeon's difficulty
+> ladder (`StageScenario::WING_RUNGS`: the levels above the band and the wipes spared, stepping on the probes alone);
+> nothing scripted plays beside them. **Wailing
 > Caverns is held out** from D2 on (the arena `heldout`, `EvalOnly`: never in a training draw, played by
-> `eval.heldout`). The "human" stand-in plays a fifth of every stage's training runs (`ArenaDefinition::StandInShare`),
+> `eval.heldout`). The "human" stand-in is a frozen learned partner from the learner's co-op partner pool in one seat
+> of a fifth of every stage's training runs (`ArenaDefinition::StandInShare`; it leads or follows, in the role it wants;
+> never trained on; not fielded while the pool is empty, which `forge status` says),
 > and H is read as `clear_standin` (the `with_human` arm) beside `clear_allbot` (the plain evaluation) and their gap
 > `standin_gap` (within ~10 points). Outcome: Clear (a corridor's packs in route order, a full clear), ReadyPull (a pull
 > started with the party ready), Kill (bosses, trash), PullClean (the drill); Cost at full price: PullExtra (a chain
@@ -120,7 +108,7 @@
 > map's frontier and its leader -- never a live pack's or boss's position nor the route's pack order (SeenPlaces;
 > `StageDefinition::GoalPlaces`, seen only by default, the user's choice 2026-10-07). The dungeon map's layout nodes
 > can be added by `AnimusForge.Curriculum.Stage.<name>.GoalPlaces = 0`, but today they are sampled along the boss
-> route, so they stay off until a whole-instance layout exists. The route stays the teacher's, a script's.
+> route, so they stay off until a whole-instance layout exists. 
 > Evaluation videos film one seat a party, spread over the tank, healer and damage places and their classes
 > (`Vision::EvalVideoAgent`); `apps/forge/tools/collect-videos.sh <stage>` brings the workers' videos home.
 >
@@ -230,9 +218,9 @@ map of its own (`ArenaDefinition::MapId`), which is how one stage mixes Kalimdor
 | `stage3_rotation` | stage2_travel | Solo | + pet, pack | **The kit, nothing fighting back** (`Opposition::Dummy`): a dummy standing still, dummies wandering with more to switch to, one that hits back and can be killed, and damage landing on the seat while it works. Paid for output against the dummy's own health, mana kept, and health kept |
 | `stage4_duel` | stage3_rotation | Solo | (−pack) | **Something that fights back.** A same-level creature out of aggro range: close in and kill it fast, taking little damage; a quarter in a lake |
 | `stage5_pack` | stage4_duel (+ stage3_rotation) | Solo | + pack, gauntlet, support (−travel) | A pack of 2-4, casters included, usually linked: targets, interrupts, crowd control. A third have a hazard caster (`hazards`): fire underfoot, under a pack. Heals, shields, food and drink start here |
-| `stage6_roles` | stage5_pack | Party (5) | + companion, party, order, crowd, hint | **The roles, one drilled a fight**, by a proper party (a tank, a healer, three damage dealers by gear) at 15-30. `tank_hold`: hold a pack. `heal_keep`: keep the party up through a pack of twice its health. `damage_discipline`: kill the tank's target without taking it (`Raid.TankTarget`, `Raid.PulledOff`). `pull`: a camp of 2-4 packs standing apart (`PullSchedule::Camp`), pulled one at a time (`Pulls.CampCleanPack`, `Pulls.CampExtraPack`). The drilled role is seat 0 and weighs `Raid.DrillWeight`; each drill climbs its own rungs |
+| `stage6_roles` | stage5_pack | Party (5) | + companion, party, order, crowd | **The roles, one drilled a fight**, by a proper party (a tank, a healer, three damage dealers by gear) at 15-30. `tank_hold`: hold a pack. `heal_keep`: keep the party up through a pack of twice its health. `damage_discipline`: kill the tank's target without taking it (`Raid.TankTarget`, `Raid.PulledOff`). `pull`: a camp of 2-4 packs standing apart (`PullSchedule::Camp`), pulled one at a time (`Pulls.CampCleanPack`, `Pulls.CampExtraPack`). The drilled role is seat 0 and weighs `Raid.DrillWeight`; each drill climbs its own rungs |
 | `stage7_group` | stage6_roles | Party (5) | same | **The group** under a learned director: a corridor of pulls (`GROUP_PULLS`: trash, elites, three elites two levels up) on its own ladder (`GROUP_RUNGS`: three pulls with three wipes to stand up from, up to eight with one, two levels up), and camps |
-| `stage8_ragefire` | stage7_group | Party (5) | same | **Ragefire Chasm** from its door to Bazzalan, by five seats of its level range under a director, on the whole dungeon's ladder (4.11, `stage9_deadmines`). The script's seats and hints only with `Instance.WingSupport` |
+| `stage8_ragefire` | stage7_group | Party (5) | same | **Ragefire Chasm** from its door to Bazzalan, by five seats of its level range under a director, on the whole dungeon's ladder (4.11, `stage9_deadmines`). The difficulty ladder's rungs, nothing scripted |
 | `stage9_deadmines` | stage8_ragefire | Party (5) | same | **The Deadmines** from its door to VanCleef, the same way: the goal's own dungeon. Every run opens a fresh instance with every creature alive. No end: trained until it is stopped by hand |
 | `stage10_raid_pulls` | stage9_deadmines | Raid | same | Forty seats in eight groups under one director: a single elite and its adds, and a run of raid pulls. Its own env count |
 | `stage11_raids` | stage10_raid_pulls | Raid | same | The real raids: Karazhan and Naxxramas at ten, Naxxramas at twenty-five, Molten Core, Blackwing Lair and AQ40 at forty, weighted 4:2:1 by cost; a ten-seat single pack as the control |
@@ -2002,45 +1990,36 @@ boss's script at its start, and a wipe ends the run (`Instance.WingWipes` 1). On
 drawn for its seats. The companion arena, the synthetic party pulls and the tanking and triage drills are gone from
 the stage; the companion block stays in its layout for the stages built on it.
 
-**A support ladder the policy earns its way down** (2026-10-01: "taper off only based on the progress made by the
-learner"). Training runs are on a rung of `StageScenario::WING_RUNGS`; each rung fixes the dungeon script's share of
-seats, the levels above the dungeon's range, the wipes to spare (with their kills kept, the party stood up at the door)
-and the weight of the hints every seat imitates. **The script's seats and hints are a support, off by default** (2026-10-02: `Instance.WingSupport` 0): off, the rungs
-lift the level and spare wipes only, and every run learns from its own rewards. The script leaves first, at the top level; then the levels come down
-one at a time, the wipes and the hints with them:
+**A difficulty ladder the policy earns its way down** (2026-10-01: "taper off only based on the progress made by the
+learner"). Training runs are on a rung of `StageScenario::WING_RUNGS`; each rung fixes the levels above the dungeon's
+range and the wipes to spare (with their kills kept, the party stood up at the door). Every run learns from its own
+rewards; nothing scripted plays beside the party. The levels come down one at a time, the spare
+wipes with them:
 
-| Rung | Script plays | Levels | Wipes | Hints |
-|---|---|---|---|---|
-| 0-3 | 100%, 75%, 50%, 25% of seats | 25-28 | 5 | 1.0 |
-| 4 | none | 25-28 | 5 | 1.0 |
-| 5, 6 | none | 24-27, 23-26 | 4 | 1.0 |
-| 7, 8 | none | 22-25, 21-24 | 3 | 0.75 |
-| 9, 10 | none | 20-23, 19-22 | 2 | none |
-| 11 | none | 18-21 | 1 | none |
-| 12 | none | 17-20 | 1 | none |
+| Rung | Levels above the band | Spare wipes |
+|---|---|---|
+| 0 | 8 | 4 |
+| 1, 2 | 7, 6 | 3 |
+| 3, 4 | 5, 4 | 2 |
+| 5, 6 | 3, 2 | 1 |
+| 7 | 1 | 0 |
+| 8 | 0 (the evaluation's own conditions) | 0 |
 
-`Instance.WingProbe` (20%) of training runs are probes: no script, no hints and no instruction, at the rung's level
-and wipes. Only they measure the policy. Once `WingRungRuns` (40) probes on a rung have made, on average,
-`WingRungTarget` (0.6) of the dungeon -- the share of its creatures killed, 1 for a clear -- the ladder steps down a
-rung; if the probes on a rung fall below `WingRungFallback` (0.5) of what they made when it was stepped onto, it steps
-back up. The target is fixed: measured against the rung's other runs, it crept up from 0.71 to 0.82 on rung 0 as
-they did. Nothing moves on a clock, and the stage has no end: it trains until it is stopped by hand (its budget is out
-of reach and `convergence.advance` is off). In a cluster the host's ladder is every machine's: workers send their runs
-in their PROGRESS reports (`wing=`), and the host sends the rung (`RUNG <n>`). The ladder is not saved with the policy;
-a resumed run names the rung it had reached in `WingRungStart`. Every step is logged ("the dungeon ladder steps");
-`wing_rung` and `wing_probe` are in the episode report.
+`Instance.WingProbe` (20%) of training runs are probes (a run started from a Go-Explore cell is never one). Only they
+measure the policy. Once `WingRungRuns` (40) probes on a rung have made, on average, `WingRungTarget` (0.6) of the
+dungeon -- the share of its creatures killed, 1 for a clear -- the ladder steps down a rung. The target is fixed:
+measured against the rung's other runs, it crept up from 0.71 to 0.82 on rung 0 as they did. Nothing moves on a clock.
+In a cluster the host's ladder is every machine's: workers send their runs in their PROGRESS reports (`wing=`), and the
+host sends the rung (`RUNG <n>`). The ladder is not saved with the policy; a resumed run names the rung it had reached
+in `WingRungStart`. Every step is logged ("the dungeon ladder steps"); `wing_rung` and `wing_probe` are in the episode
+report.
 
 **The party is a tank, a healer and three damage dealers** (`StageScenario::FitsDungeonRole`): the tank a build that
 holds a pull, the healer one geared to heal (its spec's stat profile), the others neither. The looser makeup -- one
 seat that could hold a pull, one that could heal, anybody else -- drew parties of three healers or two tanks, and a
 retribution paladin in the healer's seat.
 
-A seat that the script does not play is instructed for the run with the rung's script share: its primary goal is its
-role's rule -- the healer protects the most hurt member under `WingInstructHeal` (70%) health, the tank fights
-whatever is hitting someone else, everyone else fights the tank's target. It arrives as an order does, so the goal
-head is not trained on it.
-
-Evaluation always runs the dungeon at its own level, with one wipe, no script, hints or instruction.
+Evaluation always runs the dungeon at its own level, with one wipe.
 
 **Ground is taken by clearing it.** A wipe trace (`Instance.WingTrace`, a log line per wipe) of the first support run
 showed the parties wiping at the mine's first packs with a median of eight creatures on them -- seven miners, an
@@ -2050,43 +2029,17 @@ only for ground the seat had not reached before; and every creature on the party
 (`WingCrowdFree`) costs `WingCrowd` (0.05) a second. `wing_crowd_seconds` reports the time spent with more than a
 pack on the party.
 
-**Seeing the crowd, and hints for the whole group** (2026-10-01, after the second support run stayed flat). The pack
+**Seeing the crowd** (2026-10-01, after the second support run stayed flat). The pack
 block shows four enemies, and the fights that wiped had eight. The stage adds a `crowd` block (no actions): how many
 creatures are on the party, on its tank and loose, the elites, how many are past the pack's slots, the next four of
 them one by one, and the nearest pack not yet in the fight with how many stand with it. Every other block keeps its
 size, so the stage still seeds from `stage5_pack` whole.
 
-Every seat outside a probe gets an action hint: what the dungeon script (below) would press with that seat's own row, in
-a `hint` block, at the rung's hint weight. The learner trains the action head toward it (`mappo.hint_coef`, 1.0 here)
-and keeps the block's columns out of both networks (their adapter weights are held at zero), so the policy is taught
-the suggestion and never shown it. The weight is 0 in evaluation and in a probe. The learner reports `hint_loss`,
-`hint_match` (how often the greedy action is the hint), `hint_match_<block>` (the same for the hints of each block's
-actions: target picks are `pack`, revives and following `party`, pathed moves and object use `crowd`) and `hint_weight`.
-
-**A full clear, with the script at the controls first** (2026-10-01: "I need consistent clears"; "make sure the script
-clears every pull and every boss, even side ones. They have to stay with leader too"). The route now visits every pack
-in the instance (`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route passes
-nearest it (the order the dungeon opens up in), VanCleef last, and the episode runs up to four hours.
-`wing_cleared_share` is the share of the instance's creatures killed. The instructor is the `dungeon` script
-(Baselines), not `fight`, which charged whatever was nearest:
-
-- the tank leads along the route, waits until every member is above 70% health (the healer 70% mana) and within 20 yd,
-  then pulls the nearest pack within 25 yd, and in the fight takes whatever is hitting somebody else;
-- everyone else follows the tank between pulls (6 yd), comes back past 30 yd in a fight, and attacks the tank's
-  target; the healer heals the most hurt first;
-- between pulls everybody eats, drinks and raises the dead;
-- in a fight the tank taunts a loose enemy it has just picked up and uses its threat on many at once when two are
-  loose or three are in the fight; the damage dealers interrupt their target's casts, hold one extra enemy with crowd
-  control (Polymorph, Sap, Shackle, Hibernate; never a fear) when the tank has more than it can hold, and hold back
-  when about to take their target off the tank; the healer waits for 70% mana before a pull. The probe wipes of the
-  first ladder run had a median of one enemy on the tank and the tank dying first.
-
-A seat is played by that script for a whole run with the rung's script share: parties see the whole dungeon long
-before they can clear it. The script's press is the seat's action; the hint block's third column says so, and the
-learner leaves those rows out of the PPO update (they are not the policy's) while imitating them. The script's no-ops
-are never imitated: it presses nothing while an order it gave is still walking, resting or gathering, and the first
-run's policy, taught those, stood still on its own (2.5 kills an evaluation). Staying more than `WingStrayYards` (25)
-from the tank costs `WingStray` (0.02) a second.
+**A full clear** (2026-10-01: "I need consistent clears"). The route visits every pack in the instance
+(`Instance.WingFullClear`): every hostile creature grouped by 15 yd, each where the boss route passes nearest it (the
+order the dungeon opens up in), VanCleef last, and the episode runs up to four hours. `wing_cleared_share` is the share
+of the instance's creatures killed. Staying more than `WingStrayYards` (25) from the tank costs `WingStray` (0.02) a
+second.
 
 **The companion arena.** Adds the companion block and the owner: a seat in the scenario's owner slot, played by the
 endurance policy through

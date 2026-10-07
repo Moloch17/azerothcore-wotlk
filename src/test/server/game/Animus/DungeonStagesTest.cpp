@@ -520,9 +520,6 @@ TEST(DungeonStagesTest, NoStageDeclaresTheCrowdBlock)
     EXPECT_TRUE(Cu::CurriculumProblems().empty());
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
         EXPECT_FALSE(stage.Has(Cu::BlockId::Crowd)) << stage.Name << " trains a policy on the crowd block";
-    // Nor is any stage left without a learned seat: the teacher's check stages are gone.
-    for (char const* name : { "teacher_ragefire", "teacher_deadmines" })
-        EXPECT_EQ(Cu::FindStage(name), nullptr) << name;
 }
 
 namespace

@@ -206,7 +206,7 @@ class ScriptedOpponentEnv:
             episode_seed=np.array([seed if done else p.NO_EPISODE_SEED], np.uint32),
         )
 
-    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", opponents_only=False):
+    def set_mode(self, evaluate, seed_base=0, episodes=0, baseline="", opponents_only=False, stand_in=False):
         self.modes.append((evaluate, baseline, opponents_only))
         self.next_seed = 0
         return self._step(False, p.NO_EPISODE_SEED)

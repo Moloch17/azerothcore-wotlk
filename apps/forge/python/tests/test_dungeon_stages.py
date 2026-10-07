@@ -1,9 +1,8 @@
 """The dungeon stages (dungeon-curriculum G2 group2_corridor, D1 dungeon1_pulls, D2 dungeon2_ragefire, D3
 dungeon3_deadmines; the sim's InstanceEncounter): the configs load and read their own measures, every ladder steps on
-its gate alone with every price at full price from the start, the teacher's hints are imitated where the sim writes them,
-the evaluation plays fixed seeds and films them by the stage's rung, the seed chain runs from G1, Wailing Caverns is
-held out (evaluated, never trained), the stand-in split (H) reaches forge status, and the video collector's dry run
-names every worker and connects to none."""
+its gate alone with every price at full price from the start, the evaluation plays fixed seeds and films them by the
+stage's rung, the seed chain runs from G1, Wailing Caverns is held out (evaluated, never trained), the stand-in split
+(H) reaches forge status, and the video collector's dry run names every worker and connects to none."""
 
 import re
 import subprocess
@@ -94,9 +93,6 @@ def test_every_ladder_steps_on_its_gate_alone_with_full_prices_from_the_start(na
     assert loaded.fade.enabled is True and loaded.fade.require_plateau is False
     assert loaded.fade.rungs == (1.0, 0.5, 0.25, 0.0)
     assert 0.0 < loaded.fade.gate_value <= 1.0 and loaded.fade.moving_classes >= 100
-    # The teacher's hints imitated where the sim writes them (a taught arena), never self-imitation (no camera images).
-    taught = ".Taught = true" in stage_bodies()[name]
-    assert (loaded.mappo.hint_coef > 0.0) == taught, name
     assert loaded.mappo.sil_coef == 0.0
 
 

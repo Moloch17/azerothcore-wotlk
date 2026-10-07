@@ -2158,13 +2158,11 @@ std::string Animus::Curriculum::StageScenario::TakeClusterTally()
 
 void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally)
 {
-    // "rung/probes/others": each a comma-separated list of runs' progress, or "-". A worker of an older build sends
-    // a fourth list (its reference runs), which is ignored.
+    // "rung/probes/others": each a comma-separated list of runs' progress, or "-".
     std::size_t const first = tally.find('/');
     std::size_t const second = first == std::string::npos ? std::string::npos : tally.find('/', first + 1);
     if (second == std::string::npos)
         return;
-    std::size_t const third = tally.find('/', second + 1);
     uint32 const rung = uint32(std::strtoul(tally.substr(0, first).c_str(), nullptr, 10));
     auto const each = [&](std::string const& list, bool probe)
     {
@@ -2178,7 +2176,7 @@ void Animus::Curriculum::StageScenario::AddClusterTally(std::string const& tally
             at = end + 1;
         }
     };
-    each(third != std::string::npos ? tally.substr(second + 1, third - second - 1) : tally.substr(second + 1), false);
+    each(tally.substr(second + 1), false);
     each(tally.substr(first + 1, second - first - 1), true);
 }
 

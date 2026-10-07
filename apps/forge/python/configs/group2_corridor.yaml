@@ -6,7 +6,7 @@
 # or the "human" stand-in when it leads (a fifth of the runs have it in a seat: ArenaDefinition::StandInShare). Levels:
 # Ragefire at the dungeon finder's band, the Deadmines at 17-20, each lifted by the ladder's rung.
 #
-# Nothing scripted plays beside the party and nothing is hinted: the runs climb the whole dungeon's difficulty ladder
+# Nothing scripted plays beside the party: the runs climb the whole dungeon's difficulty ladder
 # (StageScenario::WING_RUNGS: the levels above the band and the wipes spared come down a rung each time the probes, a
 # fifth of the runs, clear 0.6 of their corridor; Instance.WingRung*), and learn from their own rewards.
 #

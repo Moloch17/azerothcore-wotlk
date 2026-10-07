@@ -6,8 +6,8 @@
 # runs start from a cell an earlier run reached (Go-Explore: explore below); an evaluation always starts at the door.
 #
 # The runs climb the whole dungeon's difficulty ladder (WING_RUNGS: the levels above the band and the spare wipes,
-# stepping on the probes alone: 0.6 of the dungeon cleared over 40 probes), nothing scripted beside them and nothing
-# hinted. The evaluation plays the ladder's last rung: the band's own levels, one wipe to spare.
+# stepping on the probes alone: 0.6 of the dungeon cleared over 40 probes), nothing scripted beside them. The
+# evaluation plays the ladder's last rung: the band's own levels, one wipe to spare.
 #
 # Outcome (x the rung's tier scale): the bosses (Kill: Instance.WingMidBoss each on the way, WingBoss the last), the
 # full

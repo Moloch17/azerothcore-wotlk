@@ -278,7 +278,7 @@ def test_a_sim_with_a_camera_over_the_socket(tmp_path):
         conn = accept(listener)
         with conn:
             _, length = p.HEADER.unpack(read_exact(conn, p.HEADER.size))
-            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 24
+            assert p.HELLO.unpack(read_exact(conn, length))[0] == p.PROTOCOL_VERSION == 25
             spec = cpp_spec_bytes(SPEC)
             conn.sendall(p.encode_header(p.MsgType.SPEC, len(spec)) + spec)
             device = struct.pack("<II", 0, SPEC.num_envs) + bytes(range(64)) * 3 + bytes(range(64, 128))
