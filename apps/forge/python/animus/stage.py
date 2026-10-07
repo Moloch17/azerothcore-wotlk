@@ -150,6 +150,7 @@ class ShapingFade:
         self.enabled = bool(fade.enabled) and len(fade.rungs) > 0
         self.gate_metric = str(getattr(fade, "gate_metric", "") or "")
         self.gate_value = float(getattr(fade, "gate_value", 0.0))
+        self.require_plateau = bool(getattr(fade, "require_plateau", True)) or not self.gate_metric
         self.gate_seen: float | None = None
         self.rungs = tuple(float(scale) for scale in fade.rungs) or (1.0,)
         self.window = max(1, int(fade.window))
@@ -244,7 +245,10 @@ class ShapingFade:
         return waited >= self.window and self.tracker.converged(env_steps, 0)
 
     def _earned(self, env_steps: int, waited: int) -> bool:
-        """Plateaued, and the stage's own measure there (the gate) when the ladder has one."""
+        """Plateaued, and the stage's own measure there (the gate) when the ladder has one; or, with require_plateau off,
+        the gate alone once the rung has had an evaluation."""
+        if not self.require_plateau:
+            return waited >= 1 and self._gated()
         return self._plateaued(env_steps, waited) and self._gated()
 
     def _moved(self) -> None:
