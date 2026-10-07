@@ -121,6 +121,11 @@ namespace AnimusForge
         /// runs/<scenario>/camera/ (AnimusForge::Forge::MaybeAuditCamera).
         uint32 VisionAuditInterval = 300;
         uint32 VisionAuditSeats = 4;
+        /// AnimusForge.Vision.EvalVideos / EvalVideoScale: episodes of every evaluation (0 = none) filmed as the seat
+        /// saw them, a composite frame a decision scaled up EvalVideoScale times, under runs/<scenario>/videos/
+        /// (Animus::Vision::EvalVideoRecorder, AnimusForge::Forge::CaptureEvalVideos).
+        uint32 VisionEvalVideos = 8;
+        uint32 VisionEvalVideoScale = 4;
         /// AnimusForge.Map.*: the mental map's caps (MaxTiles fine tiles, CoarseTiles coarse ones an evicted fine
         /// tile folds into) and how a training seat's map lives across resets (KeepShare, AgeOffsetSeconds;
         /// perception-goals REDESIGN §3, amendments 1 and 3). The process's, like the camera's

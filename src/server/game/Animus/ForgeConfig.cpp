@@ -309,6 +309,8 @@ void AnimusForge::ForgeConfig::Load()
             LOG_ERROR("server.loading", "AnimusForge.Vision.RenderSizes: {}", error);
         VisionAuditInterval = uint32(ranged("AnimusForge.Vision.AuditInterval", 300.0f, 0.0f, 86400.0f));
         VisionAuditSeats = uint32(ranged("AnimusForge.Vision.AuditSeats", 4.0f, 1.0f, 64.0f));
+        VisionEvalVideos = uint32(ranged("AnimusForge.Vision.EvalVideos", 8.0f, 0.0f, 64.0f));
+        VisionEvalVideoScale = uint32(ranged("AnimusForge.Vision.EvalVideoScale", 4.0f, 1.0f, 8.0f));
 
         // The mental map (perception-goals REDESIGN §3): its caps and its persistence across resets.
         Animus::Vision::MapRunSettings const maps;

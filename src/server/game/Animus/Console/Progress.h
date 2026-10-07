@@ -190,6 +190,14 @@ namespace AnimusForge
             uint32 AuditFrames = 0;
             std::string AuditDir;
             std::string LastAudit;
+            /// The evaluation videos (AnimusForge.Vision.EvalVideos): episodes filmed per evaluation (0 = off), videos
+            /// written since the forge started, the last evaluation's directory, frames dropped because the writer fell
+            /// behind, and the world thread's time per STEP it filmed in.
+            uint32 EvalVideos = 0;
+            uint64 EvalVideosWritten = 0;
+            std::string EvalVideoDir;
+            uint64 EvalVideoDropped = 0;
+            double EvalVideoCaptureUs = 0.0;
         };
 
         VisionStats Vision;
