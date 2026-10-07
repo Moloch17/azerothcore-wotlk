@@ -437,6 +437,9 @@ TEST_F(VisionGpuDataTest, Elwynn)
 // checked against the CPU's.
 TEST_F(VisionGpuDataTest, CrowdOfUnitsAndObjects)
 {
+    // The list's cap is read off the device's (or the emulation's) reduction: with neither there is nothing to compare.
+    if (!Device() && !Env("FORGE_VISION_EMULATE"))
+        GTEST_SKIP() << "no device (FORGE_GPU_RUNTIME/FORGE_GPU_LIBRARY) and FORGE_VISION_EMULATE is not set";
     RunPlace("crowd", 1, -450.0f, -2650.0f, 95.0f, 25.0f, -1.0e9f, 100, 60, true);
 }
 
