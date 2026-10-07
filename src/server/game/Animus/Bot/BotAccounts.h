@@ -35,41 +35,17 @@ namespace Animus::BotAccounts
     constexpr uint32 SEATS_PER_ENV = 40;
     constexpr uint32 SESSIONS_PER_BOT = 2;
 
-    constexpr uint32 OWNER_OFFSET = 100000;
-    constexpr uint32 OPPONENT_OFFSET = 300000;
-    constexpr uint32 AMBUSHER_OFFSET = 500000;
-    constexpr uint32 AMBUSHERS_PER_ENV = 2;
+    /// The accounts of the seats' range: past it nothing else is allocated but the probes below BASE.
+    constexpr uint32 SEAT_RANGE = 100000;
 
-    /// Most envs whose seat accounts stay below the owner range (the owner and opponent ranges hold more).
-    constexpr uint32 MAX_ENVS = OWNER_OFFSET / (SEATS_PER_ENV * SESSIONS_PER_BOT);
+    /// Most envs whose seat accounts fit the range.
+    constexpr uint32 MAX_ENVS = SEAT_RANGE / (SEATS_PER_ENV * SESSIONS_PER_BOT);
     static_assert(MAX_ENVS >= 1024, "seat accounts leave too few envs for the sim to run");
-    static_assert(MAX_ENVS * SESSIONS_PER_BOT <= OPPONENT_OFFSET - OWNER_OFFSET, "owner accounts overlap opponents'");
-    static_assert(MAX_ENVS * SESSIONS_PER_BOT <= AMBUSHER_OFFSET - OPPONENT_OFFSET,
-        "opponent accounts overlap ambushers'");
 
     /// A learned agent's bot: env, seat, session slot.
     [[nodiscard]] constexpr uint32 Seat(uint32 env, uint32 seat, uint8 session)
     {
         return BASE + env * SEATS_PER_ENV * SESSIONS_PER_BOT + seat * SESSIONS_PER_BOT + session;
-    }
-
-    /// A scripted owner (companion and party stages).
-    [[nodiscard]] constexpr uint32 Owner(uint32 env, uint8 session)
-    {
-        return BASE + OWNER_OFFSET + env * SESSIONS_PER_BOT + session;
-    }
-
-    /// A scripted enemy player (PvP stage).
-    [[nodiscard]] constexpr uint32 Opponent(uint32 env, uint8 session)
-    {
-        return BASE + OPPONENT_OFFSET + env * SESSIONS_PER_BOT + session;
-    }
-
-    /// A scripted enemy player ambushing the owner: env, ambusher, session slot.
-    [[nodiscard]] constexpr uint32 Ambusher(uint32 env, uint32 ambusher, uint8 session)
-    {
-        return BASE + AMBUSHER_OFFSET + env * AMBUSHERS_PER_ENV * SESSIONS_PER_BOT + ambusher * SESSIONS_PER_BOT
-            + session;
     }
 
     /// Short-lived probe characters that discover a class's spells, one per race, below every other range.

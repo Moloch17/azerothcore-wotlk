@@ -6641,17 +6641,6 @@ AnimusForge.Curriculum.Pulls.PartyEliteChance = 50
 #   gauntlet: the break between pulls
 AnimusForge.Curriculum.Pulls.NextPullMinMs = 8000
 AnimusForge.Curriculum.Pulls.NextPullMaxMs = 20000
-#   with an owner: when it walks over to a new pull
-AnimusForge.Curriculum.Pulls.OwnerEngageMinMs = 1500
-AnimusForge.Curriculum.Pulls.OwnerEngageMaxMs = 5000
-#   ... in a party, after the tank has had time to pull
-AnimusForge.Curriculum.Pulls.PartyOwnerEngageMinMs = 4000
-AnimusForge.Curriculum.Pulls.PartyOwnerEngageMaxMs = 7000
-#   ... when the owner starts the pull itself
-AnimusForge.Curriculum.Pulls.OwnerPullsMinMs = 500
-AnimusForge.Curriculum.Pulls.OwnerPullsMaxMs = 1500
-#   percent of pulls a damage dealer or healer owner starts (tanks: all)
-AnimusForge.Curriculum.Pulls.OwnerPullsChance = 30
 #   owner stages: health and mana the dead stand up with after a pull
 AnimusForge.Curriculum.Pulls.RecoverFraction = 0.5
 #   fraction of the pull's total health
@@ -7298,17 +7287,13 @@ AnimusForge.Curriculum.Roles.StandInShare = 20
 
 #
 #    AnimusForge.Curriculum.Owner.*
-#        The scripted owner of the companion and party stages.
+#        The owner of the companion and party stages (a cast agent, played from a frozen checkpoint).
 
 #   its level: the bot's plus or minus this
 AnimusForge.Curriculum.Owner.LevelSpread = 2
 #   percent tanks, healers, the rest damage dealers
 AnimusForge.Curriculum.Owner.TankChance = 25
 AnimusForge.Curriculum.Owner.HealerChance = 25
-#   in a stage whose owner is played by a frozen checkpoint (the learner's cast), the percent of training episodes
-#   that keep the scripted owner instead -- it wanders and engages on a timer, the shape the follow lesson was built
-#   on; evaluations always script it
-AnimusForge.Curriculum.Owner.CastScriptedShare = 30
 #   damage dealers: the owner's damage taken, fraction of its health
 AnimusForge.Curriculum.Owner.DamageTakenDps = 1.0
 #   tanks and healers exist to prevent it
@@ -7373,16 +7358,6 @@ AnimusForge.Curriculum.Death.SafeRise = 0.5
 AnimusForge.Curriculum.Death.SpiritHealer = 1.0
 
 #
-#    AnimusForge.Curriculum.Opponent.*
-#        The scripted enemy player of the PvP stage.
-
-AnimusForge.Curriculum.Opponent.LevelSpread = 1
-#   it starts fighting up to this long into the episode
-AnimusForge.Curriculum.Opponent.EngageMaxMs = 3000
-AnimusForge.Curriculum.Opponent.HealerChance = 20
-AnimusForge.Curriculum.Opponent.TankChance = 20
-
-#
 #    AnimusForge.Curriculum.Evade.*
 #        Getting away from a fight that cannot be won (stage13_escape's evade and hide arenas). Time spent unseen is
 #        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
@@ -7412,63 +7387,6 @@ AnimusForge.Curriculum.Stealth.StalkMax = 1.0
 #   it if the opener's burst killed it): an opener is worth what it does, not only that it landed
 AnimusForge.Curriculum.Stealth.OpenerDamage = 2.0
 AnimusForge.Curriculum.Stealth.OpenerWindowMs = 6000
-
-#
-#    AnimusForge.Curriculum.Ambush.*
-#        Scripted enemy players who ambush the owner (stage21_ship's ambush arena, and stage20_world_shared's ganks).
-#        Their class, role and level follow the Opponent.* chances and spread.
-
-#   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)
-AnimusForge.Curriculum.Ambush.MinMs = 20000
-AnimusForge.Curriculum.Ambush.MaxMs = 120000
-#   they start fighting up to this long after arriving, in ms
-AnimusForge.Curriculum.Ambush.EngageMaxMs = 3000
-#   beside pulls: every seat is paid this per ambusher killed (alone, the duel's rewards apply)
-AnimusForge.Curriculum.Ambush.Kill = 3.0
-
-#
-#    AnimusForge.Curriculum.ScriptedPlayers.*
-#        How the scripted players (owner, PvP opponent, ambushers) play.
-
-#   time between damage spells
-AnimusForge.Curriculum.ScriptedPlayers.SpellMinMs = 2000
-AnimusForge.Curriculum.ScriptedPlayers.SpellMaxMs = 4000
-#   time between heals
-AnimusForge.Curriculum.ScriptedPlayers.HealMinMs = 1500
-AnimusForge.Curriculum.ScriptedPlayers.HealMaxMs = 2500
-#   between pulls: time between wander steps
-AnimusForge.Curriculum.ScriptedPlayers.WanderMinMs = 6000
-AnimusForge.Curriculum.ScriptedPlayers.WanderMaxMs = 12000
-#   ... and the percent of an owner's steps that are a run instead: a leg at a run to a spot RunMinYards-RunMaxYards
-#   from the spawn point (never nearer than RunMinYards to where it stands) with a real route there, so the seats
-#   beside it have an owner that goes somewhere to follow. The wander's leash brings it back: another leg.
-AnimusForge.Curriculum.ScriptedPlayers.RunChance = 35
-AnimusForge.Curriculum.ScriptedPlayers.RunMinYards = 40.0
-AnimusForge.Curriculum.ScriptedPlayers.RunMaxYards = 60.0
-#   of max health and mana per second, out of combat
-AnimusForge.Curriculum.ScriptedPlayers.RegenFraction = 0.04
-#   healers heal party members under this health fraction
-AnimusForge.Curriculum.ScriptedPlayers.HealBelow = 0.85
-#   PvP healers heal themselves under this
-AnimusForge.Curriculum.ScriptedPlayers.SelfHealBelow = 0.6
-#   healers stay this close to the tank
-AnimusForge.Curriculum.ScriptedPlayers.HealerRange = 30.0
-AnimusForge.Curriculum.ScriptedPlayers.TauntRange = 25.0
-#   PvP: a ranged spec backs off inside half this ...
-AnimusForge.Curriculum.ScriptedPlayers.RangedMin = 20.0
-#   ... and closes in beyond this
-AnimusForge.Curriculum.ScriptedPlayers.RangedMax = 30.0
-#   PvP: percent of engagements a rogue sneaks up in stealth
-AnimusForge.Curriculum.ScriptedPlayers.StealthChance = 50
-#   PvP: percent of engagements it plays its kit: interrupts, crowd control, snares, defensives, breaks
-AnimusForge.Curriculum.ScriptedPlayers.TacticsChance = 75
-#   ... time between crowd control attempts
-AnimusForge.Curriculum.ScriptedPlayers.ControlMinMs = 8000
-AnimusForge.Curriculum.ScriptedPlayers.ControlMaxMs = 15000
-#   ... a defensive when its health is under this
-AnimusForge.Curriculum.ScriptedPlayers.DefensiveBelow = 0.35
-#   ... breaks crowd control when its health is under this
-AnimusForge.Curriculum.ScriptedPlayers.BreakBelow = 0.6
 
 #
 #    AnimusForge.Curriculum.StandIn.*

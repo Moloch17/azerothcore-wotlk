@@ -17,9 +17,7 @@
  */
 
 #include "Encounters.h"
-#include "Opponents.h"
 #include "Player.h"
-#include "Random.h"
 
 namespace
 {
@@ -39,49 +37,4 @@ void Animus::Curriculum::EnemyPlayers::Flag(Player* player)
 {
     if (player && !player->IsPvP())
         player->UpdatePvP(true, true);
-}
-
-Animus::Curriculum::EnemyPlayers::Spawned Animus::Curriculum::EnemyPlayers::Create(BotSlot& slot,
-    Naming const& naming, uint8 level, CurriculumTuning::OpponentTuning const& tuning, Player* near, Map* map,
-    uint32 mapId, ScriptedPlayer::State& state)
-{
-    // What this enemy is there for, drawn the same way a party's makeup is.
-    int32 const roll = irand(0, 99);
-    AptitudeDemand demand = roll < tuning.TankChance ? AptitudeDemand::HoldsThePull()
-        : roll < tuning.TankChance + tuning.HealerChance ? AptitudeDemand::KeepsThemUp()
-        : AptitudeDemand::Anything();
-    std::vector<uint8> classes = ClassAssets::ClassesFor(level, demand);
-    if (classes.empty())
-    {
-        demand = AptitudeDemand::Anything();
-        classes = ClassAssets::ClassesFor(level, demand);
-    }
-    if (classes.empty())
-        return {};
-
-    uint8 const playerClass = classes[urand(0, uint32(classes.size()) - 1)];
-    ClassAssets const& assets = ClassAssets::For(*ClassAssets::FindProfile(playerClass));
-
-    slot.Begin();
-    uint8 const session = slot.NextSession();
-
-    BotFactory::BotSpec spec;
-    spec.Name = naming.Name(session);
-    spec.Race = assets.Races[urand(0, uint32(assets.Races.size()) - 1)];
-    spec.Class = playerClass;
-    spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
-    spec.Level = level;
-    spec.AccountId = naming.Account(session);
-
-    // Out of range at a random bearing, facing a random way, like the duel's creature.
-    Position start = Opponents::FindSpawnPoint(near, map);
-    start.SetOrientation(frand(0.0f, 2.0f * float(M_PI)));
-    Player* enemy = slot.CreateNext(spec, map, mapId, start);
-    if (!enemy)
-        return {};
-
-    enemy->InitTalentForLevel();
-    ScriptedPlayer::Configure(enemy, assets, demand, state, true);
-    slot.Promote();
-    return { enemy, playerClass, state.Apt };
 }

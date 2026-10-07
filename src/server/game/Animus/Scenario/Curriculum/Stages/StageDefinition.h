@@ -47,9 +47,7 @@ namespace Animus::Curriculum
     {
         Creature,       // one same-level creature spawned out of aggro range
         Pulls,          // packs of creatures (see PullSchedule)
-        ScriptedPlayer, // an enemy player played by a script
         MirrorSeat,     // the other seat (SeatPlan::Mirror)
-        Ambush,         // only ambushers: scripted enemy players attacking the owner (ArenaDefinition::Ambushers)
         Travel,         // a place to get to (ArenaDefinition::Flying for one best reached in the air)
         Flag,           // Warsong Gulch's rules between the two mirror seats: take the other's flag home
         Hazards,        // nothing to fight: ground to get off (HazardEncounter)
@@ -212,9 +210,6 @@ namespace Animus::Curriculum
     /// Most arenas a stage can mix (the critic state has one column per arena).
     constexpr uint32 MAX_ARENAS = 16;
 
-    /// Most ambushers an arena can have; they take enemy slots the pulls leave free.
-    constexpr uint32 MAX_AMBUSHERS = 2;
-
     /// Most seats that quest alone beside two groups sharing a zone (ArenaDefinition::LoneSeats).
     constexpr uint32 MAX_LONE_SEATS = 2;
 
@@ -235,10 +230,8 @@ namespace Animus::Curriculum
         PullSchedule Schedule = PullSchedule::None;
         bool Owner = false;             // an owner the seats fight for
         /// The owner is an agent of its own: one more row on the wire, after the seats (and the directors), which
-        /// the learner plays from a frozen checkpoint (its cast, stage.json `cast`) and never trains. A share of
-        /// the episodes (Owner.CastScriptedShare) keeps the scripted owner, which wanders and engages on a timer
-        /// -- the shape the companion's follow lesson was built on -- and every evaluation does: the yardstick
-        /// stays the owner it always was. Ignored unless Owner.
+        /// the learner plays from a frozen checkpoint (its cast, stage.json `cast`) and never trains. Every owner
+        /// is one (there is no scripted owner): an owner arena sets it.
         bool OwnerCast = false;
         bool PartyGroup = false;        // the owner and seats form a core group
         bool Pvp = false;               // against players: resilience gear, no resurrecting oneself
@@ -264,9 +257,6 @@ namespace Animus::Curriculum
         /// own draw (Party.SizeWeight*, or a whole group). The party follow's four followers beside its leader.
         uint32 PartySize = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
-        /// Most scripted enemy players that ambush the owner (1 to this many, MAX_AMBUSHERS at most): mid-episode
-        /// beside pulls, or from the start against Opposition::Ambush. 0 = none.
-        uint32 Ambushers = 0;
         /// What the first seats must be able to do (entry i is seat i); the rest are drawn as usual. A drill stage
         /// fixes the seat it is about -- one that has to hold what it pulls, one that has to keep a group up --
         /// where the ordinary party asks for nothing in particular and the lesson is smeared over whoever
@@ -389,15 +379,6 @@ namespace Animus::Curriculum
         /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether
         /// the policy learned to read terrain or merely learned these particular banks.
         std::vector<Position> HeldOutSpawnPoints{};
-        /// Levels added to the scripted enemy player's own, on top of Opponent.LevelSpread. A drill about
-        /// getting away needs a fight the seat cannot win; every other arena wants an even match and leaves
-        /// this at 0. Ignored unless the opposition is a scripted player.
-        int32 OpponentLevelBonus = 0;
-        /// The scripted enemy player's level drawn each episode from the seat's plus the bonus, plus or minus this,
-        /// in place of Opponent.LevelSpread (0 keeps the spread). The evade and hide drills draw from ten below to
-        /// ten above, so whether to run at all is part of what they teach: against a fixed ten levels up every
-        /// fight was one to leave, and a seat that meets a weaker player in the world should not flee it.
-        int32 OpponentLevelRange = 0;
         /// Yards of validated random offset applied to each seat's start, with a random facing to go with it.
         /// 0 leaves the seat exactly on the spawn point facing due east, which is what every arena did and what
         /// every arena that leaves this alone keeps doing.

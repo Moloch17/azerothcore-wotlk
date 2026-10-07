@@ -898,16 +898,6 @@ void Animus::Curriculum::InstanceEncounter::Update(Env& env)
     if (!boss)
         return;
 
-    // The boss is the episode's pull. Announced on the first update, once the owner is configured (which clears its
-    // engage timer): the scripted owner's timer is only ever set by a pull starting, so in an instance it attacked
-    // the boss on its first update, before the party had moved. Now a tank owner pulls after a moment and any other
-    // waits for the tank, as it does for a pull.
-    if (!fight.Announced)
-    {
-        fight.Announced = true;
-        _scenario.NotifyPullStarting(env);
-    }
-
     fight.HealthLeft = boss->IsAlive() ? float(boss->GetHealth()) / float(fight.BossHealth) : 0.0f;
     if (!fight.BossDead && !boss->IsAlive())
         fight.BossDead = true;

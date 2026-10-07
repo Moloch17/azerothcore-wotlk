@@ -416,14 +416,13 @@ An `ArenaDefinition` describes one situation:
 | `Name` | Unique within the stage. Used in episode info, `stage.json`, tuning keys and per-arena gates |
 | `Weight` | Share of episodes, overridable with `<TuningPrefix>Arena.<stage>.<arena>.Weight` |
 | `Seats` | `Solo` (1), `Party` (4 slots beside the owner, 1-4 filled each episode), `Mirror` (2 that fight each other), `Raid` (40: eight groups of five, a tank and a healer at the head of each) |
-| `Against` | `Creature`, `Pulls`, `ScriptedPlayer`, `MirrorSeat`, `Ambush`, `Travel` (a place to get to), `Flag` (a flag match between mirror seats), `Hazards` (nothing to fight: ground to get off) |
+| `Against` | `Creature`, `Pulls`, `MirrorSeat`, `Travel` (a place to get to), `Flag` (a flag match between mirror seats), `Hazards` (nothing to fight: ground to get off) |
 | `Schedule` | `None`, `SinglePack` (ends on clear), `Gauntlet` (pull after pull) |
 | `MaxRung` | Pin the pack ladder instead of letting it climb: `-1` leaves it to `Pulls.MaxTier`, `0` and up hold every class and role at that rung, for training and evaluation alike. Overridable with `<TuningPrefix>Arena.<stage>.<arena>.MaxRung`. A drill wants one variable |
-| `Owner` | An owner the seats fight for; `OwnerCast` plays it through a row of its own from a frozen checkpoint (the learner's cast), the script keeping `Owner.CastScriptedShare` of training episodes and every evaluation |
+| `Owner` | An owner the seats fight for; `OwnerCast` plays it through a row of its own from a frozen checkpoint (the learner's cast); every owner is one, there is no scripted owner |
 | `PartyGroup` | The owner and seats form a core group |
 | `Pvp` | Resilience gear, no self-resurrection |
 | `EpisodeSeconds` | 0 = the host's `EpisodeSeconds` |
-| `Ambushers` | 0-2 scripted enemy players who attack the owner |
 | `Flying` | Travel: the objective is far enough that flying beats riding |
 
 A `StageDefinition` may also name its own `MapId`, `SpawnPoints` and `HeldOutSpawnPoints` (0 = the host's
@@ -484,10 +483,9 @@ that:
   - an owner without pulls or an ambush, or without `companion`
   - a party group without an owner, party seats and `party`
   - mirror seats without `MirrorSeat` or `Flag`, or either without mirror seats
-  - travel without `travel` or other than one seat on its own (no owner, PvP or ambushers), `Flying` without travel,
+  - travel without `travel` or other than one seat on its own (no owner or PvP), `Flying` without travel,
     or a flag match without `travel` and `flag`
-  - more than 2 ambushers, ambushers without an owner and `pack`, or an `Ambush` arena with other than exactly one
-    ambusher
+  - an owner without `OwnerCast` (there is no scripted owner)
   - fighting a player without `pvp`, a one-on-one against a player that isn't `Pvp`, or `Pvp` without a player
 
 The base only has to exist. Seeding maps blocks by name, so a stage may drop base blocks it doesn't need, and several
@@ -503,15 +501,15 @@ stages may share a base.
    DecisionMs / 50`.
 2. **Layouts.** One `Layout` per class in `StageSettings::Classes` (or all 10) whose assets have at least one
    race. `Layout::Index` is its position in this list, which is the index the learner sees.
-3. **Scripted-player assets.** If any arena has an owner or a scripted enemy player, every class's assets are
-   built now, because those bots can be any class. Building takes seconds per class, and doing it now avoids
+3. **Owner assets.** If any arena has an owner, every class's assets are built now, because the owner can be any
+   class. Building takes seconds per class, and doing it now avoids
    stalling the world thread during an episode reset.
 4. **Spec.** `AgentsPerEnv` is the largest arena's seat count. `ObsDim` and `NumActions` are the largest layout's.
    `StateDim` is fixed (4.8).
 5. **Encounters**, created only if some arena needs them, in **build order**: opponent, owner, party group, pulls,
-   creature, ambush. The owner comes before the party group (which it leads) and the pulls (which spawn around it).
-   Ambushers come last because they find the owner and take the slots the pulls leave. **Reward order** (which is also
-   the order of episode info columns) is creature, pulls, owner, party, opponent, ambush. For each arena the scenario
+   creature. The owner comes before the party group (which it leads) and the pulls (which spawn around it).
+   **Reward order** (which is also
+   the order of episode info columns) is creature, pulls, owner, party, opponent. For each arena the scenario
    keeps the subset it uses, in both orders, plus its weight and episode length.
 6. **Pools.** The creature opponent pool and the consumable pool are loaded now rather than on the first episode.
 7. **Episode info columns.** The core columns (4.10), then each encounter's, then one `reward_<term>` column per reward
@@ -570,7 +568,7 @@ every `Reset` calls `Rebuild`:
 `ApplyActions`:
 
 1. every active encounter's `UpdateEnemies` (linked packs join fights), then `Update` (the owner acts, the next pull
-   spawns, the scripted opponent acts, ambushers arrive),
+   spawns),
 2. `AcceptResurrections`: dead seats and the owner accept a pending resurrection request as a client would, and
    the seat that cast it is credited once the ally is actually alive (`StepRevivedAlly`, `Revives`) -- see the
    note below,
@@ -1072,50 +1070,21 @@ casters and ability users) to the duel pool.
   stands up with `RecoverFraction` (half) health and mana (`NotifyRecovered`). A pull that kills everyone is cleared
   away (a wipe). Every death is paid once, and again after standing up.
 
-**`OwnerEncounter`** (`Owner = true`). A scripted player (`ScriptedPlayer`) within `Owner.LevelSpread` (2) levels of
-the seats, with a random role (tank 25%, healer 25%, DPS 50%) and a class that can fill it, dressed like a seat, given
-the seats' faction. It is the env's ally 0.
-
-- Between pulls it wanders near the spawn point and regenerates (`RegenFraction` per second). `RunChance` percent of
-  its steps are a run instead: a leg at a run to a spot `RunMinYards`-`RunMaxYards` from the spawn point with a real
-  route there, and the wander's leash brings it back. The next pull spawns around wherever it is, so a seat that has
-  not followed fights from behind.
-- A tank owner starts every pull and taunts enemies off others. A healer owner heals the most hurt party member
-  under `HealBelow` and stays within `HealerRange` of the tank. A DPS owner walks in after `OwnerEngageMin/MaxMs` (in a
-  party, after `PartyOwnerEngageMin/MaxMs` so the tank can pull), and starts the pull itself `OwnerPullsChance` percent
-  of the time. It casts a spell every `SpellMin/MaxMs`.
-- Linked packs join in on whoever their engaged member fights.
+**`OwnerEncounter`** (`Owner = true`, always `OwnerCast`). A player within `Owner.LevelSpread` (2) levels of the seats,
+with a random role (tank 25%, healer 25%, DPS 50%) and a class that can fill it, built as a seat in the scenario's
+owner slot and given the seats' faction. It is the env's ally 0, and the learner plays its row from a frozen checkpoint
+(`cast.agents.owner`), in evaluations too; there is no scripted owner (the wander, engage and heal script went with
+`ScriptedPlayer`). Linked packs join in on whoever their engaged member fights.
 
 **`PartyEncounter`** (`PartyGroup = true`). Every episode the owner, as leader, and the active seats form a real core
 `Group` marked as a sim group (`CoreHooks::MarkSimGroup`), so party buffs, auras, group heals and every "party member"
 check work as in play. It is disbanded before its members are replaced (`BeforeRebuild`). Each seat sees its three
 teammates (the other seats, in order) and is rewarded for them.
 
-**`OpponentEncounter`** (`ScriptedPlayer` or `MirrorSeat`). A scripted enemy player
-(`EnemyPlayers::Create`) at the seat's level within `Opponent.LevelSpread` (1), with a random role (DPS 60%, tank 20%,
-healer 20%), its spec, talents, kit and resilience gear, spawned 40-50 yd away. It engages within `EngageMaxMs` (3 s).
-Melee specs fight in melee, ranged specs keep 10-30 yd (`RangedMin/Max`), and healers heal themselves below
-`SelfHealBelow`. A rogue sneaks up in Stealth `ScriptedPlayers.StealthChance` (50) percent of the time and opens with
-a stealth opener. `ScriptedPlayers.TacticsChance` (75) percent of engagements it plays its kit: it interrupts the
-enemy's casts, crowd controls it every `ControlMin/MaxMs` (8-15 s) when it isn't already controlled, snares or roots a
-melee enemy before backing off (ranged specs), breaks crowd control under `BreakBelow` (60%) health and uses a
-defensive under `DefensiveBelow` (35%). Scripted enemy players see no more than a player: one that can neither see nor
-detect its enemy stops attacking, goes to where it last saw it and searches around there. In a mirror arena the
-"opponent" is the other seat. Both players get opposing factions and the PvP flag. Against a scripted player the
-episode is terminal when the seat dies or kills it. In a mirror arena it is terminal when either seat dies, except in
-a flag match. PvP arenas allow no self-resurrection.
-
-**`AmbushEncounter`** (`Ambushers > 0`). One or two scripted enemy players with the opponent's class, role and gear
-rules.
-
-- Beside pulls (`ambush` arena), they arrive `Ambush.MinMs`-`MaxMs` (20-120 s) into the episode, engage within
-  `EngageMaxMs`, attack the owner while it lives and then the nearest seat they can see (a hidden one only when they see
-  none). They take enemy slots the pulls leave free (a pull has at most 4 minus the arena's ambushers creatures). Every
-  seat earns `Ambush.Kill` (3) per ambusher killed, and the pulls and owner rewards pay the rest.
-- Alone (`escort_duel`, `Opposition::Ambush`), exactly one ambusher is the whole fight from the start, paid as a
-  one-on-one against it.
-
-The pvp block observes the first living ambusher.
+**`OpponentEncounter`** (`MirrorSeat`, and a flag match's sides). The other seat of a self-play match: the seats of
+one side are the enemies of the seats of the other, both given opposing factions and the PvP flag, and the opponent a
+seat sees is whichever of them target selection last picked. There is no scripted enemy player. The episode is terminal
+when every seat of a side is down, except in a flag match. PvP arenas allow no self-resurrection.
 
 **`TravelEncounter`** (`Opposition::Travel`). An objective the seat has to reach: on the ground a place
 `Travel.ObjectiveMin`-`Max` (60-320) yd away that it can walk to by a path at most 1.8 times the straight line, not in
@@ -1322,8 +1291,6 @@ timeout.
 and healers), healers' effective healing on teammates x2, tanks -0.02 per enemy on a non-tank teammate per decision,
 -3 per teammate death. Kills and clears are shared. A tank isn't charged for fighting before the owner joins.
 
-**Ambush**: +3 per ambusher killed, for every seat.
-
 **Travel** (`Travel.*`): potential-based shaping on the distance left to the objective (+1 per 100 yd closed, taken
 back for leaving), arriving +3 plus up to +3 for the share of the episode left, damage taken x1 (falls, what it rode
 past), death -3, step cost 0.0002. Nothing pays for mounting: a mount is worth its cast time only on a long enough
@@ -1369,12 +1336,9 @@ writing. Min/max pairs are put in order on load.
 | `Duel.*` | One-on-one reward weights and preferred ranges |
 | `Casting.*` | Cast time wasted and completed, the charge per self-inflicted cancel |
 | `Actions.*` | Pacing: how soon the same action, the same movement order, a stop of a new cast and a recast of a stopped spell are allowed again |
-| `Pulls.*` | Linked, elite and higher-level chances, pull timing, owner engage timing, recovery fraction, pull reward weights |
+| `Pulls.*` | Linked, elite and higher-level chances, pull timing, recovery fraction, pull reward weights |
 | `Owner.*` | Level spread, role chances, owner reward weights, follow distances |
 | `Resurrection.*` | Grace period, revive reward |
-| `Opponent.*` | Level spread, engage time, role chances |
-| `Ambush.*` | Arrival window, engage time, kill reward |
-| `ScriptedPlayers.*` | Spell and heal intervals, wandering, regeneration, heal thresholds, ranges; PvP stealth and tactics chances, crowd control interval, defensive and break thresholds |
 | `Travel.*` | Objective distances on the ground and in the air, travel reward weights |
 | `Flag.*` | Base distance, captures to win, respawn and dropped-flag timers, touch distance, flag match reward weights |
 | `Arena.<stage>.<arena>.Weight` | Arena weights (read by `StageScenario`, not `Visit`) |
@@ -1446,7 +1410,6 @@ Encounters then add their own columns:
 - party: `seat`, `teammates_died`, `teammate_damage_taken`, `teammate_healing`, `threat_on_teammates`
 - opponent: `won`, `opponent`, `opponent_class`, `opponent_seat`, `opponent_elite`, `opponent_healing`,
   `opponent_mitigation`
-- ambush: `ambushers`, `ambushers_killed`
 - travel: `arrived`, `travel_seconds`, `start_distance`, `walk_distance`, `distance_travelled`, `dry_distance`,
   `dry_detour`, `route_length`, `route_complete`, `route_failed`, `route_shortcut`, `dry_shortcut`,
   `objective_distance_at_end`, `objective_distance_nearest`, `nearest_at_seconds`, `trip_share`, `crossing`,

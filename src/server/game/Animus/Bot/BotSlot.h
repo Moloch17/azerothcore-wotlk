@@ -31,14 +31,14 @@ struct Position;
 
 namespace Animus
 {
-    /// One bot that is rebuilt every episode (a learned seat, a scripted owner or opponent).
+    /// One bot that is rebuilt every episode (a learned seat).
     ///
     /// Two sessions and two GUIDs alternate: the next bot is created and placed on the idle session before the old
     /// one leaves, so an instance never loses its last player, and neither sessions nor GUIDs are allocated per
     /// rebuild (the core keeps some per-GUID state for the life of the server).
     ///
     ///     slot.Begin();                                   // remember the current bot
-    ///     spec.AccountId = BotAccounts::Owner(env, slot.NextSession());
+    ///     spec.AccountId = BotAccounts::Seat(env, seat, slot.NextSession());
     ///     Player* bot = slot.CreateNext(spec, map, mapId, start);
     ///     ...                                             // configure the new bot
     ///     slot.Promote();                                 // the old bot goes, the new one is the slot's bot

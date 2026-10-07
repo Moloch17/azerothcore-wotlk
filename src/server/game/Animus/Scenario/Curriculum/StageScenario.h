@@ -214,8 +214,8 @@ namespace Animus::Curriculum
         [[nodiscard]] uint32 SeatCount() const { return _seatCount; }
         /// The owner's agent index (valid when a cast owner plays).
         [[nodiscard]] uint32 OwnerAgent() const { return _seatCount + (HasDirectors() ? TEAM_COUNT : 0); }
-        /// Whether this episode's owner is played through its row: a cast-owner arena, not an evaluation, and
-        /// not one of the episodes Owner.CastScriptedShare keeps scripted.
+        /// Whether this episode's owner is played through its row: a cast-owner arena's always, a follow stage's
+        /// leader outside an evaluation.
         [[nodiscard]] bool CastOwnerActive(Env const& env) const;
         /// The seat the "human" stand-in plays this episode (StandIn.h), or -1 for an all-bot party. A leading
         /// stand-in is seat 0, the group's leader: what a party follow reads as the leader to keep up with.
@@ -329,7 +329,7 @@ namespace Animus::Curriculum
         /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
         [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
 
-        /// The scripted owner, or null (no owner in the env's arena, or none built).
+        /// The owner, or null (no owner in the env's arena, or none built).
         [[nodiscard]] Player* Owner(Env const& env) const;
 
         /// The party's living tank seat, or null (no party in the env's arena).
@@ -340,9 +340,6 @@ namespace Animus::Curriculum
 
         /// Every seat, and the owner, stood up again after a pull: tell every encounter (see Encounter::OnRecovered).
         void NotifyRecovered(Env& env, int32 who);
-
-        /// A pull is about to spawn: tell every encounter (see Encounter::OnPullStarting).
-        void NotifyPullStarting(Env& env);
 
         /// Whether seat `seat` is dead with no resurrection of its own left to wait for (Tuning().Resurrection).
         [[nodiscard]] bool DeadForGood(Env const& env, uint32 seat) const;

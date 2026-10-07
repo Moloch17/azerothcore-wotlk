@@ -33,7 +33,6 @@
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
 #include "RoutePlanner.h"
-#include "ScriptedPlayer.h"
 #include "SeatView.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
@@ -84,32 +83,13 @@ namespace Animus::Curriculum
 
     [[nodiscard]] EnemyRank RankEnemy(Unit const* enemy, Unit const* tank);
 
-    /// Scripted enemy players: the PvP stages' opponent and the ambushers.
+    /// Enemy players: both sides of a self-play match are the learner's seats.
     namespace EnemyPlayers
     {
         /// Give `enemy` the other side's faction and flag both for PvP, which players need to attack each other.
         void MakeEnemies(Player* player, Player* enemy);
         /// Flag a player for PvP (zone updates can drop the flag).
         void Flag(Player* player);
-
-        /// A bot slot's names and account ids, per session slot.
-        struct Naming
-        {
-            std::function<std::string(uint8)> Name;
-            std::function<uint32(uint8)> Account;
-        };
-
-        struct Spawned
-        {
-            Player* Bot = nullptr;
-            uint8 Class = 0;
-            Aptitude Apt;
-        };
-
-        /// Rebuild `slot` as an enemy player at `level` of a random class and role (tuning's chances), with a
-        /// standard build, kit and PvP gear, 40-50 yd from `near` in `map`. Bot is null on failure.
-        Spawned Create(BotSlot& slot, Naming const& naming, uint8 level, CurriculumTuning::OpponentTuning const& tuning,
-            Player* near, Map* map, uint32 mapId, ScriptedPlayer::State& state);
     }
 
     /// A same-level creature spawned out of aggro range, which fights back. Reward: CombatReward::OneOnOne.
@@ -478,28 +458,26 @@ namespace Animus::Curriculum
     };
 
     /// A player of a random class and role near the seats' level, whom the seats fight for (companion and party
-    /// stages). It is the env's ally 0. Scripted (ScriptedPlayer::UpdateMember), or in a cast-owner arena a seat
-    /// of its own in the scenario's owner slot, played through its row by the learner's frozen checkpoint.
+    /// stages). It is the env's ally 0: a seat of its own in the scenario's owner slot, played through its row by the
+    /// learner's frozen checkpoint (there is no scripted owner).
     class OwnerEncounter final : public Encounter
     {
     public:
         OwnerEncounter(StageScenario& scenario, uint32 envs);
 
         [[nodiscard]] Player* Find(Env const& env) const;
-        /// Whether this episode's owner is played through its row rather than by the script.
+        /// Whether this episode's owner is built (a cast seat in the scenario's owner slot).
         [[nodiscard]] bool IsCast(Env const& env) const { return _envs[env.Index].Cast; }
 
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
-        void Update(Env& env) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void BeforeRewards(Env& env) override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         void WriteState(Env const& env, float* state) const override;
         void OnRecovered(Env& env, int32 who) override;
-        void OnPullStarting(Env& env) override;
         void Deactivate(Env& env) override;
         void Teardown(Env& env) override;
 
@@ -516,11 +494,9 @@ namespace Animus::Curriculum
 
         struct EnvOwner
         {
-            BotSlot Bot;                        // the scripted owner's character (a cast owner's is its seat's)
             bool Cast = false;                  // this episode's owner is a seat in the scenario's owner slot
             uint8 Class = 0;
             Aptitude Apt;
-            ScriptedPlayer::State Script;
             bool Died = false;
             uint32 Deaths = 0;
             bool DeathCounted = false;
@@ -695,7 +671,6 @@ namespace Animus::Curriculum
             bool Wiped = false;
             bool Evaded = false;
             bool Recorded = false;
-            bool Announced = false;             // the owner was told a pull is starting (OnPullStarting)
             uint32 TrashCleared = 0;
             /// A whole wing (InstanceLadder::Wing): the route from the door to the boss and the next point on it, the
             /// trash killed, the wipes, and the creatures watched for dying.
@@ -943,8 +918,8 @@ namespace Animus::Curriculum
         std::deque<bool> _drillRuns;
     };
 
-    /// An enemy player: one played by a script (Opposition::ScriptedPlayer), or the other seat (self-play,
-    /// Opposition::MirrorSeat), as the env's arena says. Reward: CombatReward::OneOnOne against it.
+    /// The other seat of a self-play match (Opposition::MirrorSeat, and a flag match's sides). Reward:
+    /// CombatReward::OneOnOne against it.
     class OpponentEncounter final : public Encounter
     {
     public:
@@ -965,22 +940,15 @@ namespace Animus::Curriculum
     private:
         struct EnvOpponent
         {
-            BotSlot Bot;
-            uint8 Class = 0;
-            Aptitude Apt;
-            ScriptedPlayer::State Script;
             /// Per seat: a casting opponent the seat just cast an interrupt at, how many it has landed, and how long
-            /// the opponent has been held out of the fight. A scripted player casts and heals -- 3 interruptible
-            /// casts an episode in stage14_pvp -- so stopping one matters at least as much as it does against a
-            /// creature, and until now none of it was paid or even counted here.
+            /// the opponent has been held out of the fight. An opponent casts and heals, so stopping one matters at
+            /// least as much as it does against a creature.
             std::array<ObjectGuid, MAX_SEATS> PendingInterrupt{};
             std::array<uint32, MAX_SEATS> Interrupts{};
             std::array<uint32, MAX_SEATS> ControlMs{};
         };
 
-        /// Whether the seats fight each other rather than a scripted player: one a side in a Mirror arena,
-        /// TeamSeats of them a side in a Teams arena. A Teams arena read as anything else spawns a scripted
-        /// opponent and points every seat at it, which is a gang-up, not a match.
+        /// Whether the seats fight each other: one a side in a Mirror arena, TeamSeats of them a side in a Teams arena.
         [[nodiscard]] bool Mirror(Env const& env) const
         {
             SeatPlan const seats = _scenario.Arena(env).Seats;
@@ -999,64 +967,8 @@ namespace Animus::Curriculum
         /// The seats of the side `seat` fights, in that side's own seat order, capped at the slots a seat can
         /// observe. The order has to be stable across a match: target selection indexes it.
         uint32 EnemySeats(Env const& env, uint32 seat, std::array<uint32, PACK_SLOTS>& out) const;
-        bool RebuildScripted(Env& env, Player* bot, Map* map);
 
         std::vector<EnvOpponent> _envs;
-    };
-
-    /// Scripted enemy players who ambush the owner (ArenaDefinition::Ambushers): beside pulls they arrive at a random
-    /// time and take enemy slots the pulls leave free; against Opposition::Ambush one of them is the whole fight from
-    /// the start. They attack the owner while it lives, then the nearest seat. The pvp block sees the first living one.
-    /// Reward: beside pulls, every seat is paid per ambusher killed (the pulls and the owner pay the rest); alone,
-    /// CombatReward::OneOnOne against it.
-    class AmbushEncounter final : public Encounter
-    {
-    public:
-        AmbushEncounter(StageScenario& scenario, uint32 envs);
-
-        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
-        void AddEpisodeInfo(EpisodeInfoTable& table) override;
-        void ResetEpisode(Env& env) override;
-        void BeforeRebuild(Env& env) override;
-        bool Build(Env& env, Map* map, uint8 level) override;
-        void Update(Env& env) override;
-        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
-        void View(Env const& env, uint32 seat, SeatView& view) const override;
-        void BeforeRewards(Env& env) override;
-        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
-        [[nodiscard]] bool IsTerminal(Env const& env) const override;
-        void Deactivate(Env& env) override;
-        void Teardown(Env& env) override;
-
-    private:
-        struct Ambusher
-        {
-            BotSlot Bot;
-            uint8 Class = 0;
-            Aptitude Apt;
-            ScriptedPlayer::State Script;
-            bool KillCounted = false;
-        };
-
-        struct EnvAmbush
-        {
-            std::array<Ambusher, MAX_AMBUSHERS> Ambushers;
-            uint32 Count = 0;                   // ambushers this episode
-            uint32 ArriveMs = 0;                // episode time they arrive (beside pulls)
-            bool Arrived = false;
-            uint32 Killed = 0;
-            uint32 StepKills = 0;               // killed since the last decision
-        };
-
-        /// Whether the env's episode is the ambush alone (no pulls).
-        [[nodiscard]] bool Alone(Env const& env) const { return _scenario.Arena(env).Against == Opposition::Ambush; }
-        [[nodiscard]] Player* Find(Env const& env, uint32 ambusher) const;
-        /// The first living ambusher that arrived, or null.
-        [[nodiscard]] Player* FirstAlive(Env const& env, uint32* index = nullptr) const;
-        bool Arrive(Env& env, Map* map);
-        void RemoveBots(Env& env);
-
-        std::vector<EnvAmbush> _envs;
     };
 
     /// A place to get to: on the ground a reachable spot 60-320 yd away by path, in a flying arena a spot 350-700 yd

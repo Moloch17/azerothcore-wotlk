@@ -1028,11 +1028,9 @@ namespace
     std::string ArenaProblem(StageDefinition const& stage, ArenaDefinition const& arena)
     {
         bool const pulls = arena.Against == Opposition::Pulls;
-        bool const ambushOnly = arena.Against == Opposition::Ambush;
         bool const flag = arena.Against == Opposition::Flag;
-        bool const duelPlayer = arena.Against == Opposition::ScriptedPlayer || arena.Against == Opposition::MirrorSeat
-            || flag;
-        bool const player = duelPlayer || arena.Ambushers > 0;
+        bool const duelPlayer = arena.Against == Opposition::MirrorSeat || flag;
+        bool const player = duelPlayer;
 
         if (pulls != (arena.Schedule != PullSchedule::None))
             return "a pull schedule goes with pulls, and only with pulls";
@@ -1056,8 +1054,10 @@ namespace
         if (arena.RaidSeats && (arena.Seats != SeatPlan::Raid || arena.RaidSeats > MAX_SEATS
             || arena.RaidSeats % GROUP_SEATS))
             return "RaidSeats is a raid's seat count: a multiple of GROUP_SEATS, up to MAX_SEATS";
-        if (arena.Owner && (!(pulls || ambushOnly || instance) || !stage.Has(BlockId::Companion)))
-            return "an owner needs pulls, an ambush or an instance, and the companion block";
+        if (arena.Owner && (!(pulls || instance) || !stage.Has(BlockId::Companion)))
+            return "an owner needs pulls or an instance, and the companion block";
+        if (arena.Owner && !arena.OwnerCast)
+            return "an owner is played through its row (OwnerCast): there is no scripted owner";
         // A raid is a group of its own, in an instance or against pulls (stage12's raid arenas): no owner.
         bool const raidGroup = arena.Seats == SeatPlan::Raid
             && (instance || arena.Against == Opposition::Pulls);
@@ -1132,16 +1132,6 @@ namespace
         if (arena.Directed && arena.Seats != SeatPlan::Teams && arena.Seats != SeatPlan::Party
             && arena.Seats != SeatPlan::Raid)
             return "a director commands a group: its arena needs team, party or raid seats";
-        if (arena.Ambushers > MAX_AMBUSHERS)
-            return "at most " + std::to_string(MAX_AMBUSHERS) + " ambushers";
-        // A quest's ambushers are hostile players in the world: they gank whoever is questing, owner or not.
-        bool const quest = arena.Against == Opposition::Quest;
-        if (arena.Ambushers > 0 && !(pulls || ambushOnly || quest))
-            return "ambushers join pulls or a quest, or are the whole fight (Opposition::Ambush)";
-        if (arena.Ambushers > 0 && ((!arena.Owner && !quest) || !stage.Has(BlockId::Pack)))
-            return "ambushers attack an owner (or anyone questing) and take enemy slots (the pack block)";
-        if (ambushOnly && arena.Ambushers != 1)
-            return "an ambush without pulls has exactly one ambusher (a one-on-one reward)";
         if (player && !stage.Has(BlockId::Pvp))
             return "fighting a player needs the pvp block";
         if (duelPlayer && !arena.Pvp)
@@ -1155,13 +1145,8 @@ namespace
         bool const placed = travel || markerGround;
         if (travel && !stage.Has(BlockId::Travel))
             return "travel needs the travel block";
-        if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0))
+        if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp))
             return "travel is one seat on its own";
-        if ((arena.OpponentLevelBonus != 0 || arena.OpponentLevelRange != 0)
-            && arena.Against != Opposition::ScriptedPlayer)
-            return "only a scripted enemy player takes a level bonus or range";
-        if (arena.OpponentLevelRange < 0)
-            return "a level range is how far either way, not negative";
         bool const mountedMarkers = arena.Against == Opposition::Markers && arena.Course == MarkerCourse::Mounted;
         if (arena.Flying && !travel && !mountedMarkers)
             return "only a travel arena flies";
@@ -1193,10 +1178,9 @@ namespace
             || arena.Against == Opposition::Town;
         if (life && (!stage.Has(BlockId::World) || !stage.Has(BlockId::Travel) || !stage.Has(BlockId::Pack)))
             return "life outside the fight needs the world, travel and pack blocks";
-        // A quest may be a group's (world_group, world_shared) and may be ganked (ambushers); gathering and a
-        // town are one seat on its own.
+        // A quest may be a group's (world_group, world_shared); gathering and a town are one seat on its own.
         if (life && ((arena.Seats != SeatPlan::Solo && !worldGroup) || arena.Owner || arena.Pvp
-            || (arena.Ambushers > 0 && arena.Against != Opposition::Quest) || arena.Schedule != PullSchedule::None))
+            || arena.Schedule != PullSchedule::None))
             return "a life arena is one seat on its own (or a group questing), with no pulls";
         if (arena.LoneSeats && (!sharedZone || arena.LoneSeats > MAX_LONE_SEATS || arena.SeatCount() > MAX_SEATS))
             return "seats questing alone go beside two groups sharing a zone, at most MAX_LONE_SEATS of them";
@@ -1211,7 +1195,7 @@ namespace
         // The travel arena's kinds of ground (water, rooms, ledges, lakebeds, the air) are not markers' yet: each
         // comes with the stage that asks for it.
         bool const markers = arena.Against == Opposition::Markers;
-        if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (markers && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed))
             return "a marker arena is one seat on its own, with nothing to fight and no one to follow";
         if (markers && arena.OnFoot)
@@ -1240,7 +1224,7 @@ namespace
         // The follow stage: one seat, a leader in the owner's slot, nothing to fight and none of the travel arena's
         // kinds of ground.
         bool const follow = arena.Against == Opposition::Follow;
-        if (follow && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (follow && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.OnFoot || arena.Flying || arena.AirOnly
             || arena.Water || arena.Indoors || arena.Ledges || arena.Underwater || arena.Checkpoints))
             return "a follow arena is one seat and a leader, with nothing to fight";
@@ -1250,7 +1234,7 @@ namespace
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;
-        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (seek && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
             || arena.Underwater || arena.Checkpoints || arena.Objective))
             return "a seek arena is one seat on its own, on foot and dry, with no marker of its own";
@@ -1264,7 +1248,7 @@ namespace
         // hallway points (its SpawnPoints, which it spawns at too); walked to with the move block, pointed at by the
         // compass (withheld more often each rung) and seen with the camera.
         bool const sight = arena.Against == Opposition::Sight;
-        if (sight && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (sight && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
             || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
             return "a sight arena is one seat on its own, on foot and dry, with no marker or room of its own";
@@ -1280,7 +1264,7 @@ namespace
         // M3's sites: one seat on its own, on foot and dry, acting on what it sees through the sight block; the goal
         // names what it is after, so nothing points at it -- no compass, no marker of its own.
         bool const interact = arena.Against == Opposition::Interact;
-        if (interact && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (interact && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.Flying || arena.Water
             || arena.Underwater || arena.Checkpoints || arena.Objective || !arena.Rooms.empty()))
             return "an interact arena is one seat on its own, on foot and dry, with no marker or room of its own";
@@ -1308,7 +1292,7 @@ namespace
         // the minimap and memory, so the camera and the party frames, and never the compass.
         bool const partyFollow = arena.Against == Opposition::PartyFollow;
         if (partyFollow && (arena.Seats != SeatPlan::Party || !arena.PartySize || arena.PartySize > GROUP_MEMBERS
-            || arena.Owner || arena.PartyGroup || arena.Pvp || arena.Ambushers > 0
+            || arena.Owner || arena.PartyGroup || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.Objective || !arena.MapId))
             return "a party follow is a party of 1 to GROUP_MEMBERS followers and its leader, on a dungeon's map, "
                 "with nothing to fight";
@@ -1342,7 +1326,7 @@ namespace
         bool const combat = arena.Against == Opposition::Combat;
         if (combat != (arena.Combat != CombatDrill::None))
             return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";
-        if (combat && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (combat && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None || arena.Directed || arena.DeathRuns || arena.Objective))
             return "a combat arena is one seat on its own, with no pull schedule, owner or corpse run";
         if (combat && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
@@ -1366,7 +1350,7 @@ namespace
                 return "a seek room is named and its floor is a polygon";
 
         bool const dummy = arena.Against == Opposition::Dummy;
-        if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+        if (dummy && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp
             || arena.Schedule != PullSchedule::None))
             return "the rotation drill is one seat on its own against its dummies";
         if (arena.Drill != DummyDrill::Still && !dummy)

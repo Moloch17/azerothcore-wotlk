@@ -267,8 +267,7 @@ bots aren't sim sessions, that is on a stock core. With `keepSession` the sessio
 
 ### BotSlot
 
-A `BotSlot` (`src/Bot/BotSlot.h`) is one bot that is rebuilt every episode: a seat, an owner, an opponent or an
-ambusher. It owns **two sessions and two GUID counters** and alternates between them:
+A `BotSlot` (`src/Bot/BotSlot.h`) is one bot that is rebuilt every episode: a seat. It owns **two sessions and two GUID counters** and alternates between them:
 
 ```cpp
 slot.Begin();                                        // remember the current bot
@@ -298,9 +297,6 @@ teleport is out of the world but still has to be destroyed.
 | Kind | Id |
 |---|---|
 | Seat | `BASE + env * 4 * 2 + seat * 2 + session` |
-| Owner | `BASE + 100000 + env * 2 + session` |
-| Opponent | `BASE + 300000 + env * 2 + session` |
-| Ambusher | `BASE + 500000 + env * 2 * 2 + ambusher * 2 + session` |
 | Spell probe (per race) | `BASE - 1 - race` |
 
 `MAX_ENVS = 100000 / 8 = 12500`. `AnimusForge.Envs` is capped there. mod-animus companions use a separate base
@@ -414,7 +410,7 @@ changed. The learner reads `stage.json` for:
 | `stage`, `suffix`, `summary`, `seats`, `blocks` | Identification |
 | `extends`, `seed_chain` | Seeding: the ancestors, closest first |
 | `merges` | Merge seeding and distillation teachers |
-| `arenas` (name, weight, seats, episode seconds, pvp, ambushers) | Per-arena evaluation and gates. The `arena` episode-info column indexes this list |
+| `arenas` (name, weight, seats, episode seconds, pvp) | Per-arena evaluation and gates. The `arena` episode-info column indexes this list |
 | `state.arena_first`, `state.arena_count` | Where the arena one-hot sits in the critic state (distillation) |
 | `models` | Class/role to model name (export) |
 | `layouts.<class_role>` (obs dim, action count, block spans) | Block-by-block seeding and distillation mapping |

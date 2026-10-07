@@ -195,7 +195,7 @@ namespace
     static_assert(GROUP_RUNGS.size() == PACK_RUNGS.size(), "the pack rungs' top (Pulls.MaxTier) caps the run's too");
     static_assert(GROUP_PULLS.size() == SEQUENCE_PULLS.size(), "the longest run is as long whoever runs it");
 
-    /// The pull's creatures leave; enemy players in the slots (ambushers) stay.
+    /// The pull's creatures leave; enemy players in the slots stay.
     void Despawn(Animus::Env& env)
     {
         for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
@@ -205,7 +205,7 @@ namespace
         std::erase_if(env.Targets, [](ObjectGuid const& guid) { return !guid.IsPlayer(); });
     }
 
-    /// Whether a pull is up: creatures in the enemy slots (ambushers are not a pull).
+    /// Whether a pull is up: creatures in the enemy slots (enemy players are not a pull).
     bool HasCreatures(Animus::Env const& env)
     {
         return std::any_of(env.Targets.begin(), env.Targets.end(), [](ObjectGuid const& guid)
@@ -646,18 +646,15 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         if (uint32 const entry = pool.RandomHazardCaster(uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL))))
             entries.back() = entry;
 
-    // Ambushers keep their enemy slots: the pull takes what is left. A party's drill has a party's room.
+    // A party's drill has a party's room.
     uint32 const slots = PartyDrill(env) ? PARTY_SPAWN_MAX : PACK_SPAWN_MAX;
-    uint32 const room = slots - std::min(slots, arena.Ambushers);
-    if (entries.size() > room)
-        entries.resize(room);
+    if (entries.size() > slots)
+        entries.resize(slots);
     if (entries.empty())
         return false;
 
-    // With an owner, pulls spawn around the owner; whoever takes part hears of the pull first (the owner decides when
-    // it walks over).
+    // With an owner, pulls spawn around the owner.
     Player* anchor = _scenario.Owner(env);
-    _scenario.NotifyPullStarting(env);
 
     std::vector<Creature*> pack = Opponents::SpawnPack(anchor ? anchor : lead, map, entries, level);
     if (pack.empty())
@@ -693,7 +690,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
             member->SetFullHealth();
         }
 
-    // The new pull replaces the old one's creatures; enemy players (ambushers) keep their slots, first.
+    // The new pull replaces the old one's creatures; enemy players keep their slots, first.
     std::erase_if(env.Targets, [](ObjectGuid const& guid) { return !guid.IsPlayer(); });
     for (Creature* member : pack)
         env.Targets.push_back(member->GetGUID());
@@ -769,7 +766,6 @@ bool Animus::Curriculum::PullsEncounter::SpawnCamp(Env& env, Map* map, uint32 pa
     pulls.CampMembers.clear();
     pulls.PatrolA = center;
     pulls.PatrolB = center;
-    _scenario.NotifyPullStarting(env);
     for (uint32 pack = 0; pack < packs; ++pack)
     {
         // Nowhere to stand the next pack on from the last: the camp ends there, rather than one pack on another.
@@ -1432,7 +1428,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             continue;
         }
 
-        // The pull is its creatures; an ambusher is paid for by the ambush, but still a place to close in on.
+        // The pull is its creatures; an enemy player is not paid for here, but is still a place to close in on.
         if (!enemy->IsPlayer())
         {
             pullHealth += float(enemy->GetMaxHealth());

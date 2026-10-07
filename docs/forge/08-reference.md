@@ -117,13 +117,13 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Party.SizeWeight2` | 20 | | | |
 | `Party.SizeWeight3` | 20 | | `Pulls.NextPullMinMs` | 8000 |
 | `Party.SizeWeight4` | 40 | | `Pulls.NextPullMaxMs` | 20000 |
-| `Party.ClassicChance` | 50 | | `Pulls.OwnerEngageMinMs` | 1500 |
-| `Party.RoleTankChance` | 25 | | `Pulls.OwnerEngageMaxMs` | 5000 |
-| `Party.RoleHealerChance` | 25 | | `Pulls.PartyOwnerEngageMinMs` | 4000 |
-| `Party.TeammateDamageTakenDps` | 0.5 | | `Pulls.PartyOwnerEngageMaxMs` | 7000 |
-| `Party.TeammateDamageTakenProtector` | 1.0 | | `Pulls.OwnerPullsMinMs` | 500 |
-| `Party.TeammateHealing` | 2.0 | | `Pulls.OwnerPullsMaxMs` | 1500 |
-| `Party.TankLoseTeammate` | 0.02 | | `Pulls.OwnerPullsChance` | 30 |
+| `Party.ClassicChance` | 50 | | | |
+| `Party.RoleTankChance` | 25 | | | |
+| `Party.RoleHealerChance` | 25 | | | |
+| `Party.TeammateDamageTakenDps` | 0.5 | | | |
+| `Party.TeammateDamageTakenProtector` | 1.0 | | | |
+| `Party.TeammateHealing` | 2.0 | | | |
+| `Party.TankLoseTeammate` | 0.02 | | | |
 | `Party.TeammateDeath` | 3.0 | | `Pulls.RecoverFraction` | 0.5 |
 | `Raid.HealthPerGroup` | 1.0 | | `Raid.DamagePerGroup` | 0.15 |
 | `Raid.TankHold` | 0.015 | | `Raid.KeepUp` | 0.0002 |
@@ -248,36 +248,23 @@ for every key with a default and no warning, so an undocumented one quietly keep
 
 | Key | Default | | Key | Default |
 |---|---|---|---|---|
-| `Owner.LevelSpread` | 2 | | `Opponent.LevelSpread` | 1 |
-| `Owner.TankChance` | 25 | | `Opponent.EngageMaxMs` | 3000 |
-| `Owner.HealerChance` | 25 | | `Opponent.HealerChance` | 20 |
-| `Owner.DamageTakenDps` | 1.0 | | `Opponent.TankChance` | 20 |
-| `Owner.DamageTakenProtector` | 2.0 | | `Ambush.MinMs` | 20000 |
-| `Owner.TankOwnerDamageShare` | 0.25 | | `Ambush.MaxMs` | 120000 |
-| `Owner.Healing` | 3.0 | | `Ambush.EngageMaxMs` | 3000 |
-| `Owner.TankDamageRefund` | 0.5 | | `Ambush.Kill` | 3.0 |
-| `Owner.TankHold` | 0.006 | | `ScriptedPlayers.SpellMinMs` | 2000 |
-| `Owner.TankLose` | 0.02 | | `ScriptedPlayers.SpellMaxMs` | 4000 |
-| `Owner.PulledThreat` | 0.004 | | `ScriptedPlayers.HealMinMs` | 1500 |
-| `Owner.SoloFight` | 0.01 | | `ScriptedPlayers.HealMaxMs` | 2500 |
-| `Owner.FollowFar` | 0.004 | | `ScriptedPlayers.WanderMinMs` | 6000 |
-| `Owner.FollowNear` | 0.002 | | `ScriptedPlayers.WanderMaxMs` | 12000 |
-| `Owner.FollowFarDistance` | 15.0 | | `ScriptedPlayers.RegenFraction` | 0.04 |
-| `Owner.FollowNearDistance` | 6.0 | | `ScriptedPlayers.HealBelow` | 0.85 |
-| `Owner.Death` | 15.0 | | `ScriptedPlayers.SelfHealBelow` | 0.6 |
-| | | | `ScriptedPlayers.RunChance` | 35 |
-| | | | `ScriptedPlayers.RunMinYards` | 40.0 |
-| | | | `ScriptedPlayers.RunMaxYards` | 60.0 |
-| | | | `ScriptedPlayers.HealerRange` | 30.0 |
-| | | | `ScriptedPlayers.TauntRange` | 25.0 |
-| | | | `ScriptedPlayers.RangedMin` | 20.0 |
-| | | | `ScriptedPlayers.RangedMax` | 30.0 |
-| | | | `ScriptedPlayers.StealthChance` | 50 |
-| | | | `ScriptedPlayers.TacticsChance` | 75 |
-| | | | `ScriptedPlayers.ControlMinMs` | 8000 |
-| | | | `ScriptedPlayers.ControlMaxMs` | 15000 |
-| | | | `ScriptedPlayers.DefensiveBelow` | 0.35 |
-| | | | `ScriptedPlayers.BreakBelow` | 0.6 |
+| `Owner.LevelSpread` | 2 | | | |
+| `Owner.TankChance` | 25 | | | |
+| `Owner.HealerChance` | 25 | | | |
+| `Owner.DamageTakenDps` | 1.0 | | | |
+| `Owner.DamageTakenProtector` | 2.0 | | | |
+| `Owner.TankOwnerDamageShare` | 0.25 | | | |
+| `Owner.Healing` | 3.0 | | | |
+| `Owner.TankDamageRefund` | 0.5 | | | |
+| `Owner.TankHold` | 0.006 | | | |
+| `Owner.TankLose` | 0.02 | | | |
+| `Owner.PulledThreat` | 0.004 | | | |
+| `Owner.SoloFight` | 0.01 | | | |
+| `Owner.FollowFar` | 0.004 | | | |
+| `Owner.FollowNear` | 0.002 | | | |
+| `Owner.FollowFarDistance` | 15.0 | | | |
+| `Owner.FollowNearDistance` | 6.0 | | | |
+| `Owner.Death` | 15.0 | | | |
 
 | Key | Default | | Key | Default |
 |---|---|---|---|---|
@@ -413,7 +400,7 @@ Written to `<OutputDir>/layouts/<stage>/stage.json` and copied into each run:
   "format": 3, "stage": "stage9_deadmines", "suffix": "_party", "extends": "stage18_life",
   "summary": "...", "seats": 1,
   "blocks": ["core", "duel", "pet", "pack", "gauntlet", "companion"],
-  "arenas": [{"name": "companion", "weight": 1, "seats": 1, "episode_seconds": 60, "pvp": false, "ambushers": 0,
+  "arenas": [{"name": "companion", "weight": 1, "seats": 1, "episode_seconds": 60, "pvp": false,
               "checkpoints": false, "plan": "solo", "team_seats": 0, "directed": false}],
   "seed_chain": ["stage18_life", "stage5_pack", "..."],
   "merges": [],
@@ -489,9 +476,6 @@ Other locations:
 | Bot | Account id | Name |
 |---|---|---|
 | Forge seat | `0x7F000000 + env*8 + seat*2 + session` | `Forge<env>s<seat><a\|b>` |
-| Owner | `0x7F000000 + 100000 + env*2 + session` | encounter-defined |
-| Scripted opponent | `0x7F000000 + 300000 + env*2 + session` | encounter-defined |
-| Ambusher | `0x7F000000 + 500000 + env*4 + ambusher*2 + session` | encounter-defined |
 | Spell probe | `0x7F000000 - 1 - race` | |
 | mod-animus companion | `0x7E000000 + n` | `Animus<n>` |
 

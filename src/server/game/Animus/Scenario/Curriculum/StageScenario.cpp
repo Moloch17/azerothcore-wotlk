@@ -410,12 +410,9 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _layouts.push_back(std::move(layout));
     }
 
-    // A scripted owner or enemy player can be any class, whatever StageSettings::Classes says: build every
-    // profile's assets now (seconds each) rather than on the world thread in the middle of an episode reset.
-    if (_stage.AnyArena([](ArenaDefinition const& arena)
-        {
-            return arena.Owner || arena.Against == Opposition::ScriptedPlayer;
-        }))
+    // An owner can be any class, whatever StageSettings::Classes says: build every profile's assets now (seconds
+    // each) rather than on the world thread in the middle of an episode reset.
+    if (_stage.AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
         for (ClassProfile const& profile : ClassProfiles())
             ClassAssets::For(profile);
 
@@ -461,7 +458,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     OpponentEncounter* opponent = nullptr;
     PullsEncounter* pulls = nullptr;
     CreatureEncounter* creature = nullptr;
-    AmbushEncounter* ambush = nullptr;
     TravelEncounter* travel = nullptr;
     FlagEncounter* flag = nullptr;
     InstanceEncounter* instance = nullptr;
@@ -475,13 +471,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     auto const fightsPlayer = [](ArenaDefinition const& arena)
     {
-        return arena.Against == Opposition::ScriptedPlayer || arena.Against == Opposition::MirrorSeat
-            || arena.Against == Opposition::Flag;
+        return arena.Against == Opposition::MirrorSeat || arena.Against == Opposition::Flag;
     };
     auto const hasPulls = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Pulls; };
     auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
     auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
-    auto const hasAmbush = [](ArenaDefinition const& arena) { return arena.Ambushers > 0; };
     auto const hasTravel = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Travel; };
     auto const hasFlag = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Flag; };
     auto const hasInstance = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Instance; };
@@ -535,9 +529,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* hazards = nullptr;
     if (_stage.AnyArena(hasHazards))
         hazards = add(std::make_unique<HazardEncounter>(*this, envs));
-    // After the owner and the pulls: ambushers find the owner and take the slots the pull leaves.
-    if (_stage.AnyArena(hasAmbush))
-        ambush = add(std::make_unique<AmbushEncounter>(*this, envs));
     if (_stage.AnyArena(hasTravel))
         travel = add(std::make_unique<TravelEncounter>(*this, envs, settings));
     // The movement stages' markers: nothing to fight, nothing else to order against.
@@ -586,7 +577,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight,
+        town, hazards, _owner, _party, opponent, travel, markers, _follow, _partyFollow, seek, sight,
         interact, combat, roles, flag,
         director })
         if (encounter)
@@ -600,7 +591,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         {
             return (encounter == opponent && fightsPlayer(arena)) || (encounter == _owner && arena.Owner)
                 || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
-                || (encounter == creature && hasCreature(arena)) || (encounter == ambush && hasAmbush(arena))
+                || (encounter == creature && hasCreature(arena))
                 || (encounter == travel && hasTravel(arena)) || (encounter == flag && hasFlag(arena))
                 || (encounter == hazards && hasHazards(arena))
                 || (encounter == instance && hasInstance(arena))
@@ -1076,7 +1067,7 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // An episode that could not be built ends at once and is rebuilt: 1 on that episode's row. How often a stage's
     // resets fail -- a quest the bot refuses, a spot with no objective -- is what it trains on less than it seems.
     _info.Add("build_failed", [this](Env const& env, uint32) { return Data(env).BuildFailed ? 1.0f : 0.0f; });
-    // The other side of a self-play episode: an evaluation against a scripted opponent leaves its row out.
+    // The other side of a self-play episode.
     _info.Add("opponent_seat", [this](Env const& env, uint32 index)
     {
         return IsOpponentSeat(env, index) ? 1.0f : 0.0f;
@@ -1629,7 +1620,6 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
         entry["seats"] = definition.SeatCount();
         entry["episode_seconds"] = _arenaEpisodeMs[arena] / IN_MILLISECONDS;
         entry["pvp"] = definition.Pvp;
-        entry["ambushers"] = definition.Ambushers;
         entry["checkpoints"] = definition.Checkpoints;
         // The seat plan and a team's width, so the learner can tell an arena's opponent seats (IsOpponentSeat) and
         // play them from a frozen checkpoint (its cast league) without a word on the wire.
@@ -1916,12 +1906,15 @@ Player* Animus::Curriculum::StageScenario::Owner(Env const& env) const
 
 bool Animus::Curriculum::StageScenario::CastOwnerActive(Env const& env) const
 {
-    if (!_castOwner || env.Evaluating)
+    if (!_castOwner)
         return false;
+    // An owner is always its own row, an evaluation's too; the follow stages' leaders keep their script in one.
     ArenaDefinition const& arena = Arena(env);
-    return (arena.OwnerCast && _owner && _owner->IsCast(env))
-        || (arena.Against == Opposition::Follow && _follow && _follow->IsCast(env))
-        || (arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env));
+    if (arena.OwnerCast && _owner && _owner->IsCast(env))
+        return true;
+    return !env.Evaluating
+        && ((arena.Against == Opposition::Follow && _follow && _follow->IsCast(env))
+            || (arena.Against == Opposition::PartyFollow && _partyFollow && _partyFollow->IsCast(env)));
 }
 
 Player* Animus::Curriculum::StageScenario::BuildOwnerSeat(Env& env, Map*& map, uint8 level, Position const& start,
@@ -3139,12 +3132,6 @@ void Animus::Curriculum::StageScenario::NotifyRecovered(Env& env, int32 who)
         encounter->OnRecovered(env, who);
 }
 
-void Animus::Curriculum::StageScenario::NotifyPullStarting(Env& env)
-{
-    for (Encounter* encounter : ActiveEncounters(env))
-        encounter->OnPullStarting(env);
-}
-
 void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
 {
     EnvState& data = Data(env);
@@ -4074,8 +4061,8 @@ void Animus::Curriculum::StageScenario::AgentPresence(Env const& env, uint8* pre
         present[_seatCount + side] = directing && commands ? 1 : 0;
     }
 
-    // The owner is an agent only in the episodes that play it through its row: an evaluation's owner and a
-    // scripted-share owner are the script's, and the learner neither runs the cast actor nor trains on the row.
+    // The owner is an agent only in the episodes that play it through its row (a follow stage's evaluation keeps its
+    // scripted leader: the learner neither runs the cast actor nor trains on the row).
     if (_castOwner)
         present[OwnerAgent()] = CastOwnerActive(env) ? 1 : 0;
 }

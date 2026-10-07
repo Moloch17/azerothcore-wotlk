@@ -115,9 +115,6 @@ namespace Animus::Curriculum
         /// Seat `seat` (or RECOVERED_OWNER) stood up again after a pull: its death can be paid for again.
         virtual void OnRecovered(Env& /*env*/, int32 /*who*/) { }
 
-        /// A new pull is about to spawn (the pulls encounter announces it; see StageScenario::NotifyPullStarting).
-        virtual void OnPullStarting(Env& /*env*/) { }
-
         /// The env's next episode is an arena without this encounter: remove what it keeps in the world (a bot, a
         /// group), before the seats are rebuilt. It may be built again for a later episode.
         virtual void Deactivate(Env& env) { Teardown(env); }

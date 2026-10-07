@@ -771,13 +771,8 @@ comparable across runs; the league is a training-time device.
 **The owner as a cast seat** (`ArenaDefinition::OwnerCast`, the companion, party, tanking, triage and crossroads
 arenas): the sim builds the owner as a seat in an agent slot of its own after the seats and the directors, declares
 it in stage.json's `cast` list, observes it and applies its action like any seat, pays it nothing and leaves its
-episode-info row empty; the learner plays the row from `cast.agents.owner`. `Owner.CastScriptedShare` (30%) of the
-training episodes keep the scripted owner, which wanders and engages on a timer, and every evaluation does, so the
-reported `owner_deaths` are measured beside the owner they always were.
-
-**Kept scripted, on purpose:** the hunter of the evade, hide and stealth drills (`ScriptedPlayer::Search` is what
-those drills measure against), the scripted director (a yardstick), the ambushers (they arrive mid-episode, which
-the per-episode `present` contract cannot carry), and `fight` as the evaluation opponent.
+episode-info row empty; the learner plays the row from `cast.agents.owner`, in evaluations too. There is no scripted
+owner, enemy player or ambusher: the sim's scripted players (`ScriptedPlayer`) are gone.
 
 ## 5.20 Checkpoints, resume and export
 

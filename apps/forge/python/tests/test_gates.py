@@ -55,7 +55,7 @@ def sim_stage_columns() -> dict[str, set[str]]:
     per_encounter = {name: columns(f"Encounters/{cls}.cpp") for name, cls in (
         ("opponent", "OpponentEncounter"), ("owner", "OwnerEncounter"), ("party", "PartyEncounter"),
         ("pulls", "PullsEncounter"), ("creature", "CreatureEncounter"), ("hazards", "HazardEncounter"),
-        ("ambush", "AmbushEncounter"), ("travel", "TravelEncounter"), ("flag", "FlagEncounter"),
+        ("travel", "TravelEncounter"), ("flag", "FlagEncounter"),
         ("director", "DirectorEncounter"), ("instance", "InstanceEncounter"), ("quest", "QuestEncounter"),
         ("gather", "GatherEncounter"), ("town", "TownEncounter"), ("markers", "MarkerEncounter"),
         ("follow", "FollowEncounter"), ("seek", "SeekEncounter"), ("sight", "SightEncounter"),
@@ -83,7 +83,7 @@ def sim_stage_columns() -> dict[str, set[str]]:
         active: set[str] = set()
         for arena in re.findall(r'\{\s*\.Name = "[a-z0-9_]+"(.*?)\}', body[name.end():], re.S):
             against = (re.search(r"\.Against = Opposition::(\w+)", arena) or [None, "Creature"])[1]
-            if against in ("ScriptedPlayer", "MirrorSeat", "Flag"):
+            if against in ("MirrorSeat", "Flag"):
                 active.add("opponent")
             for opposition, encounter in (("Pulls", "pulls"), ("Creature", "creature"), ("Hazards", "hazards"),
                                           ("Travel", "travel"), ("Flag", "flag"), ("Instance", "instance"),
@@ -100,8 +100,6 @@ def sim_stage_columns() -> dict[str, set[str]]:
                 active.add("party")
             if ".Directed = true" in arena:
                 active.add("director")
-            if re.search(r"\.Ambushers = [1-9]", arena):
-                active.add("ambush")
         out[name.group(1)] = set(always).union(*(per_encounter[e] for e in active)) if active else set(always)
     # Never vacuous: a live stage config means a stage definition this parse has to have found.
     if _live_stage_configs():

@@ -26,7 +26,7 @@
 
 /*
  * Every value that shapes what the curriculum trains on and what it is paid for: the characters, parties,
- * pulls and scripted players it meets, and the reward weights. Each is the config key <prefix><key>, the prefix being
+ * pulls it meets, and the reward weights. Each is the config key <prefix><key>, the prefix being
  * the host's (StageSettings::TuningPrefix: AnimusForge.Curriculum.<key> in mod_animus_forge.conf.dist, which documents
  * them, and Animus.Curriculum.<key> in mod-animus); the effective values are recorded in each stage's stage.json and so
  * in every run directory. Visit lists them once, for loading and for writing.
@@ -720,13 +720,6 @@ namespace Animus::Curriculum
             int32 PartyEliteChance = 50;        // party: per pack member
             uint32 NextPullMinMs = 8000;        // gauntlet: the break between pulls
             uint32 NextPullMaxMs = 20000;
-            uint32 OwnerEngageMinMs = 1500;     // with an owner: when it walks over to a new pull
-            uint32 OwnerEngageMaxMs = 5000;
-            uint32 PartyOwnerEngageMinMs = 4000;    // ... in a party, after the tank has had time to pull
-            uint32 PartyOwnerEngageMaxMs = 7000;
-            uint32 OwnerPullsMinMs = 500;       // ... when the owner starts the pull itself
-            uint32 OwnerPullsMaxMs = 1500;
-            int32 OwnerPullsChance = 30;        // percent of pulls a damage dealer or healer owner starts (tanks: all)
             float RecoverFraction = 0.5f;       // owner stages: health and mana the dead stand up with after a pull
             // Rewards.
             float DamageDealt = 2.0f;           // fraction of the pull's total health
@@ -854,17 +847,12 @@ namespace Animus::Curriculum
             uint32 OwnerWinPulls = 5;
         } Pulls;
 
-        /// The scripted owner of the companion and party stages.
+        /// The owner of the companion and party stages (a cast agent: the learner plays it from a frozen checkpoint).
         struct OwnerTuning
         {
             int32 LevelSpread = 2;              // its level: the bot's plus or minus this
             int32 TankChance = 25;              // percent tanks, healers, the rest damage dealers
             int32 HealerChance = 25;
-            /// In a cast-owner arena (ArenaDefinition::OwnerCast), the percent of training episodes whose owner
-            /// is still the script rather than the frozen checkpoint: the script wanders and engages on a
-            /// timer, which is the owner the follow lesson was built on, and a frozen solo policy may just stand
-            /// between pulls. Evaluations always script it.
-            int32 CastScriptedShare = 30;
             // Rewards added to the pulls'.
             float DamageTakenDps = 1.0f;        // damage dealers: the owner's damage taken, fraction of its health
             float DamageTakenProtector = 2.0f;  // tanks and healers exist to prevent it
@@ -1531,25 +1519,6 @@ namespace Animus::Curriculum
             float SpiritHealer = 1.0f;          // took the spirit healer's resurrection and its sickness
         } Death;
 
-        /// The scripted enemy player of the PvP stage.
-        struct OpponentTuning
-        {
-            int32 LevelSpread = 1;
-            uint32 EngageMaxMs = 3000;          // it starts fighting up to this long into the episode
-            int32 HealerChance = 20;
-            int32 TankChance = 20;
-        } Opponent;
-
-        /// Scripted enemy players ambushing the owner (arenas with ambushers). Their class, role and level follow
-        /// Opponent.* chances and spread.
-        struct AmbushTuning
-        {
-            uint32 MinMs = 20000;               // beside pulls: they arrive this far into the episode ...
-            uint32 MaxMs = 120000;              // ... at the latest
-            uint32 EngageMaxMs = 3000;          // they start fighting up to this long after arriving
-            float Kill = 3.0f;                  // every seat, per ambusher killed
-        } Ambush;
-
         /// Getting to a place (travel arenas): how far it is, and what arriving pays.
         struct TravelTuning
         {
@@ -1650,38 +1619,6 @@ namespace Animus::Curriculum
             float Death = 1.0f;
             float StepCost = 0.0002f;           // per decision
         } Flag;
-
-        /// How the scripted players (owner, PvP opponent, ambushers) play.
-        struct ScriptedPlayerTuning
-        {
-            uint32 SpellMinMs = 2000;           // time between damage spells
-            uint32 SpellMaxMs = 4000;
-            uint32 HealMinMs = 1500;            // time between heals
-            uint32 HealMaxMs = 2500;
-            uint32 WanderMinMs = 6000;          // between pulls: time between wander steps
-            uint32 WanderMaxMs = 12000;
-            /// Between pulls, this percent of an owner's steps are a run rather than a wander: a leg at a run to a
-            /// point RunMinYards-RunMaxYards from the spawn point (never nearer than RunMinYards to where it stands),
-            /// with a real route there. The wander's leash brings it back, another leg. This is where a companion
-            /// meets an owner that goes somewhere, which every pull it fights beside is spawned around.
-            int32 RunChance = 35;
-            float RunMinYards = 40.0f;
-            float RunMaxYards = 60.0f;
-            float RegenFraction = 0.04f;        // of max health and mana per second, out of combat
-            float HealBelow = 0.85f;            // healers heal party members under this health fraction
-            float SelfHealBelow = 0.6f;         // PvP healers heal themselves under this
-            float HealerRange = 30.0f;          // healers stay this close to the tank
-            float TauntRange = 25.0f;
-            float RangedMin = 20.0f;            // PvP: a ranged spec backs off inside half this ...
-            float RangedMax = 30.0f;            // ... and closes in beyond this
-            int32 StealthChance = 50;           // PvP: percent of engagements a rogue (or a feral druid, which
-                                                // shifts to Cat Form first) sneaks up in stealth
-            int32 TacticsChance = 75;           // PvP: percent of engagements it plays its kit (below)
-            uint32 ControlMinMs = 8000;         // ... time between crowd control attempts
-            uint32 ControlMaxMs = 15000;
-            float DefensiveBelow = 0.35f;       // ... a defensive when its health is under this
-            float BreakBelow = 0.6f;            // ... breaks crowd control when its health is under this
-        } ScriptedPlayers;
 
         /// The "human" stand-in seat of the party stages (StandIn.h: a frozen learned partner in one seat, its style
         /// leading or following, in the role it wants). Off unless StandIn.Share (or an arena's own share) is set.
@@ -1935,13 +1872,6 @@ namespace Animus::Curriculum
             f("Pulls.PartyEliteChance", tuning.Pulls.PartyEliteChance);
             f("Pulls.NextPullMinMs", tuning.Pulls.NextPullMinMs);
             f("Pulls.NextPullMaxMs", tuning.Pulls.NextPullMaxMs);
-            f("Pulls.OwnerEngageMinMs", tuning.Pulls.OwnerEngageMinMs);
-            f("Pulls.OwnerEngageMaxMs", tuning.Pulls.OwnerEngageMaxMs);
-            f("Pulls.PartyOwnerEngageMinMs", tuning.Pulls.PartyOwnerEngageMinMs);
-            f("Pulls.PartyOwnerEngageMaxMs", tuning.Pulls.PartyOwnerEngageMaxMs);
-            f("Pulls.OwnerPullsMinMs", tuning.Pulls.OwnerPullsMinMs);
-            f("Pulls.OwnerPullsMaxMs", tuning.Pulls.OwnerPullsMaxMs);
-            f("Pulls.OwnerPullsChance", tuning.Pulls.OwnerPullsChance);
             f("Pulls.RecoverFraction", tuning.Pulls.RecoverFraction);
             f("Pulls.DamageDealt", tuning.Pulls.DamageDealt);
             f("Pulls.DamageTaken", tuning.Pulls.DamageTaken);
@@ -2282,7 +2212,6 @@ namespace Animus::Curriculum
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);
-            f("Owner.CastScriptedShare", tuning.Owner.CastScriptedShare);
             f("Owner.DamageTakenDps", tuning.Owner.DamageTakenDps);
             f("Owner.DamageTakenProtector", tuning.Owner.DamageTakenProtector);
             f("Owner.TankOwnerDamageShare", tuning.Owner.TankOwnerDamageShare);
@@ -2307,16 +2236,6 @@ namespace Animus::Curriculum
             f("Death.DiedAgainMs", tuning.Death.DiedAgainMs);
             f("Death.SafeRise", tuning.Death.SafeRise);
             f("Death.SpiritHealer", tuning.Death.SpiritHealer);
-
-            f("Opponent.LevelSpread", tuning.Opponent.LevelSpread);
-            f("Opponent.EngageMaxMs", tuning.Opponent.EngageMaxMs);
-            f("Opponent.HealerChance", tuning.Opponent.HealerChance);
-            f("Opponent.TankChance", tuning.Opponent.TankChance);
-
-            f("Ambush.MinMs", tuning.Ambush.MinMs);
-            f("Ambush.MaxMs", tuning.Ambush.MaxMs);
-            f("Ambush.EngageMaxMs", tuning.Ambush.EngageMaxMs);
-            f("Ambush.Kill", tuning.Ambush.Kill);
 
             f("Travel.ObjectiveMin", tuning.Travel.ObjectiveMin);
             f("Travel.ObjectiveMax", tuning.Travel.ObjectiveMax);
@@ -2370,29 +2289,6 @@ namespace Animus::Curriculum
             f("Flag.Progress", tuning.Flag.Progress);
             f("Flag.Death", tuning.Flag.Death);
             f("Flag.StepCost", tuning.Flag.StepCost);
-
-            f("ScriptedPlayers.SpellMinMs", tuning.ScriptedPlayers.SpellMinMs);
-            f("ScriptedPlayers.SpellMaxMs", tuning.ScriptedPlayers.SpellMaxMs);
-            f("ScriptedPlayers.HealMinMs", tuning.ScriptedPlayers.HealMinMs);
-            f("ScriptedPlayers.HealMaxMs", tuning.ScriptedPlayers.HealMaxMs);
-            f("ScriptedPlayers.WanderMinMs", tuning.ScriptedPlayers.WanderMinMs);
-            f("ScriptedPlayers.WanderMaxMs", tuning.ScriptedPlayers.WanderMaxMs);
-            f("ScriptedPlayers.RunChance", tuning.ScriptedPlayers.RunChance);
-            f("ScriptedPlayers.RunMinYards", tuning.ScriptedPlayers.RunMinYards);
-            f("ScriptedPlayers.RunMaxYards", tuning.ScriptedPlayers.RunMaxYards);
-            f("ScriptedPlayers.RegenFraction", tuning.ScriptedPlayers.RegenFraction);
-            f("ScriptedPlayers.HealBelow", tuning.ScriptedPlayers.HealBelow);
-            f("ScriptedPlayers.SelfHealBelow", tuning.ScriptedPlayers.SelfHealBelow);
-            f("ScriptedPlayers.HealerRange", tuning.ScriptedPlayers.HealerRange);
-            f("ScriptedPlayers.TauntRange", tuning.ScriptedPlayers.TauntRange);
-            f("ScriptedPlayers.RangedMin", tuning.ScriptedPlayers.RangedMin);
-            f("ScriptedPlayers.RangedMax", tuning.ScriptedPlayers.RangedMax);
-            f("ScriptedPlayers.StealthChance", tuning.ScriptedPlayers.StealthChance);
-            f("ScriptedPlayers.TacticsChance", tuning.ScriptedPlayers.TacticsChance);
-            f("ScriptedPlayers.ControlMinMs", tuning.ScriptedPlayers.ControlMinMs);
-            f("ScriptedPlayers.ControlMaxMs", tuning.ScriptedPlayers.ControlMaxMs);
-            f("ScriptedPlayers.DefensiveBelow", tuning.ScriptedPlayers.DefensiveBelow);
-            f("ScriptedPlayers.BreakBelow", tuning.ScriptedPlayers.BreakBelow);
 
             f("StandIn.Share", tuning.StandIn.Share);
             f("StandIn.LeadChance", tuning.StandIn.LeadChance);

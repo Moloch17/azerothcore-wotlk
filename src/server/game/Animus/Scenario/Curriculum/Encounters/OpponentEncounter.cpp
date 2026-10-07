@@ -192,8 +192,6 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // empty and have no other side.
     table.Add("opponent_class", [this](Env const& env, uint32 seat)
     {
-        if (!Mirror(env))
-            return float(_envs[env.Index].Class);
         if (seat > 1)
             return 0.0f;
         SeatState const& other = _scenario.Data(env).Seats[1 - seat];
@@ -204,8 +202,6 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // "it can hold a pull" and "it can heal" are the two that change how a fight against it goes.
     auto const opponentApt = [this](Env const& env, uint32 seat) -> Aptitude
     {
-        if (!Mirror(env))
-            return _envs[env.Index].Apt;
         if (seat > 1)
             return Aptitude();
         SeatState const& other = _scenario.Data(env).Seats[1 - seat];
@@ -266,11 +262,10 @@ Player* Animus::Curriculum::OpponentEncounter::Find(Env const& env, uint32 seat)
         return first && first->IsInWorld() ? first : nullptr;
     }
 
-    Player* opponent = _envs[env.Index].Bot.Active();
-    return opponent && opponent->IsInWorld() ? opponent : nullptr;
+    return nullptr;
 }
 
-bool Animus::Curriculum::OpponentEncounter::Build(Env& env, Map* map, uint8 /*level*/)
+bool Animus::Curriculum::OpponentEncounter::Build(Env& env, Map* /*map*/, uint8 /*level*/)
 {
     EnvState& data = _scenario.Data(env);
 
@@ -282,59 +277,23 @@ bool Animus::Curriculum::OpponentEncounter::Build(Env& env, Map* map, uint8 /*le
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         _scenario.PrepareFighter(_scenario.SeatBot(env, seat), data.Seats[seat]);
 
-    if (Mirror(env))
-    {
-        // A scripted opponent of an earlier episode (a stage mixing both kinds) has no place here.
-        _envs[env.Index].Bot.Destroy();
-
-        // Everyone on one side is an enemy of everyone on the other, not only the pair that shares an index:
-        // a seat has to be able to hit whichever of them it chooses, or is told to.
-        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-            for (uint32 other = seat + 1; other < data.ActiveSeats; ++other)
-                if (_scenario.SideOf(env, seat) != _scenario.SideOf(env, other))
-                    if (Player* bot = _scenario.SeatBot(env, seat); bot)
-                        if (Player* enemy = _scenario.SeatBot(env, other); enemy)
-                            MakeEnemies(bot, enemy);
-
-        // Nobody has chosen yet: the first of the enemy side, which is all there is when it holds one seat.
-        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
-            data.Seats[seat].TargetSlot = 0;
-
-        return true;
-    }
-
-    if (!RebuildScripted(env, _scenario.SeatBot(env, 0), map))
+    // Only self-play seats fight each other: the seats of one side and the other.
+    if (!Mirror(env))
         return false;
 
-    env.Targets = { Find(env, 0)->GetGUID() };
-    return true;
-}
+    // Everyone on one side is an enemy of everyone on the other, not only the pair that shares an index: a seat has
+    // to be able to hit whichever of them it chooses, or is told to.
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        for (uint32 other = seat + 1; other < data.ActiveSeats; ++other)
+            if (_scenario.SideOf(env, seat) != _scenario.SideOf(env, other))
+                if (Player* bot = _scenario.SeatBot(env, seat); bot)
+                    if (Player* enemy = _scenario.SeatBot(env, other); enemy)
+                        MakeEnemies(bot, enemy);
 
-bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bot, Map* map)
-{
-    EnvOpponent& opponent = _envs[env.Index];
-    CurriculumTuning::OpponentTuning const& tuning = _scenario.Tuning().Opponent;
+    // Nobody has chosen yet: the first of the enemy side, which is all there is when it holds one seat.
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        data.Seats[seat].TargetSlot = 0;
 
-    ArenaDefinition const& arena = _scenario.Arena(env);
-    int32 const spread = arena.OpponentLevelRange > 0 ? arena.OpponentLevelRange : tuning.LevelSpread;
-    uint8 const level = uint8(std::clamp<int32>(int32(_scenario.Data(env).Seats[0].Level)
-        + arena.OpponentLevelBonus + irand(-spread, spread), 1, DEFAULT_MAX_LEVEL));
-
-    uint32 const index = env.Id;
-    EnemyPlayers::Naming const naming{
-        [index](uint8 session) { return Acore::StringFormat("Foe{}{}", index, session ? "b" : "a"); },
-        [index](uint8 session) { return BotAccounts::Opponent(index, session); },
-    };
-
-    EnemyPlayers::Spawned const spawned = EnemyPlayers::Create(opponent.Bot, naming, level, tuning, bot, map,
-        _scenario.EpisodeMapId(env), opponent.Script);
-    if (!spawned.Bot)
-        return false;
-
-    opponent.Script.EngageMs = env.EpisodeElapsedMs + urand(0, tuning.EngageMaxMs);
-    MakeEnemies(bot, spawned.Bot);
-    opponent.Class = spawned.Class;
-    opponent.Apt = spawned.Apt;
     return true;
 }
 
@@ -351,19 +310,7 @@ void Animus::Curriculum::OpponentEncounter::Update(Env& env)
             if (bot && opponent && (!bot->IsPvP() || !opponent->IsPvP()))
                 MakeEnemies(bot, opponent);
         }
-        return;
     }
-
-    Player* bot = env.FindBot(0);
-    Player* opponent = Find(env, 0);
-    if (!bot || !opponent)
-        return;
-
-    if (!bot->IsPvP() || !opponent->IsPvP())
-        MakeEnemies(bot, opponent);
-
-    ScriptedPlayer::UpdateOpponent(opponent, bot, env.EpisodeElapsedMs, _envs[env.Index].Script,
-        _scenario.Tuning().ScriptedPlayers);
 }
 
 bool Animus::Curriculum::OpponentEncounter::SelectTarget(Env const& env, uint32 seat, Unit*& target)
@@ -397,11 +344,7 @@ void Animus::Curriculum::OpponentEncounter::View(Env const& env, uint32 seat, Se
         SeatState const* other = chosen != NO_SEAT ? &data.Seats[chosen] : nullptr;
         view.OpponentClass = other && other->L ? other->L->Profile->Class : 0;
         view.OpponentApt = other && other->L ? other->Apt : Aptitude();
-        return;
     }
-
-    view.OpponentClass = _envs[env.Index].Class;
-    view.OpponentApt = _envs[env.Index].Apt;
 }
 
 /// Getting out of sight, and being paid for the moment it happens.
@@ -562,13 +505,9 @@ bool Animus::Curriculum::OpponentEncounter::IsTerminal(Env const& env) const
 void Animus::Curriculum::OpponentEncounter::Deactivate(Env& env)
 {
     Teardown(env);
-    _envs[env.Index].Class = 0;
-    _envs[env.Index].Apt = Aptitude();
 }
 
 void Animus::Curriculum::OpponentEncounter::Teardown(Env& env)
 {
-    // Nothing to destroy in self-play: the slot is empty then.
-    _envs[env.Index].Bot.Destroy();
     env.Targets.clear();
 }

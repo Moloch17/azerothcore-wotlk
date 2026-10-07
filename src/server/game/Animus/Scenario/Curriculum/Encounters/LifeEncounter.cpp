@@ -323,7 +323,7 @@ void Animus::Curriculum::LifeEncounter::UpdateEnemies(Env& env)
         Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seat, near, check);
         Cell::VisitObjects(seat, searcher, HOSTILE_REACH);
         for (Unit* unit : near)
-            // A player among them is a hostile one ganking the seats (a quest's ambushers): the seats are on one
+            // A player among them is a hostile one ganking the seats: the seats are on one
             // side, so none of them is a valid target of another.
             if (unit->IsAlive() && seat->IsValidAttackTarget(unit)
                 && std::find(units.begin(), units.end(), unit) == units.end())

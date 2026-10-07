@@ -85,32 +85,17 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     ClampPercent(prefix, "Pulls.EliteChance", tuning.Pulls.EliteChance);
     ClampPercent(prefix, "Pulls.HigherLevelChance", tuning.Pulls.HigherLevelChance);
     ClampPercent(prefix, "Pulls.PartyEliteChance", tuning.Pulls.PartyEliteChance);
-    ClampPercent(prefix, "Pulls.OwnerPullsChance", tuning.Pulls.OwnerPullsChance);
-    ClampPercent(prefix, "ScriptedPlayers.StealthChance", tuning.ScriptedPlayers.StealthChance);
-    ClampPercent(prefix, "ScriptedPlayers.RunChance", tuning.ScriptedPlayers.RunChance);
-    ClampPercent(prefix, "ScriptedPlayers.TacticsChance", tuning.ScriptedPlayers.TacticsChance);
     ClampPercent(prefix, "StandIn.Share", tuning.StandIn.Share);
     ClampPercent(prefix, "StandIn.LeadChance", tuning.StandIn.LeadChance);
     ClampRolePair(prefix, "StandIn.TankChance", tuning.StandIn.TankChance, "StandIn.HealerChance",
         tuning.StandIn.HealerChance);
     ClampRolePair(prefix, "Owner.TankChance", tuning.Owner.TankChance, "Owner.HealerChance", tuning.Owner.HealerChance);
-    ClampRolePair(prefix, "Opponent.TankChance", tuning.Opponent.TankChance, "Opponent.HealerChance",
-        tuning.Opponent.HealerChance);
     tuning.Owner.LevelSpread = std::max(0, tuning.Owner.LevelSpread);
-    tuning.Opponent.LevelSpread = std::max(0, tuning.Opponent.LevelSpread);
 
     auto const order = [](uint32& low, uint32& high) { if (low > high) std::swap(low, high); };
     order(tuning.Pulls.NextPullMinMs, tuning.Pulls.NextPullMaxMs);
     order(tuning.Pulls.ArriveMinMs, tuning.Pulls.ArriveMaxMs);
     tuning.Pulls.GauntletSupplies = std::max<uint32>(1, tuning.Pulls.GauntletSupplies);
-    order(tuning.Pulls.OwnerEngageMinMs, tuning.Pulls.OwnerEngageMaxMs);
-    order(tuning.Pulls.PartyOwnerEngageMinMs, tuning.Pulls.PartyOwnerEngageMaxMs);
-    order(tuning.Pulls.OwnerPullsMinMs, tuning.Pulls.OwnerPullsMaxMs);
-    order(tuning.Ambush.MinMs, tuning.Ambush.MaxMs);
-    order(tuning.ScriptedPlayers.SpellMinMs, tuning.ScriptedPlayers.SpellMaxMs);
-    order(tuning.ScriptedPlayers.HealMinMs, tuning.ScriptedPlayers.HealMaxMs);
-    order(tuning.ScriptedPlayers.WanderMinMs, tuning.ScriptedPlayers.WanderMaxMs);
-    order(tuning.ScriptedPlayers.ControlMinMs, tuning.ScriptedPlayers.ControlMaxMs);
 
     auto const orderYards = [](float& low, float& high)
     {
@@ -120,7 +105,6 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
             std::swap(low, high);
     };
     orderYards(tuning.Travel.ObjectiveMin, tuning.Travel.ObjectiveMax);
-    orderYards(tuning.ScriptedPlayers.RunMinYards, tuning.ScriptedPlayers.RunMaxYards);
     orderYards(tuning.Travel.FlyingMin, tuning.Travel.FlyingMax);
     orderYards(tuning.Flag.BaseMin, tuning.Flag.BaseMax);
     tuning.Flag.CapturesToWin = std::max<uint32>(1, tuning.Flag.CapturesToWin);
