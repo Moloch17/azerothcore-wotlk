@@ -430,7 +430,8 @@ namespace
     /// to author, never a bot input) on every storey, then .agents/plans/dungeon-curriculum/tools/sites.py: the
     /// door's storey within 28 yd, cells where the vmap floor agrees with the navmesh within a yard, eroded 1.5 yd,
     /// the shut door's footprint taken out, and flooded from either side of the door -- no cell is reached from both
-    /// (no way round the door within the site). **Validated** by DeadminesSitesDataTest against the map's vmaps
+    /// (no way round the door within the site); seven Mast Room points the data test found within Seek.Clearance of a
+    /// vmap wall the navmesh's erosion missed are left out. **Validated** by DeadminesSitesDataTest against the map's vmaps
     /// (FORGE_VISION_DATA): every point on a vmap floor within a quarter yard and clear of walls at knee height, and
     /// no line of sight from a near point's eye to a far point that does not pass through the shut door's leaf.
     std::vector<InteractSite> DeadminesSites()
@@ -522,23 +523,19 @@ namespace
                     { -294.0f, -561.0f, 48.99f, 0.0f }, { -294.0f, -558.0f, 48.95f, 0.0f },
                     { -294.0f, -555.0f, 49.45f, 0.0f }, { -294.0f, -552.0f, 49.45f, 0.0f },
                     { -294.0f, -549.0f, 49.44f, 0.0f }, { -294.0f, -546.0f, 49.44f, 0.0f },
-                    { -291.0f, -561.0f, 48.86f, 0.0f }, { -291.0f, -558.0f, 48.83f, 0.0f },
-                    { -291.0f, -555.0f, 49.45f, 0.0f }, { -291.0f, -552.0f, 49.45f, 0.0f },
-                    { -291.0f, -549.0f, 49.45f, 0.0f }, { -291.0f, -546.0f, 49.45f, 0.0f },
-                    { -288.0f, -561.0f, 49.01f, 0.0f }, { -288.0f, -558.0f, 48.96f, 0.0f },
-                    { -288.0f, -555.0f, 49.45f, 0.0f }, { -288.0f, -552.0f, 49.45f, 0.0f },
-                    { -288.0f, -549.0f, 49.44f, 0.0f }, { -288.0f, -546.0f, 49.44f, 0.0f },
-                    { -285.0f, -561.0f, 49.23f, 0.0f }, { -285.0f, -558.0f, 49.12f, 0.0f },
-                    { -285.0f, -555.0f, 49.45f, 0.0f }, { -285.0f, -552.0f, 49.45f, 0.0f },
-                    { -285.0f, -546.0f, 49.44f, 0.0f }
+                    { -291.0f, -561.0f, 48.86f, 0.0f }, { -291.0f, -555.0f, 49.45f, 0.0f },
+                    { -291.0f, -552.0f, 49.45f, 0.0f }, { -291.0f, -549.0f, 49.45f, 0.0f },
+                    { -291.0f, -546.0f, 49.45f, 0.0f }, { -288.0f, -561.0f, 49.01f, 0.0f },
+                    { -288.0f, -558.0f, 48.96f, 0.0f }, { -288.0f, -555.0f, 49.45f, 0.0f },
+                    { -288.0f, -552.0f, 49.45f, 0.0f }, { -288.0f, -549.0f, 49.44f, 0.0f },
+                    { -288.0f, -546.0f, 49.44f, 0.0f }, { -285.0f, -561.0f, 49.23f, 0.0f },
+                    { -285.0f, -558.0f, 49.12f, 0.0f }, { -285.0f, -555.0f, 49.45f, 0.0f },
+                    { -285.0f, -552.0f, 49.45f, 0.0f }, { -285.0f, -546.0f, 49.44f, 0.0f }
                 },
                 {
                     { -300.0f, -531.0f, 49.41f, 0.0f }, { -300.0f, -528.0f, 49.35f, 0.0f },
                     { -297.0f, -531.0f, 49.45f, 0.0f }, { -297.0f, -528.0f, 49.28f, 0.0f },
-                    { -297.0f, -525.0f, 49.47f, 0.0f }, { -294.0f, -528.0f, 49.18f, 0.0f },
-                    { -294.0f, -525.0f, 48.86f, 0.0f }, { -294.0f, -522.0f, 48.58f, 0.0f },
-                    { -294.0f, -519.0f, 48.75f, 0.0f }, { -294.0f, -516.0f, 48.93f, 0.0f },
-                    { -294.0f, -513.0f, 48.98f, 0.0f }, { -291.0f, -528.0f, 49.75f, 0.0f },
+                    { -297.0f, -525.0f, 49.47f, 0.0f }, { -291.0f, -528.0f, 49.75f, 0.0f },
                     { -291.0f, -525.0f, 49.64f, 0.0f }, { -291.0f, -522.0f, 49.54f, 0.0f },
                     { -291.0f, -519.0f, 49.54f, 0.0f }, { -291.0f, -516.0f, 49.54f, 0.0f },
                     { -291.0f, -513.0f, 49.68f, 0.0f }, { -288.0f, -516.0f, 49.54f, 0.0f },
