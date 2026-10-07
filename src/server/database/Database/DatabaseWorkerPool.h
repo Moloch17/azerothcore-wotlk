@@ -22,6 +22,8 @@
 #include "Define.h"
 #include "StringFormat.h"
 #include <array>
+#include <string>
+#include <string_view>
 #include <vector>
 
 /** @file DatabaseWorkerPool.h */
@@ -43,6 +45,11 @@ class ProducerConsumerQueue;
 
 class SQLOperation;
 struct MySQLConnectionInfo;
+
+/// Forge: a write a sealed pool drops (memory is the truth while sealed), logged the first time its kind is seen on
+/// that database -- a prepared statement by its index, a raw statement by its text's start -- so a scripted door or
+/// an instance save shows up once in the log, never per call. True when this call logged it.
+AC_DATABASE_API bool NoteSealedWrite(std::string_view database, std::string const& key, std::string_view what);
 
 template <class T>
 class DatabaseWorkerPool
