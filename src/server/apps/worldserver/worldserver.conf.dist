@@ -6401,6 +6401,11 @@ AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
 #   walking back is never also charged WingStray, and the leader it keeps with is the stand-in when it leads, else the
 #   tank
 AnimusForge.Curriculum.Instance.WingAway = 0.02
+#   a sight stage's goal places in a dungeon (SeenPlaces) are what a player knows: the hostiles the seat saw (where it
+#   last saw them), its mental map's frontier, the dungeon map's layout nodes (ground only: no pack, boss or order)
+#   and its leader -- never a live pack's or boss's position or the route's order, which stay the teacher's. A stage
+#   switches the layout off with AnimusForge.Curriculum.Stage.<name>.GoalPlaces (0 seen and layout, the default; 1
+#   seen only)
 #   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it
 #   cleared; a clean pull pays PullClean, a second pack joining ends the run at PullExtra, the clock running out with
 #   the pack alive costs PullTimeout (the tank in full, the others PullOthers of each); standing about costs WingStall

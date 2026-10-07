@@ -38,6 +38,7 @@
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include "WingRun.h"
+#include "SeenPlaces.h"
 #include <unordered_set>
 #include <atomic>
 #include <deque>
@@ -667,6 +668,11 @@ namespace Animus::Curriculum
             /// Taken off the route (past 6 yards from it) and not yet back on it (within 4): the way back is the
             /// detour until then, so a seat at the edge does not swap the two every decision (movement-smooth A8).
             mutable bool OffRoute = false;
+            /// The frontier of its own mental map (SeenPlaces::Frontier), refreshed every FRONTIER_MS: its goal places'
+            /// way on in a sight stage.
+            mutable std::vector<SeenPlaces::Point> Frontier;
+            mutable uint32 FrontierMs = 0;
+            mutable bool FrontierReady = false;
             uint32 FoodItem = 0;                // what it eats and drinks between pulls (Instance.WingSupplies)
             uint32 DrinkItem = 0;
         };
@@ -813,6 +819,9 @@ namespace Animus::Curriculum
             /// Each route pack's members' spawn ids -> the pack (its RoutePacks index): what a creature fighting the
             /// party belongs to, for the chain pull.
             std::unordered_map<ObjectGuid::LowType, uint32> PackOf;
+            /// The dungeon map's layout (SeenPlaces::Layout): ground nodes, unordered, no creature on them -- what a
+            /// player's dungeon map draws; a sight stage's goal places in SeenAndLayout.
+            std::vector<SeenPlaces::Point> MapLayout;
             /// A corridor run (ArenaDefinition::CorridorPacks, G2): its packs and which were cleared in route order.
             bool CorridorRun = false;
             WingRun::Corridor Corridor;
@@ -908,6 +917,9 @@ namespace Animus::Curriculum
         bool StartCorridor(Env& env, Map* map, WingPlan const& plan, std::vector<ObjectGuid::LowType> const& counted);
         /// The route packs fighting the party this decision, for the chain pull (EnvInstance::Drawn).
         void UpdateDrawnPacks(Env& env, EnvInstance& fight);
+        /// A sight stage's goal places in a dungeon (SeenPlaces): what `seat` saw and remembers, its map's frontier,
+        /// the layout (SeenAndLayout), the leader -- never a pack's or boss's live position or the route's order.
+        void SeenWorld(Env const& env, uint32 seat, SeatView& view) const;
         /// Whether a whole dungeon's run is a full clear: the last boss dead and every creature the clear counts.
         [[nodiscard]] static bool FullClear(EnvInstance const& fight);
         /// The run's success as the stage counts it: a drill's pack pulled and killed alone, a corridor cleared, a

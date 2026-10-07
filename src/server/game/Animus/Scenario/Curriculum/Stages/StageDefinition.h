@@ -22,6 +22,7 @@
 #include "Block.h"
 #include "Aptitude.h"
 #include "ClassProfile.h"
+#include "SeenPlaces.h"
 #include "Position.h"
 #include <optional>
 #include <string>
@@ -556,6 +557,10 @@ namespace Animus::Curriculum
         /// minimum (a death knight's 55). 0 = drawn as usual. The user's M1 (2026-10-05): level 1, so a class's kit is
         /// one or two spells and the lesson is the movement alone.
         uint8 Level = 0;
+        /// Where a sight stage's goal places come from in a dungeon (SeenPlaces): what the seat saw, its map's frontier
+        /// and the dungeon map's layout nodes (the default), or what it saw and its frontier alone. Never a live pack's
+        /// or boss's position. Overridden by `<TuningPrefix>Stage.<name>.GoalPlaces` (0 seen and layout, 1 seen only).
+        SeenPlaces::Source GoalPlaces = SeenPlaces::Source::SeenAndLayout;
 
         [[nodiscard]] bool Has(BlockId block) const;
         /// Seats per env: the largest arena's.

@@ -45,6 +45,8 @@
 #include "RouteShortcut.h"
 #include "StageScenario.h"
 #include "Supplies.h"
+#include "MentalMap.h"
+#include "EntityMemory.h"
 
 #include <algorithm>
 #include <array>
@@ -781,6 +783,14 @@ bool Animus::Curriculum::InstanceEncounter::Build(Env& env, Map* map, uint8 /*le
                 fight.PackOf.emplace(member, uint32(fight.RoutePacks.size()));
             fight.RoutePacks.push_back({ pack.Yard && pack.Yard < fight.Dense.size() ? fight.Dense[pack.Yard] : pack.At,
                 pack.Members, false });
+        }
+        // The dungeon map's layout: the walkable way's ground every LAYOUT_SPACING yards, unordered, no creature on it.
+        {
+            constexpr float LAYOUT_SPACING = 25.0f;
+            std::vector<SeenPlaces::Point> ground;
+            for (Position const& at : fight.Dense.empty() ? fight.Route : fight.Dense)
+                ground.push_back({ at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() });
+            fight.MapLayout = SeenPlaces::Layout(ground, LAYOUT_SPACING);
         }
         // The party is paid for a pull started ready at most once a pack (and once on a navmesh route's boss).
         fight.ReadyPaidCap = std::max<uint32>(1, uint32(fight.RoutePacks.size()));
@@ -2932,6 +2942,99 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
         if (!fight.ClosedDoors.empty())
             view.ClosedDoors = &fight.ClosedDoors;
     }
+
+    // **A sight stage perceives what a player does** (the coordinator's ruling, 2026-10-07): the route -- its next
+    // point, the tank's place on it, the next packs in order -- is the teacher's knowledge, kept in SeatView::Crowd for
+    // its decisions (a script may know it), never the seat's objective (no flag in its camera) nor its goal places.
+    // Those are what it saw, its map's frontier, the dungeon map's layout and its leader (SeenWorld).
+    if (_scenario.Stage().Has(BlockId::Sight))
+    {
+        view.Crowd.HasObjective = view.HasObjective;
+        view.Crowd.Objective = view.Objective;
+        view.HasObjective = false;
+        view.Objective = Position();
+        SeenWorld(env, seat, view);
+    }
+}
+
+void Animus::Curriculum::InstanceEncounter::SeenWorld(Env const& env, uint32 seat, SeatView& view) const
+{
+    EnvInstance const& fight = _envs[env.Index];
+    WorldView& world = view.World;
+    world.Places = {};
+    world.HasAssignment = false;
+    world.RoutePlaces = true;
+    if (!view.Bot || seat >= MAX_SEATS)
+        return;
+    SeatState const& state = _scenario.Data(env).Seats[seat];
+    Player const* bot = view.Bot;
+
+    SeenPlaces::Input in;
+    in.Seat = { bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
+    // What its entity memory holds: the hostiles it saw, where it last saw them (I2) -- nothing it never saw.
+    for (Vision::Remembered const& entry : state.Recall.Entries())
+        if (entry.Guid)
+            in.Memory.push_back({ { entry.Position.X, entry.Position.Y, entry.Position.Z }, entry.Reaction < 0,
+                entry.Dead, entry.GameObject });
+    // Its own mental map's frontier, refreshed every FRONTIER_MS.
+    constexpr uint32 FRONTIER_MS = 2000;
+    constexpr float FRONTIER_RADIUS = 40.0f;
+    constexpr float FRONTIER_STEP = 2.0f;
+    constexpr uint32 FRONTIER_POINTS = SeenPlaces::ROAM_PLACES;
+    SeatInstance const& own = fight.Seats[seat];
+    if (!own.FrontierReady || env.EpisodeElapsedMs >= own.FrontierMs + FRONTIER_MS)
+    {
+        Vision::MentalMap const& map = state.Map;
+        own.Frontier = SeenPlaces::Frontier(in.Seat, FRONTIER_RADIUS, FRONTIER_STEP, FRONTIER_POINTS,
+            [&map](float x, float y)
+            {
+                Vision::MapCell const* cell = map.Find(x, y);
+                if (!cell || !Vision::Known(*cell))
+                    return SeenPlaces::Ground::Unknown;
+                if (cell->Flags & (Vision::MAP_WALL_LOW | Vision::MAP_WALL_HIGH | Vision::MAP_HAZARD))
+                    return SeenPlaces::Ground::Shut;
+                return cell->Floor[0] != Vision::NO_FLOOR || (cell->Flags & (Vision::MAP_FREE | Vision::MAP_VISITED))
+                    ? SeenPlaces::Ground::Open : SeenPlaces::Ground::Unknown;
+            });
+        own.FrontierMs = env.EpisodeElapsedMs;
+        own.FrontierReady = true;
+    }
+    in.Frontier = own.Frontier;
+    // The dungeon map's layout, and which of its nodes the seat's map already holds (SeenAndLayout only).
+    if (_scenario.GoalPlaces() == SeenPlaces::Source::SeenAndLayout && !fight.MapLayout.empty())
+    {
+        in.Layout = &fight.MapLayout;
+        in.LayoutExplored.reserve(fight.MapLayout.size());
+        for (SeenPlaces::Point const& node : fight.MapLayout)
+        {
+            Vision::MapCell const* cell = state.Map.Find(node.X, node.Y);
+            in.LayoutExplored.push_back(cell && Vision::Known(*cell));
+        }
+    }
+    // The party's leader -- the stand-in when it leads, else the tank -- as its frame and its map dot show it.
+    int32 tankSeat = -1;
+    for (uint32 index = 0; index < _scenario.Data(env).ActiveSeats && tankSeat < 0; ++index)
+        if (Player* member = _scenario.SeatBot(env, index); member && !fight.Tank.IsEmpty()
+            && member->GetGUID() == fight.Tank)
+            tankSeat = int32(index);
+    int32 const leaderSeat = WingRun::LeaderSeat(_scenario.StandInSeat(env), _scenario.StandInLeads(env), tankSeat);
+    if (Player* leader = leaderSeat >= 0 && uint32(leaderSeat) != seat ? _scenario.SeatBot(env, uint32(leaderSeat))
+        : nullptr; leader && leader->IsAlive() && leader->IsInMap(bot))
+    {
+        in.HasLeader = true;
+        in.Leader = { leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ() };
+    }
+
+    SeenPlaces::Choice const choice = SeenPlaces::Choose(in);
+    for (uint32 place = 0; place < SeenPlaces::PLACES && place < WorldView::JOURNAL_PLACES; ++place)
+    {
+        world.Places[place].Present = choice.Present[place];
+        if (choice.Present[place])
+            world.Places[place].Where.Relocate(choice.Where[place].X, choice.Where[place].Y, choice.Where[place].Z);
+    }
+    world.HasAssignment = choice.HasAssignment;
+    if (choice.HasAssignment)
+        world.Assignment.Relocate(choice.Assignment.X, choice.Assignment.Y, choice.Assignment.Z);
 }
 
 void Animus::Curriculum::InstanceEncounter::CutAdvanceAtDoors(SeatView& view, EnvInstance const& fight)

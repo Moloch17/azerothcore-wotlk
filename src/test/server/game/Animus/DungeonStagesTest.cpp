@@ -560,8 +560,8 @@ TEST(DungeonStagesTest, ARisenSeatWalkingBackIsAwayNotLost)
 }
 
 // **No learned seat reads the crowd block** (bots perceive only what a player perceives): its pack ahead, overflow and
-// nearest object are radius reads off the server's lists. Only the teacher's check stages carry it, and they never train
-// a policy (every arena is the teacher's); the startup check refuses it anywhere else.
+// nearest object are radius reads off the server's lists. Only the teacher's check stages carry it, and they never
+// train a policy (every arena is the teacher's); the startup check refuses it anywhere else.
 TEST(DungeonStagesTest, NoStageWithALearnedSeatDeclaresTheCrowdBlock)
 {
     EXPECT_TRUE(Cu::CurriculumProblems().empty());
@@ -589,4 +589,122 @@ TEST(DungeonStagesTest, NoStageWithALearnedSeatDeclaresTheCrowdBlock)
     EXPECT_TRUE(Cu::TrainsAPolicy(mixed));
     mixed.Arenas[1].Teacher = true;
     EXPECT_FALSE(Cu::TrainsAPolicy(mixed));
+}
+
+namespace
+{
+    namespace Sp = Animus::Curriculum::SeenPlaces;
+
+    bool Near(Sp::Point const& a, Sp::Point const& b)
+    {
+        return Sp::Distance(a, b) < 0.01f;
+    }
+}
+
+// **An unseen pack or boss never reaches a seat's goal places** (the coordinator's ruling, 2026-10-07): the places are
+// what the seat's entity memory saw (alive, where it last saw it), its map's frontier, the layout's unexplored ground
+// and the leader -- nothing else. A pack it never saw is no input at all; a seen one that died is no place; nor is a
+// game object. Every place chosen is one of the inputs.
+TEST(DungeonStagesTest, AnUnseenPackOrBossNeverReachesTheGoalPlaces)
+{
+    Sp::Point const unseenPack{ 40.0f, 0.0f, 0.0f };
+    Sp::Point const unseenBoss{ 120.0f, 30.0f, -5.0f };
+    std::vector<Sp::Point> const layout = { { 0.0f, 60.0f, 0.0f }, { 30.0f, 60.0f, 0.0f }, { 90.0f, 60.0f, 0.0f } };
+
+    Sp::Input in;
+    in.Seat = { 0.0f, 0.0f, 0.0f };
+    in.Memory = { { { 15.0f, 5.0f, 0.0f }, true, false, false },        // a pack it saw: a place
+        { { 25.0f, -5.0f, 0.0f }, true, true, false },                  // one it saw die: none
+        { { 8.0f, 8.0f, 0.0f }, false, false, false },                  // a friend: none
+        { { 9.0f, -9.0f, 0.0f }, true, false, true } };                 // a game object: none
+    in.Frontier = { { 0.0f, 20.0f, 0.0f } };
+    in.Layout = &layout;
+    in.LayoutExplored = { true, false, false };
+    in.HasLeader = true;
+    in.Leader = { -5.0f, 0.0f, 0.0f };
+
+    Sp::Choice const choice = Sp::Choose(in);
+    std::vector<Sp::Point> const allowed = { { 15.0f, 5.0f, 0.0f }, { 0.0f, 20.0f, 0.0f }, layout[1], layout[2],
+        in.Leader };
+    uint32 present = 0;
+    for (uint32 place = 0; place < Sp::PLACES; ++place)
+    {
+        if (!choice.Present[place])
+            continue;
+        ++present;
+        Sp::Point const& at = choice.Where[place];
+        EXPECT_TRUE(std::any_of(allowed.begin(), allowed.end(), [&at](Sp::Point const& ok) { return Near(ok, at); }))
+            << "place " << place << " at " << at.X << " " << at.Y << " is nothing the seat saw, mapped or follows";
+        EXPECT_FALSE(Near(at, unseenPack) || Near(at, unseenBoss));
+        EXPECT_FALSE(Near(at, { 25.0f, -5.0f, 0.0f })) << "a pack seen dead";
+        EXPECT_FALSE(Near(at, layout[0])) << "explored ground is no way on";
+    }
+    EXPECT_GE(present, 4u);
+    EXPECT_TRUE(Near(choice.Where[0], { 15.0f, 5.0f, 0.0f })) << "the nearest thing it saw first";
+    EXPECT_TRUE(Near(choice.Where[Sp::WAY_ON], { 0.0f, 20.0f, 0.0f })) << "its own frontier before the layout";
+    EXPECT_TRUE(Near(choice.Where[Sp::LEADER], in.Leader));
+    ASSERT_TRUE(choice.HasAssignment);
+    EXPECT_TRUE(Near(choice.Assignment, { 15.0f, 5.0f, 0.0f }));
+
+    // Seen only: no layout node, ever.
+    Sp::Input seenOnly = in;
+    seenOnly.Layout = nullptr;
+    seenOnly.LayoutExplored.clear();
+    Sp::Choice const only = Sp::Choose(seenOnly);
+    for (uint32 place = 0; place < Sp::PLACES; ++place)
+        if (only.Present[place])
+            for (Sp::Point const& node : layout)
+                EXPECT_FALSE(Near(only.Where[place], node)) << "seen only, yet a layout node";
+
+    // Nothing seen, nothing mapped, no leader: no place and no assignment -- never a fallback to the route.
+    Sp::Input blind;
+    Sp::Choice const none = Sp::Choose(blind);
+    EXPECT_TRUE(std::none_of(none.Present.begin(), none.Present.end(), [](bool p) { return p; }));
+    EXPECT_FALSE(none.HasAssignment);
+}
+
+// **The layout input holds no creature data**: a node is a position and nothing else (SeenPlaces::Point), the nodes
+// are ground samples at least the spacing apart, and they keep no order -- the same ground walked in any order gives
+// the same nodes, so the route's pack order cannot survive in them.
+TEST(DungeonStagesTest, TheLayoutHoldsNoCreatureDataAndNoOrder)
+{
+    static_assert(sizeof(Sp::Point) == 3 * sizeof(float));
+    std::vector<Sp::Point> ground;
+    for (int32 yard = 0; yard < 200; ++yard)
+        ground.push_back({ float(yard), float(yard % 40), 0.0f });
+    std::vector<Sp::Point> const nodes = Sp::Layout(ground, 25.0f);
+    ASSERT_GE(nodes.size(), 4u);
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+    {
+        EXPECT_TRUE(std::any_of(ground.begin(), ground.end(), [&](Sp::Point const& g) { return Near(g, nodes[i]); }));
+        for (std::size_t j = i + 1; j < nodes.size(); ++j)
+            EXPECT_GE(Sp::Distance(nodes[i], nodes[j]), 25.0f);
+    }
+    std::vector<Sp::Point> reversed(ground.rbegin(), ground.rend());
+    std::vector<Sp::Point> const again = Sp::Layout(reversed, 25.0f);
+    ASSERT_EQ(again.size(), nodes.size());
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+        EXPECT_TRUE(Near(again[i], nodes[i])) << "the walk's order leaks into the layout";
+}
+
+// **The frontier is the seat's own map's**: open ground it has seen with unseen ground beside it, nearest first, the
+// points apart; nothing where it has seen everything round.
+TEST(DungeonStagesTest, TheFrontierIsOpenGroundBesideTheUnseen)
+{
+    // Seen: a corridor x in [-10, 30], |y| <= 4, walls at |y| = 6; beyond x = 30 nothing is known.
+    auto const probe = [](float x, float y)
+    {
+        if (x > 30.0f || x < -10.0f || std::fabs(y) > 6.0f)
+            return Sp::Ground::Unknown;
+        return std::fabs(y) > 4.0f ? Sp::Ground::Shut : Sp::Ground::Open;
+    };
+    std::vector<Sp::Point> const frontier = Sp::Frontier({ 0.0f, 0.0f, 0.0f }, 40.0f, 2.0f, 6, probe);
+    ASSERT_FALSE(frontier.empty());
+    for (Sp::Point const& at : frontier)
+        EXPECT_TRUE(at.X >= 29.0f || at.X <= -9.0f) << at.X << " " << at.Y << " is inside the seen corridor";
+    EXPECT_TRUE(Sp::Frontier({ 0.0f, 0.0f, 0.0f }, 40.0f, 2.0f, 6,
+        [](float, float) { return Sp::Ground::Open; }).empty());
+    // The party stages default to the seen places and the layout, which a conf key switches to seen only.
+    for (char const* name : PARTY_STAGES)
+        EXPECT_EQ(Stage(name).GoalPlaces, Sp::Source::SeenAndLayout) << name;
 }

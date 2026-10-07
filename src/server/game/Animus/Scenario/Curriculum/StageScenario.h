@@ -174,6 +174,8 @@ namespace Animus::Curriculum
         [[nodiscard]] CurriculumTuning const& Tuning() const { return _tuning; }
         /// The shaping scale the learner's fade has reached (1 at the start, 0 when faded): the seek stage's room ladder
         /// is read off it (SeekEncounter).
+        /// Where a sight stage's goal places come from in a dungeon (StageDefinition::GoalPlaces and its conf key).
+        [[nodiscard]] SeenPlaces::Source GoalPlaces() const { return _goalPlaces; }
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
         /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
         /// seat a side, which is what a Mirror is.
@@ -628,6 +630,7 @@ namespace Animus::Curriculum
         /// conf
         /// key); -1: StandIn.Share's.
         std::vector<int32> _arenaStandInShare;
+        SeenPlaces::Source _goalPlaces = SeenPlaces::Source::SeenAndLayout;
         OwnerEncounter* _owner = nullptr;
         FollowEncounter* _follow = nullptr;     // the follow stage's leader, in the owner's slot
         PartyFollowEncounter* _partyFollow = nullptr;   // the party follow's leader, in the owner's slot too
