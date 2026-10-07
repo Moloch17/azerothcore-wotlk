@@ -4,8 +4,9 @@ A stage the validation refuses is left out, every stage extending it goes with i
 until all are valid (CurriculumSound) -- which a stage-table error used to show only on a built, running server
 (move3_vertical's ledges, 2026-10-05). This compiles Stages.cpp on its own, with the build's own flags
 (compile_commands.json) and a stand-in for the logger, links it to a main that asks CurriculumStages() and
-CurriculumProblems(), and runs it: the real definitions through the real validation, without a server. Skipped where
-there is no configured build to borrow flags from (the dev container has one).
+CurriculumProblems(), and runs it: the real definitions through the real validation, without a server. It runs only
+where ANIMUS_COMPILE_DB names a configured build's compile_commands.json whose tree is this checkout's (a build of
+another checkout compiles this Stages.cpp against that tree's flags); without it, it is skipped.
 """
 
 import json
@@ -19,12 +20,12 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[4]
 STAGES_CPP = REPO / "src" / "server" / "game" / "Animus" / "Scenario" / "Curriculum" / "Stages" / "Stages.cpp"
-COMPILE_DB = Path(os.environ.get("ANIMUS_COMPILE_DB", "/azerothcore/var/build/obj/compile_commands.json"))
+COMPILE_DB = Path(os.environ["ANIMUS_COMPILE_DB"]) if os.environ.get("ANIMUS_COMPILE_DB") else None
 # The movement curriculum as rebuilt (2026-10-05): M1, M2 seek (perception-goals P1, 2026-10-06), M3 interact and M4
-# follow; then the combat stages (dungeon-curriculum C1-C3, 2026-10-06) and the party stages (G1, 2026-10-07). Later
-# stages add themselves here as they land.
+# follow; then the combat stages (dungeon-curriculum C1-C3, 2026-10-06), the party stages (G1, 2026-10-07) and the
+# dungeon teacher's check stages (I6), in no queue. Later stages add themselves here as they land.
 MOVEMENT = ["move1_controls", "move2_seek", "move3_interact", "move4_follow", "combat1_fight", "combat2_packs",
-            "combat3_survive", "group1_roles"]
+            "combat3_survive", "group1_roles", "teacher_ragefire", "teacher_deadmines"]
 
 LOG_STUB = """#pragma once
 #define LOG_ERROR(category, ...) ((void)0)
@@ -47,7 +48,7 @@ int main()
 
 def _command() -> tuple[list[str], str] | None:
     """The compiler and flags the build compiles Stages.cpp with, or None."""
-    if not COMPILE_DB.is_file():
+    if COMPILE_DB is None or not COMPILE_DB.is_file():
         return None
     entries = json.loads(COMPILE_DB.read_text())
     entry = next((e for e in entries if e["file"].endswith("Curriculum/Stages/Stages.cpp")), None)

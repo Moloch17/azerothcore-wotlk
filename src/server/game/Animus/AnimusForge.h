@@ -407,6 +407,9 @@ namespace AnimusForge
         int32 _clusterRungSent = -1;
         std::chrono::steady_clock::time_point _nextRungBroadcast{};
         uint32 _clusterRung = 0;
+        /// ... and its hint cutoff (Scenario::ClusterHintOff), -1 none.
+        int32 _clusterHintOffSent = -1;
+        int32 _clusterHintOff = -1;
         /// A worker's own rates for its PROGRESS report, over the interval since the last one: _ticksPerSecond is
         /// only kept by Snapshot, which runs on a periodic report (Progress.Interval, off by default) or a status.
         struct ClusterRates

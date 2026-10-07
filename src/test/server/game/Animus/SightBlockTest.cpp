@@ -132,7 +132,13 @@ TEST(SightBlockLayoutTest, TheListAndItsPointers)
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::Sight), "sight");
     EXPECT_EQ(Cu::SIGHT_SLOTS, 64u);
     EXPECT_EQ(block.Size(layout).Obs, Sight::OBS_COUNT);
-    EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS);
+    EXPECT_EQ(block.Size(layout).Actions, 5 * Cu::SIGHT_SLOTS + 1) << "five pointer groups, then clear focus";
+    EXPECT_EQ(block.ActionName(layout, Sight::ACTION_CLEAR_FOCUS), "clear_focus");
+    // The manifest's action names are every press's own (by-name seeding relies on them): clear_focus once.
+    uint32 clears = 0;
+    for (uint32 local = 0; local < Sight::ACTION_COUNT; ++local)
+        clears += block.ActionName(layout, local) == "clear_focus" ? 1 : 0;
+    EXPECT_EQ(clears, 1u);
     EXPECT_EQ(uint32(Sight::SIGHT_VISIBLE), uint32(Cu::EntitiesBlock::ENTITY_FEATURES));
 
     boost::json::object entry;
@@ -433,9 +439,10 @@ TEST(SightBlockLayoutTest, TheMovementStagesAreUnchanged)
     std::vector<Expected> const m2 = { { Id::Move, 57, 25, 5 }, { Id::Vision, 11, 0, 5 },
         { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Goal, 128, 0, 0 } };
     // M3 (the party frames unification, G1, leaves it as it was): its sight list of 64 slots of 32 and the named row
-    // of 23, without the combat block's columns; five presses a slot.
+    // of 23, without the combat block's columns; five presses a slot and I6's clear-focus press (an action appended
+    // at the block's end: seeding carries the others by name).
     std::vector<Expected> const m3 = { { Id::Move, 57, 25, 5 }, { Id::Vision, 11, 0, 5 },
-        { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Sight, 64 * 32 + 23, 5 * 64, 2 },
+        { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Sight, 64 * 32 + 23, 5 * 64 + 1, 2 },
         { Id::Goal, 128, 0, 0 } };
     uint32 found = 0;
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())

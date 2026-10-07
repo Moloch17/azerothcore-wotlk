@@ -5202,6 +5202,9 @@ AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
 AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
 # ... and the party stages.
 AnimusForge.Stage.group1_roles.TicksPerDecision = 5
+#   the dungeon teacher's checks drive every seat on the player controller: the same 50 ms world ticks
+AnimusForge.Stage.teacher_ragefire.TicksPerDecision = 5
+AnimusForge.Stage.teacher_deadmines.TicksPerDecision = 5
 
 #
 #    AnimusForge.HalfBatch
@@ -6342,6 +6345,14 @@ AnimusForge.Curriculum.Instance.WingRungRuns = 40
 AnimusForge.Curriculum.Instance.WingRungTarget = 0.6
 #   the rung a run starts on (the ladder is not saved: a resumed run names the rung it had reached)
 AnimusForge.Curriculum.Instance.WingRungStart = 0
+#   the rung from which hint imitation is off: the first rung whose probes beat the script's clear share at that rung
+#   (its reference runs), decided by the ladder; -1 lets the ladder decide (a resumed run names the rung its log's
+#   "hint imitation is off" line gave)
+AnimusForge.Curriculum.Instance.WingHintOffRung = -1
+#   the share of training runs at each rung that are reference runs while the support is on and the rung's imitation
+#   is not off: the teacher plays every seat at the rung's levels and wipes, and they measure the script's clear share
+#   there -- what the rung's probes must beat for hint imitation to end; never evaluated, never on the ladder
+AnimusForge.Curriculum.Instance.WingReferenceShare = 0.07
 #   the dungeon script's seats and hints on the ladder's rungs: a support, off by default (0), switched on (1) when a
 #   rung has not stepped for a long stretch. Off, the rungs lift the level and spare wipes only
 AnimusForge.Curriculum.Instance.WingSupport = 0
@@ -6357,11 +6368,6 @@ AnimusForge.Curriculum.Instance.WingCrowdFree = 4
 #   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
 #   other than the tank is further than WingStrayYards from it, WingStray
 AnimusForge.Curriculum.Instance.WingFullClear = 1
-#   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
-AnimusForge.Curriculum.Instance.WingRiseMs = 30000
-#   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd
-#   block's use action (levers, buttons, the cannon, doors)
-AnimusForge.Curriculum.Instance.WingAutoDoors = 0
 AnimusForge.Curriculum.Instance.WingStray = 0.02
 AnimusForge.Curriculum.Instance.WingStrayYards = 25.0
 #   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it

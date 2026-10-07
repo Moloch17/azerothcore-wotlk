@@ -251,6 +251,10 @@ namespace Animus::Curriculum
         /// route from one pack, the packs before it cleared, the run over when that pack is dead or a second one
         /// joins (Instance.Pull*). Training only: an evaluation never draws it.
         bool PullDrill = false;
+        /// InstanceLadder::Wing: the dungeon teacher (WingTeacher) plays every seat of every run, whatever the ladder's
+        /// rung and the support say, for checking the teacher (`forge run teacher_ragefire dungeon 96`); never in an
+        /// evaluation, and not for training (StageScenario::TeacherPlays).
+        bool Teacher = false;
         /// Played only when an evaluation pins it (the learner's eval.heldout, MODE's arena): never drawn in training
         /// nor in an ordinary evaluation, whatever its weight. Content a stage is measured on and never trained on --
         /// a dungeon it has not seen -- so a policy that memorised its own route is told from one that learned to run

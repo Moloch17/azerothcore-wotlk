@@ -27,6 +27,7 @@
 #include "WorldActions.h"
 #include "SeatView.h"
 #include "EncoderSupport.h"
+#include "EntityActions.h"
 #include <boost/json/object.hpp>
 #include <algorithm>
 #include <cmath>
@@ -158,7 +159,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
     }
 }
 
-void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
+void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
     if (!bot || !bot->IsAlive())
@@ -171,27 +172,32 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
         return;
     if (view.Crowd.Used)
         view.Crowd.Used->push_back(object->GetGUID());
-    // As a player does it: a chest is looted (the gunpowder), a lock that takes a key gets the key's own use (the
-    // gunpowder on the cannon, whose script answers that spell), and anything else is a right-click -- a lever or a
-    // button runs what it is linked to, a door opens.
+    // As a player does it: a lock that takes a key gets the key's own use (the gunpowder on the cannon, whose script
+    // answers that spell), and anything else is a right-click -- a lever or a button runs what it is linked to, a door
+    // opens. Nothing is looted (the user, 2026-10-06): no chest is offered (InstanceEncounter::Usable), and one never
+    // is opened here.
     if (object->GetGoType() == GAMEOBJECT_TYPE_CHEST)
-    {
-        uint32 items = 0;
-        uint32 copper = 0;
-        WorldActions::LootAll(bot, object, items, copper);
         return;
-    }
+    // Sent as the client sends them, through the session's handlers (the user's "real object actions"): the key's
+    // use as CMSG_USE_ITEM at the object, a right-click as CMSG_GAMEOBJ_USE -- the handler judges reach and state.
+    EntityActions::ClientPort& port = view.Port ? *view.Port : EntityActions::SessionPort();
     if (uint32 const key = KeyOf(object))
     {
         if (Item* carried = bot->GetItemByEntry(key))
         {
             SpellCastTargets targets;
             targets.SetGOTarget(object);
-            bot->CastItemUseSpell(carried, targets, 1, 0);
+            if (EntityActions::UseItemThroughClient(bot, carried, Encoding::UseSpell(key), targets, port).Sent)
+            {
+                ++result.ItemUses;
+                ++result.Interactions;
+            }
         }
         return;
     }
-    object->Use(bot);
+    WorldPacket packet = EntityActions::GameObjectUse(object->GetGUID());
+    port.Send(bot, packet);
+    ++result.Interactions;
 }
 
 std::string Animus::Curriculum::CrowdBlock::ActionName(Layout const& /*layout*/, uint32 local) const

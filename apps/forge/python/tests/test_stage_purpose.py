@@ -45,6 +45,10 @@ PURPOSE = {
     # tank's hold, the healer's keep, the damage dealer's focus, the puller's clean pulls and the extra ones it drags
     # in -- and the party's packs cleared.
     "group1_roles": ("DrillHold", "DrillKeep", "DrillFocus", "PullClean", "PullExtra", "Clear"),
+    # The dungeon teacher's checks (I6; not training stages, but a learner pointed at one is paid for the dungeon):
+    # every pack and boss killed (Kill, the last boss's WingBoss among them) and each death priced.
+    "teacher_ragefire": ("Kill", "Death"),
+    "teacher_deadmines": ("Kill", "Death"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -72,6 +76,7 @@ ENCOUNTER = {
     "Sight": "Encounters/SightEncounter.cpp",
     "Interact": "Encounters/InteractEncounter.cpp",
     "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
+    "Instance": "Encounters/InstanceEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

@@ -51,6 +51,9 @@ PER_EVENT = {
     "regroup_seconds": "regroups",
     "rejoined": "rises",
     "rejoin_seconds": "rejoins",
+    # A whole dungeon's (InstanceEncounter, I4 wired into the wing runs): the time from a rise at the entrance to the
+    # party, over the rejoins.
+    "wing_rejoin_seconds": "wing_rejoins",
     # The combat stages (CombatEncounter): a C1 creature's engage-to-death over the kills.
     "kill_seconds": "kills",
     # ... and C2's watch: InterruptLanded's earnings over Kill and Clear's (a ratio of the sums).

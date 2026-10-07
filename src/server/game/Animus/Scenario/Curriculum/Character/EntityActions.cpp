@@ -27,6 +27,7 @@
 #include "Player.h"
 #include "SeatView.h"
 #include "Spell.h"
+#include "CharmInfo.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "WorldSession.h"
@@ -53,6 +54,7 @@ namespace
                 case CMSG_GOSSIP_HELLO:  session->HandleGossipHelloOpcode(packet); break;
                 case CMSG_USE_ITEM:      session->HandleUseItemOpcode(packet); break;
                 case CMSG_CAST_SPELL:    session->HandleCastSpellOpcode(packet); break;
+                case CMSG_PET_ACTION:    session->HandlePetAction(packet); break;
                 default:                 break;
             }
         }
@@ -277,6 +279,65 @@ Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions
     outcome.Sent = true;
     outcome.Queued = bot->SpellQueue.size() > queued;
     return outcome;
+}
+
+Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions::UseItemThroughClient(Player* bot,
+    Item* item, SpellInfo const* spell, SpellCastTargets& targets, ClientPort& port)
+{
+    CastOutcome outcome;
+    if (!bot || !item || !spell || !bot->GetSession())
+        return outcome;
+    WorldPacket packet = UseItem(item->GetBagSlot(), item->GetSlot(), item->GetGUID(), spell->Id, NextCastCount(),
+        targets);
+    Movement::ScopedCastWatch watch(bot->GetSession());
+    port.Send(bot, packet);
+    if (watch.Watch().Failures)
+    {
+        outcome.Failed = uint32(watch.Watch().Result) + 1;
+        return outcome;
+    }
+    outcome.Sent = true;
+    return outcome;
+}
+
+WorldPacket Animus::Curriculum::EntityActions::PetAction(ObjectGuid pet, uint32 data, ObjectGuid target)
+{
+    // HandlePetAction: the pet, the action button (action | type << 24), the target.
+    WorldPacket packet(CMSG_PET_ACTION, 8 + 4 + 8);
+    packet << pet << data << target;
+    return packet;
+}
+
+WorldPacket Animus::Curriculum::EntityActions::CallPet(uint8 castCount)
+{
+    SpellCastTargets none;
+    return CastSpell(CALL_PET_SPELL, castCount, none);
+}
+
+Animus::Curriculum::EntityActions::CastOutcome Animus::Curriculum::EntityActions::CallPetThroughClient(Player* bot,
+    ClientPort& port)
+{
+    SpellCastTargets none;
+    return CastThroughClient(bot, sSpellMgr->GetSpellInfo(CALL_PET_SPELL), none, port);
+}
+
+bool Animus::Curriculum::EntityActions::PetAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)
+{
+    Unit* pet = bot ? bot->GetFirstControlled() : nullptr;
+    if (!pet || target.IsEmpty() || !bot->GetSession())
+        return false;
+    WorldPacket packet = PetAction(pet->GetGUID(), MAKE_UNIT_ACTION_BUTTON(COMMAND_ATTACK, ACT_COMMAND), target);
+    port.Send(bot, packet);
+    return true;
+}
+
+bool Animus::Curriculum::EntityActions::StartAttackThroughClient(Player* bot, ObjectGuid target, ClientPort& port)
+{
+    if (!bot || target.IsEmpty() || !bot->GetSession())
+        return false;
+    WorldPacket packet = AttackSwing(target);
+    port.Send(bot, packet);
+    return true;
 }
 
 Animus::Curriculum::EntityActions::Refusal Animus::Curriculum::EntityActions::Apply(Press press, Player* bot,

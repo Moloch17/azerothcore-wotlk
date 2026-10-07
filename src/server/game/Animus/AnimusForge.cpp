@@ -714,6 +714,7 @@ bool AnimusForge::Forge::StartCurrent()
         LOG_ERROR("module.animus", "Scenario {} has no policy '{}'", _scenario->Name(), _plan.Policy);
         return false;
     }
+    _scenario->SetLocalPolicy(_plan.Remote() ? std::string() : _plan.Policy);
 
     // The camera gathers the units it sees from the grid around the seat, which is safe only on the map's own
     // update: under ObserveAfterJoin the observations run on the job pool, outside it (camera-vision R17).
@@ -1086,11 +1087,15 @@ void AnimusForge::Forge::PollCluster()
             for (std::string const& tally : _cluster.TakeTallies())
                 _scenario->AddClusterTally(tally);
             int32 const rung = _scenario->ClusterRung();
+            int32 const hintOff = _scenario->ClusterHintOff();
             auto const now = std::chrono::steady_clock::now();
-            if (rung >= 0 && _state == State::Training && (rung != _clusterRungSent || now >= _nextRungBroadcast))
+            if (rung >= 0 && _state == State::Training && (rung != _clusterRungSent
+                || hintOff != _clusterHintOffSent || now >= _nextRungBroadcast))
             {
-                _cluster.Broadcast(Acore::StringFormat("RUNG {}", rung));
+                // The hint cutoff rides on the rung's line: a worker built before it reads the rung alone.
+                _cluster.Broadcast(Acore::StringFormat("RUNG {} HINTOFF {}", rung, hintOff));
                 _clusterRungSent = rung;
+                _clusterHintOffSent = hintOff;
                 _nextRungBroadcast = now + std::chrono::seconds(30);
             }
         }
@@ -1145,6 +1150,7 @@ void AnimusForge::Forge::PollCluster()
         if (_scenario)
         {
             _scenario->FollowClusterRung(_clusterRung);
+            _scenario->FollowClusterHintOff(_clusterHintOff);
             tally = _scenario->TakeClusterTally();
         }
         Animus::ResetSamples::Summary const resets = Animus::RecentResets.Summarise();
@@ -1218,8 +1224,14 @@ void AnimusForge::Forge::PollCluster()
         else if (unsigned rung = 0; std::sscanf(order->c_str(), "RUNG %u", &rung) == 1)
         {
             _clusterRung = rung;
+            int hintOff = -1;
+            if (std::sscanf(order->c_str(), "RUNG %*u HINTOFF %d", &hintOff) == 1)
+                _clusterHintOff = hintOff;
             if (_scenario)
+            {
                 _scenario->FollowClusterRung(rung);
+                _scenario->FollowClusterHintOff(_clusterHintOff);
+            }
         }
         else if (*order == "STOP")
         {

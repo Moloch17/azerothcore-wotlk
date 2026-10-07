@@ -1,0 +1,9 @@
+# The dungeon teacher's check in the Deadmines (dungeon-curriculum I6) -- not a training stage: the teacher plays every
+# seat from the door to VanCleef, every pack and side boss, its doors and levers by a real interact and the cannon by
+# its gunpowder (carried from the door: nothing is looted).
+#
+#   forge run teacher_deadmines dungeon 96
+#
+# teacher_ragefire.yaml says what this config is for.
+extends: teacher_ragefire.yaml
+run_name: teacher_deadmines

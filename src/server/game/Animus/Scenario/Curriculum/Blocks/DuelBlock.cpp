@@ -17,6 +17,7 @@
  */
 
 #include "DuelBlock.h"
+#include "EntityActions.h"
 #include "DBCStores.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
@@ -420,9 +421,27 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
     switch (local)
     {
         case ACTION_START_ATTACK:
-            bot->Attack(target, true);
+            // A sight stage starts its swing as the client does (dungeon-curriculum I1): CMSG_ATTACKSWING through the
+            // session's handler, at the seat's selection.
+            if (view.L && view.L->Has(BlockId::Sight))
+                EntityActions::StartAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort());
+            else
+                bot->Attack(target, true);
             return;
         case ACTION_PET_ATTACK:
+            // A sight stage orders its pet as the client does: the pet bar's Attack, CMSG_PET_ACTION through the
+            // session's handler.
+            if (view.L && view.L->Has(BlockId::Sight))
+            {
+                if (EntityActions::PetAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort()))
+                {
+                    ++result.PetOrders;
+                    result.PetOrderGiven = PetOrder::Attack;
+                }
+                return;
+            }
             if (Encoding::PetAttack(bot, target))
             {
                 ++result.PetOrders;
@@ -439,6 +458,15 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
                 bot->RemoveOwnedAura(form->Id, ObjectGuid::Empty, 0, AURA_REMOVE_BY_CANCEL);
             return;
         default:
+            // A sight stage calls its pet as the client does: Call Pet (CMSG_CAST_SPELL) through the session's
+            // handler, which summons the beast its pet stable holds; a dead one is Revive Pet's (a core spell).
+            if (view.L && view.L->Has(BlockId::Sight))
+            {
+                if (EntityActions::CastOutcome const sent = EntityActions::CallPetThroughClient(bot,
+                    view.Port ? *view.Port : EntityActions::SessionPort()); !sent.Sent)
+                    result.RefusedCast = sent.Failed ? sent.Failed - 1 : uint32(SPELL_FAILED_UNKNOWN);
+                return;
+            }
             result.CallBeast = view.Stable[local - ACTION_CALL_BEAST_FIRST];
             return;
     }

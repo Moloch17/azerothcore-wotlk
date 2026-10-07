@@ -189,6 +189,9 @@ namespace Animus
         /// the policy.
         virtual bool ScriptedAction(std::string const& policy, float const* obs, uint8 const* mask, uint16 layout,
             int32& action) const = 0;
+        /// The local policy a run plays, before its first episode ("" for the learner): a scenario whose scripted
+        /// policy plays from the world rather than the row (StageScenario's dungeon teacher) needs to know.
+        virtual void SetLocalPolicy(std::string const& /*policy*/) { }
 
         /// How often training episodes should draw each layout of Spec().Layouts, in layout order (the learner's
         /// WEIGHTS message). Weights are relative, so all-ones is the even draw a scenario starts with; an empty
@@ -219,6 +222,9 @@ namespace Animus
         virtual void AddClusterTally(std::string const& /*tally*/) { }
         [[nodiscard]] virtual int32 ClusterRung() const { return -1; }
         virtual void FollowClusterRung(uint32 /*rung*/) { }
+        /// The ladder's hint cutoff ("RUNG <n> HINTOFF <r>"): the rung from which hint imitation is off, -1 none.
+        [[nodiscard]] virtual int32 ClusterHintOff() const { return -1; }
+        virtual void FollowClusterHintOff(int32 /*rung*/) { }
 
         /// Once at shutdown: remove bots (without saving) and targets.
         virtual void Teardown(Env& env) = 0;

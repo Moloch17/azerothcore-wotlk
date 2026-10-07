@@ -25,6 +25,7 @@
 #include "InstanceBosses.h"
 #include "LifeEncounter.h"
 #include "Encounter.h"
+#include "EntranceRespawn.h"
 #include "DirectorLayout.h"
 #include "DirectorOrders.h"
 #include "Env.h"
@@ -646,7 +647,9 @@ namespace Animus::Curriculum
             bool DeathPaid = false;
             float Potential = 0.0f;             // the least route ahead it has reached (Instance.WingProgress)
             bool PotentialReady = false;
-            uint32 DeadSinceMs = 0;             // out of a fight and dead since (Instance.WingRiseMs); 0: not
+            /// Death and the rise at the entrance (dungeon-curriculum I4, EntranceRespawn): out for Respawn.DelayMs,
+            /// then alive at the entrance and walking back, rejoined within Respawn.RejoinYards of the party.
+            RespawnClock Clock;
             uint32 Walk = 0;                    // the route point the seat walks to next; back to 0 at the door
             uint32 EngagesPaid = 0;             // EnvInstance::ReadyEngages paid for (the tank)
             mutable uint32 DenseAt = 0;         // the yard of the field route it was nearest at its last view
@@ -703,6 +706,8 @@ namespace Animus::Curriculum
             /// run is drawn; and whether it is an evaluation's, which the running route share leaves out.
             uint32 Rung = 0;                    // the ladder's rung the run was drawn on (StageScenario::WING_RUNGS)
             bool Probe = false;                 // no script, no hints: a measure of the policy (Instance.WingProbe)
+            /// The teacher plays every seat: the script's clear share at the rung (Instance.WingReferenceShare).
+            bool Reference = false;
             uint32 WipesAllowed = 1;
             bool Evaluating = false;
             /// The fight under way, for the wipe's log line (Instance.WingTrace): when it began, what had been killed
@@ -733,7 +738,13 @@ namespace Animus::Curriculum
             uint32 LastMs = 0;                  // the run's clock at its last update, and its level, for its log line
             uint32 Level = 0;
             uint32 StuckLoggedMs = 0;           // when the next "Wing stuck" line may be written
-            uint32 Rises = 0;                   // seats that rose at the door and ran back (WingRiseMs)
+            uint32 Rises = 0;                   // seats that rose at the entrance and walked back (Respawn.*)
+            uint32 Rejoins = 0;                 // ... and reached the party again
+            uint32 RejoinMsTotal = 0;           // ... in this long altogether
+            /// The instance's entrance, where the dead rise: the door the run came in by, even for a run started
+            /// part-way (Go-Explore), whose packs before its start are gone.
+            Position Entrance;
+            WipeLatch Wipe;                     // the party is down and its wipe counted, until somebody stands
             /// The crowd past the pack's slots (CrowdBlock): on the tank, elites, the tank itself, the next enemies,
             /// and the nearest pack not in the fight.
             uint32 OnTank = 0;
@@ -814,6 +825,10 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool Hostile(Player const* seat, Creature const* creature);
         /// A lever, a button, a goober (the Deadmines' cannon) or a closed door, spawned, ready and not locked.
         [[nodiscard]] static bool Usable(GameObject const* object);
+        /// The items the locks of a map's game objects take (LOCK_KEY_ITEM): each seat carries them from the door.
+        [[nodiscard]] static std::vector<uint32> const& KeyItems(uint32 mapId);
+        /// The dead rise at the entrance after Respawn.DelayMs and walk back (I4); the rejoins counted.
+        void RiseDead(Env& env, EnvInstance& fight);
         /// A whole dungeon's way through: its route points every Instance.WingWaypointYards (the last one the boss),
         /// the field route a yard at a time with the yard of each point, and the spawns of the creatures it can reach.
         /// A pack of the field route, in the order the route reaches it: where it is fought from, the route's yard

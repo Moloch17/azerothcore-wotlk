@@ -127,24 +127,26 @@ namespace Animus::Curriculum::Encoding
         return other && other != bot && other->IsInMap(bot) ? other : nullptr;
     }
 
+    Unit* BeneficialTarget(Player* bot, Unit* focus, Unit* selection)
+    {
+        auto const friendly = [bot](Unit* unit)
+        {
+            return unit && unit->IsInWorld() && unit->GetMap() == bot->GetMap() && unit->IsAlive()
+                && bot->IsFriendlyTo(unit);
+        };
+        if (friendly(focus))
+            return focus;
+        if (friendly(selection))
+            return selection;
+        return bot;
+    }
+
     Unit* SupportTarget(SeatView const& view)
     {
         // A sight stage's friend is the client's own (dungeon-curriculum I1): the focus when it is a living friend,
         // else the selection when it is one, else the seat itself -- the client's self-cast.
         if (view.L && view.L->Has(BlockId::Sight))
-        {
-            Player* bot = view.Bot;
-            auto const friendly = [bot](Unit* unit)
-            {
-                return unit && unit->IsInWorld() && unit->GetMap() == bot->GetMap() && unit->IsAlive()
-                    && bot->IsFriendlyTo(unit);
-            };
-            if (Unit* focus = view.Focus ? UnitThrough(*bot, *view.Focus) : nullptr; friendly(focus))
-                return focus;
-            if (friendly(view.Target))
-                return view.Target;
-            return bot;
-        }
+            return BeneficialTarget(view.Bot, view.Focus ? UnitThrough(*view.Bot, *view.Focus) : nullptr, view.Target);
         if (!view.L || !view.L->Has(BlockId::Support))
             return view.Bot;
 
