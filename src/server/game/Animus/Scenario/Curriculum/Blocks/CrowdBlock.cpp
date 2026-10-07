@@ -24,7 +24,6 @@
 #include "Item.h"
 #include "Spell.h"
 #include "Player.h"
-#include "WorldActions.h"
 #include "SeatView.h"
 #include "EncoderSupport.h"
 #include "EntityActions.h"
@@ -34,7 +33,7 @@
 
 namespace
 {
-
+    constexpr float INTERACT_YARDS = 5.0f;     // within reach of an object to use it
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CrowdBlock::Size(Layout const& /*layout*/) const
@@ -77,7 +76,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         obs[OBS_OBJECT_DOOR] = object->GetGoType() == GAMEOBJECT_TYPE_DOOR ? 1.0f : 0.0f;
         if (mask && bot->IsAlive() && !bot->IsInCombat() && CanUse(bot, object))
         {
-            mask[ACTION_USE_OBJECT] = bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS) ? 1 : 0;
+            mask[ACTION_USE_OBJECT] = bot->IsWithinDistInMap(object, INTERACT_YARDS) ? 1 : 0;
         }
     }
 
@@ -167,7 +166,7 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
     GameObject* object = view.Crowd.Object;
     if (bot->IsInCombat() || !object || !object->IsInMap(bot))
         return;
-    if (local != ACTION_USE_OBJECT || !bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS)
+    if (local != ACTION_USE_OBJECT || !bot->IsWithinDistInMap(object, INTERACT_YARDS)
         || !CanUse(bot, object))
         return;
     if (view.Crowd.Used)

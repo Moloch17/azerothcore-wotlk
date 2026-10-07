@@ -79,28 +79,16 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
                 deadFriends = true;
             }
 
-    // The journal.
+    // A dungeon's way on (WorldView::RoutePlaces): its places and the assignment. A stage without it (the movement
+    // stages) has a trip's objective, which takes the assignment's slot, so TravelTo has a target there too.
     WorldView const& world = view.World;
     bool places = false;
-    for (uint32 i = 0; i < WorldView::JOURNAL_OBJECTIVES && world.Active; ++i)
-        if (world.Objectives[i].Present && world.Objectives[i].Left > 0.0f && world.Objectives[i].HasPlace)
-            places = targets[GOAL_TARGET_OBJECTIVE_FIRST + i] = true;
-    if (world.Active && world.HasGiver)
-        places = targets[GOAL_TARGET_GIVER] = true;
-    if (world.Active && world.HasEnder)
-        places = targets[GOAL_TARGET_ENDER] = true;
-    // Places and the assignment: a journal's, or a dungeon's way on (WorldView::RoutePlaces), which is all a dungeon
-    // fills.
-    bool const placesLive = world.Active || world.RoutePlaces;
-    bool found = false;
-    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && placesLive; ++i)
+    for (uint32 i = 0; i < WorldView::JOURNAL_PLACES && world.RoutePlaces; ++i)
         if (world.Places[i].Present)
-            found = places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
-    if (placesLive && world.HasAssignment)
+            places = targets[GOAL_TARGET_PLACE_FIRST + i] = true;
+    if (world.RoutePlaces && world.HasAssignment)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
-    // A trip's objective (the travel block's) is the place a travel stage is about. With no journal it takes the
-    // assignment's slot, so TravelTo has a target and the movement phase trains the goal level too.
-    if (!placesLive && view.HasObjective)
+    if (!world.RoutePlaces && view.HasObjective)
         places = targets[GOAL_TARGET_ASSIGNMENT] = true;
 
     bool const combat = bot->IsInCombat();
@@ -113,12 +101,8 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
     kinds[uint32(SeatGoal::Position)] = enemies > 0;
     kinds[uint32(SeatGoal::Prepare)] = !combat;
     kinds[uint32(SeatGoal::TravelTo)] = places;
-    kinds[uint32(SeatGoal::Loot)] = world.Active && world.Corpse;
-    kinds[uint32(SeatGoal::Gather)] = world.Active && ((world.Node && world.NodeOpenable) || found);
-    kinds[uint32(SeatGoal::Interact)] = world.Active && (world.HasGiver || world.HasEnder || world.QuestObject
-        || world.ItemTarget || world.QuestVendor || targets[GOAL_TARGET_OBJECTIVE_FIRST]
-        || targets[GOAL_TARGET_OBJECTIVE_FIRST + 1] || targets[GOAL_TARGET_OBJECTIVE_FIRST + 2]
-        || targets[GOAL_TARGET_OBJECTIVE_FIRST + 3]);
+    // Loot, Gather and Interact are in the goal space (it is the layout's) but nothing offers them: no looting, no
+    // gathering, no quests (the first curriculum's life encounters were deleted).
     kinds[uint32(SeatGoal::Rest)] = !combat && hurt;
     kinds[uint32(SeatGoal::Resurrect)] = deadFriends;
 
@@ -138,28 +122,18 @@ void Animus::Curriculum::GoalBlock::Available(SeatView const& view, std::array<b
 bool Animus::Curriculum::GoalBlock::PlaceOf(SeatView const& view, uint32 t, Position& where)
 {
     WorldView const& world = view.World;
-    if (!world.Active && !world.RoutePlaces)
+    if (!world.RoutePlaces)
     {
-        // A trip's objective, where there is no journal (Available) -- and only where the seat is told where it is
+        // A trip's objective, where there is no dungeon's route (Available) -- and only where the seat is told where it is
         // (SeatView::ObjectivePlaceKnown): with the compass withheld, or no compass at all, TravelTo's reached bit
         // would otherwise say "within PLACE_REACH" through walls. Arrival is the encounter's to decide and pay.
         if (t == GOAL_TARGET_ASSIGNMENT && view.HasObjective && view.ObjectivePlaceKnown)
             return where = view.Objective, true;
         return false;
     }
-    // A dungeon's way on: its places and the assignment, nothing of a journal (WorldView::RoutePlaces).
-    if (!world.Active && t < GOAL_TARGET_PLACE_FIRST)
+    // A dungeon's way on: its places and the assignment (WorldView::RoutePlaces).
+    if (t < GOAL_TARGET_PLACE_FIRST)
         return false;
-    if (t >= GOAL_TARGET_OBJECTIVE_FIRST && t < GOAL_TARGET_GIVER)
-    {
-        WorldView::JournalObjective const& objective = world.Objectives[t - GOAL_TARGET_OBJECTIVE_FIRST];
-        where = objective.Place;
-        return objective.Present && objective.HasPlace;
-    }
-    if (t == GOAL_TARGET_GIVER)
-        return where = world.GiverAt, world.HasGiver;
-    if (t == GOAL_TARGET_ENDER)
-        return where = world.EnderAt, world.HasEnder;
     if (t >= GOAL_TARGET_PLACE_FIRST && t < GOAL_TARGET_ASSIGNMENT)
     {
         WorldView::JournalPlace const& place = world.Places[t - GOAL_TARGET_PLACE_FIRST];
@@ -243,31 +217,9 @@ void Animus::Curriculum::GoalBlock::Status(SeatView const& view, int32 goal, boo
             break;
         }
         case SeatGoal::Loot:
-            reached = view.World.Active && !view.World.Corpse;
-            break;
         case SeatGoal::Gather:
-            if (target == GOAL_TARGET_NONE)
-                reached = view.World.Active && !(view.World.Node && view.World.NodeOpenable);
-            else
-            {
-                Position where;
-                reached = placeOf(target, where) && bot->GetExactDist2d(&where) <= PLACE_REACH
-                    && !(view.World.Node && view.World.NodeOpenable);
-            }
-            break;
         case SeatGoal::Interact:
-            if (target >= GOAL_TARGET_OBJECTIVE_FIRST && target < GOAL_TARGET_GIVER)
-            {
-                WorldView::JournalObjective const& objective = view.World.Objectives[target - GOAL_TARGET_OBJECTIVE_FIRST];
-                reached = objective.Present && objective.Left <= 0.0f;
-            }
-            else if (target == GOAL_TARGET_GIVER)
-                reached = !view.World.HasGiver;         // the quest is taken: the giver leaves the journal
-            else if (target == GOAL_TARGET_ENDER)
-                // Handed in: the quest is no longer complete and waiting. True while it is still being done, so a
-                // hand-in chosen early is held unpaid until the quest completes, and paid when it is handed in.
-                reached = view.World.QuestState != WorldView::QUEST_COMPLETE;
-            break;
+            break;      // nothing offers them (Available)
         case SeatGoal::Resurrect:
             if (target == GOAL_TARGET_NONE)
                 reached = possible = true;      // alive: it stood up (held from before, or true on choice)

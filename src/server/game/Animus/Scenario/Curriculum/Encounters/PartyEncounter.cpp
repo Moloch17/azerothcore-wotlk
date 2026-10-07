@@ -195,18 +195,13 @@ bool Animus::Curriculum::PartyEncounter::Build(Env& env, Map* /*map*/, uint8 /*l
 
     // The owner stands in for the player whose party the companions join: it leads. A raid in an instance has no
     // owner (forty seats leave no slot for one), so its first seat leads.
-    // Two groups sharing a zone are grouped by side by the quest (LifeEncounter::FormGroups), not as one party.
-    if (_scenario.Arena(env).Seats == SeatPlan::Teams)
-        return true;
-
     Player* owner = _scenario.Owner(env);
     bool const raid = _scenario.Arena(env).Seats == SeatPlan::Raid;
-    // A group questing in the world has no owner: its first seat leads, as a raid's does. So does a group running a
-    // dungeon, which is five learned seats, and a proper party drilling against pulls.
-    bool const questing = _scenario.Arena(env).Against == Opposition::Quest;
+    // A group running a dungeon, which is five learned seats, has no owner: its first seat leads, as a raid's does.
+    // So does a proper party drilling against pulls.
     bool const dungeon = _scenario.Arena(env).Against == Opposition::Instance && !_scenario.Arena(env).Owner;
     bool const drill = _scenario.Arena(env).ProperParty && !_scenario.Arena(env).Owner;
-    if (!owner && !raid && !questing && !dungeon && !drill)
+    if (!owner && !raid && !dungeon && !drill)
     {
         // The party stage always has an owner; it has to be built first (see the build order in StageScenario).
         LOG_ERROR("module.animus", "{}: env {} builds its party group before its owner", _scenario.Name(), env.Index);
@@ -267,14 +262,10 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     if (seatIndex < MAX_SEATS)
         shown[seatIndex] = true;
 
-    // Two groups sharing a zone: a seat's teammates are its own side, never the other group's.
-    bool const sides = _scenario.Arena(env).Seats == SeatPlan::Teams;
-    uint32 const side = _scenario.SideOf(env, seatIndex);
     auto const playing = [&](uint32 seat)
     {
         return seat < seats && seat < MAX_SEATS && !shown[seat] && data.Seats[seat].L
-            && _scenario.SeatBotInWorld(env, seat)
-            && (!sides || (_scenario.OnSide(env, seat, side) && !_scenario.IsLoneSeat(env, seatIndex)));
+            && _scenario.SeatBotInWorld(env, seat);
     };
     auto const fill = [&](uint32 slot, uint32 seat)
     {

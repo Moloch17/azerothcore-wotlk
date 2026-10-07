@@ -40,8 +40,7 @@ namespace Animus::Curriculum::SeatEncoder
     {
         // A seat that chooses its own target by sight (the sight block, dungeon-curriculum I1) has none until it
         // selects one, and selecting is one of its actions.
-        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::World)
-            || layout.Has(BlockId::Sight) || !layout.Has(BlockId::Duel);
+        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Sight) || !layout.Has(BlockId::Duel);
     }
 
     /// Write the layout's observation (view.L->ObsDim values) and action mask (view.L->NumActions). Action 0 is always

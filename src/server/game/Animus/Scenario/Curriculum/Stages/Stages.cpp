@@ -48,7 +48,6 @@
  */
 
 #include "StageDefinition.h"
-#include "QuestPlanner.h"
 #include "RolesDraw.h"
 #include "Log.h"
 #include "AreaDefines.h"
@@ -1035,9 +1034,6 @@ namespace
             return "pulls need the pack block";
         if (arena.DeathRuns && (!stage.Has(BlockId::Death) || arena.Against == Opposition::Instance))
             return "death runs on in the open world, with the death block";
-        if (arena.QuestDrill >= 0 && (arena.Against != Opposition::Quest || arena.Seats == SeatPlan::Teams
-            || arena.QuestDrill >= int8(OBJECTIVE_KIND_COUNT)))
-            return "an objective drill is a quest arena of one group, with an objective kind";
         if ((arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence)
             && !stage.Has(BlockId::Gauntlet))
             return "the gauntlet schedule needs the gauntlet block";
@@ -1061,9 +1057,6 @@ namespace
         // Its members are read through the party block's slots, or (a perception-true stage) the party frames.
         if (arena.PartyGroup && !stage.Has(BlockId::Party) && !stage.Has(BlockId::PartyFrames))
             return "a party group needs the party block or the party frames block";
-        // A group questing in the world (world_group, world_shared) is a party of its own, with no owner.
-        bool const worldGroup = arena.Against == Opposition::Quest
-            && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
         // So is a group running a dungeon: five learned seats and no owner.
         bool const dungeonGroup = arena.Against == Opposition::Instance && arena.Seats == SeatPlan::Party;
         // And a proper party drilling against pulls (the archived roles and group stages) or on a dungeon's ground
@@ -1071,9 +1064,9 @@ namespace
         bool const roles = arena.Against == Opposition::Roles;
         bool const drillGroup = arena.ProperParty && (pulls || roles) && arena.Seats == SeatPlan::Party
             && !arena.Owner;
-        if (arena.PartyGroup && !raidGroup && !worldGroup && !dungeonGroup && !drillGroup
+        if (arena.PartyGroup && !raidGroup && !dungeonGroup && !drillGroup
             && (!arena.Owner || arena.Seats != SeatPlan::Party))
-            return "a party group needs an owner and party seats, unless it is a raid, a quest, a dungeon or a drill";
+            return "a party group needs an owner and party seats, unless it is a raid, a dungeon or a drill";
         if (arena.ProperParty && !(drillGroup && arena.PartyGroup))
             return "a proper party is drawn for a party drill against pulls or on a dungeon's ground (a whole dungeon "
                 "draws its own)";
@@ -1103,29 +1096,6 @@ namespace
             return "a cast owner is still an owner: the arena has to have one";
         if (arena.OwnerCast && stage.SeatCount() + 1 > MAX_SEATS)
             return "a cast owner needs a seat slot past the seats, and a raid has none to spare";
-        // Two groups sharing a zone (world_shared) are teams that do not fight each other.
-        bool const sharedZone = arena.Seats == SeatPlan::Teams && arena.Against == Opposition::Quest;
-        if (arena.Seats == SeatPlan::Teams && !sharedZone)
-            return "team seats share a zone questing";
-        if (arena.Seats == SeatPlan::Teams && (arena.TeamSeats < 1 || arena.TeamSeats > TEAM_SEATS))
-            return "a side is between one seat and TEAM_SEATS";
-        bool const life = arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
-            || arena.Against == Opposition::Town;
-        if (life && (!stage.Has(BlockId::World) || !stage.Has(BlockId::Pack)))
-            return "life outside the fight needs the world and pack blocks";
-        // A quest may be a group's (world_group, world_shared); gathering and a town are one seat on its own.
-        if (life && ((arena.Seats != SeatPlan::Solo && !worldGroup) || arena.Owner
-            || arena.Schedule != PullSchedule::None))
-            return "a life arena is one seat on its own (or a group questing), with no pulls";
-        if (arena.LoneSeats && (!sharedZone || arena.LoneSeats > MAX_LONE_SEATS || arena.SeatCount() > MAX_SEATS))
-            return "seats questing alone go beside two groups sharing a zone, at most MAX_LONE_SEATS of them";
-        if (stage.Has(BlockId::World) && !stage.AnyArena([](ArenaDefinition const& other)
-            {
-                return other.Against == Opposition::Quest || other.Against == Opposition::Gather
-                    || other.Against == Opposition::Town;
-            }))
-            return "the world block wants a life arena to be read in";
-
         // The seek stage: one seat in a dungeon of rooms, an object to find in one of them, nothing to fight; it finds
         // the object by sight, so it carries the camera and not the compass.
         bool const seek = arena.Against == Opposition::Seek;
@@ -1250,7 +1220,7 @@ namespace
             return "the moving drill's extra dummies need the pack block's slots";
         // An arena on a map of its own stands on its own ground: the stage's points are on the stage's map. An
         // encounter that finds its own spawn (an instance's door, a quest giver, a node field, an inn) needs none.
-        bool const ownSpawn = instance || life || arena.Against == Opposition::PartyFollow;
+        bool const ownSpawn = instance || arena.Against == Opposition::PartyFollow;
         if (arena.MapId && arena.MapId != stage.MapId && arena.SpawnPoints.empty() && !ownSpawn)
             return "an arena on a map of its own needs its own spawn points";
 
@@ -1371,7 +1341,6 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
         // owner it is a whole group of learned seats (the dungeon, 2026-09-30).
         case SeatPlan::Party:  return PartySize ? PartySize : Owner ? GROUP_MEMBERS : GROUP_SEATS;
         case SeatPlan::Raid:   return RaidSeats ? RaidSeats : MAX_SEATS;
-        case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT + LoneSeats;
         case SeatPlan::Solo:   break;
     }
 

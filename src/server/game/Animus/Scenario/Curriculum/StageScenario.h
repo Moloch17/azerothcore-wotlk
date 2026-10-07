@@ -170,15 +170,6 @@ namespace Animus::Curriculum
         /// Where a sight stage's goal places come from in a dungeon (StageDefinition::GoalPlaces and its conf key).
         [[nodiscard]] SeenPlaces::Source GoalPlaces() const { return _goalPlaces; }
         [[nodiscard]] float ShapingScale() const { return _shapingScale.load(std::memory_order_relaxed); }
-        /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else is one side.
-        [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
-        /// A seat questing alone beside two groups sharing a zone (ArenaDefinition::LoneSeats): on no side.
-        [[nodiscard]] bool IsLoneSeat(Env const& env, uint32 seat) const;
-        /// Whether `seat` plays for `side`: SideOf, less the lone seats.
-        [[nodiscard]] bool OnSide(Env const& env, uint32 seat, uint32 side) const
-        {
-            return SideOf(env, seat) == side && !IsLoneSeat(env, seat);
-        }
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
         /// SpawnPoint().

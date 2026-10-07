@@ -38,7 +38,6 @@ namespace Animus::Curriculum
         Solo,           // one seat
         Party,          // one group (1-GROUP_SEATS with a character each episode): a tank, a healer and damage
         Raid,           // the arena's seats as RAID_GROUPS groups of GROUP_SEATS: a tank and a healer per group
-        Teams,          // TEAM_COUNT sides of TEAM_SEATS against each other (self-play), each side a group
     };
 
     /// What the seats fight.
@@ -48,9 +47,6 @@ namespace Animus::Curriculum
         Pulls,          // packs of creatures (see PullSchedule)
         Hazards,        // nothing to fight: ground to get off (HazardEncounter)
         Instance,       // a real dungeon or raid boss in its own instance (InstanceEncounter, ArenaDefinition::Instance)
-        Quest,          // a quest of the level band, giver to turn-in, in the world's own zone (QuestEncounter)
-        Gather,         // a field of the band's herb and ore nodes, with the zone's creatures (GatherEncounter)
-        Town,           // a town's traders: sell, repair, restock, dress (TownEncounter)
         Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
         /// Nothing to fight: one real object in one of a dungeon's rooms, found by sight and stopped beside
         /// (SeekEncounter, ArenaDefinition::Rooms and Objects) -- M2 seek.
@@ -189,9 +185,6 @@ namespace Animus::Curriculum
     /// Most arenas a stage can mix (the critic state has one column per arena).
     constexpr uint32 MAX_ARENAS = 16;
 
-    /// Most seats that quest alone beside two groups sharing a zone (ArenaDefinition::LoneSeats).
-    constexpr uint32 MAX_LONE_SEATS = 2;
-
     /// One situation an episode of a stage can be: who the seats are, what they fight, and how long it lasts. Every
     /// episode of a stage draws one of its arenas by weight, so one stage (and one policy) can train PvE and PvP
     /// together. A stage with a single arena is a stage of one situation.
@@ -248,13 +241,6 @@ namespace Animus::Curriculum
         uint8 DrillRole = 0;
         /// The pull's creatures' health, in percent of their own (a drill whose fights must outlast a mana bar).
         uint32 PackHealthPct = 100;
-        /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
-        /// every other seat plan.
-        uint32 TeamSeats = TEAM_SEATS;
-        /// Two groups sharing a zone (a Teams arena that quests): this many more seats, after the sides', each
-        /// questing alone -- a group of its own with its own quest, no director and no teammates. The solo player a
-        /// group meets in the world, and the commonest claim to share a place with. Ignored by every other arena.
-        uint32 LoneSeats = 0;
         /// Opposition::Dummy: what the dummy does. Ignored by every other arena.
         DummyDrill Drill = DummyDrill::Still;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
@@ -281,18 +267,14 @@ namespace Animus::Curriculum
         /// waits for a friend's (DeathBlock, which the stage must carry). Open-world arenas only: a release inside an
         /// instance would take the ghost to another map.
         bool DeathRuns = false;
-        /// **An objective drill** (next-run plan, 7.5): a quest with an objective of this kind (ObjectiveKind), taken
-        /// already, the seat starting within reach of that objective -- a kill, a collection from creatures, an
-        /// object used, a place reached -- so the doing is practised without the walk. -1: not a drill.
-        int8 QuestDrill = -1;
         /// Where this arena's envs start, when its ground is not the stage's: used in place of the stage's when the
         /// episode is this arena's; empty means the stage's.
         std::vector<Position> SpawnPoints{};
         /// The map this arena's episodes are on, when it is not the stage's (0 = the stage's). A stage can then mix
-        /// ground on several maps -- Kalimdor and Outland, a PvP drill's instance and the world -- which is what
-        /// lets one stage replay a whole phase. An arena on a map of its own stands on its own SpawnPoints.
+        /// ground on several maps, which is what lets one stage replay a whole phase. An arena on a map of its own
+        /// stands on its own SpawnPoints.
         uint32 MapId = 0;
-        /// The lowest level this arena's characters may be, over the stage's MinLevel (flying needs 60).
+        /// The lowest level this arena's characters may be, over the stage's MinLevel.
         uint8 MinLevel = 0;
         /// Ground kept back for evaluation: training never stands here. Empty means the arena has no control of
         /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether

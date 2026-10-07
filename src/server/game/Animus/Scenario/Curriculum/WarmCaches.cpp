@@ -20,7 +20,6 @@
 #include "WarmCaches.h"
 #include "ClassAssets.h"
 #include "ClassProfile.h"
-#include "LifeWorld.h"
 #include "Log.h"
 #include "Opponents.h"
 #include "Supplies.h"
@@ -36,7 +35,6 @@ void Animus::Curriculum::WarmCaches()
     Opponents::OpponentPool::Instance();
     WorldCreatures::SpawnedIds();
     WorldCreatures::WaypointWalkerIds();
-    LifeWorld::QuestSet::Instance();
 
     for (ClassProfile const& profile : ClassProfiles())
         ClassAssets::For(profile);

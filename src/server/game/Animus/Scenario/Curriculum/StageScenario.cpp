@@ -329,16 +329,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
 
-    // A reset stays on its env's own continent replica unless an arena sends the episode elsewhere (an instance, a
-    // battleground, a quest giver's, a node's or an inn's map) or builds what every map shares and nothing locks: a
-    // core group (an owner, a party). Only then is it safe to run on the map
-    // thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
+    // A reset stays on its env's own continent replica unless an arena sends the episode elsewhere (an instance) or
+    // builds what every map shares and nothing locks: a core group (an owner, a party). Only then is it safe to run
+    // on the map thread (EnvPool, ResetDefer); every other stage resets on the world thread as it always has.
     _resetsStayOnMap = _continent && !stage.AnyArena([this](ArenaDefinition const& arena)
     {
         return arena.Owner || arena.PartyGroup || arena.Against == Opposition::Instance
-            || (arena.MapId && arena.MapId != _spawnMapId)
-            || arena.Against == Opposition::Quest || arena.Against == Opposition::Gather
-            || arena.Against == Opposition::Town;
+            || (arena.MapId && arena.MapId != _spawnMapId);
     });
 
     // A map-thread reset cannot load a grid's collision and navmesh: while map tasks run, those wait for the world
@@ -453,9 +450,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
     auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
     auto const hasInstance = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Instance; };
-    auto const hasQuest = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Quest; };
-    auto const hasGather = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Gather; };
-    auto const hasTown = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Town; };
     auto const hasDummy = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Dummy; };
     auto const hasPartyFollow = [](ArenaDefinition const& arena)
     {
@@ -477,16 +471,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // After the owner and the group: it moves both to the boss.
     if (_stage.AnyArena(hasInstance))
         instance = add(std::make_unique<InstanceEncounter>(*this, envs));
-    // Life outside the fight: each fixes its own map and spawn (BeforeLevel), builds after the seat is placed.
-    Encounter* quest = nullptr;
-    Encounter* gather = nullptr;
-    Encounter* town = nullptr;
-    if (_stage.AnyArena(hasQuest))
-        quest = add(std::make_unique<QuestEncounter>(*this, envs));
-    if (_stage.AnyArena(hasGather))
-        gather = add(std::make_unique<GatherEncounter>(*this, envs));
-    if (_stage.AnyArena(hasTown))
-        town = add(std::make_unique<TownEncounter>(*this, envs));
     if (_stage.AnyArena(hasPulls))
         pulls = add(std::make_unique<PullsEncounter>(*this, envs));
     if (_stage.AnyArena(hasCreature))
@@ -525,8 +509,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // The order episode info columns and reward terms are listed in. An encounter left out of this list still
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
-    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, _partyFollow, seek, sight,
+    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance,
+        hazards, _owner, _party, _partyFollow, seek, sight,
         interact, combat, roles })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -542,8 +526,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == creature && hasCreature(arena))
                 || (encounter == hazards && hasHazards(arena))
                 || (encounter == instance && hasInstance(arena))
-                || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
-                || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
+                || (encounter == dummy && hasDummy(arena))
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
@@ -2051,23 +2034,6 @@ bool Animus::Curriculum::StageScenario::IsTerminal(Env const& env) const
         [&env](Encounter const* encounter) { return encounter->IsTerminal(env); });
 }
 
-uint32 Animus::Curriculum::StageScenario::SideOf(Env const& env, uint32 seat) const
-{
-    // A party and a raid are one side, whatever their size.
-    SeatPlan const plan = Arena(env).Seats;
-    if (plan == SeatPlan::Party || plan == SeatPlan::Raid)
-        return 0;
-    uint32 const perSide = plan == SeatPlan::Teams ? Arena(env).TeamSeats : 1;
-    return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
-}
-
-bool Animus::Curriculum::StageScenario::IsLoneSeat(Env const& env, uint32 seat) const
-{
-    ArenaDefinition const& arena = Arena(env);
-    return arena.Seats == SeatPlan::Teams && arena.LoneSeats
-        && seat >= std::min(arena.TeamSeats, TEAM_SEATS) * TEAM_COUNT && seat < arena.SeatCount();
-}
-
 bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
@@ -2182,10 +2148,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         encounter->BeforeRebuild(env);
 
     // The creatures still in the enemy slots, despawned once the new seats are in: read after the encounters have
-    // cleared their own. Read before them, a life encounter's creatures (its spawns fill the slots) were despawned
-    // there and then again here -- a summon queued for removal twice, and map threads tripping over it later
-    // (Map.cpp:682's PendingAdd assert, a freed TempSummon in Creature::Update): the life stage crashed twice in
-    // ten minutes once it ran 96 envs.
+    // cleared their own: a creature despawned by an encounter and again here is a summon queued for removal twice,
+    // and map threads tripping over it later (Map.cpp:682's PendingAdd assert, a freed TempSummon in Creature::Update).
     std::vector<Creature*> oldTargets;
     for (uint32 target = 0; target < env.Targets.size(); ++target)
         if (Creature* creature = env.FindTarget(target))
@@ -2684,7 +2648,7 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     seat.EpisodesPlayed = 0;
 
     // On a shared continent every env lives in its own phase: its seats see only what it spawns. The episode's
-    // map, not the stage's: a life episode of an instance stage (the crossroads) is on a continent.
+    // map, not the stage's.
     MapEntry const* episodeMap = sMapStore.LookupEntry(EpisodeMapId(env));
     if (_continent || (episodeMap && !episodeMap->Instanceable()))
         bot->SetPhaseMask(EnvPhase(env), true);
@@ -4676,18 +4640,6 @@ void Animus::Curriculum::StageScenario::JudgePress(Env const& env, SeatState& se
                 cause = AimlessCause::PetOffGoal;
             }
         }
-        else if (*block == BlockId::World && (result.Interactions || result.CorpsesLooted || result.NodesLooted
-            || result.GatherCasts || result.ItemsLooted))
-        {
-            // The world's presses serve the life goals that ask for them; under any other goal they are neutral.
-            judged = true;
-            bool const loot = result.CorpsesLooted || result.ItemsLooted || result.NodesLooted;
-            bool const gather = result.GatherCasts || result.NodesLooted;
-            verdict = (goal == SeatGoal::Loot && loot) || (goal == SeatGoal::Gather && gather)
-                || (goal == SeatGoal::Interact && result.Interactions && !result.Wasted)
-                ? Verdict::Serves : Verdict::Neutral;
-        }
-
         return { judged, verdict, cause };
     };
 

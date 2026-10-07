@@ -55,7 +55,6 @@ namespace Animus::Curriculum
         Hostiles = 10,       // per enemy slot: player or creature, class, healing, stealth, pet (no actions)
         Pet = 11,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
         Support = 14,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
-        World = 16,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
         Forecast = 17,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
         Crowd = 18,          // what is on the party past the pack's slots, and the pack ahead (no actions)
         /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a

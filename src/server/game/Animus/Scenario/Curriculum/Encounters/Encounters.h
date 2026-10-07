@@ -23,7 +23,6 @@
 #include "BotSlot.h"
 #include "DifficultyLadder.h"
 #include "InstanceBosses.h"
-#include "LifeEncounter.h"
 #include "Encounter.h"
 #include "EntranceRespawn.h"
 #include "Env.h"

@@ -2745,10 +2745,8 @@ void Animus::Curriculum::InstanceEncounter::View(Env const& env, uint32 seat, Se
     // packs not yet cleared, in route order (a navmesh route has no packs: route points two apart instead); place 6
     // the route's next point, the step on; place 7, for a seat other than the tank, the tank itself (regroup); and the
     // seat's own objective in the assignment slot it had before. The slow loop chooses among them and is credited by
-    // what the run achieves. World.Active stays false: no world action changes (WorldView::RoutePlaces). Not over a
-    // journal a life encounter already keeps.
+    // what the run achieves (WorldView::RoutePlaces).
     WorldView& world = view.World;
-    if (!world.Active)
     {
         constexpr uint32 PACK_PLACES = WorldView::JOURNAL_PLACES - 2;
         world.RoutePlaces = true;
