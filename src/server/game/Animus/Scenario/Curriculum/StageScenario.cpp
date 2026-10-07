@@ -46,6 +46,7 @@
 #include "Encounters.h"
 #include "MarkerEncounter.h"
 #include "SeekEncounter.h"
+#include "SightEncounter.h"
 #include "FollowEncounter.h"
 #include "BuildRetry.h"
 #include "SpellMgr.h"
@@ -478,6 +479,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasMarkers = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Markers; };
     auto const hasFollow = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Follow; };
     auto const hasSeek = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Seek; };
+    auto const hasSight = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Sight; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -529,6 +531,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* seek = nullptr;
     if (_stage.AnyArena(hasSeek))
         seek = add(std::make_unique<SeekEncounter>(*this, envs));
+    // M1's object in the hallways: nothing to fight, nothing else to order against.
+    Encounter* sight = nullptr;
+    if (_stage.AnyArena(hasSight))
+        sight = add(std::make_unique<SightEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -545,7 +551,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, seek, flag, director })
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, seek, sight, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -564,7 +570,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == quest && hasQuest(arena)) || (encounter == gather && hasGather(arena))
                 || (encounter == town && hasTown(arena)) || (encounter == dummy && hasDummy(arena))
                 || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
-                || (encounter == seek && hasSeek(arena))
+                || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -1708,6 +1714,14 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             categories["seek_room"] = std::move(rooms);
             categories["seek_object"] = std::move(objects);
         }
+        else if (arena.Against == Opposition::Sight)
+        {
+            // M1's object (SightEncounter): the evaluation's arrival by object.
+            boost::json::array objects;
+            for (std::string const& name : SightEncounter::ObjectNames(arena))
+                objects.emplace_back(name);
+            categories["sight_object"] = std::move(objects);
+        }
 
     // Every term's category (RewardTermCategory), so the learner's reward audit reads what the sim pays rather than
     // a list of names kept by hand beside it.
@@ -2609,7 +2623,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // so no mob further along the hallway is there to kill a level 1 seat; any other instance, around the spawn.
     if (firstBuild && map->Instanceable())
     {
-        if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek)
+        if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
+            || Arena(env).Against == Opposition::Sight)
             SpawnArea::ClearMap(lead, INSTANCE_CLEAR_RADIUS);
         else
             SpawnArea::Clear(lead);

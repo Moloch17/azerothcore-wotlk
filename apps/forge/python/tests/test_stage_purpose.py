@@ -21,8 +21,9 @@ LEDGER = CURRICULUM / "Rewards" / "RewardLedger.h"
 # Stage -> the terms its purpose is paid as. The movement curriculum's M2-M7 are archived (git tag
 # curriculum-movement-v1); a stage added after M1 adds its row here.
 PURPOSE = {
-    # M1 (the user's design, 2026-10-05): reach the end of the Stockades hallway and stop within a yard, as fast as
-    # possible -- Arrive is paid only when the seat is stopped inside the radius, and StepCost is the time it took.
+    # M1 (the user's design, 2026-10-05; redesigned 2026-10-06, SightEncounter): reach a real object in sight along the
+    # Stockades' hallways and stop beside it, as fast as possible -- Arrive is paid only when the seat is stopped
+    # inside the radius, and StepCost is the time it took.
     "move1_controls": ("Arrive", "StepCost"),
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
@@ -30,7 +31,7 @@ PURPOSE = {
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
-# file exists for, the other way round. M1's Facing is half the change in cos(bearing to the marker), and Progress the
+# file exists for, the other way round. M1's Facing is half the change in cos(bearing to the object), and Progress the
 # straight-line distance closed over the leg.
 SHAPING = {
     "move1_controls": ("Progress", "Facing"),
@@ -43,6 +44,7 @@ ENCOUNTER = {
     "Markers": "Encounters/MarkerEncounter.cpp",
     "Follow": "Encounters/FollowEncounter.cpp",
     "Seek": "Encounters/SeekEncounter.cpp",
+    "Sight": "Encounters/SightEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

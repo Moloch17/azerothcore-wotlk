@@ -418,6 +418,10 @@ namespace Animus::Curriculum
         /// or a seek object's own (Vision::ObjectiveRadiusFor its SeekObject::Radius), so the flag sits on the object.
         float ObjectiveRadius = 1.0f;
         Position Objective;
+        /// The compass is withheld this episode (M1's withholding ladder, SightEncounter): the CompassBlock reads as
+        /// absent -- its presence column and every value 0 -- as a player with no quest arrow. Only that input goes:
+        /// the objective is still the camera's to flag, and the critic's state still has it.
+        bool CompassWithheld = false;
         /// How much longer the walking way round to the objective is than the straight line to it, as a ratio;
         /// 0 without an objective and 1 when the straight line is the route. Measured on foot at the episode's
         /// build, water and magma excluded, so it is what the ground costs rather than what the pathfinder would

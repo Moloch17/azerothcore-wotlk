@@ -58,6 +58,14 @@ void Animus::Curriculum::CompassBlock::DescribeColumns(Layout const& /*layout*/,
 
 void Animus::Curriculum::CompassBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
 {
+    // Withheld this episode (M1's withholding ladder): absent, every column 0 as if the block read nothing at all.
+    // An input gone, never a mask: the actions are what they were.
+    if (view.CompassWithheld)
+    {
+        std::fill(obs, obs + OBS_COUNT, 0.0f);
+        return;
+    }
+
     // The detour is the scenario's to measure (the travel encounter, at the episode's build): 0 without one.
     obs[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
 
