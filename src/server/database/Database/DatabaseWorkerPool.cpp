@@ -341,7 +341,10 @@ void DatabaseWorkerPool<T>::CommitTransaction(SQLTransaction<T> transaction)
 #endif // ACORE_DEBUG
 
     if (_sealed)
+    {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         return;
+    }
 
     Enqueue(new TransactionTask(transaction));
 }
@@ -368,6 +371,7 @@ TransactionCallback DatabaseWorkerPool<T>::AsyncCommitTransaction(SQLTransaction
 
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         // Answer "committed" at once: memory is the truth and the caller's continuation should run.
         std::promise<bool> done;
         done.set_value(true);
@@ -385,6 +389,7 @@ void DatabaseWorkerPool<T>::DirectCommitTransaction(SQLTransaction<T>& transacti
 {
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         transaction->Cleanup();
         return;
     }
