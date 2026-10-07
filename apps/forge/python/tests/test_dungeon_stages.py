@@ -128,8 +128,11 @@ def test_the_evaluation_plays_fixed_seeds_and_films_them_by_its_rung(name):
     assert rungs == (["pull_rung"] if name == "dungeon1_pulls" else ["wing_rung"])
     assert "cleared" in loaded.eval.report
     instance = (CURRICULUM / "Encounters" / "InstanceEncounter.cpp").read_text()
-    order = [m.group(1) for m in re.finditer(r'table\.Add\("(\w+_rung)"', instance)]
+    order = [m.group(1) for m in re.finditer(r'table\.Add\("(\w+_rung)"', instance)
+             if not m.group(1).startswith("at_top")]
     assert order[:3] == ["pull_rung", "wing_rung", "boss_rung"]
+    # Convergence on the real task (convergence.top_rung): the run's own ladder at its top, reported.
+    assert "at_top_rung" in loaded.eval.report and 'table.Add("at_top_rung"' in instance
 
 
 def test_the_seed_chain_runs_from_g1():

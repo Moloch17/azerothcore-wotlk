@@ -30,7 +30,8 @@ mappo:
 eval:
   every_env_steps: 10000000
   episodes: 192
-  report: [cleared, drill_clean, drill_extra, drill_pulled, drill_gap, pull_rung, ready_pulls, wing_wipes, wing_rises,
+  report: [cleared, drill_clean, drill_extra, drill_pulled, drill_gap, pull_rung, at_top_rung, ready_pulls, wing_wipes,
+  wing_rises,
            wing_rejoins, wing_level, with_stand_in, without_stand_in, clear_standin, clear_allbot, role_tank,
            role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths, died,
            reward_pull_clean, reward_pull_extra, reward_ready_pull, reward_kill, reward_idle, reward_lost,

@@ -25,8 +25,9 @@ eval:
   report: [bar_clear, cleared, full_clear, wing_cleared_share, wing_route_share, wing_wipes, chain_pulls, ready_pulls,
            boss_rhahkzor, boss_sneed_shredder, boss_sneed, boss_gilnid, boss_smite, boss_greenskin, boss_cookie,
            boss_vancleef, wing_boss_kills, wing_trash_kills, wing_rises, wing_rejoins, wing_rejoin_seconds, wing_rung,
-           wing_level, wing_probe, wing_scripted, with_stand_in, without_stand_in, clear_standin, clear_allbot,
-           role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths, level, died,
+           at_top_rung, wing_level, wing_probe, wing_scripted, with_stand_in, without_stand_in, clear_standin,
+           clear_allbot, role_tank, role_healer, role_damage, deaths_tank, deaths_healer, deaths_damage, seat_deaths,
+           level, died,
            reward_kill, reward_clear, reward_ready_pull, reward_pull_extra, reward_idle, reward_lost, reward_death,
            reward_step_cost, reward_timeout, reward_approach, reward_threat, reward_damage_dealt, reward_repeat,
            reward_aimless, reward_effort, reward_jitter]

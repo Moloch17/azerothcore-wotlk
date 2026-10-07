@@ -190,7 +190,19 @@ void Animus::Curriculum::InstanceEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     if (wings && EvaluatesDrills(_scenario.Stage().Arenas))
         table.Add("pull_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].DrillRung); });
     if (wings)
+    {
         table.Add("wing_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Rung); });
+        // At the top of the run's own ladder (the learner's convergence.top_rung: a stage converges on its real task,
+        // never on a rung with help): a drill's PULL_GAPS, else the support ladder's last rung -- the evaluation's
+        // conditions, with no teacher. A stage's pinned row (difficulty) is the same every run and says nothing.
+        table.Add("at_top_rung", [this](Env const& env, uint32)
+        {
+            EnvInstance const& fight = _envs[env.Index];
+            bool const top = fight.Drill ? fight.DrillRung + 1 >= PULL_GAPS.size()
+                : fight.Rung + 1 >= StageScenario::WING_RUNGS.size();
+            return top ? 1.0f : 0.0f;
+        });
+    }
     table.Add("boss_rung", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     table.Add("instance_map", [this](Env const& env, uint32) { return float(_envs[env.Index].MapId); });
     table.Add("boss_entry", [this](Env const& env, uint32) { return float(_envs[env.Index].Entry); });
