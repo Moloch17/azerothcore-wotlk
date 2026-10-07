@@ -472,7 +472,6 @@ void AnimusForge::ForgeConfig::Load()
 
     Bench.OutputDir = (fs::path(OutputDir) / "bench").lexically_normal().string();
 
-
     SpawnMapId = sConfigMgr->GetOption<uint32>("AnimusForge.SpawnPoint.MapId", 560);
     SpawnPosition.Relocate(
         sConfigMgr->GetOption<float>("AnimusForge.SpawnPoint.X", 2741.9f),

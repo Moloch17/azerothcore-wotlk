@@ -121,7 +121,6 @@ namespace FieldRouteSearch
         return floor.Headroom() >= MIN_HEADROOM && !Burning(floor);
     }
 
-
     /// The standable floor of the column at (x, y) nearest `z`, within SNAP; false without one.
     bool FloorNear(Grids& grids, float x, float y, float z, uint32& index, float& height)
     {
