@@ -1,8 +1,10 @@
 # The training cluster
 
 Where the forge trains, what each machine is, and how to move code and a run between them. Verified 2026-10-07; the
-parts marked **to confirm** were not checked. Until `forgectl` exists (Phase 2 of
-`.agents/plans/human-operable/human-operable.PLAN.md`), everything here is done by hand.
+parts marked **to confirm** were not checked. Every step below has a `forgectl` command
+([forgectl.md](forgectl.md)); the by-hand steps are kept in the last section, "What forgectl does underneath", for
+when the tool itself is in doubt. The machines are listed in [`apps/forge/cluster.toml`](../../apps/forge/cluster.toml),
+which forgectl reads.
 
 ## Machines
 
@@ -25,6 +27,7 @@ parts marked **to confirm** were not checked. Until `forgectl` exists (Phase 2 o
   are per machine and not tracked in git.
 - Ports: 7700 control, 7701 data, 7702 weight exchange between learners.
 - With `AnimusForge.Cluster.Learner = "auto"` every machine trains its own learner and only weights cross the network.
+- `forgectl cluster` shows each machine's role, revision, worldserver, learner and load in one table.
 
 ## Where the code comes from
 
@@ -36,45 +39,66 @@ Machines pull from the bare repo on the dev machine, **not** from GitHub:
 
 ## Deploying a new build to the cluster
 
-1. Merge into `forge`, then `git push lan forge` and `git push origin forge`.
-2. On each machine: `cd ~/animus-forge && apps/forge/tools/cluster-pull.sh`. It pulls, touches `env/dist/.forge-build`
-   and recreates the worldserver container, which builds from source with `-march=native`. The slowest machines take
-   the longest; the log line `AzerothCore rev. <sha> ... ready` means the build is done.
-3. **The cluster fingerprint** must match. The host refuses a worker whose source hash, protocol version, probe-data
-   count or curriculum settings differ (`Cluster: refused the worker at ...`). The curriculum settings are the
-   `AnimusForge.Curriculum.*` keys in `mod_animus_forge.conf`, which must be identical on every machine. Copy the
-   host's keys to each worker (239 of them on 2026-10-07).
-4. Start or resume from the host's console (see below).
+```
+forgectl stage cancel                 stop the plan first: a build restarts every worldserver
+forgectl build --cluster              push forge to lan, cluster-pull on every machine, wait for each "ready"
+forgectl conf-sync --check            the AnimusForge.Curriculum.* keys must match the host's (drop --check to fix them)
+forgectl cluster                      one revision everywhere, every worldserver up, no refused workers
+forgectl stage resume <stage>
+```
+
+Merge into `forge` and `git push origin forge` yourself; `forgectl build --cluster` pushes to `lan` (the bare repo on
+the dev machine the workers pull from). **The cluster fingerprint** must match: the host refuses a worker whose source
+hash, protocol version, probe-data count or curriculum settings differ (`Cluster: refused the worker at ...`, which
+`forgectl cluster` shows). The curriculum settings are the `AnimusForge.Curriculum.*` keys in
+`mod_animus_forge.conf`, identical on every machine (239 of them on 2026-10-07).
 
 ## Running and stopping a stage
 
-From the host's worldserver console (`docker attach ac-animus-forge-worldserver`; detach with Ctrl-P Ctrl-Q, never
-Ctrl-C):
-
-| Command | Does |
-|---|---|
-| `forge status` | the stage's headline measures, ladder rung, evaluation and cluster |
-| `forge start <stage>` | start a stage fresh (archives the previous run of that stage) |
-| `forge resume <stage>` | continue from the stage's `latest.pt` |
-| `forge pause` / `forge cancel` | pause; or stop and save `latest.pt` (a cancelled run resumes where it left off) |
-
-Known gap: `forge pause` does not reach the workers; pause each worker's console as well.
+```
+forgectl status                       the stage's headline measures, ladder rung, evaluation and cluster
+forgectl stage start <stage>          start fresh (archives the previous run of that stage)
+forgectl stage resume <stage>         continue from the stage's latest.pt
+forgectl stage pause                  pause (on the host and every worker)
+forgectl stage cancel                 stop and save latest.pt (a cancelled run resumes where it left off), everywhere
+```
 
 Runs live in `var/animus-forge/shared/runs/<stage>/` on the host (`progress.json`, `metrics.csv`, `eval.jsonl`,
 `latest.pt`, `best.pt`, `stage.json`, camera images, videos). Workers train and send weights; the host holds the run.
 
 ## Moving the host to another machine
 
-(Done on 2026-10-07, dev to sarah.)
+`forgectl cluster move-host <machine> <stage>` (done by hand on 2026-10-07, dev to sarah). It prints the plan and asks.
+
+## Collecting evaluation videos
+
+`forgectl videos <stage>` (`--check` lists without copying).
+
+## What forgectl does underneath
+
+The by-hand versions, for when forgectl cannot be used.
+
+**Deploy.** Merge into `forge`, then `git push lan forge` and `git push origin forge`. On each machine:
+`cd ~/animus-forge && apps/forge/tools/cluster-pull.sh`. It pulls, touches `env/dist/.forge-build` and recreates the
+worldserver container, which builds from source with `-march=native`. The slowest machines take the longest; the log
+line `AzerothCore rev. <sha> ... ready` (`docker logs ac-animus-forge-worldserver`) means the build is done. Copy the
+host's `AnimusForge.Curriculum.*` keys to each worker's `mod_animus_forge.conf` (keep a `.bak-<date>` copy), then
+restart.
+
+**The console.** `docker attach ac-animus-forge-worldserver` on the machine (over ssh for a worker); type `forge
+status`, `forge start <stage>`, `forge resume <stage>`, `forge pause`, `forge cancel`; detach with Ctrl-P Ctrl-Q, never
+Ctrl-C (it stops the server). `forge pause` does not reach the workers: pause each worker's console as well.
+
+**Moving the host.**
 
 1. `forge cancel` on the old host; wait for "Plan ended: cancelled".
 2. Copy the stage's run directory (`runs/<stage>/`, without `camera/` and `tb/`) to the same place on the new host.
 3. In each machine's `mod_animus_forge.conf`: the new host gets `Role = "host"`, `Host = ""`; the others get
    `Role = "worker"`, `Host = "<new host>:7700"`.
 4. Pull and rebuild every machine (the config change needs a worldserver restart).
-5. `forge resume <stage>` on the new host. The log should say "N worker learners join this run".
+5. `forge resume <stage>` on the new host. The log should say "N worker learners join this run". Change `host =` in
+   `apps/forge/cluster.toml`.
 
-## Collecting evaluation videos
-
-Evaluation videos are written under each machine's `runs/<stage>/videos/`. `apps/forge/tools/collect-videos.sh
-<stage>` pulls them into the host's run directory (`--check` lists without copying).
+**Videos.** Evaluation videos are written under each machine's `runs/<stage>/videos/`.
+`apps/forge/tools/collect-videos.sh <stage>` pulls them into the host's run directory (`--check` lists without
+copying).
