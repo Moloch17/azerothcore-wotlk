@@ -454,15 +454,3 @@ class Distiller:
             return None
 
         return self.coef * (total / rows_taught), rows_taught
-
-    def step_loss(self, obs: torch.Tensor, state: torch.Tensor, layout: torch.Tensor, mask: torch.Tensor,
-                  logits: torch.Tensor, memories: dict[int, torch.Tensor], dones: torch.Tensor):
-        """One decision of a replayed sequence (MappoTrainer's recurrent update): the same loss as __call__, with the
-        teachers' memories carried in `memories` and cleared where `dones`. Returns (loss, rows) with rows 0 when
-        nothing was taught."""
-        if self.coef < 1e-4:
-            return None
-        total, rows = self.kl(obs, state, layout, mask, logits, memories, dones)
-        if rows == 0:
-            return None
-        return self.coef * (total / rows), rows

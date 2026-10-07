@@ -683,8 +683,6 @@ class ConvergenceTracker:
     best_env_steps: int = 0
     evals_since_best: int = 0
     last_margin: float = 0.0  # the margin the latest evaluation had to beat
-    segment_index: int = 0  # history index where the current segment starts
-    segment_env_steps: int = 0
     history: list[tuple[int, float, float]] = field(default_factory=list)  # (env steps, score, stderr)
 
     def margin(self, stderr: float = 0.0) -> float:
@@ -707,8 +705,8 @@ class ConvergenceTracker:
         return False
 
     def projected_gain(self) -> float | None:
-        """Score gain over the next `patience` evaluations on the current segment's trend; None below 3 points."""
-        points = self.history[self.segment_index:][-max(3, self.window):]
+        """Score gain over the next `patience` evaluations on the recent trend; None below 3 points."""
+        points = self.history[-max(3, self.window):]
         if len(points) < 3:
             return None
         steps = np.array([point[0] for point in points], dtype=np.float64)
@@ -722,12 +720,12 @@ class ConvergenceTracker:
     def converged(self, env_steps: int, min_env_steps: int = 0) -> bool:
         if self.patience <= 0 or self.evals_since_best < self.patience:
             return False
-        if env_steps - self.segment_env_steps < min_env_steps:
+        if env_steps < min_env_steps:
             return False
         gain = self.projected_gain()
         if gain is None:
             return True
-        recent = self.history[self.segment_index:][-max(3, self.window):]
+        recent = self.history[-max(3, self.window):]
         stderr = float(np.mean([point[2] for point in recent]))
         return gain <= self.margin(stderr)
 
@@ -739,20 +737,12 @@ class ConvergenceTracker:
         self.best_env_steps = env_steps
         self.evals_since_best = 0
 
-    def reset_segment(self, env_steps: int) -> None:
-        """Start a new segment (after a restart): counters and trend start over, the best score is kept."""
-        self.segment_index = len(self.history)
-        self.segment_env_steps = env_steps
-        self.evals_since_best = 0
-
     def state_dict(self) -> dict:
         return {
             "best": self.best,
             "best_stderr": self.best_stderr,
             "best_env_steps": self.best_env_steps,
             "evals_since_best": self.evals_since_best,
-            "segment_index": self.segment_index,
-            "segment_env_steps": self.segment_env_steps,
             "history": list(self.history),
         }
 
@@ -765,8 +755,6 @@ class ConvergenceTracker:
         self.best_env_steps = 0
         self.evals_since_best = 0
         self.last_margin = 0.0
-        self.segment_index = 0
-        self.segment_env_steps = 0
         self.history = []
 
     def load_state_dict(self, state: dict | None) -> None:
@@ -776,8 +764,6 @@ class ConvergenceTracker:
         self.best_stderr = state.get("best_stderr", 0.0)
         self.best_env_steps = state.get("best_env_steps", 0)
         self.evals_since_best = state.get("evals_since_best", 0)
-        self.segment_index = state.get("segment_index", 0)
-        self.segment_env_steps = state.get("segment_env_steps", 0)
         self.history = [tuple(h) for h in state.get("history", [])]
 
 

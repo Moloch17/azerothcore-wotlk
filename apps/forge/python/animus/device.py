@@ -17,8 +17,6 @@ import ctypes
 import glob
 import os
 
-import numpy as np
-
 HANDLE_BYTES = 64
 
 

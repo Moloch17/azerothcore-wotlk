@@ -42,8 +42,7 @@ from .config import TrainConfig
 from .distill import Distiller, auto_teachers, build_teacher
 from .env import ClusterEnv, ForgeEnv
 from .explore import ExploreArchive, cells_of, mark_columns
-from .evaluation import (DERIVED_METRICS, ConvergenceTracker, EvalResult, action_mask_table, casting_weights,
-                         format_summary,
+from .evaluation import (ConvergenceTracker, EvalResult, action_mask_table, casting_weights, format_summary,
                          run_evaluation)
 from .mappo.buffer import RolloutBuffer
 from .mappo.trainer import LOOK_COMMANDS, MappoTrainer, horizon_seconds, per_decision, schedule

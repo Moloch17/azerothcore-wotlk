@@ -47,7 +47,6 @@ from .evaluation import ConvergenceTracker
 from .mappo.trainer import schedule
 
 CONTINUE, ADVANCE = "continue", "advance"
-SIGNALS = ("score", "kl", "entropy", "ladder", "top_rung")
 TOP_RUNG_SHARE = 0.9  # of a class's training episodes at the top rung, every evaluation interval of the window
 RUNG_SETTLED = 0.5  # rungs a class's training difficulty may drift over the window
 

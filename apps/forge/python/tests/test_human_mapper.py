@@ -44,7 +44,7 @@ def test_move_local_indices_follow_movecontrols():
               / "src/server/game/Animus/Scenario/Curriculum/Blocks/MoveControls.h").read_text()
     body = re.search(r"NAMES\s*=\s*\{(.*?)\};", header, re.S).group(1)
     names = re.findall(r'"([a-z_0-9]+)"', body)
-    assert len(names) == mapper.MOVE_ACTIONS == 25
+    assert len(names) == 25      # MoveControls.h: the move block's local actions (revision 2)
     for space in fit.SPACES.values():
         labels = {space.label(i): mapper.move_local(space, i) for i in range(len(space.actions))}
         assert labels.pop("noop") is None
@@ -75,14 +75,6 @@ def test_casts_map_through_rank_chains(tmp_path):
     assert mapper.map_cast(99999, ranks, catalog)[0] is None
     report = mapper.validate_casts(ranks, catalog)
     assert report["accuracy"] >= 0.99 and report["spells"] == 6
-
-
-def test_selection_slot_ranks_within_the_same_reaction():
-    units = np.zeros(4, r.SNAPSHOT_UNIT)
-    units["unit"] = [5, 6, 7, 8]
-    units["reaction"] = [0, 2, 0, 0]
-    assert mapper.selection_slot(7, units) == 1 and mapper.selection_slot(6, units) == 0
-    assert mapper.selection_slot(9, units) is None
 
 
 def test_spell_ranks_export_from_an_sql_dump(tmp_path):

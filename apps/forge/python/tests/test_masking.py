@@ -8,7 +8,9 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from animus.mappo.buffer import RolloutBuffer  # noqa: E402
-from animus.mappo.networks import masked_distribution  # noqa: E402
+from torch.distributions import Categorical  # noqa: E402
+
+from animus.mappo.networks import masked_logits  # noqa: E402
 from animus.mappo.trainer import MappoConfig, MappoTrainer  # noqa: E402
 
 
@@ -17,12 +19,12 @@ def test_masked_actions_never_sampled():
     logits = torch.randn(2000, 4) * 5
     mask = torch.rand(2000, 4) < 0.5
     mask[:, 2] = True  # at least one allowed per row
-    samples = masked_distribution(logits, mask).sample()
+    samples = Categorical(logits=masked_logits(logits, mask)).sample()
     assert mask[torch.arange(2000), samples].all()
 
 
 def test_fully_masked_row_falls_back_to_action_zero():
-    dist = masked_distribution(torch.zeros(1, 3), torch.zeros(1, 3, dtype=torch.bool))
+    dist = Categorical(logits=masked_logits(torch.zeros(1, 3), torch.zeros(1, 3, dtype=torch.bool)))
     assert dist.sample().item() == 0
 
 

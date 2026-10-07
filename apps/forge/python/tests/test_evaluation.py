@@ -336,20 +336,6 @@ def test_convergence_waits_for_a_flat_trend():
     assert not recovering.converged(300)
 
 
-def test_convergence_segment_reset_keeps_best():
-    tracker = ConvergenceTracker(patience=1, min_improvement=0.0, min_improvement_abs=0.5)
-    tracker.observe(5.0, 0)
-    tracker.observe(4.0, 10)
-    assert tracker.converged(10)
-    tracker.reset_segment(10)
-    assert tracker.best == 5.0 and tracker.evals_since_best == 0
-    assert not tracker.converged(10)
-    assert not tracker.converged(15, min_env_steps=10)  # counted from the restart
-    tracker.observe(4.5, 20)
-    assert tracker.converged(20, min_env_steps=10)
-    assert tracker.projected_gain() is None  # one point in the new segment
-
-
 def test_config_overrides(tmp_path):
     path = tmp_path / "c.yaml"
     path.write_text("total_env_steps: 100\neval:\n  every_env_steps: 10\n  baseline: random\n")

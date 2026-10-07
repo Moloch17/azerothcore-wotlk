@@ -16,7 +16,7 @@ from ..parallel import Ranks
 from .sil import SelfImitation, sil_policy_loss, sil_value_loss
 from .buffer import RolloutBuffer
 from .networks import (LayoutActor, LayoutCritic, SharedInputDense, _carry_sequence, _per_layout, load_actor_state,
-                       log_prob_of, per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
+                       per_layout, per_layout_host, sample_logits, skip_distribution_checks, goal_pair,
                        split_goal_pair, to_device, update_norms, vision_image_bytes, vision_look_heads, vision_term,
                        look_hold_indices)
 from .valuenorm import ValueNorm
@@ -782,24 +782,6 @@ class MappoTrainer:
                 continue
             for group in optimizer.param_groups:
                 group["lr"] = rate * scale
-
-    @torch.no_grad()
-    def shrink_perturb(self, shrink: float, perturb: float) -> None:
-        """weights = shrink x weights + perturb x freshly initialised weights (Ash & Adams, 2020)."""
-        hidden = list(self.config.hidden)
-        fresh_actor = LayoutActor(self.layouts, hidden, self.foresight_outputs, self.recurrent_size, self.goal_kinds,
-                                  self.goal_targets, self.slow_goal_size, self.config.foresight_feedback,
-                                  self.config.goal_lookahead, self.goal_slots, self.seat_sets,
-                                  self.config.entity_attention, self.vision)
-        # As the trained pair: the critic reads the actor's camera encoder, so its parameters line up with the critic's.
-        fresh = (fresh_actor,
-                 LayoutCritic(self.state_dim, self.layouts, hidden, self.goal_kinds, self.recurrent_size,
-                              self.goal_targets, self.goal_slots, self.seat_sets,
-                              self.config.entity_attention, self.vision, fresh_actor.vision))
-        for network, init in zip((self.actor, self.critic), fresh):
-            for param, init_param in zip(network.parameters(), init.to(self.train_device).parameters()):
-                param.mul_(shrink).add_(init_param, alpha=perturb)
-        self._sync_rollout()
 
     # ------------------------------------------------------------------ rollout
 

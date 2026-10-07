@@ -49,11 +49,6 @@ def masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return logits.masked_fill(~mask, MASKED_LOGIT)
 
 
-def masked_distribution(logits: torch.Tensor, mask: torch.Tensor) -> Categorical:
-    """Categorical over allowed actions only. A row with nothing allowed falls back to action 0."""
-    return Categorical(logits=masked_logits(logits, mask))
-
-
 def log_prob_of(logits: torch.Tensor, choice: torch.Tensor) -> torch.Tensor:
     """log softmax(logits)[choice]: Categorical(logits=...).log_prob(choice), without building the distribution."""
     return logits.gather(-1, choice.long()[..., None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
@@ -859,7 +854,6 @@ IMAGE_CHANNELS = 5
 IMAGE_CLASS_CHANNEL = 3
 #: The class byte's bits (Camera.h): the class in the low five, the objective in bit 5; byte 4 is the slot.
 CLASS_MASK = 0x1F
-OBJECTIVE_BIT = 0x20
 SLOT_BYTE = 4
 #: The classes the wire can carry (5 bits): the size of the class embedding's table, so a class added later needs no
 #: new shape.
@@ -879,7 +873,6 @@ MAP_CHANNELS = 6
 MAP_CODES = 5
 MAP_CODE, MAP_HEIGHT, MAP_VISITED, MAP_AGE, MAP_CLASS, MAP_FRONTIER = range(MAP_CHANNELS)
 MAP_HEIGHT_ZERO = 128
-MAP_AGE_NEVER = 255
 
 
 def _map_of(entry: dict, name: str) -> dict | None:
@@ -1853,11 +1846,6 @@ def share_vision(network: nn.Module, encoder: "VisionEncoder") -> None:
     network.__dict__["vision"] = encoder
 
 
-def owns_vision(network: nn.Module) -> bool:
-    """Whether the camera encoder `network` reads is its own module (False: a reference to another's, or none)."""
-    return "vision" in network._modules
-
-
 def vision_term(network: nn.Module, obs: torch.Tensor, layout: torch.Tensor,
                 embedding: torch.Tensor | None = None, image: torch.Tensor | None = None) -> torch.Tensor:
     """What the camera adds to `network`'s adapter output: its join over the encoder's embedding of the rows' images
@@ -2212,14 +2200,6 @@ class LayoutActor(nn.Module):
                           layout: torch.Tensor | None = None) -> Categorical:
         """Which goal to pursue next, from the same features, masked by what the goal block says is there."""
         return Categorical(logits=self.goal_head.logits(features, obs, layout))
-
-    def goal_logits(self, features: torch.Tensor, obs: torch.Tensor | None = None,
-                    layout: torch.Tensor | None = None) -> torch.Tensor:
-        return self.goal_head.logits(features, obs, layout)
-
-    def goal_ended(self, obs: torch.Tensor, layout: torch.Tensor) -> torch.Tensor:
-        """Rows whose goal just ended (GoalBlock::OBS_ENDED): chosen again at once."""
-        return self.goal_head.ended(obs, layout)
 
     def decide_goals(self, features: torch.Tensor, obs: torch.Tensor, layout: torch.Tensor, held: torch.Tensor,
                      queue: torch.Tensor, clock: torch.Tensor, deterministic: bool) -> dict[str, torch.Tensor]:
