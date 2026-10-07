@@ -194,6 +194,24 @@ def test_partners_take_party_seats_only_and_leave_a_live_one(tmp_path):
     assert stats["partner_rows"] > 0.0 and stats["partner_members"] == 1.0
 
 
+def test_a_partner_never_takes_the_drilled_seat(tmp_path):
+    """G1's drills (stage.json drill_seat 0): the drilled role's seat is the learner's whatever is drawn, and with it
+    live every other seat may be a partner; an arena that drills no one (-1) leaves any seat to the draw."""
+    stage = party_stage()
+    stage["arenas"][0]["drill_seat"] = 0
+    rule = PartyRule.from_stage(stage, 3)
+    assert rule.drill_seat(state_for([0, 1]), 0) == 0 and rule.drill_seat(state_for([0, 1]), 1) == -1
+    partners = Partners(config(max_partners=5), spec(envs=64), stage, tmp_path, "cpu", [str(checkpoint(tmp_path))],
+                        seed=11)
+    rows = partners.rows(step_for([0] * 64))
+    assert not rows[:, 0].any()
+    assert rows[:, 1:].all(axis=1).any(), "with the drilled seat live, both other seats can be partners"
+    # Without a drill, the first seat is drawn like the others.
+    undrilled = Partners(config(max_partners=5), spec(envs=64), party_stage(), tmp_path, "cpu",
+                         [str(checkpoint(tmp_path))], seed=11)
+    assert undrilled.rows(step_for([0] * 64))[:, 0].any()
+
+
 def test_the_party_outcome_scores_the_partner(tmp_path):
     partners = Partners(config(max_partners=1), spec(envs=1), party_stage(), tmp_path, "cpu",
                         [str(checkpoint(tmp_path))], seed=0)

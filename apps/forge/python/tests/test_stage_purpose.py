@@ -41,6 +41,10 @@ PURPOSE = {
     "combat1_fight": ("Kill", "Survived", "Hurt", "StepCost"),
     "combat2_packs": ("Clear", "InterruptLanded", "PullExtra", "FireHurt"),
     "combat3_survive": ("Survived", "Clear", "Away"),
+    # G1 roles (dungeon-curriculum G1, RolesEncounter, 2026-10-07): each drill's lesson, the drilled seat's own -- the
+    # tank's hold, the healer's keep, the damage dealer's focus, the puller's clean pulls and the extra ones it drags
+    # in -- and the party's packs cleared.
+    "group1_roles": ("DrillHold", "DrillKeep", "DrillFocus", "PullClean", "PullExtra", "Clear"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -57,6 +61,7 @@ SHAPING = {
     "combat1_fight": ("DamageDealt",),
     "combat2_packs": ("DamageDealt",),
     "combat3_survive": ("DamageDealt",),
+    "group1_roles": ("DamageDealt",),
 }
 
 # Opposition -> the encounter source that pays it.
@@ -71,6 +76,7 @@ ENCOUNTER = {
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",
     "Combat": "Encounters/CombatEncounter.cpp",
+    "Roles": "Encounters/RolesEncounter.cpp",
 }
 
 

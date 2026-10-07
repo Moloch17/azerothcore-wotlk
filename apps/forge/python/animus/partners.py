@@ -17,8 +17,9 @@ every member in use. ``newest_share`` of the draws go to the newest snapshot wha
 
 **Which rows.** At an episode's first decision a party env (an arena whose stage.json plan is "party" or "raid") draws
 whether it has partners (``share``), then up to ``max_partners`` of its present seats, always leaving at least one
-live seat; each drawn seat gets a member whose checkpoint has that seat's layout (a member without it is never drawn
-for it, so no partner row silently falls back to the live policy). Partner rows take the frozen actor's action and are
+live seat and never the seat a drill is about (stage.json's arena ``drill_seat``: G1's drilled role, whose lesson the
+episode is for); each drawn seat gets a member whose checkpoint has that seat's layout (a member without it is never
+drawn for it, so no partner row silently falls back to the live policy). Partner rows take the frozen actor's action and are
 never samples; their episodes are left out of the training statistics, and the league never sees them.
 
 **Evaluation.** The plain evaluation is "all bots". The eval arm "with_partners" (eval.arms) plays a fixed partner set
@@ -63,6 +64,8 @@ class PartyRule:
     arena_count: int
     party: list[bool]
     seats: int
+    # Per arena, the seat its drill is about (stage.json drill_seat; -1 none): a partner never plays it.
+    drill_seats: list[int] | None = None
 
     @classmethod
     def from_stage(cls, stage: dict | None, agents_per_env: int) -> "PartyRule | None":
@@ -70,11 +73,13 @@ class PartyRule:
         party = [str(arena.get("plan", "solo")) in PARTY_PLANS for arena in arenas]
         if not any(party):
             return None
+        drill_seats = [int(arena.get("drill_seat", -1)) for arena in arenas]
         span = arena_state_span(stage)
         seats = min(int((stage or {}).get("seats", agents_per_env)), agents_per_env)
         if span is None:
-            return cls(arena_first=-1, arena_count=0, party=party, seats=seats) if all(party) else None
-        return cls(arena_first=span[0], arena_count=span[1], party=party, seats=seats)
+            return cls(arena_first=-1, arena_count=0, party=party, seats=seats,
+                       drill_seats=drill_seats) if all(party) else None
+        return cls(arena_first=span[0], arena_count=span[1], party=party, seats=seats, drill_seats=drill_seats)
 
     def envs(self, state: np.ndarray) -> np.ndarray:
         """[E] bool: the envs whose episode is a party."""
@@ -85,6 +90,18 @@ class PartyRule:
         known = onehot.max(axis=-1) > 0.5
         party = np.array(self.party + [False], dtype=bool)
         return known & party[np.minimum(index, len(self.party))]
+
+    def drill_seat(self, state: np.ndarray, env: int) -> int:
+        """The seat env's arena drills (-1 none): the learner's own, never a partner's. Without an arena one-hot, the
+        one seat every arena drills, if they agree."""
+        seats = self.drill_seats or []
+        if self.arena_first < 0:
+            return seats[0] if seats and all(seat == seats[0] for seat in seats) else -1
+        onehot = state[env, self.arena_first:self.arena_first + self.arena_count]
+        if onehot.max() <= 0.5:
+            return -1
+        index = int(onehot.argmax())
+        return seats[index] if index < len(seats) else -1
 
 
 # ------------------------------------------------------------------ the pool
@@ -289,14 +306,18 @@ class Partners:
         self.assigned[fresh] = -1
         if not self.enabled:
             return
-        party = self.rule.envs(host(step.state))
+        state = host(step.state)
+        party = self.rule.envs(state)
         present = np.asarray(step.present, dtype=bool)
         for env in fresh:
             if not party[env] or self.rng.random() >= self.share:
                 continue
-            seats = [seat for seat in range(min(self.rule.seats, present.shape[1])) if present[env, seat]]
-            # Always at least one live seat: the policy is what is being trained.
-            room = min(self.config.max_partners, len(seats) - 1)
+            drilled = self.rule.drill_seat(state, int(env))
+            seats = [seat for seat in range(min(self.rule.seats, present.shape[1]))
+                     if present[env, seat] and seat != drilled]
+            # Always at least one live seat: the policy is what is being trained (a drill's seat is one already).
+            live_drilled = 0 <= drilled < present.shape[1] and bool(present[env, drilled])
+            room = min(self.config.max_partners, len(seats) - (0 if live_drilled else 1))
             if room <= 0:
                 continue
             count = int(self.rng.integers(1, room + 1))

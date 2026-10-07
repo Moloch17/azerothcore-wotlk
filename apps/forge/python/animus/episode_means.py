@@ -55,6 +55,18 @@ PER_EVENT = {
     "kill_seconds": "kills",
     # ... and C2's watch: InterruptLanded's earnings over Kill and Clear's (a ratio of the sums).
     "interrupt_earnings": "outcome_paid",
+    # G1 roles (RolesEncounter): each drill's win and reading over the episodes that drilled it, the share of packs
+    # pulled alone over the packs cleared, and the party's rejoins as M4's and C3's.
+    "won_hold": "drill_hold",
+    "won_keep": "drill_keep",
+    "won_focus": "drill_focus",
+    "won_pull": "drill_pull",
+    "hold_share": "drill_hold",
+    "kept_share": "drill_keep",
+    "low_mana_seconds": "drill_keep",
+    "focus_share": "drill_focus",
+    "pulled_seconds": "drill_focus",
+    "clean_share": "packs_cleared",
 }
 
 

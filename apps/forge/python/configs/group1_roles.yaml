@@ -1,0 +1,116 @@
+# G1 -- roles (dungeon-curriculum G1; Stages.cpp group1_roles, RolesEncounter): a party of five on the combat stages'
+# cleared Ragefire Chasm at its band, 13-18, every race and class, drilling one role an episode -- the archived
+# curriculum's stage6 drills, now on real dungeon ground and perceived as a player perceives (the camera, the sight
+# list, the party frames, the target frame's threat):
+#   tank_hold          the tank holds every enemy, pack after pack (DrillHold);
+#   heal_keep          the healer keeps everyone up through packs of twice their health -- longer than its mana bar
+#                      (DrillKeep);
+#   damage_discipline  a damage dealer kills the tank's target without taking an enemy off it (DrillFocus);
+#   pull               the tank pulls one pack of a camp at a time, the packs closer each rung (PullClean, PullExtra).
+# The drilled role sits in seat 0, its class and build drawn among those whose spec plays it (a role is read off the
+# build: every class drills every role its builds can); a proper party round it, learned, partners from the I7 pool
+# (cast.partners below; never the drilled seat) or the "human" stand-in (Roles.StandInShare percent of the training
+# episodes, in the conf template). A death rises at the entrance after 10 s and walks back to the party (I4); the
+# episode ends on its clock alone.
+#
+# Outcome (tier-scaled, w = 1 + 0.25 x rung): the drilled seat's lesson as its own Outcome (the archived curriculum held
+# its drills only once they were), Clear per pack, Survived. Cost at full price from the first step: the drilled
+# seat's misses (over w), PullExtra, Death (over w), Away, the clock. Shaping (faded): DamageDealt, and the party
+# encounter's role nudges for the seats not drilled.
+#
+# Seeded from combat3_survive (the seed chain: the camera, the map, the sight list, the combat block's player, pet and
+# target frames, the duel, pet and gauntlet blocks), with move4_follow's party frames merged in by name (merge_from:
+# auto, bootstrap.seed_merges: the members' frames, the leader and the minimap's dots; the members' combat columns and
+# targets start at zero). C3's hyperparameters otherwise; what differs is below.
+extends: combat3_survive.yaml
+run_name: group1_roles
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 400000000
+
+# Fixed seeds: seed i plays the drilled seat's (class, build) pair i mod pairs at rung (i / pairs) mod 6
+# (DifficultyLadder's spread) from corridor point i mod points, the party round it drawn from the same index, so
+# successive checkpoints play the same parties; 384 episodes over the four drills. The eval videos (I0) film a sample of
+# the same seeds, their rung read off roles_rung (Vision::EvalVideoRungColumn) and their outcome off won.
+eval:
+  every_env_steps: 10000000
+  episodes: 384
+  seed: 1000
+  deterministic: true
+  report: [won, won_hold, won_keep, won_focus, won_pull, drill_hold, drill_keep, drill_focus, drill_pull,
+           hold_share, kept_share, low_mana_seconds, focus_share, pulled_seconds, clean_share, packs_cleared,
+           clean_pulls, extra_pulls, pulls, party_deaths, wipes, rises, rejoins, rejoin_seconds, rejoined,
+           dead_seconds, away_seconds, roles_rung, difficulty, at_top_rung, with_stand_in, tank_hold_share,
+           group_kept_share, tank_target_share, teammates_died, died,
+           reward_clear, reward_drill_hold, reward_drill_keep, reward_drill_focus, reward_pull_clean,
+           reward_pull_extra, reward_survived, reward_death, reward_away, reward_step_cost, reward_damage_dealt,
+           reward_teammate_death, reward_repeat, reward_aimless, reward_effort, reward_jitter]
+  # The I7 arms beside "all bots": the stand-in in one seat of every party, and the fixed partner set.
+  arms:
+    with_human: 64
+    with_partners: 64
+  arms_every: 2
+
+# forge status: the drills won, each drill's own reading, pulls kept clean, deaths, wipes and rejoins, and the rung.
+# Targets are a readout, never a gate.
+status:
+  headline: [won, won_hold, won_keep, won_focus, won_pull, hold_share, kept_share, focus_share, clean_share,
+             extra_pulls, party_deaths, wipes, rejoined, rejoin_seconds, roles_rung]
+  targets:
+    # C3's measures are not G1's (null drops an inherited key).
+    survived: null
+    packs_cleared: null
+    hurt_share: null
+    won: ">= 0.7"
+    won_hold: ">= 0.7"
+    won_keep: ">= 0.7"
+    won_focus: ">= 0.7"
+    won_pull: ">= 0.7"
+    hold_share: ">= 0.8"
+    kept_share: ">= 0.8"
+    focus_share: ">= 0.6"
+    clean_share: ">= 0.9"
+    extra_pulls: "<= 0.1"
+    wipes: "<= 0.05"
+    rejoined: ">= 0.9"
+    rejoin_seconds: "<= 60"
+
+convergence:
+  measure: won
+
+# The ladder by gate: the shaping fade steps on the evaluation's won rate at 0.6, one evaluation at a rung, never
+# waiting on a plateau (require_plateau: false) or on the classes' own rungs (each class and build's DifficultyLadder
+# steps on its own window). A curriculum ladder, not a pass gate: the stage ends on convergence.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.25, 0.0]
+  gate_metric: won
+  gate_value: 0.6
+  require_plateau: false
+  moving_classes: 1000
+
+# Off: every price at full price from the first step, so no ladder waits on a cost ladder (M1's lesson).
+costs:
+  enabled: false
+  gate_metric: won
+  gate_value: 0.6
+
+# More episodes for the drilled classes and builds winning least.
+layout_sampling:
+  metric: won
+
+# Co-op partners (I7, animus.partners): a third of the party episodes give up to two of the seats other than the
+# drilled one to a frozen partner -- C3's policy (it fights by sight; it reads neither the party frames nor the revised
+# combat block) and this run's own snapshots every 20M steps, the party drawn most often with the partners it does
+# worst with. The "with_partners" evaluation arm plays C3's.
+cast:
+  partners:
+    stages: [combat3_survive]
+    snapshot_every_env_steps: 20000000
+    newest_share: 0.3
+    share: 0.3
+    max_partners: 2
+    pool_size: 6
+    keep_newest: 2
+    score: won
+    eval_partners: [combat3_survive]
