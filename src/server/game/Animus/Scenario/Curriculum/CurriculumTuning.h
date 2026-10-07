@@ -141,86 +141,17 @@ namespace Animus::Curriculum
             float IdleReach = 40.0f;            // yards: an enemy this near is one to act on
         } Raid;
 
-        /// One-on-one fights against a creature (the duel) or a player (PvP).
+        /// The range the approach shaping aims for.
         struct DuelTuning
         {
-            float DamageDealt = 2.0f;           // fraction of the opponent's health: a kill is worth this in damage
-            float DamageTaken = 1.0f;           // fraction of the bot's health
-            float Approach = 0.5f;              // shaping toward the spec's range, per 40 yd closed
-            float StealthOpener = 0.5f;         // a harmful spell from stealth that breaks it (Ambush, Cheap Shot,
-                                                // a feral druid's Pounce or Ravage out of Prowl)
-            float StealthUtility = 0.05f;       // one that keeps it (Sap, Distract), once per target per stealth
-            float StepCost = 0.0002f;           // per decision
-            /// Winning is what the stage is for, so the kill and the losses dwarf the rest. With Kill 3, FastKill up to
-            /// 3 and a loss at -3, a risky fast opener (time bonus ~2.4) beat a sure slow win (~0.6) as soon as it won
-            /// 79% of the time: the reward traded one fight in five for speed. At Kill 10, FastKill 1 and a loss at
-            /// -10, that break-even is ~97%. The dense terms (damage, approach) stay small, as guidance.
-            float Kill = 10.0f;
-            float FastKill = 1.0f;              // times the fraction of the episode length left, from the engagement
-            /// Times the fraction of the bot's health not lost. Damage taken is already charged as it happens
-            /// (DamageTaken, dense), so this pays for the same thing again at the kill; together they were
-            /// worth three times the damage dealt term, which reads as "survive" more than "win". stage1_duel
-            /// bore that out: the policy beat the baseline on score everywhere while killing less often than it
-            /// did as a rogue (0.87 against 0.94) and below level 20 (0.78 against 0.83), banking the difference
-            /// in health it never spent. Halved, against a larger Kill, so that winning the fight outweighs
-            /// finishing it untouched -- deaths were 0.002 an episode, so there is room to push.
-            float HealthKept = 0.5f;
-            float Death = 10.0f;
-            /// A creature duel that runs out the clock without a kill (and without a death, which Death already
-            /// charges). The duel is won by killing, so a timeout is a lost fight and ends the episode as one, not
-            /// a cut-off the critic bootstraps across: without it the cheapest fight to lose was the one never
-            /// started (stage1_duel at 30M: none of the 11 failed warlock episodes took any damage). As Death, so
-            /// neither way of losing is the cheaper one to learn.
-            float Timeout = 10.0f;
-            /// The share of Timeout charged whatever the fight's progress; the rest is charged times the share of the
-            /// opponent still standing, so a near miss costs about half a refusal. Without the floor, breaking off
-            /// was cheaper than dying: the fights lost to the clock on 2026-09-17 ended with 71% of the opponent
-            /// left, which is -6.7 unfloored against -8.9 for dying and -9.5 for the flat charge it replaced.
-            float TimeoutFloor = 0.5f;
-            /// Creature duel: per second the fight has not started once StallGraceMs of the episode are gone. Timeout
-            /// alone charges standing still only at the end of the clock, 900 decisions away: stage1_duel at 20M had
-            /// its deterministic policy stand where it spawned for all 90 s in 67 of 2048 episodes (21 without a
-            /// single action), fights the same policy sampled won. Raised from 0.05 on 2026-09-17: standing at range
-            /// held SeatGoal::Position and earned Goals.Match at 0.01 a decision against this at 0.0125, so keeping
-            /// out of the fight was all but free -- 24 of the 87 elite fights lost to the clock were never engaged.
-            float Stall = 0.08f;
-            uint32 StallGraceMs = 15000;        // summoning a pet, buffing and sneaking up in stealth fit in this
-            /// Creature duel, ranged specs: per second the opponent stands in melee range hitting the bot. The approach
-            /// shaping only pays for closing in, so nothing told a hunter, mage or warlock to keep the range it
-            /// fights best at (stage1_duel at 20M: 88 of 96 hunter kills ended within 5 yd).
-            /// Stopping the opponent's cast. The duel meets casters now (Difficulty.CasterChance), so this is the
-            /// cheapest place to learn what an interrupt is for: one enemy, one cast, nothing else happening. Priced
-            /// by what was stopped, as the pack's is.
-            float Interrupt = 0.3f;
-            /// 0.03 cost a mage about 0.4 a fight against 15 for a kill, and mages spent 60-75% of their duels in melee
-            /// range, dying to elites they let close (2026-10-02, stage4 at 160M); 0.1 puts 15 s in melee at 1.5.
-            float Spacing = 0.1f;
-            /// A ranged spec's shots (Auto Shot, Steady Shot, a wand) landed while nothing hits it in melee reach, as a
-            /// share of the fight's enemy health, on top of DamageDealt: shooting from range is worth more than the
-            /// same damage in melee. Duel and pack. Hunters let packs close and fought half of each pull in melee
-            /// (2026-10-02, stage5 at 60M): Spacing alone was outweighed by finishing sooner.
-            float ShotAtRange = 1.0f;
-            /// Per second a seat with Auto Shot (or Shoot) running moves while its target is alive and in range and
-            /// nothing hits it in melee reach and nothing on the ground hurts it: moving stops the shots.
-            float ShotPaused = 0.05f;
-            /// The damage the seat's pet takes, as a share of the seat's own health: a pet holding enemies off its
-            /// owner (a Voidwalker, a hunter's pet). Warlocks lost two packs in three with their pets doing a sixth
-            /// of their damage and none of the holding (2026-10-02, stage5 at 60M).
-            float PetTank = 0.5f;
-            float PetTankMax = 1.5f;            // ... at most this an episode
             float MeleeRange = 3.5f;            // the range the approach shaping aims for, melee specs
             float RangedRange = 25.0f;          // ... ranged specs
         } Duel;
 
-        /// How hard the creature duel's opponents are, per class/role. Tier t below EliteTier is a normal creature
-        /// t x LevelsPerTier levels above the seat; from EliteTier on an elite, (t - EliteTier) x LevelsPerTier levels
-        /// above. A class/role moves up a tier when it wins (kills without dying) RaiseAbove of Window fights at its
-        /// tier, and down when it wins fewer than LowerBelow.
+        /// How hard the combat and role drills' opponents are, per class/role. A class/role moves up a tier when it
+        /// wins RaiseAbove of Window fights at its tier, and down when it wins fewer than LowerBelow.
         struct DifficultyTuning
         {
-            uint32 MaxTier = 6;
-            uint32 EliteTier = 4;               // > MaxTier: no elites
-            uint32 LevelsPerTier = 1;
             float RaiseAbove = 0.9f;
             float LowerBelow = 0.6f;
             uint32 Window = 200;                // fights at a tier before it is judged
@@ -235,7 +166,6 @@ namespace Animus::Curriculum
             /// stage 1 teaches nothing about interrupting, dispelling or stepping out of anything -- every one of
             /// those had to wait for stage 2's packs, where they compete with learning to fight several enemies.
             uint32 CasterChance = 40;
-            uint32 HazardChance = 30;
             /// The outcome terms scale with the tier: a win (kill, clear, health kept) is multiplied by
             /// 1 + TierScale x tier, a loss (death, timeout, overtime) divided by it. A tier-0 fight is unchanged;
             /// at tier 6 and 0.25 a kill pays 2.5x and a death costs 0.4x. Evaluations spread their seeds over
@@ -246,25 +176,13 @@ namespace Animus::Curriculum
             float TierScale = 0.25f;
         } Difficulty;
 
-        /// Real instances (InstanceEncounter): where the raid stands and what a lost boss fight is worth.
+        /// Whole dungeon wings (InstanceEncounter): what a run is paid and charged, and how its rungs and drills step.
         struct InstanceTuning
         {
-            uint32 EngageYards = 35;            // how far back up the path from the boss the seats start
-            uint32 TrashRadius = 60;            // creatures this close to the boss that are not its adds are cleared
             /// The rung's tier scale is capped here: a ladder of twenty bosses at 0.25 a tier would pay a top kill
             /// 5.75x, where the pool ladders stop at 2.5x. Kill, HealthKept and BossProgress are multiplied by the
             /// capped scale, Death and Timeout divided by it.
             uint32 MaxTierScale = 6;
-            /// Paid on a wipe, an evade or the clock for the share of the boss's health the fight took off it, so a
-            /// forty-seat fight has a gradient before its first kill: at 5, a wipe at 40% pays 3 (x the tier scale).
-            /// It was not paid on the clock, so a raid that could not win learned that doing nothing cost the same
-            /// as trying (stage13_raids, 2026-09-29: 0 kills, output falling, idle rising).
-            float BossProgress = 5.0f;
-            float Timeout = 10.0f;              // the clock, scaled by what is left of the boss (Duel.TimeoutFloor)
-            /// Per second the boss has not been engaged once StallGraceMs of the episode are gone, as the single
-            /// pack's Pulls.Stall.
-            float Stall = 0.08f;
-            uint32 StallGraceMs = 15000;
             /// Whole wings (InstanceLadder::Wing): each trash creature killed, each waypoint of the route reached, the
             /// wing's boss, each seat's death and each wipe (WingWipes of them end the episode; below that a wipe
             /// stands the party up at the door). One since 2026-09-30: a wipe ends the run, and the next run starts
@@ -359,24 +277,6 @@ namespace Animus::Curriculum
             float PullRungTarget = 0.7f;
         } Instance;
 
-        /// Cast-time spells, from the duel stage on.
-        struct CastingTuning
-        {
-            float TimeWasted = 0.03f;           // per second spent on a cast that did not finish
-            /// Per second of cast time of a cast that finished, in combat (not out of it, so casting long spells at
-            /// nothing earns nothing). It pays a long useless cast as readily as the right one, so keep it small next
-            /// to what a cast does, which damage, healing and the kill already pay for.
-            float TimeCompleted = 0.03f;
-            /// Per cast the bot cut short itself, whatever it had spent on it. TimeWasted is proportional to the
-            /// seconds lost, so a cast stopped on the decision after it began costs almost nothing: under a
-            /// deterministic policy that leaves start-cast / stop-cast a free loop to sit in for a whole episode
-            /// (stage1_duel: a quarter of the warlock evaluation episodes, up to 299 cancels in one). A flat charge
-            /// prices the loop -- hundreds of them outweigh anything an episode can pay -- while leaving the
-            /// handful of deliberate stops a fight actually wants cheap next to the kill, so when to cut a cast
-            /// short stays the policy's call.
-            float Cancel = 0.05f;
-        } Casting;
-
         /// The learner's goals (SeatGoal), in every stage that its policy chooses them for.
         struct GoalTuning
         {
@@ -422,39 +322,6 @@ namespace Animus::Curriculum
             float Secondary = 0.002f;
         } Goals;
 
-        /// Getting away: the stages about breaking off a fight that cannot be won.
-        struct EvadeTuning
-        {
-            /// Paid once for going from seen to unseen, and not again for BreakCooldownMs. Never per second
-            /// unseen: the best policy for paid seconds is to run to the far corner at the start and stand
-            /// there, which is not evasion, and the reward audit would only say so after the run was spent.
-            float BrokeContact = 0.3f;
-        } Evade;
-
-        /// Stalking: closing on someone while stealthed, and staying there. The stealth stage's own lesson,
-        /// and the one thing here that is paid per decision rather than on a transition.
-        struct StealthTuning
-        {
-            /// Paid each decision the seat is stealthed, unseen, and within StalkYards of its opponent, up to
-            /// StalkMax an episode. Per-decision shaping is what the order nudge had to be cut for, so this
-            /// one is capped outright: what it is worth is fixed no matter how long the episode runs, and the
-            /// opener it sets up (Combat.StealthOpener) stays the larger prize.
-            ///
-            /// Time unseen is still never paid. The difference is the distance condition: staying stealthed
-            /// inside StalkYards of something that is actively looking is the skill being taught, where
-            /// staying unseen in the far corner of the map is the absence of one.
-            float Stalk = 0.02f;
-            float StalkYards = 10.0f;
-            float StalkMax = 1.0f;
-            /// Paid OpenerWindowMs after a stealth opener lands, per share of the opponent's health it had lost
-            /// since (all of it, if the opener's burst killed it). The flat Duel.StealthOpener pays for landing one
-            /// at all, the same for a wasted Ambush as for a Cheap Shot into a kill, so in the first run of the
-            /// stealth drill the openers were already landing in 80% of fights and the score did not move for
-            /// 30M steps (2026-09-28): nothing paid for an approach good enough to decide the fight.
-            float OpenerDamage = 2.0f;
-            uint32 OpenerWindowMs = 6000;
-        } Stealth;
-
         /// Looking after itself and its friends, in every stage.
         struct SupportTuning
         {
@@ -473,10 +340,6 @@ namespace Animus::Curriculum
             /// Kept well below SelfHealing on purpose: the failure to avoid is a seat that heals too little and
             /// dies, which costs 10. Watch deaths before efficiency when this moves.
             float HealingMana = 0.1f;
-            /// A class that keeps a pet (PetBlock::HasPet) with it out when a fight starts, paid once at the
-            /// engagement. A pet is part of being ready, and the kill alone did not teach it: the warlock summoned
-            /// in 7% of the episodes it did not start with one where the hunter summoned in 85% of its own.
-            float PetReady = 0.3f;
         } Support;
 
         /// How often a seat may press the same button, as a player would. Each decision is 100 ms apart, and a
@@ -633,7 +496,6 @@ namespace Animus::Curriculum
             /// Stopped: no forward, back, strafe or vertical key held, no jump pending, on the ground, and the feet
             /// moved less than this many yards since the last decision.
             float StopMoved = 0.05f;
-            uint32 Rungs = 8;                   // rungs on the ladder, the last of which is the stage's real task
             /// How near a stop has to be to count in stop_distance (a stop far from the marker is a pause, not a try).
             float StopNear = 10.0f;
             /// Arriving is on the marker's own floor too: the unit within this many yards of its height (a seat under
@@ -1027,49 +889,16 @@ namespace Animus::Curriculum
             f("Raid.Idle", tuning.Raid.Idle);
             f("Raid.IdleMs", tuning.Raid.IdleMs);
             f("Raid.IdleReach", tuning.Raid.IdleReach);
-
-            f("Duel.DamageDealt", tuning.Duel.DamageDealt);
-            f("Duel.DamageTaken", tuning.Duel.DamageTaken);
-            f("Duel.Approach", tuning.Duel.Approach);
-            f("Duel.StealthOpener", tuning.Duel.StealthOpener);
-            f("Duel.StealthUtility", tuning.Duel.StealthUtility);
-            f("Duel.StepCost", tuning.Duel.StepCost);
-            f("Duel.Kill", tuning.Duel.Kill);
-            f("Duel.FastKill", tuning.Duel.FastKill);
-            f("Duel.HealthKept", tuning.Duel.HealthKept);
-            f("Duel.Death", tuning.Duel.Death);
-            f("Duel.Timeout", tuning.Duel.Timeout);
-            f("Duel.TimeoutFloor", tuning.Duel.TimeoutFloor);
-            f("Duel.Stall", tuning.Duel.Stall);
-            f("Duel.StallGraceMs", tuning.Duel.StallGraceMs);
-            f("Duel.Interrupt", tuning.Duel.Interrupt);
-            f("Duel.Spacing", tuning.Duel.Spacing);
-            f("Duel.ShotAtRange", tuning.Duel.ShotAtRange);
-            f("Duel.ShotPaused", tuning.Duel.ShotPaused);
-            f("Duel.PetTank", tuning.Duel.PetTank);
-            f("Duel.PetTankMax", tuning.Duel.PetTankMax);
             f("Duel.MeleeRange", tuning.Duel.MeleeRange);
             f("Duel.RangedRange", tuning.Duel.RangedRange);
-
-            f("Difficulty.MaxTier", tuning.Difficulty.MaxTier);
-            f("Difficulty.EliteTier", tuning.Difficulty.EliteTier);
-            f("Difficulty.LevelsPerTier", tuning.Difficulty.LevelsPerTier);
             f("Difficulty.RaiseAbove", tuning.Difficulty.RaiseAbove);
             f("Difficulty.LowerBelow", tuning.Difficulty.LowerBelow);
             f("Difficulty.Window", tuning.Difficulty.Window);
             f("Difficulty.ReviewChance", tuning.Difficulty.ReviewChance);
             f("Difficulty.StretchChance", tuning.Difficulty.StretchChance);
             f("Difficulty.CasterChance", tuning.Difficulty.CasterChance);
-            f("Difficulty.HazardChance", tuning.Difficulty.HazardChance);
             f("Difficulty.TierScale", tuning.Difficulty.TierScale);
-
-            f("Instance.EngageYards", tuning.Instance.EngageYards);
-            f("Instance.TrashRadius", tuning.Instance.TrashRadius);
             f("Instance.MaxTierScale", tuning.Instance.MaxTierScale);
-            f("Instance.BossProgress", tuning.Instance.BossProgress);
-            f("Instance.Timeout", tuning.Instance.Timeout);
-            f("Instance.Stall", tuning.Instance.Stall);
-            f("Instance.StallGraceMs", tuning.Instance.StallGraceMs);
             f("Instance.WingTrashKill", tuning.Instance.WingTrashKill);
             f("Instance.WingWaypoint", tuning.Instance.WingWaypoint);
             f("Instance.WingBoss", tuning.Instance.WingBoss);
@@ -1111,10 +940,6 @@ namespace Animus::Curriculum
             f("Instance.PullRungStart", tuning.Instance.PullRungStart);
             f("Instance.PullRungRuns", tuning.Instance.PullRungRuns);
             f("Instance.PullRungTarget", tuning.Instance.PullRungTarget);
-
-            f("Casting.TimeWasted", tuning.Casting.TimeWasted);
-            f("Casting.TimeCompleted", tuning.Casting.TimeCompleted);
-            f("Casting.Cancel", tuning.Casting.Cancel);
 
             f("Actions.RepeatMs", tuning.Actions.RepeatMs);
             f("Actions.MoveRepeatMs", tuning.Actions.MoveRepeatMs);
@@ -1165,16 +990,8 @@ namespace Animus::Curriculum
             f("Goals.SecondaryShare", tuning.Goals.SecondaryShare);
             f("Goals.Secondary", tuning.Goals.Secondary);
 
-            f("Evade.BrokeContact", tuning.Evade.BrokeContact);
-            f("Stealth.Stalk", tuning.Stealth.Stalk);
-            f("Stealth.StalkYards", tuning.Stealth.StalkYards);
-            f("Stealth.StalkMax", tuning.Stealth.StalkMax);
-            f("Stealth.OpenerDamage", tuning.Stealth.OpenerDamage);
-            f("Stealth.OpenerWindowMs", tuning.Stealth.OpenerWindowMs);
-
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);
-            f("Support.PetReady", tuning.Support.PetReady);
 
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
             f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
@@ -1187,7 +1004,6 @@ namespace Animus::Curriculum
             f("Markers.Progress", tuning.Markers.Progress);
             f("Markers.Facing", tuning.Markers.Facing);
             f("Markers.StopMoved", tuning.Markers.StopMoved);
-            f("Markers.Rungs", tuning.Markers.Rungs);
             f("Markers.StopNear", tuning.Markers.StopNear);
             f("Markers.ArriveRise", tuning.Markers.ArriveRise);
             f("Respawn.DelayMs", tuning.Respawn.DelayMs);
