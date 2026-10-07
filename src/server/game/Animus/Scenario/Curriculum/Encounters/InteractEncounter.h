@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_INTERACT_ENCOUNTER_H
 
 #include "Encounter.h"
+#include "InteractDraw.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include <string>
@@ -130,9 +131,7 @@ namespace Animus::Curriculum
             bool SightPaid = false;
             uint32 SightMs = 0;
             bool LeverPressed = false;
-            bool DoorOpened = false;
-            bool DoorByLever = false;
-            bool DoorPaid = false;
+            InteractDraw::DoorWatch Watch;
             bool KeyUsed = false;
             uint32 WrongPresses = 0;
             uint32 WrongStops = 0;

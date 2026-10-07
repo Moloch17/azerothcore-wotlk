@@ -395,6 +395,84 @@ TEST(InteractStageTest, AWrongObjectPressIsPriced)
     EXPECT_GT(Cu::CurriculumTuning::ActionTuning().AimlessActRefused, 0.0f);
 }
 
+// DoorOpened is paid once an episode, on the door's first opening after the seat's own lever press: the lever pressed
+// twice, or the door opening, shutting and opening again, pays once; an opening before any press pays nothing (it is
+// measured), and a later press's opening still pays.
+TEST(InteractStageTest, TheDoorIsPaidOnceAnEpisode)
+{
+    Draw::DoorWatch watch;
+    EXPECT_FALSE(watch.Look(false));
+    watch.Press();
+    watch.Press();
+    EXPECT_TRUE(watch.Look(true));
+    EXPECT_FALSE(watch.Look(true));
+    watch.Press();
+    EXPECT_FALSE(watch.Look(true));
+    EXPECT_FALSE(watch.Look(false));
+    EXPECT_FALSE(watch.Look(true));
+    watch.Press();
+    EXPECT_FALSE(watch.Look(false));
+    EXPECT_FALSE(watch.Look(true));
+    EXPECT_TRUE(watch.Opened && watch.ByLever && watch.Paid);
+
+    Draw::DoorWatch early;
+    EXPECT_FALSE(early.Look(true));
+    EXPECT_TRUE(early.Opened);
+    EXPECT_FALSE(early.ByLever);
+    EXPECT_FALSE(early.Look(false));
+    early.Press();
+    EXPECT_TRUE(early.Look(true));
+    EXPECT_FALSE(early.Look(false));
+    EXPECT_FALSE(early.Look(true));
+}
+
+// A decoy is taken for the named object only by pressing it within reach (sent, or refused for what it is: a chest's
+// loot, its lock) -- never by a press refused for distance or a remembered decoy gone, and never by passing near it
+// (the stop beside it is the encounter's other way, InteractEncounter::Reward).
+TEST(InteractStageTest, AWrongObjectIsTakenByPressingOrStoppingNeverPassing)
+{
+    EXPECT_TRUE(Draw::Reached(uint8(Ea::Refusal::None)));
+    EXPECT_TRUE(Draw::Reached(uint8(Ea::Refusal::Loot)));
+    EXPECT_TRUE(Draw::Reached(uint8(Ea::Refusal::Locked)));
+    EXPECT_FALSE(Draw::Reached(uint8(Ea::Refusal::Reach)));
+    EXPECT_FALSE(Draw::Reached(uint8(Ea::Refusal::Gone)));
+    EXPECT_FALSE(Draw::Reached(uint8(Ea::Refusal::Sight)));
+
+    std::vector<uint64> const decoys{ 31 };
+    Draw::PressFacts facts;
+    facts.Target = 30;
+    facts.Opener = 40;
+    facts.Decoys = &decoys;
+    facts.On = 31;
+    facts.Press = uint8(Ea::Press::Interact);
+    facts.Sent = false;
+    facts.Reached = Draw::Reached(uint8(Ea::Refusal::Loot));
+    EXPECT_EQ(Draw::Judge(facts), Draw::Verdict::Wrong);
+    facts.Reached = Draw::Reached(uint8(Ea::Refusal::Reach));
+    EXPECT_EQ(Draw::Judge(facts), Draw::Verdict::None);
+    // A refused press on the named object is no outcome: only one the world took.
+    facts.On = 30;
+    facts.Reached = true;
+    EXPECT_EQ(Draw::Judge(facts), Draw::Verdict::None);
+    // Price: a Cost of half the arrival, the same once for each decoy (the encounter's DecoyTaken).
+    Cu::CurriculumTuning::InteractTuning const tuning;
+    EXPECT_FLOAT_EQ(tuning.WrongObject, 0.5f);
+}
+
+// The named row is always there in a stage with the sight block (its size never depends on the stage), its presence
+// column 0 where nothing is named.
+TEST(InteractStageTest, TheNamedRowIsAlwaysInTheSightBlock)
+{
+    Cu::Layout layout;
+    Cu::Block const& sight = Cu::GetBlock(Cu::BlockId::Sight);
+    EXPECT_EQ(sight.Size(layout).Obs, Sight::OBS_COUNT);
+    Cu::SeatView view;
+    std::vector<float> row(Sight::NAMED_FEATURES, 9.0f);
+    Sight::WriteNamed(view, row.data());
+    for (float value : row)
+        EXPECT_FLOAT_EQ(value, 0.0f);
+}
+
 // The goal names a kind, never a place: the named row is the kind's class, template and game-object column and the
 // task, every other column 0 -- no distance, direction, centroid or pixels -- and the same wherever the seat stands
 // and whatever it sees; with nothing named it is all 0.

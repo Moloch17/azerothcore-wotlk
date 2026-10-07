@@ -181,8 +181,8 @@ void Animus::Curriculum::InteractEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // the seat's own lever press (door_by_lever, the switch rung's "door opened by the right action"), the key item
     // used on the lock (key_used).
     table.Add("lever_pressed", [this](Env const& env, uint32) { return _envs[env.Index].LeverPressed ? 1.0f : 0.0f; });
-    table.Add("door_opened", [this](Env const& env, uint32) { return _envs[env.Index].DoorOpened ? 1.0f : 0.0f; });
-    table.Add("door_by_lever", [this](Env const& env, uint32) { return _envs[env.Index].DoorByLever ? 1.0f : 0.0f; });
+    table.Add("door_opened", [this](Env const& env, uint32) { return _envs[env.Index].Watch.Opened ? 1.0f : 0.0f; });
+    table.Add("door_by_lever", [this](Env const& env, uint32) { return _envs[env.Index].Watch.ByLever ? 1.0f : 0.0f; });
     table.Add("key_used", [this](Env const& env, uint32) { return _envs[env.Index].KeyUsed ? 1.0f : 0.0f; });
     // Where and what (indexes into stage.json episode_categories): the site, and the named object's kind (the last
     // name, "lock", for the key rung's opener).
@@ -489,6 +489,7 @@ void Animus::Curriculum::InteractEncounter::OnSeatAction(Env& env, uint32 /*seat
     Draw::PressFacts facts;
     facts.Press = result.ActPress;
     facts.Sent = result.ActRefused == 0;
+    facts.Reached = Draw::Reached(result.ActRefused);
     facts.On = result.ActedOn.GetRawValue();
     facts.Target = state.Target.GetRawValue();
     facts.Opener = state.Opener.GetRawValue();
@@ -516,6 +517,7 @@ void Animus::Curriculum::InteractEncounter::OnSeatAction(Env& env, uint32 /*seat
         case Draw::Verdict::Opener:
         {
             state.LeverPressed = true;
+            state.Watch.Press();
             // The map's script opened the door with the lever's use; should it not have, the lever's link does.
             Map* map = env.FindMap();
             Player* bot = _scenario.SeatBot(env, 0);
@@ -624,17 +626,11 @@ void Animus::Curriculum::InteractEncounter::Reward(Env& env, uint32 seatIndex, P
     }
 
     // The door: open by now, and opened after the seat's own press on its lever (the switch rung's half).
-    if (Map* map = bot->GetMap(); map && !state.DoorOpened)
-        if (GameObject* door = map->GetGameObject(state.Door); door && door->GetGoState() != GO_STATE_READY)
-        {
-            state.DoorOpened = true;
-            state.DoorByLever = state.LeverPressed;
-            if (state.DoorByLever && state.Rung == uint32(Draw::Rung::Switch) && !state.DoorPaid)
-            {
-                state.DoorPaid = true;
+    // Paid once an episode, on its first opening after the seat's own lever press (DoorWatch), on the switch rung.
+    if (Map* map = bot->GetMap())
+        if (GameObject* door = map->GetGameObject(state.Door))
+            if (state.Watch.Look(door->GetGoState() != GO_STATE_READY) && state.Rung == uint32(Draw::Rung::Switch))
                 ledger.Add(RewardTerm::DoorOpened, tuning.DoorOpened);
-            }
-        }
 
     // Decoys pressed this decision (OnSeatAction): each once.
     if (state.PendingWrong)

@@ -153,6 +153,57 @@ namespace Animus::Curriculum::InteractDraw
         return Rung(seed % RUNGS);
     }
 
+    /// **The site's door over an episode** (DoorOpened): watched once a decision. It is paid once an episode, on the
+    /// door's first opening (shut -> open) after the seat's own press on its lever; pressing the lever again, or the
+    /// door shutting and opening again, pays nothing more. An opening before any press (none the seat made) is measured,
+    /// never paid, and a later press's opening still pays.
+    struct DoorWatch
+    {
+        bool Pressed = false;       // the seat has pressed the site's lever this episode
+        bool WasOpen = false;       // the door at the last look
+        bool Opened = false;        // it has opened at all (door_opened)
+        bool ByLever = false;       // ... after the seat's own press (door_by_lever)
+        bool Paid = false;
+
+        /// The lever pressed (sent) this decision.
+        void Press() { Pressed = true; }
+        /// The door as it stands now; true when this look pays DoorOpened.
+        bool Look(bool open)
+        {
+            bool const opening = open && !WasOpen;
+            WasOpen = open;
+            if (!opening)
+                return false;
+            Opened = true;
+            if (!Pressed)
+                return false;
+            ByLever = true;
+            if (Paid)
+                return false;
+            Paid = true;
+            return true;
+        }
+    };
+
+    /// Whether a press reached the object it named: sent, or refused for what the object is (it would loot, it does
+    /// not take that press, it is locked, no key fits it) rather than for where it is (out of reach, gone). A decoy
+    /// reached so is taken for the named object (WrongObject); passing near one is not.
+    inline bool Reached(uint8 refusal)
+    {
+        using EntityActions::Refusal;
+        switch (Refusal(refusal))
+        {
+            case Refusal::None:
+            case Refusal::Loot:
+            case Refusal::Kind:
+            case Refusal::Locked:
+            case Refusal::NoItem:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// **What a sight press came to** (OnSeatAction, from SeatActionResult): the press sent (not refused) on the
     /// named object -- reached by a use, or its lock opened by the key -- on a decoy, on the site's opener, or on
     /// anything else (nothing).
@@ -167,6 +218,7 @@ namespace Animus::Curriculum::InteractDraw
     {
         uint8 Press = 0;                    // EntityActions::Press
         bool Sent = false;                  // not refused
+        bool Reached = false;               // sent, or refused for what the object is (InteractDraw::Reached)
         uint64 On = 0;                      // the entity pressed (raw GUID)
         uint64 Target = 0;                  // the named object
         uint64 Opener = 0;                  // the site's lever or lock
@@ -177,7 +229,13 @@ namespace Animus::Curriculum::InteractDraw
     {
         using EntityActions::Press;
         bool const acts = facts.Press == uint8(Press::Interact) || facts.Press == uint8(Press::UseItem);
-        if (!facts.Sent || !facts.On || !acts)
+        if (!facts.On || !acts)
+            return Verdict::None;
+        // A decoy pressed within reach is taken for the named object, whether or not the world took the press.
+        if ((facts.Sent || facts.Reached) && facts.On != facts.Target && facts.Decoys
+            && std::find(facts.Decoys->begin(), facts.Decoys->end(), facts.On) != facts.Decoys->end())
+            return Verdict::Wrong;
+        if (!facts.Sent)
             return Verdict::None;
         if (facts.On == facts.Target)
         {
@@ -186,8 +244,6 @@ namespace Animus::Curriculum::InteractDraw
                 return facts.Press == uint8(Press::UseItem) ? Verdict::Right : Verdict::None;
             return Verdict::Right;
         }
-        if (facts.Decoys && std::find(facts.Decoys->begin(), facts.Decoys->end(), facts.On) != facts.Decoys->end())
-            return Verdict::Wrong;
         if (facts.On == facts.Opener && facts.Press == uint8(Press::Interact))
             return Verdict::Opener;
         return Verdict::None;

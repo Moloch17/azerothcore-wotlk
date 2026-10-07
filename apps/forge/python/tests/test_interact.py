@@ -268,3 +268,27 @@ def test_seeding_m3_from_m2_starts_the_named_row_at_zero():
         before = m3.actor(obs, layout, mask, image=image).logits[:, :ts.BASE_ACTIONS]
         after = m3.actor(other, layout, mask, image=image).logits[:, :ts.BASE_ACTIONS]
     torch.testing.assert_close(before - before[:, :1], after - after[:, :1])
+
+
+def test_with_nothing_named_the_row_and_its_pointer_bonus_are_inert():
+    """The named row is in every stage with the sight block; where nothing is named its presence column reads 0, and
+    then neither the pool nor the presses' bonus moves anything, whatever the gain."""
+    net = named_actor()
+    sight = net.vision.sight
+    obs, layout, image = named_rows(4)
+    for row in range(4):
+        name = ve.NAMES[int(layout[row])]
+        if name in ts.SIGHT_FIRST:
+            obs[row, named_first(name): named_first(name) + NAMED] = 0.0
+    _, present = sight.named(obs, layout)
+    assert not bool(present.any())
+    mask = torch.ones(4, ts.ACTIONS)
+    with torch.no_grad():
+        features = net.features(obs, layout, image=image)
+        before = net.action_logits(features, layout, mask, obs=obs)
+        sight.named_gain.fill_(5.0)
+        sight.named_pool.weight.normal_()
+        after = net.action_logits(features, layout, mask, obs=obs)
+        again = net.features(obs, layout, image=image)
+    torch.testing.assert_close(before, after)
+    torch.testing.assert_close(features, again)
