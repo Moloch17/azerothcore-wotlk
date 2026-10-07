@@ -412,3 +412,56 @@ TEST_F(SightBlockTest, OutOfReachAndGonePressesAreRefusedAndPriced)
     EXPECT_STREQ(Cu::AimlessCauseName(Cu::AimlessCause::ActRefused), "act_refused");
     EXPECT_GT(Cu::CurriculumTuning::ActionTuning().AimlessActRefused, 0.0f);
 }
+
+// Training resumes where it left off after the rebuild: move1_controls' and move2_seek's layouts are as they were at
+// forge 7a90f9b2c. Neither gets the sight block (only a stage that names it does, unlike the entity list after a
+// camera), and every block they have keeps its columns, actions and revision; the entity list's memory-id column
+// stays 0 without entity memory.
+TEST(SightBlockLayoutTest, TheMovementStagesAreUnchanged)
+{
+    using Id = Cu::BlockId;
+    struct Expected
+    {
+        Id Block;
+        uint32 Obs;
+        uint32 Actions;
+        uint32 Revision;
+    };
+    std::vector<Expected> const m1 = { { Id::Move, 57, 25, 5 }, { Id::Compass, 6, 0, 1 }, { Id::Vision, 11, 0, 5 },
+        { Id::Entities, 640, 0, 1 }, { Id::Goal, 128, 0, 0 } };
+    std::vector<Expected> const m2 = { { Id::Move, 57, 25, 5 }, { Id::Vision, 11, 0, 5 },
+        { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Goal, 128, 0, 0 } };
+    uint32 found = 0;
+    for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
+    {
+        std::vector<Expected> const* expected = stage.Name == "move1_controls" ? &m1
+            : stage.Name == "move2_seek" ? &m2 : nullptr;
+        if (!expected)
+            continue;
+        ++found;
+        EXPECT_FALSE(stage.Has(Id::Sight)) << stage.Name;
+        ASSERT_EQ(stage.Blocks.size(), expected->size() + 1) << stage.Name;
+        EXPECT_EQ(stage.Blocks[0], Id::Core) << stage.Name;
+        EXPECT_EQ(Cu::GetBlock(Id::Core).Revision(), 1u);
+        Cu::Layout layout;
+        for (std::size_t i = 0; i < expected->size(); ++i)
+        {
+            Expected const& want = (*expected)[i];
+            ASSERT_EQ(stage.Blocks[i + 1], want.Block) << stage.Name << " block " << i + 1;
+            Cu::Block const& block = Cu::GetBlock(want.Block);
+            EXPECT_EQ(block.Size(layout).Obs, want.Obs) << stage.Name << " " << Cu::BlockName(want.Block);
+            EXPECT_EQ(block.Size(layout).Actions, want.Actions) << stage.Name << " " << Cu::BlockName(want.Block);
+            EXPECT_EQ(block.Revision(), want.Revision) << stage.Name << " " << Cu::BlockName(want.Block);
+        }
+    }
+    EXPECT_EQ(found, 2u);
+
+    // Without entity memory (no sight block, SeatView::Recall null) the list's memory-id column reads 0, as before.
+    Vi::SeenList seen = Frame({ Entity(31, { 4.0f, 0.0f, 2.0f }) });
+    Cu::SeatView view;
+    view.Seen = &seen;
+    std::vector<float> list(Vi::ENTITY_SLOTS * Cu::EntitiesBlock::ENTITY_FEATURES, 1.0f);
+    Cu::GetBlock(Id::Entities).Observe(view, list.data(), nullptr);
+    EXPECT_FLOAT_EQ(list[Cu::EntitiesBlock::ENTITY_PRESENT], 1.0f);
+    EXPECT_FLOAT_EQ(list[Cu::EntitiesBlock::ENTITY_MEMORY], 0.0f);
+}
