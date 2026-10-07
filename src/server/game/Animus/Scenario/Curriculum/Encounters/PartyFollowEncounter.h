@@ -41,7 +41,9 @@ namespace Animus::Curriculum
     /// controller and reported to the server as a client, never a spline. Scripted, its keys are the seek helper's
     /// (Movement::Seek) toward the next corner of the route planner's way to the next stop: the navmesh drives the
     /// script, never a bot's input. PartyFollow.CastShare percent of training episodes hand it to a frozen checkpoint
-    /// instead (stage.json cast "leader"; its objective is the next stop); evaluations always keep the script.
+    /// instead (stage.json cast "leader"; its objective is the next stop); evaluations always keep the script. **Not
+    /// dead code:** this leader is the one user of the owner's slot (OwnerAgent, BuildOwnerSeat, CastOwnerActive, the
+    /// follow case of StageScenario's cast row), left standing when the first curriculum's owner was deleted around it.
     ///
     /// **The ladder** (the shaping fade's rungs, SightDraw::Rung; an evaluation plays the training rung): rung 0 a
     /// slow, steady leader (walking, long stops at the stops); rung 1 running; rung 2 also stopping unannounced; rung 3
