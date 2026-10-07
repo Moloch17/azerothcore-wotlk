@@ -175,11 +175,28 @@ namespace Animus::Curriculum
         /// show a room's floor (Seek.RoomSeen), by the episode's own bookkeeping, never the remembered map's
         /// (amendment 6). Shaping, as the other two.
         RoomSeen,
+        /// The interact stage (M3, InteractEncounter): its switch rung's door opened, by the seat's own press on the
+        /// lever that opens it (Interact.DoorOpened, Outcome: half of what the rung is for), and a decoy taken for
+        /// the object the goal names -- stopped beside or pressed, each decoy once (Interact.WrongObject, Cost).
+        DoorOpened,
+        WrongObject,
         /// The party follow (M4, PartyFollowEncounter): back in the band of the leader after it stopped, sooner paying
         /// more (Outcome: the stops are the leader's, so it cannot be farmed); standing in a moving leader's way
         /// (Cost).
         Regroup,
         Blocking,
+        /// The combat stages (CombatEncounter, dungeon-curriculum C1-C3): what each is for, paid as Outcome so the fade
+        /// never takes it -- an episode ended with no death (Combat.Survived), an interrupt that stopped a cast
+        /// (Combat.InterruptLanded) -- and what it costs, at a fixed price from the first step: the seat's health taken
+        /// (Combat.Hurt, small), what ground fire took (Combat.FireHurt), and every second dead or away from the fight
+        /// (Combat.Away: dead, walking back from the entrance, or beyond Combat.AwayYards of the pull while it fights).
+        /// Walking back is never paid (a reward for it would pay dying). DamageTaken, Interrupt and Hazard stay the
+        /// Shaping they were for the archived stages.
+        Survived,
+        InterruptLanded,
+        Away,
+        Hurt,
+        FireHurt,
         Count
     };
 
@@ -230,8 +247,13 @@ namespace Animus::Curriculum
             case RewardTerm::PullClean:
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:
+            // The interact stage's door opened by its lever (M3).
+            case RewardTerm::DoorOpened:
             // The party follow's regroup at the leader's stops (2026-10-06).
             case RewardTerm::Regroup:
+            // The combat stages' own (2026-10-06): surviving, interrupts landed.
+            case RewardTerm::Survived:
+            case RewardTerm::InterruptLanded:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -261,7 +283,13 @@ namespace Animus::Curriculum
             case RewardTerm::Drowning:
             case RewardTerm::Lost:
             case RewardTerm::Aggro:
+            // A decoy taken for the named object (M3).
+            case RewardTerm::WrongObject:
             case RewardTerm::Blocking:
+            // The combat stages' prices: time dead or away from the fight, health taken, what ground fire took.
+            case RewardTerm::Away:
+            case RewardTerm::Hurt:
+            case RewardTerm::FireHurt:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

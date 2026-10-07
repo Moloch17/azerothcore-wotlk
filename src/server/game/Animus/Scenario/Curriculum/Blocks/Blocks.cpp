@@ -20,6 +20,7 @@
  * Every block implementation, by BlockId. Adding a block is a new BlockId, its class, and one entry here.
  */
 
+#include "CombatBlock.h"
 #include "CompanionBlock.h"
 #include "CompassBlock.h"
 #include "ContextBlock.h"
@@ -142,6 +143,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     static MapBlock const map;
     static SightBlock const sight;
     static PartyFramesBlock const partyFrames;
+    static CombatBlock const combat;
     static GoalBlock const goal;
 
     // In BlockId order.
@@ -149,7 +151,7 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     {
         &core, &move, &compass, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet,
         &travel, &flag, &support, &order, &world, &forecast, &crowd, &hint, &death, &vision, &entities, &map,
-        &sight, &partyFrames, &goal
+        &sight, &partyFrames, &combat, &goal
     };
 
     return *blocks[std::size_t(id)];

@@ -290,6 +290,12 @@ namespace Animus::Curriculum
         /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
         /// avoiding one possible rather than only leaving one.
         Hazard NearestHazard;
+        /// A sight stage's ground fire is what its camera shows (dungeon-curriculum I3, CombatBlock::ReadHazards):
+        /// the visible hazards it stands in and the deepest of them; NearestHazard is then the nearest visible one too.
+        /// The duel block reads these in place of the seat's auras.
+        bool HazardsSeen = false;
+        uint32 StandingSeen = 0;
+        Hazard DeepestSeen;
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
@@ -301,6 +307,10 @@ namespace Animus::Curriculum
         bool TargetSeen = false;                    // LastSeen holds where the target was when the bot last saw it
         Position LastSeen;
         float TargetUnseenTime = 0.0f;              // time since the bot last saw the target / 20 s, clamped
+        /// A sight stage's selection is in the camera's last frame (dungeon-curriculum I3). Out of it, the duel block
+        /// reads its place as where the seat last saw it (LastSeen, from the entity memory), never where it is; its
+        /// target-frame facts stay. Always true outside a sight stage.
+        bool TargetInView = true;
 
         /// Per catalog action, the highest rank the bot knows (SeatState::KnownRanks); null for a view built
         /// without one, where Encoding::KnownRank resolves the chain itself.
@@ -461,6 +471,15 @@ namespace Animus::Curriculum
 
         RaidView Raid;
 
+        /// **What the goal names** (M3 interact; the sight block's named row): the kind of thing the seat is to find
+        /// or act on -- its semantic class (Vision::Class), its template entry and whether it is a game object, as a
+        /// quest's log names its objective -- and how (NamedTask: 1 reach it, 2 use it, 3 use the key item on it; 0
+        /// nothing named). Never where it is.
+        uint8 NamedTask = 0;
+        uint8 NamedClass = 0;
+        uint32 NamedEntry = 0;
+        bool NamedObject = false;
+
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
         /// How near a camera ray has to pass the Objective to flag it (Vision::ObjectiveFlag): Vision::OBJECTIVE_RADIUS,
@@ -574,6 +593,10 @@ namespace Animus::Curriculum
         /// Actions.Aimless.ActRefused.
         uint32 Selections = 0;
         uint8 ActRefused = 0;
+        /// The entity a sight press named once it was found (sent or refused), and the press (EntityActions::Press):
+        /// what an encounter judges the press by (M3 interact: the right object, the lever, the key's lock).
+        ObjectGuid ActedOn;
+        uint8 ActPress = 0;
         uint32 CorpsesLooted = 0;
         uint32 NodesLooted = 0;
         uint32 ItemsLooted = 0;

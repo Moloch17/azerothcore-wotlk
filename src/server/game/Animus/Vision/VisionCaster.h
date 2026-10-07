@@ -109,6 +109,26 @@ namespace Animus::Vision
         uint8_t Entity = 0;
     };
 
+    /// **A ground hazard as a ray sees it** (Class::GroundHazard): a flat disc, HAZARD_THICKNESS yards thick, lying on
+    /// the ground at the area's centre with its radius -- what the client draws of a fire pool or a poison cloud. It is
+    /// a UnitShape (a vertical cylinder), so every caster that draws units -- VisionCaster's CastRay and the device's
+    /// (Gpu/VisionDevice.h, DeviceUnit) -- draws it the same way, and the diff gate and the data harness compare it.
+    constexpr float HAZARD_THICKNESS = 0.2f;
+    /// How far below the area's centre the disc starts, so ground a little uneven under it does not hide it.
+    constexpr float HAZARD_SINK = 0.05f;
+    [[nodiscard]] inline UnitShape HazardDisc(float x, float y, float z, float radius, uint8_t entity = 0)
+    {
+        UnitShape disc;
+        disc.X = x;
+        disc.Y = y;
+        disc.Z = z - HAZARD_SINK;
+        disc.Radius = radius;
+        disc.Height = HAZARD_THICKNESS;
+        disc.What = Class::GroundHazard;
+        disc.Entity = entity;
+        return disc;
+    }
+
     /// **A game object with no collision model** (a herb, most chests, a mailbox) as a ray sees it: its display's
     /// bounding box (GameObjectDisplayInfo's bounds, scaled), turned as the object is (perception-goals 1a: cast as
     /// its bounding shape, as a unit is a cylinder). The box's space is the object's: a point p is at
@@ -263,6 +283,20 @@ namespace Animus::Vision
     /// ray from inside sees none of it, as with a cylinder); `normalZ` takes the entered face's world normal z,
     /// turned to face the ray (1 a top seen from above).
     [[nodiscard]] float RayBox(Vec3 origin, Vec3 dir, float limit, BoxShape const& box, float& normalZ);
+
+    /// **An open door as a ray sees it** (M3 interact): a door that stands open (its GO state not ready, its model out
+    /// of the collision tree) is still drawn, as a client still shows it -- not as the slab it was across the doorway,
+    /// which would read as shut, but as the band at the top of its frame a raised gate leaves showing (the
+    /// Deadmines' doors lift): the top OPEN_DOOR_BAND of its closed box, the doorway under it clear. Its pixels keep
+    /// the door class and its entity (listed with EntityInfo::Open), so the camera and memory tell an open door from
+    /// no door. Both casters draw it as any other box.
+    constexpr float OPEN_DOOR_BAND = 0.15f;
+    [[nodiscard]] inline BoxShape OpenDoorBox(BoxShape closed)
+    {
+        float const height = closed.High[2] - closed.Low[2];
+        closed.Low[2] = closed.High[2] - OPEN_DOOR_BAND * height;
+        return closed;
+    }
 
     /// Numbers a frame's entities nearest first (perception-goals 1b): numbers[i] is 1 + the rank of distances[i]
     /// (squared distances from the seat's head; a tie goes to the lower i) when that rank is below MAX_SEEN, else

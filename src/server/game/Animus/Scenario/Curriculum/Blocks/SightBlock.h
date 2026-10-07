@@ -80,6 +80,21 @@ namespace Animus::Curriculum
             ACTION_FOCUS_FIRST      = 4 * SIGHT_SLOTS,
             ACTION_COUNT            = 5 * SIGHT_SLOTS
         };
+        /// **The named row** (revision 2, M3 interact): after the slots, what the goal names (SeatView::NamedTask) as
+        /// the entity list writes an entity -- present, class, type (the template entry) and game object, the rest of
+        /// its ENTITY_FEATURES 0, nothing of where -- then the task, one-hot: reach it, use it, use the key item on
+        /// it. All 0 when nothing is named. The learner reads it with the list's own encoder, so "the one named" is
+        /// matched against the slots' tokens.
+        enum NamedTask : uint32
+        {
+            NAMED_REACH = EntitiesBlock::ENTITY_FEATURES,
+            NAMED_INTERACT,
+            NAMED_USE_ITEM,
+            NAMED_FEATURES
+        };
+        static constexpr uint32 NAMED_FIRST = SIGHT_SLOTS * SIGHT_FEATURES;
+        static constexpr uint32 OBS_COUNT = NAMED_FIRST + NAMED_FEATURES;
+
         static_assert(SIGHT_VISIBLE_SLOTS == Vision::ENTITY_SLOTS, "the visible half is the entity list");
         static_assert(uint32(EntityActions::Press::Count) == ACTION_COUNT / SIGHT_SLOTS, "a group per press");
 
@@ -87,11 +102,12 @@ namespace Animus::Curriculum
         static constexpr float SPEED_SCALE = 7.0f;
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
-        [[nodiscard]] uint32 Revision() const override { return 1; }
+        /// 2: the named row after the slots (M3 interact).
+        [[nodiscard]] uint32 Revision() const override { return 2; }
         /// "sight": { name "sight", slots, visible_slots, recalled_slots, width (SIGHT_FEATURES), first, present,
         /// class_column, type_column, object_column, memory_column, visible_column, classes, type_buckets,
         /// memory_ids (the id table the learner embeds, MEMORY_TRAINING_CAP), features [names], pointers [{press,
-        /// first (the layout's action), count}] }.
+        /// first (the layout's action), count}], named { offset (from first), width, entity_width, tasks [names] } }.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
@@ -105,9 +121,21 @@ namespace Animus::Curriculum
         [[nodiscard]] static uint32 SlotOf(uint32 local) { return local % SIGHT_SLOTS; }
 
         /// The block's columns from the seat's frame and memory (`memory` already written with this frame), each
-        /// slot's GUID into `guids` (0 an empty slot): `selected` and `focus` are the seat's (raw GUIDs).
+        /// slot's GUID into `guids` (0 an empty slot): `selected` and `focus` are the seat's (raw GUIDs). `width` is a
+        /// slot's stride (Width): the columns past SIGHT_FEATURES are left 0 here.
         static void Write(Vision::SeenList const& seen, Vision::EntityMemory const& memory, uint64 selected,
-            uint64 focus, float* obs, std::array<uint64, SIGHT_SLOTS>& guids);
+            uint64 focus, float* obs, std::array<uint64, SIGHT_SLOTS>& guids, uint32 width = SIGHT_FEATURES);
+        /// The named row (NAMED_FEATURES columns at `out`) from the view's NamedTask, NamedClass, NamedEntry and
+        /// NamedObject: all 0 with nothing named.
+        static void WriteNamed(SeatView const& view, float* out);
+
+        /// A slot's columns in `layout`: SIGHT_FEATURES, and CombatBlock::COMBAT_SLOT_FEATURES more after them in a
+        /// layout with the combat block (dungeon-curriculum I3: each visible unit's cast bar, crowd control, elite,
+        /// whom it hits and the seat's threat on it, as its nameplate shows them; 0 for a remembered slot). A layout
+        /// without one -- M3's -- keeps the narrower list.
+        [[nodiscard]] static uint32 Width(Layout const& layout);
+        /// Where the named row starts in `layout`'s block: after its slots (NAMED_FIRST at the narrow width).
+        [[nodiscard]] static uint32 NamedFirst(Layout const& layout) { return SIGHT_SLOTS * Width(layout); }
     };
 }
 

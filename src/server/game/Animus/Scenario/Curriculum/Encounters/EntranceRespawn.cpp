@@ -24,6 +24,9 @@
 
 bool Animus::Curriculum::RiseAtEntrance(Player* bot, SeatState& seat, Position const& entrance, uint32 nowMs)
 {
+    // What it saw is what it saw before it died, somewhere else: nothing is in view at the entrance until its camera
+    // casts a frame there (dungeon-curriculum I3 -- the enemy list is the frame's, never the server's).
+    ForgetFrame(seat);
     if (!bot || !bot->IsInWorld())
         return false;
 
@@ -46,4 +49,10 @@ bool Animus::Curriculum::RiseAtEntrance(Player* bot, SeatState& seat, Position c
     // the move queued is drained next tick and only takes the same body again.
     StageScenario::StartMover(seat, bot, nowMs);
     return moved;
+}
+
+void Animus::Curriculum::ForgetFrame(SeatState& seat)
+{
+    seat.Seen = Vision::SeenList();
+    seat.SightGuids.fill(0);
 }

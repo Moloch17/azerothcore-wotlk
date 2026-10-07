@@ -341,7 +341,10 @@ void DatabaseWorkerPool<T>::CommitTransaction(SQLTransaction<T> transaction)
 #endif // ACORE_DEBUG
 
     if (_sealed)
+    {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         return;
+    }
 
     Enqueue(new TransactionTask(transaction));
 }
@@ -368,6 +371,7 @@ TransactionCallback DatabaseWorkerPool<T>::AsyncCommitTransaction(SQLTransaction
 
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         // Answer "committed" at once: memory is the truth and the caller's continuation should run.
         std::promise<bool> done;
         done.set_value(true);
@@ -385,6 +389,7 @@ void DatabaseWorkerPool<T>::DirectCommitTransaction(SQLTransaction<T>& transacti
 {
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "commit", "transaction commit");
         transaction->Cleanup();
         return;
     }
@@ -606,11 +611,30 @@ std::string_view DatabaseWorkerPool<T>::GetDatabaseName() const
     return std::string_view{ _connectionInfo->database };
 }
 
+bool NoteSealedWrite(std::string_view database, std::string const& key, std::string_view what)
+{
+    static std::mutex seenLock;
+    static std::set<std::pair<std::string, std::string>> seen;
+    {
+        std::lock_guard<std::mutex> guard(seenLock);
+        if (!seen.emplace(std::string(database), key).second)
+            return false;
+    }
+    LOG_INFO("sql.driver", "Write {} dropped on sealed DatabasePool '{}' (memory is the truth while sealed; "
+        "further ones of it are not logged)", what, database);
+    return true;
+}
+
 template <class T>
 void DatabaseWorkerPool<T>::Execute(std::string_view sql)
 {
-    if (sql.empty() || _sealed)
+    if (sql.empty())
         return;
+    if (_sealed)
+    {
+        NoteSealedWrite(GetDatabaseName(), std::string(sql.substr(0, 48)), sql.substr(0, 120));
+        return;
+    }
 
     BasicStatementTask* task = new BasicStatementTask(sql);
     Enqueue(task);
@@ -621,6 +645,8 @@ void DatabaseWorkerPool<T>::Execute(PreparedStatement<T>* stmt)
 {
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "#" + std::to_string(stmt->GetIndex()),
+            "prepared statement " + std::to_string(stmt->GetIndex()));
         delete stmt;
         return;
     }
@@ -632,8 +658,13 @@ void DatabaseWorkerPool<T>::Execute(PreparedStatement<T>* stmt)
 template <class T>
 void DatabaseWorkerPool<T>::DirectExecute(std::string_view sql)
 {
-    if (sql.empty() || _sealed)
+    if (sql.empty())
         return;
+    if (_sealed)
+    {
+        NoteSealedWrite(GetDatabaseName(), std::string(sql.substr(0, 48)), sql.substr(0, 120));
+        return;
+    }
 
     T* connection = GetFreeConnection();
     connection->Execute(sql);
@@ -645,6 +676,8 @@ void DatabaseWorkerPool<T>::DirectExecute(PreparedStatement<T>* stmt)
 {
     if (_sealed)
     {
+        NoteSealedWrite(GetDatabaseName(), "#" + std::to_string(stmt->GetIndex()),
+            "prepared statement " + std::to_string(stmt->GetIndex()));
         delete stmt;
         return;
     }

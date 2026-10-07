@@ -211,6 +211,22 @@ def test_a_camera_the_stage_cannot_feed_as_it_was_fed_is_refused(tmp_path):
         build_teacher(copy.deepcopy(checkpoint), blind_spec, blind, "cpu")
 
 
+def test_a_teacher_on_fewer_classes_is_fed_and_one_on_more_is_refused(tmp_path):
+    """The class table only appends (Vision::Class; the embedding has class_limit rows): a checkpoint trained on 23
+    classes plays a stage that sends 24 (ground_hazard added) -- it never met the new one, nothing it knew moved -- and
+    one on the same count plays as before; a checkpoint on more classes than the stage sends is refused. A change of a
+    class's meaning is a vision revision, refused on its own."""
+    path, _ = save(tmp_path, camera_stage())
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    teacher_classes = ve.IMAGE["classes"]
+    for stage_classes in (teacher_classes, teacher_classes + 1):
+        stage = camera_stage(image={**ve.IMAGE, "classes": stage_classes})
+        assert build_teacher(copy.deepcopy(checkpoint), spec_of(stage), stage, "cpu") is not None
+    fewer = camera_stage(image={**ve.IMAGE, "classes": teacher_classes - 1})
+    with pytest.raises(ValueError, match=f"image classes is {teacher_classes}, the stage's {teacher_classes - 1}"):
+        build_teacher(copy.deepcopy(checkpoint), spec_of(fewer), fewer, "cpu")
+
+
 def test_distillation_still_refuses_a_teacher_with_a_camera(tmp_path):
     stage = camera_stage()
     path, _ = save(tmp_path, stage)

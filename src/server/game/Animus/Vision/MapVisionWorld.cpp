@@ -19,6 +19,9 @@
 #include "Cell.h"
 #include "CellImpl.h"
 #include "Creature.h"
+#include "DynamicObject.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "GameObjectModel.h"
@@ -278,6 +281,18 @@ namespace
     };
 }
 
+bool Animus::Vision::HostileGround(Player* seat, DynamicObject const* area)
+{
+    // An area spell's persistent area that would hurt this seat: harmful, its caster not on the seat's side. The
+    // seat's own and its friends' consecrations are somewhere to stand, not to leave.
+    if (!seat || !area || !area->IsInWorld() || area->GetRadius() <= 0.0f
+        || area->GetByteValue(DYNAMICOBJECT_BYTES, 0) != DYNAMIC_OBJECT_AREA_SPELL)
+        return false;
+    SpellInfo const* info = sSpellMgr->GetSpellInfo(area->GetSpellId());
+    Unit* caster = area->GetCaster();
+    return info && !info->IsPositive() && (!caster || !seat->IsFriendlyTo(caster));
+}
+
 void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out)
 {
     out.Units.clear();
@@ -336,6 +351,27 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
             return;
         }
 
+        // A hostile ground effect (an area spell's persistent area): drawn as its visual, a disc at its radius.
+        if (DynamicObject* area = object->ToDynObject())
+        {
+            if (!HostileGround(seat, area) || !within(area))
+                return;
+            UnitShape const disc = HazardDisc(area->GetPositionX(), area->GetPositionY(), area->GetPositionZ(),
+                area->GetRadius());
+            Candidate candidate{ Candidate::Shape::Unit, out.Units.size(), EntityInfo() };
+            EntityInfo& info = candidate.Info;
+            info.Id.What = Class::GroundHazard;
+            // Not a unit and not to be selected: listed as an object (the sight list masks select on one).
+            info.GameObject = true;
+            info.Reaction = -1;
+            info.Centre = { disc.X, disc.Y, disc.Z + 0.5f * disc.Height };
+            info.Guid = area->GetGUID().GetRawValue();
+            info.Radius = disc.Radius;
+            candidates.push_back(candidate);
+            out.Units.push_back(disc);
+            return;
+        }
+
         GameObject* go = object->ToGameObject();
         if (!go || !go->isSpawned() || !within(go) || !seat->CanSeeOrDetect(go))
             return;
@@ -345,10 +381,12 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
         info.GameObject = true;
         info.Guid = go->GetGUID().GetRawValue();
         info.Orientation = go->GetOrientation();
-        info.Open = go->GetGoState() == GO_STATE_ACTIVE;
+        bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
+        // A door or button stands open in either of its active states (the cannon blows the Iron Clad Door into the
+        // alternative one).
+        info.Open = door ? go->GetGoState() != GO_STATE_READY : go->GetGoState() == GO_STATE_ACTIVE;
         info.Used = info.Open || go->getLootState() != GO_READY;
         GameObjectModel const* model = go->m_model;
-        bool const door = go->GetGoType() == GAMEOBJECT_TYPE_DOOR || go->GetGoType() == GAMEOBJECT_TYPE_BUTTON;
         if (model && model->isEnabled())
         {
             DoorShape shape;
@@ -363,12 +401,13 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
             out.Doors.push_back(shape);
             return;
         }
-        // An open door or button is out of the way; anything else is drawn by its box.
-        if (model && door)
-            return;
+        // Anything else by its box: an open door as the band its raised gate leaves at the top of its frame
+        // (OpenDoorBox: the doorway clear, the door still there to the camera, listed open), an open button whole.
         BoxShape box;
         if (!BoxOf(go, box))
             return;
+        if (info.Open && go->GetGoType() == GAMEOBJECT_TYPE_DOOR)
+            box = OpenDoorBox(box);
         box.What = info.Id.What;
         // The box's middle, back in the world (its space's middle through the rotation, the transpose of InvRot).
         float const mid[3] = { 0.5f * (box.Low[0] + box.High[0]), 0.5f * (box.Low[1] + box.High[1]),
@@ -384,7 +423,8 @@ void Animus::Vision::GatherSight(Player* seat, Vec3 pivot, float range, SightSto
     float const reach = range + Length(pivot - Vec3{ seat->GetPositionX(), seat->GetPositionY(),
         seat->GetPositionZ() });
     Acore::WorldObjectWorker<decltype(worker)> searcher(seat, worker,
-        GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER | GRID_MAP_TYPE_MASK_GAMEOBJECT);
+        GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER | GRID_MAP_TYPE_MASK_GAMEOBJECT
+        | GRID_MAP_TYPE_MASK_DYNAMICOBJECT);
     Cell::VisitObjects(seat, searcher, reach);
 
     // Numbered nearest the head first: the frame's slots go in that order.

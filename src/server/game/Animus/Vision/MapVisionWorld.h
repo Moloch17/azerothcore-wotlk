@@ -24,6 +24,8 @@
 #include "VisionCaster.h"
 #include <vector>
 
+class DynamicObject;
+
 class GameObject;
 class Map;
 class Player;
@@ -80,12 +82,16 @@ namespace Animus::Vision
     /// - every creature and player it can see or detect, the dead included (a corpse is in the world, and in the
     ///   way), the seat itself marked Self, each a cylinder of its class (Classify over FactsOf);
     /// - every spawned game object it can see: one with an enabled collision model (in the dynamic tree) by its
-    ///   model (a DoorShape); one with none, or a disabled one that is not a door or button (an opened chest, still
-    ///   drawn by the client), by its display's bounding box (a BoxShape); a disabled door or button not at all (it
-    ///   is open: the doorway is clear);
+    ///   model (a DoorShape); one with none, or a disabled one (an opened chest, an open door: still drawn by the
+    ///   client), by its display's bounding box (a BoxShape) -- an open door by the band at the top of its frame
+    ///   (OpenDoorBox: the doorway clear under it), listed with Open set;
     /// - numbered nearest the head first (NumberNearest), MAX_SEEN of them at most, each number's EntityInfo kept.
     /// Visits the grid around the seat: on the seat's own map thread only (not under AnimusForge.ObserveAfterJoin).
     void GatherSight(Player* seat, Vec3 pivot, float range, SightStore& out);
+
+    /// A ground effect this seat's camera draws as a hazard (Class::GroundHazard): an area spell's persistent area,
+    /// harmful, its caster (when there is one) not friendly to the seat.
+    [[nodiscard]] bool HostileGround(Player* seat, DynamicObject const* area);
 
     /// The facts this seat's client shows of a unit or a game object (the UI rule, perception-goals amendment 7).
     /// `killTargets`: the creature entries the seat's incomplete quests still need killed (KillTargets).

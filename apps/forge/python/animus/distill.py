@@ -143,6 +143,13 @@ def check_camera(t_stage: dict | None, stage: dict | None, name: str, t_camera: 
     if camera is None:
         raise ValueError(f"{where}: the teacher has a camera and the stage's layout has none")
     for key in IMAGE_KEYS:
+        # The class table only grows at its end (Vision::Class: a value never changes meaning, new ones append, and
+        # the embedding has class_limit rows), so a teacher trained on fewer classes reads the stage's frames as it
+        # was trained -- it simply never met the newer ones; one trained on more knows classes the stage cannot send,
+        # and is refused. A change in a class's MEANING must bump the vision block's revision (refused below); never
+        # lean on this <= to hide one.
+        if key == "classes" and t_camera[key] <= camera[key]:
+            continue
         if t_camera[key] != camera[key]:
             raise ValueError(f"{where}: the camera's image {key} is {t_camera[key]}, the stage's {camera[key]}")
     if tuple(t_camera["look"]) != tuple(camera["look"]):

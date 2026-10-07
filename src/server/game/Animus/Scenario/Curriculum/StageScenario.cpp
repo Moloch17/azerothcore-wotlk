@@ -31,6 +31,7 @@
 #include "Containers.h"
 #include "Corpse.h"
 #include "ObjectAccessor.h"
+#include "ObjectMgr.h"
 #include "CoreBlock.h"
 #include "Creature.h"
 #include "DBCStores.h"
@@ -46,6 +47,9 @@
 #include "MarkerEncounter.h"
 #include "SeekEncounter.h"
 #include "SightEncounter.h"
+#include "InteractEncounter.h"
+#include "CombatEncounter.h"
+#include "CombatBlock.h"
 #include "FollowEncounter.h"
 #include "PartyFollowEncounter.h"
 #include "BuildRetry.h"
@@ -110,6 +114,8 @@ namespace
     /// Yards round the spawn an instance used as empty ground is cleared over (SpawnArea::ClearMap): the whole of a
     /// small dungeon -- the Stockades spans about 150 by 290 yards.
     constexpr float INSTANCE_CLEAR_RADIUS = 300.0f;
+    /// ... and for the interact stage's Deadmines (M3), whose sites lie up to about 350 yards from its far end.
+    constexpr float INTERACT_CLEAR_RADIUS = 600.0f;
     /// ... and the party follow's dungeons, whose last bosses stand further from the door than that (the Deadmines'
     /// ship is several hundred yards from its entrance).
     constexpr float DUNGEON_CLEAR_RADIUS = 1000.0f;
@@ -494,6 +500,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     };
     auto const hasSeek = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Seek; };
     auto const hasSight = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Sight; };
+    auto const hasInteract = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Interact; };
+    auto const hasCombat = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Combat; };
     auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
@@ -552,6 +560,14 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     Encounter* sight = nullptr;
     if (_stage.AnyArena(hasSight))
         sight = add(std::make_unique<SightEncounter>(*this, envs));
+    // M3's doors, levers and named objects: nothing to fight, nothing else to order against.
+    Encounter* interact = nullptr;
+    if (_stage.AnyArena(hasInteract))
+        interact = add(std::make_unique<InteractEncounter>(*this, envs));
+    // The combat stages' creatures on a cleared dungeon: nothing else to order against.
+    Encounter* combat = nullptr;
+    if (_stage.AnyArena(hasCombat))
+        combat = add(std::make_unique<CombatEncounter>(*this, envs));
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
@@ -568,7 +584,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
     // while the drill around it worked.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, dummy, pulls, instance, quest, gather,
-        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight, flag,
+        town, hazards, _owner, _party, opponent, ambush, travel, markers, _follow, _partyFollow, seek, sight,
+        interact, combat, flag,
         director })
         if (encounter)
             _rewardOrder.push_back(encounter);
@@ -590,6 +607,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == markers && hasMarkers(arena)) || (encounter == _follow && hasFollow(arena))
                 || (encounter == _partyFollow && hasPartyFollow(arena))
                 || (encounter == seek && hasSeek(arena)) || (encounter == sight && hasSight(arena))
+                || (encounter == interact && hasInteract(arena)) || (encounter == combat && hasCombat(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -1763,6 +1781,18 @@ void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& set
             categories["seek_room"] = std::move(rooms);
             categories["seek_object"] = std::move(objects);
         }
+        else if (arena.Against == Opposition::Interact)
+        {
+            // M3's sites and named objects (InteractEncounter): the evaluation's right object by each.
+            boost::json::array sites;
+            for (std::string const& name : InteractEncounter::SiteNames(arena))
+                sites.emplace_back(name);
+            boost::json::array objects;
+            for (std::string const& name : InteractEncounter::ObjectNames(arena))
+                objects.emplace_back(name);
+            categories["interact_site"] = std::move(sites);
+            categories["interact_object"] = std::move(objects);
+        }
         else if (arena.Against == Opposition::Sight)
         {
             // M1's object (SightEncounter): the evaluation's arrival by object.
@@ -2786,8 +2816,11 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     if ((firstBuild || (partyFollow && newInstance)) && map->Instanceable())
     {
         if (Arena(env).Against == Opposition::Markers || Arena(env).Against == Opposition::Seek
-            || Arena(env).Against == Opposition::Sight || partyFollow)
+            || Arena(env).Against == Opposition::Sight || Arena(env).Against == Opposition::Combat || partyFollow)
             SpawnArea::ClearMap(lead, partyFollow ? DUNGEON_CLEAR_RADIUS : INSTANCE_CLEAR_RADIUS);
+        // M3's Deadmines is wider than the Stockades: from any of its sites to the ship's far end.
+        else if (Arena(env).Against == Opposition::Interact)
+            SpawnArea::ClearMap(lead, INTERACT_CLEAR_RADIUS);
         else
             SpawnArea::Clear(lead);
     }
@@ -3151,8 +3184,9 @@ void Animus::Curriculum::StageScenario::AcceptResurrections(Env& env)
 
 bool Animus::Curriculum::StageScenario::DeadForGood(Env const& env, uint32 seatIndex) const
 {
-    // Where death runs on, nobody is dead for good: the seat releases and runs back (DeathBlock).
-    if (Arena(env).DeathRuns)
+    // Where death runs on, nobody is dead for good: the seat releases and runs back (DeathBlock); nor where it comes
+    // back alive at the entrance (dungeon-curriculum I4).
+    if (Arena(env).DeathRuns || Arena(env).RespawnAtEntrance)
         return false;
     CombatTally const& tally = Data(env).Seats[seatIndex].Combat;
     Player* bot = env.FindBot(seatIndex);
@@ -3734,9 +3768,41 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.StableCount = uint32(std::min<std::size_t>(seat.Stable.size(), STABLE_SLOTS));
     std::copy_n(seat.Stable.begin(), view.StableCount, view.Stable.begin());
 
-    view.EnemyCount = uint32(std::min<std::size_t>(env.Targets.size(), PACK_SLOTS));
-    for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
-        view.Enemies[slot] = env.FindTargetUnit(slot);
+    if (_stage.Has(BlockId::Sight))
+    {
+        // A sight stage's enemies are what the seat saw (dungeon-curriculum I3): the last frame's visible living
+        // hostiles in its slot order, never the encounter's spawn list -- nothing behind a wall, nothing round a
+        // corner. Its selection's place is the frame's too: out of it, where the seat last saw it.
+        // Alive only: a dead seat sees nothing, and a risen one nothing until its camera casts a frame again
+        // (RiseAtEntrance clears the list), so no pre-death frame leaks into its first decision at the entrance.
+        if (bot && bot->IsInWorld() && bot->IsAlive())
+        {
+            Player* const seer = bot;
+            view.EnemyCount = CombatBlock::VisibleEnemies(seat.Seen, [seer](uint64 guid) -> Unit*
+            {
+                Unit* unit = Encoding::UnitThrough(*seer, ObjectGuid(guid));
+                return unit && unit->IsInWorld() && unit->GetMap() == seer->GetMap() ? unit : nullptr;
+            }, view.Enemies.data(), PACK_SLOTS);
+        }
+        if (target)
+        {
+            view.TargetInView = target == bot || CombatBlock::InView(seat.Seen, target->GetGUID().GetRawValue());
+            if (!view.TargetInView)
+                if (Vision::Remembered const* entry = seat.Recall.Find(target->GetGUID().GetRawValue()))
+                {
+                    view.TargetSeen = true;
+                    view.LastSeen.Relocate(entry->Position.X, entry->Position.Y, entry->Position.Z);
+                    view.TargetUnseenTime = std::min(1.0f, std::max(0.0f, seat.Recall.AgeOf(*entry))
+                        * 1000.0f / MAX_UNSEEN_TIME_MS);
+                }
+        }
+    }
+    else
+    {
+        view.EnemyCount = uint32(std::min<std::size_t>(env.Targets.size(), PACK_SLOTS));
+        for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
+            view.Enemies[slot] = env.FindTargetUnit(slot);
+    }
     view.TargetSlot = seat.TargetSlot;
     view.FriendSlot = seat.FriendSlot;
     view.RankTier = seat.RankTier;
@@ -3828,6 +3894,17 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
+    // A sight stage's ground fire is what the camera shows (I3): the visible hazards, never the server's areas.
+    if (_stage.Has(BlockId::Sight))
+    {
+        CombatBlock::SeenHazards const seen = bot && bot->IsAlive()
+            ? CombatBlock::ReadHazards(seat.Seen, bot->GetPositionX(), bot->GetPositionY(), bot->GetOrientation())
+            : CombatBlock::SeenHazards();
+        view.HazardsSeen = true;
+        view.StandingSeen = seen.Standing;
+        view.DeepestSeen = seen.Deepest;
+        view.NearestHazard = seen.Nearest;
+    }
     view.Option = &seat.Option;
     SeatActionResult result;
     SeatOptionSet const started = seat.Option;
@@ -4225,6 +4302,17 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     }
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.NearestHazard = seat.NearestHazard;
+    // A sight stage's ground fire is what the camera shows (I3): the visible hazards, never the server's areas.
+    if (_stage.Has(BlockId::Sight))
+    {
+        CombatBlock::SeenHazards const seen = bot && bot->IsAlive()
+            ? CombatBlock::ReadHazards(seat.Seen, bot->GetPositionX(), bot->GetPositionY(), bot->GetOrientation())
+            : CombatBlock::SeenHazards();
+        view.HazardsSeen = true;
+        view.StandingSeen = seen.Standing;
+        view.DeepestSeen = seen.Deepest;
+        view.NearestHazard = seen.Nearest;
+    }
     if (_stage.Has(BlockId::Map))
     {
         view.Hits = &seat.Hits;

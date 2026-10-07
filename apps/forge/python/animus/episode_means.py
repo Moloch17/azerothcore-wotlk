@@ -39,6 +39,12 @@ PER_EVENT = {
     "time_ratio_sight": "markers_sight",
     "arrive_seconds_corner": "markers_corner",
     "time_ratio_corner": "markers_corner",
+    # M3 interact (InteractEncounter): the right object's clock over the episodes that got it, and the right object
+    # by rung over the episodes that played each (sight_seconds and sight_to_arrival read as the seek stage's).
+    "right_seconds": "right_object",
+    "right_distinguish": "rung_distinguish",
+    "right_switch": "rung_switch",
+    "right_key": "rung_key",
     # M4 follow (PartyFollowEncounter): the regroups over the leader's stops each follower was counted for, their time
     # over the regroups; the rejoins after a rise at the entrance (I4) over the rises, their time over the rejoins.
     "regroup_share": "regroup_stops",
@@ -48,6 +54,10 @@ PER_EVENT = {
     # A whole dungeon's (InstanceEncounter, I4 wired into the wing runs): the time from a rise at the entrance to the
     # party, over the rejoins.
     "wing_rejoin_seconds": "wing_rejoins",
+    # The combat stages (CombatEncounter): a C1 creature's engage-to-death over the kills.
+    "kill_seconds": "kills",
+    # ... and C2's watch: InterruptLanded's earnings over Kill and Clear's (a ratio of the sums).
+    "interrupt_earnings": "outcome_paid",
 }
 
 

@@ -5039,8 +5039,17 @@ AnimusForge.OutputDir = ""
 #                                 level 1, death knights at 55)
 #                                 "move2_seek" (the same Stockades: one real object in one of its 39
 #                                 rooms, found by sight with no compass, and stopped beside)
+#                                 "move3_interact" (an empty Deadmines, levels 17-20: the object the goal
+#                                 names among decoys, a door opened by its lever, the cannon fired with
+#                                 the gunpowder carried from the start; acting through the sight block)
 #                                 "move4_follow" (an empty Ragefire Chasm or Deadmines: four followers keep
 #                                 with a leader walking the dungeon's route; a death rises at the entrance)
+#                     The combat stages (dungeon-curriculum C1-C3), from move3_interact, on a cleared Ragefire Chasm
+#                     at its levels, the seat seeing what it fights:
+#                       combat    "combat1_fight" (one creature at a time; a friend to taunt off and heal)
+#                                 "combat2_packs" (packs of 2-4: casters, linked, fire; one pack at a time)
+#                                 "combat3_survive" (packs that can kill: rest between them, come back after a
+#                                 death from the entrance)
 #                     Its first version (move1_controls ... move7_follow) was archived on 2026-10-05: definitions
 #                     on the git tag curriculum-movement-v1, learner configs in
 #                     apps/forge/python/configs/archive/movement-v1/.
@@ -5180,7 +5189,12 @@ AnimusForge.TicksPerDecision = 1
 
 AnimusForge.Stage.move1_controls.TicksPerDecision = 5
 AnimusForge.Stage.move2_seek.TicksPerDecision = 5
+AnimusForge.Stage.move3_interact.TicksPerDecision = 5
 AnimusForge.Stage.move4_follow.TicksPerDecision = 5
+# The combat stages move on the player controller too.
+AnimusForge.Stage.combat1_fight.TicksPerDecision = 5
+AnimusForge.Stage.combat2_packs.TicksPerDecision = 5
+AnimusForge.Stage.combat3_survive.TicksPerDecision = 5
 #   the dungeon teacher's checks drive every seat on the player controller: the same 50 ms world ticks
 AnimusForge.Stage.teacher_ragefire.TicksPerDecision = 5
 AnimusForge.Stage.teacher_deadmines.TicksPerDecision = 5
@@ -7087,6 +7101,42 @@ AnimusForge.Curriculum.Seek.DoorwayDeeper = 1.5
 AnimusForge.Curriculum.Seek.DoorwaySpread = 1.0
 
 #
+#    AnimusForge.Curriculum.Interact.*
+#        The interact stage (move3_interact, InteractEncounter): in an empty Deadmines, the object the goal names by its
+#        kind (never its place) among DecoysMin to DecoysMax decoys of other kinds, behind a door whose lever opens it,
+#        or the lock its key item opens (the cannon and the Defias Gunpowder the seat carries from the start). Arrive
+#        (Outcome) is paid once, on the right object reached (stopped within 3 yd, within ArriveRise yards of its
+#        height) or, for a lock, its key item used on it; DoorOpened (Outcome) once, the door opened by the seat's own
+#        press on its lever. WrongObject (Cost) once a decoy, stopped beside or pressed; a refused press is priced as
+#        Actions.Aimless.ActRefused. StepCost (per 50 ms), Death, Stuck, Wall and WallSlide as Seek's, the noise
+#        prices fixed from the first step. Sighting (Shaping, faded) once, on the first frame listing the named object.
+#        The ladder follows the fade's rungs (1, 0.5, 0): distinguish, switch, key; each rung keeps CarryShare of the
+#        one below, its episodes RungSeconds0 to 2. Distinguish objects stand SightNearest to SightFurthest yards off
+#        in sight of the seat, Spacing yards apart (Attempts draws). Summoned creatures within SummonSweep yards of a
+#        site's opener (the cannon's pirates) are sent away at each reset.
+AnimusForge.Curriculum.Interact.Arrive = 3.0
+AnimusForge.Curriculum.Interact.DoorOpened = 1.0
+AnimusForge.Curriculum.Interact.WrongObject = 0.5
+AnimusForge.Curriculum.Interact.StepCost = 0.0005
+AnimusForge.Curriculum.Interact.Death = 6.0
+AnimusForge.Curriculum.Interact.ArriveRise = 2.0
+AnimusForge.Curriculum.Interact.Sighting = 0.5
+AnimusForge.Curriculum.Interact.Stuck = 0.02
+AnimusForge.Curriculum.Interact.Wall = 0.02
+AnimusForge.Curriculum.Interact.WallSlide = 0.5
+AnimusForge.Curriculum.Interact.CarryShare = 0.1
+AnimusForge.Curriculum.Interact.RungSeconds0 = 60
+AnimusForge.Curriculum.Interact.RungSeconds1 = 120
+AnimusForge.Curriculum.Interact.RungSeconds2 = 90
+AnimusForge.Curriculum.Interact.DecoysMin = 2
+AnimusForge.Curriculum.Interact.DecoysMax = 4
+AnimusForge.Curriculum.Interact.Spacing = 2.5
+AnimusForge.Curriculum.Interact.SightNearest = 4.0
+AnimusForge.Curriculum.Interact.SightFurthest = 30.0
+AnimusForge.Curriculum.Interact.Attempts = 64
+AnimusForge.Curriculum.Interact.SummonSweep = 80.0
+
+#
 #    AnimusForge.Curriculum.Controls.*
 #        M1 controls, redesigned (move1_controls, SightEncounter): a real object (the seek stage's pool) at a hallway
 #        point of the Stockades Nearest to Furthest yards (straight) from a random hallway spawn, in sight of the seat's
@@ -7112,6 +7162,54 @@ AnimusForge.Curriculum.Controls.Withhold3 = 0.9
 AnimusForge.Curriculum.Controls.Stuck = 0.02
 AnimusForge.Curriculum.Controls.Wall = 0.02
 AnimusForge.Curriculum.Controls.WallSlide = 0.5
+
+#
+#    AnimusForge.Curriculum.Combat.*
+#        The combat stages (combat1_fight, combat2_packs, combat3_survive; CombatEncounter, dungeon-curriculum C1-C3):
+#        creatures on a cleared Ragefire Chasm, fought by a seat that sees them. Outcome (times the tier's
+#        w = 1 + Difficulty.TierScale x tier): Kill a C1 creature, Clear a C2/C3 pack, Survived the episode with no
+#        death (SurviveSurvived in C3); InterruptLanded an interrupt that stopped a cast, unscaled. Cost, fixed price
+#        from the first step: Away per second dead or away from the fight (walking back from the entrance, or beyond
+#        AwayYards of the pull while it fights), Death and AllyDeath (divided by w), Hurt and FireHurt per maximum
+#        health taken (all of it, and from ground effects), ExtraPull a second pack drawn in, Clock per second a
+#        creature of the pull is alive and engaged. Shaping (faded): Damage per creature health dealt. The ladder (per
+#        class and build, on its window alone): the seat's level + LevelBase + rung x LevelsPerTier (C2 half the steps,
+#        its packs growing), elites from EliteTier, a caster from CasterTier, linked packs from LinkedTier,
+#        HazardChance percent of C2 packs with fire; C3's packs SurviveSize strong, SurviveLevels higher. The seat
+#        starts on one of the dungeon's own creature spawns within CorridorWalk yards' walk of the entrance
+#        (CorridorSpacing apart); a pull stands FightNearest-FightFurthest yards off (past a same-level creature's
+#        ~20 yd aggro) in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
+#        after a kill. A death: Respawn.DelayMs out, then alive at the entrance (dungeon-curriculum I4).
+AnimusForge.Curriculum.Combat.Kill = 1.0
+AnimusForge.Curriculum.Combat.Clear = 2.0
+AnimusForge.Curriculum.Combat.Survived = 1.0
+AnimusForge.Curriculum.Combat.SurviveSurvived = 2.0
+AnimusForge.Curriculum.Combat.InterruptLanded = 0.25
+AnimusForge.Curriculum.Combat.Away = 0.02
+AnimusForge.Curriculum.Combat.AwayYards = 30.0
+AnimusForge.Curriculum.Combat.Death = 2.0
+AnimusForge.Curriculum.Combat.AllyDeath = 1.0
+AnimusForge.Curriculum.Combat.Hurt = 0.2
+AnimusForge.Curriculum.Combat.FireHurt = 1.0
+AnimusForge.Curriculum.Combat.ExtraPull = 1.0
+AnimusForge.Curriculum.Combat.Clock = 0.01
+AnimusForge.Curriculum.Combat.Damage = 0.3
+AnimusForge.Curriculum.Combat.MaxTier = 5
+AnimusForge.Curriculum.Combat.LevelBase = -2
+AnimusForge.Curriculum.Combat.LevelsPerTier = 1
+AnimusForge.Curriculum.Combat.EliteTier = 4
+AnimusForge.Curriculum.Combat.CasterTier = 1
+AnimusForge.Curriculum.Combat.LinkedTier = 2
+AnimusForge.Curriculum.Combat.HazardChance = 33
+AnimusForge.Curriculum.Combat.SurviveSize = 3
+AnimusForge.Curriculum.Combat.SurviveLevels = 2
+AnimusForge.Curriculum.Combat.FightNearest = 28.0
+AnimusForge.Curriculum.Combat.FightFurthest = 40.0
+AnimusForge.Curriculum.Combat.NextNearest = 30.0
+AnimusForge.Curriculum.Combat.NextFurthest = 45.0
+AnimusForge.Curriculum.Combat.NextFightMs = 2000
+AnimusForge.Curriculum.Combat.CorridorWalk = 220.0
+AnimusForge.Curriculum.Combat.CorridorSpacing = 8.0
 
 #
 #    AnimusForge.Curriculum.Owner.*

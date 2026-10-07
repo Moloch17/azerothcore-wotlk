@@ -138,6 +138,10 @@ namespace Animus::Curriculum
     /// held, its player controller started again from where the server put it (the body would otherwise walk on from
     /// where it died). False when the move failed; it is alive either way.
     bool RiseAtEntrance(Player* bot, SeatState& seat, Position const& entrance, uint32 nowMs);
+
+    /// The seat's last frame forgotten (RiseAtEntrance does it first): its entity list empty and its sight slots naming
+    /// nothing, until the camera casts again where it stands now.
+    void ForgetFrame(SeatState& seat);
 }
 
 #endif

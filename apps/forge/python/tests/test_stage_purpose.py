@@ -28,10 +28,19 @@ PURPOSE = {
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
     "move2_seek": ("Arrive", "StepCost"),
+    # M3 interact (dungeon-curriculum M3, 2026-10-06): the right object reached or its lock given the key (Arrive), the
+    # switch rung's door opened by the seat's own lever press (DoorOpened), a decoy taken (WrongObject), and the time.
+    "move3_interact": ("Arrive", "DoorOpened", "WrongObject", "StepCost"),
     # M4 follow (dungeon-curriculum I5, 2026-10-06): keep with the leader through the dungeon -- FollowKept per second
     # in the band, Regroup on coming back to it after each of the leader's stops -- and Death, each one a price the
     # episode goes on past (I4).
     "move4_follow": ("FollowKept", "Regroup", "Death"),
+    # The combat stages (dungeon-curriculum C1-C3, CombatEncounter, 2026-10-06): C1's kills and surviving, its damage
+    # taken and the time a kill takes; C2's packs cleared and interrupts landed, its extra pulls and fire damage; C3's
+    # surviving and packs cleared, and every second dead or away from the fight (never a reward for coming back).
+    "combat1_fight": ("Kill", "Survived", "Hurt", "StepCost"),
+    "combat2_packs": ("Clear", "InterruptLanded", "PullExtra", "FireHurt"),
+    "combat3_survive": ("Survived", "Clear", "Away"),
     # The dungeon teacher's checks (I6; not training stages, but a learner pointed at one is paid for the dungeon):
     # every pack and boss killed (Kill, the last boss's WingBoss among them) and each death priced.
     "teacher_ragefire": ("Kill", "Death"),
@@ -46,6 +55,12 @@ SHAPING = {
     # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground", and REDESIGN
     # §2's "looked into a room").
     "move2_seek": ("Sighting", "NewGround", "RoomSeen"),
+    # M3's one aid: the first frame listing the named object.
+    "move3_interact": ("Sighting",),
+    # The combat stages' one nudge: the damage dealt, in creature healths.
+    "combat1_fight": ("DamageDealt",),
+    "combat2_packs": ("DamageDealt",),
+    "combat3_survive": ("DamageDealt",),
 }
 
 # Opposition -> the encounter source that pays it.
@@ -54,11 +69,13 @@ ENCOUNTER = {
     "Follow": "Encounters/FollowEncounter.cpp",
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
+    "Interact": "Encounters/InteractEncounter.cpp",
     "PartyFollow": "Encounters/PartyFollowEncounter.cpp",
     "Instance": "Encounters/InstanceEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",
+    "Combat": "Encounters/CombatEncounter.cpp",
 }
 
 
