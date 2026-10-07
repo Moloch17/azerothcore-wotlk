@@ -232,6 +232,7 @@ def test_fresh_passes_the_real_m1_and_m2_stage_files():
         assert not report.failed, report.text()
         assert [check.title.split(" (")[0] for check in report.checks][-1] == "trainer inputs and MappoTrainer on CPU"
         assert any("held-out arenas" in check.title for check in report.checks)
+        assert not any("phases" in check.title for check in report.checks)   # eval.phases was removed from EvalConfig
 
 
 def test_fresh_fails_on_a_heldout_arena_the_stage_lacks(tmp_path):

@@ -30,7 +30,7 @@ the sim). Both are said in the output, as UNVERIFIED, rather than faked.
 --fresh is the check for a stage that has never run on the learner (no checkpoint): from the stage's learner yaml and
 the stage.json the sim wrote for it, it builds what TrainingRun.__init__ builds before it trains -- the spec (from
 stage.json: camera and map bytes, look heads, layouts, episode columns), the held-out arenas (train.heldout_arenas),
-eval.phases and eval.mask_actions against the stage's arenas and actions, the score and gate columns against the
+eval.mask_actions against the stage's actions, the score and gate columns against the
 stage's episode columns, the convergence controller with its ladders, the trainer inputs and the trainer itself on
 CPU -- and says PASS or FAIL per stage with the first error. It is the only check that the learner side of a stage
 nobody has trained starts. What it cannot know (the sim's state width and goal count, which stage.json does not
@@ -380,20 +380,12 @@ def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = No
     spec = step("spec from stage.json", lambda: _spec_step(stage, state_dim, goal_count))
     if spec is None:
         return report
-    arenas = [arena.get("name") for arena in stage.get("arenas", ())]
     names = [layout.name for layout in spec.layouts]
 
     def heldout():
         held = heldout_arenas(config.eval.heldout, stage)
         shown = {name: f"arena {pin}, {episodes} episodes" for name, (pin, episodes) in held.items()}
         return (f"eval.heldout -> {shown or 'none'}", held)
-
-    def phases():
-        wanted = {str(phase): [str(name) for name in members] for phase, members in config.eval.phases.items()}
-        unknown = sorted({name for members in wanted.values() for name in members} - set(arenas))
-        if unknown:
-            raise ValueError(f"eval.phases names arenas the stage does not have: {unknown} (its arenas: {arenas})")
-        return (f"{len(wanted)} phase(s)" if wanted else "", wanted)
 
     def masks():
         action_names = {name: layout.get("action_names", []) for name, layout in stage["layouts"].items()}
@@ -429,7 +421,6 @@ def check_fresh(stage_name: str, stage_json: Path, config_path: Path | None = No
                 trainer)
 
     for title, build_step in (("held-out arenas (train.heldout_arenas)", heldout),
-                              ("eval.phases against the arenas", phases),
                               ("eval.mask_actions against each layout's actions", masks),
                               ("ladder configuration (ConvergenceController)", ladders),
                               ("trainer inputs and MappoTrainer on CPU", build)):
