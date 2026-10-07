@@ -20,6 +20,9 @@
 #include "Baselines.h"
 #include "Camera.h"
 #include "Env.h"
+#include "WingTeacher.h"
+#include "ObjectAccessor.h"
+#include "EntityActions.h"
 #include "Log.h"
 #include "Player.h"
 #include "Random.h"
@@ -68,6 +71,58 @@ namespace
         return seat.L && seat.L->Profile && seat.Spec < seat.L->Profile->Specs.size()
             && seat.L->Profile->Specs[seat.Spec].Range == RangeBand::Ranged;
     }
+}
+
+Unit* Animus::Curriculum::StageScenario::SightTarget(Env const& env, uint32 seatIndex, Player* bot) const
+{
+    // Only what its sight list names: seen now or remembered, and still there to its client.
+    SeatState const& seat = Data(env).Seats[seatIndex];
+    if (!bot || !bot->IsInWorld())
+        return nullptr;
+    if (Unit* selected = ObjectAccessor::GetUnit(*bot, bot->GetTarget()); selected && selected->IsAlive()
+        && bot->IsValidAttackTarget(selected)
+        && std::find(seat.SightGuids.begin(), seat.SightGuids.end(), selected->GetGUID().GetRawValue())
+            != seat.SightGuids.end())
+        return selected;
+    Unit* fighting = nullptr;
+    Unit* nearest = nullptr;
+    for (uint64 raw : seat.SightGuids)
+    {
+        if (!raw)
+            continue;
+        ObjectGuid const guid(raw);
+        if (!guid.IsUnit())
+            continue;
+        Unit* unit = ObjectAccessor::GetUnit(*bot, guid);
+        if (!unit || !unit->IsAlive() || !unit->IsInMap(bot) || !EntityActions::AtClient(bot, unit)
+            || !bot->IsValidAttackTarget(unit))
+            continue;
+        bool const onParty = unit->IsInCombat() && unit->GetVictim() && unit->GetVictim()->IsPlayer();
+        if (onParty && (!fighting || bot->GetExactDist(unit) < bot->GetExactDist(fighting)))
+            fighting = unit;
+        if (!nearest || bot->GetExactDist(unit) < bot->GetExactDist(nearest))
+            nearest = unit;
+    }
+    return fighting ? fighting : nearest;
+}
+
+Animus::Curriculum::WingTeacher::Facts Animus::Curriculum::StageScenario::StandInFacts(SeatState const& seat,
+    StandIn::Role role)
+{
+    // Its role is its style's; and it acts only on what it sees: the enemies its sight list names.
+    WingTeacher::Facts facts = seat.StandInSeen;
+    facts.Is = role == StandIn::Role::Tank ? WingTeacher::Role::Tank : role == StandIn::Role::Healer
+        ? WingTeacher::Role::Healer : WingTeacher::Role::Damage;
+    uint32 kept = 0;
+    for (uint32 i = 0; i < facts.EnemyCount; ++i)
+        if (facts.Enemies[i].At.Slot >= 0)
+            facts.Enemies[kept++] = facts.Enemies[i];
+    facts.EnemyCount = kept;
+    if (facts.Pull.Slot < 0)
+        facts.Pull = WingTeacher::Place();
+    if (facts.Object.Slot < 0)
+        facts.Object = WingTeacher::Place();
+    return facts;
 }
 
 int32 Animus::Curriculum::StageScenario::StandInSeat(Env const& env) const
@@ -163,8 +218,11 @@ void Animus::Curriculum::StageScenario::DecideStandIn(Env& env, uint32 seatIndex
     if (bot && seat.L && bot->IsInWorld())
     {
         // What it sees: its own state, the party frames, the enemy its seat is given (the next pull, or what the
-        // party fights) and whom it follows -- the group's leader, seat 0, or the owner who leads the party.
-        Unit* target = DecisionTarget(env, seatIndex);
+        // party fights) and whom it follows -- the group's leader, seat 0, or the owner who leads the party. With the
+        // sight block, the enemy is one it sees or remembers: its selection, else the nearest of its sight list in a
+        // fight with the party, else the nearest there at all -- never a server list's.
+        bool const sight = seat.L->Has(BlockId::Sight);
+        Unit* target = sight ? SightTarget(env, seatIndex, bot) : DecisionTarget(env, seatIndex);
         if (target && (!target->IsAlive() || !target->IsInWorld() || target->GetMapId() != bot->GetMapId()))
             target = nullptr;
         Player* leader = Owner(env);
@@ -234,14 +292,22 @@ void Animus::Curriculum::StageScenario::DecideStandIn(Env& env, uint32 seatIndex
         held.FaceTurnApplied = seat.Controls.Held.FaceTurnApplied;
         seat.Controls.Held = held;
 
-        // Its hands: one press of the seat's own actions, through ApplySeatAction like a learned seat's. Today it is
-        // the "fight" baseline's choice from the seat's own row (the greedy one for a layout without the duel
-        // block), never a movement press -- the keys above are its feet. SEAM (I1): once the entity actions land,
-        // this is where it selects, assists, heals a friend or uses an object through them; and a rebuilt dungeon
-        // teacher (I6) may offer its press here for the stand-in's pulls.
-        if (intent.Fight && target && obs && mask && seen.Alive)
+        // Its hands: one press of the seat's own actions, through ApplySeatAction like a learned seat's, never a
+        // movement press -- the keys above are its feet. With the sight block (dungeon-curriculum I1, I6) they are the
+        // dungeon teacher's hands (WingTeacher::Hands) for its role, on what it sees: it selects, assists, focuses
+        // and heals a friend, casts (through the client's handler) and uses objects through the sight list's presses,
+        // as a player does. Without it, the "fight" baseline's choice from its own row (the greedy one for a layout
+        // without the duel block).
+        Layout const& layout = *seat.L;
+        if (intent.Fight && sight && obs && mask && seen.Alive)
         {
-            Layout const& layout = *seat.L;
+            int32 const action = Baselines::TeacherPress(WingTeacher::Hands(StandInFacts(seat, play.Plays.GetRole())),
+                layout, obs, mask);
+            seat.ScriptAction = std::max(action, 0);
+            play.Presses += action > 0 ? 1 : 0;
+        }
+        else if (intent.Fight && target && obs && mask && seen.Alive)
+        {
             int32 action = Baselines::Choose(Baselines::Supports("fight", layout) ? "fight" : "greedy", layout, obs,
                 mask);
             std::optional<BlockId> const block = action > 0 ? layout.BlockOfAction(uint32(action)) : std::nullopt;
