@@ -9,7 +9,7 @@
 #
 # This config exists so the stage has one like every other (and a learner pointed at it by mistake does nothing that
 # matters): no imitation, no self-imitation -- the teacher's runs are its own, not the policy's.
-extends: move4_follow.yaml
+extends: combat3_survive.yaml
 run_name: teacher_ragefire
 
 seed_from: ""
@@ -30,22 +30,28 @@ status:
   headline: [wing_cleared_share, wing_boss_kills, boss_killed, wing_wipes, wing_rises, wing_rejoins,
              wing_rejoin_seconds]
   targets:
-    follow_kept_share: null
-    regroup_share: null
-    regroup_seconds: null
-    lost_seconds: null
-    blocking_seconds: null
+    # C3's targets are not the teacher's measures (null drops an inherited key).
+    won: null
+    survived: null
+    packs_cleared: null
     rejoined: null
-    wall_seconds: null
-    died: null
+    rejoin_seconds: null
+    extra_pulls: null
+    hurt_share: null
     wing_cleared_share: ">= 0.95"
     boss_killed: ">= 0.9"
 
 convergence:
   measure: wing_cleared_share
 
+# C3's fade rungs and no cost ladder (the dungeon plan's rule), on the teacher's own measure.
 fade:
-  enabled: false
+  gate_metric: wing_cleared_share
+  gate_value: 0.9
+
+costs:
+  gate_metric: wing_cleared_share
+  gate_value: 0.9
 
 layout_sampling:
   metric: wing_cleared_share

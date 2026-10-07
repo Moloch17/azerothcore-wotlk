@@ -118,3 +118,8 @@ def test_the_teacher_check_configs_load():
         assert config.mappo.hint_coef == 0.0 and config.mappo.sil_coef == 0.0
         assert config.convergence.measure == "wing_cleared_share"
         assert "wing_rejoin_seconds" in config.eval.report and "wing_rises" in config.status.headline
+        # C3's (combat3_survive.yaml): its fade rungs on the teacher's measure, and no cost ladder.
+        assert config.costs.enabled is False
+        assert config.fade.enabled and config.fade.rungs == (1.0, 0.5, 0.25, 0.0)
+        assert config.fade.gate_metric == "wing_cleared_share" and config.fade.require_plateau is False
+        assert "survived" not in config.status.targets
