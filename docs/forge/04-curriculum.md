@@ -208,11 +208,11 @@ An `ArenaDefinition` describes one situation:
 | `Combat`, `Ally`, `Roles` | The combat drill (`Fight`, `Packs`, `Survive`), a friend beside the seat, the roles drill |
 | `RespawnAtEntrance` | A death brings the seat back alive at the instance's entrance after `Respawn.DelayMs` |
 | `StandInShare` | Share of a party arena's training episodes with the "human" stand-in in one seat |
-| `Hazards`, `CommandedGoals` | Every pull holds a ground-effect caster; the sim gives the seat its goal as an order |
+| `Hazards` | Every pull holds a ground-effect caster |
 | `EpisodeSeconds` | 0 = the host's `EpisodeSeconds` |
-| `SpawnPoints`, `MapId`, `MinLevel`, `HeldOutSpawnPoints` | Ground of the arena's own, when it is not the stage's |
+| `SpawnPoints`, `MapId`, `MinLevel` | Ground of the arena's own, when it is not the stage's |
 
-A `StageDefinition` may also name its own `MapId`, `SpawnPoints` and `HeldOutSpawnPoints` (0 = the host's
+A `StageDefinition` may also name its own `MapId` and `SpawnPoints` (0 = the host's
 `SpawnMapId` and `SpawnPosition`) and a `Level` or `MinLevel`. Every live stage stands on an instance's map (a fresh
 instance an episode, or an env's own), so no env sees another's.
 
@@ -220,10 +220,6 @@ instance an episode, or an env's own), so no env sees another's.
 an episode, reproducible from an evaluation seed, and every seat sees all of the stage's ground. A spawn point that no
 objective can be found from no longer takes the run down with it either: the reset draws again and moves the seats, up
 to four points, and only names a failure when all of them fail.
-
-**`HeldOutSpawnPoints` is where scored episodes stand, and where training never does.** The split is keyed on
-`Env::Evaluating` rather than on the presence of a seed. No live stage sets it today (the control ground the first
-curriculum measured terrain reading with went with it); the mechanism remains.
 
 **Validation.** `CurriculumStages()` checks each definition in order and leaves out (with an error log) any stage
 that:
@@ -911,11 +907,9 @@ Every stage reports these **core columns** per seat:
 - `spell_casts`, `trinket_uses`
 - `present` (0 for an empty party seat; ignore that row), `arena` (index into `stage.json` arenas), `opponent_seat`
 - `spawn_point` (which spawn point the episode was built from) and `spawn_drawn` (which one it drew first),
-  indices into the stage's or the arena's `SpawnPoints`, or into `HeldOutSpawnPoints` while evaluating.
+  indices into the stage's or the arena's `SpawnPoints`.
   Equal, the first choice worked; different, that point could not build an episode and the reset moved on.
-  A point drawn often and built from never is ground no episode can start on -- held-out ground like that
-  is counted as control and scores nothing, which was how a stage came to be gated on two of its
-  three rooms without anything saying so.
+  A point drawn often and built from never is ground no episode can start on.
 - `killed`, `died`, `time_to_kill`, `damage_taken`, `health_left`, `stealth_openers`, `stealth_utility_casts`,
   `pet_summoned`, `pet_at_start`, `pet_damage_share` (of the seat's damage, what its pets and guardians dealt),
   `pet_died`, `pet_abilities` (pet bar abilities started), `pet_orders` (stances, follow, stay, sending the pet in),

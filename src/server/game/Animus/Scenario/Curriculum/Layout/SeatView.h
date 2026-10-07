@@ -201,9 +201,6 @@ namespace Animus::Curriculum
         bool Goal2Ended = false;
         /// Something changed that a plan should answer (GoalBlock::OBS_EVENT): the goal head chooses again now.
         bool GoalEvent = false;
-        /// The primary the director's order set (NO_GOAL when none): the seat holds it whatever it chose, and the
-        /// learner reads it from GoalBlock's order columns.
-        int32 OrderGoal = -1;
         /// What the seat achieved this decision whatever it pursued (GoalBlock's hindsight columns), or NO_GOAL.
         int32 Achieved = -1;
         /// The seat's durative action, to read, start and stop. Null for a view without one.

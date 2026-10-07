@@ -42,7 +42,6 @@ std::vector<Animus::Curriculum::FieldGrids::GridRef> Animus::Curriculum::FieldGr
     std::map<uint32, std::vector<Position>> points;
     std::vector<Position>& stagePoints = points[stage.MapId];
     stagePoints = stage.SpawnPoints;
-    stagePoints.insert(stagePoints.end(), stage.HeldOutSpawnPoints.begin(), stage.HeldOutSpawnPoints.end());
     std::set<uint32> maps = { stage.MapId };
     for (Animus::Curriculum::ArenaDefinition const& arena : stage.Arenas)
     {
@@ -50,7 +49,6 @@ std::vector<Animus::Curriculum::FieldGrids::GridRef> Animus::Curriculum::FieldGr
         maps.insert(arenaMap);
         std::vector<Position>& arenaPoints = points[arenaMap];
         arenaPoints.insert(arenaPoints.end(), arena.SpawnPoints.begin(), arena.SpawnPoints.end());
-        arenaPoints.insert(arenaPoints.end(), arena.HeldOutSpawnPoints.begin(), arena.HeldOutSpawnPoints.end());
         for (Animus::Curriculum::BossRow const& row : Animus::Curriculum::InstanceLadderRows(arena.Instance))
             maps.insert(row.MapId);
     }

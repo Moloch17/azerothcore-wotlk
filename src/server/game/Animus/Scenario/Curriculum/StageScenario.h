@@ -170,8 +170,7 @@ namespace Animus::Curriculum
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
         /// SpawnPoint().
-        /// The ground this episode may stand on: the arena's if it has its own, else the stage's -- and the
-        /// control ground instead when the episode is being scored (StageDefinition::HeldOutSpawnPoints).
+        /// The ground this episode may stand on: the arena's if it has its own, else the stage's.
         [[nodiscard]] std::vector<Position> const& SpawnGroundFor(Env const& env) const;
         [[nodiscard]] Position const& SpawnPointFor(Env const& env) const;
         /// Phase bits a map has to give an env: all but phase 1, which is the world's own.

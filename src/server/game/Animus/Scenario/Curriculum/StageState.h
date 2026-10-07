@@ -89,7 +89,6 @@ namespace Animus::Curriculum
         Position Place;
         ObjectGuid Friend;                  // the goal names a friend (Protect): who
         uint32 ProtectSafeMs = 0;           // ... and how long it has been kept above half health while attacked
-        bool FromOrder = false;             // set by the director's order, not chosen by the seat (primary only)
     };
 
     /// Why a press was aimless (StageScenario::JudgePress, SettleIntent): each is counted and priced on its own
@@ -320,9 +319,6 @@ namespace Animus::Curriculum
         /// What the seat achieved this decision, whatever it was pursuing (GoalBlock's hindsight columns), and what
         /// it is measured against: which enemy slots were alive, and whether the seat was below Recover's line.
         int32 Achieved = NO_GOAL;
-        /// A commanded arena's goal for this seat (ArenaDefinition::CommandedGoals), and when it was given.
-        int32 Commanded = NO_GOAL;
-        uint32 CommandedAtMs = 0;
         /// A whole dungeon's party makeup (StageScenario::FitsDungeonRole): this seat's place in it.
         uint8 DungeonRole = 0;
         int32 Pressed = -1;                     // what the seat pressed this decision (the "Wing stuck" log line)
@@ -544,8 +540,6 @@ namespace Animus::Curriculum
             EventEnemies = 0;
             Event = false;
             Achieved = NO_GOAL;
-            Commanded = NO_GOAL;
-            CommandedAtMs = 0;
             EnemySeenAlive.fill(0);
             BelowRecover = false;
             StepPreparationMs = 0;
