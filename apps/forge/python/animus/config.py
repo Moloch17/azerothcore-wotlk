@@ -521,10 +521,16 @@ class StatusConfig:
     general episode columns. Each is summarised whether or not eval.report lists it. `targets` gives a metric the
     bound it is judged against, ">= 0.95" or "<= 18", and the status line says whether the evaluation meets it.
     Targets are a readout, never a gate: convergence alone ends a stage.
+
+    `excluded` names the classes the stage never fields, by design, each with the reason ({death_knight: "..."}), so
+    their absence from the evaluation reads as a decision and not as a failure: forge status lists them under the
+    headline and every evaluation's report line says so (G1 and the level-band dungeon stages: a party shares one level
+    under the band's cap, below a death knight's 55). A stage declares its own; `null` drops an inherited one.
     """
 
     headline: tuple[str, ...] = ()
     targets: dict = field(default_factory=dict)
+    excluded: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for metric, target in self.targets.items():
@@ -532,10 +538,24 @@ class StatusConfig:
                 raise ValueError(f"status.targets: {metric!r} is not in status.headline")
             if not isinstance(target, str) or not STATUS_TARGET.match(target.strip()):
                 raise ValueError(f"status.targets.{metric}: {target!r} is not '>= x' or '<= x'")
+        for name, reason in self.excluded.items():
+            if not isinstance(reason, str) or not reason.strip() or any(c in str(name) + reason for c in ";="):
+                raise ValueError(f"status.excluded.{name}: a reason is plain text without ';' or '=', got {reason!r}")
 
     def target_text(self) -> str:
         """"arrived>=0.95;arrive_seconds<=18": the flat form progress.json carries to the sim."""
         return ";".join(f"{metric}{''.join(target.split())}" for metric, target in self.targets.items())
+
+    def excluded_text(self) -> str:
+        """"death_knight=the party's level is capped at 18": the flat form progress.json carries to the sim."""
+        return ";".join(f"{name}={reason.strip()}" for name, reason in self.excluded.items())
+
+    def excluded_line(self) -> str:
+        """The evaluation report's line, or "" when the stage excludes nothing."""
+        if not self.excluded:
+            return ""
+        return "Not fielded by design (not a failure): " + "; ".join(
+            f"{name} ({reason.strip()})" for name, reason in self.excluded.items())
 
 
 @dataclass

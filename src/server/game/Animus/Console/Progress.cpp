@@ -628,6 +628,14 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
             }
             table.AddRow({ "  " + metric, Format::OrDash(evaluated, Format::Metric), note });
         }
+        // The classes the stage never fields, by design (its config's status.excluded): "death_knight=reason;...".
+        // Their absence from the measures above is a decision, not a failure.
+        for (std::string const& entry : split(progress->Text("status_excluded"), ';'))
+        {
+            std::size_t const at = entry.find('=');
+            table.AddRow({ "  excluded " + entry.substr(0, at), "-",
+                at == std::string::npos ? std::string("by design") : "by design: " + entry.substr(at + 1) });
+        }
     }
 
     std::optional<double> const reward = progress->Number("reward_per_decision");

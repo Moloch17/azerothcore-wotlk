@@ -148,3 +148,26 @@ def test_the_drill_readings_are_weighted_by_the_episodes_that_drilled_them():
     assert out["won_hold"] == pytest.approx(0.5)
     assert out["hold_share"] == pytest.approx(0.7)
     assert out["clean_share"] == pytest.approx((1.0 * 2 + 0.5 * 4) / 6)
+
+
+def test_death_knights_are_excluded_by_design_and_say_so():
+    """G1 never fields a death knight (a party shares one level under the 13-18 cap; a death knight starts at 55): the
+    status and every evaluation's report name it and the reason, so its absence reads as a decision, not a failure.
+    The same status.excluded serves the later level-band dungeon stages; a stage that excludes nothing says nothing."""
+    from animus.config import StatusConfig
+    loaded = config()
+    reason = loaded.status.excluded["death_knight"]
+    assert "55" in reason and "13-18" in reason
+    assert loaded.status.excluded_text() == f"death_knight={reason}"
+    assert loaded.status.excluded_line().startswith("Not fielded by design (not a failure): death_knight (")
+    progress = (Path(__file__).resolve().parents[1] / "animus" / "progress.py").read_text()
+    assert '"status_excluded": config.status.excluded_text()' in progress
+    train = (Path(__file__).resolve().parents[1] / "animus" / "train.py").read_text()
+    assert "config.status.excluded_line()" in train
+    progress_cpp = (CURRICULUM.parents[1] / "Console" / "Progress.cpp").read_text()
+    assert 'progress->Text("status_excluded")' in progress_cpp
+    assert StatusConfig().excluded_line() == "" and StatusConfig().excluded_text() == ""
+    # The combat stages field every class (a death knight at its own 55, alone): none excluded.
+    assert TrainConfig.load(CONFIGS / "combat3_survive.yaml").status.excluded == {}
+    with pytest.raises(ValueError):
+        StatusConfig(excluded={"death_knight": "a;b"})

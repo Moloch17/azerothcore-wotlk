@@ -74,6 +74,11 @@ status:
     wipes: "<= 0.05"
     rejoined: ">= 0.9"
     rejoin_seconds: "<= 60"
+  # Death knights are never fielded here, by design (the fix -- accept it, a death-knight band, scaled content -- is
+  # the user's to choose): a proper party shares one level, capped at Ragefire's 13-18 band, and a death knight starts
+  # at 55. forge status lists it under the headline, and every evaluation's report says so.
+  excluded:
+    death_knight: "the party shares one level, capped at the 13-18 band, and a death knight starts at 55"
 
 convergence:
   measure: won

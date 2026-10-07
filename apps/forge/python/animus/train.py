@@ -1440,6 +1440,8 @@ class TrainingRun:
                   f"x{self.shaping_scale_now:g}, noise priced x{self.cost_scale_now:g}; "
                   f"{result.episodes} episodes in {result.seconds:.0f} s"
                   f" [learner/baseline]\n{format_summary(summary, baseline_summary, self.report)}", flush=True)
+            if excluded := config.status.excluded_line():
+                print(excluded, flush=True)
 
             if controller.costs_message:
                 print(f"{config.run_name}: {controller.costs_message}", flush=True)

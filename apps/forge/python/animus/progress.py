@@ -64,6 +64,8 @@ class ProgressWriter:
             # The stage's own measures for forge status (config.status): their order, and "metric>=x;metric<=y".
             "status_headline": ",".join(config.status.headline),
             "status_targets": config.status.target_text(),
+            # The classes it never fields, by design, and why: "death_knight=...;...".
+            "status_excluded": config.status.excluded_text(),
         }
         self.headline = tuple(config.status.headline)
         self.metrics: dict = {}
