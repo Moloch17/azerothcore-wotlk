@@ -628,6 +628,12 @@ void AnimusForge::ProgressMonitor::ReportTraining(ForgeConfig const& config, Sim
             }
             table.AddRow({ "  " + metric, Format::OrDash(evaluated, Format::Metric), note });
         }
+        // The shaping ladder's collapse alarm (a gate-stepped ladder never steps back by itself): its rung while the
+        // gate metric there has stayed under its floor for three evaluations.
+        std::optional<double> const collapsed = progress->Number("ladder_collapsed");
+        if (collapsed && *collapsed >= 0.0)
+            table.AddRow({ "  WARNING ladder", Acore::StringFormat("rung {}", int32(*collapsed)),
+                "collapsed: its gate metric under the floor for 3 evaluations (see the run log)" });
         // The classes the stage never fields, by design (its config's status.excluded): "death_knight=reason;...".
         // Their absence from the measures above is a decision, not a failure.
         for (std::string const& entry : split(progress->Text("status_excluded"), ';'))

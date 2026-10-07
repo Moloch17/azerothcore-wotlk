@@ -165,6 +165,12 @@ class ShapingFade:
         self.step_stderr = 0.0
         self.falls: dict[int, int] = {}  # rung -> times the ladder fell back to it
         self.steps = 0
+        # The collapse alarm (gate-stepped ladders, which never step back): the gate metric at this rung, and the last
+        # one read at the rung below. A warning only; whether to roll back is a person's call (overseer, 2026-10-07).
+        self.rung_gates: list[float] = []
+        self.lower_gate: float | None = None
+        self.collapsed = False
+        self.alarm: str | None = None
 
     def _new_tracker(self) -> ConvergenceTracker:
         c = self._convergence
@@ -177,10 +183,10 @@ class ShapingFade:
 
     @property
     def regresses(self) -> bool:
-        """Whether the ladder steps back on its outcome score. A gate-stepped ladder (require_plateau off) never does: its
-        rungs are difficulty (M2's placements, the drills, the dungeon rungs), where the outcome score falls at a harder
-        rung by design, so a score held against the easier rung's read every step up as a regression -- M2 fell back
-        twice from the doorway and was then held at the hallway for good (2026-10-07)."""
+        """Whether the ladder steps back on its outcome score. A gate-stepped ladder (require_plateau off) never
+        does: its rungs are difficulty (M2's placements, the drills, the dungeon rungs), where the outcome score falls
+        at a harder rung by design, so a score held against the easier rung's read every step up as a regression --
+        M2 fell back twice from the doorway and was then held at the hallway for good (2026-10-07)."""
         return self.require_plateau
 
     @property
@@ -206,6 +212,7 @@ class ShapingFade:
         self.tracker.observe(score, env_steps, stderr)
         self.evals_at_rung += 1
         waited = self.evals_at_rung
+        self._watch_collapse()
 
         # A regression is read off the rung's last `window` scores, once it has that many: one noisy evaluation at
         # regress_z 2 is a ~2% false alarm, which over a rung of dozens of evaluations would hold the ladder short of
@@ -264,6 +271,31 @@ class ShapingFade:
         self.steps += 1
         self.evals_at_rung = 0
         self.tracker = self._new_tracker()
+        self.lower_gate = self.gate_seen
+        self.rung_gates = []
+        self.collapsed = False
+
+    COLLAPSE_EVALS = 3
+    COLLAPSE_FLOOR = 0.1
+    COLLAPSE_SHARE = 0.25
+
+    def _watch_collapse(self) -> None:
+        """A gate-stepped ladder's alarm: its gate metric at this rung under a floor (COLLAPSE_FLOOR, or a quarter of
+        the rung below's last reading) for COLLAPSE_EVALS evaluations running. `alarm` is the line to log the first
+        time; `collapsed` stays while it lasts."""
+        self.alarm = None
+        if self.regresses or self.rung == 0 or self.gate_seen is None:
+            return
+        self.rung_gates.append(self.gate_seen)
+        floor = max(self.COLLAPSE_FLOOR, self.COLLAPSE_SHARE * (self.lower_gate or 0.0))
+        recent = self.rung_gates[-self.COLLAPSE_EVALS:]
+        now = len(recent) == self.COLLAPSE_EVALS and all(value < floor for value in recent)
+        if now and not self.collapsed:
+            self.alarm = (f"WARNING the {self.NAME} rung {self.rung} (x{self.scale:g}) collapsed: {self.gate_metric} "
+                          f"{', '.join(f'{v:.3g}' for v in recent)} over {self.COLLAPSE_EVALS} evaluations, under "
+                          f"{floor:.3g} (the rung below's last {self.lower_gate or 0.0:.3g});"
+                          f" the ladder does not step back by itself -- roll back to a checkpoint or change the rung")
+        self.collapsed = now
 
     def _why(self) -> str:
         if self.gate_metric and self.gate_seen is not None:
@@ -278,12 +310,14 @@ class ShapingFade:
         self.step_stderr = 0.0
 
     def report(self) -> dict:
-        return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps}
+        return {"scale": self.scale, "rung": self.rung, "settled": self.settled, "steps": self.steps,
+                "collapsed": self.collapsed}
 
     def state_dict(self) -> dict:
         return {"rung": self.rung, "tracker": self.tracker.state_dict(), "evals_at_rung": self.evals_at_rung,
                 "step_score": self.step_score, "step_stderr": self.step_stderr,
-                "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps}
+                "falls": {str(rung): count for rung, count in self.falls.items()}, "steps": self.steps,
+                "rung_gates": list(self.rung_gates), "lower_gate": self.lower_gate, "collapsed": self.collapsed}
 
     def load_state_dict(self, state: dict | None) -> None:
         if not state:
@@ -295,6 +329,10 @@ class ShapingFade:
         self.step_stderr = float(state.get("step_stderr", 0.0))
         self.falls = {int(rung): int(count) for rung, count in (state.get("falls") or {}).items()}
         self.steps = int(state.get("steps", 0))
+        self.rung_gates = [float(value) for value in state.get("rung_gates") or []]
+        lower = state.get("lower_gate")
+        self.lower_gate = float(lower) if lower is not None else None
+        self.collapsed = bool(state.get("collapsed", False))
 
 
 class CostLadder(ShapingFade):

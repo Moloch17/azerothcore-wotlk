@@ -215,3 +215,43 @@ def test_without_require_plateau_a_gated_fade_steps_on_the_gate_alone_while_the_
 
     ungated = _fade(require_plateau=False)
     assert ungated.require_plateau   # no gate: plateau as before
+
+
+def test_a_collapsed_rung_raises_the_alarm_once_and_never_steps_back():
+    """A gate-stepped ladder's gate metric under its floor (0.1, or a quarter of the rung below's last reading) for
+    three evaluations running raises one warning line and the `collapsed` flag (forge status); the rung stays."""
+    fade = _fade(gate_metric="found", gate_value=0.8, require_plateau=False)
+    fade.see_gate({"found": 0.95})
+    fade.observe(3.0, 0.1, 0)
+    assert fade.rung == 1 and fade.lower_gate == pytest.approx(0.95)
+    alarms = []
+    for env_steps, found in enumerate([0.3, 0.2, 0.1, 0.15, 0.6], start=1):   # floor 0.2375
+        fade.see_gate({"found": found})
+        fade.observe(-1.0, 0.1, env_steps)
+        alarms.append((fade.alarm is not None, fade.collapsed))
+    assert alarms == [(False, False), (False, False), (False, False), (True, True), (False, False)]
+    assert fade.rung == 1
+    again = _fade(gate_metric="found", gate_value=0.8, require_plateau=False)
+    again.load_state_dict(fade.state_dict())
+    assert again.rung_gates == fade.rung_gates and again.lower_gate == fade.lower_gate
+
+
+def test_no_gate_stepped_stage_can_settle_below_its_top_rung():
+    """Convergence needs the shaping ladder settled; a gate-stepped ladder is settled only at its last rung, whatever
+    falls a checkpoint carries -- so no such stage (M2 on) converges at an easy rung."""
+    from pathlib import Path
+    configs = sorted((Path(__file__).resolve().parents[1] / "configs").glob("*.yaml"))
+    gated = 0
+    for path in configs:
+        config = TrainConfig.load(path)
+        if not (config.fade.enabled and config.fade.rungs and config.fade.gate_metric
+                and not config.fade.require_plateau):
+            continue
+        gated += 1
+        fade = ShapingFade(config)
+        if len(fade.rungs) > 1:
+            fade.falls = {0: 9}
+            assert not fade.settled, path.name
+        fade.rung = len(fade.rungs) - 1
+        assert fade.settled, path.name
+    assert gated >= 10
