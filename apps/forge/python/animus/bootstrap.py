@@ -29,6 +29,9 @@ were trained against the merged stage's own trunk, so they are a warm start; dis
 
 from __future__ import annotations
 
+import contextlib
+import io
+
 import torch
 
 from .stages import Span, block_revisions, block_spans
@@ -643,6 +646,33 @@ def _seed_look(new: dict, old: dict, new_stage: dict | None, old_stage: dict | N
     return "carried"
 
 
+def _layout_segments(old_stage: dict | None, stage: dict | None, layout: str, source: str = "", quiet: bool = False):
+    """Every (old, new) segment a checkpoint of `old_stage` seeds `layout` of `stage` with: the blocks both have
+    (_common_blocks), then what a block that started fresh (a changed revision) or is new shares by name with the
+    checkpoint (_by_name: the compass split's move and compass blocks). The named segments join the blocks', so each
+    column's normaliser mean and variance (actor's and critic's, _seed_norm_blocks) move with its weights: the copied
+    weights read the column at the scale they were trained on. `quiet`: say nothing (seed_merges asks what the base
+    filled)."""
+    sets = (_layout_sets(old_stage, layout), _layout_sets(stage, layout))
+    old_actions, new_actions = _action_names(old_stage, layout), _action_names(stage, layout)
+
+    def work():
+        common = _common_blocks(block_spans(old_stage, layout), block_spans(stage, layout), layout, old_actions,
+                                new_actions, (block_revisions(old_stage, layout), block_revisions(stage, layout)),
+                                source, sets,
+                                (core_action_features(old_stage, layout), core_action_features(stage, layout)))
+        named, carried = _by_name(common, old_stage, stage, layout, old_actions, new_actions)
+        if not quiet:
+            for block, (columns, actions) in carried.items():
+                print(f"  {layout}: block {block}: {columns} columns and {actions} actions carried by name", flush=True)
+        return common + named
+
+    if not quiet:
+        return work()
+    with contextlib.redirect_stdout(io.StringIO()):
+        return work()
+
+
 def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, overlay: bool = False,
                  source: str = "") -> list[str]:
     """Seed a fresh MappoTrainer for `spec` (whose stage.json is `stage`) from an earlier stage's checkpoint; returns
@@ -726,22 +756,7 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
         new_blocks = block_spans(stage, layout.name)
         sets = (_layout_sets(old_stage, layout.name), _layout_sets(stage, layout.name))
         if old_blocks is not None and new_blocks is not None:
-            common = _common_blocks(old_blocks, new_blocks, layout.name, _action_names(old_stage, layout.name),
-                                    _action_names(stage, layout.name),
-                                    (block_revisions(old_stage, layout.name), block_revisions(stage, layout.name)),
-                                    source, sets,
-                                    (core_action_features(old_stage, layout.name),
-                                     core_action_features(stage, layout.name)))
-            # A block that started fresh (a changed revision) or is new keeps whatever columns and actions it shares by
-            # name with the checkpoint: the compass split's move and compass blocks. The named segments join `common`,
-            # so each column's normaliser mean and variance (actor's and critic's, _seed_norm_blocks) move with its
-            # weights: the copied weights read the column at the scale they were trained on.
-            named, carried = _by_name(common, old_stage, stage, layout.name, _action_names(old_stage, layout.name),
-                                      _action_names(stage, layout.name))
-            for block, (columns, actions) in carried.items():
-                print(f"  {layout.name}: block {block}: {columns} columns and {actions} actions carried by name",
-                      flush=True)
-            common = common + named
+            common = _layout_segments(old_stage, stage, layout.name, source)
             for network, remapped in adapters:
                 _seed_adapter_blocks(network, remapped, f"adapters.{index}", common)
             for network, remapped in norms:
@@ -765,31 +780,94 @@ def seed_trainer(trainer, checkpoint: dict, spec, stage: dict | None = None, ove
     return seeded
 
 
+def _merge_by_name(wanted: dict, merge_stage: dict | None, stage: dict | None, layout: str, filled_obs: set,
+                   filled_actions: set):
+    """Segments for the named columns and actions of the `wanted` blocks that no earlier source filled, from the merged
+    checkpoint's columns and actions of the same name: a block it has at another revision (M4's party frames, revision
+    1, into revision 2's, G1) is carried by name where whole-block seeding starts it fresh. Returns (segments, {block:
+    (columns, actions)} carried)."""
+    old_spans = block_spans(merge_stage, layout) or {}
+    new_spans = block_spans(stage, layout) or {}
+    old_columns, new_columns = _column_names(merge_stage, layout), _column_names(stage, layout)
+    old_actions, new_actions = _action_names(merge_stage, layout), _action_names(stage, layout)
+    where = {}
+    for block, names in old_columns.items():
+        first = old_spans[block][0][0]
+        for offset, name in enumerate(names):
+            where.setdefault(name, first + offset)
+
+    segments, carried = [], {}
+    for block in wanted:
+        (first, count), (action_first, action_count) = new_spans[block]
+        columns = actions = 0
+        for offset, name in enumerate(new_columns.get(block, [])[:count]):
+            if first + offset in filled_obs or name not in where:
+                continue
+            segments.append((((where[name], 1), (0, 0)), ((first + offset, 1), (0, 0))))
+            columns += 1
+        if block in old_spans and old_actions and new_actions:
+            old_first, old_count = old_spans[block][1]
+            old_block = {name: old_first + index
+                         for index, name in enumerate(old_actions[old_first : old_first + old_count])}
+            for index, name in enumerate(new_actions[action_first : action_first + action_count]):
+                if action_first + index in filled_actions or name not in old_block:
+                    continue
+                segments.append((((0, 0), (old_block[name], 1)), ((0, 0), (action_first + index, 1))))
+                actions += 1
+        if columns or actions:
+            carried[block] = (columns, actions)
+    return segments, carried
+
+
+def _fill(segments, filled_obs: set, filled_actions: set) -> None:
+    for ((_, count), (_, actions)), ((new_first, _), (new_action, _)) in segments:
+        filled_obs.update(range(new_first, new_first + count))
+        filled_actions.update(range(new_action, new_action + actions))
+
+
 def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dict) -> dict[str, list[str]]:
     """After seed_trainer from `base` (the extended stage's checkpoint), seed each layout's blocks that only the merged
-    stages' checkpoints (`merges`, in order) have; returns {layout: [block, ...]} for what was seeded."""
+    stages' checkpoints (`merges`, in order) have; returns {layout: [block, ...]} for what was seeded.
+
+    A block the merged stage has at the same revision and shape is copied whole. One it has at another revision is
+    carried by name (_merge_by_name): each named column and action of it that neither the base (by name) nor an
+    earlier merge filled, from the merged checkpoint's column or action of the same name -- G1 takes M4's party frames
+    (revision 1) into revision 2's this way, the overseer's second-source ruling. Each carried column's normaliser mean
+    and variance (actor's and critic's) come with it, so its weights read it at the scale they were trained on; the
+    trunk and everything the base seeded stay the base's."""
     actor = {key: tensor.clone() for key, tensor in trainer.actor.state_dict().items()}
     critic = {key: tensor.clone() for key, tensor in trainer.critic.state_dict().items()}
     seeded: dict[str, list[str]] = {}
+    base_stage = base.get("stage")
 
     for index, layout in enumerate(spec.layouts):
         new_blocks = block_spans(stage, layout.name)
         if new_blocks is None:
             continue
-        taken = set(block_spans(base.get("stage"), layout.name) or {})
+        taken = set(block_spans(base_stage, layout.name) or {})
+        # What the base already filled, as seed_trainer filled it (its blocks, and what it carried by name).
+        filled_obs: set[int] = set()
+        filled_actions: set[int] = set()
+        if block_spans(base_stage, layout.name) is not None:
+            _fill(_layout_segments(base_stage, stage, layout.name, quiet=True), filled_obs, filled_actions)
 
         for merge in merges:
             names = [entry["name"] for entry in merge["spec"].get("layouts", ())]
-            old_blocks = block_spans(merge.get("stage"), layout.name)
+            merge_stage = merge.get("stage")
+            old_blocks = block_spans(merge_stage, layout.name)
             if layout.name not in names or old_blocks is None:
                 continue
             old_index = names.index(layout.name)
             wanted = {block: spans for block, spans in new_blocks.items() if block not in taken}
-            common = _common_blocks(old_blocks, wanted, layout.name, _action_names(merge.get("stage"), layout.name),
+            common = _common_blocks(old_blocks, wanted, layout.name, _action_names(merge_stage, layout.name),
                                     _action_names(stage, layout.name),
-                                    (block_revisions(merge.get("stage"), layout.name),
+                                    (block_revisions(merge_stage, layout.name),
                                      block_revisions(stage, layout.name)))
-            if not common:
+            _fill(common, filled_obs, filled_actions)
+            named, carried = _merge_by_name(wanted, merge_stage, stage, layout.name, filled_obs, filled_actions)
+            _fill(named, filled_obs, filled_actions)
+            segments = common + named
+            if not segments:
                 continue
 
             old = merge["trainer"]
@@ -798,19 +876,30 @@ def seed_merges(trainer, merges: list[dict], spec, stage: dict | None, base: dic
                 if new_w.shape[0] != old_w.shape[0]:
                     raise ValueError(f"adapters.{index}: width {old_w.shape[0]} in a merged checkpoint, "
                                      f"{new_w.shape[0]} now")
-                for ((old_first, count), _), ((new_first, _), _) in common:
+                for ((old_first, count), _), ((new_first, _), _) in segments:
                     new_w[:, new_first : new_first + count] = old_w[:, old_first : old_first + count]
+                # The carried columns' observation statistics, with their weights.
+                if f"norms.{index}.mean" in network and f"norms.{old_index}.mean" in old_network:
+                    for name in ("mean", "var"):
+                        new_stat, old_stat = network[f"norms.{index}.{name}"], old_network[f"norms.{old_index}.{name}"]
+                        for ((old_first, count), _), ((new_first, _), _) in segments:
+                            new_stat[new_first : new_first + count] = old_stat[old_first : old_first + count]
 
             new_head, old_head = actor[f"heads.{index}.weight"], old["actor"][f"heads.{old_index}.weight"]
             new_bias, old_bias = actor[f"heads.{index}.bias"], old["actor"][f"heads.{old_index}.bias"]
             if new_head.shape[1] != old_head.shape[1]:
                 raise ValueError(f"heads.{index}: {tuple(old_head.shape)} in a merged checkpoint does not fit "
                                  f"{tuple(new_head.shape)}")
-            for (_, (old_first, count)), (_, (new_first, _)) in common:
+            for (_, (old_first, count)), (_, (new_first, _)) in segments:
                 new_head[new_first : new_first + count] = old_head[old_first : old_first + count]
                 new_bias[new_first : new_first + count] = old_bias[old_first : old_first + count]
 
-            blocks = [block for block in wanted if block in old_blocks]
+            whole = {block for block, ((first, _), _) in wanted.items()
+                     for (_, ((new_first, _), _)) in common if new_first == first}
+            for block, (columns, actions) in carried.items():
+                print(f"  {layout.name}: block {block}: {columns} columns and {actions} actions carried by name from "
+                      f"a merged stage", flush=True)
+            blocks = [block for block in wanted if block in whole or block in carried]
             taken.update(blocks)
             seeded.setdefault(layout.name, []).extend(blocks)
 
