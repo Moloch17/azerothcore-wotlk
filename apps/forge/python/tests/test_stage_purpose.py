@@ -28,6 +28,9 @@ PURPOSE = {
     # M2 seek (perception-goals P1, 2026-10-06): find one hidden object by sight and stop within 3 yd of it -- Arrive is
     # paid only on that stop, and StepCost is the time the search took.
     "move2_seek": ("Arrive", "StepCost"),
+    # M3 interact (dungeon-curriculum M3, 2026-10-06): the right object reached or its lock given the key (Arrive), the
+    # switch rung's door opened by the seat's own lever press (DoorOpened), a decoy taken (WrongObject), and the time.
+    "move3_interact": ("Arrive", "DoorOpened", "WrongObject", "StepCost"),
 }
 
 # Stage -> the terms it pays that must stay Shaping (they fade): a nudge mistaken for the lesson is the failure this
@@ -38,6 +41,8 @@ SHAPING = {
     # M2's training-only aids (the plan's "fading bonuses for the first sighting and for new ground", and REDESIGN
     # §2's "looked into a room").
     "move2_seek": ("Sighting", "NewGround", "RoomSeen"),
+    # M3's one aid: the first frame listing the named object.
+    "move3_interact": ("Sighting",),
 }
 
 # Opposition -> the encounter source that pays it.
@@ -46,6 +51,7 @@ ENCOUNTER = {
     "Follow": "Encounters/FollowEncounter.cpp",
     "Seek": "Encounters/SeekEncounter.cpp",
     "Sight": "Encounters/SightEncounter.cpp",
+    "Interact": "Encounters/InteractEncounter.cpp",
     "Travel": "Encounters/TravelEncounter.cpp",
     "Creature": "Encounters/CreatureEncounter.cpp",
     "Dummy": "Encounters/DummyEncounter.cpp",

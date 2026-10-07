@@ -524,7 +524,7 @@ MAP_ZEROED = ("vision.map.join.", "vision.map.vin.out.")
 #: queries over it (SightPointers): seeded on their own, so a camera carries from a checkpoint without a sight block,
 #: and the list starts fresh with its pool zeroed -- the seeded policy acts as it did.
 SIGHT = "vision.sight."
-SIGHT_ZEROED = ("vision.sight.pool.",)
+SIGHT_ZEROED = ("vision.sight.pool.", "vision.sight.named_pool.")
 SIGHT_POINTERS = "sight_pointers."
 
 

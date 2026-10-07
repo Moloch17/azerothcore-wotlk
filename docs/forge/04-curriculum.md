@@ -19,10 +19,21 @@
 > Evaluations play 78 episodes at the training rung; the held-out `sweep` arena is the full 195-pair sweep at the top
 > rung, for the stage's end.
 >
+> `move3_interact` (dungeon-curriculum M3, 2026-10-06) extends it: an empty Deadmines (map 36) at its band, levels
+> 17-20, and the sight block (`BlockId::Sight`: the seen and remembered entity list and its presses, sent as a client
+> sends them; no looting). The goal names what -- the sight block's named row, a kind's class and template entry and
+> the task -- never where: no compass, no objective flag. A ladder on the fade's rungs (InteractEncounter,
+> `Opposition::Interact`, `ArenaDefinition::Sites`): the named object among two to four decoys of other kinds, all in
+> sight (distinguish); behind a shut door whose real lever, on the seat's side, opens it (switch: the Factory, Foundry
+> and Mast Room doors); the cannon, which only the Defias Gunpowder the seat carries from the start opens (key). Paid as
+> Arrive and DoorOpened (Outcome), WrongObject (Cost), Sighting (Shaping). Evaluations play 64 episodes at the training
+> rung; the held-out `sweep` plays every rung in turn.
+>
 > | Stage | Budget | Eval every | Episodes |
 > |---|---|---|---|
 > | `move1_controls` | 150M | 5M | 512 |
 > | `move2_seek` | 250M | 10M | 78 |
+> | `move3_interact` | 200M | 10M | 64 |
 >
 > **The first movement curriculum** (`move1_controls` ... `move7_follow`: open ground, broken ground, vertical,
 > water, routes, mounted, follow) was archived the same day: definitions on the git tag `curriculum-movement-v1`,

@@ -1,0 +1,94 @@
+# M3 -- interact (dungeon-curriculum M3). An empty Deadmines at its band (levels 17-20, every race and class): tell
+# objects apart, open a door with its lever, use the item a lock needs -- all through the sight block's entity presses
+# (I1: select, interact, use an item on, as a client sends them), with entity memory (I2). No looting.
+#
+# The goal names WHAT (the sight block's named row: the kind's class and template entry, and the task), never WHERE:
+# no compass, no objective flag. The ladder (InteractDraw::Rung, on this fade's rungs):
+#   1.0  distinguish -- the named object among 2-4 decoys of other kinds, all in sight: reach the right one;
+#   0.5  switch      -- the named object behind a shut door; the real lever on the seat's side opens it;
+#   0.0  key         -- the cannon, named; only the Defias Gunpowder the seat carries from the start opens it.
+# Each rung keeps a tenth of the one below; episodes of 60, 120 and 90 s.
+#
+# Paid: Arrive (Outcome) for the right object reached or its lock given the key; DoorOpened (Outcome) for the door
+# opened by the seat's own lever press; WrongObject (Cost) for a decoy taken; a refused press (a locked door pressed,
+# the key on the wrong thing, out of reach) the sight block's act_refused price; Stuck, Wall and the step cost at a
+# fixed price from the first step; Sighting (Shaping, faded) the first frame listing the named object.
+#
+# Seeds from move2_seek (stage.json's seed chain): the move block, the camera and the mental map carry by name; the
+# sight block (its list, its named row and its pointer heads) starts fresh with its pools at zero, so the seeded policy
+# moves as M2's did until the presses are learned. M2's hyperparameters otherwise; what differs is below.
+extends: move2_seek.yaml
+run_name: move3_interact
+
+# The latest M2 checkpoint, by name.
+seed_from: latest
+
+# A ceiling, not a target: convergence ends the stage.
+total_env_steps: 200000000
+
+# An evaluation plays the training rung (each seed its own site, spawn, spots and kinds: InteractDraw::EvaluationPick,
+# so every checkpoint meets the same layouts); the held-out "sweep" plays every rung in turn (seed mod 3), at the
+# stage's end. Every 10M steps, as M2.
+eval:
+  every_env_steps: 10000000
+  episodes: 64
+  heldout:
+    sweep: 60
+  heldout_every: 1000
+  heldout_on_best: false
+  report: [right_object, right_distinguish, right_switch, right_key, interact_rung, rung_carried, right_seconds,
+           sighted, sight_seconds, sight_to_arrival, objective_visible, wrong_objects, wrong_presses, wrong_stops,
+           decoys, lever_pressed, door_opened, door_by_lever, key_used, act_refused_locked, act_refused_reach,
+           act_refused_gone, act_refused_kind, act_refused_no_item, act_refused_loot, object_fallback,
+           distance_travelled, course_kinks, wall_seconds, stuck_seconds, died, timed_out, reward_arrive,
+           reward_door_opened, reward_wrong_object, reward_step_cost, reward_sighting, reward_stuck, reward_wall,
+           reward_aimless]
+
+# forge status for this stage: the right object, by rung; the door opened by its lever and the key used; the wrong
+# objects and the refused presses; how soon it saw the named object and got there after. The targets are a readout,
+# never a gate: the right object at 0.9 is the plan's development criterion for M3.
+status:
+  headline: [right_object, right_distinguish, right_switch, right_key, interact_rung, door_by_lever, key_used,
+             wrong_objects, lever_pressed, act_refused_locked, right_seconds, sight_seconds, sight_to_arrival,
+             wall_seconds, timed_out, died]
+  targets:
+    # M2's targets are not M3's measures (null drops an inherited key).
+    found: null
+    found_deepest: null
+    find_seconds: null
+    rooms_before_found: null
+    revisit_rate: null
+    right_object: ">= 0.9"
+    right_distinguish: ">= 0.9"
+    right_switch: ">= 0.9"
+    right_key: ">= 0.9"
+    wrong_objects: "<= 0.1"
+    sight_seconds: "<= 30"
+    sight_to_arrival: "<= 15"
+    wall_seconds: "<= 2"
+    timed_out: "<= 0.05"
+    died: "<= 0.01"
+
+convergence:
+  # Converged on the stage's own measure, at the top of its ladder (at_top_rung: the ladder at the key rung).
+  measure: right_object
+
+# The ladder and the aid (Sighting) step together on the fade's gate alone (the dungeon plan's rule: every ladder steps
+# at once on its gate, no plateau wait): the rung moves on once its own right-object rate (the evaluation plays the
+# training rung) reaches 80%, with the fade's window and regress rules. A curriculum ladder, not a pass gate.
+fade:
+  enabled: true
+  rungs: [1.0, 0.5, 0.0]
+  gate_metric: right_object
+  gate_value: 0.8
+  require_plateau: false
+
+# No cost ladder: every price is paid in full from the first step (the dungeon plan's rule; M1's lesson). Stuck and
+# Wall are the encounter's own fixed prices; the refused presses, jitter, effort and repeats are paid at x1.
+costs:
+  enabled: false
+  gate_metric: right_object
+  gate_value: 0.8
+
+layout_sampling:
+  metric: right_object

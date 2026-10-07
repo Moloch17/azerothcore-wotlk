@@ -137,9 +137,10 @@ void Animus::Curriculum::InteractEncounter::ResetObject(GameObject* object)
 void Animus::Curriculum::InteractEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
     // `right_object` is the stage's measure: the named object reached, or its lock given the key, before the clock
-    // ran out. The convergence and the fade (whose rungs are the ladder's) are gated on it (configs/move3_interact.yaml).
+    // ran out. The convergence and the fade (whose rungs are the ladder's) are gated on it
+    // (configs/move3_interact.yaml).
     table.Add("right_object", [this](Env const& env, uint32) { return _envs[env.Index].Found ? 1.0f : 0.0f; });
-    table.Add("find_seconds", [this](Env const& env, uint32)
+    table.Add("right_seconds", [this](Env const& env, uint32)
     {
         EnvInteract const& state = _envs[env.Index];
         return state.Found ? float(state.FoundMs) / 1000.0f : 0.0f;

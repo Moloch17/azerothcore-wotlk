@@ -39,6 +39,12 @@ PER_EVENT = {
     "time_ratio_sight": "markers_sight",
     "arrive_seconds_corner": "markers_corner",
     "time_ratio_corner": "markers_corner",
+    # M3 interact (InteractEncounter): the right object's clock over the episodes that got it, and the right object
+    # by rung over the episodes that played each (sight_seconds and sight_to_arrival read as the seek stage's).
+    "right_seconds": "right_object",
+    "right_distinguish": "rung_distinguish",
+    "right_switch": "rung_switch",
+    "right_key": "rung_key",
 }
 
 
