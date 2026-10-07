@@ -79,7 +79,7 @@ def test_the_stage_config_reads_its_own_measures():
     assert config.convergence.measure == "found" and config.fade.gate_metric == "found"
     assert config.costs.gate_metric == "found" and config.layout_sampling.metric == "found"
     # M1's look entropy, a longer horizon for a 300 s search, and the whole rollout as the GRU's BPTT.
-    assert config.mappo.look_entropy_coef == pytest.approx(0.001)
+    assert config.mappo.look_entropy_coef == pytest.approx(0.004)
     assert config.mappo.gamma == pytest.approx(0.998)
     assert config.mappo.chunk_length >= config.rollout_length
     assert config.mappo.recurrent_size > 0
