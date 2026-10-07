@@ -16,6 +16,12 @@
  */
 
 #include "Block.h"
+#include "CoreBlock.h"
+#include "DuelBlock.h"
+#include "PackBlock.h"
+#include "PetBlock.h"
+#include "StageScenario.h"
+#include "TalentBuilder.h"
 #include "ClassProfile.h"
 #include "Layout.h"
 #include "StageDefinition.h"
@@ -83,9 +89,70 @@ namespace
         return buffer;
     }
 
+    /// The sizes every layout, the critic's state and the wire are built from: the slots, the goal space, the state
+    /// widths (the critic's input is STATE_GLOBAL_COUNT + MAX_SEATS * STATE_SEAT_FEATURES + PACK_SLOTS *
+    /// STATE_ENEMY_FEATURES wide), and the constants of the class-dependent blocks.
+    std::string Constants()
+    {
+        using Ss = Cu::StageScenario;
+        std::string out = "constants";
+        auto const add = [&out](char const* name, uint64_t value)
+        {
+            out += std::string(" ") + name + "=" + std::to_string(value);
+        };
+        add("MAX_ARENAS", Cu::MAX_ARENAS);
+        add("RAID_GROUPS", Cu::RAID_GROUPS);
+        add("GROUP_SEATS", Cu::GROUP_SEATS);
+        add("MAX_SEATS", Cu::MAX_SEATS);
+        add("TEAM_SEATS", Cu::TEAM_SEATS);
+        add("TEAM_COUNT", Cu::TEAM_COUNT);
+        add("GROUP_MEMBERS", Cu::GROUP_MEMBERS);
+        add("SPOTLIGHT_SLOTS", Cu::SPOTLIGHT_SLOTS);
+        add("PARTY_MEMBERS", Cu::PARTY_MEMBERS);
+        add("PACK_SLOTS", Cu::PACK_SLOTS);
+        add("NAMED_ENEMY_SLOTS", Cu::NAMED_ENEMY_SLOTS);
+        add("CROWD_SLOTS", Cu::CROWD_SLOTS);
+        add("SIGHT_SLOTS", Cu::SIGHT_SLOTS);
+        add("TRAIL_SAMPLES", Cu::TRAIL_SAMPLES);
+        add("STABLE_SLOTS", Cu::STABLE_SLOTS);
+        add("FRIEND_SLOTS", Cu::FRIEND_SLOTS);
+        add("RANK_TIERS", Cu::RANK_TIERS);
+        add("GOAL_COUNT", Cu::GOAL_COUNT);
+        add("GOAL_TARGETS", Cu::GOAL_TARGETS);
+        add("GOAL_JOINT_COUNT", Cu::GOAL_JOINT_COUNT);
+        add("BLOCK_COUNT", Cu::BLOCK_COUNT);
+        add("STATE_GLOBAL_COUNT", Ss::STATE_GLOBAL_COUNT);
+        add("STATE_SEAT_FEATURES", Ss::STATE_SEAT_FEATURES);
+        add("STATE_ENEMY_FEATURES", Ss::STATE_ENEMY_FEATURES);
+        add("STATE_DIM", Ss::STATE_GLOBAL_COUNT + Cu::MAX_SEATS * Ss::STATE_SEAT_FEATURES
+            + Cu::PACK_SLOTS * Ss::STATE_ENEMY_FEATURES);
+        add("core.OBS_GLOBAL_COUNT", Cu::CoreBlock::OBS_GLOBAL_COUNT);
+        add("core.ACTION_FEATURES", Cu::CoreBlock::ACTION_FEATURES);
+        add("core.ACTION_RANK_TIERS", Cu::CoreBlock::ACTION_RANK_TIERS);
+        add("TREE_COUNT", Cu::TalentBuilder::TREE_COUNT);
+        add("duel.OBS_COUNT_WITHOUT_STABLE", Cu::DuelBlock::OBS_COUNT_WITHOUT_STABLE);
+        add("duel.ACTION_COUNT_WITHOUT_STABLE", Cu::DuelBlock::ACTION_COUNT_WITHOUT_STABLE);
+        add("duel.STABLE_FEATURES", Cu::DuelBlock::STABLE_FEATURES);
+        add("pet.OBS_SLOT_FIRST", Cu::PetBlock::OBS_SLOT_FIRST);
+        add("pet.ABILITY_SLOTS", Cu::PetBlock::ABILITY_SLOTS);
+        add("pet.SLOT_FEATURES", Cu::PetBlock::SLOT_FEATURES);
+        add("pet.ACTION_COUNT", Cu::PetBlock::ACTION_COUNT);
+        // The enemies set DescribeSeatSets writes for a layout with the pack block (the only set a live stage has).
+        add("pack.OBS_GLOBAL_COUNT", Cu::PackBlock::OBS_GLOBAL_COUNT);
+        add("pack.SLOT_FEATURES", Cu::PackBlock::SLOT_FEATURES);
+        add("pack.SLOT_PRESENT", Cu::PackBlock::SLOT_PRESENT);
+        add("pack.ACTION_SLOT_FIRST", Cu::PackBlock::ACTION_SLOT_FIRST);
+        out += " duel.actions=";
+        Cu::Layout none;
+        for (uint32_t local = 0; local < Cu::DuelBlock::ACTION_COUNT_WITHOUT_STABLE; ++local)
+            out += Cu::GetBlock(Cu::BlockId::Duel).ActionName(none, local) + ',';
+        out += '\n';
+        return out;
+    }
+
     std::string Describe()
     {
-        std::string out;
+        std::string out = Constants();
         out += "classes";
         for (Cu::ClassProfile const& profile : Cu::ClassProfiles())
         {
