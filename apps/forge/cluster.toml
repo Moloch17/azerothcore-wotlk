@@ -1,0 +1,75 @@
+# The training cluster, as forgectl reads it (docs/forge/cluster.md explains each machine).
+# Every machine is reached over ssh with keys (never passwords); `path` is its checkout of this repository, where
+# a leading ~/ means the login user's home. Add a worker by adding a [[machine]] block with in_cluster = true.
+
+[cluster]
+host = "sarah"          # the machine that holds the run and decides (AnimusForge.Cluster.Role = "host")
+lan_remote = "lan"      # the remote the workers pull from (a bare repository on the dev machine)
+branch = "forge"        # the branch that is deployed
+control_port = 7700     # worker -> host control; also the port in each worker's Cluster.Host
+data_port = 7701
+weights_port = 7702     # weight exchange between learners
+
+[containers]
+worldserver = "ac-animus-forge-worldserver"
+
+[paths]                 # relative to each machine's checkout
+conf = "env/dist/etc/modules/mod_animus_forge.conf"
+runs = "var/animus-forge/shared/runs"
+learner_log = "env/dist/logs/animus-learner.log"
+server_log = "env/dist/logs/Server.log"
+errors_log = "env/dist/logs/Errors.log"
+
+[dev]                   # the container `forgectl test` builds and tests in
+container = "claude-syntax"
+python = "/azerothcore/apps/forge/python/.venv/bin/python"
+build_dir_name = "forgectl-build"
+
+[[machine]]
+name = "dev"
+user = "moloch"
+address = "192.168.0.69"
+role = "dev"
+path = "~/mlac/azerothcore"
+in_cluster = false
+local = true            # forgectl is run here: no ssh
+
+[[machine]]
+name = "sarah"
+user = "sarah"
+address = "192.168.0.68"
+role = "host"
+path = "~/animus-forge"
+in_cluster = true
+
+[[machine]]
+name = "spencer"
+user = "spencer"
+address = "192.168.0.66"
+role = "worker"
+path = "~/animus-forge"
+in_cluster = true
+
+[[machine]]
+name = "thomas"
+user = "thomas"
+address = "192.168.0.67"
+role = "worker"
+path = "~/animus-forge"
+in_cluster = true
+
+[[machine]]
+name = "moloch"         # the .117 machine
+user = "moloch"
+address = "192.168.0.117"
+role = "worker"
+path = "~/animus-forge"
+in_cluster = true
+
+[[machine]]
+name = "eli"            # out of the cluster until the owner says otherwise (4 cores, the slowest)
+user = "eli"
+address = "192.168.0.65"
+role = "worker"
+path = "~/animus-forge"
+in_cluster = false
