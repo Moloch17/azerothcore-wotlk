@@ -44,9 +44,9 @@ AnimusForge.Curriculum.Travel.Gamma=7
   AnimusForge.Human.Trips   =   8
 # AnimusForge.Curriculum.Pulls.Commented = 9
 AnimusForge.Stage.move2_seek.Envs = 16
-AnimusForge.Stage.stage18_life.Envs = 16
+AnimusForge.Stage.gone_stage_a.Envs = 16
 AnimusForge.Curriculum.Arena.move2_seek.rooms.Weight = 3
-AnimusForge.Curriculum.Arena.stage9_deadmines.chain.Weight = 3
+AnimusForge.Curriculum.Arena.gone_stage_b.chain.Weight = 3
 AnimusForge.Curriculum.Arena.dungeon2_ragefire.dungeon.WeightFinal = 2
 Other.Setting = 1
 """
@@ -115,8 +115,8 @@ def test_unknown_keys_are_the_ones_the_template_and_its_families_do_not_name():
         "AnimusForge.Curriculum.Pulls.Beta": "not in worldserver.conf.dist",
         "AnimusForge.Curriculum.Travel.Gamma": "not in worldserver.conf.dist",
         "AnimusForge.Human.Trips": "not in worldserver.conf.dist",
-        "AnimusForge.Stage.stage18_life.Envs": "stage stage18_life no longer exists",
-        "AnimusForge.Curriculum.Arena.stage9_deadmines.chain.Weight": "stage stage9_deadmines no longer exists"}
+        "AnimusForge.Stage.gone_stage_a.Envs": "stage gone_stage_a no longer exists",
+        "AnimusForge.Curriculum.Arena.gone_stage_b.chain.Weight": "stage gone_stage_b no longer exists"}
     # Line numbers point at the file.
     assert [CONF.splitlines()[number - 1].split("=")[0].strip() for number, _, _ in found][0] == \
         "AnimusForge.Curriculum.Pulls.Beta"
@@ -189,7 +189,7 @@ def test_prune_comments_the_lines_out_after_a_backup_and_deletes_nothing(tmp_pat
     assert len(pruned.splitlines()) == len(CONF.splitlines())
     assert re.search(r"^#pruned \d{8}-\d{6} \(not in worldserver.conf.dist\): AnimusForge.Curriculum.Pulls.Beta = 6$",
                      pruned, re.M)
-    assert re.search(r"^#pruned .*\(stage stage18_life no longer exists\): AnimusForge.Stage.stage18_life.Envs",
+    assert re.search(r"^#pruned .*\(stage gone_stage_a no longer exists\): AnimusForge.Stage.gone_stage_a.Envs",
                      pruned, re.M)
     # What the new build reads stays, comments and other apps' keys stay, and a second pass finds nothing.
     for kept in ("AnimusForge.Enable = 1", "AnimusForge.Curriculum.Pulls.Alpha = 5", "AnimusForge.Stage.move2_seek.Envs = 16",

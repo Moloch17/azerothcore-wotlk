@@ -104,7 +104,7 @@ def test_per_event_means_name_columns_some_stage_reports():
 def test_the_extraction_covers_the_live_m2_stage_json():
     """The extractor against the one real stage.json it has been checked against: the 235 episode_info names the
     deployed build (64b7c7dc5) wrote for move2_seek. Everything the cleanup did not delete must be extracted."""
-    recorded = json.loads((FIXTURES / "move2_seek_episode_info.json").read_text())
+    recorded = json.loads((FIXTURES / "recorded_m2_episode_info.json").read_text())
     columns = EXTRACTOR.columns(recorded["stage"])
     terms = EXTRACTOR.reward_terms()
     # Deleted with the scripted opponents (91811bba6): the seat of the scripted opponent.
