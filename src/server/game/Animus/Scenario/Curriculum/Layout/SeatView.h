@@ -437,10 +437,13 @@ namespace Animus::Curriculum
         std::array<Teammate, PARTY_MEMBERS> Teammates{};
         Player* Tank = nullptr;
 
-        /// **What a player's UI shows of the rest of its party** (the party frames block; dungeon-curriculum I5): the
-        /// party frames -- always: health, power, alive, in combat, which one leads -- and the minimap's party dots,
-        /// only for members within its radius, as a position relative to the seat. The leader first, then the other
-        /// members in seat order. Filled by the encounter that has a party (PartyFollowEncounter::View).
+        /// **What a player's UI shows of the rest of its party** (the party frames block, revision 2; dungeon-
+        /// curriculum I5 and G1): the party frames -- always: health, power, alive, in combat, which one leads, the
+        /// debuffs on it, whether something attacks it, whom it has targeted -- and the minimap's party dots, only for
+        /// members within its radius, as a position relative to the seat. The leader first, then the other members in
+        /// group (or seat) order. Filled from the seat's group (PartyFramesBlock::FillFromGroup, StageScenario::
+        /// ViewSeat) or by the encounter whose party has no core group (PartyFollowEncounter::View); each frame by
+        /// PartyFramesBlock::FillFrame, the one place a member's frame is read.
         struct PartyFrame
         {
             bool Present = false;
@@ -452,6 +455,18 @@ namespace Animus::Curriculum
             bool DotShown = false;                  // on the minimap: within its radius
             float DotRight = 0.0f;                  // yards, in the seat's facing frame (heading-up minimap)
             float DotForward = 0.0f;
+            bool ManaUser = false;                  // its power is mana
+            bool InRange = false;                   // within PartyFramesBlock::FRAME_RANGE (the client fades it past)
+            uint32 Debuffs = 0;                     // harmful auras on it, as its frame shows them
+            uint32 Dispellable = 0;                 // ... of a kind a dispel removes
+            bool Aggro = false;                     // something is attacking it (the frame's red border)
+            bool Selected = false;                  // the seat's selection
+            bool Focused = false;                   // the seat's focus
+            bool HasTarget = false;                 // it has a selection the seat's client also has
+            bool TargetHostile = false;             // ... hostile to the seat
+            bool TargetMine = false;                // ... the seat's own selection
+            bool TargetInView = false;              // ... in the seat's camera's frame now
+            ObjectGuid Guid;                        // the member, for a press on its frame
         };
         std::array<PartyFrame, GROUP_MEMBERS> Frames{};
         float MinimapYards = 60.0f;

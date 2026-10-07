@@ -62,6 +62,7 @@
 #include "MapMgr.h"
 #include "MapDefines.h"
 #include "Opponents.h"
+#include "PartyFramesBlock.h"
 #include "PetBlock.h"
 #include "Player.h"
 #include "Random.h"
@@ -3717,6 +3718,14 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.TargetSlot = seat.TargetSlot;
     view.FriendSlot = seat.FriendSlot;
     view.RankTier = seat.RankTier;
+
+    // The party frames (the party frames block, revision 2: the one source of party-member state): from the seat's
+    // core group, where it has one; an encounter whose party has none (the party follow) fills them in its View.
+    if (_stage.Has(BlockId::PartyFrames))
+    {
+        view.MinimapYards = _tuning.PartyFollow.MinimapYards;
+        PartyFramesBlock::FillFromGroup(view);
+    }
 
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->View(env, seatIndex, view);

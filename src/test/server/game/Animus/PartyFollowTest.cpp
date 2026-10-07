@@ -17,6 +17,7 @@
  */
 
 #include "Block.h"
+#include "CombatBlock.h"
 #include "CurriculumTuning.h"
 #include "EntranceRespawn.h"
 #include "Encounters.h"
@@ -30,7 +31,9 @@
 #include "gtest/gtest.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
+#include <boost/json/value_to.hpp>
 #include <cmath>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -240,7 +243,7 @@ TEST(PartyFramesTest, TheBlockReadsTheFramesAlwaysAndTheDotsWithinTheRadius)
     Cu::Layout layout;
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::PartyFrames), "party_frames");
     EXPECT_EQ(block.Size(layout).Obs, Cu::GROUP_MEMBERS * uint32(PartyFramesBlock::FRAME_FEATURES));
-    EXPECT_EQ(block.Size(layout).Actions, 0u);
+    EXPECT_EQ(block.Size(layout).Actions, uint32(PartyFramesBlock::ACTION_COUNT));
     boost::json::array names;
     block.DescribeColumns(layout, names);
     ASSERT_EQ(names.size(), Cu::GROUP_MEMBERS * uint32(PartyFramesBlock::FRAME_FEATURES));
@@ -270,11 +273,17 @@ TEST(PartyFramesTest, TheBlockReadsTheFramesAlwaysAndTheDotsWithinTheRadius)
     view.Frames[2].Present = true;
 
     std::vector<float> obs(block.Size(layout).Obs, -1.0f);
-    block.Observe(view, obs.data(), nullptr);
+    std::vector<uint8> mask(block.Size(layout).Actions, 9);
+    block.Observe(view, obs.data(), mask.data());
     auto const at = [&](uint32 member, uint32 feature)
     {
         return obs[member * PartyFramesBlock::FRAME_FEATURES + feature];
     };
+    // A frame that is there can be clicked (select, focus, assist); an empty one cannot.
+    for (uint32 member = 0; member < Cu::GROUP_MEMBERS; ++member)
+        for (uint32 first : { uint32(PartyFramesBlock::ACTION_SELECT_FIRST),
+            uint32(PartyFramesBlock::ACTION_FOCUS_FIRST), uint32(PartyFramesBlock::ACTION_ASSIST_FIRST) })
+            EXPECT_EQ(mask[first + member], member < 3 ? 1 : 0) << member;
     EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_PRESENT), 1.0f);
     EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_LEADER), 1.0f);
     EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_POWER), 0.5f);
@@ -292,6 +301,122 @@ TEST(PartyFramesTest, TheBlockReadsTheFramesAlwaysAndTheDotsWithinTheRadius)
     EXPECT_FLOAT_EQ(at(2, PartyFramesBlock::FRAME_ALIVE), 0.0f);
     for (uint32 feature = 0; feature < PartyFramesBlock::FRAME_FEATURES; ++feature)
         EXPECT_FLOAT_EQ(at(3, feature), 0.0f);
+}
+
+// **PartyFrames revision 2** (G1, 2026-10-07: the one source of party-member state): four member frames of 21 named
+// columns each -- revision 1's ten first and by their old names (member{i}_*, so M4's columns carry by name), then the
+// combat block's member features, then the member's target -- and three presses a frame (select, focus, assist).
+TEST(PartyFramesTest, RevisionTwoLayout)
+{
+    PartyFramesBlock const& block = static_cast<PartyFramesBlock const&>(Cu::GetBlock(Cu::BlockId::PartyFrames));
+    Cu::Layout layout;
+    EXPECT_EQ(block.Revision(), 2u);
+    EXPECT_EQ(uint32(PartyFramesBlock::FRAME_FEATURES), 21u);
+    EXPECT_EQ(block.Size(layout).Obs, 4u * 21u);
+    EXPECT_EQ(block.Size(layout).Actions, 12u);
+
+    boost::json::array names;
+    block.DescribeColumns(layout, names);
+    ASSERT_EQ(names.size(), 84u);
+    std::vector<std::string> const first = { "member0_present", "member0_alive", "member0_leader", "member0_in_combat",
+        "member0_health", "member0_power", "member0_dot", "member0_dot_right", "member0_dot_forward",
+        "member0_dot_distance", "member0_mana_user", "member0_in_range", "member0_debuffs", "member0_dispellable",
+        "member0_aggro", "member0_selected", "member0_focused", "member0_target", "member0_target_hostile",
+        "member0_target_mine", "member0_target_in_view" };
+    for (std::size_t i = 0; i < first.size(); ++i)
+        EXPECT_EQ(std::string(names[i].as_string()), first[i]) << i;
+    EXPECT_EQ(std::string(names[83].as_string()), "member3_target_in_view");
+    // Unique, so seeding by name finds each one once.
+    std::set<std::string> unique;
+    for (boost::json::value const& name : names)
+        unique.insert(std::string(name.as_string()));
+    EXPECT_EQ(unique.size(), names.size());
+
+    EXPECT_EQ(block.ActionName(layout, PartyFramesBlock::ACTION_SELECT_FIRST), "select_member0");
+    EXPECT_EQ(block.ActionName(layout, PartyFramesBlock::ACTION_FOCUS_FIRST + 1), "focus_member1");
+    EXPECT_EQ(block.ActionName(layout, PartyFramesBlock::ACTION_ASSIST_FIRST + 3), "assist_member3");
+    EXPECT_EQ(block.ActionName(layout, PartyFramesBlock::ACTION_COUNT), "");
+
+    boost::json::object manifest;
+    block.DescribeManifest(layout, manifest);
+    EXPECT_EQ(boost::json::value_to<uint64>(manifest.at("members")), uint64(Cu::GROUP_MEMBERS));
+    EXPECT_EQ(boost::json::value_to<uint64>(manifest.at("member_features")), 21u);
+}
+
+// The member's combat columns and its target, as a frame carries them; a target the client does not have reads as none.
+TEST(PartyFramesTest, TheCombatColumnsAndTheMembersTarget)
+{
+    PartyFramesBlock const& block = static_cast<PartyFramesBlock const&>(Cu::GetBlock(Cu::BlockId::PartyFrames));
+    Cu::Layout layout;
+    Cu::SeatView view;
+    Cu::SeatView::PartyFrame& tank = view.Frames[0];
+    tank.Present = true;
+    tank.Alive = true;
+    tank.Leader = true;
+    tank.ManaUser = false;
+    tank.InRange = true;
+    tank.Debuffs = 7;               // capped at five shown
+    tank.Dispellable = 2;
+    tank.Aggro = true;
+    tank.Selected = true;
+    tank.HasTarget = true;
+    tank.TargetHostile = true;
+    tank.TargetMine = false;
+    tank.TargetInView = true;
+    Cu::SeatView::PartyFrame& healer = view.Frames[1];
+    healer.Present = true;
+    healer.Alive = true;
+    healer.ManaUser = true;
+    healer.Focused = true;
+    healer.TargetHostile = true;    // no target: never read
+    healer.TargetMine = true;
+
+    std::vector<float> obs(block.Size(layout).Obs, -1.0f);
+    block.Observe(view, obs.data(), nullptr);
+    auto const at = [&](uint32 member, uint32 feature)
+    {
+        return obs[member * PartyFramesBlock::FRAME_FEATURES + feature];
+    };
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_IN_RANGE), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_DEBUFFS), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_DISPELLABLE), 0.4f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_AGGRO), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_SELECTED), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_TARGET), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_TARGET_HOSTILE), 1.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_TARGET_MINE), 0.0f);
+    EXPECT_FLOAT_EQ(at(0, PartyFramesBlock::FRAME_TARGET_IN_VIEW), 1.0f);
+    EXPECT_FLOAT_EQ(at(1, PartyFramesBlock::FRAME_MANA_USER), 1.0f);
+    EXPECT_FLOAT_EQ(at(1, PartyFramesBlock::FRAME_FOCUSED), 1.0f);
+    EXPECT_FLOAT_EQ(at(1, PartyFramesBlock::FRAME_TARGET), 0.0f);
+    EXPECT_FLOAT_EQ(at(1, PartyFramesBlock::FRAME_TARGET_HOSTILE), 0.0f);
+    EXPECT_FLOAT_EQ(at(1, PartyFramesBlock::FRAME_TARGET_MINE), 0.0f);
+}
+
+// **The combat block, revision 1, has no party frames**: the player frame and the pet frame (revision 0's names, so
+// they carry by name) and the target frame, the select and focus presses of those two frames, and not one column or
+// press about a party member.
+TEST(PartyFramesTest, TheCombatBlockHasNoPartyFrames)
+{
+    using Combat = Cu::CombatBlock;
+    Cu::Block const& block = Cu::GetBlock(Cu::BlockId::Combat);
+    Cu::Layout layout;
+    EXPECT_EQ(block.Revision(), 1u);
+    EXPECT_EQ(uint32(Combat::OWN_FRAMES), 2u);
+    EXPECT_EQ(block.Size(layout).Obs, 2u * uint32(Combat::FRAME_FEATURES) + uint32(Combat::TARGET_FEATURES));
+    EXPECT_EQ(block.Size(layout).Actions, 4u);
+    boost::json::array names;
+    block.DescribeColumns(layout, names);
+    ASSERT_EQ(names.size(), std::size_t(block.Size(layout).Obs));
+    EXPECT_EQ(std::string(names[0].as_string()), "frame_self_present");
+    EXPECT_EQ(std::string(names[Combat::FRAME_FEATURES].as_string()), "frame_pet_present");
+    EXPECT_EQ(std::string(names[2 * Combat::FRAME_FEATURES].as_string()), "target_present");
+    for (boost::json::value const& name : names)
+        EXPECT_EQ(std::string(name.as_string()).find("member"), std::string::npos) << name.as_string();
+    for (uint32 local = 0; local < block.Size(layout).Actions; ++local)
+        EXPECT_EQ(block.ActionName(layout, local).find("member"), std::string::npos) << local;
+    EXPECT_EQ(block.ActionName(layout, Combat::ACTION_SELECT_FRAME_FIRST + Combat::FRAME_PET), "select_frame_pet");
+    EXPECT_EQ(block.ActionName(layout, Combat::ACTION_FOCUS_FRAME_FIRST + Combat::FRAME_SELF), "focus_frame_self");
 }
 
 // ---------------------------------------------------------------- the stage, and the stages before it

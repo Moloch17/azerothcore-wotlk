@@ -579,25 +579,15 @@ void Animus::Curriculum::PartyFollowEncounter::View(Env const& env, uint32 seat,
     float const selfX = body ? body->X : bot->GetPositionX();
     float const selfY = body ? body->Y : bot->GetPositionY();
 
+    // The party has no core group (the leader is the owner's slot), so its frames are the encounter's to name: the
+    // leader, then the other followers in seat order. Each is read as any party frame is (PartyFramesBlock::FillFrame:
+    // the minimap's dot only within its radius, and only on the same map).
+    view.Frames.fill(SeatView::PartyFrame());
+    ObjectGuid const focus = view.Focus ? *view.Focus : ObjectGuid::Empty;
     auto const frame = [&](uint32 slot, Player const* member, bool leads)
     {
-        SeatView::PartyFrame& out = view.Frames[slot];
-        out.Present = true;
-        out.Leader = leads;
-        out.Alive = member->IsAlive();
-        out.InCombat = member->IsInCombat();
-        out.Health = member->GetMaxHealth() ? float(member->GetHealth()) / float(member->GetMaxHealth()) : 0.0f;
-        Powers const power = member->getPowerType();
-        out.Power = member->GetMaxPower(power) ? float(member->GetPower(power)) / float(member->GetMaxPower(power))
-            : 0.0f;
-        // The minimap: a dot only within its radius, and only on the same map.
-        if (member->GetMapId() != bot->GetMapId() || member->GetInstanceId() != bot->GetInstanceId())
-            return;
-        PartyFramesBlock::Dot const dot = PartyFramesBlock::DotOf(selfX, selfY, view.Facing,
-            member->GetPositionX(), member->GetPositionY(), view.MinimapYards);
-        out.DotShown = dot.Shown;
-        out.DotRight = dot.Right;
-        out.DotForward = dot.Forward;
+        PartyFramesBlock::FillFrame(view.Frames[slot], member, leads, bot, selfX, selfY, view.Facing,
+            view.MinimapYards, focus, view.Seen);
     };
 
     uint32 slot = 0;

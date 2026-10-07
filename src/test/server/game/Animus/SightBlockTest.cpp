@@ -416,7 +416,8 @@ TEST_F(SightBlockTest, OutOfReachAndGonePressesAreRefusedAndPriced)
 // Training resumes where it left off after the rebuild: move1_controls' and move2_seek's layouts are as they were at
 // forge 7a90f9b2c. Neither gets the sight block (only a stage that names it does, unlike the entity list after a
 // camera), and every block they have keeps its columns, actions and revision; the entity list's memory-id column
-// stays 0 without entity memory.
+// stays 0 without entity memory. move3_interact's too, as it was at dungeon-staging 44f1551d9: neither the combat
+// block nor the party frames (PartyFrames revision 2, G1) reach it.
 TEST(SightBlockLayoutTest, TheMovementStagesAreUnchanged)
 {
     using Id = Cu::BlockId;
@@ -431,15 +432,21 @@ TEST(SightBlockLayoutTest, TheMovementStagesAreUnchanged)
         { Id::Entities, 640, 0, 1 }, { Id::Goal, 128, 0, 0 } };
     std::vector<Expected> const m2 = { { Id::Move, 57, 25, 5 }, { Id::Vision, 11, 0, 5 },
         { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Goal, 128, 0, 0 } };
+    // M3 (the party frames unification, G1, leaves it as it was): its sight list of 64 slots of 32 and the named row
+    // of 23, without the combat block's columns; five presses a slot.
+    std::vector<Expected> const m3 = { { Id::Move, 57, 25, 5 }, { Id::Vision, 11, 0, 5 },
+        { Id::Entities, 640, 0, 1 }, { Id::Map, 4, 0, 1 }, { Id::Sight, 64 * 32 + 23, 5 * 64, 2 },
+        { Id::Goal, 128, 0, 0 } };
     uint32 found = 0;
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
     {
         std::vector<Expected> const* expected = stage.Name == "move1_controls" ? &m1
-            : stage.Name == "move2_seek" ? &m2 : nullptr;
+            : stage.Name == "move2_seek" ? &m2 : stage.Name == "move3_interact" ? &m3 : nullptr;
         if (!expected)
             continue;
         ++found;
-        EXPECT_FALSE(stage.Has(Id::Sight)) << stage.Name;
+        EXPECT_EQ(stage.Has(Id::Sight), expected == &m3) << stage.Name;
+        EXPECT_FALSE(stage.Has(Id::Combat) || stage.Has(Id::PartyFrames)) << stage.Name;
         ASSERT_EQ(stage.Blocks.size(), expected->size() + 1) << stage.Name;
         EXPECT_EQ(stage.Blocks[0], Id::Core) << stage.Name;
         EXPECT_EQ(Cu::GetBlock(Id::Core).Revision(), 1u);
@@ -449,12 +456,13 @@ TEST(SightBlockLayoutTest, TheMovementStagesAreUnchanged)
             Expected const& want = (*expected)[i];
             ASSERT_EQ(stage.Blocks[i + 1], want.Block) << stage.Name << " block " << i + 1;
             Cu::Block const& block = Cu::GetBlock(want.Block);
+            layout.Blocks = stage.Blocks;
             EXPECT_EQ(block.Size(layout).Obs, want.Obs) << stage.Name << " " << Cu::BlockName(want.Block);
             EXPECT_EQ(block.Size(layout).Actions, want.Actions) << stage.Name << " " << Cu::BlockName(want.Block);
             EXPECT_EQ(block.Revision(), want.Revision) << stage.Name << " " << Cu::BlockName(want.Block);
         }
     }
-    EXPECT_EQ(found, 2u);
+    EXPECT_EQ(found, 3u);
 
     // Without entity memory (no sight block, SeatView::Recall null) the list's memory-id column reads 0, as before.
     Vi::SeenList seen = Frame({ Entity(31, { 4.0f, 0.0f, 2.0f }) });

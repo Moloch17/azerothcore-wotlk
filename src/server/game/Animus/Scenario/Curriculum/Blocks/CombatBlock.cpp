@@ -45,13 +45,10 @@ namespace
         "cast_heal", "cast_area", "cast_at_me", "controlled", "elite", "in_combat", "attacks_me", "attacks_party",
         "threat", "debuffs" };
 
+    /// Revision 0's names for the two frames that stayed, so their columns and presses carry by name.
     std::string FrameName(uint32 frame)
     {
-        if (frame == Combat::FRAME_SELF)
-            return "self";
-        if (frame == Combat::FRAME_PET)
-            return "pet";
-        return Acore::StringFormat("member_{}", frame - Combat::FRAME_MEMBER_FIRST);
+        return frame == Combat::FRAME_SELF ? "self" : "pet";
     }
 
     /// A party frame's click: its unit wherever it is on the seat's map (a frame is not a nameplate: it needs no
@@ -100,19 +97,14 @@ bool Animus::Curriculum::CombatBlock::IsPartyOf(Player const* bot, Unit const* u
     return player && bot->GetGroup() && bot->GetGroup() == player->GetGroup();
 }
 
-std::array<Unit*, Animus::Curriculum::CombatBlock::PARTY_FRAMES> Animus::Curriculum::CombatBlock::FrameUnits(
+std::array<Unit*, Animus::Curriculum::CombatBlock::OWN_FRAMES> Animus::Curriculum::CombatBlock::FrameUnits(
     Player* bot)
 {
-    std::array<Unit*, PARTY_FRAMES> units{};
+    std::array<Unit*, OWN_FRAMES> units{};
     if (!bot)
         return units;
     units[FRAME_SELF] = bot;
     units[FRAME_PET] = Encoding::FirstPet(bot);
-    uint32 frame = FRAME_MEMBER_FIRST;
-    if (Group* group = bot->GetGroup())
-        for (GroupReference* ref = group->GetFirstMember(); ref && frame < PARTY_FRAMES; ref = ref->next())
-            if (Player* member = ref->GetSource(); member && member != bot && member->IsInWorld())
-                units[frame++] = member;
     return units;
 }
 
@@ -236,7 +228,7 @@ Animus::Curriculum::BlockSize Animus::Curriculum::CombatBlock::Size(Layout const
 
 void Animus::Curriculum::CombatBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
 {
-    block["party_frames"] = PARTY_FRAMES;
+    block["own_frames"] = OWN_FRAMES;
     block["frame_features"] = uint32(FRAME_FEATURES);
     block["target_features"] = uint32(TARGET_FEATURES);
     boost::json::array slot;
@@ -247,7 +239,7 @@ void Animus::Curriculum::CombatBlock::DescribeManifest(Layout const& /*layout*/,
 
 void Animus::Curriculum::CombatBlock::DescribeColumns(Layout const& /*layout*/, boost::json::array& names) const
 {
-    for (uint32 frame = 0; frame < PARTY_FRAMES; ++frame)
+    for (uint32 frame = 0; frame < OWN_FRAMES; ++frame)
         for (char const* name : FRAME_NAMES)
             names.push_back(boost::json::string(Acore::StringFormat("frame_{}_{}", FrameName(frame), name)));
     for (char const* name : TARGET_NAMES)
@@ -266,9 +258,9 @@ void Animus::Curriculum::CombatBlock::Observe(SeatView const& view, float* obs, 
     ObjectGuid const selected = bot->GetTarget();
     ObjectGuid const focus = view.Focus ? *view.Focus : ObjectGuid::Empty;
 
-    // The party frames: always known, on screen or not.
-    std::array<Unit*, PARTY_FRAMES> const units = FrameUnits(bot);
-    for (uint32 frame = 0; frame < PARTY_FRAMES; ++frame)
+    // The player frame and the pet frame: always known, on screen or not.
+    std::array<Unit*, OWN_FRAMES> const units = FrameUnits(bot);
+    for (uint32 frame = 0; frame < OWN_FRAMES; ++frame)
     {
         Unit* unit = units[frame];
         if (!unit)
@@ -331,7 +323,7 @@ void Animus::Curriculum::CombatBlock::Apply(SeatView& view, uint32 local, SeatAc
 {
     if (local >= ACTION_COUNT || !view.Bot)
         return;
-    uint32 const frame = local % PARTY_FRAMES;
+    uint32 const frame = local % OWN_FRAMES;
     Unit* unit = FrameUnits(view.Bot)[frame];
     if (!unit)
         return;
@@ -348,5 +340,5 @@ std::string Animus::Curriculum::CombatBlock::ActionName(Layout const& /*layout*/
     if (local >= ACTION_COUNT)
         return {};
     return Acore::StringFormat("{}_frame_{}", local < ACTION_FOCUS_FRAME_FIRST ? "select" : "focus",
-        FrameName(local % PARTY_FRAMES));
+        FrameName(local % OWN_FRAMES));
 }

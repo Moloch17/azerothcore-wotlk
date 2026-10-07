@@ -882,8 +882,9 @@ namespace
         // A raid is a group of its own, in an instance or against pulls (stage12's raid arenas): no owner.
         bool const raidGroup = arena.Seats == SeatPlan::Raid
             && (instance || arena.Against == Opposition::Pulls);
-        if (arena.PartyGroup && !stage.Has(BlockId::Party))
-            return "a party group needs the party block";
+        // Its members are read through the party block's slots, or (a perception-true stage) the party frames.
+        if (arena.PartyGroup && !stage.Has(BlockId::Party) && !stage.Has(BlockId::PartyFrames))
+            return "a party group needs the party block or the party frames block";
         // A group questing in the world (world_group, world_shared) is a party of its own, with no owner.
         bool const worldGroup = arena.Against == Opposition::Quest
             && (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Teams);
@@ -1194,10 +1195,15 @@ namespace
             if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || sight < entities)
                 return "the sight block reads what the camera's entity list wrote: it needs the vision block, after it";
         }
-        // Two party-frame blocks would show the same frames twice (M4's PartyFrames, the combat block's own): until
-        // PartyFrames takes the combat block's extra party fields (G1), a stage has one or the other.
-        if (stage.Has(BlockId::PartyFrames) && stage.Has(BlockId::Combat))
-            return "the party frames are the party frames block's or the combat block's, not both";
+        // A party member's state has one source, the party frames block (revision 2, G1: the combat block's member
+        // frames moved into it): never beside the party or the support block, whose teammate and friend slots would
+        // show the same members' health and power a second time -- and from the server's list at that.
+        if (stage.Has(BlockId::PartyFrames) && (stage.Has(BlockId::Party) || stage.Has(BlockId::Support)))
+            return "a party member's frame is the party frames block's alone: not beside the party or support block";
+        // ... and a combat stage with a party reads its members there: the combat block keeps only the player frame and
+        // the pet frame (its revision 1), so without the party frames block its party would be unseen.
+        if (stage.Has(BlockId::Combat) && stage.SeatCount() > 1 && !stage.Has(BlockId::PartyFrames))
+            return "a combat stage with a party reads its members' frames in the party frames block";
         // The combat block's per-target columns ride on the sight list (dungeon-curriculum I3).
         if (stage.Has(BlockId::Combat))
         {

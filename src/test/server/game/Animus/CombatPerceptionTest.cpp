@@ -29,6 +29,7 @@
 #include "EntitiesBlock.h"
 #include "EntityMemory.h"
 #include "Layout.h"
+#include "PartyFramesBlock.h"
 #include "ObjectMgr.h"
 #include "RewardLedger.h"
 #include "SeatView.h"
@@ -281,9 +282,10 @@ TEST_F(CombatPerceptionTest, TheEnemiesAreTheFramesLivingHostiles)
     EXPECT_EQ(Combat::VisibleEnemies(Vi::SeenList(), Knowing({ first }), enemies.data(), Cu::PACK_SLOTS), 0u);
 }
 
-// The party frames are always known: with no camera frame at all, the seat's own frame reads its health and power,
-// and its select and focus presses are offered; an empty frame (no pet, no group) is the only mask.
-TEST_F(CombatPerceptionTest, ThePartyFramesAreAlwaysKnown)
+// The player frame and the pet frame are always known: with no camera frame at all, the seat's own frame reads its
+// health and power, and its select and focus presses are offered; an empty frame (no pet) is the only mask. The rest of
+// the party's frames are not the combat block's (revision 1: they are the party frames block's).
+TEST_F(CombatPerceptionTest, TheOwnFramesAreAlwaysKnown)
 {
     _bot->SetMaxHealth(1000);
     _bot->SetHealth(250);
@@ -301,7 +303,7 @@ TEST_F(CombatPerceptionTest, ThePartyFramesAreAlwaysKnown)
     EXPECT_FLOAT_EQ(self[Combat::FRAME_IN_RANGE], 1.0f);
     EXPECT_EQ(mask[Combat::ACTION_SELECT_FRAME_FIRST + Combat::FRAME_SELF], 1);
     EXPECT_EQ(mask[Combat::ACTION_FOCUS_FRAME_FIRST + Combat::FRAME_SELF], 1);
-    for (uint32 frame = Combat::FRAME_PET; frame < Combat::PARTY_FRAMES; ++frame)
+    for (uint32 frame = Combat::FRAME_PET; frame < Combat::OWN_FRAMES; ++frame)
     {
         EXPECT_FLOAT_EQ(obs[Combat::OBS_FRAMES_FIRST + frame * Combat::FRAME_FEATURES + Combat::FRAME_PRESENT], 0.0f);
         EXPECT_EQ(mask[Combat::ACTION_SELECT_FRAME_FIRST + frame], 0);
@@ -317,6 +319,65 @@ TEST_F(CombatPerceptionTest, ThePartyFramesAreAlwaysKnown)
     Cu::GetBlock(Cu::BlockId::Combat).Observe(view, obs.data(), mask.data());
     EXPECT_NEAR(self[Combat::FRAME_HEALTH], 0.25f, 1e-4f);
     EXPECT_EQ(Combat::FrameUnits(_bot)[Combat::FRAME_SELF], _bot);
+}
+
+// **A party member's frame** (PartyFrames revision 2, FillFrame: the one place a member's frame is read): its health
+// and power as the client shows them, whether it leads, in the frame's range, and its minimap dot within the radius --
+// right and forward of the seat's facing; with no target, the target's columns are empty. Nothing about it needs the
+// camera.
+TEST_F(CombatPerceptionTest, AMembersFrameIsReadAsItsClientShowsIt)
+{
+    TestPlayer* member = CreateTestPlayer(2, "Member");
+    member->SetFaction(TEST_FACTION_HOSTILE_TO_MONSTERS);
+    member->Relocate(X0 + 20.0f, Y0 - 10.0f, 0.0f, 0.0f);
+    member->SetMaxHealth(1000);
+    member->SetHealth(600);
+
+    Cu::SeatView::PartyFrame frame;
+    frame.HasTarget = true;     // cleared by the fill
+    Cu::PartyFramesBlock::FillFrame(frame, member, true, _bot, X0, Y0, 0.0f, 60.0f, ObjectGuid::Empty, nullptr);
+    EXPECT_TRUE(frame.Present);
+    EXPECT_EQ(frame.Guid, member->GetGUID());
+    EXPECT_TRUE(frame.Leader);
+    EXPECT_TRUE(frame.Alive);
+    EXPECT_NEAR(frame.Health, 0.6f, 1e-4f);
+    EXPECT_TRUE(frame.InRange);
+    EXPECT_FALSE(frame.Selected);
+    EXPECT_FALSE(frame.Focused);
+    EXPECT_FALSE(frame.Aggro);
+    EXPECT_TRUE(frame.DotShown);
+    EXPECT_NEAR(frame.DotForward, 20.0f, 1e-3f);
+    EXPECT_NEAR(frame.DotRight, 10.0f, 1e-3f);
+    EXPECT_FALSE(frame.HasTarget);
+
+    // Selected and focused by the seat; 50 yd off: past the frame's range, still on the minimap.
+    _bot->SetSelection(member->GetGUID());
+    member->Relocate(X0 + 50.0f, Y0, 0.0f, 0.0f);
+    Cu::PartyFramesBlock::FillFrame(frame, member, false, _bot, X0, Y0, 0.0f, 60.0f, member->GetGUID(), nullptr);
+    EXPECT_TRUE(frame.Selected);
+    EXPECT_TRUE(frame.Focused);
+    EXPECT_FALSE(frame.Leader);
+    EXPECT_FALSE(frame.InRange);
+    EXPECT_TRUE(frame.DotShown);
+    // Past the minimap's radius: the frame, no dot.
+    member->Relocate(X0 + 70.0f, Y0, 0.0f, 0.0f);
+    Cu::PartyFramesBlock::FillFrame(frame, member, false, _bot, X0, Y0, 0.0f, 60.0f, ObjectGuid::Empty, nullptr);
+    EXPECT_TRUE(frame.Present);
+    EXPECT_FALSE(frame.DotShown);
+    _bot->SetSelection(ObjectGuid::Empty);
+
+    // No member: an empty frame.
+    Cu::PartyFramesBlock::FillFrame(frame, nullptr, true, _bot, X0, Y0, 0.0f, 60.0f, ObjectGuid::Empty, nullptr);
+    EXPECT_FALSE(frame.Present);
+    EXPECT_TRUE(frame.Guid.IsEmpty());
+
+    // Without a group, the frames from the group are empty (a solo combat stage has none to show).
+    Cu::SeatView view;
+    view.Bot = _bot;
+    view.Frames[2].Present = true;
+    Cu::PartyFramesBlock::FillFromGroup(view);
+    for (Cu::SeatView::PartyFrame const& empty : view.Frames)
+        EXPECT_FALSE(empty.Present);
 }
 
 // The client's threat status (UnitThreatSituation), as the target frame and the nameplates show it.
@@ -446,10 +507,9 @@ TEST(CombatBlockLayoutTest, TheSightListCarriesTheCombatColumns)
     Cu::Block const& block = Cu::GetBlock(Cu::BlockId::Combat);
     EXPECT_EQ(Cu::BlockName(Cu::BlockId::Combat), "combat");
     EXPECT_EQ(block.Size(combat).Obs, uint32(Combat::OBS_COUNT));
-    EXPECT_EQ(block.Size(combat).Actions, 2 * Combat::PARTY_FRAMES);
+    EXPECT_EQ(block.Size(combat).Actions, 2 * Combat::OWN_FRAMES);
     EXPECT_EQ(block.ActionName(combat, Combat::ACTION_SELECT_FRAME_FIRST), "select_frame_self");
-    EXPECT_EQ(block.ActionName(combat, Combat::ACTION_FOCUS_FRAME_FIRST + Combat::FRAME_MEMBER_FIRST),
-        "focus_frame_member_0");
+    EXPECT_EQ(block.ActionName(combat, Combat::ACTION_FOCUS_FRAME_FIRST + Combat::FRAME_PET), "focus_frame_pet");
     boost::json::array columns;
     block.DescribeColumns(combat, columns);
     EXPECT_EQ(columns.size(), std::size_t(Combat::OBS_COUNT));
@@ -659,9 +719,14 @@ TEST(CombatStagesTest, TheStagesLayouts)
     layout.Blocks = c1->Blocks;
     EXPECT_EQ(Sight::Width(layout), uint32(Sight::SIGHT_FEATURES) + uint32(Combat::COMBAT_SLOT_FEATURES));
 
-    // No stage shows the party frames twice (the validation refuses PartyFrames beside the combat block).
+    // A party member's state has one source (PartyFrames revision 2): no stage shows it beside the party or support
+    // block's slots, and a combat stage with a party has the party frames.
     for (Cu::StageDefinition const& stage : Cu::CurriculumStages())
-        EXPECT_FALSE(stage.Has(Id::PartyFrames) && stage.Has(Id::Combat)) << stage.Name;
+    {
+        EXPECT_FALSE(stage.Has(Id::PartyFrames) && (stage.Has(Id::Party) || stage.Has(Id::Support))) << stage.Name;
+        if (stage.Has(Id::Combat) && stage.SeatCount() > 1)
+            EXPECT_TRUE(stage.Has(Id::PartyFrames)) << stage.Name;
+    }
 
     // M1 and M2: neither the combat block nor the sight list (their layouts are pinned in SightBlockTest).
     for (char const* name : { "move1_controls", "move2_seek" })

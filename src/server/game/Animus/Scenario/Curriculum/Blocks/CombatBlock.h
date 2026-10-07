@@ -46,26 +46,29 @@ namespace Animus::Curriculum
     /// what it is doing now. And the scenario's enemy list (SeatView::Enemies, which the goal and gauntlet blocks read)
     /// is the frame's visible living hostiles in slot order (VisibleEnemies), never the encounter's spawn list.
     ///
-    /// **The party frames, always known** (PARTY_FRAMES): the seat itself, its pet and its group's members in group
-    /// order -- present, alive, health, power, in range (40 yd: the client fades a frame past it), in combat, the
-    /// debuffs and the dispellable ones on it, aggro (something is attacking it: the frame's red border), selected,
-    /// focused. A player sees these whether or not the member is on screen, so they need no camera.
+    /// **The player frame and the pet frame, always known** (OWN_FRAMES): the seat itself and its pet -- present,
+    /// alive, health, power, in range (40 yd: the client fades a frame past it), in combat, the debuffs and the
+    /// dispellable ones on it, aggro (something is attacking it: the frame's red border), selected, focused. A player
+    /// sees these whether or not the pet is on screen, so they need no camera. **The frames of the rest of its party
+    /// are the party frames block's** (PartyFramesBlock, revision 2: the one source of party-member state): they left
+    /// this block in its revision 1 (G1, 2026-10-07), where they were frames 2 to 5.
     ///
     /// **The target frame**: the selection's reaction, whether the camera shows it now, the seat's **threat status on
     /// it** (the client's UnitThreatSituation, 0-3: the target frame's threat indicator) and its threat percentage
     /// against whoever holds it, and the target of its target (the seat, its pet, a party member, someone else).
     ///
-    /// **The presses**: select and focus a party frame (PARTY_FRAMES of each), as clicking one does -- the client's
+    /// **The presses**: select and focus the player frame or the pet frame, as clicking one does -- the client's
     /// CMSG_SET_SELECTION, the focus client-side (EntityActions::Apply). An empty frame is the only mask.
     class CombatBlock final : public Block
     {
     public:
-        /// The seat, its pet, its group's other members.
-        static constexpr uint32 PARTY_FRAMES = 2 + GROUP_MEMBERS;
+        /// Revision 1: the party members' frames gone to the party frames block (revision 0 had six frames).
+        static constexpr uint32 REVISION = 1;
+        /// The seat and its pet.
+        static constexpr uint32 OWN_FRAMES = 2;
         static constexpr uint32 FRAME_SELF = 0;
         static constexpr uint32 FRAME_PET = 1;
-        static constexpr uint32 FRAME_MEMBER_FIRST = 2;
-        /// The client fades a party frame past this many yards (the range the frame's spells are checked at).
+        /// The client fades a frame past this many yards (the range the frame's spells are checked at).
         static constexpr float FRAME_RANGE = 40.0f;
 
         enum FrameFeature : uint32
@@ -105,7 +108,7 @@ namespace Animus::Curriculum
         enum Obs : uint32
         {
             OBS_FRAMES_FIRST    = 0,
-            OBS_TARGET_FIRST    = PARTY_FRAMES * FRAME_FEATURES,
+            OBS_TARGET_FIRST    = OWN_FRAMES * FRAME_FEATURES,
             OBS_COUNT           = OBS_TARGET_FIRST + TARGET_FEATURES
         };
 
@@ -131,12 +134,13 @@ namespace Animus::Curriculum
         enum Action : uint32
         {
             ACTION_SELECT_FRAME_FIRST   = 0,
-            ACTION_FOCUS_FRAME_FIRST    = PARTY_FRAMES,
-            ACTION_COUNT                = 2 * PARTY_FRAMES
+            ACTION_FOCUS_FRAME_FIRST    = OWN_FRAMES,
+            ACTION_COUNT                = 2 * OWN_FRAMES
         };
 
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
-        /// "combat": { party_frames, frame_features, target_features, slot_features [names] }.
+        [[nodiscard]] uint32 Revision() const override { return REVISION; }
+        /// "combat": { own_frames, frame_features, target_features, slot_features [names] }.
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void DescribeColumns(Layout const& layout, boost::json::array& names) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
@@ -154,8 +158,8 @@ namespace Animus::Curriculum
         /// Who a unit's frames call its party: the seat's pet and its group's other members.
         [[nodiscard]] static bool IsPartyOf(Player const* bot, Unit const* unit);
 
-        /// The party frames' units, in frame order (null for an empty frame): the seat, its pet, its group's members.
-        [[nodiscard]] static std::array<Unit*, PARTY_FRAMES> FrameUnits(Player* bot);
+        /// The player frame's and the pet frame's units, in frame order (null for an empty frame): the seat, its pet.
+        [[nodiscard]] static std::array<Unit*, OWN_FRAMES> FrameUnits(Player* bot);
 
         /// One sight slot's combat columns for a visible unit, from `bot`'s point of view; `seen` the frame and `focus`
         /// the seat's focus (what ShownDebuffs allows).
