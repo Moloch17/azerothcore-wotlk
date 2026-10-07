@@ -1467,6 +1467,10 @@ void AnimusForge::Forge::MaybeAuditCamera()
         uint32 const e = seat / agents;
         uint32 const a = seat % agents;
         uint8 const* image = &_pool->Image[std::size_t(seat) * spec.ImageBytes];
+        // Its mental map's crop, in a stage with a map block (perception-goals REDESIGN §3): the PNG's fifth panel and
+        // the composite's inset.
+        uint8 const* crop = spec.MapBytes && !_pool->MapCrop.empty()
+            ? &_pool->MapCrop[std::size_t(seat) * spec.MapBytes] : nullptr;
         uint16 const layoutIndex = _pool->Layout[seat];
         std::string const layout = layoutIndex < spec.Layouts.size() ? spec.Layouts[layoutIndex].Name : _current;
         Animus::Env const& env = _pool->EnvAt(e);
@@ -1475,7 +1479,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
         std::string const file = Acore::StringFormat("{}-e{}a{}-{}.png", stamp, e, a, layout);
         // A 128-wide frame at 2x, a 64-wide one at 4x: about 256 pixels a panel whatever the canonical size.
         uint32 const scale = std::max<uint32>(1, 256 / std::max<uint32>(1, settings.Width));
-        std::string const png = Vi::FramePng(settings, image, scale);
+        std::string const png = Vi::FramePng(settings, image, scale, crop);
         std::ofstream out(dir / file, std::ios::binary);
         out << png;
         if (png.empty() || !out)
@@ -1486,7 +1490,7 @@ void AnimusForge::Forge::MaybeAuditCamera()
         ++saved;
         // Every layer in one picture beside it (Vi::CompositePng), named after the frame: no CSV column needed.
         std::string const compositeFile = Acore::StringFormat("{}-e{}a{}-{}-composite.png", stamp, e, a, layout);
-        std::string const composite = Vi::CompositePng(settings, image, scale);
+        std::string const composite = Vi::CompositePng(settings, image, scale, crop);
         std::ofstream compositeOut(dir / compositeFile, std::ios::binary);
         compositeOut << composite;
         if (composite.empty() || !compositeOut)

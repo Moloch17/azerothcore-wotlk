@@ -22,6 +22,7 @@
 #include "Camera.h"
 #include <array>
 #include <string>
+#include <vector>
 
 /// **A frame as a person looks at it**: the bytes a seat's camera sent (Camera.h, BYTES_PER_PIXEL a pixel), decoded as
 /// the learner decodes them, drawn as one PNG for `forge camera snapshot` and the training audit
@@ -42,8 +43,18 @@ namespace Animus::Vision
     /// - depth: the distance channel, near dark and sky white;
     /// - class: CLASS_COLOURS, the objective white;
     /// - height over the feet: mid-grey at the feet, lighter above, darker below;
-    /// - slope: the surface's normal z, white for level ground, black for a wall (and sky).
-    [[nodiscard]] std::string FramePng(Settings const& settings, uint8_t const* image, uint32_t scale);
+    /// - slope: the surface's normal z, white for level ground, black for a wall (and sky);
+    /// and with `map` (the seat's mental map crop, Vision::CROP_BYTES; perception-goals REDESIGN §3) a fifth, square
+    /// panel as tall as the others: the crop, heading-up, coloured by MapColour.
+    [[nodiscard]] std::string FramePng(Settings const& settings, uint8_t const* image, uint32_t scale,
+        uint8_t const* map = nullptr);
+
+    /// **The map panel's colours** (the audit): a crop cell's code -- unknown near black, floor green (brighter the
+    /// newer its look), wall light grey, door orange, hazard blue -- with the body's cells red at the centre, frontier
+    /// yellow, visited floor cyan, and an entity's class colour (CLASS_COLOURS) over the rest.
+    [[nodiscard]] std::array<uint8_t, 3> MapColour(uint8_t const* cell);
+    /// The crop drawn as a `side` x `side` square (nearest cell), row-major RGB.
+    [[nodiscard]] std::vector<std::array<uint8_t, 3>> MapPanel(uint8_t const* map, uint32_t side);
 
     /// CompositePng's colours: the sky, the haze far things fade into, the yards by which they have faded, and the
     /// height between two contour lines.
@@ -58,7 +69,9 @@ namespace Animus::Vision
     /// fogged by the distance (min(1, yards / 80)^0.7 towards COMPOSITE_HAZE x 0.6), and darkened to 0.35 where the
     /// pixel and its right or lower neighbour lie across a whole yard of height over the feet (a contour line;
     /// within the height channel's range only).
-    [[nodiscard]] std::string CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale);
+    /// With `map`, a mini-map inset in its top right corner: MapPanel, half the picture's height, framed.
+    [[nodiscard]] std::string CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale,
+        uint8_t const* map = nullptr);
 }
 
 #endif

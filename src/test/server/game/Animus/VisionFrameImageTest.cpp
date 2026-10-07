@@ -17,6 +17,7 @@
  */
 
 #include "FrameImage.h"
+#include "MentalMap.h"
 #include "VisionCaster.h"
 #include "gtest/gtest.h"
 #include <array>
@@ -209,4 +210,60 @@ TEST(VisionFrameImageTest, CompositeIsEveryLayerInOnePicture)
     // Scaled by nearest pixel: every output pixel of a source pixel is the same.
     EXPECT_EQ(rgb[0], rgb[3]);
     EXPECT_EQ(rgb[0], rgb[std::size_t(width) * 3]);
+}
+
+// The mental map in the audit (perception-goals REDESIGN §3): the PNG gains a fifth, square panel -- the crop
+// heading-up, coloured by code, the body red at its centre, frontier yellow, visited cyan -- and the composite a
+// framed mini-map inset in its top right corner.
+TEST(VisionFrameImageTest, TheMapPanelAndTheInset)
+{
+    Vi::Settings settings;
+    settings.Width = 16;
+    settings.Height = 8;
+    std::vector<uint8_t> image(Vi::ImageBytes(settings));
+    Vi::FillNoFrame(image.data(), uint32_t(image.size()));
+    // A crop: unknown everywhere, a wall row across the top, a frontier cell and a visited floor cell.
+    std::vector<uint8_t> crop(Vi::CROP_BYTES, 0);
+    auto const cell = [&crop](uint32_t row, uint32_t col) { return &crop[(row * Vi::CROP + col) * Vi::CROP_CHANNELS]; };
+    for (uint32_t row = 0; row < Vi::CROP; ++row)
+        for (uint32_t col = 0; col < Vi::CROP; ++col)
+            cell(row, col)[Vi::CROP_AGE] = Vi::CROP_AGE_NEVER;
+    for (uint32_t col = 0; col < Vi::CROP; ++col)
+        cell(0, col)[Vi::CROP_CODE] = uint8_t(Vi::MapCode::Wall);
+    cell(10, 10)[Vi::CROP_CODE] = uint8_t(Vi::MapCode::Floor);
+    cell(10, 10)[Vi::CROP_FRONTIER] = 1;
+    cell(30, 30)[Vi::CROP_CODE] = uint8_t(Vi::MapCode::Floor);
+    cell(30, 30)[Vi::CROP_VISITED] = 1;
+    EXPECT_EQ(Vi::MapColour(cell(10, 10)), (std::array<uint8_t, 3>{ 240, 220, 40 }));
+    EXPECT_EQ(Vi::MapColour(cell(30, 30)), (std::array<uint8_t, 3>{ 40, 200, 200 }));
+    EXPECT_EQ(Vi::MapColour(cell(0, 5)), (std::array<uint8_t, 3>{ 210, 210, 210 }));
+
+    uint32_t const scale = 6;   // panels 96 x 48; the map panel 48 x 48, a pixel a cell
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> const rgb = Pixels(Vi::FramePng(settings, image.data(), scale, crop.data()), width, height);
+    uint32_t const mapLeft = 4 * 16 * scale + 4 * Vi::PANEL_GAP;
+    ASSERT_EQ(width, mapLeft + 48u);
+    ASSERT_EQ(height, 48u);
+    auto const at = [&](std::vector<uint8_t> const& pixels, uint32_t w, uint32_t x, uint32_t y)
+    {
+        uint8_t const* p = &pixels[(std::size_t(y) * w + x) * 3];
+        return std::array<uint8_t, 3>{ p[0], p[1], p[2] };
+    };
+    EXPECT_EQ(at(rgb, width, mapLeft + 24, 24), (std::array<uint8_t, 3>{ 230, 30, 30 }));     // the body
+    EXPECT_EQ(at(rgb, width, mapLeft + 10, 10), (std::array<uint8_t, 3>{ 240, 220, 40 }));    // the frontier
+    EXPECT_EQ(at(rgb, width, mapLeft + 5, 0), (std::array<uint8_t, 3>{ 210, 210, 210 }));     // the wall, ahead
+    // Without a map, the four panels as before.
+    Pixels(Vi::FramePng(settings, image.data(), scale), width, height);
+    EXPECT_EQ(width, 4 * 16 * scale + 3 * Vi::PANEL_GAP);
+
+    // The composite's inset: half its height (24 x 24 here), framed, top right; the body red at its centre.
+    std::vector<uint8_t> const composite = Pixels(Vi::CompositePng(settings, image.data(), scale, crop.data()), width,
+        height);
+    ASSERT_EQ(width, 96u);
+    uint32_t const left = width - 24 - 2;
+    EXPECT_EQ(at(composite, width, left - 1, 5), (std::array<uint8_t, 3>{ 128, 128, 128 }));  // its frame
+    EXPECT_EQ(at(composite, width, left + 12, 13), (std::array<uint8_t, 3>{ 230, 30, 30 }));
+    EXPECT_EQ(at(composite, width, 5, 40), (std::array<uint8_t, 3>{ Vi::COMPOSITE_SKY[0], Vi::COMPOSITE_SKY[1],
+        Vi::COMPOSITE_SKY[2] }));   // the picture itself, away from the inset
 }

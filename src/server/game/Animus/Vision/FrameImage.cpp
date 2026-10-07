@@ -17,6 +17,7 @@
  */
 
 #include "FrameImage.h"
+#include "MentalMap.h"
 #include "VisionCaster.h"
 #include <algorithm>
 #include <cmath>
@@ -105,6 +106,44 @@ namespace
     }
 }
 
+std::array<uint8_t, 3> Vi::MapColour(uint8_t const* cell)
+{
+    static uint8_t const CODES[MAP_CODES][3] = { { 18, 18, 24 }, { 60, 150, 60 }, { 210, 210, 210 }, { 220, 130, 40 },
+        { 40, 90, 220 } };
+    uint8_t const code = std::min<uint8_t>(cell[CROP_CODE], uint8_t(MAP_CODES - 1));
+    std::array<uint8_t, 3> out = { CODES[code][0], CODES[code][1], CODES[code][2] };
+    if (code == uint8_t(MapCode::Floor))
+    {
+        // Newer looks brighter: full at once, half by an hour.
+        float const fresh = 1.0f - 0.5f * std::min(1.0f, float(cell[CROP_AGE]) / 236.0f);
+        for (uint8_t& c : out)
+            c = uint8_t(float(c) * fresh);
+        if (cell[CROP_VISITED])
+            out = { 40, 200, 200 };
+    }
+    if (cell[CROP_FRONTIER])
+        out = { 240, 220, 40 };
+    if (uint8_t const what = cell[CROP_CLASS] & CLASS_MASK; what && what < CLASSES)
+        out = { CLASS_COLOURS[what][0], CLASS_COLOURS[what][1], CLASS_COLOURS[what][2] };
+    return out;
+}
+
+std::vector<std::array<uint8_t, 3>> Vi::MapPanel(uint8_t const* map, uint32_t side)
+{
+    std::vector<std::array<uint8_t, 3>> out(std::size_t(side) * side);
+    for (uint32_t y = 0; y < side; ++y)
+        for (uint32_t x = 0; x < side; ++x)
+        {
+            uint32_t const row = y * CROP / side;
+            uint32_t const col = x * CROP / side;
+            // The body: the four cells round the centre's corner.
+            bool const body = (row == CROP / 2 - 1 || row == CROP / 2) && (col == CROP / 2 - 1 || col == CROP / 2);
+            out[std::size_t(y) * side + x] = body ? std::array<uint8_t, 3>{ 230, 30, 30 }
+                : MapColour(map + (std::size_t(row) * CROP + col) * CROP_CHANNELS);
+        }
+    return out;
+}
+
 std::array<uint32_t, Vi::CLASSES> Vi::ClassCounts(Settings const& settings, uint8_t const* image)
 {
     std::array<uint32_t, CLASSES> counts{};
@@ -115,14 +154,18 @@ std::array<uint32_t, Vi::CLASSES> Vi::ClassCounts(Settings const& settings, uint
     return counts;
 }
 
-std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_t scale)
+std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
 {
     scale = std::max<uint32_t>(scale, 1);
     uint32_t const width = settings.Width;
     uint32_t const height = settings.Height;
     uint32_t const panelWidth = width * scale;
-    uint32_t const outWidth = panelWidth * PANELS + PANEL_GAP * (PANELS - 1);
     uint32_t const outHeight = height * scale;
+    // The map panel, square and as tall as the others.
+    uint32_t const mapSide = map ? outHeight : 0;
+    std::vector<std::array<uint8_t, 3>> const mapPanel = map ? MapPanel(map, mapSide) : std::vector<std::array<uint8_t,
+        3>>();
+    uint32_t const outWidth = panelWidth * PANELS + PANEL_GAP * (PANELS - 1) + (map ? PANEL_GAP + mapSide : 0);
 
     // Each source pixel's four panel colours, decoded as the learner decodes the bytes.
     std::vector<std::array<uint8_t, 3 * PANELS>> colours(std::size_t(width) * height);
@@ -163,12 +206,19 @@ std::string Vi::FramePng(Settings const& settings, uint8_t const* image, uint32_
                     raw += char(source[panel * 3 + c]);
             }
         }
+        if (map)
+        {
+            raw.append(std::size_t(PANEL_GAP) * 3, char(GAP_GREY));
+            for (uint32_t x = 0; x < mapSide; ++x)
+                for (uint8_t c : mapPanel[std::size_t(y) * mapSide + x])
+                    raw += char(c);
+        }
     }
 
     return WritePng(outWidth, outHeight, raw);
 }
 
-std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale)
+std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uint32_t scale, uint8_t const* map)
 {
     scale = std::max<uint32_t>(scale, 1);
     uint32_t const width = settings.Width;
@@ -221,14 +271,28 @@ std::string Vi::CompositePng(Settings const& settings, uint8_t const* image, uin
 
     uint32_t const outWidth = width * scale;
     uint32_t const outHeight = height * scale;
+    // The mini-map inset: half the picture's height, in its top right corner, a grey frame round it.
+    uint32_t const side = map ? std::max<uint32_t>(8, outHeight / 2) : 0;
+    uint32_t const left = outWidth > side + 2 ? outWidth - side - 2 : 0;
+    std::vector<std::array<uint8_t, 3>> const inset = map ? MapPanel(map, side) : std::vector<std::array<uint8_t,
+        3>>();
     std::string raw;
     raw.reserve(std::size_t(outHeight) * (1 + std::size_t(outWidth) * 3));
     for (uint32_t y = 0; y < outHeight; ++y)
     {
         raw += char(0);
         for (uint32_t x = 0; x < outWidth; ++x)
-            for (uint8_t c : colours[std::size_t(y / scale) * width + x / scale])
+        {
+            std::array<uint8_t, 3> pixel = colours[std::size_t(y / scale) * width + x / scale];
+            if (map && x + 1 >= left && x <= left + side && y <= side + 1)
+            {
+                bool const frame = x + 1 == left || x == left + side || y == side + 1;
+                pixel = frame ? std::array<uint8_t, 3>{ 128, 128, 128 }
+                    : x >= left && y >= 1 && y - 1 < side ? inset[std::size_t(y - 1) * side + (x - left)] : pixel;
+            }
+            for (uint8_t c : pixel)
                 raw += char(c);
+        }
     }
     return WritePng(outWidth, outHeight, raw);
 }
