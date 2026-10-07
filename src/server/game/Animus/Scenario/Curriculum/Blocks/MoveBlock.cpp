@@ -20,7 +20,6 @@
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include "MapWorldQuery.h"
-#include "SeatEncoder.h"
 #include "SeatView.h"
 #include "UnitBody.h"
 #include "Map.h"

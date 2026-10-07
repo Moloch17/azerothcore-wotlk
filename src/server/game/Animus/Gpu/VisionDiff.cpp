@@ -17,7 +17,6 @@
  */
 
 #include "VisionDiff.h"
-#include "FrameImage.h"
 #include "GameObjectModel.h"
 #include "Random.h"
 #include "StringFormat.h"

@@ -55,7 +55,6 @@
 #include "Map.h"
 #include "MapMgr.h"
 #include "MapDefines.h"
-#include "Opponents.h"
 #include "PartyFramesBlock.h"
 #include "PetBlock.h"
 #include "Player.h"

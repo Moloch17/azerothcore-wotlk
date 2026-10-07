@@ -24,8 +24,6 @@
 #include "FieldGrids.h"
 #include "InstanceBosses.h"
 #include "CurriculumTuning.h"
-#include "EncoderSupport.h"
-#include "Encounters.h"
 #include "SeatEncoder.h"
 #include "WarmCaches.h"
 #include "Forge.h"
