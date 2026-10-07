@@ -863,9 +863,10 @@ uniform over the unmasked actions.
 
 ## 4.8 The critic state
 
-The centralised critic sees a class-agnostic global state of the env. `StateDim = 22 + 4 x 26 + 4 x 33 = 258`
-(`STATE_GLOBAL_COUNT` is 14 plus one arena column each, the tier among the 14, then `MAX_SEATS` seat blocks and
-`PACK_SLOTS` enemy blocks -- the enum in `StageScenario.h` is the source).
+The centralised critic sees a class-agnostic global state of the env. `StateDim = 30 + 40 x 26 + 24 x 37 = 1958`
+(`STATE_GLOBAL_COUNT` is 30 global columns, then `MAX_SEATS` = 40 seat blocks of `STATE_SEAT_FEATURES` = 26 and
+`PACK_SLOTS` = 24 enemy blocks of `STATE_ENEMY_FEATURES` = 37 -- the enum in `StageScenario.h` is the source, and the
+live-layout pin test fails if any of them moves).
 
 | Part | Features |
 |---|---|
