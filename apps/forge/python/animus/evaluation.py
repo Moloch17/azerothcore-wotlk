@@ -534,7 +534,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                    trace_episodes: int = 0, first_seed: int = 0,
                    any_playing: Callable[[bool], bool] | None = None,
                    score_column: str = SCORE_COLUMN, arena: int = 0,
-                   collect_motion: bool = False) -> tuple[EvalResult, p.Step]:
+                   collect_motion: bool = False, stand_in: bool = False,
+                   excluded: Callable[[int], np.ndarray] | None = None) -> tuple[EvalResult, p.Step]:
     """Run seeded episodes first_seed..first_seed+episodes-1 (a data-parallel learner's share of an evaluation; 0..
     episodes-1 alone) and return their results and the fresh training STEP after them.
 
@@ -552,6 +553,11 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     `collect_motion` keeps the scored seats' kinematic samples, a track per seat and episode (EvalResult.motion_tracks;
     the sample the episode ended on is the next episode's, so a track stops one decision short of the end).
 
+    `stand_in` plays the "human" stand-in in one seat of every party (the eval arm "with_human"; the sim reports its
+    row as not present, so it is never scored). `excluded(env)` -> [A] bool names rows of env's episode that just ended
+    that are not the learner's to be scored (the eval arm "with_partners": the pool partners' seats); it is asked before
+    the chooser sees the next episode's first STEP.
+
     `any_playing(playing)` is whether any data-parallel learner still plays its share (Ranks.any): the sim answers
     every rank's envs on the same decision and switches mode only once all of them ask, so a rank done with its
     seeds keeps stepping until the last one is, and they switch back together.
@@ -568,6 +574,8 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
     share = {"first_seed": first_seed} if first_seed else {}
     if arena:
         share["arena"] = arena
+    if stand_in:
+        share["stand_in"] = True
     if baseline:
         step = env.set_mode(True, seed, episodes, baseline, **share)
     else:
@@ -641,12 +649,14 @@ def run_evaluation(env, spec, choose_actions, episodes: int, seed: int, baseline
                         and len(track[a]) > 1)
                 moving[e] = [np.array(step.kinematics[e])]
             if counted:
+                dropped = excluded(int(e)) if excluded is not None else np.zeros(agents, dtype=bool)
                 finished[index] = [
                     (float(running[e, a]), step.episode_info[e, a].copy(), names[int(layout[e, a])], taken[e, a].copy(),
                      allowed[e, a].copy())
                     for a in range(agents)
                     if (present is None or step.episode_info[e, a, present] > 0.0)
                     and (opponent_seat is None or step.episode_info[e, a, opponent_seat] <= 0.0)
+                    and not dropped[a]
                 ]
             if tracing:
                 # The episode's seed is only known now, so its decisions are kept until it ends and then either

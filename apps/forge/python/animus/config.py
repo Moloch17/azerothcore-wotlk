@@ -110,8 +110,25 @@ class EvalConfig:
     # whole return with its shaping. Scored on the return, a stage whose shaping is turned down reads as getting
     # worse, and a ladder that steps reads as learning or collapse (peak-play plan W0).
     score: str = "outcome"
+    # The evaluation arms beside the plain one, which is always "all bots" (dungeon-curriculum I7): each arm's name ->
+    # its seeded episodes, played on the evaluation's own seeds after it every `arms_every` evaluations (and on the
+    # stage's last), and reported apart as policy <arm> in eval.csv / eval.jsonl, and in forge status as
+    # <metric>_<arm> for any status.headline metric so named (clear_rate_with_human). A reading, never a target:
+    # nothing about an arm moves best.pt, the league or convergence.
+    #   with_human: the "human" stand-in (the sim's StandIn.*) in one seat of every party; its row is not scored.
+    #   with_partners: cast.partners' fixed set (eval_partners) in some seats of every party; their rows not scored.
+    arms: dict = field(default_factory=dict)
+    arms_every: int = 1
 
     def __post_init__(self) -> None:
+        unknown = sorted(set(self.arms) - set(EVAL_ARMS))
+        if unknown:
+            raise ValueError(f"eval.arms: unknown arm(s) {unknown}; expected some of {list(EVAL_ARMS)}")
+        for arm, episodes in self.arms.items():
+            if not isinstance(episodes, int) or isinstance(episodes, bool) or episodes < 0:
+                raise ValueError(f"eval.arms.{arm}: expected a number of episodes, got {episodes!r}")
+        if self.arms_every < 1:
+            raise ValueError(f"eval.arms_every: expected at least 1, got {self.arms_every!r}")
         if self.heldout_every < 1:
             raise ValueError(f"eval.heldout_every: expected at least 1 (1 = every evaluation), got "
                              f"{self.heldout_every!r}")
@@ -382,6 +399,72 @@ class DistillConfig:
         return max(self.min_coef, self.coef * decay)
 
 
+#: The evaluation arms beside the plain one ("all bots"): eval.arms names them (dungeon-curriculum I7).
+EVAL_ARMS = ("with_human", "with_partners")
+
+
+@dataclass
+class PartnerConfig:
+    """Co-op partners (animus.partners, dungeon-curriculum I7): frozen checkpoints in some of a party's seats, so the
+    policy learns to work with anyone -- an earlier stage's policy, its own older self -- and not only with copies of
+    itself. Only party and raid arenas (stage.json plan "party" / "raid"); a partner's rows are never samples.
+
+    Members are drawn per episode by how badly the party does with them: each member's party outcome (`score`, the
+    live seats' mean of that episode info column) is averaged over `rate_window` episodes, normalised across the pool
+    (the best member 1, the worst 0; a member not yet met counts as the worst, so it is met), and weighted
+    (1 - normalised)^2 + floor -- the co-op mirror of the league's prioritised fictitious self-play, so the partners
+    the party carries worst are met most and none is forgotten."""
+
+    # Earlier stages' best checkpoints by stage name ({runs_dir}/<name>/best.pt), and any checkpoint by path
+    # ({runs_dir}, {run_name} filled in). A missing one is skipped with a line saying so.
+    stages: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+    # This run's own snapshots join the pool (<run_dir>/partners/) on this clock of latest.pt and on every improved
+    # best.pt; 0 = never.
+    snapshot_every_env_steps: int = 0
+    # The share of the partner draws that go to the newest snapshot whatever the weights say (0 = only the weights):
+    # the nearest thing to itself that is not itself.
+    newest_share: float = 0.0
+    share: float = 0.0  # share of party episodes with partners, drawn per env at the episode's first decision
+    max_partners: int = 1  # partner seats in one party, at most (at least one live seat is always left)
+    pool_size: int = 8  # snapshots kept (stage and path members are always kept)
+    keep_newest: int = 2  # snapshots never pruned
+    rate_window: int = 200  # episodes behind a member's party-outcome average
+    floor: float = 0.1  # minimum draw weight
+    score: str = "score_outcome"  # the party's outcome: the stage's own measure (eval.score's column)
+    deterministic: bool = False  # training samples their actions; the "with_partners" eval arm always takes the argmax
+    # The "with_partners" eval arm's fixed partner set: stage names or checkpoint paths, as above. () = the pool's
+    # stage and path members (its snapshots move, so they are never part of a fixed set).
+    eval_partners: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.share <= 1.0 or not 0.0 <= self.newest_share <= 1.0:
+            raise ValueError(f"cast.partners: share and newest_share are shares (0 to 1), got {self.share!r} and "
+                             f"{self.newest_share!r}")
+        if self.max_partners < 1:
+            raise ValueError(f"cast.partners.max_partners: at least 1, got {self.max_partners!r}")
+
+    @property
+    def enabled(self) -> bool:
+        return self.share > 0.0 and (bool(self.stages) or bool(self.paths) or self.snapshot_every_env_steps > 0)
+
+    def resolve(self, names, runs_dir: str, run_name: str) -> list[str]:
+        """Stage names and paths as checkpoint paths: a bare name is {runs_dir}/<name>/best.pt."""
+        out = []
+        for name in names:
+            text = str(name).format(runs_dir=runs_dir, run_name=run_name)
+            out.append(text if ("/" in text or text.endswith(".pt")) else str(Path(runs_dir) / text / "best.pt"))
+        return out
+
+    def members(self, runs_dir: str, run_name: str) -> list[str]:
+        return self.resolve(self.stages, runs_dir, run_name) + self.resolve(self.paths, runs_dir, run_name)
+
+    def eval_members(self, runs_dir: str, run_name: str) -> list[str]:
+        if self.eval_partners:
+            return self.resolve(self.eval_partners, runs_dir, run_name)
+        return self.members(runs_dir, run_name)
+
+
 @dataclass
 class CastConfig:
     """Frozen checkpoints in the seats a script used to play (animus.cast): the far side of self-play arenas and
@@ -406,6 +489,8 @@ class CastConfig:
     retire_above: float = 0.85  # a member the live policy beats this often over a full window is retired
     keep_newest: int = 2  # never retired or pruned
     exploiter_floor: float = 0.15  # the least share of the draw each exploiter in the league gets (animus.exploit)
+    # Co-op partners in party seats (animus.partners), apart from the league's opponents.
+    partners: PartnerConfig = field(default_factory=PartnerConfig)
 
     def resolved_agents(self, runs_dir: str, run_name: str) -> dict[str, str]:
         return {name: str(path).format(runs_dir=runs_dir, run_name=run_name) for name, path in self.agents.items()}
