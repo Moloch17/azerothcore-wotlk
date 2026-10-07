@@ -10,7 +10,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from . import remote
+from . import audit, remote
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, say, table
 
@@ -166,6 +166,7 @@ def run(config: Config, check_only: bool, yes: bool) -> int:
     except Declined as declined:
         say(f"Nothing was written ({declined}).")
         return 1
+    audit.touch(out_of_sync)
     failed = list(unreadable)
     for name in out_of_sync:
         worker = config.machine(name)

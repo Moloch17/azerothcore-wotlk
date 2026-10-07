@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from . import console, remote
+from . import audit, console, remote
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, note, say
 
@@ -68,6 +68,7 @@ def run(config: Config, action: str, stages: list[str], yes: bool) -> int:
     except Declined as declined:
         say(f"Nothing was sent ({declined}).")
         return 1
+    audit.touch(targets)
     failed = []
     for machine in targets:
         try:

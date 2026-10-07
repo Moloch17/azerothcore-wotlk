@@ -5,7 +5,7 @@ import re
 import shlex
 import subprocess
 
-from . import remote
+from . import audit, remote
 from .config import Config
 from .ui import Declined, Failure, confirm, say
 
@@ -33,6 +33,7 @@ def run(config: Config, stage: str, check: bool, dry_run: bool, on_host: bool, y
         except Declined as declined:
             say(f"Nothing was copied ({declined}).")
             return 1
+        audit.touch([*config.workers, *([config.host] if on_host else [])])
     if on_host:
         host = config.host
         say(f"Running {SCRIPT} on {host.name}, which holds the run ({mode}) ...")

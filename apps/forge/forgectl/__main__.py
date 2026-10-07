@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import cluster, config as config_module, confsync, deploy, logs, stage, testcmd, videos
+from . import audit, cluster, config as config_module, confsync, deploy, logs, stage, testcmd, videos
 from .config import ConfigError
 from .ui import Failure, say
 
@@ -115,21 +115,46 @@ def dispatch(args, config) -> int:
     raise Failure(f"unknown command {args.command}")
 
 
+def changes_state(args) -> bool:
+    """Whether the command can change something (and so is audited): not the read-only ones."""
+    if args.command == "stage":
+        return args.action != "status"
+    if args.command == "build":
+        return True
+    if args.command == "conf-sync":
+        return not args.check
+    if args.command == "cluster":
+        return getattr(args, "cluster_command", None) == "move-host"
+    if args.command == "videos":
+        return not (args.check or args.dry_run)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     main_parser = parser()
     args = main_parser.parse_args(argv)
     if not args.command:
         main_parser.print_help()
         return 2
+    entry, outcome = None, "failed"
     try:
+        if changes_state(args):
+            entry = audit.begin(sys.argv[1:] if argv is None else argv)
         config = config_module.load(args.config)
-        return dispatch(args, config)
-    except (ConfigError, Failure) as problem:
+        code = dispatch(args, config)
+        outcome = "declined" if entry and entry.confirmation == "declined" else "done" if code == 0 else "failed"
+        return code
+    except (ConfigError, Failure, audit.AuditError) as problem:
         print(f"forgectl: error: {problem}", file=sys.stderr)
+        if entry:
+            entry.notes.append(str(problem)[:300])
         return 1
     except KeyboardInterrupt:
         print("forgectl: interrupted", file=sys.stderr)
         return 130
+    finally:
+        if entry:
+            audit.finish(entry, outcome)
 
 
 if __name__ == "__main__":

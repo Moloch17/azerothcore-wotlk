@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import stat
 import sys
 import textwrap
@@ -17,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from forgectl import (  # noqa: E402
-    __main__ as cli, cluster, config as config_module, confsync, console, deploy, logs, remote, stage, testcmd, ui,
+    __main__ as cli, audit, cluster, config as config_module, confsync, console, deploy, logs, remote, stage, testcmd, ui,
     videos)
 from forgectl.config import ConfigError  # noqa: E402
 from forgectl.remote import Result  # noqa: E402
@@ -59,6 +60,21 @@ def fake(monkeypatch):
     executor = FakeExec()
     monkeypatch.setattr(remote, "execute", executor)
     return executor
+
+
+@pytest.fixture(autouse=True)
+def forgectl_home(tmp_path, monkeypatch):
+    """The audit log and the console locks go to a temporary home, never the real ~/.forgectl; and a console that
+    is not a test's own fake is never really attached."""
+    home = tmp_path / "forgectl-home"
+    monkeypatch.setenv("FORGECTL_HOME", str(home))
+    real_spawn = console.spawn
+
+    def guarded(argv):
+        assert argv[0] not in ("ssh", "docker"), f"a test tried to attach a real console: {argv}"
+        return real_spawn(argv)
+    monkeypatch.setattr(console, "spawn", guarded)
+    return home
 
 
 # ---- config ----------------------------------------------------------------------------------------------------------
@@ -941,3 +957,85 @@ def test_the_root_shim_runs_the_package():
     shim = Path(__file__).resolve().parents[4] / "forgectl"
     done = remote.execute([sys.executable, str(shim), "--help"], timeout=30)
     assert done.ok and "forgectl operates the forge training cluster" in done.out
+
+
+# ---- the audit log ---------------------------------------------------------------------------------------------------
+
+def audit_lines(home):
+    path = home / "audit.log"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+@pytest.fixture
+def cli_cfg(monkeypatch):
+    real = config_module.load
+    monkeypatch.setattr(cli.config_module, "load", lambda path=None: real(CLUSTER_TOML))
+
+
+def test_a_state_changing_command_leaves_one_audit_line_with_who_what_where_and_how(cli_cfg, sent, forgectl_home):
+    assert cli.main(["stage", "cancel", "--yes"]) == 0
+    (line,) = audit_lines(forgectl_home)
+    assert f"user={audit.username()}" in line and "machines=sarah,spencer,thomas,moloch" in line
+    assert "confirm=--yes" in line and "outcome=done" in line and 'cmd="forgectl stage cancel --yes"' in line
+    assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} ", line)
+    assert oct((forgectl_home / "audit.log").stat().st_mode & 0o777) == "0o600"
+
+
+def test_a_person_confirming_a_declined_and_a_failed_command_are_told_apart(cli_cfg, monkeypatch, forgectl_home):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    recorder = FakeConsole()
+    monkeypatch.setattr(console, "send", recorder)
+    monkeypatch.setattr(ui, "ask", lambda prompt: "y")
+    assert cli.main(["stage", "resume", "move2_seek"]) == 0
+    monkeypatch.setattr(ui, "ask", lambda prompt: "n")
+    assert cli.main(["stage", "resume", "move2_seek"]) == 1
+    monkeypatch.setattr(console, "send", FakeConsole(fail_on=("sarah",)))
+    assert cli.main(["stage", "resume", "move2_seek", "--yes"]) == 1
+    done, declined, failed = audit_lines(forgectl_home)
+    assert "confirm=prompt outcome=done" in done and "machines=sarah" in done
+    assert "confirm=declined outcome=declined" in declined and "machines=-" in declined
+    assert "confirm=--yes outcome=failed" in failed
+
+
+def test_no_terminal_and_no_yes_is_logged_as_declined(cli_cfg, sent, monkeypatch, forgectl_home):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert cli.main(["stage", "resume", "move2_seek"]) == 1
+    assert "outcome=declined" in audit_lines(forgectl_home)[0]
+
+
+def test_read_only_commands_are_not_logged(cli_cfg, sent, fake, monkeypatch, forgectl_home):
+    monkeypatch.setattr(cluster, "run", lambda config, include_out=False: 0)
+    monkeypatch.setattr(stage, "status", lambda config: 0)
+    monkeypatch.setattr(confsync, "run", lambda config, check, yes: 0)
+    monkeypatch.setattr(videos, "run", lambda *a, **k: 0)
+    for argv in (["cluster"], ["status"], ["stage", "status"], ["logs"], ["conf-sync", "--check"],
+                 ["videos", "move2_seek", "--check"], ["videos", "move2_seek", "--dry-run"]):
+        monkeypatch.setattr(logs, "run", lambda *a, **k: 0)
+        assert cli.main(argv) == 0, argv
+    assert not (forgectl_home / "audit.log").exists()
+    for argv in (["conf-sync"], ["videos", "move2_seek", "--yes"]):
+        cli.main(argv)
+    assert len(audit_lines(forgectl_home)) == 2
+
+
+def test_an_unwritable_audit_log_refuses_the_command_before_anything_is_sent(cli_cfg, sent, monkeypatch, tmp_path,
+                                                                             capsys):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    monkeypatch.setenv("FORGECTL_HOME", str(blocker / "home"))
+    assert cli.main(["stage", "cancel", "--yes"]) == 1
+    assert sent.sent == [] and "audit log" in capsys.readouterr().err
+
+
+def test_an_exception_still_leaves_a_failed_line(cli_cfg, monkeypatch, forgectl_home):
+    monkeypatch.setattr(stage, "run", lambda *a, **k: (_ for _ in ()).throw(SystemExit(143)))
+    with pytest.raises(SystemExit):
+        cli.main(["stage", "cancel", "--yes"])
+    assert "outcome=failed" in audit_lines(forgectl_home)[0] and "SystemExit" in audit_lines(forgectl_home)[0]
+
+
+def test_two_runs_append_and_keep_both_lines(cli_cfg, sent, forgectl_home):
+    cli.main(["stage", "pause", "--yes"])
+    cli.main(["stage", "cancel", "--yes"])
+    assert [l.split('cmd="')[1].split('"')[0] for l in audit_lines(forgectl_home)] == [
+        "forgectl stage pause --yes", "forgectl stage cancel --yes"]

@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 import sys
 
+from . import audit
+
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\x1b[=>]")
 
 
@@ -38,12 +40,16 @@ def confirm(plan: list[str], yes: bool, what: str = "Proceed") -> None:
         say(f"  - {line}")
     if yes:
         say("(--yes: not asking)")
+        audit.confirmed("--yes")
         return
     if not sys.stdin.isatty():
+        audit.confirmed("declined")
         raise Declined("not a terminal, so no way to ask; pass --yes to go ahead")
     answer = ask(f"{what}? [y/N] ").strip().lower()
     if answer not in ("y", "yes"):
+        audit.confirmed("declined")
         raise Declined("not confirmed")
+    audit.confirmed("prompt")
 
 
 def table(headers: list[str], rows: list[list[str]]) -> str:

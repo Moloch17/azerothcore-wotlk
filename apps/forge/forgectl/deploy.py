@@ -8,7 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
-from . import confsync, remote, stage as stage_commands
+from . import audit, confsync, remote, stage as stage_commands
 from .config import Config, Machine
 from .ui import Declined, Failure, confirm, note, say, strip_ansi, table
 
@@ -132,6 +132,7 @@ def build(config: Config, cluster: bool, yes: bool, timeout_minutes: float, push
     except Declined as declined:
         say(f"Nothing was changed ({declined}).")
         return 1
+    audit.touch(targets)
     if cluster and push:
         note(f"pushing {config.branch} to {config.lan_remote} ...")
         local_git(config, "push", config.lan_remote, config.branch)
@@ -208,6 +209,7 @@ def move_host(config: Config, target: str, stage: str | None, yes: bool, timeout
     except Declined as declined:
         say(f"Nothing was changed ({declined}).")
         return 1
+    audit.touch(config.cluster)
     done: list[str] = []
     try:
         say(f"[1/6] cancel on {old.name}")
