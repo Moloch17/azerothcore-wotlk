@@ -80,7 +80,7 @@ TEST(RewardLedgerTest, ShapingScaleTouchesOnlyShaping)
 
     RewardLedger half;
     half.SetShaping(0.5f);
-    EXPECT_FLOAT_EQ(half.Add(RewardTerm::OrderMatch, 2.0f), 1.0f);
+    EXPECT_FLOAT_EQ(half.Add(RewardTerm::GoalProgress, 2.0f), 1.0f);
     EXPECT_FLOAT_EQ(half.Add(RewardTerm::Kill, 2.0f), 2.0f);
     EXPECT_FLOAT_EQ(half.AddTaken(RewardTerm::GoalReached, 4.0f), 2.0f);
     EXPECT_FLOAT_EQ(half.Score(), 2.0f);
@@ -132,15 +132,15 @@ TEST(RewardLedgerTest, EveryTermHasItsOwnNameAndACategory)
     }
 }
 
-// What a stage is for is paid as its Outcome or Cost, so the shaping fade cannot take it away (2026-10-05: stage3's
-// dummy drills and stage6/stage8's role and pull drills were paid as Shaping, and faded with it).
+// What a stage is for is paid as its Outcome or Cost, so the shaping fade cannot take it away (2026-10-05: the role
+// and pull drills were paid as Shaping, and faded with it).
 TEST(RewardLedgerTest, DrillLessonsAreOutcomesAndTheirChargesCosts)
 {
     using Animus::Curriculum::RewardTermCategory;
-    for (RewardTerm term : { RewardTerm::DummyOutput, RewardTerm::DummyMana, RewardTerm::DrillHold,
-            RewardTerm::DrillFocus, RewardTerm::DrillKeep, RewardTerm::PullClean, RewardTerm::Kill, RewardTerm::Clear })
+    for (RewardTerm term : { RewardTerm::DrillHold, RewardTerm::DrillFocus, RewardTerm::DrillKeep,
+            RewardTerm::PullClean, RewardTerm::Kill, RewardTerm::Clear })
         EXPECT_EQ(RewardTermCategory(term), RewardCategory::Outcome) << Animus::Curriculum::RewardTermName(term);
-    for (RewardTerm term : { RewardTerm::DummyHurt, RewardTerm::PullExtra, RewardTerm::EarlyPull })
+    for (RewardTerm term : { RewardTerm::PullExtra, RewardTerm::EarlyPull })
         EXPECT_EQ(RewardTermCategory(term), RewardCategory::Cost) << Animus::Curriculum::RewardTermName(term);
     // Every other seat's version of a drill's lesson stays the shaping it was.
     for (RewardTerm term : { RewardTerm::Threat, RewardTerm::DamageDealt, RewardTerm::TeammateHealing })

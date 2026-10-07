@@ -36,49 +36,26 @@ namespace Animus::Curriculum
         Approach,
         StealthOpener,
         StealthUtility,
-        Interrupt,
         Kill,
         Clear,
         HealthKept,
         Death,
-        OwnerDamageTaken,
-        OwnerHealing,
-        TankDamageRefund,
         Threat,
-        SoloFight,
-        Follow,
-        OwnerDeath,
         TeammateDamageTaken,
         TeammateHealing,
         TeammateThreat,
         TeammateDeath,
         Revive,
-        PlayerKill,
         Progress,
         Arrive,
-        FlagCapture,
-        FlagPickup,
-        FlagReturn,
-        CarrierKill,
-        FlagLost,
         Timeout,
         Stall,
-        Spacing,
         Readiness,
-        Control,
         SelfHealing,
         GoalReached,        // the goal held was reached (Goals.Reached)
         GoalSwitch,         // the goal head changed a seat's goal (Goals.Switch)
         GoalProgress,       // closing on the goal held (Goals.Progress, potential-based)
-        OrderMatch,
-        PlaceMatch,
-        BrokeContact,
-        Stalk,
         OpenerDamage,       // what a stealth opener's first seconds took off the opponent (Stealth.OpenerDamage)
-        /// Room to move: charged by the second for being closer to the edge of walkable space than a seat
-        /// ought to be. Shaped, never a gate -- a doorway is narrower than any margin worth keeping in the open,
-        /// so a rule that forbade closeness would forbid doorways.
-        Clearance,
         Repeat,
         /// Steering that does not commit (Actions.Jitter): a turn undone moments after it was chosen, feet swung
         /// round from a bearing just pressed.
@@ -92,21 +69,6 @@ namespace Animus::Curriculum
         HealingMana,
         /// An instance boss fight lost with the boss part dead: the share of its health the fight took off it.
         BossProgress,
-        /// Life outside the fight (the quest, gather and town stages).
-        Wasted,             // a press that did nothing in the world
-        QuestAccepted,
-        QuestCredit,        // objective counts as they land
-        QuestTurnIn,
-        Poach,              // quest credit taken in a place another group holds (Life.Poach)
-        GatherNode,
-        GatherSkillUp,
-        TownSold,
-        TownRepaired,
-        TownStocked,
-        TownEquipped,
-        TownDone,
-        /// The corpse run (Death.*): time dead, dying again soon after rising, rising safely, the spirit healer.
-        DeathRun,
         /// Every second an engaged enemy lives (Output.Clock): what makes killing faster pay.
         CombatClock,
         /// A ranged spec shooting from range, and its shooting stopped by moving for nothing (Duel.Shot*).
@@ -116,19 +78,9 @@ namespace Animus::Curriculum
         /// A pull drill's pack killed alone (Instance.PullClean): paid as Kill until 2026-10-03, which put a drill's
         /// lesson in the same column as the dungeon's kills.
         PullClean,
-        /// A director replacing or churning its side's orders (Director.OrderChange, Director.OrderChurn): charged to
-        /// the director's own row, outside any seat's. A term since 2026-10-03, so it fades with the rest of shaping.
-        OrderChurn,
         /// A party's damage dealer or healer with enemies on it while the tank has not engaged (Raid.EarlyPull): the
         /// pull opened before the tank was there to take it. A cost, not shaping: it never fades (2026-10-03).
         EarlyPull,
-        /// The dummy drills' own lesson (DummyEncounter, stage3_rotation): output against the dummy's health, mana
-        /// kept at the end, and time spent hurt in the bleeding drill. Paid as DamageDealt, Readiness and HealthKept
-        /// until 2026-10-05, all Shaping: the shaping fade took away everything the stage is for, and stage3 stopped
-        /// casting (output 5 -> 1.1 a dummy) while its score -- kills in the one drill that has any -- rose.
-        DummyOutput,
-        DummyMana,
-        DummyHurt,
         /// A role drill's own lesson, paid to the drilled seat only (ArenaDefinition::DrillRole, seat 0; stage6): the
         /// tank holding the pack (Raid.TankHold/TankLoose), the damage dealer on the tank's target and off its
         /// enemies (Raid.TankTarget/PulledOff), the healer keeping the party up without waste (Raid.KeepUp, Overheal).
@@ -142,29 +94,21 @@ namespace Animus::Curriculum
         /// A pull drill's second pack dragged into the fight (Instance.PullExtra): a cost. Paid as Threat (Shaping)
         /// until 2026-10-05, so a faded stage8 drill charged nothing for a double pull.
         PullExtra,
-        /// Turning toward the marker (MarkerEncounter, the movement stages): potential shaping on the cosine of the
-        /// marker's bearing from the seat's facing, so turning to face it pays and turning away gives it back. A
-        /// nudge for the first minutes of M1 (Markers.Facing), Shaping so the fade takes it away.
+        /// Turning toward the marker (SightEncounter, M1): potential shaping on the cosine of the marker's bearing from
+        /// the seat's facing, so turning to face it pays and turning away gives it back. A nudge for the first minutes
+        /// of M1 (Markers.Facing), Shaping so the fade takes it away.
         Facing,
-        /// Moving nowhere (the movement stages, MarkerEncounter): a movement key held and the unit's position
-        /// still for more than MarkerGround.StuckAfterMs, charged by the second after that (MarkerGround.Stuck). A
-        /// noise price: free until the stage's measure is learned, on the cost ladder after.
+        /// Moving nowhere (the movement stages): a movement key held and the unit's position still for long enough,
+        /// charged by the second after that (Controls.Stuck). A noise price: free until the stage's measure is
+        /// learned, on the cost ladder after.
         Stuck,
         /// Pressing into a wall: a movement key held while the controller's step was blocked (BodyState::AgainstWall),
-        /// charged by the second (MarkerGround.Wall). A noise price, as Stuck.
+        /// charged by the second (Controls.Wall). A noise price, as Stuck.
         Wall,
-        /// What a fall took (the movement stages from M3, MarkerEncounter): per share of the seat's maximum health
-        /// (MarkerVertical.FallDamage). A Cost at full price, never on the cost ladder: a drop's price is real.
-        FallDamage,
-        /// What the water took (the water stage, M4): per share of the seat's maximum health lost to drowning
-        /// (MarkerWater.Drowning). A Cost at full price, as FallDamage: running out of breath is a real price.
-        Drowning,
-        /// The follow stage (M7, FollowEncounter): per second within the band of the leader (Outcome) -- what the
-        /// stage is for; per second past Follow.LostYards (Cost); per hostile creature newly attacking the seat on the
-        /// way (Cost: keeping clear of aggro while travelling).
+        /// The party follow (M4, PartyFollowEncounter): per second within the band of the leader (Outcome) -- what the
+        /// stage is for; per second past PartyFollow.LostYards (Cost).
         FollowKept,
         Lost,
-        Aggro,
         /// The seek stage (M2, SeekEncounter): the first frame the camera shows the hidden object (Seek.Sighting), and
         /// each new cell of floor walked onto before it is found (Seek.NewGround). Training-only aids (the plan's
         /// "fading bonuses for the first sighting and for new ground"): Shaping, so the fade takes both away and the
@@ -190,8 +134,7 @@ namespace Animus::Curriculum
         /// (Combat.InterruptLanded) -- and what it costs, at a fixed price from the first step: the seat's health taken
         /// (Combat.Hurt, small), what ground fire took (Combat.FireHurt), and every second dead or away from the fight
         /// (Combat.Away: dead, walking back from the entrance, or beyond Combat.AwayYards of the pull while it fights).
-        /// Walking back is never paid (a reward for it would pay dying). DamageTaken, Interrupt and Hazard stay the
-        /// Shaping they were for the archived stages.
+        /// Walking back is never paid (a reward for it would pay dying). DamageTaken and Hazard stay Shaping.
         Survived,
         InterruptLanded,
         Away,
@@ -239,15 +182,7 @@ namespace Animus::Curriculum
             // 88% of a stage's return (animus.rewards).
             case RewardTerm::Kill:
             case RewardTerm::Clear:
-            case RewardTerm::PlayerKill:
             case RewardTerm::Arrive:
-            case RewardTerm::FlagCapture:
-            case RewardTerm::FlagReturn:
-            case RewardTerm::QuestTurnIn:
-            case RewardTerm::GatherNode:
-            case RewardTerm::TownDone:
-            case RewardTerm::DummyOutput:
-            case RewardTerm::DummyMana:
             case RewardTerm::DrillHold:
             case RewardTerm::DrillFocus:
             case RewardTerm::DrillKeep:
@@ -268,14 +203,10 @@ namespace Animus::Curriculum
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
             case RewardTerm::Death:
-            case RewardTerm::OwnerDeath:
             case RewardTerm::TeammateDeath:
-            case RewardTerm::FlagLost:
             case RewardTerm::Timeout:
             case RewardTerm::StepCost:
-            case RewardTerm::DeathRun:
             case RewardTerm::EarlyPull:
-            case RewardTerm::DummyHurt:
             case RewardTerm::PullExtra:
             // The prices of noise: a press that did nothing again, a turn and its reversal, a press its goal did not
             // call for, any press at all, standing in place shuffling. As shaping they faded with the rest, and by a
@@ -289,10 +220,7 @@ namespace Animus::Curriculum
             // Moving nowhere and pressing into walls (the movement stages, 2026-10-05).
             case RewardTerm::Stuck:
             case RewardTerm::Wall:
-            case RewardTerm::FallDamage:
-            case RewardTerm::Drowning:
             case RewardTerm::Lost:
-            case RewardTerm::Aggro:
             // A decoy taken for the named object (M3).
             case RewardTerm::WrongObject:
             case RewardTerm::Blocking:
@@ -309,51 +237,26 @@ namespace Animus::Curriculum
             case RewardTerm::Approach:
             case RewardTerm::StealthOpener:
             case RewardTerm::StealthUtility:
-            case RewardTerm::Interrupt:
             case RewardTerm::HealthKept:
-            case RewardTerm::OwnerDamageTaken:
-            case RewardTerm::OwnerHealing:
-            case RewardTerm::TankDamageRefund:
             case RewardTerm::Threat:
-            case RewardTerm::SoloFight:
-            case RewardTerm::Follow:
             case RewardTerm::TeammateDamageTaken:
             case RewardTerm::TeammateHealing:
             case RewardTerm::TeammateThreat:
             case RewardTerm::Revive:
             case RewardTerm::Progress:
-            case RewardTerm::FlagPickup:
-            case RewardTerm::CarrierKill:
             case RewardTerm::Stall:
-            case RewardTerm::Spacing:
             case RewardTerm::Readiness:
-            case RewardTerm::Control:
             case RewardTerm::SelfHealing:
             case RewardTerm::GoalReached:
             case RewardTerm::GoalSwitch:
             case RewardTerm::GoalProgress:
-            case RewardTerm::OrderMatch:
-            case RewardTerm::PlaceMatch:
-            case RewardTerm::BrokeContact:
-            case RewardTerm::Stalk:
             case RewardTerm::OpenerDamage:
-            case RewardTerm::Clearance:
             case RewardTerm::Hazard:
             case RewardTerm::HealingMana:
             case RewardTerm::BossProgress:
-            case RewardTerm::Wasted:
-            case RewardTerm::QuestAccepted:
-            case RewardTerm::QuestCredit:
-            case RewardTerm::Poach:
-            case RewardTerm::GatherSkillUp:
-            case RewardTerm::TownSold:
-            case RewardTerm::TownRepaired:
-            case RewardTerm::TownStocked:
-            case RewardTerm::TownEquipped:
             case RewardTerm::CombatClock:
             case RewardTerm::Ranged:
             case RewardTerm::PetTank:
-            case RewardTerm::OrderChurn:
             case RewardTerm::Facing:
             case RewardTerm::Sighting:
             case RewardTerm::NewGround:

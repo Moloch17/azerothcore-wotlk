@@ -14,7 +14,7 @@ Each was found by hand, and the first two only after runs had been trained on th
 and no single check would have predicted them, but they broke the same rule, which is the one checked here: no
 shaping term should be worth an appreciable fraction of what winning is worth.
 
-Outcome terms -- the kill, the clear, the capture, the arrival -- are what a stage is *for*, and may be as
+Outcome terms -- the kill, the clear, the arrival -- are what a stage is *for*, and may be as
 large as they like. Everything else is shaping. Shaping that out-earns the outcome is not shaping any more, it
 is the objective, and the policy will tell you so.
 """
@@ -28,8 +28,7 @@ from __future__ import annotations
 #: party living through the pull -- and listing it as an outcome is exactly what would have let the farmable
 #: revive through this check, since it was the largest earner by a factor of ten and would have been reading
 #: itself as the yardstick.
-OUTCOME_TERMS = ("kill", "clear", "flag_capture", "flag_return", "player_kill", "arrive",
-                 "quest_turn_in", "gather_node", "town_done")
+OUTCOME_TERMS = ("kill", "clear", "arrive")
 
 #: A shaping term worth more than this much of the largest outcome term is reported. Half a kill is already a
 #: lot for a nudge; the three faults above scored 0.96, well over 1, and far over 1 respectively.

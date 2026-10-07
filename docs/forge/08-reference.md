@@ -106,7 +106,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 
 | Key | Default | | Key | Default |
 |---|---|---|---|---|
-| `Characters.HighLevelFirst` | 61 | | `Raid.DamagePerGroup` | 0.15 |
+| `Characters.HighLevelFirst` | 61 | |  |  |
 | `Characters.HighLevelChance` | 50 | | `Raid.KeepUp` | 0.0002 |
 | `Characters.NoisyTalentChance` | 30 | | `Raid.Idle` | 0.001 |
 | `Characters.RandomTalentChance` | 10 | | `Raid.IdleReach` | 40.0 |
@@ -125,9 +125,7 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Party.TeammateHealing` | 2.0 | | |  |
 | `Party.TankLoseTeammate` | 0.02 | | |  |
 | `Party.TeammateDeath` | 3.0 | | |  |
-| `Raid.HealthPerGroup` | 1.0 | | |  |
 | `Raid.TankHold` | 0.015 | | |  |
-| `Raid.Output` | 0.5 | | |  |
 | `Raid.IdleMs` | 4000 | | |  |
 | `Duel.DamageDealt` | 2.0 | | |  |
 | `Duel.DamageTaken` | 1.0 | | |  |
@@ -154,7 +152,6 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Goals.Switch` | 0.15 | | |  |
 | `Support.SelfHealing` | 0.5 | | |  |
 | `Support.PetReady` | 0.3 | | |  |
-| `Support.BuffCoverage` | 0.3 | | |  |
 | `Actions.RepeatMs` | 1000 | | |  |
 | `Actions.MoveRepeatMs` | 300 | | |  |
 | `Actions.StopCastMinMs` | 500 | | |  |
@@ -163,7 +160,6 @@ for every key with a default and no warning, so an undocumented one quietly keep
 | `Characters.LowLevelChance` | 15 | | |  |
 | `Duel.Stall` | 0.08 | | |  |
 | `Duel.StallGraceMs` | 15000 | | |  |
-| `Duel.PreparationRefundMaxMs` | 15000 | | |  |
 | `Duel.Spacing` | 0.1 | | |  |
 | `Actions.Repeat` | 0.03 | | |  |
 | `Actions.RepeatWindowMs` | 10000 | | |  |

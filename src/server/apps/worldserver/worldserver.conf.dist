@@ -6096,9 +6096,6 @@ AnimusForge.Curriculum.Party.TeammateDeath = 3.0
 #    AnimusForge.Curriculum.Raid.*
 #        Raids: synthetic pulls sized to the raid, and each role paid for its own part.
 
-#   a raid pull's health x (seats / 5) x HealthPerGroup, its melee damage x (1 + DamagePerGroup x (groups - 1))
-AnimusForge.Curriculum.Raid.HealthPerGroup = 1.0
-AnimusForge.Curriculum.Raid.DamagePerGroup = 0.15
 #   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
 AnimusForge.Curriculum.Raid.TankHold = 0.015
 #   the party's tank is charged per enemy on somebody else, per decision
@@ -6118,8 +6115,6 @@ AnimusForge.Curriculum.Raid.Overheal = 0.5
 #   tanks, party and raid: per decision in a fight in the spec's tanking stance, form or aura (Defensive Stance, Bear
 #   Form, Righteous Fury, Frost Presence)
 AnimusForge.Curriculum.Raid.TankStance = 0.001
-#   raid damage dealers: own damage as a share of the level's damage scale, times this
-AnimusForge.Curriculum.Raid.Output = 0.5
 #   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
 #   damaging or healing for IdleMs (ms)
 AnimusForge.Curriculum.Raid.Idle = 0.001
@@ -6165,17 +6160,11 @@ AnimusForge.Curriculum.Duel.TimeoutFloor = 0.5
 AnimusForge.Curriculum.Duel.Stall = 0.08
 #   ... the time a seat has to summon, buff and sneak up before it (ms)
 AnimusForge.Curriculum.Duel.StallGraceMs = 15000
-#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
-#   cast time, at least a global cooldown), up to this much (ms): 30 s made a 45 s approach free
-AnimusForge.Curriculum.Duel.PreparationRefundMaxMs = 15000
 #   duel: stopping the opponent's cast, priced by what was stopped as the pack's is (a heal undoes damage already
 #   dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output). The duel
 #   meets casters now (Difficulty.CasterChance), and one enemy casting one spell is the cheapest place in the
 #   curriculum to learn what an interrupt is for
 AnimusForge.Curriculum.Duel.Interrupt = 0.3
-AnimusForge.Curriculum.Duel.InterruptHeal = 3.0
-AnimusForge.Curriculum.Duel.InterruptArea = 2.0
-AnimusForge.Curriculum.Duel.InterruptLong = 1.5
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 AnimusForge.Curriculum.Duel.Spacing = 0.1
 #   duel and pack, a spec fighting with a ranged weapon (the hunter's): its shots landed while nothing hits it in
@@ -6407,12 +6396,6 @@ AnimusForge.Curriculum.Support.SelfHealing = 0.5
 #   bought nothing and a heal over time could be stacked on a full bar for free. With it the objective is healing per
 #   mana. Kept well below SelfHealing -- the failure to avoid is a seat that heals too little and dies
 AnimusForge.Curriculum.Support.HealingMana = 0.1
-#   the same charge in the schedules that pay readiness (the gauntlet, a planned run), where mana spent healing
-#   already costs the seat what it brings to the next pull. 0 leaves that accounting to do the work: the charge is a
-#   stand-in for an opportunity cost and is only needed where there is no later fight to have one
-AnimusForge.Curriculum.Support.HealingManaWithReadiness = 0.0
-#   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
-AnimusForge.Curriculum.Support.BuffCoverage = 0.3
 #   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
 #   engagement: part of being ready, which the kill alone did not teach
 AnimusForge.Curriculum.Support.PetReady = 0.3
@@ -6544,29 +6527,10 @@ AnimusForge.Curriculum.Markers.Death = 3.0
 AnimusForge.Curriculum.Markers.Progress = 1.0
 AnimusForge.Curriculum.Markers.Facing = 0.25
 AnimusForge.Curriculum.Markers.StopMoved = 0.05
-AnimusForge.Curriculum.Markers.MarkersMin = 3
-AnimusForge.Curriculum.Markers.MarkersMax = 8
 AnimusForge.Curriculum.Markers.Rungs = 8
-AnimusForge.Curriculum.Markers.DistanceMin = 5.0
-AnimusForge.Curriculum.Markers.DistanceFirst = 10.0
-AnimusForge.Curriculum.Markers.DistanceLast = 60.0
-AnimusForge.Curriculum.Markers.BearingFirst = 20.0
-AnimusForge.Curriculum.Markers.BearingLast = 180.0
-AnimusForge.Curriculum.Markers.RadiusFirst = 4.0
-AnimusForge.Curriculum.Markers.RadiusLast = 0.5
-AnimusForge.Curriculum.Markers.MaxDetour = 1.1
 AnimusForge.Curriculum.Markers.StopNear = 10.0
 #   arriving is on the marker's own floor too: the unit within ArriveRise yards of its height
 AnimusForge.Curriculum.Markers.ArriveRise = 2.0
-#   the deepest single drop a marker's walking way may take (a ledge's way round: MarkerVertical.SafeDrop): at 20 yd
-#   a fall takes 12% of maximum health (0.018 x h - 0.2426; nothing under 13.48 yd), so no marker needs a
-#   near-fatal fall
-AnimusForge.Curriculum.Markers.RouteMaxDrop = 20.0
-#   narrow legs (above, below, upstairs, across water, a lakebed) that fell back to ordinary markers: a class cannot
-#   converge while its top-rung fallback share is over FallbackCeiling (a convergence signal), and a spawn point over it
-#   across FallbackMinLegs legs is named once in the log and in `forge status`
-AnimusForge.Curriculum.Markers.FallbackCeiling = 0.2
-AnimusForge.Curriculum.Markers.FallbackMinLegs = 50
 
 #
 #    AnimusForge.Curriculum.Respawn.*
@@ -6857,10 +6821,6 @@ AnimusForge.Curriculum.Output.Clock = 0.03
 
 #   paid once when a seat that was visible to a living enemy stops being visible
 AnimusForge.Curriculum.Evade.BrokeContact = 0.3
-#   no second break pays within this long of the last, in ms
-AnimusForge.Curriculum.Evade.BreakCooldownMs = 5000
-#   an unbroken stretch out of sight at least this long, in ms, counts as an escape (metric only)
-AnimusForge.Curriculum.Evade.EscapeMs = 8000
 
 #
 #    AnimusForge.Curriculum.Stealth.*

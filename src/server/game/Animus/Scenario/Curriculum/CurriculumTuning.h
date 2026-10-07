@@ -106,8 +106,6 @@ namespace Animus::Curriculum
         /// -- a forty-seat raid paid only as a party learned to leave the fight to the others.
         struct RaidTuning
         {
-            float HealthPerGroup = 1.0f;        // a raid pull's health x (seats / 5) x this
-            float DamagePerGroup = 0.15f;       // ... and its melee damage x (1 + this x (groups - 1))
             /// Tanks, party and raid: per enemy on the tank, per decision. 0.006 was drowned by the charges for loose
             /// enemies: Ragefire's tanks netted -9.6 a run on the threat term (2026-10-02).
             float TankHold = 0.015f;
@@ -135,8 +133,6 @@ namespace Animus::Curriculum
             /// (Defensive Stance, Bear Form, Righteous Fury, Frost Presence). Warrior tanks finished 27 of 38 drill
             /// fights in Battle Stance (stage6 at 41M).
             float TankStance = 0.001f;
-            /// Damage dealers in a raid: their own damage as a share of the level's damage scale, times this.
-            float Output = 0.5f;
             /// Party and raid: per decision in a fight with an enemy in reach, once nothing the seat did served or
             /// was neutral -- no press, no damage, no healing -- for IdleMs. Per 50 ms of tuning: a minute idle
             /// costs about 1.2.
@@ -189,10 +185,6 @@ namespace Animus::Curriculum
             /// out of the fight was all but free -- 24 of the 87 elite fights lost to the clock were never engaged.
             float Stall = 0.08f;
             uint32 StallGraceMs = 15000;        // summoning a pet, buffing and sneaking up in stealth fit in this
-            /// Preparing is not stalling: the grace grows by the time the seat spent starting buffs, forms, stances,
-            /// stealth and pet summons out of combat (CombatTally::PreparationMs), up to this much. 30 s made a 45 s
-            /// approach free; buffing, a form, a pet and an opener from stealth fit in 15.
-            uint32 PreparationRefundMaxMs = 15000;
             /// Creature duel, ranged specs: per second the opponent stands in melee range hitting the bot. The approach
             /// shaping only pays for closing in, so nothing told a hunter, mage or warlock to keep the range it
             /// fights best at (stage1_duel at 20M: 88 of 96 hunter kills ended within 5 yd).
@@ -200,9 +192,6 @@ namespace Animus::Curriculum
             /// cheapest place to learn what an interrupt is for: one enemy, one cast, nothing else happening. Priced
             /// by what was stopped, as the pack's is.
             float Interrupt = 0.3f;
-            float InterruptHeal = 3.0f;
-            float InterruptArea = 2.0f;
-            float InterruptLong = 1.5f;
             /// 0.03 cost a mage about 0.4 a fight against 15 for a kill, and mages spent 60-75% of their duels in melee
             /// range, dying to elites they let close (2026-10-02, stage4 at 160M); 0.1 puts 15 s in melee at 1.5.
             float Spacing = 0.1f;
@@ -440,9 +429,6 @@ namespace Animus::Curriculum
             /// unseen: the best policy for paid seconds is to run to the far corner at the start and stand
             /// there, which is not evasion, and the reward audit would only say so after the run was spent.
             float BrokeContact = 0.3f;
-            uint32 BreakCooldownMs = 5000;
-            /// Unbroken seconds out of sight that count as having got away, for the `escaped` metric.
-            uint32 EscapeMs = 8000;
         } Evade;
 
         /// Stalking: closing on someone while stealthed, and staying there. The stealth stage's own lesson,
@@ -487,16 +473,6 @@ namespace Animus::Curriculum
             /// Kept well below SelfHealing on purpose: the failure to avoid is a seat that heals too little and
             /// dies, which costs 10. Watch deaths before efficiency when this moves.
             float HealingMana = 0.1f;
-            /// The same charge where the episode already prices mana honestly: a gauntlet pays readiness for what a
-            /// seat brings to the next pull (SoloGauntletReadiness, OwnerReadiness), so mana spent healing already
-            /// costs it there, and charging again would price the same mana twice. HealingMana is a stand-in for an
-            /// opportunity cost, needed only where there is no later fight to have it -- a duel ends at the kill and
-            /// leftover mana is worth nothing, which is where efficiency has to be taught. 0 leaves the gauntlet's
-            /// own accounting to do the work.
-            float HealingManaWithReadiness = 0.0f;
-            /// Gauntlets: engaging a pull pays this times the share of the layout's buff groups up on the seat (and on
-            /// the owner, averaged, with one), next to readiness.
-            float BuffCoverage = 0.3f;
             /// A class that keeps a pet (PetBlock::HasPet) with it out when a fight starts, paid once at the
             /// engagement. A pet is part of being ready, and the kill alone did not teach it: the warlock summoned
             /// in 7% of the episodes it did not start with one where the hunter summoned in 85% of its own.
@@ -635,13 +611,9 @@ namespace Animus::Curriculum
             float Max = 3.0f;
         } Hazards;
 
-        /// The movement stages' markers (Opposition::Markers, MarkerEncounter): a place to stop on, then the next.
-        ///
-        /// The ladder is per class and build (DifficultyLadder, Difficulty.*), Rungs rungs from the first to the last,
-        /// each of the three things it tightens moving linearly between its First and Last value: how far the marker
-        /// is (DistanceMin up to Distance*), how far round from the seat's facing it may be (Bearing*, degrees either
-        /// side: 180 is behind as well) and the radius the seat has to stop in (Radius*). A rung counts as won when
-        /// every marker of the episode was reached before the clock.
+        /// The movement stages' marker prices and stops (SightEncounter, SeekEncounter, InteractEncounter): the arrival
+        /// and the time it takes, the distance and facing shaping, and what counts as stopped. (The marker courses'
+        /// ladders went with the first movement curriculum.)
         struct MarkerTuning
         {
             float Arrive = 3.0f;                // per marker stopped on (Outcome)
@@ -661,34 +633,12 @@ namespace Animus::Curriculum
             /// Stopped: no forward, back, strafe or vertical key held, no jump pending, on the ground, and the feet
             /// moved less than this many yards since the last decision.
             float StopMoved = 0.05f;
-            uint32 MarkersMin = 3;              // markers an episode (drawn per episode)
-            uint32 MarkersMax = 8;
             uint32 Rungs = 8;                   // rungs on the ladder, the last of which is the stage's real task
-            float DistanceMin = 5.0f;           // yards: the nearest a marker is, at every rung
-            float DistanceFirst = 10.0f;        // the furthest, on the first rung ...
-            float DistanceLast = 60.0f;         // ... and the last
-            float BearingFirst = 20.0f;         // degrees either side of the facing a marker may be, first rung
-            float BearingLast = 180.0f;
-            float RadiusFirst = 4.0f;           // yards: the radius to stop in, first rung (user, 2026-10-05: 4 -> 0.5)
-            float RadiusLast = 0.5f;
-            /// The way to a marker on the navmesh may be at most this many times the straight line: M1's markers are
-            /// in the open, where the straight line is the way.
-            float MaxDetour = 1.1f;
             /// How near a stop has to be to count in stop_distance (a stop far from the marker is a pause, not a try).
             float StopNear = 10.0f;
             /// Arriving is on the marker's own floor too: the unit within this many yards of its height (a seat under
             /// a ledge, or a storey below, is not on it).
             float ArriveRise = 2.0f;
-            /// The deepest single drop a marker's walking way may take, every course (TravelPlaceRules::RouteMaxDrop;
-            /// a ledge's way round takes MarkerVertical.SafeDrop instead). Placement never asks for a near-fatal
-            /// fall: at 20 yd a fall takes 0.018 x 20 - 0.2426 = 12% of maximum health (nothing under 13.48 yd).
-            float RouteMaxDrop = 20.0f;
-            /// The most a stage's narrow legs (above, below, upstairs, across water, a lakebed) may fall back to
-            /// ordinary markers: a class cannot converge while its top-rung evaluation's fallback share is over it
-            /// (the learner reads it from stage.json), and a spawn point over it across FallbackMinLegs legs is
-            /// named once in the log and in `forge status`, to be removed from the data.
-            float FallbackCeiling = 0.2f;
-            uint32 FallbackMinLegs = 50;
         } Markers;
 
         /// **Death in an instance** (dungeon-curriculum I4; EntranceRespawn): a seat that dies is out for DelayMs, then
@@ -1065,8 +1015,6 @@ namespace Animus::Curriculum
             f("Party.TankLoseTeammate", tuning.Party.TankLoseTeammate);
             f("Party.PulledThreat", tuning.Party.PulledThreat);
             f("Party.TeammateDeath", tuning.Party.TeammateDeath);
-            f("Raid.HealthPerGroup", tuning.Raid.HealthPerGroup);
-            f("Raid.DamagePerGroup", tuning.Raid.DamagePerGroup);
             f("Raid.TankHold", tuning.Raid.TankHold);
             f("Raid.TankLoose", tuning.Raid.TankLoose);
             f("Raid.TankTarget", tuning.Raid.TankTarget);
@@ -1076,7 +1024,6 @@ namespace Animus::Curriculum
             f("Raid.KeepUp", tuning.Raid.KeepUp);
             f("Raid.Overheal", tuning.Raid.Overheal);
             f("Raid.TankStance", tuning.Raid.TankStance);
-            f("Raid.Output", tuning.Raid.Output);
             f("Raid.Idle", tuning.Raid.Idle);
             f("Raid.IdleMs", tuning.Raid.IdleMs);
             f("Raid.IdleReach", tuning.Raid.IdleReach);
@@ -1095,11 +1042,7 @@ namespace Animus::Curriculum
             f("Duel.TimeoutFloor", tuning.Duel.TimeoutFloor);
             f("Duel.Stall", tuning.Duel.Stall);
             f("Duel.StallGraceMs", tuning.Duel.StallGraceMs);
-            f("Duel.PreparationRefundMaxMs", tuning.Duel.PreparationRefundMaxMs);
             f("Duel.Interrupt", tuning.Duel.Interrupt);
-            f("Duel.InterruptHeal", tuning.Duel.InterruptHeal);
-            f("Duel.InterruptArea", tuning.Duel.InterruptArea);
-            f("Duel.InterruptLong", tuning.Duel.InterruptLong);
             f("Duel.Spacing", tuning.Duel.Spacing);
             f("Duel.ShotAtRange", tuning.Duel.ShotAtRange);
             f("Duel.ShotPaused", tuning.Duel.ShotPaused);
@@ -1223,8 +1166,6 @@ namespace Animus::Curriculum
             f("Goals.Secondary", tuning.Goals.Secondary);
 
             f("Evade.BrokeContact", tuning.Evade.BrokeContact);
-            f("Evade.BreakCooldownMs", tuning.Evade.BreakCooldownMs);
-            f("Evade.EscapeMs", tuning.Evade.EscapeMs);
             f("Stealth.Stalk", tuning.Stealth.Stalk);
             f("Stealth.StalkYards", tuning.Stealth.StalkYards);
             f("Stealth.StalkMax", tuning.Stealth.StalkMax);
@@ -1233,8 +1174,6 @@ namespace Animus::Curriculum
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);
-            f("Support.HealingManaWithReadiness", tuning.Support.HealingManaWithReadiness);
-            f("Support.BuffCoverage", tuning.Support.BuffCoverage);
             f("Support.PetReady", tuning.Support.PetReady);
 
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
@@ -1248,22 +1187,9 @@ namespace Animus::Curriculum
             f("Markers.Progress", tuning.Markers.Progress);
             f("Markers.Facing", tuning.Markers.Facing);
             f("Markers.StopMoved", tuning.Markers.StopMoved);
-            f("Markers.MarkersMin", tuning.Markers.MarkersMin);
-            f("Markers.MarkersMax", tuning.Markers.MarkersMax);
             f("Markers.Rungs", tuning.Markers.Rungs);
-            f("Markers.DistanceMin", tuning.Markers.DistanceMin);
-            f("Markers.DistanceFirst", tuning.Markers.DistanceFirst);
-            f("Markers.DistanceLast", tuning.Markers.DistanceLast);
-            f("Markers.BearingFirst", tuning.Markers.BearingFirst);
-            f("Markers.BearingLast", tuning.Markers.BearingLast);
-            f("Markers.RadiusFirst", tuning.Markers.RadiusFirst);
-            f("Markers.RadiusLast", tuning.Markers.RadiusLast);
-            f("Markers.MaxDetour", tuning.Markers.MaxDetour);
             f("Markers.StopNear", tuning.Markers.StopNear);
             f("Markers.ArriveRise", tuning.Markers.ArriveRise);
-            f("Markers.RouteMaxDrop", tuning.Markers.RouteMaxDrop);
-            f("Markers.FallbackCeiling", tuning.Markers.FallbackCeiling);
-            f("Markers.FallbackMinLegs", tuning.Markers.FallbackMinLegs);
             f("Respawn.DelayMs", tuning.Respawn.DelayMs);
             f("Respawn.RejoinYards", tuning.Respawn.RejoinYards);
             f("PartyFollow.BandMin", tuning.PartyFollow.BandMin);
