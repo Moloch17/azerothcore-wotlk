@@ -28,6 +28,7 @@
  * var/animus-forge/shared/archive/curriculum-v1-2026-10-05/.
  *
  *   movement   move1_controls ─ move2_seek (perception-goals P1: the compass split, a hidden object found by sight)
+ *   combat     move2_seek ─ combat1_fight ─ combat2_packs ─ combat3_survive (dungeon-curriculum C1-C3, Ragefire Chasm)
  *
  * Every movement stage runs 50 ms world ticks (AnimusForge.Stage.<name>.TicksPerDecision in the conf template): the
  * controller's mouse-look facing rule and its heartbeat are checked once a world tick, so a coarser tick would leave
@@ -413,6 +414,13 @@ namespace
         };
     }
 
+    /// **Ragefire Chasm's entrance** (the combat stages, C1-C3): where its areatrigger (2230, from Orgrimmar's Cleft of
+    /// Shadow) puts a player, and where a seat that died there comes back (dungeon-curriculum I4).
+    Position RagefireEntrance()
+    {
+        return { 3.81f, -14.82f, -17.84f, 4.39f };
+    }
+
     /// Every stage, every base before the stages that extend it.
     std::vector<StageDefinition> Definitions()
     {
@@ -493,6 +501,94 @@ namespace
             .MapId = MAP_STORMWIND_STOCKADE,
             .SpawnPoints = { StockadeEntrance() },
             .Level = 1,
+        });
+
+        // **The combat stages** (dungeon-curriculum C1-C3, approved 2026-10-06): fighting on a cleared Ragefire Chasm
+        // (map 389, every creature removed on the env's first build: SpawnArea::ClearMap), every race and class at the
+        // dungeon's level band, 13-18 (a death knight at its own 55, against creatures of its level), one seat. The
+        // seat starts at one of the dungeon's own creature spawn points, its corridors, within a walk of the entrance
+        // (CombatEncounter::Corridors), and what it fights is spawned there for it (CombatEncounter, CombatDraw::
+        // PlanPull at its class and build's rung).
+        //
+        // **What it perceives** (I3) is what a player does: the camera, the entities it shows and the ones it remembers
+        // (the vision, entities, map and sight blocks), each visible one's cast bar, crowd control and threat (the
+        // combat block's per-target columns on the sight list), the party frames, and the target frame's threat. **What
+        // it does**: the move block's keys and mouse (controller-only), selecting by sight (the sight block's presses)
+        // and casting at the selection as the client does; nothing situational masked. A death is never the end: it
+        // comes back alive at the entrance after a short delay and walks back (I4, ArenaDefinition::RespawnAtEntrance).
+        //
+        // Seeded from move2_seek (the camera, the map and the movement carry; the duel, pet, sight and combat blocks
+        // start fresh). move3_interact, the plan's base, is another branch's: when it lands, C1 extends it instead.
+        //
+        // C1 -- fight: one creature at a time, the next two seconds after each kill, over a 150 s episode; a caster
+        // from rung 1, an elite from rung 4. `guard` stands a passive friend by the seat that every creature goes for
+        // first: taunting it off and healing it are the drill, for the classes that can. Outcome: kills, survived;
+        // Cost: damage taken (small), the time a kill takes, a death.
+        stages.push_back({
+            .Name = "combat1_fight",
+            .Suffix = "_fight",
+            .Extends = "move2_seek",
+            .Summary = "a cleared Ragefire Chasm: one creature at a time, found by sight and killed with the class's "
+                "kit; in a share of them a friend to taunt off and heal",
+            .Blocks = { Core, Move, Duel, Pet, Vision, Entities, Map, Sight, Combat, Goal },
+            .Arenas = {
+                { .Name = "fight", .Weight = 3, .Against = Opposition::Combat, .EpisodeSeconds = 150,
+                    .Combat = CombatDrill::Fight, .RespawnAtEntrance = true },
+                { .Name = "guard", .Weight = 1, .Against = Opposition::Combat, .EpisodeSeconds = 150,
+                    .Combat = CombatDrill::Fight, .Ally = true, .RespawnAtEntrance = true },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+            .SpawnPoints = { RagefireEntrance() },
+            .FocusLevelFirst = 13,
+            .FocusLevelLast = 18,
+            .FocusChance = 100,
+        });
+
+        // C2 -- packs: packs of two to four on the same ground -- a caster from rung 1, linked from rung 2, fire
+        // underfoot in a third of them (always in `fire`) -- with the next pack standing further on: pulling it before
+        // this one is down is an extra pull. Focus, interrupts, crowd control, line of sight, out of the fire, one pack
+        // at a time. Outcome: packs cleared, interrupts landed, survived; Cost: extra pulls, fire damage, damage taken.
+        stages.push_back({
+            .Name = "combat2_packs",
+            .Suffix = "_packs",
+            .Extends = "combat1_fight",
+            .Summary = "a cleared Ragefire Chasm: packs of 2-4, casters, linked, fire underfoot, the next pack further "
+                "on; clear them one at a time",
+            .Blocks = { Core, Move, Duel, Pet, Vision, Entities, Map, Sight, Combat, Goal },
+            .Arenas = {
+                { .Name = "packs", .Weight = 2, .Against = Opposition::Combat, .EpisodeSeconds = 240,
+                    .Combat = CombatDrill::Packs, .RespawnAtEntrance = true },
+                { .Name = "fire", .Weight = 1, .Against = Opposition::Combat, .EpisodeSeconds = 240, .Hazards = true,
+                    .Combat = CombatDrill::Packs, .RespawnAtEntrance = true },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+            .SpawnPoints = { RagefireEntrance() },
+            .FocusLevelFirst = 13,
+            .FocusLevelLast = 18,
+            .FocusChance = 100,
+        });
+
+        // C3 -- survive: packs that can kill (three or four, two levels up on the rung's), pull after pull, the next
+        // waiting until the seat goes for it; food and drink stocked (the gauntlet block: eat, drink, rest until
+        // ready), so resting between pulls and backing off are the seat's own choices. A death comes back at the
+        // entrance and walks back to where it fell (Rejoin), and the pack is still there to clear: never "give up".
+        // Outcome: packs cleared, survived, rejoined, interrupts landed.
+        stages.push_back({
+            .Name = "combat3_survive",
+            .Suffix = "_survive",
+            .Extends = "combat2_packs",
+            .Summary = "a cleared Ragefire Chasm: packs that can kill, pull after pull; rest between them, back off, "
+                "and after a death come back from the entrance and finish them",
+            .Blocks = { Core, Move, Duel, Pet, Gauntlet, Vision, Entities, Map, Sight, Combat, Goal },
+            .Arenas = {
+                { .Name = "survive", .Weight = 1, .Against = Opposition::Combat, .EpisodeSeconds = 360,
+                    .Combat = CombatDrill::Survive, .RespawnAtEntrance = true },
+            },
+            .MapId = MAP_RAGEFIRE_CHASM,
+            .SpawnPoints = { RagefireEntrance() },
+            .FocusLevelFirst = 13,
+            .FocusLevelLast = 18,
+            .FocusChance = 100,
         });
 
         return stages;
@@ -734,6 +830,26 @@ namespace
                 || pair.Spawn == pair.Object)
                 return "a sight pair is a sight arena's: two different points of its SpawnPoints";
 
+        // The combat stages: one seat on a dungeon's own ground, seeing what it fights (the sight block and the combat
+        // block's columns on it) and coming back at the entrance after a death.
+        bool const combat = arena.Against == Opposition::Combat;
+        if (combat != (arena.Combat != CombatDrill::None))
+            return "a combat drill goes with fighting on a cleared dungeon (Opposition::Combat), and only with that";
+        if (combat && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0
+            || arena.Schedule != PullSchedule::None || arena.Directed || arena.DeathRuns || arena.Objective))
+            return "a combat arena is one seat on its own, with no pull schedule, owner or corpse run";
+        if (combat && (!stage.Has(BlockId::Move) || !stage.Has(BlockId::Vision) || !stage.Has(BlockId::Sight)
+            || !stage.Has(BlockId::Combat)))
+            return "a combat arena is fought by sight: the move, vision, sight and combat blocks";
+        if (combat && arena.Combat == CombatDrill::Survive && !stage.Has(BlockId::Gauntlet))
+            return "surviving pull after pull rests between them with the gauntlet block";
+        if (arena.Ally && (!combat || arena.Combat != CombatDrill::Fight))
+            return "a friend to guard is a single fight's (CombatDrill::Fight)";
+        if (combat && (arena.MapId ? arena.MapId : stage.MapId) == 0)
+            return "a combat arena is on a dungeon's own map";
+        if (arena.RespawnAtEntrance && (arena.DeathRuns || (arena.MapId ? arena.MapId : stage.MapId) == 0))
+            return "a seat comes back at an instance's entrance, never with a corpse run";
+
         if (!seek && !arena.Rooms.empty())
             return "only a seek arena has rooms";
         if (!seek && !sight && !arena.Objects.empty())
@@ -782,6 +898,14 @@ namespace
             auto const sight = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Sight);
             if (!stage.Has(BlockId::Vision) || entities == stage.Blocks.end() || sight < entities)
                 return "the sight block reads what the camera's entity list wrote: it needs the vision block, after it";
+        }
+        // The combat block's per-target columns ride on the sight list (dungeon-curriculum I3).
+        if (stage.Has(BlockId::Combat))
+        {
+            auto const sight = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Sight);
+            auto const combat = std::find(stage.Blocks.begin(), stage.Blocks.end(), BlockId::Combat);
+            if (sight == stage.Blocks.end() || combat < sight)
+                return "the combat block's columns ride on the sight list: it needs the sight block, after it";
         }
 
         // The base only has to exist: seeding maps the base's blocks to this stage's by name (stage.json spans), so a

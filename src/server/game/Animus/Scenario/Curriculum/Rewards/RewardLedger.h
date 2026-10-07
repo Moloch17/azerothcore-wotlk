@@ -175,6 +175,17 @@ namespace Animus::Curriculum
         /// show a room's floor (Seek.RoomSeen), by the episode's own bookkeeping, never the remembered map's
         /// (amendment 6). Shaping, as the other two.
         RoomSeen,
+        /// The combat stages (CombatEncounter, dungeon-curriculum C1-C3): what each is for, paid as Outcome so the fade
+        /// never takes it -- an episode ended with no death (Combat.Survived), an interrupt that stopped a cast
+        /// (Combat.InterruptLanded), and walking back to the fight after a respawn at the entrance (Combat.Rejoin) --
+        /// and what it costs, at a fixed price from the first step: the seat's health taken (Combat.Hurt, small) and
+        /// what ground fire took (Combat.FireHurt). DamageTaken, Interrupt and Hazard stay the Shaping they were for
+        /// the archived stages.
+        Survived,
+        InterruptLanded,
+        Rejoin,
+        Hurt,
+        FireHurt,
         Count
     };
 
@@ -225,6 +236,10 @@ namespace Animus::Curriculum
             case RewardTerm::PullClean:
             // The follow stage's band kept (2026-10-05).
             case RewardTerm::FollowKept:
+            // The combat stages' own (2026-10-06): surviving, interrupts landed, rejoining after a respawn.
+            case RewardTerm::Survived:
+            case RewardTerm::InterruptLanded:
+            case RewardTerm::Rejoin:
                 return RewardCategory::Outcome;
             // What the outcome costs: deaths (the seat's, a teammate's, the owner's; a wipe is paid as deaths), the
             // flag lost, the clock run out, the step cost a stage charges for time, the corpse run.
@@ -254,6 +269,9 @@ namespace Animus::Curriculum
             case RewardTerm::Drowning:
             case RewardTerm::Lost:
             case RewardTerm::Aggro:
+            // The combat stages' prices: health taken, and what ground fire took.
+            case RewardTerm::Hurt:
+            case RewardTerm::FireHurt:
                 return RewardCategory::Cost;
             case RewardTerm::DamageDealt:
             case RewardTerm::DamageTaken:

@@ -301,6 +301,10 @@ namespace Animus::Curriculum
         bool TargetSeen = false;                    // LastSeen holds where the target was when the bot last saw it
         Position LastSeen;
         float TargetUnseenTime = 0.0f;              // time since the bot last saw the target / 20 s, clamped
+        /// A sight stage's selection is in the camera's last frame (dungeon-curriculum I3). Out of it, the duel block
+        /// reads its place as where the seat last saw it (LastSeen, from the entity memory), never where it is; its
+        /// target-frame facts stay. Always true outside a sight stage.
+        bool TargetInView = true;
 
         /// Per catalog action, the highest rank the bot knows (SeatState::KnownRanks); null for a view built
         /// without one, where Encoding::KnownRank resolves the chain itself.

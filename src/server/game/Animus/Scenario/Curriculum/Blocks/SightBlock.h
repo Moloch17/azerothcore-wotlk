@@ -105,9 +105,16 @@ namespace Animus::Curriculum
         [[nodiscard]] static uint32 SlotOf(uint32 local) { return local % SIGHT_SLOTS; }
 
         /// The block's columns from the seat's frame and memory (`memory` already written with this frame), each
-        /// slot's GUID into `guids` (0 an empty slot): `selected` and `focus` are the seat's (raw GUIDs).
+        /// slot's GUID into `guids` (0 an empty slot): `selected` and `focus` are the seat's (raw GUIDs). `width` is a
+        /// slot's stride (Width): the columns past SIGHT_FEATURES are left 0 here.
         static void Write(Vision::SeenList const& seen, Vision::EntityMemory const& memory, uint64 selected,
-            uint64 focus, float* obs, std::array<uint64, SIGHT_SLOTS>& guids);
+            uint64 focus, float* obs, std::array<uint64, SIGHT_SLOTS>& guids, uint32 width = SIGHT_FEATURES);
+
+        /// A slot's columns in `layout`: SIGHT_FEATURES, and CombatBlock::COMBAT_SLOT_FEATURES more after them in a
+        /// layout with the combat block (dungeon-curriculum I3: each visible unit's cast bar, crowd control, elite,
+        /// whom it hits and the seat's threat on it, as its nameplate shows them; 0 for a remembered slot). A layout
+        /// without one -- M3's -- keeps the narrower list.
+        [[nodiscard]] static uint32 Width(Layout const& layout);
     };
 }
 

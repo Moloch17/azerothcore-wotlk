@@ -1262,6 +1262,65 @@ namespace Animus::Curriculum
             float WallSlide = 0.5f;
         } Controls;
 
+        /// **The combat stages** (Opposition::Combat, CombatEncounter; dungeon-curriculum C1-C3): creatures on a
+        /// cleared Ragefire Chasm, fought by a seat that sees them (I3).
+        ///
+        /// **Outcome**, each multiplied by the difficulty tier's w = 1 + Difficulty.TierScale x tier: Kill for each
+        /// creature of C1 killed, Clear for each pack of C2 and C3 cleared, Survived at the episode's end with no death
+        /// in it (Survived, or SurviveSurvived in C3, where staying alive is the lesson); InterruptLanded for an
+        /// interrupt that stopped a cast (C2 and C3), and Rejoin for walking back within RejoinYards of the fight after
+        /// a respawn at the entrance (C3), neither scaled. **Cost**, at a fixed price from the first step: Death
+        /// (divided by w), AllyDeath (the guard arena's friend, divided by w), Hurt per maximum health taken (small),
+        /// FireHurt per maximum health taken from ground effects, ExtraPull for a second pack drawn into a fight before
+        /// the first is cleared, and Clock per second a creature of the current pull is alive and engaged (the time a
+        /// kill takes). **Shaping** (faded): Damage per share of a creature's health the seat (or its pet) took off it.
+        ///
+        /// **The ladder** (DifficultyLadder, per class and build, steps on its own window's win rate alone): rung t of
+        /// MaxTier puts the creatures at the seat's level + LevelBase + t x LevelsPerTier (C2 at half the steps, its
+        /// pack growing instead), elites from EliteTier, a caster in every pack from CasterTier and linked packs from
+        /// LinkedTier; HazardChance percent of C2 packs bring something that puts fire on the ground. C3's packs are
+        /// SurviveSize strong at SurviveLevels above C1's for the rung: meant to be able to kill.
+        ///
+        /// **Placement**: the seat starts at one of the dungeon's own creature spawn points (its corridors, cleared),
+        /// within CorridorWalk yards' walk of the entrance and CorridorSpacing apart; a creature or pack stands
+        /// FightNearest to FightFurthest yards from the seat, in its line of sight; the next pack NextNearest to
+        /// NextFurthest on from the current one, further from the seat. C1's next creature comes NextFightMs after a
+        /// kill. **Death** (I4): RespawnDelayMs out, then alive at the entrance (ArenaDefinition::RespawnAtEntrance).
+        struct CombatTuning
+        {
+            float Kill = 1.0f;
+            float Clear = 2.0f;
+            float Survived = 1.0f;
+            float SurviveSurvived = 2.0f;
+            float InterruptLanded = 0.25f;
+            float Rejoin = 1.0f;
+            float Death = 2.0f;
+            float AllyDeath = 1.0f;
+            float Hurt = 0.2f;
+            float FireHurt = 1.0f;
+            float ExtraPull = 1.0f;
+            float Clock = 0.01f;                // per second
+            float Damage = 0.3f;                // shaping, per creature health
+            uint32 MaxTier = 5;
+            int32 LevelBase = -2;
+            uint32 LevelsPerTier = 1;
+            uint32 EliteTier = 4;
+            uint32 CasterTier = 1;
+            uint32 LinkedTier = 2;
+            int32 HazardChance = 33;
+            uint32 SurviveSize = 3;
+            uint32 SurviveLevels = 2;
+            float FightNearest = 18.0f;
+            float FightFurthest = 35.0f;
+            float NextNearest = 30.0f;
+            float NextFurthest = 45.0f;
+            uint32 NextFightMs = 2000;
+            float CorridorWalk = 220.0f;
+            float CorridorSpacing = 8.0f;
+            uint32 RespawnDelayMs = 10000;
+            float RejoinYards = 30.0f;
+        } Combat;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1922,6 +1981,37 @@ namespace Animus::Curriculum
             f("Controls.Stuck", tuning.Controls.Stuck);
             f("Controls.Wall", tuning.Controls.Wall);
             f("Controls.WallSlide", tuning.Controls.WallSlide);
+            f("Combat.Kill", tuning.Combat.Kill);
+            f("Combat.Clear", tuning.Combat.Clear);
+            f("Combat.Survived", tuning.Combat.Survived);
+            f("Combat.SurviveSurvived", tuning.Combat.SurviveSurvived);
+            f("Combat.InterruptLanded", tuning.Combat.InterruptLanded);
+            f("Combat.Rejoin", tuning.Combat.Rejoin);
+            f("Combat.Death", tuning.Combat.Death);
+            f("Combat.AllyDeath", tuning.Combat.AllyDeath);
+            f("Combat.Hurt", tuning.Combat.Hurt);
+            f("Combat.FireHurt", tuning.Combat.FireHurt);
+            f("Combat.ExtraPull", tuning.Combat.ExtraPull);
+            f("Combat.Clock", tuning.Combat.Clock);
+            f("Combat.Damage", tuning.Combat.Damage);
+            f("Combat.MaxTier", tuning.Combat.MaxTier);
+            f("Combat.LevelBase", tuning.Combat.LevelBase);
+            f("Combat.LevelsPerTier", tuning.Combat.LevelsPerTier);
+            f("Combat.EliteTier", tuning.Combat.EliteTier);
+            f("Combat.CasterTier", tuning.Combat.CasterTier);
+            f("Combat.LinkedTier", tuning.Combat.LinkedTier);
+            f("Combat.HazardChance", tuning.Combat.HazardChance);
+            f("Combat.SurviveSize", tuning.Combat.SurviveSize);
+            f("Combat.SurviveLevels", tuning.Combat.SurviveLevels);
+            f("Combat.FightNearest", tuning.Combat.FightNearest);
+            f("Combat.FightFurthest", tuning.Combat.FightFurthest);
+            f("Combat.NextNearest", tuning.Combat.NextNearest);
+            f("Combat.NextFurthest", tuning.Combat.NextFurthest);
+            f("Combat.NextFightMs", tuning.Combat.NextFightMs);
+            f("Combat.CorridorWalk", tuning.Combat.CorridorWalk);
+            f("Combat.CorridorSpacing", tuning.Combat.CorridorSpacing);
+            f("Combat.RespawnDelayMs", tuning.Combat.RespawnDelayMs);
+            f("Combat.RejoinYards", tuning.Combat.RejoinYards);
             f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);

@@ -285,20 +285,40 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
         }
     }
 
+    // A sight stage's selection out of the camera's frame (dungeon-curriculum I3): the target frame still shows it --
+    // its health, level, cast bar, whom it fights, the threat -- but where it stands is only where the seat last saw
+    // it (its entity memory), as for a hidden target.
+    bool const placed = !view.L || !view.L->Has(BlockId::Sight) || view.TargetInView;
+    if (target && !placed)
+    {
+        obs[OBS_TARGET_HIDDEN] = 1.0f;
+        if (view.TargetSeen)
+        {
+            float const bearing = bot->GetRelativeAngle(&view.LastSeen);
+            obs[OBS_TARGET_UNSEEN_TIME] = view.TargetUnseenTime;
+            obs[OBS_LAST_SEEN_DISTANCE] = std::min(1.0f, bot->GetExactDist(&view.LastSeen) / 60.0f);
+            obs[OBS_LAST_SEEN_BEARING_SIN] = std::sin(bearing);
+            obs[OBS_LAST_SEEN_BEARING_COS] = std::cos(bearing);
+        }
+    }
+
     if (target)
     {
-        float const bearing = bot->GetRelativeAngle(target);
-        obs[OBS_DISTANCE] = std::min(1.0f, bot->GetDistance(target) / 60.0f);
-        obs[OBS_BEARING_SIN] = std::sin(bearing);
-        obs[OBS_BEARING_COS] = std::cos(bearing);
-        obs[OBS_BEHIND_TARGET] = target->isInBack(bot) ? 1.0f : 0.0f;
-        obs[OBS_TARGET_FACING_BOT] = target->HasInArc(float(M_PI), bot) ? 1.0f : 0.0f;
+        if (placed)
+        {
+            float const bearing = bot->GetRelativeAngle(target);
+            obs[OBS_DISTANCE] = std::min(1.0f, bot->GetDistance(target) / 60.0f);
+            obs[OBS_BEARING_SIN] = std::sin(bearing);
+            obs[OBS_BEARING_COS] = std::cos(bearing);
+            obs[OBS_BEHIND_TARGET] = target->isInBack(bot) ? 1.0f : 0.0f;
+            obs[OBS_TARGET_FACING_BOT] = target->HasInArc(float(M_PI), bot) ? 1.0f : 0.0f;
+            obs[OBS_TARGET_IN_LINE_OF_SIGHT] = bot->IsWithinLOSInMap(target) ? 1.0f : 0.0f;
+        }
         obs[OBS_TARGET_IN_COMBAT] = target->IsInCombat() ? 1.0f : 0.0f;
         obs[OBS_TARGET_ATTACKS_BOT] = target->GetVictim() == bot ? 1.0f : 0.0f;
         obs[OBS_TARGET_CASTING] = target->IsNonMeleeSpellCast(false) ? 1.0f : 0.0f;
         obs[OBS_TARGET_THREAT_SHARE] = Encoding::ThreatShare(target, bot);
         IncomingSpell::Observe(target, bot, obs + OBS_TARGET_CAST_FIRST);
-        obs[OBS_TARGET_IN_LINE_OF_SIGHT] = bot->IsWithinLOSInMap(target) ? 1.0f : 0.0f;
         obs[OBS_BOT_MOVING] = bot->movespline->Finalized() ? 0.0f : 1.0f;
         obs[OBS_BOT_IN_COMBAT] = bot->IsInCombat() ? 1.0f : 0.0f;
         obs[OBS_BOT_STEALTHED] = bot->HasAuraType(SPELL_AURA_MOD_STEALTH) ? 1.0f : 0.0f;

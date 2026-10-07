@@ -80,6 +80,11 @@ namespace Animus::Curriculum
         /// or use, use an item on, assist, focus -- sent as the client sends them. After the entities block, which
         /// writes the memory it reads.
         Sight,
+        /// Perception-true combat inputs (dungeon-curriculum I3): the party frames (always known), the target frame's
+        /// threat indicator and target of target, and -- in a layout with it -- the sight list's per-target combat
+        /// columns (the cast bar, crowd control, elite, whom it hits, the seat's threat on it: visible units only).
+        /// Presses: select or focus a party frame. After the sight block.
+        Combat,
         Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
         Count
     };

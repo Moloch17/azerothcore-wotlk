@@ -70,6 +70,18 @@ namespace Animus::Curriculum
         /// corner), stopped beside, with a compass the ladder withholds more and more often (SightEncounter,
         /// ArenaDefinition::Objects and SightPairs) -- M1 controls, redesigned.
         Sight,
+        /// Creatures on a cleared dungeon's own ground, fought by a seat that sees them (CombatEncounter, the drill in
+        /// ArenaDefinition::Combat) -- the combat stages C1-C3 of the dungeon curriculum.
+        Combat,
+    };
+
+    /// What a combat arena's creatures are (Opposition::Combat, CombatEncounter): the dungeon curriculum's C1-C3.
+    enum class CombatDrill : uint8
+    {
+        None,
+        Fight,          // C1: one creature at a time, the next after each kill
+        Packs,          // C2: packs of 2-4 (casters, linked, fire underfoot), the next pack standing further on
+        Survive,        // C3: packs that can kill, pull after pull; rest between them, and come back after a death
     };
 
     /// What kind of ground a marker arena's markers are on (Opposition::Markers only): each movement stage's own.
@@ -394,6 +406,15 @@ namespace Animus::Curriculum
         /// Opposition::Sight: the evaluation's fixed (spawn, object) pairs, indexes into SpawnPoints, each played with
         /// and without the compass (SightDraw::EvaluationPick). Objects is the pool the object is drawn from.
         std::vector<SightPair> SightPairs{};
+        /// Opposition::Combat: what the creatures are (CombatDrill), and whether a friendly fighter stands with the seat
+        /// for each creature to go for first -- the drill's taunt and its heals on someone else (C1's `guard`).
+        CombatDrill Combat = CombatDrill::None;
+        bool Ally = false;
+        /// **A death brings the seat back alive at the instance's entrance** (dungeon-curriculum I4; the user,
+        /// 2026-10-06: no graveyard, ghost or corpse run): out for Combat.RespawnDelayMs, then alive with full health
+        /// and mana at the map's entrance (its areatrigger's target), to walk back on the controller. The episode goes
+        /// on (StageScenario::DeadForGood is never true). An instanced arena's, never with DeathRuns.
+        bool RespawnAtEntrance = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };

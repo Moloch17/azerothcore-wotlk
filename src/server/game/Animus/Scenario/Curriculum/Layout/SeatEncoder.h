@@ -38,8 +38,10 @@ namespace Animus::Curriculum::SeatEncoder
     /// stages', whose seats never have a target).
     [[nodiscard]] inline bool ActsWithoutTarget(Layout const& layout)
     {
+        // A seat that chooses its own target by sight (the sight block, dungeon-curriculum I1) has none until it
+        // selects one, and selecting is one of its actions.
         return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Travel) || layout.Has(BlockId::World)
-            || !layout.Has(BlockId::Duel);
+            || layout.Has(BlockId::Sight) || !layout.Has(BlockId::Duel);
     }
 
     /// Write the layout's observation (view.L->ObsDim values) and action mask (view.L->NumActions). Action 0 is always

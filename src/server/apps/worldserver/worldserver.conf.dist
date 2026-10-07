@@ -7059,6 +7059,54 @@ AnimusForge.Curriculum.Controls.Wall = 0.02
 AnimusForge.Curriculum.Controls.WallSlide = 0.5
 
 #
+#    AnimusForge.Curriculum.Combat.*
+#        The combat stages (combat1_fight, combat2_packs, combat3_survive; CombatEncounter, dungeon-curriculum C1-C3):
+#        creatures on a cleared Ragefire Chasm, fought by a seat that sees them. Outcome (times the tier's
+#        w = 1 + Difficulty.TierScale x tier): Kill a C1 creature, Clear a C2/C3 pack, Survived the episode with no
+#        death (SurviveSurvived in C3); InterruptLanded an interrupt that stopped a cast, Rejoin back within
+#        RejoinYards of the fight after a respawn (C3), unscaled. Cost, fixed price from the first step: Death and
+#        AllyDeath (divided by w), Hurt and FireHurt per maximum health taken (all of it, and from ground effects),
+#        ExtraPull a second pack drawn in, Clock per second a creature of the pull is alive and engaged. Shaping
+#        (faded): Damage per creature health dealt. The ladder (per class and build, on its window alone): the seat's
+#        level + LevelBase + rung x LevelsPerTier (C2 half the steps, its packs growing), elites from EliteTier, a
+#        caster from CasterTier, linked packs from LinkedTier, HazardChance percent of C2 packs with fire; C3's packs
+#        SurviveSize strong, SurviveLevels higher. The seat starts on one of the dungeon's own creature spawns within
+#        CorridorWalk yards' walk of the entrance (CorridorSpacing apart); a pull stands FightNearest-FightFurthest
+#        yards off in its sight, the next pack NextNearest-NextFurthest further on; C1's next creature NextFightMs
+#        after a kill. A death: RespawnDelayMs out, then alive at the entrance (dungeon-curriculum I4).
+AnimusForge.Curriculum.Combat.Kill = 1.0
+AnimusForge.Curriculum.Combat.Clear = 2.0
+AnimusForge.Curriculum.Combat.Survived = 1.0
+AnimusForge.Curriculum.Combat.SurviveSurvived = 2.0
+AnimusForge.Curriculum.Combat.InterruptLanded = 0.25
+AnimusForge.Curriculum.Combat.Rejoin = 1.0
+AnimusForge.Curriculum.Combat.Death = 2.0
+AnimusForge.Curriculum.Combat.AllyDeath = 1.0
+AnimusForge.Curriculum.Combat.Hurt = 0.2
+AnimusForge.Curriculum.Combat.FireHurt = 1.0
+AnimusForge.Curriculum.Combat.ExtraPull = 1.0
+AnimusForge.Curriculum.Combat.Clock = 0.01
+AnimusForge.Curriculum.Combat.Damage = 0.3
+AnimusForge.Curriculum.Combat.MaxTier = 5
+AnimusForge.Curriculum.Combat.LevelBase = -2
+AnimusForge.Curriculum.Combat.LevelsPerTier = 1
+AnimusForge.Curriculum.Combat.EliteTier = 4
+AnimusForge.Curriculum.Combat.CasterTier = 1
+AnimusForge.Curriculum.Combat.LinkedTier = 2
+AnimusForge.Curriculum.Combat.HazardChance = 33
+AnimusForge.Curriculum.Combat.SurviveSize = 3
+AnimusForge.Curriculum.Combat.SurviveLevels = 2
+AnimusForge.Curriculum.Combat.FightNearest = 18.0
+AnimusForge.Curriculum.Combat.FightFurthest = 35.0
+AnimusForge.Curriculum.Combat.NextNearest = 30.0
+AnimusForge.Curriculum.Combat.NextFurthest = 45.0
+AnimusForge.Curriculum.Combat.NextFightMs = 2000
+AnimusForge.Curriculum.Combat.CorridorWalk = 220.0
+AnimusForge.Curriculum.Combat.CorridorSpacing = 8.0
+AnimusForge.Curriculum.Combat.RespawnDelayMs = 10000
+AnimusForge.Curriculum.Combat.RejoinYards = 30.0
+
+#
 #    AnimusForge.Curriculum.Owner.*
 #        The scripted owner of the companion and party stages.
 
